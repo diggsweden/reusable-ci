@@ -225,7 +225,9 @@ jobs:
             "source,artifact" \
             "" \
             "" \
-            "."
+            "." \
+            "" \
+            "true"
       - name: Run JReleaser
         if: inputs.jreleaserEnabled
         working-directory: ${{ inputs.workingDirectory }}
