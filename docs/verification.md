@@ -30,26 +30,37 @@ Every release includes **three layers** of SBOMs, each in **two formats** (SPDX 
 | Layer | Source | Captures | Use Case | Formats |
 |-------|--------|----------|----------|---------|
 | **POM** | `pom.xml`, `build.gradle`, `package.json` | Declared dependencies + transitive dependencies | License compliance, dependency analysis, build-time security | SPDX 2.3, CycloneDX 1.6 |
-| **JAR** | Fat JAR binary (e.g., `app.jar`) | Actual packaged libraries (including shaded deps) | Runtime dependency verification, binary analysis | SPDX 2.3, CycloneDX 1.6 |
+| **JAR** | JAR binaries (may be multiple) | Actual packaged libraries (including shaded deps) | Runtime dependency verification, binary analysis | SPDX 2.3, CycloneDX 1.6 |
 | **Container** | Container image | OS packages, JRE, runtime environment | Deployment security, runtime vulnerability scanning | SPDX 2.3, CycloneDX 1.6 |
 
-**Total SBOMs per release:** 6 files (3 layers × 2 formats)
+**Total SBOMs per release:** 6-10+ files (3+ layers × 2 formats, more if multiple JARs)
 
 ### SBOM Naming Convention
 
 SBOMs follow a consistent, versioned naming scheme with explicit `-sbom` suffix:
 
-```
-{project-name}-{version}-{layer}-sbom.{format}.json
+```text
+{jar-filename}-jar-sbom.{format}.json
 
 Examples:
-- eudiw-wallet-issuer-poc-ci-0.5.13-pom-sbom.spdx.json
-- eudiw-wallet-issuer-poc-ci-0.5.13-pom-sbom.cyclonedx.json
-- eudiw-wallet-issuer-poc-ci-0.5.13-jar-sbom.spdx.json
-- eudiw-wallet-issuer-poc-ci-0.5.13-jar-sbom.cyclonedx.json
-- eudiw-wallet-issuer-poc-ci-0.5.13-container-sbom.spdx.json
-- eudiw-wallet-issuer-poc-ci-0.5.13-container-sbom.cyclonedx.json
+- PROJECT-VERSION-pom-sbom.spdx.json
+- PROJECT-VERSION-pom-sbom.cyclonedx.json
+- PROJECT-VERSION-jar-sbom.spdx.json        (library JAR)
+- PROJECT-jar-sbom.spdx.json              (fat/executable JAR)
+- PROJECT-VERSION-container-sbom.spdx.json
+- PROJECT-VERSION-container-sbom.cyclonedx.json
 ```
+
+**Multiple JAR Artifacts:**
+
+Maven/Spring Boot projects may produce multiple JARs, each with its own SBOM:
+
+| JAR Type | Filename | SBOM Size | Dependencies | Use Case |
+|----------|----------|-----------|--------------|----------|
+| **Library JAR** | `app-1.0.0.jar` | Small (5-10 KB) | ~2 packages (application code only) | Library consumers, Maven dependency |
+| **Fat/Uber JAR** | `app.jar` | Large (500+ KB) | 100+ packages (all embedded deps) | Deployment, security scanning, runtime analysis |
+
+The fat JAR SBOM is critical for security as it shows the complete dependency tree deployed to production.
 
 **Rationale for `-sbom` suffix:**
 - ✅ Explicit identification (users instantly recognize SBOM files)
@@ -113,9 +124,9 @@ Each SBOM is uploaded as a separate release asset:
 
 ```bash
 # Download specific SBOM layer
-gh release download v0.5.13 -p "*-pom.spdx.json"
-gh release download v0.5.13 -p "*-jar.cyclonedx.json"
-gh release download v0.5.13 -p "*-container.spdx.json"
+gh release download v0.5.13 -p "*-pom-sbom.spdx.json"
+gh release download v0.5.13 -p "*-jar-sbom.cyclonedx.json"
+gh release download v0.5.13 -p "*-container-sbom.spdx.json"
 ```
 
 #### 2. SBOM Archive (All Layers)
@@ -124,14 +135,14 @@ All 6 SBOMs packaged in a signed ZIP archive:
 
 ```bash
 # Download complete SBOM package
-gh release download v0.5.13 -p "*-sboms.zip"
-gh release download v0.5.13 -p "*-sboms.zip.asc"
+gh release download v0.5.21 -p "*-sboms.zip"
+gh release download v0.5.21 -p "*-sboms.zip.asc"
 
 # Verify GPG signature
-gpg --verify eudiw-wallet-issuer-poc-ci-0.5.13-sboms.zip.asc
+gpg --verify PROJECT-VERSION-sboms.zip.asc
 
 # Extract all SBOMs
-unzip eudiw-wallet-issuer-poc-ci-0.5.13-sboms.zip
+unzip PROJECT-VERSION-sboms.zip
 ```
 
 #### 3. Container Image Attestation (Runtime Layer)
@@ -143,13 +154,13 @@ Container SBOM attached as signed attestation:
 cosign verify-attestation \
   --type spdx \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp "^https://github.com/diggsweden/eudiw-wallet-issuer-poc-ci" \
-  ghcr.io/diggsweden/eudiw-wallet-issuer-poc-ci:v0.5.13
+  --certificate-identity-regexp "^https://github.com/diggsweden/PROJECT" \
+  ghcr.io/diggsweden/PROJECT:v0.5.13
 
 # Extract SBOM from attestation
 cosign download attestation \
   --predicate-type https://spdx.dev/Document \
-  ghcr.io/diggsweden/eudiw-wallet-issuer-poc-ci:v0.5.13 | \
+  ghcr.io/diggsweden/PROJECT:v0.5.13 | \
   jq -r '.payload' | base64 -d | jq '.predicate' > container-sbom.spdx.json
 ```
 
@@ -159,7 +170,7 @@ All SBOMs included in release checksums:
 
 ```bash
 # Download checksums and signature
-gh release download v0.5.13 -p "checksums.sha256*"
+gh release download v0.5.21 -p "checksums.sha256*"
 
 # Verify GPG signature on checksums
 gpg --verify checksums.sha256.asc checksums.sha256
@@ -174,13 +185,16 @@ sha256sum -c checksums.sha256 --ignore-missing | grep sbom
 
 ```bash
 # Scan POM layer (declared dependencies)
-grype sbom:eudiw-wallet-issuer-poc-ci-0.5.13-pom-sbom.spdx.json
+grype sbom:PROJECT-VERSION-pom-sbom.spdx.json
 
-# Scan JAR layer (actual packaged artifacts)
-grype sbom:eudiw-wallet-issuer-poc-ci-0.5.13-jar-sbom.cyclonedx.json
+# Scan JAR layer - library JAR (application code only)
+grype sbom:PROJECT-VERSION-jar-sbom.spdx.json
+
+# Scan JAR layer - fat JAR (all embedded dependencies)
+grype sbom:PROJECT-jar-sbom.cyclonedx.json
 
 # Scan container layer (runtime environment)
-grype sbom:eudiw-wallet-issuer-poc-ci-0.5.13-container-sbom.spdx.json
+grype sbom:PROJECT-VERSION-container-sbom.spdx.json
 ```
 
 #### License Compliance Analysis
@@ -188,10 +202,10 @@ grype sbom:eudiw-wallet-issuer-poc-ci-0.5.13-container-sbom.spdx.json
 ```bash
 # Extract license information from SBOM
 jq '.packages[] | {name: .name, version: .versionInfo, license: .licenseConcluded}' \
-  eudiw-wallet-issuer-poc-ci-0.5.13-pom-sbom.spdx.json
+  PROJECT-VERSION-pom-sbom.spdx.json
 
 # Convert SPDX to CycloneDX for tool compatibility
-syft convert eudiw-wallet-issuer-poc-ci-0.5.13-pom-sbom.spdx.json \
+syft convert PROJECT-VERSION-pom-sbom.spdx.json \
   -o cyclonedx-json > converted.cyclonedx.json
 ```
 
@@ -199,10 +213,10 @@ syft convert eudiw-wallet-issuer-poc-ci-0.5.13-pom-sbom.spdx.json \
 
 ```bash
 # Generate dependency tree from SBOM
-syft packages eudiw-wallet-issuer-poc-ci-0.5.13-jar-sbom.spdx.json -o table
+syft packages PROJECT-VERSION-jar-sbom.spdx.json -o table
 
 # Export to dependency graph format
-syft packages eudiw-wallet-issuer-poc-ci-0.5.13-pom-sbom.cyclonedx.json -o json | \
+syft packages PROJECT-VERSION-pom-sbom.cyclonedx.json -o json | \
   jq '.artifacts[] | {name: .name, version: .version, type: .type}'
 ```
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2024 Digg - Agency for Digital Government
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
 
@@ -45,9 +45,7 @@
 #   - Sources and Javadoc JARs
 #   - GPG signed artifacts
 #   - Unique version (no overwrites)
----
 name: Publish Maven Library to Maven Central
-
 on:
   workflow_call:
     inputs:
@@ -70,7 +68,6 @@ on:
         required: false
         default: "central-release"
         type: string
-
       settingsPath:
         description: "Path to Maven settings.xml (optional)"
         required: false
@@ -90,13 +87,10 @@ on:
         required: false
         default: ".github-templates/templates/gitcliff/default.toml"
         type: string
-
 permissions:
-  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
-
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 env:
   MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always -DinstallAtEnd=true -DdeployAtEnd=true"
-
 jobs:
   generate-changelog:
     name: Generate Release Changelog
@@ -111,7 +105,6 @@ jobs:
       outputFile: "ReleasenotesTmp"
       uploadAsArtifact: true
       artifactName: "release-changelog"
-
   publish-maven-lib:
     name: Publish Maven Library
     needs: [generate-changelog]
@@ -121,14 +114,12 @@ jobs:
       contents: write
       packages: write
       id-token: write
-    
     steps:
       - name: Checkout repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 0
-
       - name: Set up JDK
         uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
@@ -139,42 +130,38 @@ jobs:
           server-id: github
           server-username: GITHUB_ACTOR
           server-password: GITHUB_TOKEN
-
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
         with:
           gpg_private_key: ${{ secrets.OSPO_BOT_GPG_PRIV }}
           passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
-
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs.workingDirectory }}
         run: |
           VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
           echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
-          
+
           if [[ "${VERSION}" == *-SNAPSHOT ]]; then
             echo "IS_SNAPSHOT=true" >> "$GITHUB_OUTPUT"
           else
             echo "IS_SNAPSHOT=false" >> "$GITHUB_OUTPUT"
           fi
-          
-          echo "Project version: ${VERSION}"
 
+          echo "Project version: ${VERSION}"
       - name: Build library
         working-directory: ${{ inputs.workingDirectory }}
         run: |
           echo "Building Maven library..."
           mvn clean compile
-          
+
           if [ "${{ inputs.skipTests }}" != "true" ]; then
             echo "Running tests..."
             mvn test
           fi
-          
+
           echo "Creating library package..."
           mvn package -DskipTests=${{ inputs.skipTests }}
-
       - name: Deploy to Maven Central
         working-directory: ${{ inputs.workingDirectory }}
         env:
@@ -182,7 +169,7 @@ jobs:
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD }}
         run: |
           echo "Deploying to Maven Central..."
-          
+
           # Only use settings file if explicitly provided
           SETTINGS_ARG=""
           if [ -n "${{ inputs.settingsPath }}" ]; then
@@ -194,12 +181,10 @@ jobs:
               exit 1
             fi
           fi
-          
+
           # Deploy with profile
           # shellcheck disable=SC2086
           mvn $MAVEN_CLI_OPTS deploy $SETTINGS_ARG -P${{ inputs.profile }} -DskipTests
-
-
       - name: Download Release Changelog
         if: inputs.jreleaserEnabled
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
@@ -207,7 +192,6 @@ jobs:
         with:
           name: release-changelog
           path: ${{ inputs.workingDirectory }}
-
       - name: Verify Release Changelog
         if: inputs.jreleaserEnabled
         working-directory: ${{ inputs.workingDirectory }}
@@ -219,7 +203,6 @@ jobs:
           else
             echo "✅ Release changelog found ($(wc -l < ReleasenotesTmp) lines)"
           fi
-
       - name: Checkout .github repo for SBOM script
         if: inputs.jreleaserEnabled
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -229,7 +212,6 @@ jobs:
           path: .github-shared
           sparse-checkout: |
             scripts/sbom
-
       - name: Generate POM and JAR SBOMs for Library
         if: inputs.jreleaserEnabled
         working-directory: ${{ inputs.workingDirectory }}
@@ -244,7 +226,6 @@ jobs:
             "" \
             "" \
             "."
-
       - name: Run JReleaser
         if: inputs.jreleaserEnabled
         working-directory: ${{ inputs.workingDirectory }}
@@ -256,7 +237,7 @@ jobs:
           JRELEASER_GPG_PASSPHRASE: ${{ secrets.OSPO_BOT_GPG_PASS }}
         run: |
           echo "Running JReleaser..."
-          
+
           # Check if JReleaser is configured in pom.xml
           if grep -q "jreleaser-maven-plugin" pom.xml; then
             # shellcheck disable=SC2086
@@ -264,7 +245,6 @@ jobs:
           else
             echo "JReleaser not configured in pom.xml, skipping..."
           fi
-
       - name: Upload JReleaser logs
         if: inputs.jreleaserEnabled && always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -273,9 +253,8 @@ jobs:
           path: |
             ${{ inputs.workingDirectory }}/target/jreleaser/trace.log
             ${{ inputs.workingDirectory }}/target/jreleaser/output.properties
-
       - name: Generate build summary
-        run: |
+        run: |-
           echo "## Maven Library Build Summary 📚" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Version:** ${{ steps.version-info.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY

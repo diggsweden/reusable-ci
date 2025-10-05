@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: 2024 Digg - Agency for Digital Government
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 # SPDX-License-Identifier: CC0-1.0
 
 # Validates that a git tag follows semantic versioning format
@@ -35,12 +35,12 @@ if [[ "$TAG_NAME" =~ $VERSION_PATTERN ]]; then
   MINOR="${BASH_REMATCH[2]}"
   PATCH="${BASH_REMATCH[3]}"
   PRERELEASE="${BASH_REMATCH[5]}"
-  
+
   echo "✅ Valid semantic version tag"
   echo "   Version: $MAJOR.$MINOR.$PATCH"
   if [[ -n "$PRERELEASE" ]]; then
     echo "   Pre-release: $PRERELEASE"
-    
+
     # Validate pre-release format matches our allowed patterns
     if [[ "$PRERELEASE" =~ ^(alpha|beta|rc|snapshot|SNAPSHOT|dev)(\.[0-9]+)?$ ]]; then
       echo "   ✅ Pre-release identifier follows convention"

@@ -14,4 +14,3 @@ jobs:
       - uses: italia/publiccode-parser-action@3244a5a109ae23f76cb379831abbad32927cad8c # v1.2.0
         with:
           publiccode: "publiccode.yml"
-

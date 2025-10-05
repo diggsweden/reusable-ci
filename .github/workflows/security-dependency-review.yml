@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2024 Digg - Agency for Digital Government
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
 
@@ -17,32 +17,26 @@
 #
 # 2. The workflow will analyze dependencies and fail if vulnerabilities of the specified severity level are found.
 #    Supported severity levels: critical, high, moderate, low.
----
-
-    name: Dependency Review
-    
-    on:
-      workflow_call:
-        inputs:
-          fail-on-severity:
-            description: "Severity level to fail the workflow (e.g., critical, high, moderate, low)"
-            required: false
-            default: "critical"
-            type: string
-    
-    permissions:
-      contents: read
-    
-    jobs:
-      dependency-review:
-        name: Dependency Review analysis
-        runs-on: ubuntu-latest
-        if: github.event_name == 'pull_request'
-        steps:
-          - name: Checkout repository
-            uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-    
-          - name: Dependency Review
-            uses: actions/dependency-review-action@595b5aeba73380359d98a5e087f648dbb0edce1b # v4.7.3
-            with:
-              fail-on-severity: ${{ inputs.fail-on-severity }}
+name: Dependency Review
+on:
+  workflow_call:
+    inputs:
+      fail-on-severity:
+        description: "Severity level to fail the workflow (e.g., critical, high, moderate, low)"
+        required: false
+        default: "critical"
+        type: string
+permissions:
+  contents: read
+jobs:
+  dependency-review:
+    name: Dependency Review analysis
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Dependency Review
+        uses: actions/dependency-review-action@595b5aeba73380359d98a5e087f648dbb0edce1b # v4.7.3
+        with:
+          fail-on-severity: ${{ inputs.fail-on-severity }}

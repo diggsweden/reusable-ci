@@ -30,4 +30,3 @@ jobs:
           eval "$(mise activate bash)"
           # Run verification
           just lint
-

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2024 Digg - Agency for Digital Government
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
 
@@ -36,9 +36,7 @@
 #   - Uses Maven wrapper if present
 #   - Caches dependencies for faster builds
 #   - Supports custom settings.xml if needed
----
 name: Publish Maven Application to GitHub
-
 on:
   workflow_call:
     inputs:
@@ -66,10 +64,8 @@ on:
         required: false
         default: "main"
         type: string
-
 permissions:
-  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
-
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
   publish-maven-app:
     name: Publish Maven Application
@@ -77,14 +73,12 @@ jobs:
     permissions:
       contents: write
       packages: write
-    
     steps:
       - name: Checkout repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 0
-
       - name: Set up JDK
         uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
@@ -95,7 +89,6 @@ jobs:
           server-id: github
           server-username: GITHUB_ACTOR
           server-password: GITHUB_TOKEN
-
       - name: Build application
         working-directory: ${{ inputs.workingDirectory }}
         env:
@@ -104,22 +97,20 @@ jobs:
         run: |
           echo "Building Maven application..."
           mvn clean compile
-          
+
           if [ "${{ inputs.skipTests }}" != "true" ]; then
             echo "Running tests..."
             mvn test
           fi
-          
+
           echo "Creating application package..."
           mvn package -DskipTests=${{ inputs.skipTests }}
-
       - name: List built artifacts
         working-directory: ${{ inputs.workingDirectory }}
         run: |
           echo "Built artifacts:"
           ls -la target/*.jar || echo "No JAR files found"
           ls -la target/*.war || echo "No WAR files found"
-
       - name: Publish to GitHub Packages
         working-directory: ${{ inputs.workingDirectory }}
         env:
@@ -127,7 +118,6 @@ jobs:
         run: |
           echo "Publishing to GitHub Packages..."
           mvn deploy -DskipTests -DaltDeploymentRepository=github::default::https://maven.pkg.github.com/${{ github.repository }}
-
       - name: Upload Maven artifacts for other jobs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -139,48 +129,30 @@ jobs:
             !${{ inputs.workingDirectory }}/target/*-javadoc.jar
             !${{ inputs.workingDirectory }}/target/original-*.jar
           retention-days: 1
-
       - name: Upload artifacts to release
         if: ${{ inputs.attachPattern != '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         working-directory: ${{ inputs.workingDirectory }}
-        run: |
-          echo "Uploading artifacts to GitHub release..."
-          
-          # Check if release exists
-          if gh release view "${{ github.ref_name }}" > /dev/null 2>&1; then
-            echo "Release ${{ github.ref_name }} exists, uploading artifacts..."
-            
-            # Upload matching files
-            for file in ${{ inputs.attachPattern }}; do
-              if [ -f "$file" ]; then
-                echo "Uploading $file..."
-                gh release upload "${{ github.ref_name }}" "$file" --clobber || true
-              fi
-            done
-          else
-            echo "Warning: Release ${{ github.ref_name }} not found. Artifacts not uploaded."
-          fi
-
+        run: "echo \"Uploading artifacts to GitHub release...\"\n\n# Check if release exists\nif gh release view \"${{ github.ref_name }}\" > /dev/null 2>&1; then\n  echo \"Release ${{ github.ref_name }} exists, uploading artifacts...\"\n  \n  # Upload matching files\n  for file in ${{ inputs.attachPattern }}; do\n    if [ -f \"$file\" ]; then\n      echo \"Uploading $file...\"\n      gh release upload \"${{ github.ref_name }}\" \"$file\" --clobber || true\n    fi\n  done\nelse\n  echo \"Warning: Release ${{ github.ref_name }} not found. Artifacts not uploaded.\"\nfi\n"
       - name: Generate build summary
         working-directory: ${{ inputs.workingDirectory }}
-        run: |
+        run: |-
           echo "# 📦 Maven Application Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
           # Extract artifact coordinates from pom.xml
           GROUP_ID=$(mvn help:evaluate -Dexpression=project.groupId -q -DforceStdout)
           ARTIFACT_ID=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout)
           VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
-          
+
           echo "## 🎯 Artifact Details" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| **Coordinates** | \`$GROUP_ID:$ARTIFACT_ID:$VERSION\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Java Version** | ${{ inputs.javaVersion }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Build Time** | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
-          
+
           # Detect framework
           FRAMEWORK="Standard Java"
           if grep -q "spring-boot-maven-plugin" pom.xml; then
@@ -189,7 +161,7 @@ jobs:
             FRAMEWORK="Quarkus"
           fi
           echo "| **Framework** | $FRAMEWORK |" >> $GITHUB_STEP_SUMMARY
-          
+
           # List built artifacts with sizes
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## 📁 Built Artifacts" >> $GITHUB_STEP_SUMMARY
@@ -202,17 +174,17 @@ jobs:
               echo "| \`$FILE_NAME\` | $FILE_SIZE |" >> $GITHUB_STEP_SUMMARY
             fi
           done
-          
+
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## 🚀 Distribution" >> $GITHUB_STEP_SUMMARY
           echo "| Location | Details |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|---------|" >> $GITHUB_STEP_SUMMARY
           echo "| **GitHub Packages** | [\`${{ github.repository }}\`](https://github.com/${{ github.repository }}/packages) |" >> $GITHUB_STEP_SUMMARY
-          
+
           if [ -n "${{ inputs.attachPattern }}" ]; then
             echo "| **GitHub Release** | [View Release](https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}) |" >> $GITHUB_STEP_SUMMARY
           fi
-          
+
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## 📥 Download Instructions" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
@@ -223,7 +195,7 @@ jobs:
           echo "  -DartifactId=$ARTIFACT_ID \\" >> $GITHUB_STEP_SUMMARY
           echo "  -Dversion=$VERSION" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          
+
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "*Build completed at $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY

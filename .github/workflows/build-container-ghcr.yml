@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2024 Digg - Agency for Digital Government
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
 
@@ -45,9 +45,7 @@
 #   - branch: Branch-based tags (main, develop)
 #   - sha: SHA-based tags (main-abc1234)
 #   - custom: User-defined tags
----
 name: Build Container Image to GHCR
-
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
@@ -99,7 +97,6 @@ on:
         description: "Custom image name (defaults to repository name)"
         required: false
         type: string
-
       buildArgs:
         description: "Build arguments (KEY=VALUE format, one per line)"
         required: false
@@ -138,10 +135,8 @@ on:
       metadata:
         description: "Image metadata JSON"
         value: ${{ jobs.build-and-push.outputs.metadata }}
-
 permissions:
-  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
-
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
   build-and-push:
     name: Build and Push Container
@@ -149,27 +144,23 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write  # Required for SLSA provenance
-      security-events: write  # Required for security scanning
-      actions: read   # Required for SLSA provenance v2
-      attestations: write  # Required for SBOM attestation
-    
+      id-token: write # Required for SLSA provenance
+      security-events: write # Required for security scanning
+      actions: read # Required for SLSA provenance v2
+      attestations: write # Required for SBOM attestation
     outputs:
       image: ${{ steps.image.outputs.image }}
       digest: ${{ steps.build.outputs.digest }}
       metadata: ${{ steps.metadata.outputs.json }}
-    
     steps:
       - name: Harden GitHub runner
         uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
         with:
           egress-policy: ${{ inputs.egress-policy }}
-
       - name: Checkout repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           ref: ${{ inputs.branch }}
-
       - name: Download Maven artifacts
         if: ${{ inputs.projectType == 'maven' }}
         uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
@@ -177,7 +168,6 @@ jobs:
         with:
           name: maven-artifacts
           path: target/
-
       - name: Verify Maven artifacts
         if: ${{ inputs.projectType == 'maven' }}
         run: |
@@ -189,7 +179,6 @@ jobs:
             echo "✅ Maven artifacts found:"
             ls -lh target/*.jar
           fi
-
       - name: Download NPM artifacts
         if: ${{ inputs.projectType == 'npm' }}
         uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
@@ -197,7 +186,6 @@ jobs:
         with:
           name: npm-artifacts
           path: dist/
-
       - name: Verify NPM artifacts
         if: ${{ inputs.projectType == 'npm' }}
         run: |
@@ -209,28 +197,24 @@ jobs:
             echo "✅ NPM artifacts found:"
             ls -lh dist/
           fi
-
       - name: Verify Containerfile
         id: containerfile
         run: |
           CONTAINERFILE="${{ inputs.containerfile }}"
-          
+
           # Verify the file exists
           if [ ! -f "$CONTAINERFILE" ]; then
             echo "Error: Containerfile '$CONTAINERFILE' not found"
             exit 1
           fi
-          
+
           echo "Using containerfile: $CONTAINERFILE"
           echo "containerfile=$CONTAINERFILE" >> "$GITHUB_OUTPUT"
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
-
       - name: Set up Buildx
         id: buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
-
       - name: Log in to Container Registry
         if: ${{ inputs.pushImage }}
         uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
@@ -238,7 +222,6 @@ jobs:
           registry: ${{ inputs.registry }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Determine Image Name
         id: image-name
         run: |
@@ -248,7 +231,7 @@ jobs:
             # Default to repository name
             IMAGE_NAME="${{ github.repository }}"
           fi
-          
+
           # Add registry prefix if not already present
           if [[ "$IMAGE_NAME" != *"/"* ]] || [[ "$IMAGE_NAME" != *"."* ]]; then
             if [ "${{ inputs.registry }}" = "docker.io" ]; then
@@ -257,10 +240,9 @@ jobs:
               IMAGE_NAME="${{ inputs.registry }}/$IMAGE_NAME"
             fi
           fi
-          
+
           echo "Image name: $IMAGE_NAME"
           echo "name=$IMAGE_NAME" >> "$GITHUB_OUTPUT"
-
       - name: Extract Image Metadata
         id: metadata
         uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f # v5.8.0
@@ -273,17 +255,16 @@ jobs:
             type=ref,event=branch
             type=ref,event=tag
             type=ref,event=pr
-            
+
             # For version tags only (v1.0.0, v2.3.4, etc)
             type=semver,pattern={{version}},enable=${{ github.ref_type == 'tag' }}
-            
+
             # For stable versions only (no dash in tag name like -beta, -rc)
             type=semver,pattern={{major}}.{{minor}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
             type=semver,pattern={{major}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
-            
+
             # SHA-based tags for non-tag refs (branches, PRs) for traceability
             type=sha,prefix={{branch}}-,enable=${{ github.ref_type != 'tag' }}
-
       - name: Build Container Image
         id: build
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
@@ -300,15 +281,12 @@ jobs:
           secrets: ${{ inputs.buildSecrets }}
           provenance: ${{ inputs.enableSLSA && 'mode=max' || 'false' }}
           sbom: ${{ inputs.enableSBOM }}
-
-
       - name: Export digest
         if: ${{ inputs.pushImage && inputs.enableSLSA }}
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
-
       - name: Upload digest
         if: ${{ inputs.pushImage && inputs.enableSLSA }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -317,7 +295,6 @@ jobs:
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
-
       - name: Scan Container Image
         if: ${{ inputs.enableScan && inputs.pushImage }}
         uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
@@ -327,14 +304,12 @@ jobs:
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
           vuln-type: 'os,library'
-
       - name: Upload Trivy scan results
         if: ${{ inputs.enableScan && inputs.pushImage }}
         uses: github/codeql-action/upload-sarif@f1f6e5f6af878fb37288ce1c627459e94dbf7d01 # v3.30.1
         with:
           sarif_file: 'trivy-results.sarif'
           category: 'container-scan'
-
       - name: Checkout .github repo for SBOM script
         if: ${{ inputs.enableSBOM && inputs.pushImage }}
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -344,7 +319,6 @@ jobs:
           path: .github-shared
           sparse-checkout: |
             scripts/sbom
-
       - name: Generate Container SBOMs (SPDX + CycloneDX)
         if: ${{ inputs.enableSBOM && inputs.pushImage }}
         run: |
@@ -352,7 +326,7 @@ jobs:
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"  # Remove 'v' prefix
           PROJECT_NAME=$(basename ${{ github.repository }})
-          
+
           # Use SBOM generation script for container layer
           IMAGE="${{ steps.image-name.outputs.name }}@${{ steps.build.outputs.digest }}"
           bash .github-shared/scripts/sbom/generate-sbom.sh \
@@ -362,7 +336,6 @@ jobs:
             "$PROJECT_NAME" \
             "." \
             "$IMAGE"
-
       - name: Upload Container SBOMs
         if: ${{ inputs.enableSBOM && inputs.pushImage }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -372,7 +345,6 @@ jobs:
             *-container-sbom.spdx.json
             *-container-sbom.cyclonedx.json
           retention-days: 30
-
       - name: Find Container SBOM file
         if: ${{ inputs.enableSBOM && inputs.pushImage && inputs.enableSLSA }}
         id: find-sbom
@@ -384,7 +356,6 @@ jobs:
           fi
           echo "sbom-file=$SBOM_FILE" >> "$GITHUB_OUTPUT"
           echo "Found SBOM file: $SBOM_FILE"
-
       - name: Attest Container SBOM
         if: ${{ inputs.enableSBOM && inputs.pushImage && inputs.enableSLSA }}
         uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3.0.0
@@ -393,7 +364,6 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           sbom-path: ${{ steps.find-sbom.outputs.sbom-file }}
           push-to-registry: true
-
       - name: Output image details
         id: image
         run: |
@@ -402,7 +372,6 @@ jobs:
           echo "Image: $IMAGE_NAME"
           echo "Digest: ${{ steps.build.outputs.digest }}"
           echo "Metadata: ${{ steps.metadata.outputs.json }}"
-
   # Generate SLSA provenance (called as separate job if enabled)
   provenance:
     needs: [build-and-push]

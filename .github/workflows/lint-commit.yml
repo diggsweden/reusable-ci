@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2024 Digg - Agency for Digital Government
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
 
@@ -18,37 +18,31 @@
 #    If not, Conform will use its default rules.
 #
 # 3. The workflow will analyze commits in pull requests and enforce the configured rules.
----
-    name: Commit Lint
-    
-    on: 
-      workflow_call:
-        inputs:
-          base-branch:
-            description: "Base branch to compare commits against (e.g., main)"
-            required: false
-            default: "main"
-            type: string
-    
-    permissions:
-      contents: read
-    
-    jobs:
-      conform:
-        name: Commit (conform) analysis
-        runs-on: ubuntu-latest
-        if: github.event_name == 'pull_request'
-        steps:
-          - name: Checkout repository
-            uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-            with:
-              fetch-depth: 0
-              ref: ${{ github.event.pull_request.head.sha }} # https://github.com/actions/checkout/issues/426
-    
-          - name: Setup base branch
-            run: git fetch origin ${{ inputs.base-branch }}:${{ inputs.base-branch }}
-    
-          - name: Commit (conform) analysis
-            uses: docker://ghcr.io/siderolabs/conform@sha256:f7e72122d4296b90285ac51964361295adf1f2018420a8547cb2b069f94a776d
-            with:
-              args: "enforce --base-branch=${{ inputs.base-branch }}"
+name: Commit Lint
+on:
+  workflow_call:
+    inputs:
+      base-branch:
+        description: "Base branch to compare commits against (e.g., main)"
+        required: false
+        default: "main"
+        type: string
+permissions:
+  contents: read
+jobs:
+  conform:
+    name: Commit (conform) analysis
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }} # https://github.com/actions/checkout/issues/426
+      - name: Setup base branch
+        run: git fetch origin ${{ inputs.base-branch }}:${{ inputs.base-branch }}
+      - name: Commit (conform) analysis
+        uses: docker://ghcr.io/siderolabs/conform@sha256:f7e72122d4296b90285ac51964361295adf1f2018420a8547cb2b069f94a776d
+        with:
+          args: "enforce --base-branch=${{ inputs.base-branch }}"

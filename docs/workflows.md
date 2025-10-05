@@ -30,7 +30,7 @@ graph TD
     F --> H
     G --> H
     H --> I[Project test.yml]
-    
+
     style A fill:#e1f5ff
     style B fill:#fff4e1
     style H fill:#e8f5e9
@@ -48,25 +48,25 @@ graph TD
     D --> E2[generate-minimal-changelog.yml]
     E1 --> F{Project Type?}
     E2 --> F
-    
+
     F -->|Maven App| G1[publish-maven-app-github.yml]
     F -->|Maven Lib| G2[publish-maven-lib-central.yml]
     F -->|NPM App| G3[publish-npm-app-github.yml]
-    
+
     G1 --> H{Container Enabled?}
     G2 --> H
     G3 --> H
-    
+
     H -->|Yes| I[build-container-ghcr.yml]
     H -->|No| J{Release Publisher?}
     I --> J
-    
+
     J -->|JReleaser| K1[release-github.yml with JReleaser]
     J -->|GitHub CLI| K2[release-github.yml with gh CLI]
-    
+
     K1 --> L[release-summary]
     K2 --> L
-    
+
     style A fill:#e1f5ff
     style B fill:#fff4e1
     style C fill:#ffebee
@@ -84,21 +84,21 @@ graph LR
     B --> D[Publisher]
     B --> E[Builder]
     B --> F[Release Creator]
-    
+
     C -.validates.-> G[(Secrets)]
     C -.checks.-> H[(Version)]
-    
+
     D -.uploads.-> I[(Maven Central)]
     D -.uploads.-> J[(GitHub Packages)]
     D -.uploads.-> K[(NPM Registry)]
-    
+
     E -.builds.-> L[(Container Image)]
     E -.generates.-> M[(SBOM)]
     E -.scans.-> N[(Vulnerabilities)]
-    
+
     F -.creates.-> O[(GitHub Release)]
     F -.signs.-> P[(GPG Signatures)]
-    
+
     style B fill:#fff4e1
     style C fill:#ffebee
     style D fill:#e8f5e9
@@ -116,7 +116,7 @@ graph LR
     C --> D[Publish to Maven Central]
     D --> E[JReleaser in publish step]
     E --> F[GitHub Release Created]
-    
+
     style A fill:#e1f5ff
     style D fill:#e8f5e9
     style E fill:#fff4e1
@@ -132,7 +132,7 @@ graph LR
     D --> E[Build Container]
     E --> F[Create GitHub Release]
     F --> G[JReleaser or GitHub CLI]
-    
+
     style A fill:#e1f5ff
     style D fill:#e8f5e9
     style E fill:#e1f5ff
@@ -160,7 +160,7 @@ with:
 ```
 
 **JReleaser runs DURING the Maven publish step:**
-```
+```text
 1. Version bump
 2. Publish to Maven Central
    └─ mvn deploy (publishes to Central)
@@ -206,7 +206,7 @@ with:
 ```
 
 **JReleaser runs AFTER all artifacts are ready:**
-```
+```text
 1. Version bump
 2. Publish artifacts (JAR or NPM)
 3. Build container image
@@ -233,7 +233,7 @@ with:
 
 ### Decision Tree: Which Pattern Should I Use?
 
-```
+```text
 Is this a library or application?
 ├─ Library
 │  └─ Publishing to Maven Central?
@@ -270,7 +270,7 @@ releasePublisher: jreleaser  # ← JReleaser runs AFTER container ready
 ## Project Structure Required
 
 ### Maven Projects
-```
+```text
 your-repo/
 ├── pom.xml
 ├── src/
@@ -283,7 +283,7 @@ your-repo/
 ```
 
 ### NPM Projects
-```
+```text
 your-repo/
 ├── package.json
 ├── package-lock.json

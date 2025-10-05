@@ -18,14 +18,13 @@ Reusable CI/CD workflows and scripts for DiggSweden projects. Implements securit
 - [Pull Request Workflow](#pull-request-workflow)
 - [Release Workflow](#release-workflow)
 - [Development Container Workflow](#development-container-workflow)
-- [Workflow Architecture](#workflow-architecture)
+- [Permissions in Reusable Workflows](#permissions-in-reusable-workflows)
 - [Available Components](#available-components)
+- [Workflow Reference](#workflow-reference)
 - [Environment Variables Matrix](#environment-variables-matrix)
 - [Prerequisites Check Matrix](#prerequisites-check-matrix)
 - [Permission Requirements Matrix](#permission-requirements-matrix)
 - [Getting Access to Secrets](#getting-access-to-secrets)
-- [Workflow Reference](#workflow-reference)
-- [Examples](#examples)
 - [Version Tag Format](#version-tag-format)
 - [Local Testing](#local-testing)
 
@@ -109,7 +108,7 @@ with:
 jobs:
   my-build:
     # Your custom steps
-    
+
   my-container:
     needs: my-build
     uses: diggsweden/reusable-ci/.github/workflows/build-container-ghcr.yml@v1
@@ -126,7 +125,6 @@ jobs:
 
 ## Quick Start
 
-
 ---
 
 ## Pull Request Workflow
@@ -142,11 +140,11 @@ Quality checks executed on pull requests and pushes.
 
 ### Full Configuration Example (Maven Application)
 ```yaml
-# SPDX-FileCopyrightText: 2024 Digg - Agency for Digital Government
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
-
 ---
+
 name: Pull Request Workflow
 
 on:
@@ -164,32 +162,32 @@ permissions:
 jobs:
   pr-checks:
     uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@v1
-    
+
     # Pass organization-level secrets to the workflow
     # Required for access to private GitHub Packages
     # Without this, workflow cannot fetch private @diggsweden/* packages
     secrets: inherit
-    
+
     permissions:
       contents: read         # Required: Clone and read repository source code
       packages: read         # Required: Download private dependencies from GitHub Packages
       security-events: write # Required: Upload vulnerability scan results to GitHub Security tab
-    
+
     with:
       projectType: maven  # Determines build commands and dependency management (maven/npm)
-  
+
   test:
     needs: [pr-checks]
-    
+
     # Always run tests regardless of linting results
     # Shows both linting issues and test failures
     # Without this, test failures hidden if linting fails first
     if: always()
-    
+
     permissions:
       contents: read  # Required: Access repository source code for test execution
       packages: read  # Required: Fetch test dependencies from GitHub Packages
-    
+
     # Uses local test workflow (must exist in repository)
     # Separation allows custom test configurations per repository
     uses: ./.github/workflows/test.yml
@@ -214,42 +212,42 @@ permissions:
 jobs:
   pr-checks:
     uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@v1
-    
+
     # Pass organization-level secrets to the workflow
     # Required for accessing private @diggsweden/* packages in GitHub Packages
     # Without this, builds fail if you depend on internal private libraries
     secrets: inherit
-    
+
     permissions:
       contents: read          # Required: Clone repository and read source code
       packages: read          # Required: Access private packages from GitHub Packages registry
       security-events: write  # Required: Upload security findings to GitHub's Security tab
-    
+
     with:
       # REQUIRED PARAMETERS
       projectType: maven              # Required. Valid: maven, npm
-      
+
       # OPTIONAL PARAMETERS (shown with defaults)
       baseBranch: main               # Default: main. Base branch for commit linting
-      
+
       # LINTER CONTROLS (all default to true except publiccodelint)
       linters.commitlint: true       # Default: true. Validates commit messages follow conventions
       linters.licenselint: true      # Default: true. Validates SPDX license headers
       linters.dependencyreview: true # Default: true. Checks for vulnerable dependencies
       linters.megalint: true         # Default: true. Runs 50+ code quality linters
       linters.publiccodelint: false  # Default: false. Validates publiccode.yml (for open source)
-      
+
   test:
     needs: [pr-checks]
-    
+
     # Always run tests regardless of linting results
     # CI feedback in one run
     if: always()
-    
+
     permissions:
       contents: read  # Required: Read source code to run tests
       packages: read  # Required: Download test dependencies from GitHub Packages
-    
+
     # Your custom test workflow - keeps test logic separate and maintainable
     uses: ./.github/workflows/test.yml
 ```
@@ -342,21 +340,21 @@ jobs:
       security-events: write
     with:
       projectType: maven
-      
+
       # === PUBLISHERS & BUILDERS ===
       # Artifact Publisher - Choose based on your package type:
       artifactPublisher: maven-app-github        # Publishes JAR/WAR to GitHub Packages
       # artifactPublisher: maven-lib-mavencentral # For libraries going to Maven Central (needs credentials)
       # artifactPublisher: npm-app-github         # Publishes to GitHub NPM registry
-      
+
       containerBuilder: containerimage-ghcr      # Creates multi-arch Docker images in ghcr.io
-      
+
       changelogCreator: git-cliff                # Generates changelog from commit messages
-      
+
       # Release Publisher - Platform-specific:
       releasePublisher: jreleaser               # Uses JReleaser (for Java projects)
       # releasePublisher: github-cli            # Uses GitHub CLI (for Node.js projects)
-      
+
       # === ARTIFACT SETTINGS (showing defaults) ===
       artifact.javaversion: "21"                # Default: "21". JDK version for Maven builds
       artifact.nodeversion: "22"                # Default: "22". Node.js version for NPM builds  
@@ -364,7 +362,7 @@ jobs:
       artifact.npmtag: "latest"                 # Default: "latest". NPM dist-tag
       # artifact.settingspath: ".mvn/settings.xml" # No default. Custom Maven settings path
       artifact.jreleaserenabled: false          # Default: false. Enable JReleaser Maven plugin
-      
+
       # === CONTAINER SETTINGS (showing defaults) ===
       container.registry: "ghcr.io"             # Default: "ghcr.io". Container registry
       container.platforms: "linux/amd64,linux/arm64"  # Default: "linux/amd64,linux/arm64". Target platforms
@@ -372,12 +370,12 @@ jobs:
       container.enablesbom: true                # Default: true. Generate SBOM
       container.enablescan: true                # Default: true. Trivy vulnerability scan
       container.containerfile: "Containerfile"  # Default: "Containerfile". Dockerfile path
-      
+
       # === CHANGELOG SETTINGS (showing defaults) ===
       changelogCreator: "git-cliff"             # Default: "git-cliff". Changelog generator
       changelog.config: ".github-templates/gitcliff-templates/keepachangelog.toml" # Default template
       changelog.skipversionbump: false          # Default: false. Skip version bump
-      
+
       # === RELEASE SETTINGS (showing defaults) ===
       # releasePublisher: jreleaser             # No default. Choose jreleaser or github-cli
       release.config: "jreleaser.yml"           # Default: "jreleaser.yml". JReleaser config
@@ -387,11 +385,11 @@ jobs:
       release.draft: false                      # Default: false. Create draft release
       # releaseType: stable                     # Auto-detected from tag (v1.0.0=stable, v1.0.0-beta=prerelease)
       branch: "main"                             # Default: "main". Base branch for changelog
-      
+
       # === ADVANCED SETTINGS (showing defaults) ===
       workingDirectory: "."                     # Default: ".". Working directory
       # file_pattern: Auto-detected based on projectType (Maven: "CHANGELOG.md pom.xml", NPM: "CHANGELOG.md package.json package-lock.json")
-      
+
       # Note: The following features are automatically handled by the workflows:
       # - File pattern detection based on project type (Maven, NPM, Gradle, Python)
       # - SHA-256 checksums in checksums.sha256 (generated by JReleaser or GitHub CLI)
@@ -550,6 +548,7 @@ You can use individual components instead of the full orchestrators.
 ### Component Overview Matrix
 
 #### Artifact Publishers
+
 | Component | Purpose | Output | Required Secrets | Use When |
 |-----------|---------|--------|------------------|----------|
 | **maven-app-github** | Publishes Maven JARs to GitHub Packages | JAR artifacts in GitHub Packages | GITHUB_TOKEN | Java apps for internal distribution |
@@ -557,12 +556,14 @@ You can use individual components instead of the full orchestrators.
 | **npm-app-github** | Publishes NPM packages to GitHub registry | NPM packages in GitHub Packages | NPM_TOKEN | Node.js apps/libs for internal use |
 
 #### Container Builders
+
 | Component | Purpose | Features | Build Time | Use When |
 |-----------|---------|----------|------------|----------|
 | **containerimage-ghcr** | Production multi-platform container builds | SLSA attestation, SBOM, vulnerability scanning, multi-arch | ~10-15 min | Production releases |
 | **containerimage-ghcr-dev** | Fast single-platform dev builds | Basic image only, SHA-based tags | ~2-3 min | Development/testing |
 
 #### Release Tools
+
 | Component | Purpose | Creates/Updates | Required Secrets | Use When |
 |-----------|---------|----------------|------------------|----------|
 | **jreleaser** | Automated GitHub releases | GitHub release, changelog, signatures | RELEASE_TOKEN, GPG keys | Any production release |
@@ -570,6 +571,7 @@ You can use individual components instead of the full orchestrators.
 | **version-bump-changelog** | Version management | Updated version files, changelog | GITHUB_TOKEN | Before releases |
 
 #### Validators
+
 | Component | Purpose | Validates | Blocks On | Use When |
 |-----------|---------|-----------|-----------|----------|
 | **validate-release-prerequisites** | Pre-release checks | Version match, permissions, secrets | Any validation failure | Before any release |
@@ -578,7 +580,7 @@ You can use individual components instead of the full orchestrators.
 > - **Monorepo support** - Build multiple services/packages from a single repository
 > - **Gradle support** - For Gradle-based Java/Kotlin projects
 > - **NPM library publisher** - For publishing NPM libraries (not just applications)
-> 
+>
 > To request a new component, open an issue in the `.github` repository.
 
 ### Publishers
@@ -614,8 +616,6 @@ with:
   workingDirectory: "."
   npmTag: "latest"        # Distribution tag (latest, next, beta)
 ```
-
-### Container Builders
 
 #### `containerimage-ghcr`
 Production container builds with full security features.
@@ -736,7 +736,7 @@ with:
 
 ## Getting Access to Secrets
 
-### How Secrets Work 
+### How Secrets Work
 
 **All secrets are managed centrally at the DiggSweden organization level.** As a developer in a DiggSweden project, you:
 
@@ -770,8 +770,6 @@ with:
 ## Local Testing
 
 The release workflow includes several validation scripts that you can run locally before creating a tag:
-
-
 
 See `.github/scripts/README.md` for detailed documentation.
 

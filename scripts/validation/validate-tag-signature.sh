@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: 2024 Digg - Agency for Digital Government
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 # SPDX-License-Identifier: CC0-1.0
 
 # Validates that a git tag is annotated and cryptographically signed
@@ -69,7 +69,7 @@ if [[ "$HAS_GPG_SIG" == "true" ]]; then
   if [[ -n "$OSPO_BOT_GPG_PUB" ]]; then
     echo "$OSPO_BOT_GPG_PUB" | gpg --import 2>/dev/null || true
   fi
-  
+
   if git tag -v "$TAG_NAME" 2>/dev/null; then
     echo "✅ GPG signature verification successful"
     SIGNER=$(git tag -v "$TAG_NAME" 2>&1 | grep "Good signature from" | sed 's/.*Good signature from "\(.*\)".*/\1/' || echo "Unknown")

@@ -2,7 +2,7 @@
 
 Shell scripts for SBOM generation and release validation.
 
-```
+```text
 scripts/
 ├── sbom/
 │   └── generate-sbom.sh

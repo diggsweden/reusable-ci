@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2024 Digg - Agency for Digital Government
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
 
@@ -39,9 +39,7 @@
 #   - Dist-tags for version channels (latest, next, beta)
 #   - Respects .npmrc configuration
 #   - Caches node_modules for faster builds
----
 name: Publish NPM Application to GitHub
-
 on:
   workflow_call:
     inputs:
@@ -64,10 +62,8 @@ on:
         required: false
         default: "main"
         type: string
-
 permissions:
-  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
-
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
   publish-npm-app:
     name: Publish NPM Application
@@ -75,29 +71,24 @@ jobs:
     permissions:
       contents: write
       packages: write
-    
     steps:
       - name: Checkout repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 0
-
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ inputs.nodeVersion }}
           registry-url: "https://npm.pkg.github.com"
           cache: 'npm'
-
       - name: Install dependencies
         working-directory: ${{ inputs.workingDirectory }}
         run: npm ci
-
       - name: Run tests
         working-directory: ${{ inputs.workingDirectory }}
         run: npm test || echo "No tests configured"
-
       - name: Build application
         working-directory: ${{ inputs.workingDirectory }}
         run: |
@@ -105,21 +96,19 @@ jobs:
             echo "Running build script..."
             npm run build
           fi
-
       - name: Determine publish tag
         id: tag
         run: |
           TAG="${{ inputs.npmTag }}"
           VERSION="${{ github.ref_name }}"
-          
+
           # Auto-detect prerelease tags
           if [[ "$VERSION" =~ -alpha\. ]]; then TAG="alpha"; fi
           if [[ "$VERSION" =~ -beta\. ]]; then TAG="beta"; fi
           if [[ "$VERSION" =~ -rc\. ]]; then TAG="rc"; fi
-          
+
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "Publishing with tag: $TAG"
-
       - name: Publish to GitHub Packages
         working-directory: ${{ inputs.workingDirectory }}
         env:
@@ -131,18 +120,16 @@ jobs:
             echo "Package must be scoped for GitHub Packages"
             npm config set @${{ github.repository_owner }}:registry https://npm.pkg.github.com
           fi
-          
-          npm publish --tag ${{ steps.tag.outputs.tag }}
 
+          npm publish --tag ${{ steps.tag.outputs.tag }}
       - name: Pack NPM tarball
         working-directory: ${{ inputs.workingDirectory }}
         run: |
           echo "Creating NPM package tarball..."
           npm pack
-          
+
           # List the created tarball for verification
           ls -lh *.tgz
-
       - name: Upload NPM artifacts for other jobs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -150,9 +137,8 @@ jobs:
           path: |
             ${{ inputs.workingDirectory }}/*.tgz
           retention-days: 1
-
       - name: Generate build summary
-        run: |
+        run: |-
           echo "## NPM Application Build Summary 📦" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Version:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY

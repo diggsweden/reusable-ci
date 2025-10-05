@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+policies:
+  - type: commit
+    spec:
+      dco: true
+      gpg:
+        required: false
+      header:
+        length: 90
+        imperative: true
+        case: lower
+        invalidLastCharacters: .
+      body:
+        required: false
+      conventional:
+        types: ["chore", "ci", "docs", "feat", "fix", "perf", "refactor", "style", "test", "release"]
+        scopes: [".*"]
+        descriptionLength: 92

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2024 Digg - Agency for Digital Government
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
 
@@ -42,9 +42,7 @@
 # Outputs:
 #   image: Full image name (ghcr.io/org/repo:0.5.9-dev-feat-name-abc1234)
 #   digest: Image digest for verification
----
 name: Build Dev Container Image to GHCR
-
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
@@ -74,10 +72,8 @@ on:
       digest:
         description: "Image digest"
         value: ${{ jobs.build-and-push.outputs.digest }}
-
 permissions:
-  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
-
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
   build-and-push:
     name: Build and Push Dev Container
@@ -85,15 +81,12 @@ jobs:
     permissions:
       contents: read
       packages: write
-    
     outputs:
       image: ${{ steps.image.outputs.image }}
       digest: ${{ steps.build.outputs.digest }}
-    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       # Maven build
       - name: Set up JDK
         if: inputs.projectType == 'maven'
@@ -101,40 +94,34 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
-          cache: 'maven'  # This already caches ~/.m2/repository
-
+          cache: 'maven' # This already caches ~/.m2/repository
       - name: Build with Maven
         if: inputs.projectType == 'maven'
         working-directory: ${{ inputs.workingDirectory }}
         run: |
           # The setup-java cache handles dependencies
           mvn clean package -DskipTests -Dstyle.color=always
-
       # NPM build
       - name: Set up Node.js
         if: inputs.projectType == 'npm'
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'  # This already caches ~/.npm
-
+          cache: 'npm' # This already caches ~/.npm
       - name: Build with NPM
         if: inputs.projectType == 'npm'
         working-directory: ${{ inputs.workingDirectory }}
         run: |
           npm ci --prefer-offline --no-audit
           npm run build
-
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
-
       - name: Login to Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ inputs.registry }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Generate dev tags
         id: tags
         run: |
@@ -142,7 +129,7 @@ jobs:
           git fetch --tags
           # Use git describe to get the most recent tag, or sort -V for proper version sorting
           LATEST_TAG=$(git describe --tags --match="v[0-9]*.[0-9]*.[0-9]*" --abbrev=0 2>/dev/null || git tag -l "v[0-9]*.[0-9]*.[0-9]*" | sort -V | tail -n1 || echo "")
-          
+
           # If no semver tag exists, use v0.0.0
           if [ -z "$LATEST_TAG" ]; then
             BASE_VERSION="0.0.0"
@@ -150,21 +137,20 @@ jobs:
             # Remove 'v' prefix if present
             BASE_VERSION="${LATEST_TAG#v}"
           fi
-          
+
           # Get branch name and sanitize for Docker tag
           # Remove refs/heads/ prefix, replace slashes and special chars with dashes
           BRANCH_NAME="${GITHUB_REF#refs/heads/}"
           SANITIZED_BRANCH=$(echo "$BRANCH_NAME" | sed 's|[^a-zA-Z0-9._-]|-|g' | sed 's|^-*||; s|-*$||')
-          
+
           # Dev tag with version, branch, and sha
           SHORT_SHA=${GITHUB_SHA:0:7}
           IMAGE_NAME="${{ inputs.registry }}/${{ github.repository }}"
           DEV_TAG="${BASE_VERSION}-dev-${SANITIZED_BRANCH}-${SHORT_SHA}"
-          
+
           echo "tags=${IMAGE_NAME}:${DEV_TAG}" >> $GITHUB_OUTPUT
           echo "image=${IMAGE_NAME}:${DEV_TAG}" >> $GITHUB_OUTPUT
           echo "📦 Dev tag: ${DEV_TAG}"
-
       - name: Build and push
         id: build
         uses: docker/build-push-action@v5
@@ -179,8 +165,7 @@ jobs:
           # Disable all security features for dev builds
           provenance: false
           sbom: false
-
       - name: Set outputs
         id: image
-        run: |
+        run: |-
           echo "image=${{ steps.tags.outputs.image }}" >> $GITHUB_OUTPUT

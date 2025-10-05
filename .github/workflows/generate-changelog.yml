@@ -7,9 +7,7 @@
 #   - Full history: gitCliffArgs="" 
 #   - Latest release: gitCliffArgs="--latest"
 #   - Commit message: gitCliffArgs="--latest --strip header"
----
 name: Generate Changelog
-
 on:
   workflow_call:
     inputs:
@@ -43,10 +41,8 @@ on:
         required: false
         default: "release-changelog"
         type: string
-
 permissions:
   contents: read
-
 jobs:
   generate-changelog:
     name: Generate
@@ -56,8 +52,7 @@ jobs:
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           ref: ${{ inputs.branch }}
-          fetch-depth: 0  # Need full history for git-cliff
-
+          fetch-depth: 0 # Need full history for git-cliff
       - name: Fetch git-cliff templates
         if: ${{ startsWith(inputs.changelogConfig, '.github-templates/') }}
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
@@ -67,7 +62,6 @@ jobs:
           ref: v1
           sparse-checkout: |
             templates/
-
       - name: Generate Changelog with git-cliff
         uses: orhun/git-cliff-action@d77b37db2e3f7398432d34b72a12aa3e2ba87e51 # v4.6.0
         with:
@@ -76,24 +70,8 @@ jobs:
         env:
           OUTPUT: ${{ inputs.outputFile }}
           GITHUB_REPO: ${{ github.repository }}
-
       - name: Verify Changelog Generation
-        run: |
-          if [ -f "${{ inputs.outputFile }}" ]; then
-            echo "✅ Changelog generated successfully: ${{ inputs.outputFile }}"
-            echo "File size: $(stat -c%s "${{ inputs.outputFile }}") bytes"
-            echo "Line count: $(wc -l < "${{ inputs.outputFile }}")"
-            
-            # Show first few lines for debugging
-            echo ""
-            echo "Preview (first 10 lines):"
-            echo "========================"
-            head -10 "${{ inputs.outputFile }}"
-          else
-            echo "❌ ERROR: No changelog generated"
-            exit 1
-          fi
-
+        run: "if [ -f \"${{ inputs.outputFile }}\" ]; then\n  echo \"✅ Changelog generated successfully: ${{ inputs.outputFile }}\"\n  echo \"File size: $(stat -c%s \"${{ inputs.outputFile }}\") bytes\"\n  echo \"Line count: $(wc -l < \"${{ inputs.outputFile }}\")\"\n  \n  # Show first few lines for debugging\n  echo \"\"\n  echo \"Preview (first 10 lines):\"\n  echo \"========================\"\n  head -10 \"${{ inputs.outputFile }}\"\nelse\n  echo \"❌ ERROR: No changelog generated\"\n  exit 1\nfi\n"
       - name: Upload Changelog Artifact
         if: ${{ inputs.uploadAsArtifact }}
         uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # v4.4.0

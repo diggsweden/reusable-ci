@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2024 Digg - Agency for Digital Government
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
 
@@ -35,9 +35,7 @@
 #   - No vulnerability scanning
 #   - No artifact signing
 #   - No GitHub release
----
 name: Release Dev Orchestrator
-
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
@@ -60,10 +58,8 @@ on:
         required: false
         default: "."
         type: string
-
 permissions:
-  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
-
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
   build-dev-container:
     name: Build Dev Container
