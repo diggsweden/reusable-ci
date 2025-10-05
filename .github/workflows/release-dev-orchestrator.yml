@@ -1,0 +1,79 @@
+# SPDX-FileCopyrightText: 2024 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Release Dev Orchestrator
+# 
+# Purpose: Lightweight orchestrator for development container builds. Provides fast
+# feedback loops during development by skipping production security features while
+# maintaining basic functionality for testing and development environments.
+#
+# How it works:
+# 1. Triggers on pushes to development branches (develop, feature/*)
+# 2. Builds the project (Maven or NPM)
+# 3. Creates a single-platform container image
+# 4. Pushes to ghcr.io with SHA-based tag (e.g., abc1234-dev)
+# 5. Skips all production features (SLSA, SBOM, signing, releases)
+#
+# Security controls:
+# - Minimal - focused on speed over security for development
+# - Images clearly marked with -dev suffix
+# - No production attestations or signing
+#
+# Required Secrets:
+#   None - uses GITHUB_TOKEN for ghcr.io access
+#
+# Required Permissions:
+#   contents: read   # Read source code
+#   packages: write  # Push images to ghcr.io
+#
+# Differences from Production:
+#   - Single platform (linux/amd64) vs multi-platform
+#   - SHA tags only (abc1234-dev) vs version tags
+#   - No SLSA attestation
+#   - No SBOM generation
+#   - No vulnerability scanning
+#   - No artifact signing
+#   - No GitHub release
+---
+name: Release Dev Orchestrator
+
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      projectType:
+        description: "Project type: maven, npm"
+        required: true
+        type: string
+      containerfile:
+        description: "Path to Dockerfile/Containerfile"
+        required: false
+        default: "Containerfile"
+        type: string
+      registry:
+        description: "Container registry"
+        required: false
+        default: "ghcr.io"
+        type: string
+      workingDirectory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+
+permissions:
+  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+
+jobs:
+  build-dev-container:
+    name: Build Dev Container
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit
+    uses: ./.github/workflows/build-container-ghcr-dev.yml
+    with:
+      containerfile: ${{ inputs.containerfile }}
+      registry: ${{ inputs.registry }}
+      projectType: ${{ inputs.projectType }}
+      workingDirectory: ${{ inputs.workingDirectory }}

@@ -1,0 +1,289 @@
+# SPDX-FileCopyrightText: 2024 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Maven Library Publisher for Maven Central
+# 
+# Purpose: Publishes Maven libraries to Maven Central (Sonatype) repository with
+# full compliance including GPG signing, checksum generation, and staged releases.
+# Also creates a backup publication to GitHub Packages.
+#
+# How it works:
+# 1. Sets up Java and GPG signing environment
+# 2. Configures Maven with Central repository credentials
+# 3. Builds library with source and javadoc JARs
+# 4. Signs all artifacts with GPG
+# 5. Deploys to Maven Central staging repository
+# 6. Optionally runs JReleaser for GitHub release
+# 7. Auto-releases from staging to Central (or manual if configured)
+#
+# Security controls:
+# - GPG signing of all artifacts (required by Central)
+# - Checksum validation (SHA-1, MD5)
+# - Sonatype authentication for deployment
+# - Staging repository for validation before release
+#
+# Required Secrets:
+#   MAVENCENTRAL_USERNAME: Sonatype OSSRH username
+#   MAVENCENTRAL_PASSWORD: Sonatype OSSRH password
+#   OSPO_BOT_GPG_PRIV: GPG private key for signing
+#   OSPO_BOT_GPG_PASS: GPG key passphrase
+#
+# Required Permissions:
+#   contents: write  # Create releases if using JReleaser
+#   packages: write  # Backup publish to GitHub Packages
+#
+# Generated Artifacts:
+#   - *.jar: Main library JAR
+#   - *-sources.jar: Source code (required by Central)
+#   - *-javadoc.jar: API documentation (required by Central)
+#   - *.pom: Project metadata
+#   - *.asc: GPG signatures for each file
+#
+# Maven Central Requirements:
+#   - Valid POM with required fields (groupId, artifactId, version, etc.)
+#   - Sources and Javadoc JARs
+#   - GPG signed artifacts
+#   - Unique version (no overwrites)
+---
+name: Publish Maven Library to Maven Central
+
+on:
+  workflow_call:
+    inputs:
+      javaVersion:
+        description: "Java version"
+        required: true
+        type: string
+      workingDirectory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      skipTests:
+        description: "Skip tests during build"
+        required: false
+        default: false
+        type: boolean
+      profile:
+        description: "Maven profile to use for deployment (default: central-release)"
+        required: false
+        default: "central-release"
+        type: string
+
+      settingsPath:
+        description: "Path to Maven settings.xml (optional)"
+        required: false
+        type: string
+      jreleaserEnabled:
+        description: "Enable JReleaser for GitHub release"
+        required: false
+        default: false
+        type: boolean
+      branch:
+        description: "Branch to checkout"
+        required: false
+        default: "main"
+        type: string
+      changelogConfig:
+        description: "Path to changelog configuration file"
+        required: false
+        default: ".github-templates/gitcliff-templates/default.toml"
+        type: string
+
+permissions:
+  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+
+env:
+  MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always -DinstallAtEnd=true -DdeployAtEnd=true"
+
+jobs:
+  generate-changelog:
+    name: Generate Release Changelog
+    if: ${{ inputs.jreleaserEnabled }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/generate-changelog.yml
+    with:
+      branch: ${{ inputs.branch }}
+      changelogConfig: ${{ inputs.changelogConfig }}
+      gitCliffArgs: "--latest"
+      outputFile: "ReleasenotesTmp"
+      uploadAsArtifact: true
+      artifactName: "release-changelog"
+
+  publish-maven-lib:
+    name: Publish Maven Library
+    needs: [generate-changelog]
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          java-version: ${{ inputs.javaVersion }}
+          distribution: 'temurin'
+          cache: maven
+          cache-dependency-path: ${{ inputs.workingDirectory }}/pom.xml
+          server-id: github
+          server-username: GITHUB_ACTOR
+          server-password: GITHUB_TOKEN
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
+        with:
+          gpg_private_key: ${{ secrets.OSPO_BOT_GPG_PRIV }}
+          passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
+
+      - name: Get version info
+        id: version-info
+        working-directory: ${{ inputs.workingDirectory }}
+        run: |
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          
+          if [[ "${VERSION}" == *-SNAPSHOT ]]; then
+            echo "IS_SNAPSHOT=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "IS_SNAPSHOT=false" >> "$GITHUB_OUTPUT"
+          fi
+          
+          echo "Project version: ${VERSION}"
+
+      - name: Build library
+        working-directory: ${{ inputs.workingDirectory }}
+        run: |
+          echo "Building Maven library..."
+          mvn clean compile
+          
+          if [ "${{ inputs.skipTests }}" != "true" ]; then
+            echo "Running tests..."
+            mvn test
+          fi
+          
+          echo "Creating library package..."
+          mvn package -DskipTests=${{ inputs.skipTests }}
+
+      - name: Deploy to Maven Central
+        working-directory: ${{ inputs.workingDirectory }}
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVENCENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD }}
+        run: |
+          echo "Deploying to Maven Central..."
+          
+          # Only use settings file if explicitly provided
+          SETTINGS_ARG=""
+          if [ -n "${{ inputs.settingsPath }}" ]; then
+            if [ -f "${{ inputs.settingsPath }}" ]; then
+              SETTINGS_ARG="--settings ${{ inputs.settingsPath }}"
+              echo "Using settings file: ${{ inputs.settingsPath }}"
+            else
+              echo "::error::Settings file specified but not found: ${{ inputs.settingsPath }}"
+              exit 1
+            fi
+          fi
+          
+          # Deploy with profile
+          # shellcheck disable=SC2086
+          mvn $MAVEN_CLI_OPTS deploy $SETTINGS_ARG -P${{ inputs.profile }} -DskipTests
+
+
+      - name: Download Release Changelog
+        if: inputs.jreleaserEnabled
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        continue-on-error: true
+        with:
+          name: release-changelog
+          path: ${{ inputs.workingDirectory }}
+
+      - name: Verify Release Changelog
+        if: inputs.jreleaserEnabled
+        working-directory: ${{ inputs.workingDirectory }}
+        run: |
+          if [ ! -f "ReleasenotesTmp" ]; then
+            echo "::warning::Release changelog not found"
+            echo "JReleaser will use default changelog generation"
+            echo "This may result in less detailed release notes"
+          else
+            echo "✅ Release changelog found ($(wc -l < ReleasenotesTmp) lines)"
+          fi
+
+      - name: Checkout .github repo for SBOM script
+        if: inputs.jreleaserEnabled
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: diggsweden/.github
+          ref: feat/ci-refactor
+          path: .github-shared
+          sparse-checkout: scripts/sbom
+
+      - name: Generate POM and JAR SBOMs for Library
+        if: inputs.jreleaserEnabled
+        working-directory: ${{ inputs.workingDirectory }}
+        run: |
+          # Use SBOM generation script
+          # Generate both source and artifact layers
+          # Use generic layer names that work for all project types
+          # Pass empty version/name to auto-detect from pom.xml
+          bash ${GITHUB_WORKSPACE}/.github-shared/scripts/sbom/generate-sbom.sh \
+            maven \
+            "source,artifact" \
+            "" \
+            "" \
+            "."
+
+      - name: Run JReleaser
+        if: inputs.jreleaserEnabled
+        working-directory: ${{ inputs.workingDirectory }}
+        env:
+          JRELEASER_GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JRELEASER_GPG_PUBLIC_KEY: ${{ secrets.OSPO_BOT_GPG_PUB }}
+          JRELEASER_GPG_SECRET_KEY: ${{ secrets.OSPO_BOT_GPG_PRIV }}
+          JRELEASER_GPG_PASSPHRASE: ${{ secrets.OSPO_BOT_GPG_PASS }}
+        run: |
+          echo "Running JReleaser..."
+          
+          # Check if JReleaser is configured in pom.xml
+          if grep -q "jreleaser-maven-plugin" pom.xml; then
+            # shellcheck disable=SC2086
+            mvn $MAVEN_CLI_OPTS jreleaser:full-release -DskipTests
+          else
+            echo "JReleaser not configured in pom.xml, skipping..."
+          fi
+
+      - name: Upload JReleaser logs
+        if: inputs.jreleaserEnabled && always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: jreleaser-logs
+          path: |
+            ${{ inputs.workingDirectory }}/target/jreleaser/trace.log
+            ${{ inputs.workingDirectory }}/target/jreleaser/output.properties
+
+      - name: Generate build summary
+        run: |
+          echo "## Maven Library Build Summary 📚" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${{ steps.version-info.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release Type:** ${{ steps.version-info.outputs.IS_SNAPSHOT == 'true' && 'SNAPSHOT' || 'Release' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Java Version:** ${{ inputs.javaVersion }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tests:** ${{ inputs.skipTests && 'Skipped' || 'Executed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Published to:" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Maven Central" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ inputs.jreleaserEnabled }}" == "true" ]]; then
+            echo "- ✅ GitHub Release (via JReleaser)" >> $GITHUB_STEP_SUMMARY
+          fi

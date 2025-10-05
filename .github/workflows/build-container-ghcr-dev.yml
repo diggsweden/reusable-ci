@@ -1,0 +1,186 @@
+# SPDX-FileCopyrightText: 2024 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Development Container Image Builder
+# 
+# Purpose: Fast container builds for development and testing. Optimized for quick
+# feedback loops by removing production security features while maintaining
+# functionality for development environments.
+#
+# How it works:
+# 1. Checks out repository code
+# 2. Builds project (Maven package or NPM build)
+# 3. Builds single-platform container image (linux/amd64 only)
+# 4. Tags with version, branch name, and SHA (e.g., 0.5.9-dev-feat-awesome-abc1234)
+# 5. Pushes to ghcr.io for development testing
+#
+# Security controls:
+# - Minimal - optimized for speed over security
+# - Images clearly marked with -dev suffix
+# - Basic authentication to ghcr.io
+# - No production features enabled
+#
+# Required Secrets:
+#   None - uses GITHUB_TOKEN for ghcr.io authentication
+#
+# Required Permissions:
+#   contents: read   # Read source code and Containerfile
+#   packages: write  # Push images to ghcr.io
+#
+# Differences from Production:
+#   Production                    | Development
+#   ----------------------------- | ---------------------------
+#   Multi-platform (amd64, arm64) | Single platform (amd64)
+#   Version tags (v1.0.0, latest) | Dev tags (0.5.9-dev-feat-name-abc1234)
+#   SLSA attestation              | No attestation
+#   SBOM generation               | No SBOM
+#   Vulnerability scanning        | No scanning
+#   Multiple tag strategies       | Branch-aware dev tags
+#   ~12-15 min build time        | ~3-4 min build time
+#
+# Outputs:
+#   image: Full image name (ghcr.io/org/repo:0.5.9-dev-feat-name-abc1234)
+#   digest: Image digest for verification
+---
+name: Build Dev Container Image to GHCR
+
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      containerfile:
+        description: "Containerfile path"
+        required: false
+        default: "Containerfile"
+        type: string
+      registry:
+        description: "Container registry"
+        required: false
+        default: "ghcr.io"
+        type: string
+      projectType:
+        description: "Project type: maven, npm"
+        required: true
+        type: string
+      workingDirectory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+    outputs:
+      image:
+        description: "Full image name with registry"
+        value: ${{ jobs.build-and-push.outputs.image }}
+      digest:
+        description: "Image digest"
+        value: ${{ jobs.build-and-push.outputs.digest }}
+
+permissions:
+  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+
+jobs:
+  build-and-push:
+    name: Build and Push Dev Container
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Maven build
+      - name: Set up JDK
+        if: inputs.projectType == 'maven'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'  # This already caches ~/.m2/repository
+
+      - name: Build with Maven
+        if: inputs.projectType == 'maven'
+        working-directory: ${{ inputs.workingDirectory }}
+        run: |
+          # The setup-java cache handles dependencies
+          mvn clean package -DskipTests -Dstyle.color=always
+
+      # NPM build
+      - name: Set up Node.js
+        if: inputs.projectType == 'npm'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'  # This already caches ~/.npm
+
+      - name: Build with NPM
+        if: inputs.projectType == 'npm'
+        working-directory: ${{ inputs.workingDirectory }}
+        run: |
+          npm ci --prefer-offline --no-audit
+          npm run build
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate dev tags
+        id: tags
+        run: |
+          # Get the latest semver tag
+          git fetch --tags
+          # Use git describe to get the most recent tag, or sort -V for proper version sorting
+          LATEST_TAG=$(git describe --tags --match="v[0-9]*.[0-9]*.[0-9]*" --abbrev=0 2>/dev/null || git tag -l "v[0-9]*.[0-9]*.[0-9]*" | sort -V | tail -n1 || echo "")
+          
+          # If no semver tag exists, use v0.0.0
+          if [ -z "$LATEST_TAG" ]; then
+            BASE_VERSION="0.0.0"
+          else
+            # Remove 'v' prefix if present
+            BASE_VERSION="${LATEST_TAG#v}"
+          fi
+          
+          # Get branch name and sanitize for Docker tag
+          # Remove refs/heads/ prefix, replace slashes and special chars with dashes
+          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+          SANITIZED_BRANCH=$(echo "$BRANCH_NAME" | sed 's|[^a-zA-Z0-9._-]|-|g' | sed 's|^-*||; s|-*$||')
+          
+          # Dev tag with version, branch, and sha
+          SHORT_SHA=${GITHUB_SHA:0:7}
+          IMAGE_NAME="${{ inputs.registry }}/${{ github.repository }}"
+          DEV_TAG="${BASE_VERSION}-dev-${SANITIZED_BRANCH}-${SHORT_SHA}"
+          
+          echo "tags=${IMAGE_NAME}:${DEV_TAG}" >> $GITHUB_OUTPUT
+          echo "image=${IMAGE_NAME}:${DEV_TAG}" >> $GITHUB_OUTPUT
+          echo "📦 Dev tag: ${DEV_TAG}"
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.workingDirectory }}
+          file: ${{ inputs.workingDirectory }}/${{ inputs.containerfile }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Disable all security features for dev builds
+          provenance: false
+          sbom: false
+
+      - name: Set outputs
+        id: image
+        run: |
+          echo "image=${{ steps.tags.outputs.image }}" >> $GITHUB_OUTPUT

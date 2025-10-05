@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: 2024 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Description:
+# This workflow checks your repository for REUSE compliance, ensuring that all files
+# have proper SPDX license headers and copyright information. It helps enforce
+# open-source licensing best practices.
+#
+# Usage:
+# 1. Add the following to your workflow file:
+#    jobs:
+#      reuse-compliance:
+#        uses: <orgname>/<reponame>/.github/workflows/<workflowname>.yml@main
+#
+# 2. Ensure your repository has a `.reuse/dep5` file or equivalent configuration
+#    to define licensing and copyright information.
+#
+# 3. The workflow will analyze your repository and report any REUSE compliance issues.
+---
+    name: REUSE Compliance
+    
+    on: [workflow_call] # yamllint disable-line rule:truthy
+    
+    permissions:
+      contents: read
+    
+    jobs:
+      reuse:
+        name: License (REUSE) analysis
+        runs-on: ubuntu-latest
+        steps:
+          - name: Checkout repository
+            uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+            with:
+              fetch-depth: 7
+    
+          - name: REUSE Compliance
+            uses: fsfe/reuse-action@bb774aa972c2a89ff34781233d275075cbddf542 # v5.0.0

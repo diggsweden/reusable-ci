@@ -1,0 +1,636 @@
+# SPDX-FileCopyrightText: 2024 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# GitHub Release Creator
+# 
+# Purpose: Creates GitHub releases with comprehensive security features including
+# artifact signing, SBOM generation, and checksum calculation. Supports both
+# GitHub CLI and JReleaser as backends for different project needs.
+#
+# How it works:
+# 1. Downloads all artifacts from the workflow run
+# 2. Generates checksums (SHA-256) for all artifacts
+# 3. Creates SBOM in multiple formats (CycloneDX, SPDX) if enabled
+# 4. Signs artifacts with GPG if configured
+# 5. Creates GitHub release with changelog
+# 6. Uploads all artifacts, checksums, signatures, and SBOMs to release
+# 7. Updates issues and milestones if configured
+#
+# Security controls:
+# - GPG signing of all release artifacts
+# - Checksum generation for integrity verification
+# - SBOM for supply chain transparency
+# - Support for attestation attachment
+#
+# Required Secrets:
+#   GPG_SECRET_KEY: For artifact signing (if signArtifacts: true)
+#   GPG_PASSPHRASE: For artifact signing (if signArtifacts: true)
+#   GITHUB_TOKEN: For release creation (automatic)
+#
+# Required Permissions:
+#   contents: write      # Create releases
+#   issues: write        # Update issues/milestones (optional)
+#   attestations: write  # Attach attestations (optional)
+#
+# Release Publishers:
+#   - github-cli: Best for NPM/simple projects
+#   - jreleaser: Best for Maven/complex projects with multiple artifacts
+#
+# Generated Files:
+#   - checksums.sha256: SHA-256 checksums for all artifacts
+#   - *.sig: GPG signatures for each artifact
+#   - sbom.json: CycloneDX/SPDX Software Bill of Materials
+---
+name: Create GitHub Release
+
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      releaseName:
+        description: "Release name (supports template variables)"
+        required: false
+        default: "Release ${{ github.ref_name }}"
+        type: string
+      checkoutRef:
+        description: "Git ref to checkout (branch or tag)"
+        required: false
+        default: "main"
+        type: string
+      attachArtifacts:
+        description: "Glob patterns for artifacts to attach (newline or comma separated)"
+        required: false
+        type: string
+      generateSBOM:
+        description: "Generate and attach SBOM for the repository"
+        required: false
+        default: true
+        type: boolean
+
+      signArtifacts:
+        description: "GPG sign all artifacts"
+        required: false
+        default: true
+        type: boolean
+      draft:
+        description: "Create as draft release"
+        required: false
+        default: false
+        type: boolean
+      useJReleaser:
+        description: "Use JReleaser for release creation"
+        required: false
+        default: false
+        type: boolean
+      jreleaserConfig:
+        description: "Path to JReleaser config file"
+        required: false
+        default: "jreleaser.yml"
+        type: string
+      projectType:
+        description: "Project type (maven, npm, gradle, python, etc.)"
+        required: false
+        default: "maven"
+        type: string
+      changelogConfig:
+        description: "Path to changelog configuration file"
+        required: false
+        default: ".github-templates/gitcliff-templates/default.toml"
+        type: string
+      makeLatest:
+        description: "Mark as latest release (true, false, legacy)"
+        required: false
+        default: "true"
+        type: string
+      egress-policy:
+        description: "Egress policy for the Harden Runner step"
+        required: false
+        default: "audit"
+        type: string
+
+permissions:
+  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+
+jobs:
+  generate-changelog:
+    name: Generate Release Changelog
+    permissions:
+      contents: read
+    uses: ./.github/workflows/generate-changelog.yml
+    with:
+      branch: ${{ inputs.checkoutRef }}
+      gitCliffArgs: "--latest"
+      outputFile: "ReleasenotesTmp"
+      uploadAsArtifact: true
+      artifactName: "release-changelog"
+
+  create-release:
+    name: Create GitHub Release
+    needs: [generate-changelog]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+      id-token: write
+
+    steps:
+      - name: Harden GitHub runner
+        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
+        with:
+          egress-policy: ${{ inputs.egress-policy }}
+
+      - name: Checkout repository with moved tag
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.checkoutRef }}
+          fetch-tags: true
+
+      - name: Import GPG key
+        if: ${{ inputs.signArtifacts }}
+        id: import-gpg
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
+        with:
+          gpg_private_key: ${{ secrets.OSPO_BOT_GPG_PRIV }}
+          passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
+          git_user_signingkey: true
+          
+      - name: Download Release Changelog
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        continue-on-error: true
+        with:
+          name: release-changelog
+
+      - name: Verify Changelog
+        run: |
+          if [ -f "ReleasenotesTmp" ]; then
+            echo "✅ Changelog artifact downloaded successfully"
+            echo "File size: $(stat -c%s ReleasenotesTmp) bytes"
+          else
+            echo "⚠️ No changelog artifact found - creating fallback"
+            echo "# Release ${{ github.ref_name }}" > ReleasenotesTmp
+            echo "" >> ReleasenotesTmp  
+            echo "Release created from commit ${{ github.sha }}" >> ReleasenotesTmp
+          fi
+
+      # JReleaser Path
+      - name: Setup Java for JReleaser
+        if: ${{ inputs.useJReleaser }}
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Download Maven artifacts for JReleaser
+        if: ${{ inputs.useJReleaser }}
+        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
+        continue-on-error: true
+        with:
+          name: maven-artifacts
+          path: target/
+
+      - name: Verify Maven artifacts for JReleaser
+        if: ${{ inputs.useJReleaser }}
+        run: |
+          if [ ! -d "target" ] || [ -z "$(ls -A target/*.jar 2>/dev/null)" ]; then
+            echo "::error::No Maven artifacts found for JReleaser"
+            echo "JReleaser requires artifacts in target/ directory"
+            echo "This usually means the publish-maven step did not upload artifacts"
+            exit 1
+          fi
+          echo "✅ Maven artifacts available for JReleaser:"
+          ls -lh target/*.jar
+
+      # Download container SBOM if it exists (from container build job)
+      - name: Download container SBOM artifacts (JReleaser path)
+        if: ${{ inputs.useJReleaser }}
+        continue-on-error: true
+        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
+        with:
+          name: container-sbom-${{ github.run_id }}
+          path: ./sbom-artifacts/
+
+      - name: Checkout .github repo for SBOM script
+        if: ${{ inputs.useJReleaser }}
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: diggsweden/.github
+          ref: feat/ci-refactor
+          path: .github-shared
+          sparse-checkout: scripts/sbom
+
+      - name: Generate 3-Layer SBOMs (JReleaser path)
+        if: ${{ inputs.useJReleaser }}
+        run: |
+          # Extract version and project name from GitHub context
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"  # Remove 'v' prefix
+          PROJECT_NAME=$(basename ${{ github.repository }})
+          
+          # Use SBOM generation script for source and artifact layers
+          # Use generic layer names (source, artifact) that work for all project types
+          bash .github-shared/scripts/sbom/generate-sbom.sh \
+            ${{ inputs.projectType }} \
+            "source,artifact" \
+            "$VERSION" \
+            "$PROJECT_NAME"
+          
+          echo "Layer 3: Container SBOMs downloaded from container build job"
+
+      - name: Create SBOM ZIP (JReleaser path)
+        if: ${{ inputs.useJReleaser }}
+        run: |
+          # Count SBOMs to determine if we need to create a ZIP
+          SBOM_COUNT=$(ls *-sbom.*.json 2>/dev/null | wc -l)
+          [ -d "./sbom-artifacts" ] && SBOM_COUNT=$((SBOM_COUNT + $(ls ./sbom-artifacts/*-container-sbom.*.json 2>/dev/null | wc -l)))
+          
+          if [ "$SBOM_COUNT" -gt 0 ]; then
+            echo "Creating SBOM zip archive with all 3 layers"
+            PROJECT_NAME=$(basename ${{ github.repository }})
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"  # Remove 'v' prefix if present
+            SBOM_ZIP="${PROJECT_NAME}-${VERSION}-sboms.zip"
+            
+            # Add all three layers to ZIP
+            # Layer 1: Source SBOMs (pom for Maven, package for NPM, gradle for Gradle)
+            # Layer 2: Artifact SBOMs (jar for Maven/Gradle, tararchive for NPM)
+            for sbom in *-pom-sbom.spdx.json *-pom-sbom.cyclonedx.json \
+                        *-package-sbom.spdx.json *-package-sbom.cyclonedx.json \
+                        *-gradle-sbom.spdx.json *-gradle-sbom.cyclonedx.json \
+                        *-jar-sbom.spdx.json *-jar-sbom.cyclonedx.json \
+                        *-tararchive-sbom.spdx.json *-tararchive-sbom.cyclonedx.json; do
+              if [ -f "$sbom" ]; then
+                zip "$SBOM_ZIP" "$sbom"
+                echo "  Added: $sbom"
+              fi
+            done
+            
+            # Add container SBOMs to zip if they exist
+            if [ -d "./sbom-artifacts" ]; then
+              for sbom in ./sbom-artifacts/*-container-sbom.*.json; do
+                if [ -f "$sbom" ]; then
+                  zip -j "$SBOM_ZIP" "$sbom"
+                  echo "  Added: $(basename $sbom)"
+                fi
+              done
+            fi
+            
+            echo "SBOM ZIP contents:"
+            unzip -l "$SBOM_ZIP"
+            
+            echo "✅ Created SBOM ZIP: $SBOM_ZIP"
+          else
+            echo "⚠️ No SBOMs found, skipping ZIP creation"
+          fi
+
+      - name: Run JReleaser
+        if: ${{ inputs.useJReleaser }}
+        env:
+          JRELEASER_GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          JRELEASER_GPG_PUBLIC_KEY: ${{ secrets.OSPO_BOT_GPG_PUB }}
+          JRELEASER_GPG_SECRET_KEY: ${{ secrets.OSPO_BOT_GPG_PRIV }}
+          JRELEASER_GPG_PASSPHRASE: ${{ secrets.OSPO_BOT_GPG_PASS }}
+        run: |
+          # Check if jreleaser config exists
+          if [ ! -f "${{ inputs.jreleaserConfig }}" ]; then
+            echo "JReleaser config not found at ${{ inputs.jreleaserConfig }}"
+            exit 1
+          fi
+          
+          # Run JReleaser (Maven projects only)
+          if [ -f "pom.xml" ]; then
+            mvn -B jreleaser:full-release
+          else
+            echo "JReleaser is only supported for Maven projects with pom.xml"
+            echo "For other project types, use useJReleaser: false"
+            exit 1
+          fi
+
+       # GitHub CLI Path (when not using JReleaser)
+      
+      # Download container SBOM if it exists (from container build job)
+      - name: Download container SBOM artifacts
+        if: ${{ !inputs.useJReleaser }}
+        continue-on-error: true
+        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
+        with:
+          name: container-sbom-${{ github.run_id }}
+          path: ./sbom-artifacts/
+
+      # Determine artifact name based on project type
+      - name: Determine artifact name
+        if: ${{ !inputs.useJReleaser }}
+        id: artifact-name
+        run: |
+          case "${{ inputs.projectType }}" in
+            maven)
+              echo "name=maven-artifacts" >> $GITHUB_OUTPUT
+              ;;
+            npm)
+              echo "name=npm-artifacts" >> $GITHUB_OUTPUT
+              ;;
+            gradle)
+              echo "name=gradle-artifacts" >> $GITHUB_OUTPUT
+              ;;
+            python)
+              echo "name=python-artifacts" >> $GITHUB_OUTPUT
+              ;;
+            go)
+              echo "name=go-artifacts" >> $GITHUB_OUTPUT
+              ;;
+            rust)
+              echo "name=rust-artifacts" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "name=build-artifacts" >> $GITHUB_OUTPUT  # Generic fallback
+              ;;
+          esac
+
+      # Download build artifacts based on project type
+      - name: Download build artifacts
+        if: ${{ !inputs.useJReleaser }}
+        continue-on-error: true
+        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
+        with:
+          name: ${{ steps.artifact-name.outputs.name }}
+          path: ./release-artifacts/
+
+      - name: Checkout .github repo for SBOM script
+        if: ${{ !inputs.useJReleaser && inputs.generateSBOM }}
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: diggsweden/.github
+          ref: feat/ci-refactor
+          path: .github-shared
+          sparse-checkout: scripts/sbom
+
+      - name: Generate 3-Layer SBOMs (GitHub CLI path)
+        if: ${{ !inputs.useJReleaser && inputs.generateSBOM }}
+        run: |
+          # Extract version and project name from GitHub context
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"  # Remove 'v' prefix
+          PROJECT_NAME=$(basename ${{ github.repository }})
+          
+          # Use SBOM generation script for source and artifact layers
+          # Use generic layer names (source, artifact) that work for all project types
+          bash .github-shared/scripts/sbom/generate-sbom.sh \
+            ${{ inputs.projectType }} \
+            "source,artifact" \
+            "$VERSION" \
+            "$PROJECT_NAME"
+          
+          echo "Layer 3: Container SBOMs will be downloaded from container build job"
+
+      - name: Generate checksums and signatures
+        if: ${{ !inputs.useJReleaser }}
+        run: |
+          # When not using JReleaser, we generate comprehensive checksums
+          echo "Generating security artifacts for GitHub CLI release"
+          
+          # Create checksums.sha256 file
+          touch checksums.sha256
+          
+          # Add checksums for release artifacts if they exist
+          if [ -d "./release-artifacts" ]; then
+            for file in ./release-artifacts/*; do
+              if [ -f "$file" ]; then
+                sha256sum "$file" | sed 's|./release-artifacts/||' >> checksums.sha256
+              fi
+            done
+          fi
+          
+          # Add checksums for specified attach patterns
+          if [ -n "${{ inputs.attachArtifacts }}" ]; then
+            IFS=',' read -ra PATTERNS <<< "${{ inputs.attachArtifacts }}"
+            for pattern in "${PATTERNS[@]}"; do
+              pattern=$(echo "$pattern" | xargs)
+              for file in $pattern; do
+                if [ -f "$file" ]; then
+                  sha256sum "$file" >> checksums.sha256
+                fi
+              done
+            done
+          fi
+          
+          # Add checksums for container SBOMs if they exist
+          if [ -d "./sbom-artifacts" ]; then
+            for file in ./sbom-artifacts/*-container-sbom.*.json; do
+              if [ -f "$file" ]; then
+                filename=$(basename "$file")
+                sha256sum "$file" | sed "s|$file|$filename|" >> checksums.sha256
+              fi
+            done
+          fi
+          
+          # Add checksums for all three SBOM layers
+          # Layer 1: POM/Source, Layer 2: Artifact (jar/tararchive)
+          for sbom in *-pom-sbom.spdx.json *-pom-sbom.cyclonedx.json \
+                        *-package-sbom.spdx.json *-package-sbom.cyclonedx.json \
+                        *-gradle-sbom.spdx.json *-gradle-sbom.cyclonedx.json \
+                      *-jar-sbom.spdx.json *-jar-sbom.cyclonedx.json \
+                      *-tararchive-sbom.spdx.json *-tararchive-sbom.cyclonedx.json; do
+            if [ -f "$sbom" ]; then
+              sha256sum "$sbom" >> checksums.sha256
+            fi
+          done
+          
+          # Sign the checksums file if GPG is configured
+          if [ "${{ inputs.signArtifacts }}" = "true" ] && [ -s checksums.sha256 ]; then
+            echo "Signing checksums.sha256 with GPG"
+            gpg --armor --detach-sign --default-key ${{ steps.import-gpg.outputs.keyid }} checksums.sha256
+          fi
+          
+          # Sign individual artifacts (JARs, tgz, etc.) to match JReleaser output
+          if [ "${{ inputs.signArtifacts }}" = "true" ] && [ -d "./release-artifacts" ]; then
+            echo "Signing individual artifacts"
+            for artifact in ./release-artifacts/*; do
+              # Sign JARs, tgz, and other artifact types
+              if [[ "$artifact" =~ \.(jar|tgz|tar\.gz|zip)$ ]] && [ -f "$artifact" ]; then
+                echo "Signing $(basename "$artifact")"
+                gpg --armor --detach-sign --default-key ${{ steps.import-gpg.outputs.keyid }} "$artifact"
+                # Move signature to current directory for easier handling
+                mv "${artifact}.asc" "$(basename "${artifact}").asc"
+              fi
+            done
+          fi
+          
+          # Zip all 3-layer SBOMs and sign the zip
+          SBOM_COUNT=$(ls *-sbom.*.json 2>/dev/null | wc -l)
+          [ -d "./sbom-artifacts" ] && SBOM_COUNT=$((SBOM_COUNT + $(ls ./sbom-artifacts/*-container-sbom.*.json 2>/dev/null | wc -l)))
+          
+          if [ "$SBOM_COUNT" -gt 0 ]; then
+            echo "Creating SBOM zip archive with all 3 layers"
+            PROJECT_NAME=$(basename ${{ github.repository }})
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"  # Remove 'v' prefix if present
+            SBOM_ZIP="${PROJECT_NAME}-${VERSION}-sboms.zip"
+            
+            # Add all three layers to ZIP
+            # Layer 1: Source SBOMs (pom for Maven, package for NPM, gradle for Gradle)
+            # Layer 2: Artifact SBOMs (jar for Maven/Gradle, tararchive for NPM)
+            for sbom in *-pom-sbom.spdx.json *-pom-sbom.cyclonedx.json \
+                        *-package-sbom.spdx.json *-package-sbom.cyclonedx.json \
+                        *-gradle-sbom.spdx.json *-gradle-sbom.cyclonedx.json \
+                        *-jar-sbom.spdx.json *-jar-sbom.cyclonedx.json \
+                        *-tararchive-sbom.spdx.json *-tararchive-sbom.cyclonedx.json; do
+              if [ -f "$sbom" ]; then
+                zip "$SBOM_ZIP" "$sbom"
+                echo "  Added: $sbom"
+              fi
+            done
+            
+            # Add container SBOMs to zip if they exist
+            if [ -d "./sbom-artifacts" ]; then
+              for sbom in ./sbom-artifacts/*-container-sbom.*.json; do
+                if [ -f "$sbom" ]; then
+                  zip -j "$SBOM_ZIP" "$sbom"
+                  echo "  Added: $(basename $sbom)"
+                fi
+              done
+            fi
+            
+            echo "SBOM ZIP contents:"
+            unzip -l "$SBOM_ZIP"
+            
+            # Sign the SBOM zip if it was created
+            if [ -f "$SBOM_ZIP" ] && [ "${{ inputs.signArtifacts }}" = "true" ]; then
+              gpg --armor --detach-sign --default-key ${{ steps.import-gpg.outputs.keyid }} "$SBOM_ZIP"
+            fi
+          fi
+
+      - name: Prepare release notes for GitHub CLI
+        if: ${{ !inputs.useJReleaser }}
+        run: |
+          # Use git-cliff generated release notes
+          if [ -f "ReleasenotesTmp" ]; then
+            cp ReleasenotesTmp release-notes.md
+            echo "Using git-cliff generated release notes"
+          else
+            echo "No release notes generated by git-cliff"
+            touch release-notes.md
+          fi
+
+      - name: Create GitHub Release
+        if: ${{ !inputs.useJReleaser }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          # Build command arguments
+          ARGS=()
+          ARGS+=("${{ github.ref_name }}")
+          ARGS+=("--title" "${{ github.ref_name }}")
+          
+          # Add flags
+          if [ "${{ inputs.draft }}" = "true" ]; then
+            ARGS+=("--draft")
+          fi
+          
+          # Auto-detect prerelease from version tag
+          if [[ "${{ github.ref_name }}" =~ -(alpha|beta|rc|dev|snapshot) ]]; then
+            ARGS+=("--prerelease")
+          fi
+          
+          if [ "${{ inputs.makeLatest }}" != "true" ]; then
+            ARGS+=("--latest=false")
+          fi
+          
+          # Add release notes from git-cliff
+          if [ -f "release-notes.md" ] && [ -s "release-notes.md" ]; then
+            ARGS+=("--notes-file" "release-notes.md")
+          fi
+          
+          # Add specified artifacts
+          if [ -n "${{ inputs.attachArtifacts }}" ]; then
+            # Split comma-separated patterns and add each file
+            IFS=',' read -ra PATTERNS <<< "${{ inputs.attachArtifacts }}"
+            for pattern in "${PATTERNS[@]}"; do
+              pattern=$(echo "$pattern" | xargs)
+              for file in $pattern; do
+                [ -f "$file" ] && ARGS+=("$file")
+              done
+            done
+          fi
+          
+          # Track added files to avoid duplicates
+          declare -A ADDED_FILES
+          
+          # When not using JReleaser, add all security artifacts
+          if [ "${{ inputs.useJReleaser }}" = "false" ]; then
+            # Add release artifacts from build
+            if [ -d "./release-artifacts" ]; then
+              for file in ./release-artifacts/*; do
+                if [ -f "$file" ]; then
+                  BASENAME=$(basename "$file")
+                  ARGS+=("$file")
+                  ADDED_FILES[$BASENAME]=1
+                  # Add signature if it exists in current directory
+                  if [ -f "${BASENAME}.asc" ]; then
+                    ARGS+=("${BASENAME}.asc")
+                    ADDED_FILES["${BASENAME}.asc"]=1
+                  fi
+                fi
+              done
+            fi
+            
+            # Add SBOM zip instead of individual files (matches JReleaser)
+            PROJECT_NAME=$(basename ${{ github.repository }})
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"  # Remove 'v' prefix
+            SBOM_ZIP="${PROJECT_NAME}-${VERSION}-sboms.zip"
+            if [ -f "$SBOM_ZIP" ]; then
+              ARGS+=("$SBOM_ZIP")
+              ADDED_FILES["$SBOM_ZIP"]=1
+              if [ -f "${SBOM_ZIP}.asc" ]; then
+                ARGS+=("${SBOM_ZIP}.asc")
+                ADDED_FILES["${SBOM_ZIP}.asc"]=1
+              fi
+            fi
+            
+            # Add checksums and signature
+            if [ -f "checksums.sha256" ]; then
+              ARGS+=("checksums.sha256")
+              ADDED_FILES["checksums.sha256"]=1
+              if [ -f "checksums.sha256.asc" ]; then
+                ARGS+=("checksums.sha256.asc")
+                ADDED_FILES["checksums.sha256.asc"]=1
+              fi
+            fi
+          fi
+          
+          # Only add individual SBOMs if using JReleaser (otherwise they're in the zip)
+          if [ "${{ inputs.useJReleaser }}" = "true" ]; then
+            for sbom in *.spdx.json *.cyclonedx.json; do
+              [ -f "$sbom" ] && ARGS+=("$sbom")
+            done
+          fi
+          
+
+          
+          # Add any signature files not already added
+          for sig in *.asc; do
+            if [ -f "$sig" ]; then
+              # Check if not already added
+              BASENAME=$(basename "$sig")
+              if [[ -z "${ADDED_FILES[$BASENAME]:-}" ]]; then
+                ARGS+=("$sig")
+                ADDED_FILES[$BASENAME]=1
+              fi
+            fi
+          done
+          
+          # Create the release
+          echo "Creating release with gh release create"
+          gh release create "${ARGS[@]}"
+
+      - name: Upload release artifacts summary
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-artifacts-${{ github.run_id }}
+          path: |
+            release-files/
+            ReleasenotesTmp
+            release-notes.md
+          retention-days: 30
+          if-no-files-found: ignore
