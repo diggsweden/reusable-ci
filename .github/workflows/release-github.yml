@@ -214,7 +214,7 @@ jobs:
         if: ${{ inputs.useJReleaser }}
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          repository: diggsweden/.github
+          repository: diggsweden/reusable-ci
           ref: feat/ci-refactor
           path: .github-shared
           sparse-checkout: scripts/sbom
@@ -359,7 +359,7 @@ jobs:
         if: ${{ !inputs.useJReleaser && inputs.generateSBOM }}
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          repository: diggsweden/.github
+          repository: diggsweden/reusable-ci
           ref: feat/ci-refactor
           path: .github-shared
           sparse-checkout: scripts/sbom
