@@ -95,7 +95,7 @@ jobs:
   commit-lint:
     name: Commit Lint
     if: ${{ inputs['linters.commitlint'] }}
-    uses: diggsweden/.github/.github/workflows/lint-commit.yml@feat/ci-refactor
+    uses: diggsweden/reusable-ci/.github/workflows/lint-commit.yml@v1
     with:
       base-branch: ${{ inputs.baseBranch }}
   
@@ -103,13 +103,13 @@ jobs:
   license-lint:
     name: License Lint
     if: ${{ inputs['linters.licenselint'] }}
-    uses: diggsweden/.github/.github/workflows/lint-license.yml@feat/ci-refactor
+    uses: diggsweden/reusable-ci/.github/workflows/lint-license.yml@v1
   
   # Dependency security review
   dependency-review:
     name: Dependency Review
     if: ${{ inputs['linters.dependencyreview'] }}
-    uses: diggsweden/.github/.github/workflows/security-dependency-review.yml@feat/ci-refactor
+    uses: diggsweden/reusable-ci/.github/workflows/security-dependency-review.yml@v1
   
   # Comprehensive linting with MegaLinter
   megalint:
@@ -118,13 +118,13 @@ jobs:
     permissions:
       contents: read
       security-events: write
-    uses: diggsweden/.github/.github/workflows/lint-mega.yml@feat/ci-refactor
+    uses: diggsweden/reusable-ci/.github/workflows/lint-mega.yml@v1
   
   # Public code metadata linting
   publiccode-lint:
     name: Publiccode Lint
     if: ${{ inputs['linters.publiccodelint'] }}
-    uses: diggsweden/.github/.github/workflows/lint-publiccode.yml@feat/ci-refactor
+    uses: diggsweden/reusable-ci/.github/workflows/lint-publiccode.yml@v1
   
   # Gather results from enabled linters (always runs to check status)
   lint-status:

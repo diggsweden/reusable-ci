@@ -342,7 +342,7 @@ jobs:
       signArtifacts: ${{ inputs['release.signartifacts'] }}
       checkAuthorization: ${{ inputs.artifactPublisher == 'maven-lib-mavencentral' || inputs['release.checkauthorization'] }}
       branch: ${{ inputs.branch }}
-      workflowsRef: feat/ci-refactor
+      workflowsRef: v1
 
   # Step 1: Version Bump
   version-and-changelog:
