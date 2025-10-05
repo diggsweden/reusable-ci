@@ -215,31 +215,48 @@ generate_artifact_layer() {
       echo "   Project type: Maven (looking for JAR files)"
       layer_name="jar"
       
-      if [ ! -d "target" ]; then
-        echo "   ⚠️  No target/ directory found, skipping JAR layer"
-        echo ""
-        return
+      # Maven JARs can be in multiple locations:
+      # 1. target/ directory (from local build or JReleaser workflow)
+      # 2. ./release-artifacts/ (downloaded from GitHub CLI workflow artifact)
+      local artifact=""
+      
+      # Try release-artifacts first (common in GitHub CLI release workflows)
+      if [ -d "./release-artifacts" ]; then
+        # Try unversioned JAR first (finalName pattern)
+        artifact=$(find ./release-artifacts -maxdepth 1 -name "${name}.jar" -type f 2>/dev/null | head -1)
+        
+        # Fallback to versioned JAR pattern
+        if [ -z "$artifact" ]; then
+          artifact=$(find ./release-artifacts -maxdepth 1 -name "${name}-*.jar" -type f \
+            ! -name "*-sources.jar" \
+            ! -name "*-javadoc.jar" \
+            ! -name "*-tests.jar" \
+            ! -name "*-test.jar" \
+            2>/dev/null | head -1)
+        fi
       fi
       
-      # Try unversioned JAR first (finalName pattern)
-      local artifact
-      artifact=$(find target -maxdepth 1 -name "${name}.jar" -type f 2>/dev/null | head -1)
-      
-      # Fallback to versioned JAR pattern
-      if [ -z "$artifact" ]; then
-        artifact=$(find target -maxdepth 1 -name "${name}-*.jar" -type f \
-          ! -name "*-sources.jar" \
-          ! -name "*-javadoc.jar" \
-          ! -name "*-tests.jar" \
-          ! -name "*-test.jar" \
-          2>/dev/null | head -1)
+      # Fallback to target/ directory
+      if [ -z "$artifact" ] && [ -d "target" ]; then
+        # Try unversioned JAR first (finalName pattern)
+        artifact=$(find target -maxdepth 1 -name "${name}.jar" -type f 2>/dev/null | head -1)
+        
+        # Fallback to versioned JAR pattern
+        if [ -z "$artifact" ]; then
+          artifact=$(find target -maxdepth 1 -name "${name}-*.jar" -type f \
+            ! -name "*-sources.jar" \
+            ! -name "*-javadoc.jar" \
+            ! -name "*-tests.jar" \
+            ! -name "*-test.jar" \
+            2>/dev/null | head -1)
+        fi
       fi
       
       if [ -n "$artifact" ] && [ -f "$artifact" ]; then
         echo "   Scanning JAR file: $artifact"
         generate_dual_sboms "$artifact" "$name" "$version" "$layer_name"
       else
-        echo "   ⚠️  No JAR file found in target/ directory"
+        echo "   ⚠️  No JAR file found in target/ or ./release-artifacts/ directories"
         echo "      Searched for: ${name}.jar or ${name}-*.jar"
       fi
       ;;

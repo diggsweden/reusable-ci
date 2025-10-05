@@ -251,8 +251,6 @@ jobs:
                 ;;
             esac
           fi
-          
-          echo "::notice::Using file_pattern: $(cat $GITHUB_OUTPUT | grep file_pattern | cut -d= -f2-)"
 
   # Step 0b: Validate configuration
   validate-config:
