@@ -1,0 +1,94 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Description:
+# This workflow runs just-based linting using mise-managed tools.
+# It provides a lightweight alternative to MegaLinter by leveraging individual
+# linting tools defined in the project's justfile and .mise.toml.
+#
+# How to use:
+# 1. Ensure your project has:
+#    - .mise.toml with required tools (yamlfmt, actionlint, gitleaks, etc.)
+#    - justfile with lint tasks (lint, lint-yaml, lint-actions, etc.)
+#
+# 2. Add to your workflow file:
+#    jobs:
+#      just-mise-lint:
+#        uses: <orgname>/<reponame>/.github/workflows/lint-just-mise.yml@main
+#        with:
+#          lint-tasks: "lint"  # Optional: customize tasks
+#
+# 3. The workflow will:
+#    - Install just command runner
+#    - Install tools from .mise.toml via just install
+#    - Run specified just lint tasks
+name: Just-based Linting
+env:
+  # renovate: datasource=github-releases depName=casey/just
+  JUST_VERSION: "1.43.0"
+  JUST_CHECKSUM: "a1bc93654f31669fd964ea3011a5e5e9676b9b6f8adcd762606e5140632ea72d"
+  # renovate: datasource=github-releases depName=jdx/mise
+  MISE_VERSION: "2025.10.10"
+  MISE_CHECKSUM: "d300a395d82092a4793c9d02a4fff15819ace22a027ddc58a83602aea24ee646"
+on:
+  workflow_call:
+    inputs:
+      lint-tasks:
+        description: "Space-separated list of just lint tasks to run (default: 'lint')"
+        required: false
+        default: "lint"
+        type: string
+permissions:
+  contents: read
+jobs:
+  just-mise-lint:
+    name: Just+Mise Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Fetch base branch for PR
+        if: github.event_name == 'pull_request'
+        run: git fetch origin ${{ github.base_ref }}:${{ github.base_ref }}
+      - name: Install just command runner
+        run: |
+          # Install pinned version of just for reproducible builds
+          cd /tmp
+          curl -sSfL "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz" -o just.tar.gz
+          # Verify checksum for security
+          echo "${JUST_CHECKSUM}  just.tar.gz" | sha256sum -c
+          tar -xzf just.tar.gz
+          sudo mv just /usr/local/bin/just
+          chmod +x /usr/local/bin/just
+          rm just.tar.gz
+          just --version
+      - name: Install mise
+        run: |
+          # Install pinned version of mise for reproducible builds
+          cd /tmp
+          curl -sSfL "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-x64-musl.tar.gz" -o mise.tar.gz
+          # Verify checksum for security
+          echo "${MISE_CHECKSUM}  mise.tar.gz" | sha256sum -c
+          tar -xzf mise.tar.gz
+          sudo mv mise/bin/mise /usr/local/bin/mise
+          chmod +x /usr/local/bin/mise
+          rm -rf mise.tar.gz mise
+          mise --version
+      - name: Install development tools
+        run: |
+          mise trust
+          just install
+      - name: Run linting tasks
+        run: |
+          eval "$(mise activate bash)"
+          for task in ${{ inputs.lint-tasks }}; do
+            echo "Running: just $task"
+            just "$task"
+          done

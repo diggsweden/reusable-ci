@@ -1,0 +1,81 @@
+# Generate Changelog
+# 
+# This reusable workflow generates a changelog using git-cliff with flexible configuration.
+# Can generate full history, latest changes only, with or without headers.
+#
+# Common use cases:
+#   - Full history: gitCliffArgs="" 
+#   - Latest release: gitCliffArgs="--latest"
+#   - Commit message: gitCliffArgs="--latest --strip header"
+name: Generate Changelog
+on:
+  workflow_call:
+    inputs:
+      branch:
+        description: "Branch to generate changelog from"
+        required: false
+        default: "main"
+        type: string
+      changelog-config:
+        description: "Path to git-cliff configuration file"
+        required: false
+        default: ".github-templates/templates/gitcliff/default.toml"
+        type: string
+      git-cliff-args:
+        description: "Arguments for git-cliff (empty for full, '--latest' for latest release)"
+        required: false
+        default: ""
+        type: string
+      output-file:
+        description: "Output filename"
+        required: false
+        default: "ReleasenotesTmp"
+        type: string
+      upload-as-artifact:
+        description: "Upload as artifact (true) or keep in workspace (false)"
+        required: false
+        default: true
+        type: boolean
+      artifact-name:
+        description: "Artifact name if uploading"
+        required: false
+        default: "release-changelog"
+        type: string
+permissions:
+  contents: read
+jobs:
+  generate-changelog:
+    name: Generate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0 # Need full history for git-cliff
+      - name: Fetch git-cliff templates
+        if: ${{ startsWith(inputs['changelog-config'], '.github-templates/') }}
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: diggsweden/reusable-ci
+          path: .github-templates
+          ref: v2
+          sparse-checkout: |
+            templates/
+      - name: Generate Changelog with git-cliff
+        uses: orhun/git-cliff-action@d77b37db2e3f7398432d34b72a12aa3e2ba87e51 # v4.6.0
+        with:
+          config: ${{ inputs['changelog-config'] }}
+          args: ${{ inputs['git-cliff-args'] }}
+        env:
+          OUTPUT: ${{ inputs['output-file'] }}
+          GITHUB_REPO: ${{ github.repository }}
+      - name: Verify Changelog Generation
+        run: "if [ -f \"${{ inputs['output-file'] }}\" ]; then\n  echo \"✓ Changelog generated successfully: ${{ inputs['output-file'] }}\"\n  echo \"  • File size: $(stat -c%s \"${{ inputs['output-file'] }}\") bytes\"\n  echo \"  • Line count: $(wc -l < \"${{ inputs['output-file'] }}\")\"\n  \n  # Show first few lines for debugging\n  echo \"\"\n  echo \"Preview (first 10 lines):\"\n  echo \"========================\"\n  head -10 \"${{ inputs['output-file'] }}\"\nelse\n  echo \"✗ ERROR: No changelog generated\"\n  exit 1\nfi\n"
+      - name: Upload Changelog Artifact
+        if: ${{ inputs['upload-as-artifact'] }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ inputs['artifact-name'] }}
+          path: ${{ inputs['output-file'] }}
+          retention-days: 7

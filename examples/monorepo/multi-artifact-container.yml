@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Example: Multiple artifacts building into ONE combined container (v2)
+# Use case: Monorepo with 2 Maven services + 1 NPM frontend → 1 combined container image
+
+artifacts:
+  # Backend API (Maven) - published to GitHub Packages
+  - name: api
+    project-type: maven
+    working-directory: services/api
+    build-type: application
+    config:
+      java-version: 21
+  # Background worker (Maven) - published to GitHub Packages
+  - name: worker
+    project-type: maven
+    working-directory: services/worker
+    build-type: application
+    config:
+      java-version: 21
+  # Web frontend (NPM) - published to GitHub Packages
+  - name: web
+    project-type: npm
+    working-directory: apps/web
+    config:
+      node-version: 22
+# ONE container containing all three artifacts
+# Multi-stage Containerfile at repo root uses all three build outputs
+containers:
+  - name: combined-app
+    from: [api, worker, web]
+    container-file: Containerfile
+    context: .
+    platforms: linux/amd64,linux/arm64

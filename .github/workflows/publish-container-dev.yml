@@ -1,0 +1,189 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Development Container Image Publisher
+# 
+# Purpose: Fast container builds for development and testing. Optimized for quick
+# feedback loops by removing production security features while maintaining
+# functionality for development environments.
+#
+# Supported Registries:
+# - GitHub Container Registry (ghcr.io) - Default, uses GITHUB_TOKEN
+# - Docker Hub (docker.io) - Set useGithubToken=false, provide registryPassword
+# - Quay.io (quay.io) - Set useGithubToken=false, provide registryPassword
+# - Any OCI-compatible registry
+#
+# How it works:
+# 1. Checks out repository code
+# 2. Builds project (Maven package or NPM build)
+# 3. Builds multi-platform container image (linux/amd64, linux/arm64)
+# 4. Tags with version, branch name, and SHA (e.g., 0.5.9-dev-feat-awesome-abc1234)
+# 5. Pushes to configured registry for development testing
+#
+# Security controls:
+# - Minimal - optimized for speed over security
+# - Images clearly marked with -dev suffix
+# - Basic authentication to registry
+# - No production features enabled
+#
+# Registry Authentication:
+#   GHCR (default): Uses GITHUB_TOKEN (no secrets needed)
+#   Other registries: Set useGithubToken=false and provide registryPassword secret
+#
+# Required Secrets:
+#   registryPassword: Required when useGithubToken=false (for Docker Hub, Quay, etc)
+#
+# Required Permissions:
+#   contents: read   # Read source code and Containerfile
+#   packages: write  # Push images to registry
+#
+# Differences from Production:
+#   Production                    | Development
+#   ----------------------------- | ---------------------------
+#   Version tags (v1.0.0, latest) | Dev tags (0.5.9-dev-feat-name-abc1234)
+#   SLSA attestation              | No attestation
+#   SBOM generation               | No SBOM
+#   Vulnerability scanning        | No scanning
+#   Multiple tag strategies       | Branch-aware dev tags
+#   ~12-15 min build time        | ~3-4 min build time
+#
+# Outputs:
+#   image: Full image name (registry/org/repo:0.5.9-dev-feat-name-abc1234)
+#   digest: Image digest for verification
+name: Publish Dev Container Image
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      container-file:
+        description: "Containerfile path"
+        required: false
+        default: "Containerfile"
+        type: string
+      registry:
+        description: "Container registry"
+        required: false
+        default: "ghcr.io"
+        type: string
+      project-type:
+        description: "Project type: maven, npm"
+        required: true
+        type: string
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      registry-username:
+        description: "Registry username (defaults to github.actor for GHCR)"
+        required: false
+        type: string
+      use-github-token:
+        description: "Use GITHUB_TOKEN for authentication (GHCR only)"
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      registry-password:
+        description: "Registry password/token (required when use-github-token=false)"
+        required: false
+    outputs:
+      image:
+        description: "Full image name with registry"
+        value: ${{ jobs.build-and-push.outputs.image }}
+      digest:
+        description: "Image digest"
+        value: ${{ jobs.build-and-push.outputs.digest }}
+permissions:
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+jobs:
+  build-and-push:
+    name: Build and Push Dev Container
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Checkout .github repository for scripts
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: diggsweden/reusable-ci
+          ref: v2
+          path: .github-shared
+          sparse-checkout: |
+            scripts/version
+            scripts/registry
+            scripts/container
+      # Maven build
+      - name: Set up JDK
+        if: inputs['project-type'] == 'maven'
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+      # NPM build
+      - name: Set up Node.js
+        if: inputs['project-type'] == 'npm'
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+      # Build project (Maven, NPM, or Gradle)
+      - name: Build project
+        run: |
+          bash .github-shared/scripts/container/build-project.sh \
+            "${{ inputs['project-type'] }}" \
+            "${{ inputs['working-directory'] }}"
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Check registry authentication configuration
+        run: |
+          HAS_PASSWORD="false"
+          if [ -n "${{ secrets['registry-password'] }}" ]; then
+            HAS_PASSWORD="true"
+          fi
+
+          bash .github-shared/scripts/registry/validate-auth.sh \
+            "${{ inputs['use-github-token'] }}" \
+            "${{ inputs.registry }}" \
+            "ghcr.io" \
+            "$HAS_PASSWORD"
+      - name: Login to Container Registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ inputs['registry-username'] || github.actor }}
+          password: ${{ inputs['use-github-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+      - name: Generate dev tags
+        id: tags
+        run: |
+          DEV_VERSION=$(bash .github-shared/scripts/version/generate-dev-version.sh)
+          IMAGE_NAME="${{ inputs.registry }}/${{ github.repository }}"
+
+          echo "tags=${IMAGE_NAME}:${DEV_VERSION}" >> $GITHUB_OUTPUT
+          echo "image=${IMAGE_NAME}:${DEV_VERSION}" >> $GITHUB_OUTPUT
+          echo "→ Dev tag: ${DEV_VERSION}"
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: ${{ inputs['working-directory'] }}
+          file: ${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Disable all security features for dev builds
+          provenance: false
+          sbom: false
+      - name: Set outputs
+        id: image
+        run: |-
+          echo "image=${{ steps.tags.outputs.image }}" >> $GITHUB_OUTPUT

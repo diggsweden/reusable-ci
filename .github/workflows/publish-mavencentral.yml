@@ -1,0 +1,163 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Maven Central Publisher
+# 
+# Purpose: Publishes Maven library artifacts to Maven Central (Sonatype OSSRH) repository.
+# Downloads pre-built artifacts from workflow artifacts (must include sources and javadoc JARs)
+# and deploys them to Maven Central with GPG signing.
+#
+# Requirements:
+#   - Artifacts must be built with build-maven.yml using build-type: lib
+#   - POM must have required Maven Central metadata (name, description, url, licenses, etc.)
+#   - GPG signing credentials configured
+#   - Maven Central (Sonatype) credentials configured
+#
+# Required Secrets:
+#   MAVENCENTRAL_USERNAME: Sonatype OSSRH username
+#   MAVENCENTRAL_PASSWORD: Sonatype OSSRH password or token
+#   OSPO_BOT_GPG_PRIV: GPG private key for signing
+#   OSPO_BOT_GPG_PASS: GPG key passphrase
+#
+# Required Permissions:
+#   contents: read   # Download artifacts
+#   packages: write  # Backup publish to GitHub Packages
+#
+name: Publish to Maven Central
+on:
+  workflow_call:
+    inputs:
+      artifact-source:
+        description: "Name of workflow artifact containing built library JARs"
+        required: true
+        type: string
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      settings-path:
+        description: "Path to Maven settings.xml (optional)"
+        required: false
+        type: string
+      profile:
+        description: "Maven profile to use for deployment"
+        required: false
+        default: "central-release"
+        type: string
+      branch:
+        description: "Branch to checkout (default: main)"
+        required: false
+        default: "main"
+        type: string
+permissions:
+  contents: read
+env:
+  MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
+jobs:
+  publish-mavencentral:
+    name: Publish to Maven Central
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ inputs.branch }}
+      - name: Set up JDK
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+          cache-dependency-path: ${{ inputs['working-directory'] }}/pom.xml
+          server-id: github
+          server-username: GITHUB_ACTOR
+          server-password: GITHUB_TOKEN
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
+        with:
+          gpg_private_key: ${{ secrets.OSPO_BOT_GPG_PRIV }}
+          passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
+      - name: Download build artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: ${{ inputs['artifact-source'] }}
+          path: ${{ inputs['working-directory'] }}/target/
+      - name: Verify artifacts for Maven Central
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          echo "Checking for required artifacts..."
+
+          # Maven Central requires: main JAR, sources JAR, javadoc JAR, POM
+          if [ ! -f target/*-sources.jar ]; then
+            echo "::error::Missing sources JAR. Maven Central requires sources."
+            echo "::error::Build with build-type: lib to generate sources and javadoc JARs"
+            exit 1
+          fi
+
+          if [ ! -f target/*-javadoc.jar ]; then
+            echo "::error::Missing javadoc JAR. Maven Central requires javadoc."
+            echo "::error::Build with build-type: lib to generate sources and javadoc JARs"
+            exit 1
+          fi
+
+          echo "✓ All required artifacts present:"
+          ls -lh target/*.jar
+      - name: Get version info
+        id: version-info
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          if [[ "${VERSION}" == *-SNAPSHOT ]]; then
+            echo "IS_SNAPSHOT=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "IS_SNAPSHOT=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "Project version: ${VERSION}"
+      - name: Deploy to Maven Central
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVENCENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD }}
+        run: |
+          echo "Deploying to Maven Central..."
+
+          # Use settings file if provided
+          SETTINGS_ARG=""
+          if [ -n "${{ inputs['settings-path'] }}" ]; then
+            if [ -f "${{ inputs['settings-path'] }}" ]; then
+              SETTINGS_ARG="--settings ${{ inputs['settings-path'] }}"
+              echo "Using settings file: ${{ inputs['settings-path'] }}"
+            else
+              echo "::error::Settings file specified but not found: ${{ inputs['settings-path'] }}"
+              exit 1
+            fi
+          fi
+
+          # Deploy with profile (includes GPG signing via maven-gpg-plugin)
+          mvn $MAVEN_CLI_OPTS deploy $SETTINGS_ARG -P${{ inputs.profile }} -DskipTests
+      - name: Generate publish summary
+        run: |
+          echo "## Published to Maven Central 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${{ steps.version-info.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Type:** ${{ steps.version-info.outputs.IS_SNAPSHOT == 'true' && 'SNAPSHOT' || 'Release' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry:** [Maven Central](https://central.sonatype.com/)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.version-info.outputs.IS_SNAPSHOT }}" = "true" ]; then
+            echo "⚠️ **SNAPSHOT** releases are available immediately in the snapshot repository." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✓ **Release** deployed to staging. Will be published to Central within 30 minutes." >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "*Published at $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY

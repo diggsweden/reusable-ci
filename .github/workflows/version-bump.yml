@@ -1,0 +1,300 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Version Bump
+# 
+# Purpose: Automates version management for releases. Updates version files,
+# downloads generated changelogs, and commits all changes back to the repository
+# with proper signing.
+#
+# How it works:
+# 1. Detects current version from pom.xml or package.json
+# 2. Determines new version based on tag and release type
+# 3. Downloads pre-generated changelogs (full and minimal)
+# 4. Updates version in project files
+# 5. Commits and signs changes with GPG
+# 6. Pushes changes back to repository
+#
+# Security controls:
+# - GPG signing of commits for authenticity
+# - Uses bot token with limited permissions
+# - Validates version format before updating
+#
+# Required Secrets:
+#   GITHUB_TOKEN: For repository operations (or custom bot token)
+#   GPG_SECRET_KEY: GPG key for signing commits (optional)
+#   GPG_PASSPHRASE: Passphrase for GPG key (optional)
+#
+# Required Permissions:
+#   contents: write  # Update version files and push commits
+#
+# Changelog Formats:
+#   - keepachangelog: Standard Keep a Changelog format
+#   - minimal: Simplified format for quick reading
+#   - conventional: Based on conventional commits
+#
+# Version Strategies:
+#   - SemVer for stable releases (1.0.0)
+#   - Pre-release for beta/rc (1.0.0-beta.1)
+#   - SNAPSHOT for development (1.0.0-SNAPSHOT)
+name: Version Bump
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      branch:
+        description: "Branch to checkout and work on (default: main)"
+        required: false
+        default: "main"
+        type: string
+      project-type:
+        description: "Project type: maven, npm"
+        required: true
+        type: string
+      java-version:
+        description: "Java version for Maven projects (default: 21)"
+        required: false
+        default: '21'
+        type: string
+      node-version:
+        description: "Node.js version for NPM projects (default: 22)"
+        required: false
+        default: '22'
+        type: string
+      gradle-version-file:
+        description: "Path to Gradle version file (default: gradle.properties)"
+        required: false
+        default: 'gradle.properties'
+        type: string
+      working-directory:
+        description: "Working directory for the project"
+        required: false
+        default: '.'
+        type: string
+      minimal-changelog-config:
+        description: "Configuration for the minimal changelog (default: minimal)"
+        required: false
+        default: ".github-templates/templates/gitcliff/minimal.toml"
+        type: string
+      file-pattern:
+        description: 'Files to commit (default: "CHANGELOG.md pom.xml"). NPM projects should set to "CHANGELOG.md package.json package-lock.json"'
+        required: false
+        type: string
+        default: 'CHANGELOG.md pom.xml'
+      egress-policy:
+        description: "Egress policy for the Harden Runner step (e.g., audit, block)"
+        required: false
+        default: "audit"
+        type: string
+permissions:
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+jobs:
+  # Generate full changelog for committing to repository
+  generate-full-changelog:
+    name: Generate Full Changelog
+    permissions:
+      contents: read
+    uses: ./.github/workflows/generate-changelog.yml
+    with:
+      branch: ${{ inputs.branch }}
+      changelog-config: ".github-templates/templates/gitcliff/keepachangelog.toml"
+      git-cliff-args: "" # Empty means full history
+      output-file: "CHANGELOG.md"
+      upload-as-artifact: true
+      artifact-name: "full-changelog"
+  # Generate minimal changelog for commit message
+  generate-minimal-changelog:
+    name: Generate Minimal Changelog
+    permissions:
+      contents: read
+    uses: ./.github/workflows/generate-changelog.yml
+    with:
+      branch: ${{ inputs.branch }}
+      changelog-config: ".github-templates/templates/gitcliff/minimal.toml"
+      git-cliff-args: "--latest --strip header"
+      output-file: "minimal-changelog.txt"
+      upload-as-artifact: true
+      artifact-name: "minimal-changelog"
+  bump-version:
+    name: Bump Version and Commit
+    needs: [generate-full-changelog, generate-minimal-changelog]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Harden GitHub runner
+        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
+        with:
+          egress-policy: ${{ inputs.egress-policy }}
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.branch }}
+          token: ${{ secrets.OSPO_BOT_GHTOKEN }}
+      - name: Checkout .github repository for scripts
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: diggsweden/reusable-ci
+          ref: v2
+          path: .github-shared
+          sparse-checkout: |
+            scripts/version
+      - name: Import GPG key
+        id: import-gpg
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
+        with:
+          gpg_private_key: ${{ secrets.OSPO_BOT_GPG_PRIV }}
+          passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+          git_config_global: true
+      - name: Set project type
+        id: project-type
+        run: |
+          PROJECT_TYPE="${{ inputs['project-type'] }}"
+          echo "Project type: ${PROJECT_TYPE}"
+          echo "type=${PROJECT_TYPE}" >> "$GITHUB_OUTPUT"
+      - name: Set up JDK for Maven
+        if: ${{ steps.project-type.outputs.type == 'maven' }}
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          java-version: ${{ inputs['java-version'] }}
+          distribution: 'temurin'
+          # No cache here - we'll cache after version update
+      - name: Update Maven version
+        if: ${{ steps.project-type.outputs.type == 'maven' }}
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
+        run: |
+          bash .github-shared/scripts/version/bump-version.sh \
+            maven \
+            "${GITHUB_REF_NAME#v}" \
+            "${{ inputs['working-directory'] }}"
+      - name: Setup Java again with cache after version update
+        if: ${{ steps.project-type.outputs.type == 'maven' }}
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          java-version: ${{ inputs['java-version'] }}
+          distribution: 'temurin'
+          cache: maven
+          cache-dependency-path: ${{ inputs['working-directory'] }}/pom.xml
+      - name: Pre-download dependencies with new version
+        if: ${{ steps.project-type.outputs.type == 'maven' }}
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
+        run: |
+          # shellcheck disable=SC2086
+          echo "Pre-downloading dependencies with updated pom.xml..."
+          mvn $MAVEN_CLI_OPTS dependency:resolve || true
+          mvn $MAVEN_CLI_OPTS dependency:resolve-plugins || true
+      - name: Set up Node.js for NPM
+        if: ${{ steps.project-type.outputs.type == 'npm' }}
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: ${{ inputs['node-version'] }}
+          # No cache here - we'll cache after version update
+      - name: Update NPM version
+        if: ${{ steps.project-type.outputs.type == 'npm' }}
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          bash .github-shared/scripts/version/bump-version.sh \
+            npm \
+            "${GITHUB_REF_NAME#v}" \
+            "${{ inputs['working-directory'] }}"
+
+          echo "Pre-installing dependencies..."
+          npm ci --ignore-scripts || npm install --ignore-scripts || true
+      - name: Save NPM cache
+        if: ${{ steps.project-type.outputs.type == 'npm' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', inputs['working-directory'])) }}
+      - name: Set up JDK for Gradle
+        if: ${{ steps.project-type.outputs.type == 'gradle' || steps.project-type.outputs.type == 'gradle-android' }}
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          java-version: ${{ inputs['java-version'] }}
+          distribution: 'temurin'
+          cache: 'gradle'
+      - name: Update Gradle version
+        if: ${{ steps.project-type.outputs.type == 'gradle' || steps.project-type.outputs.type == 'gradle-android' }}
+        run: |
+          echo "::group::Update Gradle version"
+          bash .github-shared/scripts/version/bump-version.sh \
+            ${{ steps.project-type.outputs.type }} \
+            "${GITHUB_REF_NAME#v}" \
+            "${{ inputs['working-directory'] }}" \
+            "${{ inputs['gradle-version-file'] }}"
+          echo "::endgroup::"
+      - name: Download Full Changelog
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: full-changelog
+          path: ${{ inputs['working-directory'] }}
+      - name: Verify Full Changelog
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          if [ ! -f "CHANGELOG.md" ]; then
+            echo "::error::Full changelog (CHANGELOG.md) not found"
+            echo "This file is required for the version bump commit"
+            exit 1
+          fi
+          echo "✓ Full changelog found ($(wc -l < CHANGELOG.md) lines)"
+      - name: Download Minimal Changelog
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: minimal-changelog
+          path: ${{ inputs['working-directory'] }}
+      - name: Read Minimal Changelog
+        id: minimal-changelog
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          if [ -f "minimal-changelog.txt" ]; then
+            # Read content and escape for GitHub Actions
+            CONTENT=$(cat minimal-changelog.txt)
+            # Use EOF delimiter to handle multiline content
+            {
+              echo "content<<EOF"
+              echo "$CONTENT"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "content=No changes for this release" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Commit and Push Changes
+        uses: stefanzweifel/git-auto-commit-action@28e16e81777b558cc906c8750092100bbb34c5e3 # v7.0.0
+        with:
+          commit_message: |
+            chore(release): ${{ github.ref_name }}
+
+            ${{ steps.minimal-changelog.outputs.content }}
+
+            [skip ci]
+          file_pattern: ${{ inputs['file-pattern'] }}
+          commit_author: "${{ steps.import-gpg.outputs.name }} <${{ steps.import-gpg.outputs.email }}>"
+          commit_user_name: ${{ steps.import-gpg.outputs.name }}
+          commit_user_email: ${{ steps.import-gpg.outputs.email }}
+          commit_options: " --signoff"
+      - name: Move tag to current commit
+        run: |-
+          LATEST_TAG=$(git describe --tags --abbrev=0)
+          PREV_SHA=$(git rev-parse HEAD~1)
+          TAG_SHA=$(git rev-list -n 1 "$LATEST_TAG")
+
+          if [ "$TAG_SHA" = "$PREV_SHA" ]; then
+            echo "Moving tag $LATEST_TAG from previous commit to current"
+            git tag -f -s "$LATEST_TAG" -m "$LATEST_TAG"
+            git push --force origin "$LATEST_TAG"
+          else
+            echo "✗ Tag $LATEST_TAG points to unexpected commit"
+            echo "Expected: $PREV_SHA (HEAD~1)"
+            echo "Found: $TAG_SHA"
+            exit 1
+          fi

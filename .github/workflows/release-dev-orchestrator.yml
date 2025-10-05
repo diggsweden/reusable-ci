@@ -1,0 +1,170 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Release Dev Orchestrator
+# 
+# Purpose: Lightweight orchestrator for development builds. Provides fast
+# feedback loops during development by skipping production security features while
+# maintaining basic functionality for testing and development environments.
+#
+# How it works:
+# 1. Triggers on pushes to development branches (develop, feature/*)
+# 2. Builds the project (Maven or NPM)
+# 3. Creates container image with dev tag
+# 4. Optionally publishes NPM package to GitHub Packages (dev tag)
+# 5. Skips all production features (SLSA, SBOM, signing, releases)
+#
+# Security controls:
+# - Minimal - focused on speed over security for development
+# - Images/packages clearly marked with -dev suffix
+# - No production attestations or signing
+#
+# Registry Authentication:
+#   GitHub Packages (default): Uses GITHUB_TOKEN (no secrets needed)
+#   Other registries: Set use-github-token=false and provide registry-password secret
+#
+# Required Secrets:
+#   registry-password: Required when use-github-token=false (for npmjs.org, etc)
+#
+# Required Permissions:
+#   contents: read   # Read source code
+#   packages: write  # Push images to ghcr.io and packages to GitHub Packages
+#
+# Differences from Production:
+#   - Dev tags (0.5.9-dev-feat-name-abc1234) vs version tags
+#   - No SLSA attestation
+#   - No SBOM generation
+#   - No vulnerability scanning
+#   - No artifact signing
+#   - No GitHub release
+#   - ~3-5 min vs ~12-15 min build time
+name: Release Dev Orchestrator
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      project-type:
+        description: "Project type: maven, npm"
+        required: true
+        type: string
+      container-file:
+        description: "Containerfile path"
+        required: false
+        default: "Containerfile"
+        type: string
+      registry:
+        description: "Container registry"
+        required: false
+        default: "ghcr.io"
+        type: string
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      publish-npm:
+        description: "Publish NPM package to registry (npm projects only)"
+        required: false
+        default: true
+        type: boolean
+      node-version:
+        description: "Node.js version for npm projects"
+        required: false
+        default: "22"
+        type: string
+      npm-registry:
+        description: "NPM registry URL"
+        required: false
+        default: "https://npm.pkg.github.com"
+        type: string
+      package-scope:
+        description: "Required NPM package scope (e.g., @diggsweden)"
+        required: false
+        default: ""
+        type: string
+      npm-registry-username:
+        description: "NPM registry username (defaults to github.actor for GitHub Packages)"
+        required: false
+        type: string
+      use-github-token:
+        description: "Use GITHUB_TOKEN for NPM authentication (GitHub Packages only)"
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      registry-password:
+        description: "NPM registry auth token (required when use-github-token=false)"
+        required: false
+    outputs:
+      container-image:
+        description: "Published container image"
+        value: ${{ jobs.build-dev-container.outputs.image }}
+      container-digest:
+        description: "Container image digest"
+        value: ${{ jobs.build-dev-container.outputs.digest }}
+      npm-package-name:
+        description: "Published NPM package name (if published)"
+        value: ${{ jobs.publish-npm-dev.outputs.package-name }}
+      npm-package-version:
+        description: "Published NPM package version (if published)"
+        value: ${{ jobs.publish-npm-dev.outputs.package-version }}
+permissions:
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+jobs:
+  build-dev-container:
+    name: Build Dev Container
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit
+    uses: ./.github/workflows/publish-container-dev.yml
+    with:
+      container-file: ${{ inputs['container-file'] }}
+      registry: ${{ inputs.registry }}
+      project-type: ${{ inputs['project-type'] }}
+      working-directory: ${{ inputs['working-directory'] }}
+  publish-npm-dev:
+    name: Publish Dev NPM Package
+    if: ${{ inputs['project-type'] == 'npm' && inputs['publish-npm'] }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-npm-dev.yml
+    with:
+      node-version: ${{ inputs['node-version'] }}
+      working-directory: ${{ inputs['working-directory'] }}
+      registry: ${{ inputs['npm-registry'] }}
+      package-scope: ${{ inputs['package-scope'] }}
+      registry-username: ${{ inputs['npm-registry-username'] }}
+      use-github-token: ${{ inputs['use-github-token'] }}
+    secrets:
+      registry-password: ${{ secrets.registry-password }}
+  dev-release-summary:
+    name: Dev Release Summary
+    needs: [build-dev-container, publish-npm-dev]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout .github repository for scripts
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: diggsweden/reusable-ci
+          ref: v2
+          path: .github-shared
+          sparse-checkout: |
+            scripts/release
+      - name: Generate Dev Release Summary
+        run: |
+          bash .github-shared/scripts/release/generate-dev-summary.sh \
+            "${{ inputs['project-type'] }}" \
+            "${{ github.ref_name }}" \
+            "${{ github.sha }}" \
+            "${{ github.actor }}" \
+            "${{ github.repository }}" \
+            "${{ needs.build-dev-container.outputs.image }}" \
+            "${{ needs.build-dev-container.result }}" \
+            "${{ needs.publish-npm-dev.outputs.package-name }}" \
+            "${{ needs.publish-npm-dev.outputs.package-version }}" \
+            "${{ needs.publish-npm-dev.result }}"

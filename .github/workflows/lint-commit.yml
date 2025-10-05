@@ -1,0 +1,66 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Description:
+# This workflow enforces commit message conventions using Conform.
+# It checks commit messages against a predefined set of rules to ensure consistency and compliance.
+#
+# Usage:
+# 1. Add the following to your workflow file:
+#    jobs:
+#      commit-lint:
+#        uses: <orgname>/<reponame>/.github/workflows/<workflowname>.yml@main
+#        # base-branch parameter is optional - auto-detects PR target branch
+#        # with:
+#        #   base-branch: "custom-branch"  # Only needed for special cases
+#
+# 2. Ensure your repository has a Conform configuration file (e.g., `.conform.yaml`).
+#    If not, Conform will use its default rules.
+#
+# 3. The workflow will analyze commits in pull requests and enforce the configured rules.
+#    It automatically compares against the PR's target branch.
+name: Commit Lint
+on:
+  workflow_call:
+    inputs:
+      base-branch:
+        description: "Base branch to compare commits against (auto-detects PR target if empty)"
+        required: false
+        default: ""
+        type: string
+permissions:
+  contents: read
+jobs:
+  conform:
+    name: Commit (conform) analysis
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }} # https://github.com/actions/checkout/issues/426
+      - name: Determine base branch
+        id: base
+        run: |
+          # If explicitly provided, use it
+          if [ -n "${{ inputs.base-branch }}" ]; then
+            echo "branch=${{ inputs.base-branch }}" >> "$GITHUB_OUTPUT"
+            echo "Using explicitly provided base: ${{ inputs.base-branch }}"
+          # For PRs, use the PR target branch
+          elif [ "${{ github.event_name }}" = "pull_request" ] && [ -n "${{ github.base_ref }}" ]; then
+            echo "branch=${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
+            echo "Auto-detected PR base: ${{ github.base_ref }}"
+          # Fallback to main
+          else
+            echo "branch=main" >> "$GITHUB_OUTPUT"
+            echo "Using default base: main"
+          fi
+      - name: Setup base branch
+        run: git fetch origin ${{ steps.base.outputs.branch }}:${{ steps.base.outputs.branch }}
+      - name: Commit (conform) analysis
+        uses: docker://ghcr.io/siderolabs/conform@sha256:f7e72122d4296b90285ac51964361295adf1f2018420a8547cb2b069f94a776d
+        with:
+          args: "enforce --base-branch=${{ steps.base.outputs.branch }}"

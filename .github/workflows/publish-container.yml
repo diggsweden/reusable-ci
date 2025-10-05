@@ -1,0 +1,421 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Container Image Publisher
+# 
+# Purpose: Builds and publishes production-grade container images to any OCI-compatible
+# registry with  security features including multi-platform support,
+# vulnerability scanning, SBOM generation, and SLSA attestation (GHCR only).
+#
+# Supported Registries:
+# - GitHub Container Registry (ghcr.io) - Full SLSA support
+# - Docker Hub (docker.io) - No SLSA support
+# - Quay.io (quay.io) - No SLSA support
+# - Any OCI-compatible registry - No SLSA support
+#
+# How it works:
+# 1. Downloads build artifacts from previous jobs (Maven JARs, NPM dist)
+# 2. Sets up Buildx for multi-platform builds
+# 3. Builds container image for specified platforms (amd64, arm64)
+# 4. Scans image for vulnerabilities using Trivy
+# 5. Generates SBOM in multiple formats (CycloneDX, SPDX)
+# 6. Creates SLSA provenance attestation for supply chain security (GHCR only)
+# 7. Pushes image with all attestations to registry
+#
+# Security controls:
+# - SLSA Level 3 provenance attestation (GHCR only)
+# - Vulnerability scanning with severity thresholds
+# - SBOM generation for dependency transparency
+# - Signed attestations attached to image
+# - Security scan results uploaded to GitHub
+# - Namespace validation (enforces ghcr.io/OWNER/REPO pattern)
+#
+# Registry Authentication:
+#   GHCR (default): Uses GITHUB_TOKEN (no secrets needed)
+#   Other registries: Set useGithubToken=false and provide registryPassword secret
+#
+# Required Secrets:
+#   registryPassword: Required when useGithubToken=false (for Docker Hub, Quay, etc)
+#
+# Required Permissions:
+#   contents: read         # Read Containerfile and context
+#   packages: write        # Push images to registry
+#   id-token: write       # Generate OIDC token for SLSA (GHCR only)
+#   security-events: write # Upload vulnerability scan results
+#   attestations: write   # Attach SBOM attestation
+#   actions: read         # Read workflow for provenance
+#
+# Outputs:
+#   image: Full image name with registry
+#   digest: Image digest for verification
+#   metadata: Image metadata JSON
+#
+# Tagging Strategy:
+#   - semver: Version-based tags (v1.0.0, v1, v1.0)
+#   - branch: Branch-based tags (main, develop)
+#   - sha: SHA-based tags (main-abc1234)
+#   - custom: User-defined tags
+name: Publish Container Image
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      container-file:
+        description: "Containerfile path"
+        required: false
+        default: "Containerfile"
+        type: string
+      context:
+        description: "Build context directory"
+        required: false
+        default: "."
+        type: string
+      branch:
+        description: "Branch to checkout (default: main)"
+        required: false
+        default: "v1"
+        type: string
+      platforms:
+        description: "Comma-separated list of platforms to build"
+        required: false
+        default: "linux/amd64"
+        type: string
+      artifact-types:
+        description: "Comma-separated artifact types (maven,npm,gradle)"
+        required: true
+        type: string
+      enable-slsa:
+        description: "Generate SLSA provenance"
+        required: false
+        default: true
+        type: boolean
+      enable-sbom:
+        description: "Generate and attach SBOM"
+        required: false
+        default: true
+        type: boolean
+      enable-scan:
+        description: "Enable vulnerability scanning"
+        required: false
+        default: true
+        type: boolean
+      registry:
+        description: "Container registry"
+        required: false
+        default: "ghcr.io"
+        type: string
+      image-name:
+        description: "Custom image name (defaults to repository name)"
+        required: false
+        type: string
+      build-args:
+        description: "Build arguments (KEY=VALUE format, one per line)"
+        required: false
+        type: string
+      build-secrets:
+        description: "Build secrets to pass (KEY=VALUE format, one per line)"
+        required: false
+        type: string
+      push-image:
+        description: "Push image to registry"
+        required: false
+        default: true
+        type: boolean
+      cache-from:
+        description: "Cache sources for build"
+        required: false
+        default: "type=gha"
+        type: string
+      cache-to:
+        description: "Cache destinations for build"
+        required: false
+        default: "type=gha,mode=max"
+        type: string
+      egress-policy:
+        description: "Egress policy for the Harden Runner step"
+        required: false
+        default: "audit"
+        type: string
+      registry-username:
+        description: "Registry username (defaults to github.actor for GHCR)"
+        required: false
+        type: string
+      use-github-token:
+        description: "Use GITHUB_TOKEN for authentication (GHCR only)"
+        required: false
+        default: true
+        type: boolean
+      enforce-namespace:
+        description: "Enforce namespace validation (defaults to repository owner)"
+        required: false
+        type: string
+    secrets:
+      registry-password:
+        description: "Registry password/token (required when use-github-token=false)"
+        required: false
+    outputs:
+      image:
+        description: "Full image name with registry"
+        value: ${{ jobs.build-and-push.outputs.image }}
+      digest:
+        description: "Image digest"
+        value: ${{ jobs.build-and-push.outputs.digest }}
+      metadata:
+        description: "Image metadata JSON"
+        value: ${{ jobs.build-and-push.outputs.metadata }}
+permissions:
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+jobs:
+  build-and-push:
+    name: Build and Push Container
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # Required for SLSA provenance
+      attestations: write # Required for SBOM attestation
+      security-events: write # Required for security scanning
+      actions: read # Required for SLSA provenance v2
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+      metadata: ${{ steps.metadata.outputs.json }}
+    steps:
+      - name: Harden GitHub runner
+        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
+        with:
+          egress-policy: ${{ inputs.egress-policy }}
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ inputs.branch }}
+      - name: Checkout .github repository for scripts
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: diggsweden/reusable-ci
+          ref: v2
+          path: .github-shared
+          sparse-checkout: |
+            scripts/container
+            scripts/sbom
+            scripts/release
+            scripts/registry
+      - name: Download Maven artifacts
+        if: ${{ contains(inputs['artifact-types'], 'maven') }}
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        continue-on-error: true
+        with:
+          name: maven-build-artifacts
+          path: target/
+      - name: Verify Maven artifacts
+        if: ${{ contains(inputs['artifact-types'], 'maven') }}
+        run: bash .github-shared/scripts/container/verify-artifacts.sh maven target
+      - name: Download NPM artifacts
+        if: ${{ contains(inputs['artifact-types'], 'npm') }}
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        continue-on-error: true
+        with:
+          name: npm-build-artifacts
+          path: dist/
+      - name: Verify NPM artifacts
+        if: ${{ contains(inputs['artifact-types'], 'npm') }}
+        run: bash .github-shared/scripts/container/verify-artifacts.sh npm dist fi
+      - name: Download Gradle artifacts
+        if: ${{ contains(inputs['artifact-types'], 'gradle') }}
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        continue-on-error: true
+        with:
+          name: gradle-build-artifacts
+          path: build/libs/
+      - name: Verify Gradle artifacts
+        if: ${{ contains(inputs['artifact-types'], 'gradle') }}
+        run: bash .github-shared/scripts/container/verify-artifacts.sh gradle build/libs
+      - name: Verify Containerfile
+        id: containerfile
+        run: |
+          CONTAINERFILE="${{ inputs['container-file'] }}"
+
+          # Verify the file exists
+          if [ ! -f "$CONTAINERFILE" ]; then
+            echo "Error: Containerfile '$CONTAINERFILE' not found"
+            exit 1
+          fi
+
+          echo "Using containerfile: $CONTAINERFILE"
+          echo "containerfile=$CONTAINERFILE" >> "$GITHUB_OUTPUT"
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+      - name: Set up Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Check registry authentication configuration
+        if: ${{ inputs['push-image'] }}
+        run: |
+          HAS_PASSWORD="false"
+          if [ -n "${{ secrets['registry-password'] }}" ]; then
+            HAS_PASSWORD="true"
+          fi
+
+          bash .github-shared/scripts/registry/validate-auth.sh \
+            "${{ inputs['use-github-token'] }}" \
+            "${{ inputs.registry }}" \
+            "ghcr.io" \
+            "$HAS_PASSWORD"
+      - name: Log in to Container Registry
+        if: ${{ inputs['push-image'] }}
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ inputs['registry-username'] || github.actor }}
+          password: ${{ inputs['use-github-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+      - name: Determine Image Name
+        id: image-name
+        run: |
+          bash .github-shared/scripts/container/determine-image-name.sh \
+            "${{ inputs.registry }}" \
+            "${{ inputs['image-name'] }}" \
+            "${{ github.repository }}" \
+            "${{ github.repository_owner }}" >> "$GITHUB_OUTPUT"
+      - name: Validate Image Namespace
+        if: ${{ inputs['push-image'] }}
+        run: "IMAGE_NAME=\"${{ steps.image-name.outputs.name }}\"\nREPO_NAME=\"${{ github.repository }}\"\nREPO_OWNER=\"${{ github.repository_owner }}\"\nREGISTRY=\"${{ inputs.registry }}\"\nENFORCE_NAMESPACE=\"${{ inputs['enforce-namespace'] || github.repository_owner }}\"\n\necho \"Validating image namespace...\"\necho \"  Image: $IMAGE_NAME\"\necho \"  Repository: $REPO_NAME\"\necho \"  Registry: $REGISTRY\"\necho \"  Enforced namespace: $ENFORCE_NAMESPACE\"\n\n# Extract repo name without org\nREPO_SHORT=\"${REPO_NAME##*/}\"\n\n# For GHCR, enforce strict namespace matching\nif [[ \"$REGISTRY\" == \"ghcr.io\" ]]; then\n  # Must be ghcr.io/NAMESPACE/REPO_NAME or ghcr.io/NAMESPACE/REPO_NAME-*\n  EXPECTED_PREFIX=\"ghcr.io/${ENFORCE_NAMESPACE}/${REPO_SHORT}\"\n  \n  if [[ ! \"$IMAGE_NAME\" =~ ^${EXPECTED_PREFIX}(-.*)?$ ]]; then\n    echo \"::error::Security: Image name must start with '${EXPECTED_PREFIX}'\"\n    echo \"::error::Got: $IMAGE_NAME\"\n    echo \"::error::This prevents pushing to unauthorized namespaces\"\n    exit 1\n  fi\n  \n  echo \"✓ Image namespace validated: $IMAGE_NAME\"\nelse\n  echo \"⚠ Non-GHCR registry - namespace validation skipped\"\nfi\n"
+      - name: Extract Image Metadata
+        id: metadata
+        uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f # v5.8.0
+        with:
+          images: ${{ steps.image-name.outputs.name }}
+          flavor: |
+            latest=false
+          tags: |
+            # Always include the ref as-is (branch name, tag name, or PR number)
+            type=ref,event=branch
+            type=ref,event=tag
+            type=ref,event=pr
+
+            # For version tags only (v1.0.0, v2.3.4, etc)
+            type=semver,pattern={{version}},enable=${{ github.ref_type == 'tag' }}
+
+            # For stable versions only (no dash in tag name like -beta, -rc)
+            type=semver,pattern={{major}}.{{minor}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
+            type=semver,pattern={{major}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
+
+            # SHA-based tags for non-tag refs (branches, PRs) for traceability
+            type=sha,prefix={{branch}}-,enable=${{ github.ref_type != 'tag' }}
+      - name: Build Container Image
+        id: build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ steps.containerfile.outputs.containerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: ${{ inputs['push-image'] }}
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          cache-from: ${{ inputs['cache-from'] }}
+          cache-to: ${{ inputs['cache-to'] }}
+          build-args: ${{ inputs['build-args'] }}
+          secrets: ${{ inputs['build-secrets'] }}
+          provenance: ${{ inputs['enable-slsa'] && 'mode=max' || 'false' }}
+          sbom: ${{ inputs['enable-sbom'] }}
+      - name: Check SLSA compatibility
+        if: ${{ inputs['push-image'] && inputs['enable-slsa'] && inputs.registry != 'ghcr.io' }}
+        run: |
+          echo "::notice::SLSA provenance generation only supports ghcr.io registry"
+          echo "::notice::Current registry: ${{ inputs.registry }}"
+          echo "::notice::SLSA provenance attestation will be skipped"
+          echo "::notice::To enable SLSA: Use registry: ghcr.io or set enable-slsa: false"
+      - name: Export digest
+        if: ${{ inputs['push-image'] && inputs['enable-slsa'] && inputs.registry == 'ghcr.io' }}
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - name: Upload digest
+        if: ${{ inputs['push-image'] && inputs['enable-slsa'] && inputs.registry == 'ghcr.io' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: digests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+      - name: Scan Container Image
+        if: ${{ inputs['enable-scan'] && inputs['push-image'] }}
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        with:
+          image-ref: ${{ steps.image-name.outputs.name }}@${{ steps.build.outputs.digest }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'os,library'
+      - name: Upload Trivy scan results
+        if: ${{ inputs['enable-scan'] && inputs['push-image'] }}
+        uses: github/codeql-action/upload-sarif@e296a935590eb16afc0c0108289f68c87e2a89a5 # v4.30.7
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: 'container-scan'
+      - name: Generate Container SBOMs (SPDX + CycloneDX)
+        if: ${{ inputs['enable-sbom'] && inputs['push-image'] }}
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          PROJECT_NAME=$(basename ${{ github.repository }})
+          IMAGE="${{ steps.image-name.outputs.name }}@${{ steps.build.outputs.digest }}"
+
+          bash .github-shared/scripts/sbom/generate-container-sbom.sh \
+            "${{ inputs['artifact-types'] }}" \
+            "$VERSION" \
+            "$PROJECT_NAME" \
+            "$IMAGE" \
+            ".github-shared/scripts/sbom"
+      - name: Upload Container SBOMs
+        if: ${{ inputs['enable-sbom'] && inputs['push-image'] }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: container-sbom-${{ github.run_id }}
+          path: |
+            *-container-sbom.spdx.json
+            *-container-sbom.cyclonedx.json
+          retention-days: 30
+      - name: Find Container SBOM file
+        if: ${{ inputs['enable-sbom'] && inputs['push-image'] && inputs['enable-slsa'] }}
+        id: find-sbom
+        run: |
+          SBOM_FILE=$(ls *-container-sbom.spdx.json 2>/dev/null | head -1)
+          if [ -z "$SBOM_FILE" ]; then
+            echo "::error::No container SBOM file found matching pattern *-container-sbom.spdx.json"
+            echo "::error::SBOM generation step may have failed"
+            exit 1
+          fi
+          echo "sbom-file=$SBOM_FILE" >> "$GITHUB_OUTPUT"
+          echo "Found SBOM file: $SBOM_FILE"
+      - name: Attest Container SBOM
+        if: ${{ inputs['enable-sbom'] && inputs['push-image'] && inputs['enable-slsa'] }}
+        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3.0.0
+        with:
+          subject-name: ${{ steps.image-name.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: ${{ steps.find-sbom.outputs.sbom-file }}
+          push-to-registry: true
+      - name: Output image details
+        id: image
+        run: |
+          IMAGE_NAME="${{ steps.image-name.outputs.name }}"
+          echo "image=$IMAGE_NAME" >> "$GITHUB_OUTPUT"
+          echo "Image: $IMAGE_NAME"
+          echo "Digest: ${{ steps.build.outputs.digest }}"
+          echo "Metadata: ${{ steps.metadata.outputs.json }}"
+  # Generate SLSA provenance (called as separate job if enabled)
+  provenance:
+    needs: [build-and-push]
+    if: ${{ inputs['push-image'] && inputs['enable-slsa'] && startsWith(github.ref, 'refs/tags/') && inputs.registry == 'ghcr.io' }}
+    permissions:
+      actions: read
+      id-token: write
+      packages: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
+    with:
+      image: ${{ needs.build-and-push.outputs.image }}
+      digest: ${{ needs.build-and-push.outputs.digest }}
+      registry-username: ${{ github.actor }}
+    secrets:
+      registry-password: ${{ secrets.GITHUB_TOKEN }}

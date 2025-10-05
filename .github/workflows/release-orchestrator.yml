@@ -1,0 +1,437 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Release Orchestrator
+# 
+# Purpose: Main orchestrator workflow that coordinates the complete release process for
+# production releases. It handles version management, artifact publishing, container 
+# building, security attestations, and GitHub release creation in a single workflow.
+#
+# How it works:
+# 1. Validates release prerequisites (version match, credentials, permissions)
+# 2. Bumps version and generates changelog using git-cliff
+# 3. Publishes artifacts to configured registries (Maven Central, NPM, GitHub Packages)
+# 4. Builds and publishes container images with SLSA/SBOM if configured
+# 5. Creates GitHub release with changelog, artifacts, and signatures
+#
+# Security controls:
+# - GPG signing of all artifacts (if signatures: true)
+# - SLSA provenance attestation for supply chain security
+# - SBOM generation in multiple formats (CycloneDX, SPDX)
+# - Container vulnerability scanning with Trivy
+# - License compliance checking
+#
+# Required Secrets (depending on configuration):
+#   GITHUB_TOKEN: Automatically provided for GitHub operations
+#   GPG_SECRET_KEY: For artifact signing (if signatures enabled)
+#   GPG_PASSPHRASE: For artifact signing (if signatures enabled)
+#   MAVEN_CENTRAL_USERNAME: For Maven Central publishing (when publish-to includes maven-central)
+#   MAVEN_CENTRAL_PASSWORD: For Maven Central publishing (when publish-to includes maven-central)
+#   NPM_TOKEN: For NPM registry publishing (npm packages)
+#
+# Required Permissions:
+#   contents: write       # Create releases and tags
+#   packages: write       # Publish packages and containers
+#   id-token: write      # OIDC for attestations
+#   attestations: write  # Attach SBOMs
+#   security-events: write # Upload scan results
+#   actions: read        # Read workflow for SLSA
+#
+# v3 Design
+# - Removed single-artifact inline mode
+# - Only supports artifactsConfig file
+# - Separate artifacts[] and containers[] sections
+# - Container configuration moved to containers[] section
+#
+# Build Types: application (default), library
+# Publishing: Controlled via build-type, require-authorization, publish-to fields
+# Containers: Separate section with explicit dependencies
+name: Release Orchestrator
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      # === REQUIRED: artifacts.yml FILE ===
+      artifacts-config:
+        description: "Path to artifacts config file (required, e.g., .github/artifacts.yml)"
+        required: true
+        type: string
+      # === SHARED CONFIGURATION ===
+      release-type:
+        description: "Release type: stable, prerelease (auto-detected from tag if not specified)"
+        required: false
+        type: string
+      branch:
+        description: "Branch to work with (default: main)"
+        required: false
+        default: "main"
+        type: string
+      # Changelog creator configuration
+      changelog-creator:
+        description: "Changelog creator type (e.g., git-cliff). Leave empty to skip"
+        required: false
+        default: "git-cliff"
+        type: string
+      changelog.config:
+        description: "Changelog configuration file (default: uses generate-changelog default)"
+        required: false
+        default: ""
+        type: string
+      changelog.skipversionbump:
+        description: "Skip version bump (default: false)"
+        required: false
+        default: false
+        type: boolean
+      # Release publisher configuration  
+      release-publisher:
+        description: "Release publisher type (github-cli). Leave empty to skip GitHub release"
+        required: false
+        type: string
+      release.generatesbom:
+        description: "Generate SBOM for release (default: true)"
+        required: false
+        default: true
+        type: boolean
+      release.attachartifacts:
+        description: "Glob patterns for artifacts to attach to GitHub release (comma/newline separated)"
+        required: false
+        default: ""
+        type: string
+      release.signartifacts:
+        description: "GPG sign release artifacts (default: true)"
+        required: false
+        default: true
+        type: boolean
+      release.checkauthorization:
+        description: "Check if user is authorized for non-SNAPSHOT releases (default: false, typically true for public libraries)"
+        required: false
+        default: false
+        type: boolean
+      release.draft:
+        description: "Create as draft release (default: false)"
+        required: false
+        default: false
+        type: boolean
+      # Advanced configuration
+      working-directory:
+        description: "Working directory for operations"
+        required: false
+        default: "."
+        type: string
+      file-pattern:
+        description: "Files to commit in version bump (auto-detected based on projectType if not specified: Maven='CHANGELOG.md pom.xml', NPM='CHANGELOG.md package.json package-lock.json', Gradle='CHANGELOG.md build.gradle settings.gradle')"
+        required: false
+        type: string
+        default: ""
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false # Queue releases, don't cancel partial releases
+permissions:
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+jobs:
+  # Step 0b: Parse Configuration (v3 clean design)
+  parse-config:
+    name: Parse Configuration
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      artifacts: ${{ steps.parse.outputs.artifacts }}
+      containers: ${{ steps.parse.outputs.containers }}
+      first-project-type: ${{ steps.parse.outputs.first-project-type }}
+      first-build-type: ${{ steps.parse.outputs.first-build-type }}
+      first-require-authorization: ${{ steps.parse.outputs.first-require-authorization }}
+      # Filtered artifact lists by project type
+      maven-artifacts: ${{ steps.parse.outputs.maven-artifacts }}
+      npm-artifacts: ${{ steps.parse.outputs.npm-artifacts }}
+      gradle-artifacts: ${{ steps.parse.outputs.gradle-artifacts }}
+      gradleandroid-artifacts: ${{ steps.parse.outputs.gradleandroid-artifacts }}
+      python-artifacts: ${{ steps.parse.outputs.python-artifacts }}
+      go-artifacts: ${{ steps.parse.outputs.go-artifacts }}
+      rust-artifacts: ${{ steps.parse.outputs.rust-artifacts }}
+      # Flags indicating presence of each type
+      has-maven: ${{ steps.parse.outputs.has-maven }}
+      has-npm: ${{ steps.parse.outputs.has-npm }}
+      has-gradle: ${{ steps.parse.outputs.has-gradle }}
+      has-gradleandroid: ${{ steps.parse.outputs.has-gradleandroid }}
+      has-python: ${{ steps.parse.outputs.has-python }}
+      has-go: ${{ steps.parse.outputs.has-go }}
+      has-rust: ${{ steps.parse.outputs.has-rust }}
+      # Filtered by publish target
+      mavencentral-artifacts: ${{ steps.parse.outputs.mavencentral-artifacts }}
+      github-packages-artifacts: ${{ steps.parse.outputs.github-packages-artifacts }}
+      has-mavencentral: ${{ steps.parse.outputs.has-mavencentral }}
+      has-github-packages: ${{ steps.parse.outputs.has-github-packages }}
+      is-draft-release: ${{ steps.parse.outputs.is-draft-release }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ inputs.branch }}
+      - name: Checkout reusable-ci for scripts
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: diggsweden/reusable-ci
+          ref: v2
+          path: .github-shared
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+      - name: Parse artifacts.yml
+        id: parse
+        run: bash .github-shared/scripts/config/parse-artifacts-config.sh
+        env:
+          ARTIFACTS_CONFIG: ${{ inputs['artifacts-config'] }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+  # Step 0c: Validate configuration
+  validate-prerequisites:
+    name: Validate Prerequisites
+    needs: [parse-config]
+    secrets: inherit
+    uses: ./.github/workflows/release-prerequisites.yml
+    with:
+      project-type: ${{ needs.parse-config.outputs.first-project-type }}
+      build-type: ${{ needs.parse-config.outputs.first-build-type }}
+      container-registry: ghcr.io
+      sign-artifacts: ${{ inputs['release.signartifacts'] }}
+      check-authorization: ${{ needs.parse-config.outputs.first-require-authorization == 'true' || inputs['release.checkauthorization'] }}
+      branch: ${{ inputs.branch }}
+      workflows-ref: v2
+  # Step 1: Version Bump (iterates over all artifacts)
+  version-and-changelog:
+    needs: [parse-config, validate-prerequisites]
+    name: Version Bump - ${{ matrix.artifact.name }}
+    if: ${{ !inputs['changelog.skipversionbump'] && inputs['changelog-creator'] == 'git-cliff' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(needs.parse-config.outputs.artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: write
+      packages: read
+    secrets: inherit
+    uses: ./.github/workflows/version-bump.yml
+    with:
+      branch: ${{ inputs.branch }}
+      project-type: ${{ matrix.artifact['project-type'] }}
+      file-pattern: ${{ inputs['file-pattern'] || (matrix.artifact['project-type'] == 'npm' && 'CHANGELOG.md package.json package-lock.json' || matrix.artifact['project-type'] == 'gradle' && 'CHANGELOG.md gradle.properties build.gradle.kts settings.gradle.kts build.gradle settings.gradle' || matrix.artifact['project-type'] == 'python' && 'CHANGELOG.md pyproject.toml' || 'CHANGELOG.md pom.xml') }}
+      java-version: ${{ matrix.artifact.config['java-version'] }}
+      node-version: ${{ matrix.artifact.config['node-version'] }}
+      gradle-version-file: ${{ matrix.artifact.config['gradle-version-file'] }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+  # Step 2a: Build Maven artifacts
+  build-maven:
+    name: Build Maven - ${{ matrix.artifact.name }}
+    needs: [parse-config, version-and-changelog]
+    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-maven == 'true' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(needs.parse-config.outputs.maven-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/build-maven.yml
+    with:
+      build-type: ${{ matrix.artifact['build-type'] == 'library' && 'lib' || 'app' }}
+      java-version: ${{ matrix.artifact.config['java-version'] }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      branch: ${{ inputs.branch }}
+      profile: ${{ matrix.artifact['build-type'] == 'library' && (matrix.artifact.config['maven-profile'] || 'central-release') || '' }}
+  # Step 2b: Build NPM artifacts
+  build-npm:
+    name: Build NPM - ${{ matrix.artifact.name }}
+    needs: [parse-config, version-and-changelog]
+    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-npm == 'true' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(needs.parse-config.outputs.npm-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/build-npm.yml
+    with:
+      node-version: ${{ matrix.artifact.config['node-version'] }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      branch: ${{ inputs.branch }}
+  # Step 2c: Build Gradle artifacts
+  build-gradle:
+    name: Build Gradle - ${{ matrix.artifact.name }}
+    needs: [parse-config, version-and-changelog]
+    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-gradle == 'true' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(needs.parse-config.outputs.gradle-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/build-gradle.yml
+    with:
+      java-version: ${{ matrix.artifact.config['java-version'] }}
+      gradle-tasks: ${{ matrix.artifact.config['gradle-tasks'] }}
+      build-module: ${{ matrix.artifact.config['build-module'] }}
+      enable-signing: ${{ matrix.artifact.config['enable-android-signing'] }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      branch: ${{ inputs.branch }}
+  # Step 2d: Build Gradle Android artifacts
+  build-gradle-android:
+    name: Build Gradle Android - ${{ matrix.artifact.name }}
+    needs: [parse-config, version-and-changelog]
+    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-gradleandroid == 'true' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(needs.parse-config.outputs.gradleandroid-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/build-gradle.yml
+    with:
+      java-version: ${{ matrix.artifact.config['java-version'] }}
+      gradle-tasks: ${{ matrix.artifact.config['gradle-tasks'] }}
+      build-module: ${{ matrix.artifact.config['build-module'] }}
+      enable-signing: ${{ matrix.artifact.config['enable-android-signing'] }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      branch: ${{ inputs.branch }}
+  # Step 3a: Publish to GitHub Packages
+  publish-github:
+    name: Publish GitHub - ${{ matrix.artifact.name }}
+    needs: [parse-config, build-maven, build-npm, build-gradle, build-gradle-android]
+    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-github-packages == 'true' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(needs.parse-config.outputs.github-packages-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: write
+      packages: write
+    secrets: inherit
+    uses: ./.github/workflows/publish-github.yml
+    with:
+      artifact-source: ${{ matrix.artifact['project-type'] }}-build-artifacts
+      package-type: ${{ matrix.artifact['project-type'] }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      attach-pattern: ${{ matrix.artifact.config['attach-pattern'] }}
+  # Step 3b: Publish to Maven Central
+  publish-mavencentral:
+    name: Publish Maven Central - ${{ matrix.artifact.name }}
+    needs: [parse-config, build-maven]
+    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-mavencentral == 'true' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(needs.parse-config.outputs.mavencentral-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    secrets: inherit
+    uses: ./.github/workflows/publish-mavencentral.yml
+    with:
+      artifact-source: maven-build-artifacts
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      settings-path: ${{ matrix.artifact.config['settings-path'] }}
+  # Step 4: Build and Publish Container Images
+  build-containers:
+    name: Build Container - ${{ matrix.container.name }}
+    needs: [parse-config, build-maven, build-npm, build-gradle, build-gradle-android]
+    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.containers != '[]' }}
+    strategy:
+      matrix:
+        container: ${{ fromJson(needs.parse-config.outputs.containers) }}
+      fail-fast: false
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      security-events: write
+      actions: read
+    secrets: inherit
+    uses: ./.github/workflows/publish-container.yml
+    with:
+      container-file: ${{ matrix.container['container-file'] }}
+      context: ${{ matrix.container.context || '.' }}
+      branch: ${{ inputs.branch }}
+      platforms: ${{ matrix.container.platforms || 'linux/amd64,linux/arm64' }}
+      enable-slsa: ${{ matrix.container['enable-slsa'] == true || matrix.container['enable-slsa'] == null }}
+      enable-sbom: ${{ matrix.container['enable-sbom'] == true || matrix.container['enable-sbom'] == null }}
+      enable-scan: ${{ matrix.container['enable-scan'] == true || matrix.container['enable-scan'] == null }}
+      registry: ghcr.io
+      artifact-types: ${{ join(matrix.container['artifact-types'], ',') }}
+      push-image: true
+  # Step 5: Create GitHub Release  
+  create-release:
+    name: Create GitHub Release
+    needs: [parse-config, publish-github, publish-mavencentral, build-containers, build-gradle-android]
+    # Run even if previous jobs were skipped but at least one succeeded
+    if: ${{ !failure() && !cancelled() && inputs['release-publisher'] == 'github-cli' }}
+    permissions:
+      contents: write
+      packages: read
+      id-token: write
+    secrets: inherit
+    uses: ./.github/workflows/release-github.yml
+    with:
+      release-name: "${{ github.ref_name }}"
+      checkout-ref: ${{ inputs.branch }}
+      attach-artifacts: ${{ inputs['release.attachartifacts'] }}
+      generate-sbom: ${{ inputs['release.generatesbom'] }}
+      sign-artifacts: ${{ inputs['release.signartifacts'] }}
+      draft: ${{ inputs['release.draft'] || needs.parse-config.outputs.is-draft-release == 'true' }}
+      project-type: ${{ needs.parse-config.outputs.first-project-type }}
+      changelog-config: ${{ inputs['changelog.config'] }}
+      make-latest: ${{ (inputs['release-type'] == 'stable' || (!inputs['release-type'] && !contains(github.ref_name, '-'))) && 'true' || 'false' }}
+  # Final summary
+  release-summary:
+    name: Release Summary
+    needs: [parse-config, version-and-changelog, build-maven, build-npm, build-gradle, build-gradle-android, publish-github, publish-mavencentral, build-containers, create-release]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Generate Release Summary
+        run: |
+          RELEASE_TIME=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          # Release Summary
+
+          ## Release Overview
+          | Property | Value |
+          |----------|-------|
+          | **Version** | `${{ github.ref_name }}` |
+          | **Branch** | `${{ inputs.branch }}` |
+          | **Commit** | `${{ github.sha }}` |
+          | **Released By** | @${{ github.actor }} |
+          EOF
+
+          echo "| **Released At** | $RELEASE_TIME |" >> $GITHUB_STEP_SUMMARY
+
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+
+          ## Job Status
+          | Job | Status |
+          |-----|--------|
+          EOF
+
+          echo "| Version Bump | ${{ needs.version-and-changelog.result == 'success' && '✓' || needs.version-and-changelog.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Maven | ${{ needs.build-maven.result == 'success' && '✓' || needs.build-maven.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build NPM | ${{ needs.build-npm.result == 'success' && '✓' || needs.build-npm.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Gradle | ${{ needs.build-gradle.result == 'success' && '✓' || needs.build-gradle.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Gradle Android | ${{ needs.build-gradle-android.result == 'success' && '✓' || needs.build-gradle-android.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Publish GitHub | ${{ needs.publish-github.result == 'success' && '✓' || needs.publish-github.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Publish Maven Central | ${{ needs.publish-mavencentral.result == 'success' && '✓' || needs.publish-mavencentral.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Containers | ${{ needs.build-containers.result == 'success' && '✓' || needs.build-containers.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| GitHub Release | ${{ needs.create-release.result == 'success' && '✓' || needs.create-release.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
+
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+
+          ## Resources
+          - [GitHub Release](https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }})
+          - [Packages](https://github.com/${{ github.repository }}/packages)
+          - [Workflow Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})

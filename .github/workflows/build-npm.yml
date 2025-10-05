@@ -1,0 +1,120 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# NPM Builder
+# 
+# Purpose: Builds NPM projects and uploads artifacts for subsequent publishing steps.
+# Separates build logic from registry-specific publishing.
+#
+# Build Process:
+#   1. Install dependencies (npm ci)
+#   2. Run tests (if configured)
+#   3. Build application (if build script exists)
+#   4. Upload built artifacts
+#
+# Outputs:
+#   - Artifacts uploaded as 'npm-build-artifacts' for use by publish-* workflows
+#
+# Required Permissions:
+#   contents: read  # Checkout code
+#
+name: Build NPM Project
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: "Node.js version"
+        required: true
+        type: string
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      skip-tests:
+        description: "Skip tests during build"
+        required: false
+        default: false
+        type: boolean
+      branch:
+        description: "Branch to checkout"
+        required: false
+        default: "main"
+        type: string
+permissions:
+  contents: read
+jobs:
+  build-npm:
+    name: Build NPM Project
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: ${{ inputs['node-version'] }}
+          cache: 'npm'
+          cache-dependency-path: ${{ inputs['working-directory'] }}/package-lock.json
+      - name: Get version info
+        id: version-info
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          NAME=$(node -p "require('./package.json').name")
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "NAME=${NAME}" >> "$GITHUB_OUTPUT"
+          echo "Package: ${NAME}@${VERSION}"
+      - name: Install dependencies
+        working-directory: ${{ inputs['working-directory'] }}
+        run: npm ci
+      - name: Run tests
+        if: ${{ !inputs['skip-tests'] }}
+        working-directory: ${{ inputs['working-directory'] }}
+        run: npm test || echo "::warning::No tests configured"
+      - name: Build application
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          if grep -q '"build"' package.json; then
+            echo "Running build script..."
+            npm run build
+          else
+            echo "No build script found, skipping build step"
+          fi
+      - name: List built artifacts
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          echo "Package contents:"
+          if [ -d "dist" ]; then
+            echo "dist/ directory:"
+            ls -lh dist/ || true
+          fi
+          if [ -d "build" ]; then
+            echo "build/ directory:"
+            ls -lh build/ || true
+          fi
+      - name: Upload NPM artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: npm-build-artifacts
+          path: |
+            ${{ inputs['working-directory'] }}/
+            !${{ inputs['working-directory'] }}/node_modules/
+            !${{ inputs['working-directory'] }}/.git/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Generate build summary
+        run: |
+          echo "## NPM Build Summary 🔨" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Package:** \`${{ steps.version-info.outputs.NAME }}@${{ steps.version-info.outputs.VERSION }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Node.js:** ${{ inputs['node-version'] }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tests:** ${{ inputs['skip-tests'] && '⊘ Skipped' || '✓ Executed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "*Build completed at $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY

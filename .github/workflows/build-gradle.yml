@@ -1,0 +1,150 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Gradle Builder
+# 
+# Purpose: Builds Gradle projects (Android/JVM) and uploads artifacts for subsequent
+# publishing steps. Separates build logic from registry-specific publishing.
+#
+# Build Process:
+#   1. Set up JDK and Android SDK (if needed)
+#   2. Run Gradle build tasks
+#   3. Optional: Sign Android APK/AAB
+#   4. Upload built artifacts
+#
+# Outputs:
+#   - Artifacts uploaded as 'gradle-build-artifacts' for use by publish-* workflows
+#
+# Required Permissions:
+#   contents: read  # Checkout code
+#
+name: Build Gradle Project
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: "Java version"
+        required: true
+        type: string
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      gradle-tasks:
+        description: "Gradle tasks to run"
+        required: false
+        default: "assemble"
+        type: string
+      build-module:
+        description: "Gradle module to build"
+        required: false
+        default: "app"
+        type: string
+      enable-signing:
+        description: "Enable Android app signing"
+        required: false
+        default: false
+        type: boolean
+      skip-tests:
+        description: "Skip tests during build"
+        required: false
+        default: false
+        type: boolean
+      branch:
+        description: "Branch to checkout"
+        required: false
+        default: "main"
+        type: string
+permissions:
+  contents: read
+jobs:
+  build-gradle:
+    name: Build Gradle Project
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+      - name: Set up JDK
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          distribution: 'temurin'
+          java-version: ${{ inputs['java-version'] }}
+          cache: 'gradle'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+      - name: Make gradlew executable
+        working-directory: ${{ inputs['working-directory'] }}
+        run: chmod +x ./gradlew
+      - name: Decode Android keystore
+        if: ${{ inputs['enable-signing'] }}
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.keystore
+            echo "✓ Android keystore decoded successfully"
+          else
+            echo "::error::ANDROID_KEYSTORE secret not found but enableSigning is true"
+            exit 1
+          fi
+      - name: Get version info
+        id: version-info
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          if [ -f "gradle.properties" ]; then
+            VERSION=$(grep "versionName=" gradle.properties | cut -d'=' -f2)
+            VERSION_CODE=$(grep "versionCode=" gradle.properties | cut -d'=' -f2)
+            echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "VERSION_CODE=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
+            echo "Version: ${VERSION} (${VERSION_CODE})"
+          else
+            echo "::warning::gradle.properties not found, version info unavailable"
+          fi
+      - name: Run Gradle build
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "Running Gradle tasks: ${{ inputs['gradle-tasks'] }}"
+          ./gradlew ${{ inputs['gradle-tasks'] }} ${{ inputs['skip-tests'] && '-x test' || '' }}
+      - name: List built artifacts
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          echo "Built artifacts:"
+          find ${{ inputs['build-module'] }}/build/outputs -type f \( -name "*.apk" -o -name "*.aab" -o -name "*.jar" \) -ls || echo "No artifacts found"
+      - name: Upload Gradle artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gradle-build-artifacts
+          path: |
+            ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/**/*.apk
+            ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/**/*.aab
+            ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/libs/*.jar
+          retention-days: 7
+          if-no-files-found: error
+      - name: Generate build summary
+        run: |
+          echo "## Gradle Build Summary 🔨" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Java:** ${{ inputs['java-version'] }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Module:** ${{ inputs['build-module'] }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tasks:** ${{ inputs['gradle-tasks'] }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tests:** ${{ inputs['skip-tests'] && '⊘ Skipped' || '✓ Executed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Signing:** ${{ inputs['enable-signing'] && '✓ Enabled' || '⊘ Disabled' }}" >> $GITHUB_STEP_SUMMARY
+
+          if [ -n "${{ steps.version-info.outputs.VERSION }}" ]; then
+            echo "- **Version:** ${{ steps.version-info.outputs.VERSION }} (${{ steps.version-info.outputs.VERSION_CODE }})" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "*Build completed at $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY

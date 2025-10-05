@@ -1,0 +1,141 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# GitHub Packages Publisher
+# 
+# Purpose: Publishes artifacts to GitHub Packages registry. Supports multiple package types
+# (Maven, NPM, Gradle) from a unified interface. Downloads pre-built artifacts from workflow
+# artifacts and publishes them to the appropriate GitHub Packages registry.
+#
+# Package Types Supported:
+#   - maven: Publishes to GitHub Maven registry (maven.pkg.github.com)
+#   - npm: Publishes to GitHub NPM registry (npm.pkg.github.com)
+#   - gradle: Publishes to GitHub Maven registry (maven.pkg.github.com)
+#
+# Inputs:
+#   - artifactSource: Name of workflow artifact containing built packages
+#   - packageType: Type of package (maven|npm|gradle)
+#
+# Required Secrets:
+#   GITHUB_TOKEN: Automatically provided by GitHub Actions
+#
+# Required Permissions:
+#   contents: read   # Download artifacts
+#   packages: write  # Publish to GitHub Packages
+#
+name: Publish to GitHub Packages
+on:
+  workflow_call:
+    inputs:
+      artifact-source:
+        description: "Name of workflow artifact containing built packages"
+        required: true
+        type: string
+      package-type:
+        description: "Package type: maven, npm, or gradle"
+        required: true
+        type: string
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      attach-pattern:
+        description: "Pattern for artifacts to attach to release"
+        required: false
+        default: ""
+        type: string
+      branch:
+        description: "Branch to checkout (default: main)"
+        required: false
+        default: "main"
+        type: string
+permissions:
+  contents: read
+jobs:
+  publish-github:
+    name: Publish to GitHub Packages (${{ inputs['package-type'] }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: main
+      - name: Download build artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: ${{ inputs['artifact-source'] }}
+          path: ${{ inputs['working-directory'] }}/target/
+      - name: List downloaded artifacts
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          echo "Downloaded artifacts:"
+          ls -lh target/ || echo "No artifacts found"
+      # Maven publishing
+      - name: Set up JDK for Maven
+        if: ${{ inputs['package-type'] == 'maven' || inputs['package-type'] == 'gradle' }}
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          server-id: github
+          server-username: GITHUB_ACTOR
+          server-password: GITHUB_TOKEN
+      - name: Publish Maven/Gradle to GitHub Packages
+        if: ${{ inputs['package-type'] == 'maven' || inputs['package-type'] == 'gradle' }}
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          echo "Publishing to GitHub Packages..."
+          mvn deploy:deploy-file \
+            -DgroupId=$(mvn help:evaluate -Dexpression=project.groupId -q -DforceStdout) \
+            -DartifactId=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout) \
+            -Dversion=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout) \
+            -Dpackaging=jar \
+            -Dfile=target/*.jar \
+            -DrepositoryId=github \
+            -Durl=https://maven.pkg.github.com/${{ github.repository }}
+      # NPM publishing
+      - name: Set up Node.js for NPM
+        if: ${{ inputs['package-type'] == 'npm' }}
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@${{ github.repository_owner }}'
+      - name: Publish NPM to GitHub Packages
+        if: ${{ inputs['package-type'] == 'npm' }}
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Publishing to GitHub NPM registry..."
+          npm publish
+      # Optional: Attach artifacts to GitHub release
+      - name: Upload artifacts to release
+        if: ${{ inputs['attach-pattern'] != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          for file in ${{ inputs['attach-pattern'] }}; do
+            if [ -f "$file" ]; then
+              echo "Uploading $file to release..."
+              gh release upload "${{ github.ref_name }}" "$file" --clobber || echo "::warning::Failed to upload $file"
+            fi
+          done
+      - name: Generate publish summary
+        run: |
+          echo "## Published to GitHub Packages 📦" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Package Type:** ${{ inputs['package-type'] }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry:** GitHub Packages" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** [${{ github.repository }}](https://github.com/${{ github.repository }}/packages)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "*Published at $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY

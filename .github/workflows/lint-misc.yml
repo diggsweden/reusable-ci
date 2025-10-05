@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2025 The Open Source Project Template Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+name: Mise And Just Verify
+on: [workflow_call]
+permissions:
+  contents: read
+jobs:
+  quality-checks:
+    name: Quality Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0 # Needed for commit linting
+      - name: Setup mise
+        uses: jdx/mise-action@e3d7b8d67a7958d1207f6ed871e83b1ea780e7b0 # v3.3.1
+        with:
+          install: true
+          cache: true
+          experimental: true # Required for go backend tools
+      - name: Install mise tools
+        run: |
+          mise install
+          mise list
+      - name: Just Verify
+        env:
+          SHELLCHECK_OPTS: --exclude=SC2086
+        run: |
+          # Activate mise to get tools in PATH
+          eval "$(mise activate bash)"
+          # Run verification
+          just lint

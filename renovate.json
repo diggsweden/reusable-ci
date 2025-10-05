@@ -1,0 +1,92 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "local>diggsweden/.github:renovate-base"
+  ],
+  "baseBranches": ["v2"],
+  "enabledManagers": [
+    "github-actions",
+    "mise",
+    "custom.regex"
+  ],
+  "packageRules": [
+    {
+      "description": "Group all mise tool dependencies",
+      "matchManagers": [
+        "mise"
+      ],
+      "addLabels": [
+        "tools"
+      ],
+      "groupName": "mise tools",
+      "groupSlug": "mise-tools"
+    },
+    {
+      "description": "Security and compliance tools",
+      "matchManagers": [
+        "mise"
+      ],
+      "matchPackageNames": [
+        "aqua:zricethezav/gitleaks",
+        "aqua:siderolabs/conform",
+        "aqua:rhysd/actionlint"
+      ],
+      "addLabels": [
+        "security-tools"
+      ],
+      "groupName": "security tools"
+    },
+    {
+      "description": "Documentation and build tools",
+      "matchManagers": [
+        "mise"
+      ],
+      "matchPackageNames": [
+        "aqua:google/yamlfmt",
+        "ubi:rvben/rumdl",
+        "github:italia/publiccode-parser-go",
+        "aqua:casey/just"
+      ],
+      "addLabels": [
+        "documentation"
+      ],
+      "groupName": "documentation tools"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/\\.github/workflows/.+\\.ya?ml$/"
+      ],
+      "description": "Update Docker image references in GitHub Actions",
+      "matchStrings": [
+        "uses:\\s+docker://(?<depName>[^:]+):(?<currentValue>[^@]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/scripts/sbom/.+\\.sh$/"
+      ],
+      "description": "Update Syft version in SBOM generation script",
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)[\\s\\n]+SYFT_VERSION=\"(?<currentValue>v[0-9.]+)\""
+      ],
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/\\.github/workflows/.+\\.ya?ml$/"
+      ],
+      "description": "Update Just version in workflow inputs",
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)[\\s\\n]+just-version:[\\s\\S]*?default:\\s*\"(?<currentValue>[0-9.]+)\""
+      ],
+      "versioningTemplate": "semver"
+    }
+  ]
+}

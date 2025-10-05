@@ -1,0 +1,250 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Pull Request Orchestrator
+# 
+# Purpose: Orchestrates all quality checks for pull requests and pushes, ensuring
+# code quality, security, and compliance before merging. Provides a configurable
+# set of linters and security scanners that can be toggled per project needs.
+#
+# How it works:
+# 1. Runs on every push to configured branches and on pull requests
+# 2. Executes enabled linters in parallel for faster feedback
+# 3. Performs security scanning (SAST, dependency checks, secret detection)
+# 4. Validates licenses for compliance
+# 5. Uploads results to GitHub Security tab for visibility
+#
+# Security controls:
+# - Secret detection to prevent credential leaks
+# - Dependency vulnerability scanning
+# - License compliance validation
+# - SAST (Static Application Security Testing)
+# - Results uploaded to GitHub Security dashboard
+#
+# Required Secrets:
+#   None required - uses GITHUB_TOKEN for operations
+#   Optional: Organization secrets for private package access
+#
+# Required Permissions:
+#   contents: read         # Read source code
+#   packages: read         # Access private packages
+#   security-events: write # Upload security findings
+#
+# Configurable Linters:
+#   linters.commitlint: Commit message linting (default: true)
+#   linters.licenselint: License compliance checking (default: true)
+#   linters.dependencyreview: Dependency vulnerability scan (default: true)
+#   linters.megalint: MegaLinter with 50+ linters (default: true)
+#   linters.publiccodelint: Publiccode.yml validation (default: false)
+#   linters.justmiselint: Just+mise-based linting (default: false)
+name: Pull Request Orchestrator
+on:
+  workflow_call:
+    inputs:
+      # Project configuration
+      project-type:
+        description: "Project type: maven, npm, python"
+        required: true
+        type: string
+      base-branch:
+        description: "Base branch for commit linting (auto-detects PR target if empty)"
+        required: false
+        default: ""
+        type: string
+      # Linter toggles (all can be disabled if needed)
+      linters.commitlint:
+        description: "Enable commit message linting"
+        required: false
+        default: true
+        type: boolean
+      linters.licenselint:
+        description: "Enable SPDX license header linting"
+        required: false
+        default: true
+        type: boolean
+      linters.dependencyreview:
+        description: "Enable dependency vulnerability review"
+        required: false
+        default: true
+        type: boolean
+      linters.megalint:
+        description: "Enable MegaLinter for  code quality checks"
+        required: false
+        default: true
+        type: boolean
+      linters.publiccodelint:
+        description: "Enable publiccode.yml linting (default: false - not all repos have this)"
+        required: false
+        default: false
+        type: boolean
+      linters.justmiselint:
+        description: "Enable just+mise-based linting (lightweight alternative to megalint)"
+        required: false
+        default: false
+        type: boolean
+permissions:
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+jobs:
+  # Commit message linting
+  commit-lint:
+    name: Commit Lint
+    if: ${{ inputs['linters.commitlint'] }}
+    uses: ./.github/workflows/lint-commit.yml
+    with:
+      base-branch: ${{ inputs['base-branch'] }}
+  # License header linting
+  license-lint:
+    name: License Lint
+    if: ${{ inputs['linters.licenselint'] }}
+    uses: ./.github/workflows/lint-license.yml
+  # Dependency security review
+  dependency-review:
+    name: Dependency Review
+    if: ${{ inputs['linters.dependencyreview'] }}
+    uses: ./.github/workflows/security-dependency-review.yml
+  #  linting with MegaLinter
+  megalint:
+    name: MegaLinter
+    if: ${{ inputs['linters.megalint'] }}
+    permissions:
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/lint-mega.yml
+  # Public code metadata linting
+  publiccode-lint:
+    name: Publiccode Lint
+    if: ${{ inputs['linters.publiccodelint'] }}
+    uses: ./.github/workflows/lint-publiccode.yml
+  # Just+mise-based linting
+  just-mise-lint:
+    name: Just+Mise Lint
+    if: ${{ inputs['linters.justmiselint'] }}
+    permissions:
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/lint-just-mise.yml
+  # Gather results from enabled linters (always runs to check status)
+  lint-status:
+    name: Lint Status Check
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [commit-lint, license-lint, dependency-review, megalint, publiccode-lint, just-mise-lint]
+    steps:
+      - name: Check lint results
+        run: |
+          echo "## Pull Request Check Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check each linter status
+          echo "### Linter Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Linter | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          # Commit lint
+          if [[ "${{ inputs['linters.commitlint'] }}" == "true" ]]; then
+            if [[ "${{ needs.commit-lint.result }}" == "success" ]]; then
+              echo "| Commit Lint | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
+            elif [[ "${{ needs.commit-lint.result }}" == "skipped" ]]; then
+              echo "| Commit Lint | − Skipped |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| Commit Lint | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| Commit Lint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # License lint
+          if [[ "${{ inputs['linters.licenselint'] }}" == "true" ]]; then
+            if [[ "${{ needs.license-lint.result }}" == "success" ]]; then
+              echo "| License Lint | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
+            elif [[ "${{ needs.license-lint.result }}" == "skipped" ]]; then
+              echo "| License Lint | − Skipped |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| License Lint | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| License Lint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Dependency review
+          if [[ "${{ inputs['linters.dependencyreview'] }}" == "true" ]]; then
+            if [[ "${{ needs.dependency-review.result }}" == "success" ]]; then
+              echo "| Dependency Review | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
+            elif [[ "${{ needs.dependency-review.result }}" == "skipped" ]]; then
+              echo "| Dependency Review | − Skipped |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| Dependency Review | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| Dependency Review | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # MegaLinter
+          if [[ "${{ inputs['linters.megalint'] }}" == "true" ]]; then
+            if [[ "${{ needs.megalint.result }}" == "success" ]]; then
+              echo "| MegaLinter | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
+            elif [[ "${{ needs.megalint.result }}" == "skipped" ]]; then
+              echo "| MegaLinter | − Skipped |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| MegaLinter | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| MegaLinter | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Publiccode lint
+          if [[ "${{ inputs['linters.publiccodelint'] }}" == "true" ]]; then
+            if [[ "${{ needs.publiccode-lint.result }}" == "success" ]]; then
+              echo "| Publiccode Lint | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
+            elif [[ "${{ needs.publiccode-lint.result }}" == "skipped" ]]; then
+              echo "| Publiccode Lint | − Skipped |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| Publiccode Lint | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| Publiccode Lint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Just+Mise lint
+          if [[ "${{ inputs['linters.justmiselint'] }}" == "true" ]]; then
+            if [[ "${{ needs.just-mise-lint.result }}" == "success" ]]; then
+              echo "| Just+Mise Lint | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
+            elif [[ "${{ needs.just-mise-lint.result }}" == "skipped" ]]; then
+              echo "| Just+Mise Lint | − Skipped |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| Just+Mise Lint | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| Just+Mise Lint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Check if any enabled linter failed
+          FAILED=false
+          if [[ "${{ inputs['linters.commitlint'] }}" == "true" ]] && [[ "${{ needs.commit-lint.result }}" == "failure" ]]; then
+            FAILED=true
+          fi
+          if [[ "${{ inputs['linters.licenselint'] }}" == "true" ]] && [[ "${{ needs.license-lint.result }}" == "failure" ]]; then
+            FAILED=true
+          fi
+          if [[ "${{ inputs['linters.dependencyreview'] }}" == "true" ]] && [[ "${{ needs.dependency-review.result }}" == "failure" ]]; then
+            FAILED=true
+          fi
+          if [[ "${{ inputs['linters.megalint'] }}" == "true" ]] && [[ "${{ needs.megalint.result }}" == "failure" ]]; then
+            FAILED=true
+          fi
+          if [[ "${{ inputs['linters.publiccodelint'] }}" == "true" ]] && [[ "${{ needs.publiccode-lint.result }}" == "failure" ]]; then
+            FAILED=true
+          fi
+          if [[ "${{ inputs['linters.justmiselint'] }}" == "true" ]] && [[ "${{ needs.just-mise-lint.result }}" == "failure" ]]; then
+            FAILED=true
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [[ "$FAILED" == "true" ]]; then
+            echo "### ✗ Some checks failed" >> $GITHUB_STEP_SUMMARY
+            echo "Please review the failures above and fix any issues." >> $GITHUB_STEP_SUMMARY
+            echo "Note: Individual linter failures are shown above. This status job always succeeds to provide summary." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ✓ All enabled checks passed" >> $GITHUB_STEP_SUMMARY
+          fi
