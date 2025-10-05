@@ -1,0 +1,50 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+
+// Package git holds the plain DTOs that cross the git-port boundary.
+// Adapters (internal/adapters/git) implement the port and produce/consume
+// these values; use cases (internal/app/{version,summary,...}) reference
+// them in their consumer-defined interfaces without importing the
+// adapter. Mirrors the precedent set by internal/domain/provider for the
+// provider port.
+package git
+
+// CommitInput captures the bits a use case needs to drive `git commit`.
+type CommitInput struct {
+	Message     string
+	MessageFile string
+	AuthorName  string
+	AuthorEmail string
+	Sign        bool
+	Signoff     bool
+	NoVerify    bool
+	NoHooks     bool
+}
+
+// BranchPushInput publishes one captured commit to origin's literal branch,
+// only if that branch still points at ExpectedSHA. Both SHAs must be full OIDs.
+type BranchPushInput struct {
+	CommitSHA   string
+	Branch      string
+	ExpectedSHA string
+}
+
+// CommitInfo is the result of a CommitInfo lookup. Author is "Name <email>";
+// Date is YYYY-MM-DD; Message is the commit subject line; Body is the raw
+// `git cat-file commit` output (used by callers that need to detect GPG /
+// SSH signatures in the trailer block).
+type CommitInfo struct {
+	Author  string
+	Date    string
+	Message string
+	Body    string
+}
+
+// TaggerInfo is the result of a TaggerInfo lookup on an annotated tag.
+// Tagger is "Name <email>"; Date is the tagger date. Mirrors CommitInfo
+// for the tag-object metadata path so callers get a self-describing value
+// instead of a positional (string, string) pair.
+type TaggerInfo struct {
+	Tagger string
+	Date   string
+}

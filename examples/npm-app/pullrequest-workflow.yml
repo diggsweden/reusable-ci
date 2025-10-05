@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+name: Pull Request Workflow
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pr-checks:
+    uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@v3.0.0
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: read
+    with:
+      reusable-ci-binary-ref: v3.0.0
+      project-type: npm
+      # Default lint engine: nanolinter (runs `nanolinter verify` from your nanolinter.toml)
+      lint-engine: nanolinter
+
+  # Project-specific test jobs remain caller-owned.

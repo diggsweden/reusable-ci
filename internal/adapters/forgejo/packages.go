@@ -1,0 +1,77 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+
+package forgejo
+
+import (
+	"context"
+	"fmt"
+
+	"code.gitea.io/sdk/gitea"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+)
+
+const forgejoPackagePageSize = 50
+
+// ListContainerPackageVersions returns every version for one container
+// package. It satisfies the provider.ContainerPackageLister port role.
+//
+// Deliberately the owner-level ListPackages route (one entry per package
+// version, filtered by type + name query): the SDK's ListPackageVersions
+// hits GET /packages/{owner}/{type}/{name}, a Gitea-only route Forgejo
+// does not serve — Forgejo answers it with a literal "404 page not
+// found" (v0.8.6 cleanup sweep, run 336). The q filter is a substring
+// match, so the exact-name filter below still decides membership.
+func (p *Provider) ListContainerPackageVersions(ctx context.Context, owner, name string) ([]string, error) {
+	client, err := p.client(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	versions := make([]string, 0)
+
+	for page := 1; ; page++ {
+		packages, resp, err := client.ListPackages(owner, gitea.ListPackagesOptions{
+			ListOptions: gitea.ListOptions{Page: page, PageSize: forgejoPackagePageSize},
+			Type:        "container",
+			Q:           name,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("forgejo list container package versions %s/%s: %w", owner, name, classifyErr(resp, err))
+		}
+
+		if len(packages) == 0 {
+			break
+		}
+
+		versions = appendContainerPackageVersions(versions, packages, name)
+
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+
+		// A server repeating its Link header would otherwise be followed
+		// until the job timed out, collecting the same page each time.
+		if resp.NextPage <= page {
+			return nil, fmt.Errorf("forgejo list container package versions %s/%s: next page %d does not advance past page %d: %w",
+				owner, name, resp.NextPage, page, errs.ErrMalformedInput)
+		}
+
+		page = resp.NextPage - 1
+	}
+
+	return versions, nil
+}
+
+// appendContainerPackageVersions appends the versions of every container
+// package matching name to versions.
+func appendContainerPackageVersions(versions []string, packages []*gitea.Package, name string) []string {
+	for _, pkg := range packages {
+		if pkg != nil && pkg.Type == "container" && pkg.Name == name && pkg.Version != "" {
+			versions = append(versions, pkg.Version)
+		}
+	}
+
+	return versions
+}

@@ -1,0 +1,238 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+
+package validate
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"sort"
+	"strings"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+)
+
+// No default remote or subject: the engine must not assume one org's
+// reusable-workflow repo. The caller supplies --remote (or a local --repo-dir)
+// and --subject (the pin slug to scan for).
+const defaultPinMain = "main"
+
+// PinGitOps is the slice of internal/adapters/git.Repo this check needs from
+// an opened clone. Same rationale as gitOps in tags.go: a small interface
+// keeps tests fake-able without importing the real adapter.
+type PinGitOps interface {
+	RevParse(ctx context.Context, ref string) (string, error)
+	IsAncestor(ctx context.Context, ancestor, descendant string) (bool, error)
+	ListTags(ctx context.Context, pattern string) ([]string, error)
+	TagSHA(ctx context.Context, tag string) (string, error)
+}
+
+// PinGit supplies this check's git access. Unlike the other validate use
+// cases it cannot take a ready-made repo: the directory under test may be a
+// clone that only exists once we know there are pins worth checking, so the
+// composition root passes a factory instead. Clone materialises --remote,
+// Open binds to the resulting directory.
+type PinGit interface {
+	Clone(ctx context.Context, remote, dir string) error
+	Open(dir string) PinGitOps
+}
+
+// PinReachabilityInput drives `validate pin-reachability`.
+type PinReachabilityInput struct {
+	Workflows []string
+	Remote    string
+	RepoDir   string
+	Main      string
+	Subject   string
+	TempDir   string
+}
+
+// PinReachability fails when any pinned reusable-workflow SHA is not reachable
+// from the configured main branch and is not the commit pointed to by any tag.
+// This catches history-rewrite/orphaned-pin failures while the git object may
+// still be resolvable before server-side GC.
+//
+//nolint:cyclop // linear validate→collect→clone→check flow; splitting it would obscure the sequence.
+func PinReachability(ctx context.Context, gitrepo PinGit, out io.Writer, in PinReachabilityInput) error {
+	if len(in.Workflows) == 0 {
+		return fmt.Errorf("usage: validate pin-reachability --workflow WORKFLOW.yml [--workflow WORKFLOW.yml ...]: %w", errs.ErrUsage)
+	}
+
+	mainBranch := defaultString(in.Main, defaultPinMain)
+
+	subject := in.Subject
+	if subject == "" {
+		return fmt.Errorf("validate pin-reachability: --subject is required (the reusable-workflow pin slug to scan for): %w", errs.ErrUsage)
+	}
+
+	pins, err := collectPinReachabilitySHAs(in.Workflows, subject)
+	if err != nil {
+		return err
+	}
+
+	if len(pins) == 0 {
+		_, _ = fmt.Fprintf(out, "No %s pins found in the given files.\n", subject)
+		_, _ = fmt.Fprintf(out, "%s No %s pins to check.\n", clicolor.Check(out), subject)
+
+		return nil
+	}
+
+	repoDir := in.RepoDir
+	if repoDir == "" {
+		if strings.TrimSpace(in.Remote) == "" {
+			return fmt.Errorf("validate pin-reachability: provide --remote (the %s upstream to clone) or --repo-dir (a local clone): %w", subject, errs.ErrUsage)
+		}
+
+		repoDir, err = clonePinReachabilityRepo(ctx, gitrepo, in.Remote, in.TempDir)
+		if err != nil {
+			return err
+		}
+
+		defer func() { _ = os.RemoveAll(repoDir) }() //nolint:gosec // the clone dir this call created under the temp root.
+	}
+
+	repo := gitrepo.Open(repoDir)
+
+	mainRef := "origin/" + mainBranch
+	if _, revErr := repo.RevParse(ctx, mainRef+"^{commit}"); revErr != nil {
+		mainRef = mainBranch
+	}
+
+	_, _ = fmt.Fprintf(out, "Checking %s pin reachability against %s (%d distinct pin(s))\n\n", subject, mainRef, len(pins))
+
+	failures, err := reportPinReachability(ctx, out, repo, pins, subject, mainRef)
+	if err != nil {
+		return err
+	}
+
+	if failures > 0 {
+		return fmt.Errorf("%d orphaned %s pin(s): %w", failures, subject, errs.ErrValidation)
+	}
+
+	_, _ = fmt.Fprintf(out, "\n%s All %s pins are reachable.\n", clicolor.Check(out), subject)
+
+	return nil
+}
+
+// reportPinReachability prints the per-pin reachability verdicts and returns
+// the number of orphaned pins.
+func reportPinReachability(ctx context.Context, out io.Writer, repo PinGitOps, pins []string, subject, mainRef string) (int, error) {
+	failures := 0
+
+	for _, sha := range pins {
+		reachable, err := pinReachable(ctx, repo, sha, mainRef)
+		if err != nil {
+			return failures, err
+		}
+
+		if reachable {
+			_, _ = fmt.Fprintf(out, "%s reachable: %s@%s\n", clicolor.Check(out), subject, sha)
+
+			continue
+		}
+
+		failures++
+		_, _ = fmt.Fprintf(out, "%s ORPHANED: %s@%s is not reachable from %s nor any tag; re-pin to a current commit/tag.\n", clicolor.Cross(out), subject, sha, mainRef)
+	}
+
+	return failures, nil
+}
+
+func defaultString(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+
+	return value
+}
+
+func collectPinReachabilitySHAs(files []string, subject string) ([]string, error) {
+	seen := map[string]bool{}
+
+	for _, file := range files {
+		data, err := os.ReadFile(file) //nolint:gosec // operator-supplied workflow path.
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", file, err)
+		}
+
+		usesValues, err := yamlMappingScalarValues(data, "uses")
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", file, err)
+		}
+
+		for _, uses := range usesValues {
+			if sha := pinnedSubjectSHA(uses, subject); sha != "" {
+				seen[sha] = true
+			}
+		}
+	}
+
+	out := make([]string, 0, len(seen))
+	for sha := range seen {
+		out = append(out, sha)
+	}
+
+	sort.Strings(out)
+
+	return out, nil
+}
+
+func clonePinReachabilityRepo(ctx context.Context, gitrepo PinGit, remote, tempDir string) (string, error) {
+	// tempDir arrives from --temp-dir ($CI_TEMP_DIR, $RUNNER_TEMP). Reading
+	// the environment here instead would see only $RUNNER_TEMP, answering
+	// differently than every other command on a runner that sets the
+	// forge-neutral name.
+	if tempDir == "" {
+		tempDir = os.TempDir()
+	}
+
+	dir, err := os.MkdirTemp(tempDir, "reusable-ci-pins.*")
+	if err != nil {
+		return "", fmt.Errorf("create temporary clone dir: %w", err)
+	}
+
+	if err := gitrepo.Clone(ctx, remote, dir); err != nil {
+		_ = os.RemoveAll(dir)
+
+		return "", fmt.Errorf("clone %s to check pin reachability: %w", remote, err)
+	}
+
+	return dir, nil
+}
+
+func pinReachable(ctx context.Context, repo PinGitOps, sha, mainRef string) (bool, error) {
+	if _, err := repo.RevParse(ctx, sha+"^{commit}"); err != nil {
+		return false, nil //nolint:nilerr // an unresolvable SHA is simply "not reachable", not a failure.
+	}
+
+	ancestor, err := repo.IsAncestor(ctx, sha, mainRef)
+	if err == nil && ancestor {
+		return true, nil
+	}
+
+	tags, err := repo.ListTags(ctx, "")
+	if err != nil {
+		return false, fmt.Errorf("list tags: %w", err)
+	}
+
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+
+		tagSHA, err := repo.TagSHA(ctx, tag)
+		if err != nil {
+			return false, fmt.Errorf("resolve tag %s: %w", tag, err)
+		}
+
+		if tagSHA == sha {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}

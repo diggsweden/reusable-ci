@@ -1,0 +1,256 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+# Version Bump
+#
+# Purpose: Automates version management for releases. Updates version files,
+# downloads generated changelogs, and commits all changes back to the repository
+# with proper signing.
+#
+# Runs inside a runtime image chosen by the caller per project-type:
+# Maven/Gradle workflows pass runtime-java-25; NPM passes runtime-node-24;
+# cargo passes runtime-rust-stable; others (xcode-ios, gradle-android) use
+# the base image since their bumps are sed-only.
+#
+# Toolchain caches are warmed by the actual build workflows (build-maven,
+# build-npm, …) on the next stage. Pre-warming here was nice-to-have under
+# the old setup-java/setup-node model; with images, the build workflows
+# get the cache hit themselves.
+#
+# How it works:
+# 1. Detects current version from pom.xml or package.json
+# 2. Determines new version based on tag and release type
+# 3. Downloads pre-generated changelogs (full and minimal)
+# 4. Updates version in project files
+# 5. Commits and signs changes with GPG
+# 6. Pushes changes back to repository
+#
+# Required Secrets:
+#   GITHUB_TOKEN: For repository operations (or custom bot token)
+#   RELEASE_GPG_PRIVATE_KEY / RELEASE_GPG_PASSPHRASE: GPG key for signing commits
+#
+# Required Permissions:
+#   actions: read   # Download generated changelog artifacts
+#   contents: write  # Update version files and push commits
+name: Bump Version
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    outputs:
+      bump-sha:
+        description: "Informational: the bump commit SHA this leg produced. The release tag is NOT created here — release-prepare-stage.yml's tag-release job creates it once, after the whole matrix, at the branch HEAD carrying every artifact's bump."
+        value: ${{ jobs.bump-version.outputs.bump-sha }}
+    inputs:
+      branch:
+        description: "Explicit branch to checkout, update, and push"
+        required: true
+        type: string
+      project-type:
+        description: "Project type: maven, npm, gradle, gradle-android, xcode-ios, cargo"
+        required: true
+        type: string
+      gradle-version-file:
+        description: "Path to Gradle version file (default: gradle.properties)"
+        required: false
+        default: 'gradle.properties'
+        type: string
+      xcode-version-file:
+        description: "Path to Xcode version xcconfig file (default: versions.xcconfig)"
+        required: false
+        default: 'versions.xcconfig'
+        type: string
+      working-directory:
+        description: "Working directory for the project"
+        required: false
+        default: '.'
+        type: string
+      file-pattern:
+        description: 'Files to commit during version bump (auto-detected based on project-type if not provided)'
+        required: false
+        type: string
+        default: ""
+      runtime-image:
+        description: "reusable-ci runtime image to run inside. Caller picks based on project-type — runtime-java-25 for maven/gradle/gradle-android, runtime-node-24 for npm, runtime-rust-stable for cargo, runtime-base for xcode-ios. Default works for the sed-only bumps."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+        type: string
+      git-signing-method:
+        description: "How to sign the release commit + tag: gpg (default; imports RELEASE_GPG_PRIVATE_KEY) or ssh (RELEASE_SSH_SIGNING_KEY, no OpenPGP key on the runner). Caller passes fromJSON(config-plan-json).git_signing.method."
+        required: false
+        default: "gpg"
+        type: string
+      committer-name:
+        description: "Committer display name for the bump commit when git-signing-method=ssh (cosmetic). Unused for gpg, which derives the identity from the key's UID."
+        required: false
+        default: ""
+        type: string
+      committer-email:
+        description: "Committer email for the bump commit when git-signing-method=ssh. NOT cosmetic: SSH-signed tags/commits verify with ssh-keygen -Y verify, whose principal is this email matched against .reusable-ci/allowed_signers — it MUST be listed there or `validate tag signature` fails. Unused for gpg (verification keys off the GPG fingerprint, not the email)."
+        required: false
+        default: ""
+        type: string
+    # All `required: false` — callers using `secrets: inherit`
+    # continue to work. Declarations exist for discoverability +
+    # tooling validation.
+    secrets:
+      RELEASE_GPG_PRIVATE_KEY:
+        description: "Armored OpenPGP private key for signing the version-bump commit"
+        required: false
+      RELEASE_GPG_PASSPHRASE:
+        description: "Passphrase for RELEASE_GPG_PRIVATE_KEY"
+        required: false
+      RELEASE_TOKEN:
+        description: "Token with contents:write permission for pushing the version-bump commit"
+        required: false
+      RELEASE_SSH_SIGNING_KEY:
+        description: "OpenSSH private key for signing the release commit + tag when git-signing-method=ssh"
+        required: false
+permissions:
+  contents: read # Default permission; the job uses RELEASE_TOKEN for pushes.
+jobs:
+  # Generate full changelog for committing to repository
+  generate-full-changelog:
+    name: Generate Full Changelog
+    permissions:
+      contents: read
+    uses: ./.github/workflows/generate-changelog.yml
+    with:
+      branch: ${{ inputs.branch }}
+      runtime-image: ${{ inputs['runtime-image'] }}
+      upload-as-artifact: true
+      changelog-config: "/opt/reusable-ci/templates/gitcliff/keepachangelog.toml"
+      git-cliff-args: "" # Empty means full history
+      output-file: "CHANGELOG.md"
+      artifact-name: "full-changelog"
+  # Generate minimal changelog for commit message
+  generate-minimal-changelog:
+    name: Generate Minimal Commit Changelog
+    permissions:
+      contents: read
+    uses: ./.github/workflows/generate-changelog.yml
+    with:
+      branch: ${{ inputs.branch }}
+      runtime-image: ${{ inputs['runtime-image'] }}
+      upload-as-artifact: true
+      changelog-config: "/opt/reusable-ci/templates/gitcliff/minimal.toml"
+      git-cliff-args: "--latest --strip header"
+      output-file: "minimal-changelog.txt"
+      artifact-name: "minimal-changelog"
+  bump-version:
+    name: Bump Version and Commit
+    needs: [generate-full-changelog, generate-minimal-changelog]
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      actions: read
+      contents: write
+    outputs:
+      bump-sha: ${{ steps.bump-sha.outputs.sha }}
+    steps:
+      # Defense-in-depth: refuse PR-context triggers. RELEASE_TOKEN and
+      # RELEASE_GPG_PRIVATE_KEY are consumed by this job; must never run
+      # with PR-HEAD code. reusable-ci is pre-baked in the runtime image.
+      - name: Refuse PR-context trigger (publish/release secrets in scope)
+        run: reusable-ci validate event-context
+      - name: Checkout repository
+        env:
+          # Keep checkout on the read-only job token. The bump commit and release
+          # tag use RELEASE_TOKEN; its repository and operation scope are the
+          # operator's responsibility.
+          GITHUB_TOKEN: ${{ github.token }}
+          CHECKOUT_REF: ${{ inputs.branch }}
+          CHECKOUT_FETCH_ALL_REFS: "true"
+        run: reusable-ci platform checkout
+      - name: Derive release context from request tag
+        id: relctx
+        # The human pushed a signed `release-request/vX.Y.Z` tag (the
+        # immutable, allowlist-verified anchor). The CLI derives the final
+        # release tag/version and the original-tagger commit trailers — no ref
+        # parsing in bash. The request tag is never moved or deleted.
+        run: reusable-ci version derive-release
+      - name: Import GPG key
+        id: import-gpg
+        if: ${{ inputs['git-signing-method'] != 'ssh' }}
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          GIT_USER_SIGNINGKEY: "true"
+          GIT_COMMIT_GPGSIGN: "true"
+          REUSABLE_CI_GIT_CONFIG_GLOBAL: "true"
+        run: reusable-ci release gpg import
+      - name: Set up SSH signing
+        if: ${{ inputs['git-signing-method'] == 'ssh' }}
+        env:
+          SSH_SIGNING_KEY: ${{ secrets.RELEASE_SSH_SIGNING_KEY }}
+          COMMIT_AUTHOR_NAME: ${{ inputs['committer-name'] }}
+          COMMIT_AUTHOR_EMAIL: ${{ inputs['committer-email'] }}
+          GIT_COMMIT_GPGSIGN: "true"
+          REUSABLE_CI_GIT_CONFIG_GLOBAL: "true"
+        run: reusable-ci release ssh setup
+      - name: Bump project version
+        env:
+          PROJECT_TYPE: ${{ inputs['project-type'] }}
+          MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+          GRADLE_VERSION_FILE: ${{ inputs['gradle-version-file'] }}
+          XCODE_VERSION_FILE: ${{ inputs['xcode-version-file'] }}
+        run: |
+          VERSION="${{ steps.relctx.outputs.version }}" reusable-ci version bump
+      - name: Download Full Changelog
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: full-changelog
+          ARTIFACT_DIR: ${{ inputs['working-directory'] }}
+        run: reusable-ci artifact download
+      - name: Verify Full Changelog
+        working-directory: ${{ inputs['working-directory'] }}
+        run: reusable-ci validate changelog --path CHANGELOG.md --required
+      - name: Download Minimal Changelog
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: minimal-changelog
+          ARTIFACT_DIR: ${{ inputs['working-directory'] }}
+        run: reusable-ci artifact download
+      - name: Read Minimal Changelog
+        id: minimal-changelog
+        working-directory: ${{ inputs['working-directory'] }}
+        run: reusable-ci validate changelog --path minimal-changelog.txt
+      - name: Determine file pattern
+        id: file-pattern
+        env:
+          EXPLICIT_FILE_PATTERN: ${{ inputs['file-pattern'] }}
+          PROJECT_TYPE: ${{ inputs['project-type'] }}
+        run: reusable-ci version file-pattern
+      - name: Commit and Push Changes
+        env:
+          BRANCH: ${{ inputs.branch }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          # gpg derives the committer from the imported key; ssh has no key
+          # identity, so fall back to the caller-supplied committer inputs.
+          COMMIT_AUTHOR_NAME: ${{ steps.import-gpg.outputs.name || inputs['committer-name'] }}
+          COMMIT_AUTHOR_EMAIL: ${{ steps.import-gpg.outputs.email || inputs['committer-email'] }}
+          COMMIT_MESSAGE: |
+            chore(release): ${{ steps.relctx.outputs.release-tag }}
+
+            ${{ steps.minimal-changelog.outputs.content }}
+
+            ${{ steps.relctx.outputs.commit-trailers }}
+            [skip ci]
+          FILE_PATTERN: ${{ steps.file-pattern.outputs.pattern }}
+        run: reusable-ci version commit-push
+      # The release tag is NOT created here. In a multi-artifact release each
+      # matrix leg bumps a different artifact; tagging per leg would either
+      # fail (tag exists) or point at an early leg's commit, missing later
+      # bumps. release-prepare-stage.yml's tag-release job creates the tag
+      # once, after the whole matrix, at the branch HEAD carrying every bump.
+      - name: Capture bump commit SHA (informational)
+        id: bump-sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Cleanup GPG key
+        if: ${{ always() && inputs['git-signing-method'] != 'ssh' }}
+        env:
+          GPG_FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
+        run: reusable-ci release gpg cleanup
+      - name: Cleanup SSH signing key
+        if: ${{ always() && inputs['git-signing-method'] == 'ssh' }}
+        run: reusable-ci release ssh cleanup

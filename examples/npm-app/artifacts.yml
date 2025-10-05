@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# Example: Simple NPM Application with Container
+sign:
+  method: sigstore
+
+artifacts:
+  - name: my-app
+    project-type: npm
+    working-directory: .
+    publish-to:
+      - forge-packages
+    config:
+      node-version: 24
+containers:
+  - name: my-app
+    from: [my-app]
+    container-file: Containerfile
+    context: .
+    platforms: linux/amd64,linux/arm64
+    enable-slsa: true
+    enable-scan: true
+    # analyzed-container SBOM scan is derived from each source artefact's `sboms`.

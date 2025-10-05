@@ -1,0 +1,217 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+
+package version
+
+import (
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+)
+
+// UpdatePropertyResult tags whether the line was rewritten in place
+// (Updated) or appended at the end (Added). The bash logged both cases
+// distinctly so callers can mirror that.
+type UpdatePropertyResult int
+
+// Recognised UpdatePropertyResult values.
+const (
+	UpdatePropertyUpdated UpdatePropertyResult = iota
+	UpdatePropertyAdded
+)
+
+// UpdateOrAddProperty rewrites the first exact property key (case-sensitive,
+// anchored, with optional whitespace before sep) to `key<sep><value>`, or
+// appends a new line if no match.
+//
+// Returns the new body, a result tag, and whether any change was made
+// (true unless the key already had exactly that value).
+func UpdateOrAddProperty(body, key, value, sep string) (string, UpdatePropertyResult) {
+	lines := strings.Split(body, "\n")
+	for index, line := range lines {
+		// The key may be indented, and the separator may carry spaces the
+		// file did not: "versionCode = 41" is the same property as
+		// "versionCode=41". Rewriting keeps the indentation it found.
+		trimmed := strings.TrimLeft(line, " \t")
+		if strings.HasPrefix(trimmed, key) && strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(trimmed, key)), strings.TrimSpace(sep)) {
+			lines[index] = line[:len(line)-len(trimmed)] + key + sep + value
+
+			return strings.Join(lines, "\n"), UpdatePropertyUpdated
+		}
+	}
+	// Append. Preserve the body's trailing newline shape: if the input
+	// ends with "\n" the appended line ends with "\n" too.
+	suffix := key + sep + value + "\n"
+	if !strings.HasSuffix(body, "\n") && body != "" {
+		suffix = "\n" + suffix
+	}
+
+	return body + suffix, UpdatePropertyAdded
+}
+
+// IncrementVersionCodeResult reports whether the existing versionCode
+// was incremented (with old / new) or whether a new versionCode=1
+// line was appended.
+type IncrementVersionCodeResult struct {
+	Body  string
+	Old   int
+	New   int
+	Added bool // true → "versionCode=1" appended
+}
+
+var versionCodeLine = regexp.MustCompile(`(?m)^[ \t]*versionCode[ \t]*=[ \t]*([^\s]*)`)
+
+// IncrementVersionCode reads the first `versionCode=N` line from body,
+// rewrites it with N+1, and returns the new body. When no
+// `versionCode=` line exists, appends `versionCode=1`.
+//
+// Mirrors `increment_version_code` helper. A non-numeric value
+// is treated as 0 (the bash's `tr -d ' '` + arithmetic would fail on
+// non-numerics; this is a stricter, defined behaviour).
+func IncrementVersionCode(body string) IncrementVersionCodeResult {
+	m := versionCodeLine.FindStringSubmatchIndex(body) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	if m == nil {
+		// Append.
+		out, _ := UpdateOrAddProperty(body, "versionCode", "1", "=")
+
+		return IncrementVersionCodeResult{Body: out, Old: 0, New: 1, Added: true}
+	}
+
+	rawValue := body[m[2]:m[3]]
+	cur, _ := strconv.Atoi(strings.TrimSpace(rawValue))
+	next := cur + 1
+
+	out := body[:m[0]] + "versionCode=" + strconv.Itoa(next) + body[m[1]:]
+
+	return IncrementVersionCodeResult{Body: out, Old: cur, New: next}
+}
+
+var gradleJVMVersionLine = regexp.MustCompile(`(?m)^[ \t]*version[ \t]*=.*`)
+
+// UpdateGradleJVMVersion rewrites the first `^version=` line to the
+// given version, or appends one if none exists. Mirrors the JVM gradle
+// branch of bump-version.sh — strictly anchored on `version=` (with
+// separator) so `versionName=` / `versionCode=` are not affected.
+func UpdateGradleJVMVersion(body, version string) (string, UpdatePropertyResult) {
+	// Properties interpret backslashes as escapes, including line continuation.
+	version = strings.ReplaceAll(version, `\`, `\\`)
+
+	if gradleJVMVersionLine.MatchString(body) {
+		return gradleJVMVersionLine.ReplaceAllStringFunc(body, func(string) string { return "version=" + version }), UpdatePropertyUpdated
+	}
+
+	suffix := "version=" + version + "\n"
+	if !strings.HasSuffix(body, "\n") && body != "" {
+		suffix = "\n" + suffix
+	}
+
+	return body + suffix, UpdatePropertyAdded
+}
+
+// UpdateXcodeMarketingVersion rewrites the first
+// `^MARKETING_VERSION = ` line to the new value, or appends a new line
+// when no match. Used for versions.xcconfig.
+func UpdateXcodeMarketingVersion(body, version string) (string, UpdatePropertyResult) {
+	return UpdateOrAddProperty(body, "MARKETING_VERSION", version, " = ")
+}
+
+// CargoSection identifies which Cargo.toml section drives the version.
+// Workspaces win when both [workspace.package] and [package] exist.
+type CargoSection int
+
+// Recognised CargoSection values.
+const (
+	CargoSectionNone CargoSection = iota
+	CargoSectionWorkspacePackage
+	CargoSectionPackage
+)
+
+const (
+	cargoWorkspaceHeader = "[workspace.package]"
+	cargoPackageHeader   = "[package]"
+)
+
+// cargoVersionLine matches a top-level `version = ...` line in Cargo.toml.
+// Regex pattern stored as a package var rather than rebuilt per call so
+// MustCompile runs once at init; the value is read-only.
+//
+//nolint:gochecknoglobals // precompiled regex is the idiomatic shape.
+var cargoVersionLine = regexp.MustCompile(`(?m)^version[[:space:]]*=.*`)
+
+// UpdateCargoVersion finds the active version section ([workspace.package]
+// preferred, [package] as fallback) and rewrites the first `version =`
+// line within that section's body. Mirrors the sed range expressions in
+// bump-version.sh's cargo branch.
+//
+// Returns the section that was rewritten (NotFound when neither header
+// is present) and the new body.
+//
+//nolint:cyclop // manifest section selection and exact replacement are one parser.
+func UpdateCargoVersion(body, version string) (string, CargoSection, error) {
+	if !utf8.ValidString(version) {
+		return body, CargoSectionNone, fmt.Errorf("cargo version must be valid UTF-8: %w", errs.ErrValidation)
+	}
+	// Keep the double-quoted layout using JSON's basic-string escapes. TOML
+	// additionally requires escaping DEL, which JSON permits as a literal byte.
+	encoded, err := json.Marshal(version)
+	if err != nil {
+		return body, CargoSectionNone, fmt.Errorf("encode cargo version: %w: %w", err, errs.ErrValidation)
+	}
+
+	var section CargoSection
+
+	switch {
+	case strings.Contains(body, cargoWorkspaceHeader):
+		section = CargoSectionWorkspacePackage
+	case strings.Contains(body, cargoPackageHeader):
+		section = CargoSectionPackage
+	default:
+		return body, CargoSectionNone, fmt.Errorf("cargo manifest has neither [package] nor [workspace.package] sections"+": %w", errs.ErrValidation)
+	}
+
+	header := cargoWorkspaceHeader
+	if section == CargoSectionPackage {
+		header = cargoPackageHeader
+	}
+
+	// Find the section's body range: [start of section line ... start of
+	// next "[" line], matching the sed `/header/,/^\[/` range.
+	start := strings.Index(body, header)
+	// Skip past the header line.
+	headerEnd := start + len(header)
+	if nl := strings.IndexByte(body[headerEnd:], '\n'); nl >= 0 {
+		headerEnd += nl + 1
+	} else {
+		// Header is the last line — nothing to rewrite.
+		return body, section, fmt.Errorf("section %s has no body: %w", header, errs.ErrValidation)
+	}
+
+	// Find the next "[" at line start.
+	rest := body[headerEnd:]
+
+	endOffset := len(rest)
+	for i := range len(rest) {
+		if rest[i] == '\n' && i+1 < len(rest) && rest[i+1] == '[' {
+			endOffset = i + 1
+
+			break
+		}
+	}
+
+	sectionBody := rest[:endOffset]
+	tail := rest[endOffset:]
+
+	location := cargoVersionLine.FindStringIndex(sectionBody)
+	if location == nil {
+		return body, section, fmt.Errorf("section %s has no version field: %w", header, errs.ErrValidation)
+	}
+
+	newSection := sectionBody[:location[0]] + "version = " + strings.ReplaceAll(string(encoded), "\x7f", `\u007f`) + sectionBody[location[1]:]
+
+	return body[:headerEnd] + newSection + tail, section, nil
+}

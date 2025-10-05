@@ -1,0 +1,207 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# Apple App Store / TestFlight Publisher
+#
+# Purpose: Publishes iOS applications to Apple App Store Connect (TestFlight) using
+# the App Store Connect API.
+#
+# How it works:
+# 1. Downloads IPA artifact from previous build job
+# 2. Sets up App Store Connect API authentication
+# 3. Validates IPA file
+# 4. Uploads to App Store Connect (TestFlight)
+# 5. Records external testing/review intent; manual submission happens in App Store Connect
+#
+# Features:
+#   - TestFlight distribution
+#   - App Store Connect API v2 authentication
+#   - IPA validation before upload
+#   - Configurable submission options
+#   - Detailed upload reporting
+#
+# Outputs:
+#   - Upload status and build information
+#   - TestFlight availability notifications
+#
+# Required Secrets:
+#   APP_STORE_CONNECT_ISSUER_ID: App Store Connect API issuer ID
+#   APP_STORE_CONNECT_API_KEY_ID: App Store Connect API key ID
+#   APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64: Base64-encoded API private key (.p8)
+#
+# Required Permissions:
+#   actions: read   # Download workflow artifacts
+#   contents: read  # Checkout source
+#
+name: Publish Apple App Store
+on:
+  workflow_call:
+    inputs:
+      # === IPA SOURCE ===
+      ipa-artifact-name:
+        description: "Name of artifact containing IPA file"
+        required: true
+        type: string
+      enabled:
+        description: "Run App Store Connect upload. The release orchestrator disables this for unsigned Xcode builds."
+        required: false
+        default: true
+        type: boolean
+      branch:
+        description: "Explicit branch, tag, or SHA whose application is published"
+        required: true
+        type: string
+      # === APP STORE CONFIGURATION ===
+      platform:
+        description: "Platform (ios, macos, tvos)"
+        required: false
+        default: "ios"
+        type: string
+      # === SUBMISSION OPTIONS ===
+      submit-for-review:
+        description: "Record App Store review intent in the upload summary. Automatic review submission is not implemented."
+        required: false
+        default: false
+        type: boolean
+      skip-validation:
+        description: "Skip IPA validation before upload"
+        required: false
+        default: false
+        type: boolean
+      # === SYSTEM ===
+      macos-version:
+        description: "macOS runner version (macos-13, macos-14, macos-15, macos-26)"
+        required: false
+        default: "macos-26"
+        type: string
+      reusable-ci-binary-ref:
+        description: "reusable-ci binary ref/version to install (branch, tag, or SHA). For branch testing, set this to the same reusable-ci revision as runtime image overrides on Linux jobs."
+        required: false
+        default: "v3.0.0"
+        type: string
+    # All `required: false` — `secrets: inherit` callers unchanged.
+    secrets:
+      APP_STORE_CONNECT_API_KEY_ID:
+        description: "App Store Connect API key ID (10-char alphanumeric)"
+        required: false
+      APP_STORE_CONNECT_ISSUER_ID:
+        description: "App Store Connect API issuer ID (UUID)"
+        required: false
+      APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64:
+        description: "Base64-encoded App Store Connect API .p8 private key"
+        required: false
+permissions:
+  contents: read
+jobs:
+  publish:
+    name: Publish to App Store Connect
+    if: ${{ inputs.enabled }}
+    runs-on: ${{ inputs.macos-version }}
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 1
+      - name: Checkout reusable-ci bootstrap installers
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+          persist-credentials: false
+      - name: Install reusable-ci binary
+        env:
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
+
+      # Defense-in-depth: refuse PR-context triggers — App Store Connect
+      # credentials in env this job uses must never run with PR-HEAD code.
+      - name: Refuse PR-context trigger (publish/release secrets in scope)
+        run: reusable-ci validate event-context
+
+      - name: Download IPA artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: ${{ inputs['ipa-artifact-name'] }}
+          ARTIFACT_DIR: artifacts/
+        run: reusable-ci artifact download
+
+      - name: Find IPA file
+        id: find-ipa
+        run: reusable-ci publish appstore find-ipa
+
+      - name: Setup App Store Connect API
+        env:
+          APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+        run: reusable-ci publish appstore prepare-credentials
+
+      - name: Validate IPA
+        if: ${{ !inputs['skip-validation'] }}
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          IPA_FILE: ${{ steps.find-ipa.outputs.ipa-file }}
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          printf "Validating IPA...\n"
+
+          xcrun altool \
+            --validate-app \
+            --file "$IPA_FILE" \
+            --type "$PLATFORM" \
+            --apiKey "$APP_STORE_CONNECT_API_KEY_ID" \
+            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID" \
+            --output-format json
+
+          printf "✓ IPA validation passed\n"
+
+      - name: Upload to App Store Connect
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          IPA_FILE: ${{ steps.find-ipa.outputs.ipa-file }}
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          set -eo pipefail
+
+          printf "Uploading IPA to App Store Connect...\n"
+
+          xcrun altool \
+            --output-format json \
+            --upload-app \
+            --file "$IPA_FILE" \
+            --type "$PLATFORM" \
+            --apiKey "$APP_STORE_CONNECT_API_KEY_ID" \
+            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID" \
+          | tee upload-result.json
+
+          printf "✓ Upload successful\n"
+
+      - name: Parse upload results
+        id: upload-info
+        run: reusable-ci publish appstore parse-upload-result
+
+      - name: Generate upload summary
+        env:
+          IPA_FILE: ${{ steps.find-ipa.outputs.ipa-file }}
+          PLATFORM: ${{ inputs.platform }}
+          SKIP_VALIDATION: ${{ inputs['skip-validation'] }}
+          SUBMIT_REVIEW: ${{ inputs['submit-for-review'] }}
+          REQUEST_ID: ${{ steps.upload-info.outputs.request-id }}
+        run: reusable-ci report publish appstore
+
+      - name: Upload result artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: appstore-upload-result
+          path: upload-result.json
+          retention-days: "30"
+          if-no-files-found: warn

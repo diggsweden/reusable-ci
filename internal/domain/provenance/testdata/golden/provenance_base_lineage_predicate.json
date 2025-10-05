@@ -1,0 +1,36 @@
+{
+  "buildDefinition": {
+    "buildType": "https://diggsweden.github.io/reusable-ci/container-build/v1",
+    "externalParameters": {
+      "base_input_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "flavor": "rust",
+      "image": "codeberg.org/itiquette/ci-builder-rust",
+      "ref": "refs/tags/v1.2.3",
+      "source": "git+https://codeberg.org/itiquette/forgejo-ci"
+    },
+    "internalParameters": {},
+    "resolvedDependencies": [
+      {
+        "uri": "git+https://codeberg.org/itiquette/forgejo-ci@refs/tags/v1.2.3",
+        "digest": {
+          "gitCommit": "cccccccccccccccccccccccccccccccccccccccc"
+        }
+      },
+      {
+        "uri": "docker.io/library/debian:trixie-slim",
+        "digest": {
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "annotations": {
+          "role": "base-image"
+        }
+      }
+    ]
+  },
+  "runDetails": {
+    "builder": {
+      "id": "https://codeberg.org/itiquette/forgejo-ci/.forgejo/workflows/sign-container-images.yml@refs/tags/v1.2.3"
+    },
+    "metadata": {}
+  }
+}

@@ -1,0 +1,150 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+#
+# Gradle JVM Builder
+#
+# Purpose: Builds Gradle JVM projects — libraries, applications, plugins —
+# and uploads their JAR artifacts for subsequent publishing steps (Maven
+# Central, container images, etc.).
+#
+# Android builds are handled by build-gradle-android.yml, which supports
+# product flavors, AABs, Google Play artifact naming, and signing. This
+# workflow is intentionally Android-free: no Android SDK setup, no APK/AAB
+# globbing, no keystore decoding. Routing from artifacts.yml is by
+# `project-type: gradle` (here) vs `project-type: gradle-android` (there).
+#
+# Build Process:
+#   1. Set up JDK
+#   2. Run the requested Gradle tasks
+#   3. Generate a CycloneDX Build SBOM
+#   4. Upload JAR artifacts and the build SBOM
+#
+# Required Permissions:
+#   contents: read  # Checkout code
+#
+name: Build Gradle
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      gradle-tasks:
+        description: "Gradle tasks to run"
+        required: false
+        default: "assemble"
+        type: string
+      skip-tests:
+        description: "Skip tests during build"
+        required: false
+        default: false
+        type: boolean
+      branch:
+        description: "Branch, tag, or SHA to checkout. Empty uses the triggering ref."
+        required: false
+        default: ""
+        type: string
+      artifact-name:
+        description: "Logical artifact name for upload naming (defaults to 'gradle-build-artifacts' when empty)"
+        required: false
+        default: ""
+        type: string
+      enable-build-sbom:
+        description: "Run the cyclonedx plugin step (false skips Build SBOM generation entirely; derived from per-artefact 'sboms' when called from release-build-stage)"
+        required: false
+        default: true
+        type: boolean
+      runtime-image:
+        description: "reusable-ci runtime image carrying JDK + Gradle. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
+        type: string
+permissions:
+  contents: read
+jobs:
+  build-gradle:
+    name: Build Gradle Project
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      contents: read
+    steps:
+      - name: Guard working-directory stays inside the workspace
+        # Every upload below is rooted at this caller-supplied value. An
+        # absolute path or a parent step would take the artifact from outside
+        # the workspace, so it is refused here, before any step consumes it.
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: |
+          case "$WORKING_DIRECTORY" in
+            "") echo "working-directory must not be empty" >&2; exit 1 ;;
+            /*) echo "working-directory must be workspace-relative: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
+          case "/$WORKING_DIRECTORY/" in
+            */../*) echo "working-directory must not contain parent-directory steps: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
+      - name: Checkout repository
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CHECKOUT_REF: ${{ inputs.branch }}
+          CHECKOUT_FETCH_ALL_REFS: "true"
+        run: reusable-ci platform checkout
+      - name: Cache Gradle
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles(format('{0}/gradle/wrapper/gradle-wrapper.properties', inputs['working-directory']), format('{0}/**/*.gradle*', inputs['working-directory']), format('{0}/**/gradle.properties', inputs['working-directory'])) }}
+          restore-keys: gradle-
+      - name: Build Gradle project
+        # One step owns the whole build sequence (gradlew chmod → metadata →
+        # tasks → SBOM → summaries); the binary threads metadata internally, so
+        # the same `build gradle run` runs identically on GitLab. The per-step
+        # variations (tasks, SBOM plugin version, skip-tests) are configuration
+        # here. gradle runs in this step's working-directory; only checkout,
+        # cache, and upload wrap it.
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          GRADLE_TASKS: ${{ inputs['gradle-tasks'] }}
+          SKIP_TESTS: ${{ inputs['skip-tests'] }}
+          ENABLE_BUILD_SBOM: ${{ inputs['enable-build-sbom'] }}
+          JAVA_VERSION: "25"
+          # renovate: datasource=maven depName=org.cyclonedx:cyclonedx-gradle-plugin
+          CYCLONEDX_GRADLE_VERSION: "3.2.1"
+        run: reusable-ci build gradle run
+      - name: Upload Gradle artifacts
+        # Root and subproject JARs. Single-module projects put jars under
+        # `build/libs/`; multi-module projects put them under
+        # `<subproject>/build/libs/`. Both globs cover the common layouts.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs['artifact-name'] && format('{0}-build-artifacts', inputs['artifact-name']) || 'gradle-build-artifacts' }}
+          path: |
+            ${{ inputs['working-directory'] }}/build/libs/*.jar
+            ${{ inputs['working-directory'] }}/**/build/libs/*.jar
+          retention-days: "7"
+          if-no-files-found: error
+      # SBOM artifact is paired with the build artifact name so parallel
+      # matrix uploads (release-build-stage dispatches build-gradle per
+      # artifact) don't collide on a single fixed SBOM name. Default falls
+      # back to `gradle-build-sbom` when `artifact-name` is not overridden.
+      # cyclonedx-gradle-plugin 3.x writes to build/reports/bom.json;
+      # build/reports/cyclonedx/bom.json is retained for older plugin versions.
+      - name: Upload Gradle Build SBOM
+        if: ${{ inputs['enable-build-sbom'] }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs['artifact-name'] && format('{0}-build-sbom', inputs['artifact-name']) || 'gradle-build-sbom' }}
+          path: |
+            ${{ inputs['working-directory'] }}/build/reports/bom.json
+            ${{ inputs['working-directory'] }}/**/build/reports/bom.json
+            ${{ inputs['working-directory'] }}/build/reports/cyclonedx/bom.json
+            ${{ inputs['working-directory'] }}/**/build/reports/cyclonedx/bom.json
+          retention-days: "7"
+          if-no-files-found: error

@@ -1,0 +1,145 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+name: Pull Request Quality Stage
+on:
+  workflow_call:
+    inputs:
+      pr-plan-json:
+        required: true
+        type: string
+      quality-stage-plan-json:
+        required: true
+        type: string
+      runtime-image:
+        description: "reusable-ci runtime image for the status/summary jobs (base is sufficient)"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+        type: string
+      nanolinter-image:
+        description: "nanolinter flavour image the nanolinter lint job runs in (pin by @sha256)"
+        required: false
+        default: "codefloe.com/itiquette/nanolinter:full"
+        type: string
+      required-lints:
+        description: "Mandated lint floor passed to `nanolinter verify --require` (comma-separated check ids forced to run + block)."
+        required: false
+        default: "secrets,sast"
+        type: string
+      megalinter-image:
+        description: "Required for a planned MegaLinter job: reviewed image reference pinned by @sha256:<64 lowercase hex>"
+        required: false
+        default: ""
+        type: string
+      reusable-ci-binary-ref:
+        description: "reusable-ci version the lint job installs (cosign-verified) for SARIF tooling"
+        required: false
+        default: "v3.0.0"
+        type: string
+    # Aggregator: forwards CODE_SCANNING_TOKEN to the nanolinter job for
+    # its security-SARIF upload; other lint jobs use the auto GITHUB_TOKEN.
+    secrets:
+      CODE_SCANNING_TOKEN:
+        description: "Token with security-events:write for SARIF upload"
+        required: false
+permissions:
+  contents: read
+jobs:
+  nanolinter:
+    name: Nanolinter
+    if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.nanolinter.runs }}
+    permissions:
+      contents: read
+    secrets:
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
+    uses: ./.github/workflows/lint-nanolinter.yml
+    with:
+      nanolinter-image: ${{ inputs['nanolinter-image'] }}
+      required-lints: ${{ inputs['required-lints'] }}
+      reusable-ci-binary-ref: ${{ inputs['reusable-ci-binary-ref'] }}
+  megalinter:
+    name: MegaLinter
+    if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.megalinter.runs }}
+    permissions:
+      contents: read
+    secrets:
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
+    uses: ./.github/workflows/lint-megalinter.yml
+    with:
+      megalinter-image: ${{ inputs['megalinter-image'] }}
+      reusable-ci-binary-ref: ${{ inputs['reusable-ci-binary-ref'] }}
+  swift:
+    name: Swift Lint
+    if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.swift.runs }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/lint-swift.yml
+    with:
+      enable-swiftformat: ${{ fromJson(inputs['pr-plan-json']).policy.swift_format }}
+      enable-swiftlint: ${{ fromJson(inputs['pr-plan-json']).policy.swift_lint }}
+      runtime-image: ${{ inputs['runtime-image'] }}
+  quality-status:
+    name: Status
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    if: always()
+    needs: [nanolinter, megalinter, swift]
+    steps:
+      - name: Check quality results
+        env:
+          CHECK_NANOLINTER: Nanolinter|${{ fromJson(inputs['quality-stage-plan-json']).targets.nanolinter.runs }}|${{ needs.nanolinter.result }}
+          CHECK_MEGALINTER: MegaLinter|${{ fromJson(inputs['quality-stage-plan-json']).targets.megalinter.runs }}|${{ needs.megalinter.result }}
+          CHECK_SWIFT: Swift Lint|${{ fromJson(inputs['quality-stage-plan-json']).targets.swift.runs }}|${{ needs.swift.result }}
+        run: |
+          reusable-ci report status quality-check \
+            "$CHECK_NANOLINTER" \
+            "$CHECK_MEGALINTER" \
+            "$CHECK_SWIFT"
+  summarize-quality-stage:
+    name: Summary
+    needs: [nanolinter, megalinter, swift, quality-status]
+    if: always()
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Render nanolinter results panel
+        # The nanolinter job runs in a non-root, node-less flavour image and can't
+        # write its own $GITHUB_STEP_SUMMARY (RUNNER_TEMP is unwritable there), so
+        # it ships nanolinter's "Linting Results" markdown as an artifact. This
+        # runtime-base job CAN write the panel, so render it here for end users.
+        # Best-effort: continue-on-error so a missing artifact never fails Summary.
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: nanolinter-step-summary
+          ARTIFACT_DIR: .nl-summary
+        run: reusable-ci artifact download
+      - name: Emit nanolinter panel to job summary
+        if: always()
+        continue-on-error: true
+        run: |
+          f=.nl-summary/nl-step-summary.md
+          if [ -f "$f" ]; then
+            cat "$f" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Normalize PR quality stage result
+        id: summary
+        env:
+          STAGE_PLAN_JSON: ${{ inputs['quality-stage-plan-json'] }}
+          JOB_RESULTS: ${{ toJson(needs) }}
+        run: reusable-ci report stage-result
+      - name: Upload quality stage manifests
+        if: always() && hashFiles('.ci-results/*.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-results-pr-quality
+          path: .ci-results/*.json
+          include-hidden-files: "true"
+          retention-days: "5"
+          if-no-files-found: ignore

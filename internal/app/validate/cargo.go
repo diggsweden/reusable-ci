@@ -1,0 +1,153 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+
+package validate
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"path/filepath"
+	"strings"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
+)
+
+// CargoTool abstracts the local cargo executable for tests.
+type CargoTool interface {
+	Version(ctx context.Context) (string, error)
+}
+
+// CargoPrerequisitesInput drives `validate cargo`. Either input is
+// accepted; ConfigPlanJSON is the canonical source (covers cargo
+// artifacts in both build-modes), and PublishStagePlanJSON is kept for
+// backward compatibility with direct callers that only have the
+// publish-stage projection.
+type CargoPrerequisitesInput struct {
+	ConfigPlanJSON       string
+	PublishStagePlanJSON string
+}
+
+// CargoPrerequisites verifies lockfile/toolchain state for every planned
+// Cargo artifact (artifact-first AND container-first) in its own working
+// directory. The reproducibility invariants (committed Cargo.lock, pinned
+// rust-toolchain) apply equally to both build-modes — artifact-first
+// crates that ship as standalone binaries get the same scrutiny as
+// container-first ones embedded in a runtime image.
+//
+// Every working directory is checked for safety before any is inspected, so
+// an unsafe directory anywhere in the plan refuses the run with nothing
+// reported and no cargo call. A missing file is a configuration failure; a
+// cargo that cannot report its version keeps its own class, so a runner
+// without cargo is not reported as a broken project.
+func CargoPrerequisites(ctx context.Context, cargo CargoTool, w io.Writer, annot output.Annotator, in CargoPrerequisitesInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	artifacts, err := plannedCargoArtifacts(in.ConfigPlanJSON, in.PublishStagePlanJSON)
+	if err != nil {
+		return err
+	}
+
+	if len(artifacts) == 0 {
+		annot.Noticef("No Cargo artifacts")
+
+		return nil
+	}
+
+	dirs, err := plannedWorkingDirs(artifacts)
+	if err != nil {
+		return err
+	}
+
+	var failures []error
+
+	for _, dir := range dirs {
+		failures = append(failures, checkCargoDir(annot, dir)...)
+	}
+
+	version, err := cargo.Version(ctx)
+	if err != nil {
+		annot.Errorf("cargo is not usable on the runner: %v", err)
+
+		failures = append(failures, err)
+	} else if version != "" && w != nil {
+		_, _ = fmt.Fprintln(w, version)
+	}
+
+	if len(failures) > 0 {
+		return fmt.Errorf("cargo prerequisites failed: %w", errors.Join(failures...))
+	}
+
+	return nil
+}
+
+// checkCargoDir reports the committed lockfile and toolchain pin in dir and
+// returns one configuration failure per missing file.
+func checkCargoDir(annot output.Annotator, dir string) []error {
+	var failures []error
+
+	if !fileExists(filepath.Join(dir, "Cargo.lock")) {
+		annot.Errorf("Cargo.lock not found in %s", displayDir(dir))
+		annot.Errorf("Cargo.lock must be committed for reproducible releases")
+
+		failures = append(failures, fmt.Errorf("missing Cargo.lock in %s: %w", displayDir(dir), errs.ErrInvalidConfig))
+	} else {
+		annot.Noticef("Cargo.lock present in %s", displayDir(dir))
+	}
+
+	if !fileExists(filepath.Join(dir, "rust-toolchain.toml")) && !fileExists(filepath.Join(dir, "rust-toolchain")) {
+		annot.Errorf("No rust-toolchain.toml or rust-toolchain pin found in %s", displayDir(dir))
+		annot.Errorf("Pin the Rust toolchain to keep compiler selection consistent and support reproducible builds")
+
+		failures = append(failures, fmt.Errorf("rust toolchain pin missing in %s: %w", displayDir(dir), errs.ErrInvalidConfig))
+	} else {
+		annot.Noticef("Toolchain pin present in %s", displayDir(dir))
+	}
+
+	return failures
+}
+
+// plannedCargoArtifacts pulls every cargo artifact (both build-modes)
+// from whichever plan input the caller supplied. ConfigPlanJSON is
+// preferred — it carries the canonical artifact list. The publish-stage
+// fallback is the historical input; it sees only container-first cargo
+// and is kept so direct callers without the config plan still get
+// SOMETHING checked (with a notice that artifact-first cargo is invisible
+// on this code path).
+func plannedCargoArtifacts(configPlanJSON, publishStagePlanJSON string) ([]pipeline.PlannedArtifact, error) {
+	if strings.TrimSpace(configPlanJSON) != "" {
+		plan, err := parseConfigPlan(configPlanJSON)
+		if err != nil {
+			return nil, err
+		}
+
+		return plan.Artifacts.Cargo, nil
+	}
+
+	if strings.TrimSpace(publishStagePlanJSON) == "" {
+		return nil, fmt.Errorf("config-plan-json or publish-stage-plan-json is required: %w", errs.ErrUsage)
+	}
+
+	var plan pipeline.ReleasePublishStagePlan
+	if err := pipeline.DecodeStagePlan(publishStagePlanJSON, "publish-stage-plan-json", &plan); err != nil {
+		return nil, err
+	}
+
+	if plan.Version != pipeline.ReleasePlanVersion {
+		return nil, fmt.Errorf("publish-stage-plan-json has unsupported version %d: %w", plan.Version, errs.ErrInvalidConfig)
+	}
+
+	if plan.Stage != "publish" {
+		return nil, fmt.Errorf("publish-stage-plan-json has unexpected stage %q: %w", plan.Stage, errs.ErrInvalidConfig)
+	}
+
+	if !plan.Targets.CargoContainerFirst.Runs {
+		return nil, nil
+	}
+
+	return plan.Targets.CargoContainerFirst.Items, nil
+}
+
+// safeWorkingDir / fileExists / displayDir live in workspacedir.go —
+// shared with the jvm-reproducibility validator.

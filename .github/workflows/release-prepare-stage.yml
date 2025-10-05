@@ -1,0 +1,281 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+name: Release Prepare Stage
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      branch:
+        required: true
+        type: string
+      authorized-source-sha:
+        description: "Immutable release-request commit validated as the target branch HEAD"
+        required: true
+        type: string
+      existing-release-sha:
+        description: "Verified existing final-tag commit for an exact-tag recovery"
+        required: false
+        default: ""
+        type: string
+      prepare-stage-plan-json:
+        required: true
+        type: string
+      reusable-ci-binary-ref:
+        description: "Immutable reusable-ci commit used by the plain-runner preparation job"
+        required: false
+        default: "v3.0.0"
+        type: string
+      runtime-image:
+        description: "reusable-ci runtime image for the summarize job (base is sufficient)"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+        type: string
+      runtime-image-java:
+        description: "reusable-ci runtime image for Maven/Gradle version bump jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
+        type: string
+      runtime-image-node:
+        description: "reusable-ci runtime image for NPM version bump jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-node-24:v3.0.0"
+        type: string
+      runtime-image-rust:
+        description: "reusable-ci runtime image for Cargo version bump jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-rust-stable:v3.0.0"
+        type: string
+      git-signing-method:
+        description: "How to sign the release commit + tag: gpg (default) or ssh. Orchestrator passes fromJSON(config-plan-json).git_signing.method."
+        required: false
+        default: "gpg"
+        type: string
+      committer-name:
+        description: "Committer display name for the bump commit when git-signing-method=ssh (cosmetic; gpg derives it from the key UID)."
+        required: false
+        default: ""
+        type: string
+      committer-email:
+        description: "Committer email for the bump commit when git-signing-method=ssh. Must match a principal in .reusable-ci/allowed_signers — it is the identity SSH-signed tags verify against. Unused for gpg."
+        required: false
+        default: ""
+        type: string
+    # Aggregator: forwards to version-bump.yml. All `required: false`
+    # — `secrets: inherit` at callsites continues to flow org-scoped
+    # secrets through unchanged. The declaration documents the
+    # contract for adopters outside the org.
+    secrets:
+      RELEASE_GPG_PRIVATE_KEY:
+        description: "Armored OpenPGP private key for signing the version-bump commit"
+        required: false
+      RELEASE_GPG_PASSPHRASE:
+        description: "Passphrase for RELEASE_GPG_PRIVATE_KEY"
+        required: false
+      RELEASE_TOKEN:
+        description: "Token with contents:write for pushing the version-bump commit"
+        required: false
+      RELEASE_SSH_SIGNING_KEY:
+        description: "OpenSSH private key for signing the release commit + tag when git-signing-method=ssh"
+        required: false
+    outputs:
+      stage-ran:
+        description: Prepare stage ran at least one version bump path
+        value: ${{ jobs.summarize-prepare-stage.outputs.stage-ran }}
+      stage-result:
+        description: Normalized prepare stage result
+        value: ${{ jobs.summarize-prepare-stage.outputs.stage-result }}
+      result-json:
+        description: Prepare stage result payload
+        value: ${{ jobs.summarize-prepare-stage.outputs.result-json }}
+      release-sha:
+        description: Commit SHA the release tag points to (the final HEAD carrying every artifact's bump)
+        value: ${{ jobs.version-bump.outputs.release-sha }}
+      source-date-epoch:
+        description: Commit timestamp of the prepared release SHA
+        value: ${{ jobs.version-bump.outputs.source-date-epoch }}
+permissions:
+  contents: read
+jobs:
+  generate-full-changelog:
+    name: Generate Full Changelog
+    if: ${{ inputs['existing-release-sha'] == '' && fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/generate-changelog.yml
+    with:
+      branch: ${{ inputs['authorized-source-sha'] }}
+      runtime-image: ${{ inputs['runtime-image'] }}
+      upload-as-artifact: true
+      changelog-config: "/opt/reusable-ci/templates/gitcliff/keepachangelog.toml"
+      git-cliff-args: ""
+      output-file: "CHANGELOG.md"
+      artifact-name: "full-changelog"
+  generate-minimal-changelog:
+    name: Generate Minimal Commit Changelog
+    if: ${{ inputs['existing-release-sha'] == '' && fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/generate-changelog.yml
+    with:
+      branch: ${{ inputs['authorized-source-sha'] }}
+      runtime-image: ${{ inputs['runtime-image'] }}
+      upload-as-artifact: true
+      changelog-config: "/opt/reusable-ci/templates/gitcliff/minimal.toml"
+      git-cliff-args: "--latest --strip header"
+      output-file: "minimal-changelog.txt"
+      artifact-name: "minimal-changelog"
+  version-bump:
+    name: Prepare and Tag Release
+    needs: [generate-full-changelog, generate-minimal-changelog]
+    if: ${{ !cancelled() && needs.generate-full-changelog.result != 'failure' && needs.generate-minimal-changelog.result != 'failure' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    outputs:
+      release-sha: ${{ steps.release-state.outputs.release-sha }}
+      source-date-epoch: ${{ steps.release-state.outputs.source-date-epoch }}
+    steps:
+      - name: Checkout immutable authorized source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ inputs['existing-release-sha'] || inputs['authorized-source-sha'] }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout reusable-ci bootstrap installers
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+      - name: Install reusable-ci binary
+        env:
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
+      - name: Refuse PR-context trigger (release secrets in scope)
+        run: reusable-ci validate event-context
+      - name: Derive release context from request tag
+        id: relctx
+        env:
+          RELEASE_CONTEXT_REQUIRE_REQUEST: "true"
+          RELEASE_CONTEXT_REQUIRE_STABLE: "true"
+        run: reusable-ci version derive-release
+      - name: Revalidate exact-tag recovery lease
+        if: ${{ inputs['existing-release-sha'] != '' }}
+        env:
+          TAG_NAME: ${{ steps.relctx.outputs.release-tag }}
+          BRANCH: ${{ inputs.branch }}
+        run: reusable-ci validate tag commit --require-head
+      - name: Import GPG key
+        id: import-gpg
+        if: ${{ inputs['git-signing-method'] != 'ssh' }}
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          GIT_USER_SIGNINGKEY: "true"
+          GIT_COMMIT_GPGSIGN: "true"
+          REUSABLE_CI_GIT_CONFIG_GLOBAL: "true"
+        run: reusable-ci release gpg import
+      - name: Set up SSH signing
+        if: ${{ inputs['git-signing-method'] == 'ssh' }}
+        env:
+          SSH_SIGNING_KEY: ${{ secrets.RELEASE_SSH_SIGNING_KEY }}
+          COMMIT_AUTHOR_NAME: ${{ inputs['committer-name'] }}
+          COMMIT_AUTHOR_EMAIL: ${{ inputs['committer-email'] }}
+          GIT_COMMIT_GPGSIGN: "true"
+          REUSABLE_CI_GIT_CONFIG_GLOBAL: "true"
+        run: reusable-ci release ssh setup
+      - name: Download Full Changelog
+        if: ${{ inputs['existing-release-sha'] == '' && fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: full-changelog
+          ARTIFACT_DIR: .
+        run: reusable-ci artifact download
+      - name: Verify Full Changelog
+        if: ${{ inputs['existing-release-sha'] == '' && fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
+        run: reusable-ci validate changelog --path CHANGELOG.md --required
+      - name: Apply complete version-bump plan
+        id: bump-plan
+        if: ${{ inputs['existing-release-sha'] == '' && fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
+        env:
+          PREPARE_STAGE_PLAN_JSON: ${{ inputs['prepare-stage-plan-json'] }}
+          VERSION: ${{ steps.relctx.outputs.version }}
+          MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
+        run: reusable-ci version bump-plan
+      - name: Download Minimal Changelog
+        if: ${{ inputs['existing-release-sha'] == '' && fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: minimal-changelog
+          ARTIFACT_DIR: .
+        run: reusable-ci artifact download
+      - name: Read Minimal Changelog
+        id: minimal-changelog
+        if: ${{ inputs['existing-release-sha'] == '' && fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
+        run: reusable-ci validate changelog --path minimal-changelog.txt
+      - name: Commit complete release preparation
+        if: ${{ inputs['existing-release-sha'] == '' && fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
+        env:
+          BRANCH: ${{ inputs.branch }}
+          AUTHORIZED_SOURCE_SHA: ${{ inputs['authorized-source-sha'] }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          COMMIT_AUTHOR_NAME: ${{ steps.import-gpg.outputs.name || inputs['committer-name'] }}
+          COMMIT_AUTHOR_EMAIL: ${{ steps.import-gpg.outputs.email || inputs['committer-email'] }}
+          COMMIT_MESSAGE: |
+            chore(release): ${{ steps.relctx.outputs.release-tag }}
+
+            ${{ steps.minimal-changelog.outputs.content }}
+
+            ${{ steps.relctx.outputs.commit-trailers }}
+            [skip ci]
+          FILE_PATTERN: ${{ steps.bump-plan.outputs.file-pattern }}
+        run: reusable-ci version commit-push
+      - name: Create release tag (create-once, no force) at final HEAD
+        env:
+          RELEASE_TAG: ${{ steps.relctx.outputs.release-tag }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: reusable-ci version tag-release
+      - name: Capture immutable release state
+        id: release-state
+        run: |
+          printf 'release-sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          printf 'source-date-epoch=%s\n' "$(git log -1 --format=%ct HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Cleanup GPG key
+        if: ${{ always() && inputs['git-signing-method'] != 'ssh' }}
+        env:
+          GPG_FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
+        run: reusable-ci release gpg cleanup
+      - name: Cleanup SSH signing key
+        if: ${{ always() && inputs['git-signing-method'] == 'ssh' }}
+        run: reusable-ci release ssh cleanup
+  summarize-prepare-stage:
+    name: Summarize Prepare Stage
+    needs: [version-bump]
+    if: always()
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      contents: read
+    outputs:
+      stage-ran: ${{ steps.summary.outputs.stage-ran }}
+      stage-result: ${{ steps.summary.outputs.stage-result }}
+      result-json: ${{ steps.summary.outputs.result-json }}
+    steps:
+      - name: Normalize prepare stage result
+        id: summary
+        env:
+          STAGE_PLAN_JSON: ${{ inputs['prepare-stage-plan-json'] }}
+          JOB_RESULTS: ${{ toJson(needs) }}
+        run: reusable-ci report stage-result
+      - name: Upload prepare stage manifests
+        if: always() && hashFiles('.ci-results/*.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-results-prepare
+          path: .ci-results/*.json
+          include-hidden-files: "true"
+          retention-days: "5"
+          if-no-files-found: ignore

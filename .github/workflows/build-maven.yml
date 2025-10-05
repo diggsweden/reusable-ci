@@ -1,0 +1,146 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# Maven Builder
+# 
+# Purpose: Builds Maven projects (applications or libraries) and uploads artifacts
+# for subsequent publishing steps. Separates build logic from registry-specific publishing.
+#
+# Build Types:
+#   - app: Application lifecycle (normally a main JAR)
+#   - lib: Library lifecycle with an optional profile
+# The project POM/profile owns all attached sources and javadoc artifacts.
+#
+# Outputs:
+#   - Artifacts uploaded as '<artifact-name>-build-artifacts' or 'maven-build-artifacts' for use by publish-* workflows
+#
+# Required Permissions:
+#   contents: read  # Checkout code
+#
+name: Build Maven
+on:
+  workflow_call:
+    inputs:
+      build-type:
+        description: "Lifecycle: app (clean package) or lib (compile/test/package with optional profile; POM owns attached artifacts)"
+        required: true
+        type: string
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      skip-tests:
+        description: "Skip tests during build"
+        required: false
+        default: false
+        type: boolean
+      branch:
+        description: "Branch, tag, or SHA to checkout. Empty uses the triggering ref."
+        required: false
+        default: ""
+        type: string
+      profile:
+        description: "Maven profile to activate (e.g., central-release for libraries)"
+        required: false
+        default: ""
+        type: string
+      artifact-name:
+        description: "Logical artifact name for upload naming (defaults to 'maven-build-artifacts' when empty)"
+        required: false
+        default: ""
+        type: string
+      enable-build-sbom:
+        description: "Run the cyclonedx plugin step (false skips Build SBOM generation entirely; derived from per-artefact 'sboms' when called from release-build-stage)"
+        required: false
+        default: true
+        type: boolean
+      runtime-image:
+        description: "reusable-ci runtime image carrying JDK + Maven. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
+        type: string
+permissions:
+  contents: read
+env:
+  MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
+jobs:
+  build-maven:
+    name: Build Maven Project
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      contents: read
+    steps:
+      - name: Guard working-directory stays inside the workspace
+        # Every upload below is rooted at this caller-supplied value. An
+        # absolute path or a parent step would take the artifact from outside
+        # the workspace, so it is refused here, before any step consumes it.
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: |
+          case "$WORKING_DIRECTORY" in
+            "") echo "working-directory must not be empty" >&2; exit 1 ;;
+            /*) echo "working-directory must be workspace-relative: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
+          case "/$WORKING_DIRECTORY/" in
+            */../*) echo "working-directory must not contain parent-directory steps: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
+      - name: Checkout repository
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CHECKOUT_REF: ${{ inputs.branch }}
+        run: reusable-ci platform checkout
+      - name: Cache Maven dependencies
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ hashFiles(format('{0}/pom.xml', inputs['working-directory']), format('{0}/**/pom.xml', inputs['working-directory'])) }}
+          restore-keys: maven-
+      - name: Build Maven project
+        # One step owns the whole build sequence (install → metadata → app/lib
+        # build → SBOM → summaries); the binary threads metadata internally and
+        # branches on --build-type, so the same `build maven run` runs
+        # identically on GitLab. The per-step variations (build type, profile,
+        # SBOM plugin version, skip-tests) are configuration here. mvn runs in
+        # this step's working-directory; only checkout/cache/upload wrap it.
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          BUILD_TYPE: ${{ inputs['build-type'] }}
+          MAVEN_PROFILE: ${{ inputs['profile'] }}
+          SKIP_TESTS: ${{ inputs['skip-tests'] }}
+          ENABLE_BUILD_SBOM: ${{ inputs['enable-build-sbom'] }}
+          JAVA_VERSION: "25"
+          # renovate: datasource=maven depName=org.cyclonedx:cyclonedx-maven-plugin
+          CYCLONEDX_MAVEN_VERSION: "2.9.1"
+        run: reusable-ci build maven run
+      - name: Upload Maven artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs['artifact-name'] && format('{0}-build-artifacts', inputs['artifact-name']) || 'maven-build-artifacts' }}
+          path: |
+            ${{ inputs['working-directory'] }}/target/*.jar
+            ${{ inputs['working-directory'] }}/target/*.war
+            ${{ inputs['working-directory'] }}/target/*.pom
+            ${{ inputs['working-directory'] }}/**/target/*.jar
+            ${{ inputs['working-directory'] }}/**/target/*.war
+            ${{ inputs['working-directory'] }}/**/target/*.pom
+            !${{ inputs['working-directory'] }}/target/original-*.jar
+            !${{ inputs['working-directory'] }}/**/target/original-*.jar
+          retention-days: 7
+          if-no-files-found: error
+      # Build SBOM is a separate compliance deliverable; keeping it in its
+      # own artifact means a broken SBOM plugin can't take down the code
+      # artifact and downstream consumers can fetch just what they need.
+      - name: Upload Maven Build SBOM
+        if: ${{ inputs['enable-build-sbom'] }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs['artifact-name'] && format('{0}-build-sbom', inputs['artifact-name']) || 'maven-build-sbom' }}
+          path: |
+            ${{ inputs['working-directory'] }}/target/bom.json
+            ${{ inputs['working-directory'] }}/**/target/bom.json
+          retention-days: 7
+          if-no-files-found: error

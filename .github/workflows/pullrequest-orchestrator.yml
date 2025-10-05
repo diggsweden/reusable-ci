@@ -1,0 +1,167 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# Pull Request Orchestrator
+# 
+# Runs the selected lint engine and security checks for pull requests and
+# pushes, then publishes their stage result and available SARIF.
+#
+# How it works:
+# 1. Is called by repository workflows for their configured push/PR triggers
+# 2. Executes enabled linters in parallel for faster feedback
+# 3. Enforces the configured lint floor (secrets and SAST by default)
+# 4. Uploads available results to GitHub Code Scanning for visibility
+#
+# Security controls:
+# - Secret detection and SAST are in the default nanolinter floor
+# - Dependency and license checks depend on the selected engine/project config
+# - Results uploaded to GitHub Code Scanning (requires CODE_SCANNING_TOKEN secret)
+#
+# Required Secrets:
+#   None required - uses GITHUB_TOKEN for operations
+#   Optional: CODE_SCANNING_TOKEN for uploading scan results to Code Scanning
+#             (requires code_scanning_alerts:write — GitHub App or fine-grained PAT)
+#   Optional: Organization secrets for private package access
+#
+# Required Permissions:
+#   actions: read          # Download workflow result artifacts
+#   contents: read         # Read source code
+#   packages: read         # Access private packages
+#   secrets: inherit       # Pass CODE_SCANNING_TOKEN for Code Scanning upload
+#
+# Configurable Linters:
+#   lint-engine:          general lint engine — nanolinter (default) | megalinter
+#                         | none. Runs the chosen engine as a gate and uploads its
+#                         security findings to Code Scanning as SARIF. Swift/iOS
+#                         linting runs separately (lint-swift.yml).
+name: Orchestrate Pull Request
+on:
+  workflow_call:
+    inputs:
+      # Project configuration
+      project-type:
+        description: "Project type: maven, npm, gradle, gradle-android, xcode-ios, cargo, python, go"
+        required: true
+        type: string
+      base-branch:
+        description: "Base branch (auto-detects PR target if empty)"
+        required: false
+        default: ""
+        type: string
+      # Lint engine — the single general linter for the PR. Mutually exclusive:
+      # at most one engine runs (two would duplicate Code-Scanning findings).
+      # The swift toggles below are orthogonal and layer on top.
+      lint-engine:
+        description: "General lint engine: nanolinter (default), megalinter, or none. The chosen engine runs as a gate and uploads available security findings to Code Scanning as SARIF."
+        required: false
+        default: "nanolinter"
+        type: string
+      linters.swiftformat:
+        description: "Enable swift-format (Google Swift Style Guide) for iOS/macOS projects"
+        required: false
+        default: false
+        type: boolean
+      linters.swiftlint:
+        description: "Enable SwiftLint for iOS/macOS projects"
+        required: false
+        default: false
+        type: boolean
+      reusable-ci-binary-ref:
+        description: "reusable-ci ref/version passed to downstream plain-runner jobs (defaults to v3.0.0)"
+        required: false
+        default: "v3.0.0"
+        type: string
+      runtime-image:
+        description: "reusable-ci base runtime image for PR control-plane and summary jobs. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+        type: string
+      nanolinter-image:
+        description: "nanolinter flavour image the nanolinter lint job runs in (pin by @sha256 to your ecosystem flavour, e.g. codefloe.com/itiquette/nanolinter:java)"
+        required: false
+        default: "codefloe.com/itiquette/nanolinter:full"
+        type: string
+      required-lints:
+        description: "Mandated lint floor for the nanolinter engine — comma-separated check ids forced to run AND block via `nanolinter verify --require`, so a project cannot silently skip them. Default mandates secrets + SAST across all projects. Empty disables the floor."
+        required: false
+        default: "secrets,sast"
+        type: string
+      megalinter-image:
+        description: "Required when lint-engine=megalinter: a reviewed MegaLinter image reference pinned by @sha256:<64 lowercase hex>"
+        required: false
+        default: ""
+        type: string
+    secrets:
+      CODE_SCANNING_TOKEN:
+        description: "Token with security-events:write for SARIF upload (lint-engine security findings)"
+        required: false
+permissions:
+  contents: read # Default permission; individual jobs declare additions.
+jobs:
+  # ===== Stage 0: PR Plan =====
+  compose-pr-plan:
+    name: Setup
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      contents: read
+    outputs:
+      pr-plan-json: ${{ steps.plan.outputs.pr-plan-json }}
+      quality-stage-plan-json: ${{ steps.plan.outputs.quality-stage-plan-json }}
+    steps:
+      - name: Compose PR control-plane plan
+        id: plan
+        env:
+          PROJECT_TYPE: ${{ inputs['project-type'] }}
+          BASE_BRANCH: ${{ inputs['base-branch'] }}
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+          LINT_ENGINE: ${{ inputs['lint-engine'] }}
+          LINTER_SWIFTFORMAT: ${{ inputs['linters.swiftformat'] }}
+          LINTER_SWIFTLINT: ${{ inputs['linters.swiftlint'] }}
+        run: reusable-ci plan pr
+
+  # ===== Stage 1: Quality =====
+  execute-quality-stage:
+    name: Quality
+    needs: [compose-pr-plan]
+    permissions:
+      actions: read
+      contents: read
+    secrets:
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
+    uses: ./.github/workflows/pullrequest-quality-stage.yml
+    with:
+      pr-plan-json: ${{ needs.compose-pr-plan.outputs.pr-plan-json }}
+      quality-stage-plan-json: ${{ needs.compose-pr-plan.outputs.quality-stage-plan-json }}
+      runtime-image: ${{ inputs['runtime-image'] }}
+      nanolinter-image: ${{ inputs['nanolinter-image'] }}
+      required-lints: ${{ inputs['required-lints'] }}
+      megalinter-image: ${{ inputs['megalinter-image'] }}
+      reusable-ci-binary-ref: ${{ inputs['reusable-ci-binary-ref'] }}
+
+  # ===== Summary =====
+  pr-summary:
+    name: PR Summary
+    needs: [compose-pr-plan, execute-quality-stage]
+    if: always()
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Download quality stage manifests
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: ci-results-pr-quality
+          ARTIFACT_DIR: .ci-results
+        run: reusable-ci artifact download
+      - name: Generate PR summary
+        env:
+          PROJECT_TYPE: ${{ fromJson(needs.compose-pr-plan.outputs['pr-plan-json']).context.project_type }}
+          QUALITY_STAGE_RESULT_PATH: .ci-results/pr-quality-result.json
+          HAS_CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN != '' }}
+        run: reusable-ci report pr

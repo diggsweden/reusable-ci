@@ -1,0 +1,99 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+#
+# Generate Changelog
+#
+# Reusable workflow that wraps git-cliff. Runs inside the reusable-ci runtime
+# container; `git-cliff` is on PATH and changelog validation lives in the
+# reusable-ci binary.
+#
+# Common use cases:
+#   - Full history: git-cliff-args=""
+#   - Latest release: git-cliff-args="--latest"
+#   - Commit message: git-cliff-args="--latest --strip header"
+name: Generate Changelog
+on:
+  workflow_call:
+    inputs:
+      branch:
+        description: "Branch, tag, or SHA to generate the changelog from. Empty uses the triggering ref."
+        required: false
+        default: ""
+        type: string
+      changelog-config:
+        description: "Path to git-cliff configuration file. Defaults to the bundled template at /opt/reusable-ci/templates/gitcliff/default.toml inside the runtime image."
+        required: false
+        default: "/opt/reusable-ci/templates/gitcliff/default.toml"
+        type: string
+      git-cliff-args:
+        description: "Arguments for git-cliff (empty for full, '--latest' for latest release)"
+        required: false
+        default: ""
+        type: string
+      output-file:
+        description: "Output filename"
+        required: false
+        default: "ReleasenotesTmp"
+        type: string
+      upload-as-artifact:
+        description: "Upload as artifact (true) or keep in workspace (false)"
+        required: false
+        default: true
+        type: boolean
+      artifact-name:
+        description: "Artifact name if uploading"
+        required: false
+        default: "release-changelog"
+        type: string
+      runtime-image:
+        description: "reusable-ci runtime image. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+        type: string
+permissions:
+  contents: read
+jobs:
+  generate-changelog:
+    name: Generate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    steps:
+      - name: Checkout Repository
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CHECKOUT_REF: ${{ inputs.branch }}
+          CHECKOUT_FETCH_ALL_REFS: "true" # full history + tags for git-cliff
+        run: reusable-ci platform checkout
+      - name: Generate Changelog with git-cliff
+        env:
+          CONFIG: ${{ inputs['changelog-config'] }}
+          ARGS: ${{ inputs['git-cliff-args'] }}
+          OUTPUT: ${{ inputs['output-file'] }}
+          GITHUB_REPO: ${{ github.repository }}
+        run: |
+          # git-cliff is baked into the runtime image; ARGS is split on
+          # whitespace by design (git-cliff flags like `--latest`).
+          # shellcheck disable=SC2086
+          git-cliff --config "$CONFIG" --output "$OUTPUT" $ARGS
+      - name: Verify Changelog Generation
+        env:
+          CHANGELOG_FILE: ${{ inputs['output-file'] }}
+        run: reusable-ci release validate-changelog
+      - name: Stage Changelog Artifact
+        if: ${{ inputs['upload-as-artifact'] }}
+        env:
+          CHANGELOG_FILE: ${{ inputs['output-file'] }}
+        run: |
+          mkdir -p .reusable-ci/changelog-artifact
+          cp -- "$CHANGELOG_FILE" ".reusable-ci/changelog-artifact/$(basename -- "$CHANGELOG_FILE")"
+      - name: Upload Changelog Artifact
+        if: ${{ inputs['upload-as-artifact'] }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs['artifact-name'] }}
+          path: .reusable-ci/changelog-artifact/**
+          retention-days: "7"
+          if-no-files-found: warn

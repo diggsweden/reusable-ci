@@ -1,0 +1,204 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+# SPDX-License-Identifier: CC0-1.0
+#
+# golangci-lint v2 config. See https://golangci-lint.run/usage/configuration/.
+version: "2"
+
+run:
+  timeout: 5m
+  # Include the live conformance tier in static analysis; default build
+  # constraints otherwise exclude every //go:build live file.
+  build-tags:
+    - live
+
+output:
+  formats:
+    text:
+      path: stdout
+      print-issued-lines: true
+      print-linter-name: true
+      colors: true
+  path-prefix: ""
+
+issues:
+  uniq-by-line: true
+
+linters:
+  default: none
+  exclusions:
+    paths:
+      - generated
+    rules:
+      # Tests use fixture strings, short loop / mock vars, and
+      # naturally branching table-driven cases. The corresponding
+      # production-code findings still surface; this only quiets the
+      # patterns that are by-design in test code.
+      - path: "_test\\.go$"
+        linters:
+          - cyclop # table-driven tests have many subcases
+          - dupl # parallel happy/sad-path blocks mirror each other
+          - goconst # repeated fixture strings, often one-off
+          - varnamelen # short locals / loop vars / mock receivers
+          - ireturn # mocks return interfaces
+      # paralleltest, scoped rather than blanket. A test that mutates process
+      # state cannot be parallel: t.Setenv and t.Chdir panic under it, and a
+      # swapped os.Stdin or working directory is shared by every goroutine.
+      # This is the list of packages that do -- directly, or through a testutil
+      # helper that does it on their behalf (ghaenv, glabenv, gpgkey,
+      # isolatedenv, isolatedgit, mockbinary, testenv, testfs).
+      # Regenerate this list from the tree rather than appending to it by hand:
+      # a helper that starts calling t.Setenv adds its callers to this set.
+      - path: "^(cmd/reusable-ci/|scripts/bootstrap/|internal/adapters/apt/|internal/adapters/buildah/|internal/adapters/cargo/|internal/adapters/changelog/|internal/adapters/cosign/|internal/adapters/ghaoutput/|internal/adapters/git/|internal/adapters/gitlaboutput/|internal/adapters/gotool/|internal/adapters/gpg/|internal/adapters/gradle/|internal/adapters/httpretry/|internal/adapters/manifest/|internal/adapters/maven/|internal/adapters/mise/|internal/adapters/npm/|internal/adapters/opengrep/|internal/adapters/openpgp/|internal/adapters/osfs/|internal/adapters/platform/|internal/adapters/skopeo/|internal/adapters/stepsummary/|internal/adapters/swiftformat/|internal/adapters/swiftlint/|internal/adapters/syft/|internal/adapters/trivy/|internal/adapters/xcode/|internal/app/build/|internal/app/config/|internal/app/container/|internal/app/platform/|internal/app/publish/|internal/app/release/|internal/app/sbom/|internal/app/security/|internal/app/summary/|internal/app/toolchain/|internal/app/validate/|internal/app/version/|internal/archive/|internal/cli/|internal/cli/cienv/|internal/cli/clitoken/|internal/cli/commands/build/|internal/cli/commands/container/|internal/cli/commands/plan/|internal/cli/commands/release/|internal/cli/commands/report/|internal/cli/commands/sbom/|internal/cli/commands/validate/|internal/cli/commands/version/|internal/cli/deps/|internal/cli/planfile/|internal/cli/secret/|internal/cliio/|internal/livetest/|internal/safeexec/|internal/testutil/ghaenv/|internal/testutil/glabenv/|internal/testutil/golden/|internal/testutil/gpgkey/|internal/testutil/isolatedenv/|internal/testutil/isolatedgit/|internal/testutil/mockbinary/|internal/testutil/testenv/|internal/testutil/testfs/|internal/testutil/toolrecorder/)"
+        linters:
+          - paralleltest
+      # redact_test.go's whole point is to assert that PEM markers
+      # get redacted from subprocess output. The literal PEM blocks
+      # in the fixtures are the test contract.
+      - path: "internal/safeexec/redact_test\\.go$"
+        linters:
+          - gosec
+      # The GPG import-via-stdin test ships a throwaway PGP private
+      # key fixture so it can exercise the real `gpg --import` path
+      # end-to-end. The key is generated for that test and not used
+      # anywhere else.
+      - path: "internal/adapters/gpg/import_stdin_test\\.go$"
+        linters:
+          - gosec
+      # Test-only directory perms (0755 fixtures via os.MkdirAll) are
+      # acceptable for ephemeral t.TempDir() roots.
+      - path: "_test\\.go$"
+        text: "G301"
+        linters:
+          - gosec
+      # Test files read fixture paths from t.TempDir() and friends;
+      # the G304 "file inclusion via variable" pattern is unavoidable.
+      - path: "_test\\.go$"
+        text: "G304"
+        linters:
+          - gosec
+  enable:
+    - asasalint
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - containedctx
+    - contextcheck
+    - copyloopvar
+    - cyclop
+    - decorder
+    - dogsled
+    - dupl
+    - durationcheck
+    - errcheck
+    - err113
+    - errchkjson
+    - errname
+    - errorlint
+    - exhaustive
+    - exptostd
+    - fatcontext
+    - forcetypeassert
+    - funcorder
+    - ginkgolinter
+    - gocheckcompilerdirectives
+    - gochecknoglobals
+    - gochecknoinits
+    - gochecksumtype
+    - gocognit
+    - goconst
+    - gocritic
+    - gocyclo
+    - godot
+    - godox
+    - goheader
+    - gomoddirectives
+    - goprintffuncname
+    - gosec
+    - govet
+    - grouper
+    - iface
+    - importas
+    - inamedparam
+    - ineffassign
+    - interfacebloat
+    - intrange
+    - loggercheck
+    - maintidx
+    - makezero
+    - mirror
+    - misspell
+    - musttag
+    - nakedret
+    - nestif
+    - nilerr
+    - nilnil
+    - nlreturn
+    - noctx
+    - nonamedreturns
+    - nosprintfhostport
+    - paralleltest
+    - perfsprint
+    - prealloc
+    - predeclared
+    - promlinter
+    - protogetter
+    - reassign
+    - revive
+    - rowserrcheck
+    - sloglint
+    - sqlclosecheck
+    - staticcheck
+    - tagalign
+    - testableexamples
+    - testifylint
+    - thelper
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - usetesting
+    - depguard
+    - varnamelen
+    - wastedassign
+    - zerologlint
+
+  settings:
+    depguard:
+      rules:
+        # The live tier's oracle only means anything if it shares no code with
+        # what it observes. An adapter that mis-parsed its own writes would
+        # otherwise agree with itself and the scenario would pass while the
+        # forge held something else. Keeping the import out makes that
+        # independence a build failure rather than a habit.
+        rawref-stays-independent:
+          files:
+            - "**/internal/livetest/rawref/**"
+          deny:
+            - pkg: github.com/diggsweden/reusable-ci/v3/internal/adapters
+              desc: the raw oracle must not use the adapters it is the oracle for
+            - pkg: github.com/diggsweden/reusable-ci/v3/internal/domain
+              desc: keep the oracle on wire types, so a domain change cannot reshape what the forge is said to hold
+    exhaustive:
+      default-signifies-exhaustive: true
+    govet:
+      enable:
+        - shadow
+    varnamelen:
+      min-name-length: 2
+    paralleltest:
+      ignore-missing: false
+      ignore-missing-subtests: true
+    revive:
+      severity: warning
+      confidence: 0.8
+      rules:
+        - name: exported
+          disabled: false
+          exclude: ["Name"]
+        # Flag a superfluous `else` after an if-branch that already
+        # returns (or breaks/continues) — keeps the happy path on the
+        # left edge (100 Go Mistakes #2).
+        - name: indent-error-flow
+          disabled: false
+        - name: superfluous-else
+          disabled: false

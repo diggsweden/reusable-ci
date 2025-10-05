@@ -1,0 +1,195 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+
+// Package workflowguard holds the guards over .github/workflows, the surface
+// this repository ships to the repositories that consume it.
+//
+// The workflows are the product. Their `on.workflow_call` inputs are a public
+// API every adopter's caller workflow codes against, their `uses:` edges have
+// to line up with the callee's declared inputs, and one that handles a secret
+// must reach the event-context check before it touches it. None of that is
+// expressible in Go's type system, and all of it breaks in the adopter's
+// repository rather than this one: on their next tag bump, with no signal
+// here. These guards turn that silent break into a failing test.
+//
+// One of the repo-wide guard packages; docs/testing.md says which is which and
+// where a new guard belongs.
+package workflowguard
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
+	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
+
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
+)
+
+// regenerateContractsEnv, when set to 1, makes
+// TestConsumerContractSnapshot rewrite the snapshot instead of
+// comparing against it — the deliberate way to change the contract.
+const regenerateContractsEnv = "REGENERATE_CONTRACTS"
+
+// consumerInput is the per-input slice of the consumer contract:
+// whether the input is mandatory and what type it carries. Names live
+// as the map keys in consumerContract.Inputs.
+type consumerInput struct {
+	Required bool   `json:"required"`
+	Type     string `json:"type"`
+	Default  any    `json:"default,omitempty"`
+}
+
+// consumerContract is one orchestrator's public API surface: the
+// `on.workflow_call` inputs (name, required, type) and secret names
+// that every consuming repository's thin caller workflow codes against.
+type consumerContract struct {
+	Inputs          map[string]consumerInput `json:"inputs"`
+	Secrets         []string                 `json:"secrets"`
+	RequiredSecrets []string                 `json:"required_secrets"`
+	Outputs         map[string]string        `json:"outputs"`
+}
+
+// TestConsumerContractSnapshot pins the consumer-facing API of this
+// repository — the `on.workflow_call.inputs` (names + required + types)
+// and secret names of every *-orchestrator.yml — to a checked-in
+// snapshot. Renaming an input, flipping required, or dropping a secret
+// breaks every consuming repository on their NEXT tag bump with no
+// signal here; this test turns that silent break into a reviewed diff.
+//
+// To change the contract deliberately, regenerate the snapshot and
+// commit both sides:
+//
+//	REGENERATE_CONTRACTS=1 go test ./internal/workflowguard -run TestConsumerContractSnapshot
+func TestConsumerContractSnapshot(t *testing.T) {
+	t.Parallel()
+
+	root := reporoot.Path(t)
+
+	pattern := filepath.Join(root, ".github", "workflows", "*-orchestrator.yml")
+	files, err := filepath.Glob(pattern)
+	require.NoError(t, err)
+	require.NotEmptyf(t, files, "no consumer-facing orchestrators matched %s", pattern)
+
+	contracts := make(map[string]consumerContract, len(files))
+	for _, path := range files {
+		contracts[filepath.Base(path)] = parseConsumerContract(t, path)
+	}
+
+	blob, err := json.MarshalIndent(contracts, "", "  ")
+	require.NoError(t, err)
+
+	got := string(blob) + "\n"
+
+	// Relative to the package directory, which is where `go test` runs, so the
+	// snapshot travels with the guard rather than being addressed from the root.
+	snapshot := filepath.Join("testdata", "consumer-contracts.json")
+
+	if os.Getenv(regenerateContractsEnv) == "1" {
+		require.NoError(t, os.MkdirAll(filepath.Dir(snapshot), 0o750))
+		require.NoError(t, os.WriteFile(snapshot, []byte(got), 0o600))
+		t.Logf("regenerated %s", snapshot)
+
+		return
+	}
+
+	want, err := os.ReadFile(snapshot) //nolint:gosec // test reads repo-local snapshot.
+	require.NoErrorf(t, err,
+		"consumer-contract snapshot missing; generate it deliberately with "+
+			regenerateContractsEnv+"=1 go test ./internal/workflowguard -run TestConsumerContractSnapshot")
+
+	require.Equalf(t, string(want), got,
+		"the consumer contract changed: the orchestrators' on.workflow_call inputs/secrets "+
+			"are the public API every consuming repository's caller workflow codes against. "+
+			"If the change is deliberate, regenerate the snapshot and commit it: "+
+			regenerateContractsEnv+"=1 go test ./internal/workflowguard -run TestConsumerContractSnapshot")
+}
+
+// parseConsumerContract extracts the workflow_call inputs and secret
+// names from one orchestrator file via raw node walking (key strings
+// stay literal, so the `on:` key needs no YAML-1.1 bool gymnastics).
+func parseConsumerContract(t *testing.T, path string) consumerContract {
+	t.Helper()
+
+	body, err := os.ReadFile(path) //nolint:gosec // test reads repo-local workflow.
+	require.NoErrorf(t, err, "read %s", path)
+
+	doc, err := effectiveWorkflow(body)
+	require.NoErrorf(t, err, "parse %s", path)
+
+	call := mappingChild(mappingChild(doc, "on"), "workflow_call")
+	require.NotNilf(t, call, "%s: no on.workflow_call block — not a consumer-facing reusable workflow", path)
+
+	contract := consumerContract{
+		Inputs:          map[string]consumerInput{},
+		Secrets:         []string{},
+		RequiredSecrets: []string{},
+		Outputs:         map[string]string{},
+	}
+
+	if inputs := mappingChild(call, "inputs"); inputs != nil && inputs.Kind == yaml.MappingNode {
+		for i := 0; i < len(inputs.Content); i += 2 {
+			spec := inputs.Content[i+1]
+
+			contract.Inputs[inputs.Content[i].Value] = consumerInput{
+				Required: scalarChild(spec, "required") == "true",
+				Type:     scalarChild(spec, "type"),
+			}
+			if value := mappingChild(spec, "default"); value != nil {
+				input := contract.Inputs[inputs.Content[i].Value]
+				require.NoError(t, value.Decode(&input.Default))
+				contract.Inputs[inputs.Content[i].Value] = input
+			}
+		}
+	}
+
+	if secrets := mappingChild(call, "secrets"); secrets != nil && secrets.Kind == yaml.MappingNode {
+		for i := 0; i < len(secrets.Content); i += 2 {
+			contract.Secrets = append(contract.Secrets, secrets.Content[i].Value)
+			if scalarChild(secrets.Content[i+1], "required") == "true" {
+				contract.RequiredSecrets = append(contract.RequiredSecrets, secrets.Content[i].Value)
+			}
+		}
+
+		slices.Sort(contract.Secrets)
+		slices.Sort(contract.RequiredSecrets)
+	}
+
+	if outputs := mappingChild(call, "outputs"); outputs != nil {
+		for i := 0; i+1 < len(outputs.Content); i += 2 {
+			contract.Outputs[outputs.Content[i].Value] = scalarChild(outputs.Content[i+1], "value")
+		}
+	}
+
+	return contract
+}
+
+// mappingChild returns the value node of key inside a mapping node, or
+// nil when node is nil, not a mapping, or lacks the key.
+func mappingChild(node *yaml.Node, key string) *yaml.Node {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+
+	for i := 0; i < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+
+	return nil
+}
+
+// scalarChild returns the scalar value of key inside a mapping node,
+// or "" when absent or non-scalar.
+func scalarChild(node *yaml.Node, key string) string {
+	child := mappingChild(node, key)
+	if child == nil || child.Kind != yaml.ScalarNode {
+		return ""
+	}
+
+	return child.Value
+}

@@ -1,0 +1,427 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+
+package publish
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"io/fs"
+	"log/slog"
+	"net"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"unicode"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/archive"
+	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
+)
+
+// NPMRCInput drives WriteNPMRC.
+type NPMRCInput struct {
+	// Registry is the npm registry URL. https:// is required; http:// is
+	// accepted only for loopback hosts (local dev registries), since the
+	// emitted .npmrc carries an auth token. Required.
+	Registry string
+	// Scope is the optional npm package scope (must start with @).
+	Scope string
+	// Output is where the generated .npmrc body is written. The caller
+	// chooses the file path; passing os.Stdout is supported for dry-runs.
+	Output io.Writer
+}
+
+// WriteNPMRC composes an `.npmrc` body matching the historical bash heredoc
+// in publish-snapshot-npm.yml. The literal `${NODE_AUTH_TOKEN}` placeholder is
+// emitted as-is so npm expands it at publish time from the env var.
+//
+// Format:
+//
+//	//<host>/:_authToken=${NODE_AUTH_TOKEN}
+//	@scope:registry=<registry>     (when Scope is set)
+//	registry=<registry>            (when Scope is empty)
+func WriteNPMRC(in NPMRCInput) error {
+	if in.Output == nil {
+		return fmt.Errorf("output writer is required: %w", errs.ErrUsage)
+	}
+
+	settings, err := validateNPMRCInput(in)
+	if err != nil {
+		return err
+	}
+
+	return emitNPMRCLines(in.Output, settings)
+}
+
+// npmrcSettings is the parsed/validated form of the .npmrc inputs.
+type npmrcSettings struct {
+	host               string
+	normalisedRegistry string
+	scope              string
+}
+
+// validateNPMRCInput parses the registry URL, validates the optional
+// scope, and returns the settings WriteNPMRC will emit.
+func validateNPMRCInput(in NPMRCInput) (npmrcSettings, error) {
+	registry := strings.TrimSpace(in.Registry)
+	if registry == "" {
+		return npmrcSettings{}, fmt.Errorf("registry is required: %w", errs.ErrUsage)
+	}
+
+	parsed, err := url.Parse(registry)
+	if err != nil {
+		return npmrcSettings{}, fmt.Errorf("parse registry %q: %w: %w", registry, err, errs.ErrUsage)
+	}
+
+	if parsed.Host == "" {
+		return npmrcSettings{}, fmt.Errorf("registry %q has no host: %w", registry, errs.ErrUsage)
+	}
+
+	if strings.ContainsFunc(parsed.Path, unicode.IsControl) {
+		return npmrcSettings{}, fmt.Errorf("registry path contains a control character: %w", errs.ErrUsage)
+	}
+
+	if err := validateRegistryScheme(parsed, registry); err != nil {
+		return npmrcSettings{}, err
+	}
+
+	scope := strings.TrimSpace(in.Scope)
+	if scope != "" && !isNPMScope(scope) {
+		return npmrcSettings{}, fmt.Errorf("scope %q is not a valid npm scope: %w", scope, errs.ErrUsage)
+	}
+
+	host := parsed.Host
+	if parsed.Path != "" && parsed.Path != "/" {
+		host += strings.TrimSuffix(parsed.Path, "/")
+	}
+
+	return npmrcSettings{
+		host:               host,
+		normalisedRegistry: parsed.Scheme + "://" + parsed.Host + strings.TrimSuffix(parsed.Path, "/"),
+		scope:              scope,
+	}, nil
+}
+
+// emitNPMRCLines writes the three-line .npmrc body. Scoped vs unscoped
+// projects differ only in the registry-key prefix.
+func emitNPMRCLines(w io.Writer, s npmrcSettings) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	if _, err := fmt.Fprintf(w, "//%s/:_authToken=${NODE_AUTH_TOKEN}\n", s.host); err != nil {
+		return fmt.Errorf("write .npmrc: %w", err)
+	}
+
+	registryLine := "registry=" + s.normalisedRegistry + "\n"
+	if s.scope != "" {
+		registryLine = s.scope + ":registry=" + s.normalisedRegistry + "\n"
+	}
+
+	if _, err := fmt.Fprint(w, registryLine); err != nil {
+		return fmt.Errorf("write .npmrc: %w", err)
+	}
+
+	// No always-auth: removed from the npm CLI in 2021 (7.11.1) and reported as
+	// an unknown config by current npm, which warns it will stop working in the
+	// next major. The path-scoped _authToken above is what authenticates.
+
+	return nil
+}
+
+// validateRegistryScheme enforces the secure-by-default transport rule:
+// https is required because the emitted .npmrc carries an auth token that npm
+// sends to this host on every request to the registry path. Plaintext http is permitted only for loopback hosts (local dev
+// registries such as verdaccio), where the token never leaves the machine.
+func validateRegistryScheme(parsed *url.URL, registry string) error {
+	switch parsed.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if !isLoopbackHost(parsed.Hostname()) {
+			return fmt.Errorf(
+				"registry %q uses plaintext http, which would leak the npm auth token; use https (http is allowed only for localhost): %w",
+				registry, errs.ErrUsage)
+		}
+
+		return nil
+	default:
+		return fmt.Errorf("registry scheme %q must be https (http is allowed only for localhost): %w", parsed.Scheme, errs.ErrUsage)
+	}
+}
+
+// isLoopbackHost reports whether host (already stripped of any port) is a
+// loopback address or the literal "localhost" — the only hosts for which
+// plaintext http is safe, since the auth token never leaves the machine.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+
+	return false
+}
+
+// isNPMScope reports whether s is a valid npm scope: leading '@', followed by
+// 1+ characters drawn from [a-z0-9-_.~]. Mirrors npm's own scope-name rules
+// without pulling in a regex dependency.
+//
+//nolint:cyclop // npm scope validation: one branch per allowed/disallowed rune class.
+func isNPMScope(s string) bool {
+	if len(s) < 2 || s[0] != '@' {
+		return false
+	}
+
+	for _, r := range s[1:] {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_' || r == '.' || r == '~':
+		default:
+			return false
+		}
+	}
+
+	return true
+}
+
+// NPMOps is the npm adapter surface needed by publish helpers.
+type NPMOps interface {
+	Run(ctx context.Context, dir string, args ...string) (w, stderr string, err error)
+}
+
+// NPMValidateTarballInput drives NPMValidateTarball.
+type NPMValidateTarballInput struct {
+	// Dir is the directory containing the tarball. Empty → cwd.
+	Dir string
+}
+
+// NPMCheckVersionInput drives NPMCheckVersion.
+type NPMCheckVersionInput struct {
+	Dir      string
+	Name     string
+	Version  string
+	Registry string
+}
+
+// NPMCheckVersion checks whether package@version already exists in a registry
+// and emits already-published=true|false. E404-style npm failures are treated
+// as not found; other npm failures surface as errors.
+func NPMCheckVersion(ctx context.Context, npm NPMOps, sink ci.OutputSink, w io.Writer, annot output.Annotator, in NPMCheckVersionInput) error { //nolint:cyclop,varnamelen // exact query evidence, absence and transport failure must remain distinct.
+	name := in.Name
+	if name == "" {
+		var err error
+
+		name, err = npmPackageName(defaultDir(in.Dir))
+		if err != nil {
+			return err
+		}
+	}
+
+	if in.Version == "" {
+		return fmt.Errorf("version is required: %w", errs.ErrUsage)
+	}
+
+	args := []string{"view", name + "@" + in.Version, "name", "version", "--json"}
+	if in.Registry != "" {
+		args = append(args, "--registry", in.Registry)
+	}
+
+	stdout, stderr, err := npm.Run(ctx, defaultDir(in.Dir), args...)
+	if err == nil {
+		var evidence struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		}
+		if json.Unmarshal([]byte(stdout), &evidence) != nil || evidence.Name != name || evidence.Version != in.Version {
+			return fmt.Errorf("npm view did not confirm the requested package and version: %w", errs.ErrMalformedInput)
+		}
+
+		annot.Warningf("Package %s@%s already exists in registry - skipping publish", name, in.Version)
+
+		if setErr := setAlreadyPublished(ctx, sink, "true"); setErr != nil {
+			return setErr
+		}
+
+		return nil
+	}
+
+	if isNPMNotFound(stderr) {
+		_, _ = fmt.Fprintf(w, "Version %s not found in registry - will publish\n", in.Version)
+
+		if setErr := setAlreadyPublished(ctx, sink, "false"); setErr != nil {
+			return setErr
+		}
+
+		return nil
+	}
+
+	return err
+}
+
+func setAlreadyPublished(ctx context.Context, sink ci.OutputSink, value string) error {
+	if err := sink.Set(ctx, "already-published", value); err != nil {
+		return fmt.Errorf("set already-published: %w", err)
+	}
+
+	return nil
+}
+
+// NPMValidateTarball finds a single *.tgz / *.tar.gz at the top of Dir,
+// validates in private staging, then installs the contents and removes the
+// tarball for the snapshot-publish workflow. Rejected input changes no existing files.
+func NPMValidateTarball(_ context.Context, w, stderr io.Writer, annot output.Annotator, in NPMValidateTarballInput) error { //nolint:cyclop,varnamelen // discover, stage, validate, install, then remove the consumed archive.
+	dir := in.Dir
+	if dir == "" {
+		var err error
+
+		dir, err = os.Getwd()
+		if err != nil {
+			return fmt.Errorf("getwd: %w", err)
+		}
+	}
+
+	tarball, err := findFirstTarball(dir)
+	if err != nil {
+		return err
+	}
+
+	if tarball == "" {
+		annot.Errorf("No tarball found in artifacts")
+
+		return fmt.Errorf("no tarball found in %s: %w", dir, errs.ErrMissingInput)
+	}
+
+	_, _ = fmt.Fprintf(w, "Extracting %s...\n", tarball)
+
+	staging, err := pathsafe.NewArtifactStaging(dir)
+	if err != nil {
+		return fmt.Errorf("create npm validation directory: %w", err)
+	}
+	defer func() { _ = staging.Close() }()
+
+	extracted := staging.Root().Name()
+	if err := archive.UntarStripOne(tarball, extracted); err != nil {
+		return fmt.Errorf("extract %s: %w", tarball, err)
+	}
+
+	_, _ = fmt.Fprintln(w, "Extracted contents:")
+
+	listed := listFiles(w, filepath.Join(extracted, "dist"))
+	if !listed {
+		listFiles(w, filepath.Join(extracted, "build"))
+	}
+
+	cliJS := filepath.Join(extracted, "dist", "cli.js")
+
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "Verifying dist/cli.js exists:")
+
+	if info, err := os.Lstat(cliJS); err == nil && info.Mode().IsRegular() {
+		_, _ = fmt.Fprintf(w, "%s dist/cli.js found\n", clicolor.Check(w))
+	} else {
+		_, _ = fmt.Fprintf(w, "%s dist/cli.js NOT found\n", clicolor.Cross(w))
+
+		return fmt.Errorf("dist/cli.js not found in extracted tarball: %w", errs.ErrValidation)
+	}
+
+	if err := staging.InstallWithRelativeSymlinks(); err != nil {
+		return fmt.Errorf("install validated npm contents: %w", err)
+	}
+
+	if err := os.Remove(tarball); err != nil {
+		return fmt.Errorf("remove validated tarball: %w", err)
+	}
+
+	return nil
+}
+
+func npmPackageName(dir string) (string, error) {
+	body, err := os.ReadFile(filepath.Join(dir, "package.json")) //nolint:gosec // dir is CLI-flag-derived; filename component is hardcoded.
+	if err != nil {
+		return "", fmt.Errorf("read package.json: %w", err)
+	}
+
+	var meta struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &meta); err != nil {
+		return "", fmt.Errorf("parse package.json: %w: %w", err, errs.ErrInvalidConfig)
+	}
+
+	if meta.Name == "" {
+		return "", fmt.Errorf("package.json name is required: %w", errs.ErrInvalidConfig)
+	}
+
+	return meta.Name, nil
+}
+
+func isNPMNotFound(stderr string) bool {
+	lower := strings.ToLower(stderr)
+
+	return strings.Contains(lower, "npm err! code e404") ||
+		strings.Contains(lower, "npm error code e404") ||
+		strings.Contains(lower, "npm err! 404") ||
+		strings.Contains(lower, "npm error 404")
+}
+
+func defaultDir(dir string) string {
+	if dir == "" {
+		return "."
+	}
+
+	return dir
+}
+
+// findFirstTarball returns the path to the first *.tgz / *.tar.gz file
+// found in dir (non-recursive). Matches `find . -maxdepth 1`.
+func findFirstTarball(dir string) (string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", dir, err)
+	}
+
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+
+		name := e.Name()
+		if strings.HasSuffix(name, ".tgz") || strings.HasSuffix(name, ".tar.gz") {
+			return filepath.Join(dir, name), nil
+		}
+	}
+
+	return "", nil
+}
+
+// listFiles prints "<path>" for every regular file under dir. Returns
+// true iff dir existed and was walked.
+func listFiles(out io.Writer, dir string) bool {
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+		if err != nil {
+			slog.Debug("listFiles: skipping unreadable entry", "path", path, "err", err)
+
+			return nil
+		}
+
+		if !d.IsDir() {
+			_, _ = fmt.Fprintln(out, path)
+		}
+
+		return nil
+	})
+
+	return true
+}

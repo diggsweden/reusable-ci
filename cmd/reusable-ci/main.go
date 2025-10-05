@@ -1,0 +1,263 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+
+// Command reusable-ci is the CLI invoked by every reusable workflow
+// in this repository. One Go binary, one CLI surface: validators,
+// builders, publishers, signers, SBOM generators, and step-summary
+// writers all live here so the workflow YAML stays declarative and
+// the testable logic stays in Go.
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/url"
+	"os"
+	"os/signal"
+	"reflect"
+	"runtime"
+	"strings"
+	"syscall"
+	"unicode/utf8"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/cli"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/safeexec"
+)
+
+// bugReportURL is the public issue tracker — quoted to operators on
+// panic per clig.dev §Errors ("make it effortless to submit bug
+// reports"). Kept as a package-level constant rather than reaching for
+// it from cli.Description so the panic path stays self-contained.
+const bugReportURL = "https://github.com/diggsweden/reusable-ci/issues/new"
+
+// Build metadata, injected via -ldflags at link time. See justfile / .goreleaser.yml.
+//
+//nolint:gochecknoglobals // ldflags can only target package vars.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
+// exitInterrupted is the conventional POSIX exit code for a process
+// terminated by SIGINT (128 + 2). Used only by the force-quit path of
+// watchSignals — normal context-canceled returns flow through
+// errs.ExitCodeFromError.
+const exitInterrupted = 130
+
+// newCommand lets owned test children add an inert action while exercising
+// main and run unchanged, including the real root hooks and error classifier.
+//
+//nolint:gochecknoglobals // overridden only inside self-owned test processes.
+var newCommand = cli.New
+
+// exitProcess is os.Exit, indirected for the same reason newCommand is: the
+// force-quit path ends the process, and a test that cannot substitute it can
+// only choose between never reaching the path or taking the test binary down
+// with it. In production this is os.Exit and nothing about the lifetime
+// changes.
+//
+//nolint:gochecknoglobals // overridden only inside self-owned test processes.
+var exitProcess = os.Exit
+
+func main() {
+	// Process-level hardening: disable core dumps and ptrace exposure.
+	// Linux-only; no-op elsewhere. Best-effort — failures are
+	// intentionally silent (logging would leak runner config). Must run
+	// before any subcommand brings sensitive material into memory.
+	safeexec.HardenProcess()
+
+	defer recoverPanic()
+
+	// recoverPanic catches panics propagating out of run() before os.Exit
+	// is reached; the deferred function only runs on the panic path, not
+	// on normal exit, so the gocritic exitAfterDefer warning here is a
+	// false positive — splitting work into run() guarantees main() calls
+	// os.Exit exactly once.
+	os.Exit(run()) //nolint:gocritic // exitAfterDefer: defer is the panic boundary
+}
+
+// run owns the CLI lifecycle and returns the process exit code. Splitting
+// it out of main lets recoverPanic stay deferred — main only calls
+// os.Exit once at the bottom of the deferred chain, so the panic
+// boundary is never bypassed by an early os.Exit.
+func run() int {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// SIGINT/SIGTERM handling per clig.dev §Signals:
+	//   1. First signal cancels ctx (propagates to subprocesses via
+	//      exec.CommandContext) and tells the user what just happened.
+	//   2. Second signal hard-exits, in case in-flight cleanup hangs.
+	// A buffered channel of size 2 means the kernel can deliver both
+	// signals without dropping; the goroutine reads them in order.
+	sigCh := make(chan os.Signal, 2)
+
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	go watchSignals(ctx, sigCh, cancel, os.Stderr)
+
+	cmd := newCommand(cli.BuildInfo{
+		Version: version,
+		Commit:  commit,
+		Date:    date,
+	})
+
+	err := cmd.Run(ctx, os.Args)
+	if err == nil {
+		return int(errs.ExitCodeOK)
+	}
+
+	// Detect framework-level errors that urfave/cli has already printed
+	// to its ErrWriter (e.g. "Incorrect Usage: flag provided but not
+	// defined") before we re-print and double up. Capture this before
+	// ClassifyError rewrites the error chain.
+	alreadyPrinted := cli.IsAlreadyPrintedByCLI(err)
+
+	// cli.ClassifyError wraps urfave/cli's framework-level errors
+	// (required-flag-missing, unknown subcommand, unknown flag) with
+	// errs.ErrUsage so ExitCodeFromError below maps them to exit 2
+	// instead of the default Software/70. Without this, an operator
+	// typo would surface as "internal bug" — wrong category, hard to
+	// script against.
+	err = cli.ClassifyError(err)
+
+	// errs.ExitCodeFromError handles the small set of recognised
+	// shapes (nil → OK, context.Canceled → Usage, ErrUnsupported →
+	// Unavailable); everything else maps to Software.
+	exitCode := int(errs.ExitCodeFromError(err))
+
+	// Default stderr surface is the urfave/cli-style "Error: …" line
+	// alone — no timestamp, no level label (see clig.dev §Output:
+	// "Don't treat stderr like a log file"). The structured record is
+	// kept for --log-level debug where operators want machine-parseable
+	// failure data.
+	slog.Debug("command failed", "err", err, "exit_code", exitCode)
+
+	if !alreadyPrinted {
+		_, _ = fmt.Fprintln(os.Stderr, "Error:", err)
+	}
+
+	return exitCode
+}
+
+// watchSignals implements the two-stage Ctrl-C contract: first signal
+// announces the interrupt and cancels ctx so in-flight work can unwind
+// gracefully; second signal force-quits with exitInterrupted.
+//
+// If ctx ends from another cause (normal completion, defer cancel()),
+// the goroutine returns silently — no message, no exit.
+func watchSignals(ctx context.Context, sigCh <-chan os.Signal, cancel context.CancelFunc, stderr io.Writer) {
+	// First select: wait for either a signal or programmatic ctx end
+	// (normal completion path).
+	select {
+	case <-sigCh:
+		_, _ = fmt.Fprintln(stderr, "\ninterrupted; send another signal to force-quit.")
+
+		cancel()
+	case <-ctx.Done():
+		return
+	}
+	// Force-quit path is now armed. Wait for a second signal.
+	// If main returns first (graceful unwind succeeded), the process
+	// exits and this goroutine is reaped along with it — leaking it
+	// here is intentional, matching the "fire and forget" lifetime of
+	// the signal watcher.
+	<-sigCh
+
+	_, _ = fmt.Fprintln(stderr, "Force-quit.")
+
+	exitProcess(exitInterrupted)
+}
+
+// recoverPanic is main's panic boundary. Any panic that escapes run()
+// is caught here, printed with a stack trace and a bug-report invitation,
+// and converted to an ExitCodeSoftware (70) exit. Without this, the Go
+// runtime's default panic handler prints the stack and exits with code 2
+// — which CI can't distinguish from a normal "usage error" exit.
+func recoverPanic() {
+	r := recover()
+	if r == nil {
+		return
+	}
+
+	formatPanic(os.Stderr, r, panicStack(), version, commit, os.Args)
+	os.Exit(int(errs.ExitCodeSoftware))
+}
+
+// panicStack reports code locations, not debug.Stack's raw argument words,
+// which can contain sensitive scalar values. It never reads source files.
+func panicStack() []byte {
+	var pcs [64]uintptr
+
+	count := runtime.Callers(2, pcs[:])
+	frames := runtime.CallersFrames(pcs[:count])
+
+	var stack strings.Builder
+	stack.WriteString("Stack trace (argument values omitted):\n")
+
+	for {
+		frame, more := frames.Next()
+		_, _ = fmt.Fprintf(&stack, "%s\n\t%s:%d\n", frame.Function, frame.File, frame.Line)
+
+		if !more {
+			break
+		}
+	}
+
+	if count == len(pcs) {
+		stack.WriteString("[stack truncated]\n")
+	}
+
+	return []byte(stack.String())
+}
+
+// formatPanic renders the panic category, trusted stack/build metadata,
+// and bug-report URL to writer. Payload contents and all argv are deliberately
+// omitted: credentials may come from env, stdin, files or arbitrary values,
+// so neither token-only replacement nor calling Error/String/Format is safe here.
+// Split out from recoverPanic so rendering is testable without invoking os.Exit.
+// The URL is the final line so the operator's eye lands on the actionable bit
+// (clig.dev §Errors: "important info at the end").
+func formatPanic(writer io.Writer, panicValue any, stack []byte, vsn, sha string, args []string) {
+	kind := reflect.Invalid
+	if panicValue != nil {
+		kind = reflect.TypeOf(panicValue).Kind()
+	}
+
+	summary := kind.String() + " value [redacted]"
+	_, _ = fmt.Fprintf(writer, "reusable-ci: internal error: %s\n\n%s\n", summary, stack)
+	_, _ = fmt.Fprintf(writer, "Context: version=%s  commit=%s  command=[redacted] (%d arguments)\n\n", vsn, sha, len(args))
+	_, _ = fmt.Fprintln(writer, "This is a bug in reusable-ci — please report it (the link pre-fills the details above):")
+	_, _ = fmt.Fprintln(writer, "  "+bugReportLink(summary, vsn, sha, args))
+}
+
+// bugReportLink builds a GitHub "new issue" URL pre-populated with the
+// panic summary (title) and the environment (body), so filing a crash
+// report is one click plus pasting the stack trace — clig.dev §Errors:
+// "provide a URL and have it pre-populate as much information as
+// possible." summary must be trusted diagnostic text, never a raw panic
+// payload. The title has a UTF-8-safe byte budget to keep the URL manageable.
+func bugReportLink(summary, vsn, sha string, args []string) string {
+	title := strings.ToValidUTF8("panic: "+summary, "?")
+	if len(title) > 120 {
+		end := 117
+		for !utf8.RuneStart(title[end]) {
+			end--
+		}
+
+		title = title[:end] + "..."
+	}
+
+	body := fmt.Sprintf(
+		"Environment:\n- version: %s\n- commit: %s\n- command: [redacted] (%d arguments)\n\nStack trace (paste from the terminal output above):\n",
+		vsn, sha, len(args))
+
+	query := url.Values{"title": {title}, "body": {body}}
+
+	return bugReportURL + "?" + query.Encode()
+}

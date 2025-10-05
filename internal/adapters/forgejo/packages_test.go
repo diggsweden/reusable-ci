@@ -1,0 +1,68 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+
+package forgejo_test
+
+import (
+	"context"
+	"net/http"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/forgejo"
+)
+
+func TestListContainerPackageVersions_FiltersContainerPackageVersions(t *testing.T) {
+	t.Parallel()
+
+	var (
+		gotPath  string
+		gotQuery string
+	)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+{"type":"container","name":"nanolinter-base","version":"staging-a-rust"},
+{"type":"container","name":"nanolinter-base","version":"1.0.0"},
+{"type":"generic","name":"nanolinter-base","version":"ignored"},
+{"type":"container","name":"other","version":"ignored"}
+]`))
+	})
+
+	p := &forgejo.Provider{
+		Env:             envMap(map[string]string{"FORGEJO_TOKEN": "tok"}),
+		HTTPClient:      inMemoryClient(handler),
+		APIBaseOverride: "https://forgejo.invalid",
+	}
+
+	got, err := p.ListContainerPackageVersions(context.Background(), "itiquette", "nanolinter-base")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Owner-level listing, NOT /packages/{owner}/{type}/{name}: that route
+	// is Gitea-only and Codeberg's Forgejo answers it "404 page not found"
+	// (v0.8.6 cleanup sweep, run 336).
+	if want := "/api/v1/packages/itiquette"; gotPath != want {
+		t.Fatalf("path = %q, want %q", gotPath, want)
+	}
+
+	if gotQuery == "" {
+		t.Fatal("query is empty, want pagination query")
+	}
+
+	for _, fragment := range []string{"type=container", "q=nanolinter-base"} {
+		if !strings.Contains(gotQuery, fragment) {
+			t.Fatalf("query = %q, want it to contain %q", gotQuery, fragment)
+		}
+	}
+
+	if want := []string{"staging-a-rust", "1.0.0"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("versions = %v, want %v", got, want)
+	}
+}

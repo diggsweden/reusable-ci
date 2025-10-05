@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+name: Release Workflow
+on:
+  push:
+    tags:
+      - "release-request/v*"
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  release:
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v3.0.0
+    permissions:
+      contents: write
+      packages: write
+      # id-token: write lets an organization-owned wrapper mint a GitHub OIDC
+      # JWT and send it to the private OpenBao auth endpoint in exchange for a
+      # short-lived VAULT_TOKEN. The JWT crosses the network to OpenBao; the
+      # OpenBao signing key never leaves the server.
+      id-token: write
+      actions: read
+    secrets: inherit
+    with:
+      branch: main
+      reusable-ci-binary-ref: v3.0.0
+      artifacts-config: .reusable-ci/artifacts.yml
+      changelog-creator: git-cliff
+      release-publisher: github-cli
+      release.attachartifacts: target/*.jar
+    # This generic orchestrator does not perform the OpenBao JWT exchange and a
+    # `uses:` job cannot receive `env:` from this caller. Before adopting this
+    # example, use an organization-owned wrapper/fork that authenticates to
+    # OpenBao and exposes VAULT_ADDR + the short-lived VAULT_TOKEN to every
+    # cosign signing/attestation step. Do not use a long-lived Vault token.

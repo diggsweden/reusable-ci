@@ -1,0 +1,3 @@
+# Replace this demonstration key with the public half of RELEASE_SSH_SIGNING_KEY,
+# then commit this file as .reusable-ci/allowed_signers.
+release@example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDussZse6ojniFGMb4q0xtD/GSJ2QQkEAkgFc/dZVTJp

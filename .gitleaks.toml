@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Gitleaks configuration. Inherits the upstream default ruleset and
+# allowlists a handful of files whose whole purpose is to contain
+# secret-shaped strings (test fixtures for redaction logic, throwaway
+# keypair generators, documentation showing placeholder tokens).
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Files where secret-shaped strings are by-design test fixtures or doc placeholders."
+paths = [
+  # Documentation with example curl commands using GITHUB_TOKEN as a placeholder (not a real token)
+  '''docs/verification\.md''',
+
+  # Go fuzz seed / test fixture using PGP armor headers (no real key material)
+  '''internal/domain/gpg/gpg_fuzz_test\.go''',
+
+  # The armored-key heuristic's own table. Every case is a PGP armor header
+  # followed by an ellipsis: the marker is the input under test, and there is
+  # no key material after it.
+  '''internal/domain/gpg/heuristics_test\.go''',
+
+  # Test infra that materialises a throwaway GPG keypair to disk for isolated tests
+  '''internal/testutil/gpgkey/gpgkey_test\.go''',
+
+  # RedactKeyMaterial unit test. The whole point of the file is to feed
+  # PEM private-key markers and a JWT-shaped token through the redactor
+  # and assert the bytes get replaced. The fixtures HAVE to look like
+  # real secrets for the test to be meaningful.
+  '''internal/safeexec/redact_test\.go''',
+
+  # GPG --import-via-stdin integration test. Ships a throwaway PGP
+  # private key fixture so it can exercise the real `gpg --import`
+  # path end-to-end. The key is generated for that test and not used
+  # anywhere else.
+  '''internal/adapters/gpg/import_stdin_test\.go''',
+
+  # GPG package-signing test. Same style of throwaway PGP private-key
+  # armor fixture, driving the sign-packages flow through a real
+  # `gpg --import`; no live key material.
+  '''internal/app/release/gpgsignpackages_test\.go''',
+
+  # Run-artifact API test. Uses a made-up bearer token so the client's
+  # auth-header handling can be asserted; not a real credential.
+  '''internal/adapters/github/runartifact_test\.go''',
+
+  # Redaction tests whose subprocess fixtures deliberately print synthetic
+  # PEM/JWT-shaped material so the error path can prove it is scrubbed.
+  '''internal/adapters/cosign/publickey_test\.go''',
+  '''internal/adapters/mise/mise_test\.go''',
+
+  # Historical/current registry-auth fixture containing only made-up encoded
+  # credentials and a synthetic stale identity token.
+  '''internal/domain/container/registryauth_test\.go''',
+
+  # Redaction test for provider.RegistryAuth's formatters. Its fixture is the
+  # literal "glpat-OWNED-SYNTHETIC-CANARY" -- shaped like a GitLab PAT on
+  # purpose, because the test asserts that String and GoString never print it.
+  '''internal/domain/provider/registryauth_redaction_test\.go''',
+
+  # Release-image verification test. Its table feeds a credential-bearing URL
+  # and the RFC 7519 example JWT through the diagnostic scrubber and asserts
+  # each canary is gone; the values have to be secret-shaped to mean anything.
+  '''internal/app/container/releaseimageverify_test\.go''',
+
+  # Git diagnostic-redaction test. The fixture is base64 of the literal string
+  # "secret-key-material", wrapped in OPENSSH PRIVATE KEY markers so the
+  # redactor's real trigger fires. No key material.
+  '''internal/adapters/git/read_test\.go''',
+
+  # Redaction and credential-isolation tests. The buildah and live-input
+  # fixtures plant made-up registry auth and flag secrets, and the gpg
+  # stub prints an armor header over a fake body, so each test can assert
+  # the value never reaches output.
+  '''internal/adapters/buildah/buildah_integration_test\.go''',
+  '''internal/adapters/gpg/run_redaction_test\.go''',
+  '''scripts/ci/live_inputs_test\.go''',
+]

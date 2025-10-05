@@ -1,0 +1,152 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# GitHub Packages Publisher
+# 
+# Purpose: Publishes artifacts to GitHub Packages registry. Supports Maven and NPM
+# from a unified interface. Downloads pre-built artifacts from workflow
+# artifacts and publishes them to the appropriate GitHub Packages registry.
+#
+# Package Types Supported:
+#   - maven: Publishes to GitHub Maven registry (maven.pkg.github.com)
+#   - npm: Publishes to GitHub NPM registry (npm.pkg.github.com)
+#
+# Inputs:
+#   - artifactSource: Name of workflow artifact containing built packages
+#   - packageType: Type of package (maven|npm)
+#
+# Required Secrets:
+#   GITHUB_TOKEN: Automatically provided by GitHub Actions
+#
+# Required Permissions:
+#   actions: read    # Download workflow artifacts
+#   contents: read   # Checkout source
+#   packages: write  # Publish to GitHub Packages
+#
+name: Publish Maven GitHub
+on:
+  workflow_call:
+    inputs:
+      artifact-source:
+        description: "Name of workflow artifact containing built packages"
+        required: true
+        type: string
+      package-type:
+        description: "Package type: maven or npm"
+        required: true
+        type: string
+      java-version:
+        description: "Java version"
+        required: false
+        default: "25"
+        type: string
+      node-version:
+        description: "Node.js version"
+        required: false
+        default: "24"
+        type: string
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      attach-pattern:
+        description: "Pattern for artifacts to attach to release"
+        required: false
+        default: ""
+        type: string
+      branch:
+        description: "Explicit branch, tag, or SHA whose package is published"
+        required: true
+        type: string
+      reusable-ci-binary-ref:
+        description: "reusable-ci ref/version to install on plain-runner jobs (defaults to v3.0.0)"
+        required: false
+        default: "v3.0.0"
+        type: string
+permissions:
+  contents: read
+jobs:
+  publish-maven-github:
+    name: Publish to GitHub Packages (${{ inputs['package-type'] }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      # Least-privilege: publishes to GitHub Packages via GITHUB_TOKEN
+      # (packages: write), and reads the build artifact; no git write performed.
+      actions: read
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ inputs.branch }}
+      - name: Checkout reusable-ci bootstrap installers
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+          persist-credentials: false
+      - name: Install reusable-ci binary
+        env:
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
+      # Defense-in-depth: refuse PR-context triggers. GITHUB_PACKAGES
+      # publish uses the auto GITHUB_TOKEN today; the gate prevents
+      # any future secret addition (or a misconfigured direct caller)
+      # from leaking via PR-HEAD code.
+      - name: Refuse PR-context trigger (publish/release secrets in scope)
+        run: reusable-ci validate event-context
+      - name: Download build artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: ${{ inputs['artifact-source'] }}
+          ARTIFACT_DIR: ${{ inputs['working-directory'] }}/
+        run: reusable-ci artifact download
+      # Maven publishing. Auth/settings/registry are resolved by the binary
+      # (`publish forge-packages deploy`), so setup-java only installs the JDK.
+      - name: Set up JDK for Maven
+        if: ${{ inputs['package-type'] == 'maven' }}
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          java-version: ${{ inputs['java-version'] }}
+          distribution: 'temurin'
+      - name: Publish Maven to GitHub Packages
+        if: ${{ inputs['package-type'] == 'maven' }}
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          # The binary resolves https://maven.pkg.github.com/$GITHUB_REPOSITORY +
+          # a username/password settings.xml from $GITHUB_ACTOR/$GITHUB_TOKEN.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
+        run: reusable-ci publish forge-packages deploy
+      # NPM publishing. The binary resolves the npm registry + .npmrc, finds the
+      # *.tgz, and publishes — setup-node only installs Node.
+      - name: Set up Node.js for NPM
+        if: ${{ inputs['package-type'] == 'npm' }}
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: ${{ inputs['node-version'] }}
+      - name: Publish NPM to GitHub Packages
+        if: ${{ inputs['package-type'] == 'npm' }}
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: reusable-ci publish forge-packages deploy --project-type npm
+      # Optional: Attach artifacts to GitHub release
+      - name: Upload artifacts to release
+        if: ${{ inputs['attach-pattern'] != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ATTACH_PATTERN: ${{ inputs['attach-pattern'] }}
+          REF_NAME: ${{ github.ref_name }}
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: reusable-ci release attachments upload
+      - name: Generate publish summary
+        env:
+          REPOSITORY: ${{ github.repository }}
+          PACKAGE_TYPE: ${{ inputs['package-type'] }}
+        run: reusable-ci report publish forge-packages

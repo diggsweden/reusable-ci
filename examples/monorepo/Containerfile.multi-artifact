@@ -1,0 +1,39 @@
+# Example multi-stage Containerfile for combined-app container
+# This Containerfile builds all artifacts in separate stages, then combines them
+
+# Stage 1: Build API (Maven)
+FROM maven:3.9-eclipse-temurin-21 AS build-api
+WORKDIR /build/services/api
+COPY services/api/pom.xml .
+COPY services/api/src src/
+RUN mvn clean package -DskipTests
+
+# Stage 2: Build Worker (Maven)
+FROM maven:3.9-eclipse-temurin-21 AS build-worker
+WORKDIR /build/services/worker
+COPY services/worker/pom.xml .
+COPY services/worker/src src/
+RUN mvn clean package -DskipTests
+
+# Stage 3: Build Frontend (NPM)
+FROM node:24 AS build-web
+WORKDIR /build/apps/web
+COPY apps/web/package*.json ./
+RUN npm ci
+COPY apps/web/ ./
+RUN npm run build
+
+# Final stage: Runtime with all artifacts
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+
+# Copy built artifacts from each stage
+COPY --from=build-api /build/services/api/target/*.jar /app/api.jar
+COPY --from=build-worker /build/services/worker/target/*.jar /app/worker.jar
+COPY --from=build-web /build/apps/web/dist /app/static/
+
+# Expose ports
+EXPOSE 8080
+
+# Run the main API service
+CMD ["java", "-jar", "/app/api.jar"]

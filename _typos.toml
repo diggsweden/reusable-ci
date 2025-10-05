@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+# SPDX-License-Identifier: CC0-1.0
+#
+# crate-ci/typos configuration. Each entry below is a legitimate
+# domain term that the default dictionary mis-flags.
+
+[default.extend-words]
+# GnuPG `--with-colons` output uses `fpr:` as the row prefix for
+# the public-key fingerprint (see gnupg/doc/DETAILS in the upstream
+# repo). The codebase parses that format and names local variables
+# after the field.
+fpr = "fpr"
+
+# `anc` and `desc` are the matching short locals used in the
+# ancestor/descendant resolution helper in internal/adapters/git.
+# Keeping them symmetric reads better than longer names.
+anc = "anc"
+
+# "HashiCorp Vault" and the `hashivault://` cosign KMS URI scheme
+# appear in publishing / verification docs. The typos dictionary
+# trips on the leading "Hashi" substring.
+Hashi = "Hashi"
+hashivault = "hashivault"
+
+# `upport` is the trailing fragment of `[sS]upport` in
+# templates/gitcliff/keepachangelog.toml — a git-cliff regex character
+# class that matches commit messages beginning with "Support" or
+# "support". typos tokenises after the bracket and flags `upport` as
+# a misspelling of "support"; the regex is the correct shape.
+upport = "upport"
+
+# `in-toto` is the attestation framework (in-toto.io); its bare
+# spelling "intoto" appears in cosign predicate-type URIs
+# (`in-toto` media types), test fixtures, and verification docs.
+intoto = "intoto"
+
+# Deliberate user-typo fixture in internal/cli/clierr_test.go: the
+# did-you-mean error-classification test feeds a misspelled
+# subcommand ("relese") through ClassifyError and asserts the
+# suggestion. Correcting it would defeat the test.
+relese = "relese"
+
+# Same arrangement in internal/cli/commands/plan/write_test.go: the
+# plan-write tests feed a misspelled scope ("container biuld") and a
+# misspelled --set key ("contxt") to assert that an unknown scope and
+# an unknown flag are both rejected with a suggestion. The misspelling
+# is the input under test.
+biuld = "biuld"
+contxt = "contxt"
+
+# `validate tagg` in internal/cli/root.go is the worked example in the
+# fail-closed rationale: it contrasts the typo case, which already
+# exits 2 as an unknown subcommand, with the quieter omission case the
+# parent guard closes. The misspelling is the illustration.
+tagg = "tagg"
+
+# Deliberate malformed Android build-type fixture. The resolver must leave
+# the misspelling unmatched so the downstream empty-task refusal is covered.
+relase = "relase"
+
+# Tokens inside synthetic base64 credentials used to demonstrate the current
+# stderr-filter limit. They are encoded fixture data, not prose.
+Iy = "Iy"
+
+# Fragments of historical commit IDs cited by the review/rollout docs.
+daa = "daa"
+caf = "caf"
+
+# The "(?:ba)?sh" fragment of the shebang pattern in scripts/shellscripts_test.go
+# matches both sh and bash. It is regex syntax, not a word.
+ba = "ba"

@@ -1,0 +1,167 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+//
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+
+//go:build live
+
+package conformance_test
+
+// PAR-UX-4: the same failure means the same thing on every forge.
+//
+// Error text is the least disciplined surface in any tool — it is written per
+// adapter, in the moment, by whoever was closest to the API — so it is where
+// forges drift apart first and where nothing was comparing them.
+//
+// The load-bearing assertion here is the exit code, not the wording. A caller
+// scripts against exit codes: a refused credential that exits "wrong input" on
+// one forge and "try again later" on another is a pipeline that retries forever
+// against exactly one of them. Wording is checked only for the properties a
+// reader needs — that something was said, that it names what failed, and that it
+// is not a stack trace — because demanding identical sentences across forges
+// would forbid an adapter from saying anything specific, which is the opposite
+// of useful.
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/livetest"
+)
+
+// refusedToken is the deliberately invalid credential the refused-credential
+// case hands the product; like the target's own token, no form of it may be
+// echoed back.
+const refusedToken = "gpl-0000000000000000000000000000000000000000000000000000000000000bad" //nolint:gosec // Synthetic invalid token.
+
+func TestErrors_SameFailureClass_ExitsTheSameOnEveryForge(t *testing.T) {
+	// Each case is a failure every forge can produce, driven through the same
+	// verb, so a difference in outcome is a difference in the adapter rather
+	// than in what was asked of it.
+	cases := []struct {
+		name string
+
+		// want is the semantic exit every forge must give, beside parity:
+		// agreeing on the wrong class would still mislead every caller.
+		want errs.ExitCodeType
+
+		// args builds the invocation for one forge. The bad ingredient differs
+		// per case; everything else is held constant.
+		args func(t *testing.T, target livetest.Target, repo string) []string
+	}{
+		{
+			name: "refused credential",
+			want: errs.ExitCodeNoPerm,
+			args: func(t *testing.T, target livetest.Target, repo string) []string {
+				t.Helper()
+
+				return []string{
+					"validate", "auth", "token",
+					"--token-file", writeToken(t, refusedToken),
+					"--repository", livetest.RepoSlug(target, repo),
+				}
+			},
+		},
+		{
+			name: "repository that does not exist",
+			want: errs.ExitCodeNoInput,
+			args: func(t *testing.T, target livetest.Target, _ string) []string {
+				t.Helper()
+
+				return []string{
+					"validate", "auth", "token",
+					"--token-file", writeToken(t, target.Token),
+					"--repository", target.Owner + "/rc-absent-repository-par-ux-4",
+				}
+			},
+		},
+	}
+
+	forges := forgesClaiming(t, alwaysValidatesTokens, "token validation")
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			exits := map[provider.ForgeAPI]int{}
+
+			for _, forge := range forges {
+				target := livetest.Accept(t, forge)
+				repo := livetest.NewScratchRepo(t, target, "errshape")
+
+				run := livetest.CLI(t, target, repo, testCase.args(t, target, repo)...)
+
+				if run.ExitCode == 0 {
+					t.Fatalf("%s: %s succeeded", forge, testCase.name)
+				}
+
+				exits[forge] = run.ExitCode
+				assertReadableFailure(t, forge, testCase.name, run)
+
+				// The target's own token is checked for every CLI run by the
+				// harness; the refused token is this scenario's to check.
+				for _, form := range livetest.SecretForms(target.CredentialUsername, refusedToken) {
+					if strings.Contains(run.Combined(), form) {
+						t.Errorf("%s: %s echoed a form of the refused token", forge, testCase.name)
+					}
+				}
+
+				if run.ExitCode != int(testCase.want) {
+					t.Errorf("%s: %s exits %d, want %d\nstderr: %s", forge, testCase.name, run.ExitCode, testCase.want, run.Stderr)
+				}
+			}
+
+			// The parity claim. Reported separately from the per-forge checks
+			// because this is the one a consumer's pipeline actually depends on.
+			reference := forges[0]
+			for _, forge := range forges[1:] {
+				if exits[forge] != exits[reference] {
+					t.Errorf("%s exits %d on %s but %d on %s — a caller cannot handle this failure the same way on both",
+						testCase.name, exits[forge], forge, exits[reference], reference)
+				}
+			}
+		})
+	}
+}
+
+// assertReadableFailure checks the properties a person needs from a failure,
+// without prescribing the sentence: something was said, on the right stream, it
+// names the thing that failed, and it is not an internal crash.
+func assertReadableFailure(t *testing.T, forge provider.ForgeAPI, scenario string, run livetest.Run) {
+	t.Helper()
+
+	if strings.TrimSpace(run.Stderr) == "" {
+		t.Errorf("%s: %s failed silently on stderr, leaving nothing to act on", forge, scenario)
+
+		return
+	}
+
+	// An internal error means the failure was never classified: the user is
+	// shown our stack instead of their problem.
+	lower := strings.ToLower(run.Stderr)
+	for _, leak := range []string{"panic:", "goroutine ", "runtime error"} {
+		if strings.Contains(lower, leak) {
+			t.Errorf("%s: %s surfaced an internal crash (%q)\nstderr: %s", forge, scenario, leak, run.Stderr)
+		}
+	}
+
+	if run.ExitCode == int(errs.ExitCodeSoftware) {
+		t.Errorf("%s: %s exits %d (internal error), so a caller is told to file a bug for their own input\nstderr: %s",
+			forge, scenario, run.ExitCode, run.Stderr)
+	}
+
+	// Something identifying has to appear, or the reader cannot tell which of
+	// several inputs was wrong.
+	named := false
+	for _, subject := range []string{"token", "repository", "repo", "permission", "auth", "not found", string(forge)} {
+		if strings.Contains(lower, subject) {
+			named = true
+
+			break
+		}
+	}
+
+	if !named {
+		t.Errorf("%s: %s names neither the credential, the repository nor the forge\nstderr: %s",
+			forge, scenario, run.Stderr)
+	}
+}

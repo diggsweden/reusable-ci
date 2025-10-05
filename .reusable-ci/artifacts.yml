@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# ⚠️ INTERNAL USE ONLY - Configuration for reusable-ci's own releases
+# This file is used by self-*.yml workflows to manage reusable-ci releases.
+# For templates to use in YOUR project, see examples/ directory.
+artifacts:
+  - name: reusable-ci-meta
+    project-type: meta
+    working-directory: .
+    build-type: application
+containers: []

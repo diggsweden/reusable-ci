@@ -1,0 +1,120 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# NPM Builder
+#
+# Purpose: Builds NPM projects and uploads artifacts for subsequent publishing steps.
+# Separates build logic from registry-specific publishing.
+#
+# Runs inside the reusable-ci-runtime-node image. Node, npm, corepack, and the
+# reusable-ci binary are baked in.
+#
+# Build Process:
+#   1. Install dependencies (npm ci)
+#   2. Run tests (if configured)
+#   3. Build application (if build script exists)
+#   4. Upload built artifacts
+#
+# Outputs:
+#   - Artifacts uploaded as '<artifact-name>-build-artifacts' or 'npm-build-artifacts' for use by publish-* workflows
+#
+# Required Permissions:
+#   contents: read  # Checkout code
+#
+name: Build NPM
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      skip-tests:
+        description: "Skip tests during build"
+        required: false
+        default: false
+        type: boolean
+      branch:
+        description: "Branch, tag, or SHA to checkout. Empty uses the triggering ref."
+        required: false
+        default: ""
+        type: string
+      artifact-name:
+        description: "Logical artifact name for upload naming (defaults to 'npm-build-artifacts' when empty)"
+        required: false
+        default: ""
+        type: string
+      enable-build-sbom:
+        description: "Run the cyclonedx-npm step (false skips Build SBOM generation entirely; derived from per-artefact 'sboms' when called from release-build-stage)"
+        required: false
+        default: true
+        type: boolean
+      runtime-image:
+        description: "reusable-ci runtime image carrying Node. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-node-24:v3.0.0"
+        type: string
+permissions:
+  contents: read
+jobs:
+  build-npm:
+    name: Build NPM Project
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      contents: read
+    steps:
+      - name: Guard working-directory stays inside the workspace
+        # Every upload below is rooted at this caller-supplied value. An
+        # absolute path or a parent step would take the artifact from outside
+        # the workspace, so it is refused here, before any step consumes it.
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: |
+          case "$WORKING_DIRECTORY" in
+            "") echo "working-directory must not be empty" >&2; exit 1 ;;
+            /*) echo "working-directory must be workspace-relative: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
+          case "/$WORKING_DIRECTORY/" in
+            */../*) echo "working-directory must not contain parent-directory steps: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
+      - name: Checkout repository
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CHECKOUT_REF: ${{ inputs.branch }}
+        run: reusable-ci platform checkout
+      - name: Build NPM project
+        # One step owns the whole build sequence (metadata → ci → test → build →
+        # SBOM → pack → summary); the binary threads metadata internally and the
+        # same `build npm run` runs identically on GitLab. The per-step
+        # variations (SBOM tool version, skip-tests) are configuration here. Only
+        # platform-transport steps (checkout, upload) wrap it.
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+          SKIP_TESTS: ${{ inputs['skip-tests'] }}
+          ENABLE_BUILD_SBOM: ${{ inputs['enable-build-sbom'] }}
+          NODE_VERSION: "24"
+          # renovate: datasource=npm depName=@cyclonedx/cyclonedx-npm
+          CYCLONEDX_VERSION: "4.2.1"
+        run: reusable-ci build npm run
+      - name: Upload NPM artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs['artifact-name'] && format('{0}-build-artifacts', inputs['artifact-name']) || 'npm-build-artifacts' }}
+          path: ${{ inputs['working-directory'] }}/*.tgz
+          retention-days: "7"
+          if-no-files-found: error
+      # Build SBOM is a separate compliance deliverable; see build-maven.yml
+      # for rationale.
+      - name: Upload NPM Build SBOM
+        if: ${{ inputs['enable-build-sbom'] }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs['artifact-name'] && format('{0}-build-sbom', inputs['artifact-name']) || 'npm-build-sbom' }}
+          path: ${{ inputs['working-directory'] }}/bom.json
+          retention-days: "7"
+          if-no-files-found: error

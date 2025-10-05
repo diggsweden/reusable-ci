@@ -1,0 +1,117 @@
+__CREDENTIAL_SETUP____PROBE_PRELUDE__
+curl -fsSL -o cosign.gz "__COSIGN_ASSET_URL__"
+__COSIGN_DIGEST_CHECK__gzip -d cosign.gz
+chmod +x cosign
+curl -fsSL -o probe-json "__JSON_ASSET_URL__"
+__JSON_DIGEST_CHECK__chmod +x probe-json
+export PATH="$PWD:$PATH"
+cosign version 2>&1 | grep -i gitversion
+
+curl -fsSL -o credential-proxy "__PROXY_ASSET_URL__"
+__PROXY_DIGEST_CHECK__chmod +x credential-proxy
+
+__TOKEN_FETCH__if [ -z "$rc_sigstore_id_token" ]; then
+  echo "FAIL: the runner minted no id_token, so there is no identity to sign with"
+  exit 1
+fi
+
+proxy_ready="$PWD/credential-proxy.ready"
+env -u SIGSTORE_ID_TOKEN \
+  -u ACTIONS_ID_TOKEN_REQUEST_URL \
+  -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+  -u rc_sigstore_id_token \
+  -u rc_actions_id_token_request_url \
+  -u rc_actions_id_token_request_token \
+  ./credential-proxy --authority "__FULCIO_AUTHORITY__" --ready-file "$proxy_ready" &
+fulcio_proxy_pid=$!
+stop_fulcio_proxy() {
+  unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy
+  if kill -0 "$fulcio_proxy_pid" 2>/dev/null; then
+    kill -TERM "$fulcio_proxy_pid" 2>/dev/null || true
+    attempts=0
+    while kill -0 "$fulcio_proxy_pid" 2>/dev/null && [ "$attempts" -lt 50 ]; do
+      sleep 0.1
+      attempts=$((attempts + 1))
+    done
+    if kill -0 "$fulcio_proxy_pid" 2>/dev/null; then
+      kill -KILL "$fulcio_proxy_pid" 2>/dev/null || true
+    fi
+  fi
+  wait "$fulcio_proxy_pid" 2>/dev/null || true
+  rm -f "$proxy_ready"
+}
+trap stop_fulcio_proxy EXIT INT TERM
+
+attempts=0
+while [ ! -s "$proxy_ready" ] && [ "$attempts" -lt 50 ]; do
+  kill -0 "$fulcio_proxy_pid" 2>/dev/null || {
+    echo "FAIL: Fulcio credential proxy exited before readiness"
+    exit 1
+  }
+  sleep 0.1
+  attempts=$((attempts + 1))
+done
+test -s "$proxy_ready"
+fulcio_proxy_url="$(cat "$proxy_ready")"
+case "$fulcio_proxy_url" in
+  http://127.0.0.1:*) ;;
+  *) echo "FAIL: credential proxy did not publish a loopback URL"; exit 1 ;;
+esac
+export HTTP_PROXY="$fulcio_proxy_url" HTTPS_PROXY="$fulcio_proxy_url"
+export http_proxy="$fulcio_proxy_url" https_proxy="$fulcio_proxy_url"
+export NO_PROXY='' no_proxy=''
+
+curl -fsS "__FULCIO_URL__/api/v2/trustBundle" \
+  | ./probe-json fulcio-certificates > fulcio-root.pem
+test -s fulcio-root.pem
+
+cosign trusted-root create \
+  --fulcio="url=__FULCIO_URL__,certificate-chain=fulcio-root.pem" \
+  --no-default-fulcio --no-default-rekor --no-default-ctfe --no-default-tsa \
+  --out trusted-root.json
+
+mkdir -p dist
+echo "par-sign-2 payload" > dist/artifact.tgz
+
+sign_status=0
+SIGSTORE_ID_TOKEN="$rc_sigstore_id_token" ./reusable-ci release sign \
+  --method=sigstore \
+  --release-artifacts-dir dist \
+  --no-checksums-file \
+  --oidc-issuer "__OIDC_ISSUER__" \
+  --fulcio-url "__FULCIO_URL__" \
+  --trusted-root trusted-root.json > product-out.txt 2>&1 || sign_status=$?
+
+unset SIGSTORE_ID_TOKEN rc_sigstore_id_token
+if [ "$credential_trace" = 1 ]; then
+  set -x
+fi
+cat product-out.txt
+if [ "$sign_status" -ne 0 ] &&
+   grep -qE 'usage error|flag provided but not defined|requires a subcommand|is required' product-out.txt; then
+  echo "FAIL: the probe invoked the product incorrectly; this is a fixture bug, not a result"
+  exit 1
+fi
+if [ "$sign_status" -ne 0 ]; then
+  echo "FAIL: the product exited $sign_status; see its output above"
+  exit "$sign_status"
+fi
+
+bundle="$(find . -maxdepth 2 -name '*.bundle' -type f | head -n 1)"
+if [ -z "$bundle" ]; then
+  echo "FAIL: signing reported success but produced no bundle"
+  exit 1
+fi
+
+cosign verify-blob \
+  --bundle "$bundle" \
+  --certificate-oidc-issuer "__OIDC_ISSUER__" \
+  --certificate-identity-regexp "__IDENTITY_REGEXP__" \
+  --trusted-root trusted-root.json \
+  --insecure-ignore-tlog \
+  --insecure-ignore-sct \
+  dist/artifact.tgz
+
+stop_fulcio_proxy
+trap - EXIT INT TERM
+echo "keyless signature verified against the lab CA"

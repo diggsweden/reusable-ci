@@ -1,0 +1,58 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# rumdl configuration
+# See: https://github.com/rvben/rumdl/blob/main/docs/RULES.md
+
+[global]
+# docs/cli-reference.md is GENERATED from the CLI's usage strings
+# (cmd/gen-cli-reference); value placeholders like <server-url> are
+# not inline HTML, and the file is never hand-edited.
+# The two test-audit ledgers keep one finding per line on purpose: the counts
+# and the pruning steps in TEST_AUDIT_BACKLOG.md's own Status section depend on
+# that shape, and reflowing them would break both. Same reason as the generated
+# reference above: the file's format is a contract, not a style choice.
+exclude = [
+  "docs/cli-reference.md",
+  "TEST_AUDIT_BACKLOG.md",
+  "TEST_AUDIT_HISTORY.md",
+]
+
+# Disable rules that cause issues or are not appropriate for this project
+disable = [
+  "MD034",  # no-bare-urls - causes panic with Swedish chars
+  "MD041",  # first-line-h1 - copyright headers come first
+  "MD052",  # reference-links-images - template placeholders
+  "MD005",  # list-indent - conflicts with existing style
+  "MD007",  # ul-indent - conflicts with existing style
+  "MD032",  # blanks-around-lists - too strict
+  "MD022",  # blanks-around-headings - too strict
+  "MD029",  # ol-prefix - ordered list numbering style
+  "MD031",  # blanks-around-fences - too strict
+  "MD036"   # emphasis-heading - valid use of emphasis
+]
+
+[MD003]
+style = "atx"
+
+[MD004]
+style = "dash"
+
+[MD007]
+indent = 2
+
+[MD013]
+line_length = 500
+
+[MD033]
+allowed_elements = ["br", "kbd"]
+
+[MD035]
+style = "---"
+
+[MD046]
+style = "fenced"
+
+[MD048]
+style = "backtick"

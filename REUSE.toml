@@ -1,0 +1,140 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+version = 1
+
+# Root dual-license notice (points to LICENSES/); the notice itself is CC0.
+[[annotations]]
+path = "LICENSE"
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+# Markdown documentation.
+[[annotations]]
+path = [
+  "README.md",
+  "CHANGELOG.md",
+  "docs/DEVELOPMENT.md",
+  "docs/artifacts-reference.md",
+  "docs/components.md",
+  "docs/ecosystems.md",
+  "docs/publishing.md",
+  "docs/reference.md",
+  "docs/sbom.md",
+  "docs/verification.md",
+  "docs/workflow-design-policy.md",
+  "docs/workflows.md",
+  "examples/README.md",
+  "examples/android-app/README.md",
+  "examples/cargo-app/README.md",
+  "examples/gradle-app/README.md",
+  "examples/maven-app/README.md",
+  "examples/monorepo/README.md",
+  "examples/npm-app/README.md",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = [
+  "SECURITY.md",
+  "docs/README.md",
+  "docs/adr/*.md",
+  "docs/cli-black-box.md",
+  "docs/cli-reference.md",
+  "docs/flows.md",
+  "docs/failed-release-recovery.md",
+  "docs/forgejo.md",
+  "docs/open-questions.md",
+  "docs/providers.md",
+  "docs/runtime-images.md",
+  "docs/scripts.md",
+  "docs/testing.md",
+  "docs/threat-model.md",
+  "examples/gitlab/*/README.md",
+  "examples/go-cli/README.md",
+  "examples/go-service/README.md",
+  "examples/signing/*/README.md",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = "examples/signing/sigstore-keyless/.reusable-ci/allowed_signers.example"
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = "renovate.json"
+SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = ".github/workflows/generate-changelog.yml"
+SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = "examples/monorepo/Containerfile.multi-artifact"
+SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+# JSON Schema for artifacts.yml — JSON has no comment syntax for an
+# inline SPDX header, so the licensing claim lives here. The .json is
+# generated from the .tmpl by cmd/gen-artifacts-schema.
+[[annotations]]
+path = ".reusable-ci/artifacts.schema.json"
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = "internal/domain/config/artifacts.schema.json.tmpl"
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+# Same arrangement for the release-image ledger schema: the .json is
+# generated from the .tmpl by cmd/gen-release-images-schema.
+[[annotations]]
+path = "docs/schemas/release-images.schema.json"
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = "internal/domain/imageledger/release-images.schema.json.tmpl"
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = ".gitignore"
+SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+# Go-generated build manifests; no SPDX headers possible.
+[[annotations]]
+path = ["go.mod", "go.sum"]
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+# Go test fixtures (fuzz seeds, golden JSON, sample inputs). These are
+# inert data, not source — REUSE compliance applies to source.
+[[annotations]]
+path = [
+  "internal/workflowguard/testdata/**",
+  "internal/domain/build/testdata/**",
+  "internal/domain/pipeline/testdata/**",
+  "internal/domain/provenance/testdata/**",
+  "internal/domain/security/testdata/**",
+  "internal/livetest/testdata/**",
+]
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+# In-runner probe shell bodies embedded by internal/livetest (go:embed);
+# headers would corrupt the generated probes, so they are annotated here.
+[[annotations]]
+path = ["internal/livetest/probes/**"]
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "EUPL-1.2 OR GPL-3.0-or-later"

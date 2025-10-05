@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "context": {
+    "project_type": "go",
+    "base_branch": "main",
+    "reusable_ci_binary_ref": "v3.0.0"
+  },
+  "policy": {
+    "engine": "nanolinter",
+    "swift_format": false,
+    "swift_lint": false,
+    "swift": false
+  },
+  "stages": {
+    "quality": {
+      "version": 1,
+      "stage": "pr-quality",
+      "targets": {
+        "nanolinter": {
+          "runs": true,
+          "items": [
+            "nanolinter"
+          ]
+        },
+        "megalinter": {
+          "runs": false,
+          "items": []
+        },
+        "swift": {
+          "runs": false,
+          "items": []
+        }
+      }
+    }
+  }
+}

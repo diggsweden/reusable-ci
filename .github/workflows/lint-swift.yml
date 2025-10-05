@@ -1,0 +1,169 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# Swift Lint Workflow
+#
+# Purpose: Runs Swift code linting and formatting checks using swift-format
+# and optionally SwiftLint for iOS/macOS projects.
+#
+# How it works:
+# 1. Checks out the repository
+# 2. Installs swift-format (and optionally SwiftLint)
+# 3. Runs linting via `reusable-ci build swift …` — Go owns the file
+#    enumeration, exit-code handling, and step-summary rendering.
+# 4. Aggregates results via `reusable-ci report swift-lint`.
+#
+# Features:
+#   - swift-format linting (Google Swift Style Guide)
+#   - Optional SwiftLint support
+#   - Configurable file patterns
+#   - Detailed error reporting
+#
+# Required Permissions:
+#   contents: read  # Checkout code
+#
+name: Lint Swift
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: "Working directory for linting"
+        required: false
+        default: "."
+        type: string
+      enable-swiftformat:
+        description: "Enable swift-format linting"
+        required: false
+        default: true
+        type: boolean
+      swift-format-version:
+        description: "swift-format version (e.g., 510.1.0)"
+        required: false
+        default: ""
+        type: string
+      enable-swiftlint:
+        description: "Enable SwiftLint linting"
+        required: false
+        default: false
+        type: boolean
+      swiftlint-config:
+        description: "Path to SwiftLint configuration file"
+        required: false
+        default: ".swiftlint.yml"
+        type: string
+      file-pattern:
+        description: "File pattern for Swift files to lint (git ls-files pattern)"
+        required: false
+        default: "*.swift"
+        type: string
+      fail-on-warning:
+        description: "Fail the build on linting warnings"
+        required: false
+        default: false
+        type: boolean
+      macos-version:
+        description: "macOS runner version (macos-13, macos-14, macos-15, macos-26)"
+        required: false
+        default: "macos-26"
+        type: string
+      reusable-ci-binary-ref:
+        description: "reusable-ci ref/version installed on the macOS runner (default: v3.0.0)"
+        required: false
+        default: "v3.0.0"
+        type: string
+      runtime-image:
+        description: "reusable-ci runtime image used by the Linux summary job. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+        type: string
+permissions:
+  contents: read
+jobs:
+  swift-format-lint:
+    name: Swift Format Lint
+    if: ${{ inputs['enable-swiftformat'] }}
+    runs-on: ${{ inputs.macos-version }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 1
+      - name: Checkout reusable-ci bootstrap installers
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+          persist-credentials: false
+      - name: Install reusable-ci binary
+        env:
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
+      - name: Install swift-format
+        env:
+          SWIFT_FORMAT_VERSION: ${{ inputs['swift-format-version'] }}
+        run: |
+          if [ -n "$SWIFT_FORMAT_VERSION" ]; then
+            brew install "swift-format@$SWIFT_FORMAT_VERSION"
+          else
+            brew install swift-format
+          fi
+          swift-format --version
+      - name: Run swift-format lint
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+          FILE_PATTERN: ${{ inputs['file-pattern'] }}
+        run: reusable-ci build swift format-lint
+  swiftlint:
+    name: SwiftLint
+    if: ${{ inputs['enable-swiftlint'] }}
+    runs-on: ${{ inputs.macos-version }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 1
+      - name: Checkout reusable-ci bootstrap installers
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+          persist-credentials: false
+      - name: Install reusable-ci binary
+        env:
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
+      - name: Install SwiftLint
+        run: |
+          brew install swiftlint
+          swiftlint version
+      - name: Run SwiftLint
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+          SWIFTLINT_CONFIG_PATH: ${{ inputs['swiftlint-config'] }}
+          FAIL_ON_WARNING: ${{ inputs['fail-on-warning'] }}
+        run: reusable-ci build swift swiftlint
+  summary:
+    name: Lint Summary
+    runs-on: ubuntu-24.04
+    needs: [swift-format-lint, swiftlint]
+    if: always()
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    steps:
+      - name: Aggregate results
+        env:
+          ENABLE_SWIFTFORMAT: ${{ inputs['enable-swiftformat'] }}
+          SWIFTFORMAT_RESULT: ${{ needs.swift-format-lint.result }}
+          ENABLE_SWIFTLINT: ${{ inputs['enable-swiftlint'] }}
+          SWIFTLINT_RESULT: ${{ needs.swiftlint.result }}
+        run: reusable-ci report swift-lint

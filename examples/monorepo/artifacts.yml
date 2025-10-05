@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# Example artifacts.yml for monorepo support
+# Place this file in your repository (e.g., .reusable-ci/artifacts.yml)
+# and reference it in your release workflow with: artifacts-config: .reusable-ci/artifacts.yml
+sign:
+  method: sigstore
+
+artifacts:
+  # Maven backend application
+  - name: backend-api
+    project-type: maven
+    working-directory: services/backend
+    build-type: application
+    config:
+      java-version: 25
+  # NPM frontend application
+  - name: frontend-ui
+    project-type: npm
+    working-directory: packages/frontend
+    publish-to:
+      - forge-packages
+    config:
+      node-version: 24
+# Containers are separate - they reference artifacts by name
+containers:
+  - name: backend-api
+    from: [backend-api]
+    container-file: services/backend/Containerfile
+    context: .
+    platforms: linux/amd64,linux/arm64
+  - name: frontend-ui
+    from: [frontend-ui]
+    container-file: packages/frontend/Containerfile
+    context: .
+    platforms: linux/amd64,linux/arm64

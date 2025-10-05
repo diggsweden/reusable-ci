@@ -1,0 +1,95 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+#
+# GitLab CI/CD Catalog component: the MegaLinter PR lint gate.
+#
+# This component runs MegaLinter's bundled linters using the project's
+# `.mega-linter.yml`. The image input is mandatory and accepts only a digest
+# reference. GitLab validates that input before creating the job because the job
+# container receives the checkout, CI variables (including CI_JOB_TOKEN), and
+# any runner-provided mounts.
+#
+# The component provides two capabilities:
+#   1. MegaLinter runs enabled linters and fails the job on blocking findings
+#      (DISABLE_ERRORS=false); that exit is the lint gate.
+#   2. MegaLinter's SARIF is converted to the GitLab SAST schema and published as
+#      `artifacts:reports:sast`, so blocking findings land on the merge-request
+#      Security tab. The conversion uses `reusable-ci security report
+#      to-gitlab-sast`; it is best-effort, so an image without curl or cosign
+#      leaves the SARIF as a plain artifact rather than failing the lint gate.
+spec:
+  inputs:
+    stage:
+      default: test
+      description: Pipeline stage the lint gate runs in.
+    job-name:
+      default: megalinter
+      description: Name of the generated job.
+    megalinter-image:
+      regex: '^[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}$'
+      description: Required trusted MegaLinter image reference pinned by @sha256:<64 lowercase hex>.
+    enable-gitlab-sast:
+      type: boolean
+      default: true
+      description: >-
+        Convert MegaLinter's SARIF to a GitLab SAST report and publish it as artifacts:reports:sast (populates the MR Security tab; display needs GitLab Ultimate). When false, the SARIF is kept as a plain artifact only.
+    reusable-ci-ref:
+      default: "v3.0.0"
+      description: >-
+        reusable-ci release tag installed (cosign-verified) for the SARIF → GitLab-SAST conversion. Use a published release tag so the bootstrap scripts + Sigstore signature resolve.
+---
+"$[[ inputs.job-name ]]":
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.megalinter-image ]]
+  variables:
+    # MegaLinter lints the checked-out project and writes its reports here.
+    DEFAULT_WORKSPACE: $CI_PROJECT_DIR
+    SARIF_REPORTER: "true"
+    DISABLE_ERRORS: "false"
+    ENABLE_GITLAB_SAST: "$[[ inputs.enable-gitlab-sast ]]"
+    RC_REF: "$[[ inputs.reusable-ci-ref ]]"
+    SARIF_FILE: megalinter-reports/megalinter-report.sarif
+    GL_SAST_FILE: gl-sast-report.json
+    RC_BIN: /tmp/rc-bin/reusable-ci
+  script:
+    - |
+      set -uo pipefail
+
+      # --- Lint gate --------------------------------------------------------
+      # Run MegaLinter's entrypoint over $DEFAULT_WORKSPACE. SARIF_REPORTER emits
+      # the SARIF the conversion below consumes; DISABLE_ERRORS=false makes a
+      # blocking finding exit non-zero (the gate). Capture the exit but keep
+      # going so the SAST report is still produced when the gate is red
+      # (artifacts: when: always).
+      bash /entrypoint.sh
+      gate=$?
+      if [ "$gate" -ne 0 ]; then
+        echo "MegaLinter found blocking lint issues — see the MegaLinter output above (a lint gate on your code, not a pipeline error)."
+      fi
+
+      # --- SARIF -> GitLab SAST --------------------------------------------
+      # Convert MegaLinter's SARIF to the GitLab SAST schema for the MR Security
+      # tab. The reusable-ci installer verifies release assets and the binary is
+      # called by absolute path. Conversion is best-effort and does not change
+      # the lint gate's exit code.
+      if [ "$ENABLE_GITLAB_SAST" = "true" ] && [ -f "$SARIF_FILE" ]; then
+        work="$(mktemp -d)"
+        raw="https://raw.githubusercontent.com/diggsweden/reusable-ci/${RC_REF}/scripts/bootstrap"
+        curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-common.sh" "$raw/install-common.sh" &&
+          curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-cosign.sh" "$raw/install-cosign.sh" &&
+          curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-reusable-ci.sh" "$raw/install-reusable-ci.sh" &&
+          REUSABLE_CI_INSTALL_DIR="$(dirname "$RC_BIN")" \
+            bash "$work/install-reusable-ci.sh" "$RC_REF" &&
+          "$RC_BIN" security report to-gitlab-sast --input "$SARIF_FILE" --output "$GL_SAST_FILE" ||
+          echo "WARN: GitLab-SAST conversion skipped (reusable-ci install or convert failed; the image may lack cosign); SARIF kept as plain artifact."
+      fi
+
+      # The lint gate is the only thing that decides the job result.
+      exit "$gate"
+  artifacts:
+    when: always
+    paths:
+      - megalinter-reports/megalinter-report.sarif
+    reports:
+      sast: gl-sast-report.json

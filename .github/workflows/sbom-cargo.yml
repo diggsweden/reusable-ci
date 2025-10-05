@@ -1,0 +1,131 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+#
+# Cargo SBOM
+#
+# Generates a CycloneDX Build SBOM for a Rust project or workspace using
+# cargo-cyclonedx, and uploads it as `cargo-build-sbom` by default.
+# Workspaces get one bom.json per crate; reusable-ci sbom assemble --plan
+# picks the aggregate (root crate) BOM, the one with the smallest path depth,
+# when consolidating.
+#
+# This workflow targets container-first cargo artefacts (build-mode:
+# container-first). It deliberately does not invoke `cargo build` or
+# `cargo test`: in container-first the compile happens inside the
+# Containerfile during publish-container.yml's matrix dispatch.
+# cargo-cyclonedx resolves the dependency graph from Cargo.lock, so the
+# SBOM is accurate without compiling.
+#
+# Artefact-first cargo (build-mode: artifact-first) does not use this
+# workflow — `build-cargo.yml` runs `cargo cyclonedx` inline alongside
+# the cross-compile, mirroring `build-go.yml`'s shape. See docs/sbom.md.
+#
+# Runs inside the reusable-ci-runtime-rust image — Rust toolchain and
+# cargo-cyclonedx are baked in, so no `cargo install` happens per run.
+#
+name: Cargo SBOM
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      branch:
+        description: "Branch, tag, or SHA to checkout. Empty uses the triggering ref."
+        required: false
+        default: ""
+        type: string
+      artifact-name:
+        description: "Artifact name for uploads (defaults to 'cargo-build-sbom')"
+        required: false
+        default: ""
+        type: string
+      enable-build-sbom:
+        description: "Generate CycloneDX Build SBOM (default true)"
+        required: false
+        default: true
+        type: boolean
+      runtime-image:
+        description: "reusable-ci runtime image carrying the Rust toolchain. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-rust-stable:v3.0.0"
+        type: string
+permissions:
+  contents: read
+jobs:
+  sbom-cargo:
+    name: Cargo SBOM
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      contents: read
+    steps:
+      - name: Guard working-directory stays inside the workspace
+        # Every upload below is rooted at this caller-supplied value. An
+        # absolute path or a parent step would take the artifact from outside
+        # the workspace, so it is refused here, before any step consumes it.
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: |
+          case "$WORKING_DIRECTORY" in
+            "") echo "working-directory must not be empty" >&2; exit 1 ;;
+            /*) echo "working-directory must be workspace-relative: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
+          case "/$WORKING_DIRECTORY/" in
+            */../*) echo "working-directory must not contain parent-directory steps: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
+      - name: Checkout repository
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CHECKOUT_REF: ${{ inputs.branch }}
+        run: reusable-ci platform checkout
+      # Cache only what cargo-cyclonedx actually consults: the crates.io
+      # registry index/cache and the git db (for git-source dependencies).
+      # No target/ — this workflow doesn't compile. CARGO_HOME is fixed
+      # at /usr/local/cargo by the runtime image.
+      - name: Cache cargo registry
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            /usr/local/cargo/registry/index
+            /usr/local/cargo/registry/cache
+            /usr/local/cargo/git/db
+          key: cargo-sbom-${{ runner.os }}-${{ hashFiles(format('{0}/Cargo.lock', inputs['working-directory'])) }}
+          restore-keys: |
+            cargo-sbom-${{ runner.os }}-
+      - name: Generate Build SBOM
+        id: sbom
+        if: ${{ inputs['enable-build-sbom'] }}
+        working-directory: ${{ inputs['working-directory'] }}
+        # Binary-owned: runs cargo-cyclonedx (baked into the runtime image) —
+        # `--all` covers every workspace member, `--override-filename bom`
+        # normalises the name — the same invocation, now under the `sbom` surface.
+        run: reusable-ci sbom build --project-type cargo
+      - name: Upload Cargo SBOM
+        if: steps.sbom.outcome == 'success'
+        # When called from release-build-stage.yml's per-artefact matrix,
+        # artifact-name is set to the cargo artefact's user-chosen name
+        # (e.g. "hsm-worker") so each upload is unique. Direct callers
+        # who don't pass artifact-name fall back to the bare default,
+        # which is fine for single-cargo-artefact projects.
+        # Enabled Build SBOMs are mandatory release deliverables.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs['artifact-name'] != '' && format('{0}-cargo-build-sbom', inputs['artifact-name']) || 'cargo-build-sbom' }}
+          path: |
+            ${{ inputs['working-directory'] }}/bom.json
+            ${{ inputs['working-directory'] }}/**/bom.json
+          retention-days: "7"
+          if-no-files-found: error
+      - name: Write SBOM status to step summary
+        if: always()
+        env:
+          SBOM_KIND: cargo
+          SBOM_OUTCOME: ${{ steps.sbom.outcome }}
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: reusable-ci report status sbom-count

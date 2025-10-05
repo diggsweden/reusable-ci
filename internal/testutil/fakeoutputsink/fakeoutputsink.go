@@ -1,0 +1,210 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+
+// Package fakeoutputsink is an in-memory implementation of ci.OutputSink
+// for app-layer tests. Stores everything in maps; tests inspect via
+// Single / Multiline / All.
+package fakeoutputsink
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+)
+
+// Sink implements ci.OutputSink. Safe for concurrent use.
+type Sink struct {
+	t          *testing.T
+	mu         sync.Mutex
+	scalar     map[string]string
+	multiline  map[string][]string
+	order      []string
+	closed     bool
+	closeCount int
+}
+
+// New returns a fresh Sink.
+//
+// It registers no cleanup and asserts nothing on its own: a test that never
+// closes the sink passes. That is deliberate — most callers hand the sink to
+// one function and care about what was written, not about the close — but it
+// used to be documented as the opposite ("registers t.Cleanup to assert single
+// Close"), which is a claim a reader would reasonably rely on when deciding
+// they need not check. Close-once is opt-in: inspect CloseCount.
+func New(t *testing.T) *Sink {
+	t.Helper()
+
+	return &Sink{
+		t:         t,
+		scalar:    map[string]string{},
+		multiline: map[string][]string{},
+	}
+}
+
+// Set implements ci.OutputSink.
+func (s *Sink) Set(_ context.Context, key, value string) error {
+	if strings.ContainsAny(value, "\r\n") {
+		return fmt.Errorf("fakeoutputsink: scalar output %q contains a newline; use SetMultiline: %w", key, errs.ErrValidation)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return fmt.Errorf("fakeoutputsink: Set after Close"+": %w", errs.ErrValidation)
+	}
+
+	s.scalar[key] = value
+	s.note(key)
+
+	return nil
+}
+
+// SetBool implements ci.OutputSink, formatting the boolean as
+// "true"/"false" — matching the string-sink convention so tests that
+// assert on scalar output don't need to know which format the
+// production code uses.
+func (s *Sink) SetBool(ctx context.Context, key string, value bool) error {
+	return s.Set(ctx, key, strconv.FormatBool(value))
+}
+
+// SetMultiline implements ci.OutputSink.
+func (s *Sink) SetMultiline(_ context.Context, key string, lines []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return fmt.Errorf("fakeoutputsink: SetMultiline after Close"+": %w", errs.ErrValidation)
+	}
+
+	cp := make([]string, len(lines))
+	copy(cp, lines)
+	s.multiline[key] = cp
+	s.note(key)
+
+	return nil
+}
+
+// Close implements ci.OutputSink.
+func (s *Sink) Close(_ context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.closed = true
+	s.closeCount++
+
+	return nil
+}
+
+// Single returns the scalar value for key, or empty string if absent.
+func (s *Sink) Single(key string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.scalar[key]
+}
+
+// Multiline returns a copy of the multi-line value for key, or nil if absent.
+// An explicitly set empty value (including nil) returns a non-nil empty slice.
+func (s *Sink) Multiline(key string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	value, ok := s.multiline[key]
+	if !ok {
+		return nil
+	}
+
+	cp := make([]string, len(value))
+	copy(cp, value)
+
+	return cp
+}
+
+// AllScalar returns a snapshot of all scalar key=value pairs.
+//
+// It is a copy, so mutating it cannot reach the sink. It is NOT ordered: this
+// is a map, and the doc used to call it "sorted", which is not something a map
+// can be. Use Keys for a sorted key list, or Order for insertion order.
+func (s *Sink) AllScalar() map[string]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cp := make(map[string]string, len(s.scalar))
+	for k, v := range s.scalar {
+		cp[k] = v
+	}
+
+	return cp
+}
+
+// Order returns the keys in the order they were first written.
+//
+// jsonsink emits its document in insertion order, so the order a caller
+// writes its outputs in is the order a consumer reads them in. Keys()
+// sorts, and the maps above lose it entirely, which left callers that
+// order their outputs deliberately with no way to say so.
+func (s *Sink) Order() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cp := make([]string, len(s.order))
+	copy(cp, s.order)
+
+	return cp
+}
+
+// Keys returns the union of scalar + multiline keys, sorted.
+func (s *Sink) Keys() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	seen := map[string]struct{}{}
+	for k := range s.scalar {
+		seen[k] = struct{}{}
+	}
+
+	for k := range s.multiline {
+		seen[k] = struct{}{}
+	}
+
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+
+	sort.Strings(out)
+
+	return out
+}
+
+// CloseCount returns how many times Close was called. Should be 1 in
+// well-behaved tests.
+func (s *Sink) CloseCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.closeCount
+}
+
+// Compile-time check.
+var _ ci.OutputSink = (*Sink)(nil)
+
+// note records key in insertion order on first sight, mirroring how
+// jsonsink positions it.
+func (s *Sink) note(key string) {
+	for _, seen := range s.order {
+		if seen == key {
+			return
+		}
+	}
+
+	s.order = append(s.order, key)
+}

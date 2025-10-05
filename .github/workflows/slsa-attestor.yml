@@ -1,0 +1,137 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+# SPDX-License-Identifier: CC0-1.0
+#
+# EXPERIMENTAL GITHUB ACTIONS PATTERN; NOT YET EXERCISED IN CI.
+#
+# This reusable workflow accepts a digest-qualified image, runs the reusable-ci
+# provenance attestor with a KMS key, and pushes the resulting cosign
+# attestation. It requests contents:read and packages:write, does not request a
+# GitHub OIDC token, and lets the caller select the runner label.
+#
+# This workflow does not establish a SLSA build level or enforce isolation from
+# the build job. The operator must provide separate build/attestor identities,
+# scope KMS and registry credentials, protect the invoking ref or environment,
+# and select an ephemeral runner when those properties are required.
+#
+# VERIFY (the KMS public key verifies the signature; builder.id is caller-supplied):
+#   cosign verify-attestation --key kms-builder.pub \
+#     --type slsaprovenance1 <registry>/<image>@sha256:...
+#
+name: SLSA Attestor (experimental)
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: "Image digest reference to attest (registry/image@sha256:...). Immutable digest only — never a tag."
+        required: true
+        type: string
+      kms-key:
+        description: "cosign KMS key URI (hashivault://…, awskms://…, gcpkms://…, azurekms://…, pkcs11:…)."
+        required: true
+        type: string
+      builder-id:
+        description: "SLSA provenance builder.id — the operator's documented builder identity. Defaults to the KMS key URI."
+        required: false
+        type: string
+        default: ""
+      predicate-type:
+        # Only slsaprovenance1 works here. This job passes no --predicate, and
+        # the CLI generates a predicate from the CI environment for that type
+        # alone; any other value fails at run time with "--predicate is
+        # required". The knob stays so a future SLSA predicate version can be
+        # selected without a workflow change.
+        description: "SLSA predicate version to attest. Only slsaprovenance1 is supported: this job generates the predicate from the CI environment, which no other type can do."
+        required: false
+        type: string
+        default: "slsaprovenance1"
+      registry:
+        description: "Registry host for login (where the attestation is pushed)."
+        required: false
+        type: string
+        default: "ghcr.io"
+      runs-on:
+        description: "Runner label for the attestor job. Use an ephemeral pool when the caller's threat model requires job isolation."
+        required: false
+        type: string
+        default: "ubuntu-24.04"
+      reusable-ci-binary-ref:
+        description: "reusable-ci ref/version whose bootstrap installers + CLI to use."
+        required: false
+        type: string
+        default: "v3.0.0-pre"
+    secrets:
+      registry-password:
+        description: "Registry password/token for pushing the attestation. Falls back to the job's GITHUB_TOKEN on GHCR."
+        required: false
+      kms-auth-env:
+        description: |
+          Operator KMS authentication, as newline-separated KEY=VALUE pairs,
+          appended to the environment before signing — e.g.
+          "VAULT_ADDR=https://bao.example.org\nVAULT_TOKEN=…" for OpenBao/Vault.
+          For cloud KMS prefer OIDC: fork this workflow to add `id-token: write`
+          + your cloud's credential-configuration action instead of a token here.
+        required: false
+
+# No id-token: KMS signing uses the key, not keyless OIDC.
+permissions:
+  contents: read
+  packages: write # push the signed attestation to the registry
+
+jobs:
+  attest:
+    name: Attest provenance (cosign + KMS)
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - name: Checkout reusable-ci bootstrap installers
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+      - name: Install reusable-ci binary
+        env:
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
+      - name: Refuse PR-context trigger (signing and registry secrets in scope)
+        run: reusable-ci validate event-context
+      - name: Configure KMS authentication
+        env:
+          KMS_AUTH_ENV: ${{ secrets.kms-auth-env }}
+        run: |
+          # Operator-supplied KEY=VALUE lines (e.g. VAULT_ADDR/VAULT_TOKEN).
+          # The value is the operator's own secret — scoped to this isolated job.
+          if [ -n "$KMS_AUTH_ENV" ]; then
+            printf '%s\n' "$KMS_AUTH_ENV" >> "$GITHUB_ENV"
+          fi
+      - name: Log in to registry
+        env:
+          CONTAINER_REGISTRY: ${{ inputs.registry }}
+          REGISTRY_USERNAME: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.registry-password || github.token }}
+        run: reusable-ci container login
+      - name: Attest SLSA provenance (cosign + KMS)
+        env:
+          SIGN_METHOD: kms
+          SIGN_KEY: ${{ inputs.kms-key }}
+          BUILDER_ID: ${{ inputs.builder-id || inputs.kms-key }}
+          PREDICATE_TYPE: ${{ inputs.predicate-type }}
+          IMAGE_REF: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          # cosign installs to a temp dir and is on PATH only within this step,
+          # so install and attest together (same pattern as publish-container).
+          # shellcheck disable=SC1091
+          source .github-shared/scripts/bootstrap/install-cosign.sh
+          install_cosign
+          reusable-ci container attest \
+            --type "$PREDICATE_TYPE" \
+            --method kms \
+            --key "$SIGN_KEY" \
+            --builder-id "$BUILDER_ID" \
+            "$IMAGE_REF"

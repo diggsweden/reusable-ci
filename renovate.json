@@ -1,0 +1,179 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "local>diggsweden/.github:renovate-base"
+  ],
+  "enabledManagers": [
+    "github-actions",
+    "mise",
+    "dockerfile",
+    "gomod",
+    "custom.regex"
+  ],
+  "packageRules": [
+    {
+      "description": "Supply-chain guard: wait 7 days before proposing updates to newly published versions",
+      "matchPackageNames": [
+        "*"
+      ],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Pin external runtime Containerfile base images; the dockerfile manager updates both the tag and digest.",
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "pinDigests": true,
+      "addLabels": [
+        "containers"
+      ],
+      "groupName": "container base images",
+      "groupSlug": "container-base-images",
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Group all mise tool dependencies",
+      "matchManagers": [
+        "mise"
+      ],
+      "addLabels": [
+        "tools"
+      ],
+      "groupName": "mise tools",
+      "groupSlug": "mise-tools",
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Security and compliance tools",
+      "matchManagers": [
+        "mise"
+      ],
+      "matchPackageNames": [
+        "aqua:zricethezav/gitleaks",
+        "forgejo:itiquette/gommitlint",
+        "aqua:rhysd/actionlint"
+      ],
+      "addLabels": [
+        "security-tools"
+      ],
+      "groupName": "security tools",
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Documentation and build tools",
+      "matchManagers": [
+        "mise"
+      ],
+      "matchPackageNames": [
+        "aqua:google/yamlfmt",
+        "aqua:rvben/rumdl",
+        "github:italia/publiccode-parser-go",
+        "aqua:casey/just"
+      ],
+      "addLabels": [
+        "documentation"
+      ],
+      "groupName": "documentation tools",
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Group Go module patch bumps so routine x/* and patch-level updates land in one PR per cycle. Major/minor stay individual so they get explicit review.",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchUpdateTypes": [
+        "patch",
+        "digest"
+      ],
+      "addLabels": [
+        "go-deps"
+      ],
+      "groupName": "go module patch updates",
+      "groupSlug": "gomod-patch",
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Label and surface Go module minor/major bumps individually for review.",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "major"
+      ],
+      "addLabels": [
+        "go-deps"
+      ],
+      "minimumReleaseAge": "7 days"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/\\.github/workflows/.+\\.ya?ml$/"
+      ],
+      "description": "Update Docker image references in GitHub Actions",
+      "matchStrings": [
+        "uses:\\s+docker://(?<depName>[^:]+):(?<currentValue>[^@]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/scripts/sbom/.+\\.sh$/"
+      ],
+      "description": "Update Syft version in SBOM generation script",
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)[\\s\\n]+SYFT_VERSION=\"(?<currentValue>v[0-9.]+)\""
+      ],
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/\\.github/workflows/.+\\.ya?ml$/"
+      ],
+      "description": "Update Just version in workflow inputs",
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)[\\s\\n]+just-version:[\\s\\S]*?default:\\s*\"(?<currentValue>[0-9.]+)\""
+      ],
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/\\.github/workflows/.+\\.ya?ml$/"
+      ],
+      "description": "Update Just version in action with: blocks",
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s*\\n\\s+just-version:\\s*(?<currentValue>[0-9.]+)"
+      ],
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/\\.github/workflows/.+\\.ya?ml$/"
+      ],
+      "description": "Update env versions in workflow files",
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s*\\n\\s+\\w+:\\s*\"(?<currentValue>v?[0-9.]+)\""
+      ],
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/\\.github/workflows/.+\\.ya?ml$/"
+      ],
+      "description": "Update env versions with registryUrl (Codeberg/Gitea releases)",
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+) registryUrl=(?<registryUrl>\\S+)\\s*\\n\\s+\\w+:\\s*\"(?<currentValue>v?[0-9.]+)\""
+      ],
+      "versioningTemplate": "semver"
+    }
+  ]
+}
