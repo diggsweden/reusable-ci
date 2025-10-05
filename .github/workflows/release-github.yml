@@ -55,7 +55,7 @@ on:
       checkoutRef:
         description: "Git ref to checkout (branch or tag)"
         required: false
-        default: "main"
+        default: "v1"
         type: string
       attachArtifacts:
         description: "Glob patterns for artifacts to attach (newline or comma separated)"
@@ -217,7 +217,8 @@ jobs:
           repository: diggsweden/reusable-ci
           ref: feat/ci-refactor
           path: .github-shared
-          sparse-checkout: scripts/sbom
+          sparse-checkout: |
+            scripts/sbom
 
       - name: Generate 3-Layer SBOMs (JReleaser path)
         if: ${{ inputs.useJReleaser }}
@@ -362,7 +363,8 @@ jobs:
           repository: diggsweden/reusable-ci
           ref: feat/ci-refactor
           path: .github-shared
-          sparse-checkout: scripts/sbom
+          sparse-checkout: |
+            scripts/sbom
 
       - name: Generate 3-Layer SBOMs (GitHub CLI path)
         if: ${{ !inputs.useJReleaser && inputs.generateSBOM }}

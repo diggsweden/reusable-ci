@@ -77,12 +77,12 @@ on:
       branch:
         description: "Target branch for release (default: main)"
         required: false
-        default: "main"
+        default: "v1"
         type: string
       workflowsRef:
         description: ".github repository ref for validation scripts (default: main)"
         required: false
-        default: "main"
+        default: "v1"
         type: string
 
   workflow_dispatch: # Allow manual validation
@@ -127,7 +127,8 @@ jobs:
           repository: diggsweden/reusable-ci
           ref: ${{ inputs.workflowsRef }}
           path: .github-shared
-          sparse-checkout: scripts/validation
+          sparse-checkout: |
+            scripts/validation
       
       - name: Debug - List checked out files
         run: |

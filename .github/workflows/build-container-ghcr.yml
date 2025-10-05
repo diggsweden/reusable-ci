@@ -64,7 +64,7 @@ on:
       branch:
         description: "Branch to checkout (default: main)"
         required: false
-        default: "main"
+        default: "v1"
         type: string
       platforms:
         description: "Target platforms (comma-separated)"
@@ -342,7 +342,8 @@ jobs:
           repository: diggsweden/reusable-ci
           ref: feat/ci-refactor
           path: .github-shared
-          sparse-checkout: scripts/sbom
+          sparse-checkout: |
+            scripts/sbom
 
       - name: Generate Container SBOMs (SPDX + CycloneDX)
         if: ${{ inputs.enableSBOM && inputs.pushImage }}

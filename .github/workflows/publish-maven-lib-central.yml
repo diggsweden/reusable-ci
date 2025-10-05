@@ -83,7 +83,7 @@ on:
       branch:
         description: "Branch to checkout"
         required: false
-        default: "main"
+        default: "v1"
         type: string
       changelogConfig:
         description: "Path to changelog configuration file"
@@ -227,7 +227,8 @@ jobs:
           repository: diggsweden/reusable-ci
           ref: feat/ci-refactor
           path: .github-shared
-          sparse-checkout: scripts/sbom
+          sparse-checkout: |
+            scripts/sbom
 
       - name: Generate POM and JAR SBOMs for Library
         if: inputs.jreleaserEnabled

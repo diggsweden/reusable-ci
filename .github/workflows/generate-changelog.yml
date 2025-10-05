@@ -64,7 +64,7 @@ jobs:
         with:
           repository: diggsweden/reusable-ci
           path: .github-templates
-          ref: main
+          ref: v1
           sparse-checkout: |
             gitcliff-templates/
 
