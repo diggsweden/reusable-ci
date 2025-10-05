@@ -373,13 +373,25 @@ jobs:
             *-container-sbom.cyclonedx.json
           retention-days: 30
 
+      - name: Find Container SBOM file
+        if: ${{ inputs.enableSBOM && inputs.pushImage && inputs.enableSLSA }}
+        id: find-sbom
+        run: |
+          SBOM_FILE=$(ls *-container-sbom.spdx.json 2>/dev/null | head -1)
+          if [ -z "$SBOM_FILE" ]; then
+            echo "Error: No container SBOM file found matching pattern *-container-sbom.spdx.json"
+            exit 1
+          fi
+          echo "sbom-file=$SBOM_FILE" >> "$GITHUB_OUTPUT"
+          echo "Found SBOM file: $SBOM_FILE"
+
       - name: Attest Container SBOM
         if: ${{ inputs.enableSBOM && inputs.pushImage && inputs.enableSLSA }}
         uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3.0.0
         with:
           subject-name: ${{ steps.image-name.outputs.name }}
           subject-digest: ${{ steps.build.outputs.digest }}
-          sbom-path: '*-container-sbom.spdx.json'
+          sbom-path: ${{ steps.find-sbom.outputs.sbom-file }}
           push-to-registry: true
 
       - name: Output image details
