@@ -49,9 +49,17 @@ generate_dual_sboms() {
   local name=$2
   local version=$3
   local layer_name=$4
+  local custom_basename=$5
   
-  local spdx_file="${name}-${version}-${layer_name}-sbom.spdx.json"
-  local cdx_file="${name}-${version}-${layer_name}-sbom.cyclonedx.json"
+  local spdx_file cdx_file
+  
+  if [ -n "$custom_basename" ]; then
+    spdx_file="${custom_basename}-sbom.spdx.json"
+    cdx_file="${custom_basename}-sbom.cyclonedx.json"
+  else
+    spdx_file="${name}-${version}-${layer_name}-sbom.spdx.json"
+    cdx_file="${name}-${version}-${layer_name}-sbom.cyclonedx.json"
+  fi
   
   # Generate SBOMs
   syft "$scan_target" -o spdx-json > "$spdx_file"
@@ -188,13 +196,13 @@ generate_source_layer() {
   
   if [ -f "pom.xml" ]; then
     echo "   Scanning pom.xml for Maven dependencies..."
-    generate_dual_sboms "pom.xml" "$name" "$version" "pom"
+    generate_dual_sboms "pom.xml" "$name" "$version" "pom" "${name}-${version}-pom"
   elif [ -f "package.json" ]; then
     echo "   Scanning package.json for NPM dependencies..."
-    generate_dual_sboms "." "$name" "$version" "package"
+    generate_dual_sboms "." "$name" "$version" "package" "${name}-${version}-package"
   elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
     echo "   Scanning build.gradle for Gradle dependencies..."
-    generate_dual_sboms "." "$name" "$version" "gradle"
+    generate_dual_sboms "." "$name" "$version" "gradle" "${name}-${version}-gradle"
   else
     echo "   ⚠️  No build manifest found (pom.xml, package.json, build.gradle)"
   fi
@@ -213,76 +221,80 @@ generate_artifact_layer() {
   case "$PROJECT_TYPE" in
     maven)
       echo "   Project type: Maven (looking for JAR files)"
-      layer_name="jar"
       
       # Maven JARs can be in multiple locations:
       # 1. target/ directory (from local build or JReleaser workflow)
       # 2. ./release-artifacts/ (downloaded from GitHub CLI workflow artifact)
-      local artifact=""
+      local artifacts=()
       
-      # Try release-artifacts first (common in GitHub CLI release workflows)
+      # Collect all JARs from release-artifacts (common in GitHub CLI release workflows)
       if [ -d "./release-artifacts" ]; then
-        # Try unversioned JAR first (finalName pattern)
-        artifact=$(find ./release-artifacts -maxdepth 1 -name "${name}.jar" -type f 2>/dev/null | head -1)
-        
-        # Fallback to versioned JAR pattern
-        if [ -z "$artifact" ]; then
-          artifact=$(find ./release-artifacts -maxdepth 1 -name "${name}-*.jar" -type f \
-            ! -name "*-sources.jar" \
-            ! -name "*-javadoc.jar" \
-            ! -name "*-tests.jar" \
-            ! -name "*-test.jar" \
-            2>/dev/null | head -1)
-        fi
+        while IFS= read -r -d '' artifact; do
+          artifacts+=("$artifact")
+        done < <(find ./release-artifacts -maxdepth 1 -type f \
+          \( -name "${name}.jar" -o -name "${name}-*.jar" \) \
+          ! -name "*-sources.jar" \
+          ! -name "*-javadoc.jar" \
+          ! -name "*-tests.jar" \
+          ! -name "*-test.jar" \
+          -print0 2>/dev/null)
       fi
       
-      # Fallback to target/ directory
-      if [ -z "$artifact" ] && [ -d "target" ]; then
-        # Try unversioned JAR first (finalName pattern)
-        artifact=$(find target -maxdepth 1 -name "${name}.jar" -type f 2>/dev/null | head -1)
-        
-        # Fallback to versioned JAR pattern
-        if [ -z "$artifact" ]; then
-          artifact=$(find target -maxdepth 1 -name "${name}-*.jar" -type f \
-            ! -name "*-sources.jar" \
-            ! -name "*-javadoc.jar" \
-            ! -name "*-tests.jar" \
-            ! -name "*-test.jar" \
-            2>/dev/null | head -1)
-        fi
+      # Fallback to target/ directory if no artifacts found yet
+      if [ ${#artifacts[@]} -eq 0 ] && [ -d "target" ]; then
+        while IFS= read -r -d '' artifact; do
+          artifacts+=("$artifact")
+        done < <(find target -maxdepth 1 -type f \
+          \( -name "${name}.jar" -o -name "${name}-*.jar" \) \
+          ! -name "*-sources.jar" \
+          ! -name "*-javadoc.jar" \
+          ! -name "*-tests.jar" \
+          ! -name "*-test.jar" \
+          -print0 2>/dev/null)
       fi
       
-      if [ -n "$artifact" ] && [ -f "$artifact" ]; then
-        echo "   Scanning JAR file: $artifact"
-        generate_dual_sboms "$artifact" "$name" "$version" "$layer_name"
+      if [ ${#artifacts[@]} -gt 0 ]; then
+        for artifact in "${artifacts[@]}"; do
+          echo "   Scanning JAR file: $artifact"
+          local jar_basename
+          jar_basename=$(basename "$artifact" .jar)
+          generate_dual_sboms "$artifact" "$name" "$version" "jar" "${jar_basename}-jar"
+        done
       else
-        echo "   ⚠️  No JAR file found in target/ or ./release-artifacts/ directories"
+        echo "   ⚠️  No JAR files found in target/ or ./release-artifacts/ directories"
         echo "      Searched for: ${name}.jar or ${name}-*.jar"
       fi
       ;;
       
     npm)
       echo "   Project type: NPM (looking for tar archive files)"
-      layer_name="tararchive"
       
       # NPM tar archives can be in multiple locations:
       # 1. Current directory (from npm pack)
       # 2. ./release-artifacts/ (downloaded from workflow artifact)
-      local artifact=""
+      local artifacts=()
       
-      # Try release-artifacts first (common in release workflows)
+      # Collect all tgz files from release-artifacts (common in release workflows)
       if [ -d "./release-artifacts" ]; then
-        artifact=$(find ./release-artifacts -maxdepth 1 -name "*.tgz" -type f 2>/dev/null | head -1)
+        while IFS= read -r -d '' artifact; do
+          artifacts+=("$artifact")
+        done < <(find ./release-artifacts -maxdepth 1 -name "*.tgz" -type f -print0 2>/dev/null)
       fi
       
-      # Fallback to current directory
-      if [ -z "$artifact" ]; then
-        artifact=$(find . -maxdepth 1 -name "*.tgz" -type f 2>/dev/null | head -1)
+      # Fallback to current directory if no artifacts found yet
+      if [ ${#artifacts[@]} -eq 0 ]; then
+        while IFS= read -r -d '' artifact; do
+          artifacts+=("$artifact")
+        done < <(find . -maxdepth 1 -name "*.tgz" -type f -print0 2>/dev/null)
       fi
       
-      if [ -n "$artifact" ] && [ -f "$artifact" ]; then
-        echo "   Scanning NPM tar archive: $artifact"
-        generate_dual_sboms "$artifact" "$name" "$version" "$layer_name"
+      if [ ${#artifacts[@]} -gt 0 ]; then
+        for artifact in "${artifacts[@]}"; do
+          echo "   Scanning NPM tar archive: $artifact"
+          local tgz_basename
+          tgz_basename=$(basename "$artifact" .tgz)
+          generate_dual_sboms "$artifact" "$name" "$version" "tararchive" "${tgz_basename}-tararchive"
+        done
       else
         echo "   ⚠️  No NPM tar archive (.tgz) found"
         echo "      Searched in: current directory and ./release-artifacts/"
@@ -291,7 +303,6 @@ generate_artifact_layer() {
       
     gradle)
       echo "   Project type: Gradle (looking for JAR files)"
-      layer_name="jar"
       
       # Gradle builds to build/libs/
       if [ ! -d "build/libs" ]; then
@@ -300,17 +311,23 @@ generate_artifact_layer() {
         return
       fi
       
-      local artifact
-      artifact=$(find build/libs -maxdepth 1 -name "${name}-*.jar" -type f \
+      local artifacts=()
+      while IFS= read -r -d '' artifact; do
+        artifacts+=("$artifact")
+      done < <(find build/libs -maxdepth 1 -type f -name "${name}-*.jar" \
         ! -name "*-sources.jar" \
         ! -name "*-javadoc.jar" \
-        2>/dev/null | head -1)
+        -print0 2>/dev/null)
       
-      if [ -n "$artifact" ] && [ -f "$artifact" ]; then
-        echo "   Scanning JAR file: $artifact"
-        generate_dual_sboms "$artifact" "$name" "$version" "$layer_name"
+      if [ ${#artifacts[@]} -gt 0 ]; then
+        for artifact in "${artifacts[@]}"; do
+          echo "   Scanning JAR file: $artifact"
+          local jar_basename
+          jar_basename=$(basename "$artifact" .jar)
+          generate_dual_sboms "$artifact" "$name" "$version" "jar" "${jar_basename}-jar"
+        done
       else
-        echo "   ⚠️  No JAR file found in build/libs/ directory"
+        echo "   ⚠️  No JAR files found in build/libs/ directory"
       fi
       ;;
       
@@ -337,7 +354,7 @@ generate_container_layer() {
   fi
   
   echo "   Scanning container image: $CONTAINER_IMAGE"
-  generate_dual_sboms "$CONTAINER_IMAGE" "$name" "$version" "container"
+  generate_dual_sboms "$CONTAINER_IMAGE" "$name" "$version" "container" "${name}-${version}-container"
   echo ""
 }
 
