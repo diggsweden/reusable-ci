@@ -73,7 +73,7 @@
           minimal-changelog-config:
             description: "Configuration for the minimal changelog (default: minimal)"
             required: false
-            default: ".github-templates/gitcliff-templates/minimal.toml"
+            default: ".github-templates/templates/gitcliff/minimal.toml"
             type: string
           file_pattern:
             description: 'Files to commit (default: "CHANGELOG.md pom.xml"). NPM projects should set to "CHANGELOG.md package.json package-lock.json"'
@@ -98,7 +98,7 @@
         uses: ./.github/workflows/generate-changelog.yml
         with:
           branch: ${{ inputs.branch }}
-          changelogConfig: ".github-templates/gitcliff-templates/keepachangelog.toml"
+          changelogConfig: ".github-templates/templates/gitcliff/keepachangelog.toml"
           gitCliffArgs: ""  # Empty means full history
           outputFile: "CHANGELOG.md"
           uploadAsArtifact: true
@@ -112,7 +112,7 @@
         uses: ./.github/workflows/generate-changelog.yml
         with:
           branch: ${{ inputs.branch }}
-          changelogConfig: ".github-templates/gitcliff-templates/minimal.toml"
+          changelogConfig: ".github-templates/templates/gitcliff/minimal.toml"
           gitCliffArgs: "--latest --strip header"
           outputFile: "minimal-changelog.txt"
           uploadAsArtifact: true

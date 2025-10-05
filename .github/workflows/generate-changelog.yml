@@ -21,7 +21,7 @@ on:
       changelogConfig:
         description: "Path to git-cliff configuration file"
         required: false
-        default: ".github-templates/gitcliff-templates/default.toml"
+        default: ".github-templates/templates/gitcliff/default.toml"
         type: string
       gitCliffArgs:
         description: "Arguments for git-cliff (empty for full, '--latest' for latest release)"
@@ -66,7 +66,7 @@ jobs:
           path: .github-templates
           ref: v1
           sparse-checkout: |
-            gitcliff-templates/
+            templates/
 
       - name: Generate Changelog with git-cliff
         uses: orhun/git-cliff-action@d77b37db2e3f7398432d34b72a12aa3e2ba87e51 # v4.6.0

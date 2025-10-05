@@ -88,7 +88,7 @@ on:
       changelogConfig:
         description: "Path to changelog configuration file"
         required: false
-        default: ".github-templates/gitcliff-templates/default.toml"
+        default: ".github-templates/templates/gitcliff/default.toml"
         type: string
 
 permissions:
