@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+
+SPDX-License-Identifier: CC0-1.0
+-->
+
 # Workflow Architecture and Patterns
 
 Advanced workflow documentation for DiggSweden reusable CI/CD workflows.
@@ -5,8 +11,8 @@ Advanced workflow documentation for DiggSweden reusable CI/CD workflows.
 For basic usage, configuration, and getting started, see [README.md](../README.md).
 
 ## Table of Contents
+
 - [Workflow Architecture](#workflow-architecture)
-- [JReleaser Integration Patterns](#jreleaser-integration-patterns)
 - [Project Structure Required](#project-structure-required)
 - [Examples](#examples)
 
@@ -37,7 +43,7 @@ graph TD
     style I fill:#f3e5f5
 ```
 
-### Release Workflow Architecture
+### Release Workflow Architecture (v2-dev with Containers)
 
 ```mermaid
 graph TD
@@ -49,32 +55,41 @@ graph TD
     E1 --> F{Project Type?}
     E2 --> F
 
-    F -->|Maven App| G1[publish-maven-app-github.yml]
-    F -->|Maven Lib| G2[publish-maven-lib-central.yml]
-    F -->|NPM App| G3[publish-npm-app-github.yml]
-    F -->|Gradle App| G4[publish-gradle-app-github.yml]
+    F -->|Maven| G1[build-maven.yml]
+    F -->|NPM| G2[build-npm.yml]
+    F -->|Gradle| G3[build-gradle.yml]
 
-    G1 --> H{Container Enabled?}
+    G1 --> H{Artifact Publisher?}
     G2 --> H
     G3 --> H
-    G4 --> H
 
-    H -->|Yes| I[build-container-ghcr.yml]
-    H -->|No| J{Release Publisher?}
-    I --> J
+    H -->|maven-app-github| I1[publish-github.yml]
+    H -->|npm-app-github| I1
+    H -->|gradle-app-github| I1
+    H -->|maven-lib-mavencentral| I2[publish-mavencentral.yml]
 
-    J -->|JReleaser| K1[release-github.yml with JReleaser]
-    J -->|GitHub CLI| K2[release-github.yml with gh CLI]
+    I1 --> J{Container Builder?}
+    I2 --> J
 
-    K1 --> L[release-summary]
-    K2 --> L
+    J -->|container-image| K[publish-container.yml]
+    J -->|None| L{Release Publisher?}
+    K --> L
+
+    L -->|github-cli| M[release-github.yml]
+
+    M --> N[release-summary]
 
     style A fill:#e1f5ff
     style B fill:#fff4e1
     style C fill:#ffebee
     style D fill:#f3e5f5
-    style I fill:#e8f5e9
-    style L fill:#e0f2f1
+    style G1 fill:#e1f5ff
+    style G2 fill:#e1f5ff
+    style G3 fill:#e1f5ff
+    style I1 fill:#e8f5e9
+    style I2 fill:#e8f5e9
+    style K fill:#e8f5e9
+    style N fill:#e0f2f1
 ```
 
 ### Component Interaction Flow
@@ -108,163 +123,59 @@ graph LR
     style F fill:#f3e5f5
 ```
 
-### Workflow Execution Patterns
+### Workflow Execution Patterns (v2-dev)
 
 #### Pattern 1: Maven Library (cose-lib)
+
 ```mermaid
 graph LR
     A[Tag Push] --> B[Prerequisites]
     B --> C[Version Bump]
-    C --> D[Publish to Maven Central]
-    D --> E[JReleaser in publish step]
+    C --> D[Build Maven]
+    D --> E[Publish to Maven Central]
     E --> F[GitHub Release Created]
 
     style A fill:#e1f5ff
-    style D fill:#e8f5e9
-    style E fill:#fff4e1
+    style D fill:#e1f5ff
+    style E fill:#e8f5e9
     style F fill:#f3e5f5
 ```
 
 #### Pattern 2: Maven/NPM Application with Container (issuer-poc, linter)
+
 ```mermaid
 graph LR
     A[Tag Push] --> B[Prerequisites]
     B --> C[Version Bump]
-    C --> D[Publish Artifacts]
-    D --> E[Build Container]
-    E --> F[Create GitHub Release]
-    F --> G[JReleaser or GitHub CLI]
+    C --> D[Build Maven/NPM]
+    D --> E[Publish to GitHub]
+    E --> F[Build Container]
+    F --> G[Create GitHub Release]
 
     style A fill:#e1f5ff
-    style D fill:#e8f5e9
-    style E fill:#e1f5ff
+    style D fill:#e1f5ff
+    style E fill:#e8f5e9
+    style F fill:#e1f5ff
+    style G fill:#f3e5f5
+```
+
+#### Pattern 3: Multi-Registry Publishing
+
+```mermaid
+graph LR
+    A[Tag Push] --> B[Prerequisites]
+    B --> C[Version Bump]
+    C --> D[Build Once]
+    D --> E1[Publish to GitHub]
+    D --> E2[Publish to Maven Central]
+    E1 --> F[Create Release]
+    E2 --> F
+
+    style A fill:#e1f5ff
+    style D fill:#e1f5ff
+    style E1 fill:#e8f5e9
+    style E2 fill:#e8f5e9
     style F fill:#f3e5f5
-    style G fill:#fff4e1
-```
-
----
-
-## JReleaser Integration Patterns
-
-JReleaser is used differently depending on your project type. Understanding when and how JReleaser runs is critical for correct configuration.
-
-### Pattern 1: Library Publishing (Maven Central)
-
-**Used by:** Maven libraries published to Maven Central (e.g., `cose-lib`)
-
-**How it works:**
-```yaml
-# release-workflow.yml
-with:
-  artifactPublisher: maven-lib-mavencentral
-  artifact.jreleaserenabled: true
-  # No releasePublisher configured
-```
-
-**JReleaser runs DURING the Maven publish step:**
-```text
-1. Version bump
-2. Publish to Maven Central
-   └─ mvn deploy (publishes to Central)
-   └─ mvn jreleaser:full-release (creates GitHub release)
-3. Done (no separate release step)
-```
-
-**Why this pattern:**
-- Libraries typically only publish JARs (no containers)
-- JReleaser is configured as a Maven plugin in `pom.xml`
-- GitHub release creation happens as part of publishing
-- Single-step deployment to both Central and GitHub
-
-**Configuration required:**
-```xml
-<!-- In pom.xml -->
-<plugin>
-  <groupId>org.jreleaser</groupId>
-  <artifactId>jreleaser-maven-plugin</artifactId>
-  <version>${jreleaser-maven-plugin.version}</version>
-  <configuration>
-    <configFile>${project.basedir}/jreleaser.yml</configFile>
-  </configuration>
-</plugin>
-```
-
-**Example repositories:**
-- `cose-lib` - See `.github/workflows/release-workflow.yml`
-
----
-
-### Pattern 2: Application Publishing (with Container Images)
-
-**Used by:** Applications that build both artifacts AND containers (e.g., `eudiw-wallet-issuer-poc`, `rest-api-profil-lint-processor`)
-
-**How it works:**
-```yaml
-# release-workflow.yml
-with:
-  artifactPublisher: maven-app-github  # or npm-app-github
-  containerBuilder: containerimage-ghcr
-  releasePublisher: jreleaser  # or github-cli
-```
-
-**JReleaser runs AFTER all artifacts are ready:**
-```text
-1. Version bump
-2. Publish artifacts (JAR or NPM)
-3. Build container image
-4. Create GitHub release
-   └─ JReleaser or GitHub CLI creates release
-   └─ Attaches JAR + container reference + SBOM
-```
-
-**Why this pattern:**
-- Applications need both artifacts AND containers
-- Container must be built before creating release
-- Release notes need to reference container image
-- GitHub release is created after ALL artifacts ready
-
-**When to use JReleaser vs GitHub CLI:**
-- **JReleaser:** Maven projects with complex artifact sets
-- **GitHub CLI:** NPM projects or simpler releases
-
-**Example repositories:**
-- `eudiw-wallet-issuer-poc` - Maven app with JReleaser
-- `rest-api-profil-lint-processor` - NPM app with GitHub CLI
-
----
-
-### Decision Tree: Which Pattern Should I Use?
-
-```text
-Is this a library or application?
-├─ Library
-│  └─ Publishing to Maven Central?
-│     ├─ Yes → Use Pattern 1 (JReleaser in publish step)
-│     └─ No → Use Pattern 2 (separate release step)
-│
-└─ Application
-   └─ Building container images?
-      ├─ Yes → Use Pattern 2 (JReleaser after container)
-      └─ No → Either pattern works (Pattern 2 recommended)
-```
-
-### Common Mistakes
-
-**❌ Wrong: Using Pattern 1 for applications with containers**
-```yaml
-# This doesn't work if you build containers!
-artifactPublisher: maven-app-github
-artifact.jreleaserenabled: true  # ← JReleaser runs too early
-containerBuilder: containerimage-ghcr  # ← Container built AFTER release created
-```
-
-**Problem:** GitHub release is created before container exists, so container can't be referenced in release notes.
-
-**✅ Correct: Using Pattern 2 for applications with containers**
-```yaml
-artifactPublisher: maven-app-github
-containerBuilder: containerimage-ghcr
-releasePublisher: jreleaser  # ← JReleaser runs AFTER container ready
 ```
 
 ---
@@ -272,12 +183,12 @@ releasePublisher: jreleaser  # ← JReleaser runs AFTER container ready
 ## Project Structure Required
 
 ### Maven Projects
+
 ```text
 your-repo/
 ├── pom.xml
 ├── src/
 ├── Containerfile (optional)
-├── jreleaser.yml (optional)
 └── .github/
     └── workflows/
         ├── pullrequest-workflow.yml
@@ -285,6 +196,7 @@ your-repo/
 ```
 
 ### NPM Projects
+
 ```text
 your-repo/
 ├── package.json
@@ -298,6 +210,7 @@ your-repo/
 ```
 
 ### Gradle Projects (Android/JVM)
+
 ```text
 your-repo/
 ├── build.gradle.kts
@@ -315,12 +228,14 @@ your-repo/
 ```
 
 **Important:** For Gradle projects, version information must be stored in `gradle.properties`:
+
 ```properties
 versionName=1.0.0
 versionCode=5
 ```
 
 And read in `app/build.gradle.kts`:
+
 ```kotlin
 android {
     defaultConfig {
@@ -335,94 +250,160 @@ android {
 ## Examples
 
 ### Java Spring Boot Application
+
 ```yaml
+# .github/artifacts.yml
+artifacts:
+  - name: my-app
+    project-type: maven
+    working-directory: .
+    publishers:
+      - maven-app-github
+    config:
+      javaversion: 21
+
+containers:
+  - name: my-app
+    from: [my-app]
+    containerfile: Containerfile
+    context: .
+    platforms: linux/amd64,linux/arm64
+
+# .github/workflows/release-workflow.yml
 jobs:
   release:
-    uses: diggsweden/.github/.github/workflows/release-orchestrator.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
     with:
-      projectType: maven
-      artifactPublisher: maven-app-github      # JAR to GitHub Packages
-      containerBuilder: containerimage-ghcr    # Docker image to ghcr.io
-      releasePublisher: jreleaser              # GitHub release with changelog
-      artifact.javaversion: "21"               # Java 21 LTS
-      container.platforms: "linux/amd64,linux/arm64"  # Intel + ARM support
+      artifacts-config: .github/artifacts.yml
+      release-publisher: github-cli
 ```
 
 ### Node.js API Service
+
 ```yaml
+# .github/artifacts.yml
+artifacts:
+  - name: api-service
+    project-type: npm
+    working-directory: .
+    publishers:
+      - npm-app-github
+    config:
+      nodeversion: 22
+
+containers:
+  - name: api-service
+    from: [api-service]
+    containerfile: Containerfile
+    context: .
+    platforms: linux/amd64,linux/arm64
+
+# .github/workflows/release-workflow.yml
 jobs:
   release:
-    uses: diggsweden/.github/.github/workflows/release-orchestrator.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
     with:
-      projectType: npm
-      artifactPublisher: npm-app-github     # Package to GitHub NPM registry
-      containerBuilder: containerimage-ghcr # Docker image with Node.js app
-      releasePublisher: github-cli          # GitHub CLI for releases
-      artifact.nodeversion: "22"            # Latest Node.js LTS
+      artifacts-config: .github/artifacts.yml
+      release-publisher: github-cli
 ```
 
 ### Maven Library (No Container)
+
 ```yaml
+# .github/artifacts.yml
+artifacts:
+  - name: my-lib
+    project-type: maven
+    working-directory: .
+    publishers:
+      - maven-lib-mavencentral
+    config:
+      javaversion: 21
+      settingspath: .mvn/settings.xml
+
+# No containers section needed
+
+# .github/workflows/release-workflow.yml
 jobs:
   release:
-    uses: diggsweden/.github/.github/workflows/release-orchestrator.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
     with:
-      projectType: maven
-      artifactPublisher: maven-lib-mavencentral  # Publish to Maven Central
-      releasePublisher: jreleaser                # Handles Central deployment
-      artifact.settingspath: ".mvn/settings.xml" # Contains Central credentials
-      artifact.jreleaserenabled: true            # JReleaser plugin in pom.xml
+      artifacts-config: .github/artifacts.yml
+      release-publisher: github-cli
 ```
 
 ### Android Application (Gradle)
+
 ```yaml
+# .github/artifacts.yml
+artifacts:
+  - name: my-android-app
+    project-type: gradle
+    working-directory: .
+    publishers:
+      - gradle-app-github
+    config:
+      javaversion: 21
+      gradletasks: build assembleDemoRelease bundleDemoRelease
+      buildmodule: app
+      attachpattern: app/build/outputs/**/*.{apk,aab}
+      gradleversionfile: gradle.properties
+
+# .github/workflows/release-workflow.yml
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
     permissions:
       contents: write
       packages: write
       id-token: write
     with:
-      projectType: gradle
-      publishers: gradle-app-github           # APK/AAB to GitHub Releases
-      releasePublisher: github-cli            # Create GitHub release
-      changelogCreator: git-cliff             # Generate CHANGELOG
-      
-      # Gradle configuration
-      config.javaversion: "21"
-      config.gradletasks: "build assembleDemoRelease bundleDemoRelease"
-      config.buildmodule: "app"
-      config.attachpattern: "app/build/outputs/**/*.{apk,aab}"
-      config.gradleversionfile: "gradle.properties"
-      
-      # Release options
-      release.signartifacts: true             # GPG sign artifacts
-      release.generatesbom: true              # Generate SBOM
+      artifacts-config: .github/artifacts.yml
+      release-publisher: github-cli
+      changelog-creator: git-cliff
+      release.signartifacts: true
+      release.generatesbom: true
 ```
 
 **What this produces:**
+
 - APK (release) → `app/build/outputs/apk/demo/release/*.apk`
 - AAB (bundle) → `app/build/outputs/bundle/demoRelease/*.aab`
 - SBOM → `sbom.cyclonedx.json`
 - All attached to GitHub Release
 
 ### JVM Application (Gradle, non-Android)
+
 ```yaml
+# .github/artifacts.yml
+artifacts:
+  - name: spring-boot-app
+    project-type: gradle
+    working-directory: .
+    publishers:
+      - gradle-app-github
+    config:
+      javaversion: 21
+      gradletasks: build bootJar
+
+containers:
+  - name: spring-boot-app
+    from: [spring-boot-app]
+    containerfile: Containerfile
+    context: .
+    platforms: linux/amd64,linux/arm64
+
+# .github/workflows/release-workflow.yml
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
     with:
-      projectType: gradle
-      publishers: gradle-app-github,container-image-ghcr
-      releasePublisher: github-cli
-      
-      config.javaversion: "21"
-      config.gradletasks: "build bootJar"          # Spring Boot example
-      config.containerfile: "Containerfile"
+      artifacts-config: .github/artifacts.yml
+      release-publisher: github-cli
 ```
 
 ### Development Builds
+
 ```yaml
 on:
   push:
@@ -431,7 +412,7 @@ jobs:
   build:
     uses: diggsweden/.github/.github/workflows/release-dev-orchestrator.yml@main
     with:
-      projectType: maven  # Only builds container, no releases/artifacts
+      project-type: maven  # Only builds container, no releases/artifacts
 ```
 
 ---

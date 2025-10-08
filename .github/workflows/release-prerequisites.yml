@@ -44,30 +44,26 @@ name: Validate Release Prerequisites
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
-      projectType:
+      project-type:
         description: "Project type: maven, npm"
         required: true
         type: string
-      useJReleaser:
-        description: "Whether JReleaser will be used"
+      build-type:
+        description: "Build type: application or library"
         required: false
-        default: false
-        type: boolean
-      artifactPublisher:
-        description: "Artifact publisher being used"
-        required: false
+        default: "application"
         type: string
-      containerRegistry:
+      container-registry:
         description: "Container registry"
         required: false
         default: "ghcr.io"
         type: string
-      signArtifacts:
+      sign-artifacts:
         description: "Whether artifacts will be GPG signed"
         required: false
         default: true
         type: boolean
-      checkAuthorization:
+      check-authorization:
         description: "Check if user is authorized for non-SNAPSHOT releases"
         required: false
         default: false
@@ -77,25 +73,20 @@ on:
         required: false
         default: "v1"
         type: string
-      workflowsRef:
+      workflows-ref:
         description: ".github repository ref for validation scripts (default: main)"
         required: false
         default: "v1"
         type: string
   workflow_dispatch: # Allow manual validation
     inputs:
-      projectType:
+      project-type:
         description: "Project type"
         required: true
         type: choice
         options:
           - maven
           - npm
-      useJReleaser:
-        description: "Using JReleaser?"
-        required: false
-        type: boolean
-        default: false
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
@@ -119,7 +110,7 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ inputs.workflowsRef }}
+          ref: ${{ inputs['workflows-ref'] }}
           path: .github-shared
           sparse-checkout: |
             scripts/validation
@@ -160,31 +151,31 @@ jobs:
       - name: Validate Tag Uniqueness
         if: ${{ github.ref_type == 'tag' }}
         run: |
-          echo "## Validating Tag Points to Unique Commit"
+          echo "→ Validating Tag Points to Unique Commit"
           TAG_NAME="${{ github.ref_name }}"
 
           # Get the commit SHA this tag points to
           TAG_COMMIT=$(git rev-parse "$TAG_NAME^{commit}")
-          echo "Tag '$TAG_NAME' points to commit: $TAG_COMMIT"
+          echo "✓ Tag '$TAG_NAME' points to commit: $TAG_COMMIT"
 
           # Find all other tags pointing to the same commit
           OTHER_TAGS=$(git tag --points-at "$TAG_COMMIT" | grep -v "^${TAG_NAME}$" || true)
 
           if [ -n "$OTHER_TAGS" ]; then
-            echo "::error::❌ Tag '$TAG_NAME' points to the same commit as other tag(s)"
+            echo "::error::Tag '$TAG_NAME' points to the same commit as other tag(s)"
             echo ""
             echo "The following tags also point to commit $TAG_COMMIT:"
             echo "$OTHER_TAGS" | sed 's/^/  - /'
             echo ""
-            echo "📝 Multiple tags on the same commit cause changelog generation issues."
-            echo "   This is a known limitation in git-cliff:"
-            echo "   https://github.com/orhun/git-cliff/issues/1036"
+            echo "Multiple tags on the same commit cause changelog generation issues."
+            echo "This is a known limitation in git-cliff:"
+            echo "https://github.com/orhun/git-cliff/issues/1036"
             echo ""
             exit 1
           fi
 
-          echo "✅ Tag '$TAG_NAME' points to a unique commit"
-          echo "✅ No other tags found on commit $TAG_COMMIT"
+          echo "✓ Tag '$TAG_NAME' points to a unique commit"
+          echo "✓ No other tags found on commit $TAG_COMMIT"
       - name: Validate Tag Commit Availability
         if: ${{ github.ref_type == 'tag' }}
         run: bash .github-shared/scripts/validation/validate-tag-commit.sh "${{ github.ref_name }}" "${{ inputs.branch }}"
@@ -193,12 +184,12 @@ jobs:
       # Checks if user is authorized for non-SNAPSHOT releases
       # ============================================================================
       - name: Check Release Authorization
-        if: ${{ inputs.checkAuthorization }}
+        if: ${{ inputs['check-authorization'] }}
         run: |
           # Check if this is a SNAPSHOT release
           TAG_NAME="${{ github.ref_name }}"
           if [[ "${TAG_NAME}" == *-SNAPSHOT ]]; then
-            echo "✅ SNAPSHOT release - authorization check skipped"
+            echo "− SNAPSHOT release - authorization check skipped"
             exit 0
           fi
 
@@ -209,13 +200,13 @@ jobs:
           if [ -z "$AUTHORIZED_DEVS" ]; then
             echo "::warning::AUTHORIZED_RELEASE_DEVELOPERS secret not configured"
             echo "All users with tag push access can create releases"
-            echo "✅ Authorization check passed (no restrictions configured)"
+            echo "✓ Authorization check passed (no restrictions configured)"
             exit 0
           fi
 
           # Check if current actor is in the authorized list
           if echo ",$AUTHORIZED_DEVS," | grep -q ",$ACTOR,"; then
-            echo "✅ User '$ACTOR' is authorized to create production releases"
+            echo "✓ User '$ACTOR' is authorized to create production releases"
           else
             echo "::error::User '$ACTOR' is not authorized to create non-SNAPSHOT releases"
             echo "Only the following users can create production releases:"
@@ -231,7 +222,7 @@ jobs:
       # Validates GPG keys, GitHub tokens, and publishing credentials
       # ============================================================================
       - name: Validate GPG Configuration
-        if: ${{ inputs.signArtifacts }}
+        if: ${{ inputs['sign-artifacts'] }}
         id: gpg-test
         uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
         with:
@@ -239,7 +230,7 @@ jobs:
           passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
           git_user_signingkey: true
       - name: Validate GPG Public Key
-        if: ${{ inputs.signArtifacts }}
+        if: ${{ inputs['sign-artifacts'] }}
         run: |
           if [ -z "${{ secrets.OSPO_BOT_GPG_PUB }}" ]; then
             echo "::error::Missing OSPO_BOT_GPG_PUB secret"
@@ -247,7 +238,7 @@ jobs:
             echo "Add it in Settings → Secrets → Actions"
             exit 1
           fi
-          echo "✅ GPG public key configured"
+          echo "✓ GPG public key configured"
       - name: Validate GitHub Push Token
         run: |
           # OSPO_BOT_GHTOKEN is required for pushing version bumps
@@ -274,9 +265,9 @@ jobs:
             exit 1
           fi
 
-          echo "✅ GitHub push token validated"
+          echo "✓ GitHub push token validated"
       - name: Validate Release Token
-        run: "# RELEASE_TOKEN is required for creating GitHub releases\nTOKEN=\"${{ secrets.RELEASE_TOKEN }}\"\nif [ -z \"$TOKEN\" ]; then\n  echo \"::error::Missing RELEASE_TOKEN secret\"\n  echo \"This token is required for creating GitHub releases\"\n  echo \"GITHUB_TOKEN cannot be used as it lacks permissions when workflows chain\"\n  echo \"Add it in Settings → Secrets → Actions\"\n  exit 1\nelse\n  # Test RELEASE_TOKEN\n  RESPONSE=$(curl -s -o /dev/null -w \"%{http_code}\" \\\n    -H \"Authorization: token $TOKEN\" \\\n    https://api.github.com/repos/${{ github.repository }}/releases)\n  \n  if [ \"$RESPONSE\" != \"200\" ]; then\n    echo \"::error::RELEASE_TOKEN is invalid or lacks permissions\"\n    exit 1\n  fi\n  echo \"✅ Release token validated\"\nfi\n"
+        run: "# RELEASE_TOKEN is required for creating GitHub releases\nTOKEN=\"${{ secrets.RELEASE_TOKEN }}\"\nif [ -z \"$TOKEN\" ]; then\n  echo \"::error::Missing RELEASE_TOKEN secret\"\n  echo \"This token is required for creating GitHub releases\"\n  echo \"GITHUB_TOKEN cannot be used as it lacks permissions when workflows chain\"\n  echo \"Add it in Settings → Secrets → Actions\"\n  exit 1\nelse\n  # Test RELEASE_TOKEN\n  RESPONSE=$(curl -s -o /dev/null -w \"%{http_code}\" \\\n    -H \"Authorization: token $TOKEN\" \\\n    https://api.github.com/repos/${{ github.repository }}/releases)\n  \n  if [ \"$RESPONSE\" != \"200\" ]; then\n    echo \"::error::RELEASE_TOKEN is invalid or lacks permissions\"\n    exit 1\n  fi\n  echo \"Release token validated\"\nfi\n"
       - name: Validate Bot Token Permissions
         env:
           GH_TOKEN: ${{ secrets.OSPO_BOT_GHTOKEN }}
@@ -311,9 +302,9 @@ jobs:
             echo "  - Bypass branch protection (if enabled)"
           fi
 
-          echo "✅ Bot token is valid and has repository access"
+          echo "✓ Bot token is valid and has repository access"
       - name: Validate Maven Central Credentials
-        if: ${{ inputs.artifactPublisher == 'maven-lib-mavencentral' }}
+        if: ${{ inputs['build-type'] == 'library' }}
         run: |
           if [ -z "${{ secrets.MAVENCENTRAL_USERNAME }}" ]; then
             echo "::error::Missing MAVENCENTRAL_USERNAME secret"
@@ -327,9 +318,9 @@ jobs:
             exit 1
           fi
 
-          echo "✅ Maven Central credentials configured"
+          echo "✓ Maven Central credentials configured"
       - name: Validate NPM Token
-        if: ${{ inputs.artifactPublisher == 'npm-app-npmjs' }}
+        if: ${{ inputs['project-type'] == 'npm'  }}
         run: |
           if [ -z "${{ secrets.NPM_TOKEN }}" ]; then
             echo "::error::Missing NPM_TOKEN secret"
@@ -338,11 +329,30 @@ jobs:
             exit 1
           fi
 
-          echo "✅ NPM token configured"
+          echo "✓ NPM token configured"
       # ============================================================================
       # SECTION 4: Summary Generation
       # Creates comprehensive validation report
       # ============================================================================
       - name: Generate Validation Summary
         if: always()
-        run: "# Collect tag and commit information\nTAG_NAME=\"${{ github.ref_name }}\"\nCOMMIT_SHA=\"${{ github.sha }}\"\n\n# Get tag information if it's a tag\nif [ \"${{ github.ref_type }}\" = \"tag\" ]; then\n  TAGGER_INFO=$(git for-each-ref refs/tags/$TAG_NAME --format='%(taggername) <%(taggeremail)>' 2>/dev/null || echo \"N/A\")\n  TAG_DATE=$(git for-each-ref refs/tags/$TAG_NAME --format='%(taggerdate:short)' 2>/dev/null || echo \"N/A\")\n  TAG_MESSAGE=$(git tag -l -n1 \"$TAG_NAME\" | sed \"s/^$TAG_NAME *//\" | head -1 || echo \"No message\")\n  \n  # Check if tag is signed\n  TAG_SIGNATURE=\"Not signed\"\n  if git tag -v \"$TAG_NAME\" >/dev/null 2>&1; then\n    TAG_SIGNATURE=\"✅ GPG signed\"\n  elif git show \"$TAG_NAME\" 2>/dev/null | grep -q \"BEGIN SSH SIGNATURE\"; then\n    TAG_SIGNATURE=\"✅ SSH signed\"\n  fi\nfi\n\n# Get commit information\nCOMMIT_AUTHOR=$(git log -1 --format='%an <%ae>' $COMMIT_SHA)\nCOMMIT_DATE=$(git log -1 --format='%cs' $COMMIT_SHA)\nCOMMIT_MESSAGE=$(git log -1 --format='%s' $COMMIT_SHA)\n\n# Check if commit is signed\nCOMMIT_SIGNATURE=\"Not signed\"\nCOMMIT_CONTENT=$(git cat-file commit $COMMIT_SHA)\nif echo \"$COMMIT_CONTENT\" | grep -q \"BEGIN PGP SIGNATURE\"; then\n  COMMIT_SIGNATURE=\"✅ GPG signed\"\nelif echo \"$COMMIT_CONTENT\" | grep -q \"BEGIN SSH SIGNATURE\"; then\n  COMMIT_SIGNATURE=\"✅ SSH signed\"\nfi\n\ncat >> $GITHUB_STEP_SUMMARY << EOF\n# 📋 Release Prerequisites Validation Report\n\n## 🏷️ Release Tag\n- **Tag:** \\`$TAG_NAME\\`\n- **Type:** ${{ github.ref_type }}\n- **Tagger:** $TAGGER_INFO\n- **Tag Date:** $TAG_DATE\n- **Tag Signature:** $TAG_SIGNATURE\n- **Tag Message:** $TAG_MESSAGE\n\n## 📝 Tagged Commit\n- **SHA:** \\`$COMMIT_SHA\\`\n- **Author:** $COMMIT_AUTHOR\n- **Date:** $COMMIT_DATE\n- **Signature:** $COMMIT_SIGNATURE\n- **Message:** $COMMIT_MESSAGE\n\n## ⚙️ Configuration\n| Setting | Value |\n|---------|-------|\n| **Project Type** | ${{ inputs.projectType }} |\n| **Artifact Publisher** | ${{ inputs.artifactPublisher }} |\n| **Container Registry** | ${{ inputs.containerRegistry }} |\n| **Release Publisher** | ${{ inputs.useJReleaser && '✅ JReleaser' || '✅ GitHub CLI' }} |\n| **GPG Signing** | ${{ inputs.signArtifacts && '✅ Enabled' || '⭕ Disabled' }} |\nEOF\n\necho \"\" >> $GITHUB_STEP_SUMMARY\n\ncat >> $GITHUB_STEP_SUMMARY << 'EOF'\n## 🔐 Required Secrets Status\n\n| Secret | Purpose | Status |\n|--------|---------|--------|\nEOF\n\n# GPG signing (if enabled)\nif [ \"${{ inputs.signArtifacts }}\" = \"true\" ]; then\n  if [ -n \"${{ secrets.OSPO_BOT_GPG_PRIV }}\" ]; then\n    echo \"| OSPO_BOT_GPG_PRIV | Sign commits/artifacts | ✅ Available |\" >> $GITHUB_STEP_SUMMARY\n    echo \"| OSPO_BOT_GPG_PASS | GPG passphrase | ✅ Available |\" >> $GITHUB_STEP_SUMMARY\n  else\n    echo \"| OSPO_BOT_GPG_PRIV | Sign commits/artifacts | ❌ Missing |\" >> $GITHUB_STEP_SUMMARY\n    echo \"| OSPO_BOT_GPG_PASS | GPG passphrase | ❌ Missing |\" >> $GITHUB_STEP_SUMMARY\n  fi\nfi\n\nif [ -n \"${{ secrets.OSPO_BOT_GHTOKEN }}\" ]; then\n  echo \"| OSPO_BOT_GHTOKEN | Push commits | ✅ Available |\" >> $GITHUB_STEP_SUMMARY\n  \n  # Check bot token validity (without revealing permissions details)\n  BOT_STATUS=\"❓ Not verified\"\n  # Check if token can access the repository\n  if GH_TOKEN=\"${{ secrets.OSPO_BOT_GHTOKEN }}\" gh api repos/${{ github.repository }} --silent 2>/dev/null; then\n    BOT_STATUS=\"✅ Valid token\"\n  else\n    BOT_STATUS=\"❌ Invalid/No access\"\n  fi\n  \n  echo \"| Bot Token Status | Repository access | $BOT_STATUS |\" >> $GITHUB_STEP_SUMMARY\nelse\n  echo \"| OSPO_BOT_GHTOKEN | Push commits | ❌ Missing |\" >> $GITHUB_STEP_SUMMARY\n  echo \"| Bot Token Status | Repository access | ❓ No token |\" >> $GITHUB_STEP_SUMMARY\nfi\n\n# GPG Public Key (if signing enabled)\nif [ \"${{ inputs.signArtifacts }}\" = \"true\" ]; then\n  if [ -n \"${{ secrets.OSPO_BOT_GPG_PUB }}\" ]; then\n    echo \"| OSPO_BOT_GPG_PUB | GPG verification | ✅ Available |\" >> $GITHUB_STEP_SUMMARY\n  else\n    echo \"| OSPO_BOT_GPG_PUB | GPG verification | ❌ Required |\" >> $GITHUB_STEP_SUMMARY\n  fi\nfi\n\nif [ -n \"${{ secrets.RELEASE_TOKEN }}\" ]; then\n  echo \"| RELEASE_TOKEN | Create releases | ✅ Available |\" >> $GITHUB_STEP_SUMMARY\nelse\n  echo \"| RELEASE_TOKEN | Create releases | ❌ Required |\" >> $GITHUB_STEP_SUMMARY\nfi\n\n# Maven Central credentials (if maven-lib-mavencentral publisher)\nif [ \"${{ inputs.artifactPublisher }}\" = \"maven-lib-mavencentral\" ]; then\n  if [ -n \"${{ secrets.MAVENCENTRAL_USERNAME }}\" ]; then\n    echo \"| MAVENCENTRAL_USERNAME | Maven Central auth | ✅ Available |\" >> $GITHUB_STEP_SUMMARY\n  else\n    echo \"| MAVENCENTRAL_USERNAME | Maven Central auth | ❌ Missing |\" >> $GITHUB_STEP_SUMMARY\n  fi\n  \n  if [ -n \"${{ secrets.MAVENCENTRAL_PASSWORD }}\" ]; then\n    echo \"| MAVENCENTRAL_PASSWORD | Maven Central auth | ✅ Available |\" >> $GITHUB_STEP_SUMMARY\n  else\n    echo \"| MAVENCENTRAL_PASSWORD | Maven Central auth | ❌ Missing |\" >> $GITHUB_STEP_SUMMARY\n  fi\nfi\n\n# NPM token (only for npmjs.org publishing, not GitHub Packages)\nif [[ \"${{ inputs.artifactPublisher }}\" == \"npm-app-npmjs\" ]]; then\n  if [ -n \"${{ secrets.NPM_TOKEN }}\" ]; then\n    echo \"| NPM_TOKEN | NPM registry auth | ✅ Available |\" >> $GITHUB_STEP_SUMMARY\n  else\n    echo \"| NPM_TOKEN | NPM registry auth | ❌ Missing |\" >> $GITHUB_STEP_SUMMARY\n  fi\nfi\n\necho \"\"\nif [ \"${{ job.status }}\" = \"success\" ]; then\n  echo \"### ✅ All required prerequisites are configured!\"\n  echo \"Ready to proceed with release 🚀\"\nelse\n  echo \"### ❌ Prerequisites validation failed\" >> $GITHUB_STEP_SUMMARY\n  echo \"Please configure the missing secrets before attempting release\" >> $GITHUB_STEP_SUMMARY\nfi\n\n# Add validation checks summary\necho \"\" >> $GITHUB_STEP_SUMMARY\necho \"## ✔️ Validation Results\" >> $GITHUB_STEP_SUMMARY\necho \"\" >> $GITHUB_STEP_SUMMARY\necho \"| Validation | Result | Details |\" >> $GITHUB_STEP_SUMMARY\necho \"|------------|--------|---------|\" >> $GITHUB_STEP_SUMMARY\n\n# Tag validations (if it's a tag)\nif [ \"${{ github.ref_type }}\" = \"tag\" ]; then\n  TAG_NAME=\"${{ github.ref_name }}\"\n  \n  # Semantic version check\n  if [[ \"$TAG_NAME\" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+ ]]; then\n    echo \"| Semantic Version | ✅ Pass | \\`$TAG_NAME\\` follows vX.Y.Z |\" >> $GITHUB_STEP_SUMMARY\n  else\n    echo \"| Semantic Version | ❌ Fail | Invalid format |\" >> $GITHUB_STEP_SUMMARY\n  fi\n  \n  # Tag type check\n  echo \"| Tag Type | ✅ Pass | Annotated (not lightweight) |\" >> $GITHUB_STEP_SUMMARY\n  \n  # Signature check\n  echo \"| Tag Signature | ✅ Pass | GPG/SSH signed |\" >> $GITHUB_STEP_SUMMARY\n  \n  # Pre-release detection\n  if [[ \"$TAG_NAME\" =~ -(alpha|beta|rc|snapshot|SNAPSHOT|dev) ]]; then\n    echo \"| Release Type | 🔵 Pre-release | \\`${BASH_REMATCH[1]}\\` version |\" >> $GITHUB_STEP_SUMMARY\n  else\n    echo \"| Release Type | 🟢 Stable | Production release |\" >> $GITHUB_STEP_SUMMARY\n  fi\nfi\n\n# Authorization check\nif [ \"${{ inputs.checkAuthorization }}\" = \"true\" ]; then\n  echo \"| User Authorization | ✅ Pass | ${{ github.actor }} authorized |\" >> $GITHUB_STEP_SUMMARY\nelif [[ \"${{ github.ref_name }}\" =~ -SNAPSHOT$ ]]; then\n  echo \"| User Authorization | ⏭️ Skip | SNAPSHOT release |\" >> $GITHUB_STEP_SUMMARY\nfi\n\n# Token validations\nif [ -n \"${{ secrets.OSPO_BOT_GHTOKEN }}\" ]; then\n  echo \"| Push Token | ✅ Pass | Valid GitHub token |\" >> $GITHUB_STEP_SUMMARY\nelse\n  echo \"| Push Token | ❌ Fail | Missing OSPO_BOT_GHTOKEN |\" >> $GITHUB_STEP_SUMMARY\nfi\n\n# Publisher-specific checks\ncase \"${{ inputs.artifactPublisher }}\" in\n  maven-lib-mavencentral)\n    if [ -n \"${{ secrets.MAVENCENTRAL_USERNAME }}\" ]; then\n      echo \"| Maven Central | ✅ Pass | Credentials configured |\" >> $GITHUB_STEP_SUMMARY\n    else\n      echo \"| Maven Central | ❌ Fail | Missing credentials |\" >> $GITHUB_STEP_SUMMARY\n    fi\n    ;;\n  npm-app-npmjs)\n    if [ -n \"${{ secrets.NPM_TOKEN }}\" ]; then\n      echo \"| NPM Registry | ✅ Pass | Token configured |\" >> $GITHUB_STEP_SUMMARY\n    else\n      echo \"| NPM Registry | ❌ Fail | Missing NPM_TOKEN |\" >> $GITHUB_STEP_SUMMARY\n    fi\n    ;;\n  npm-app-github)\n    echo \"| NPM Registry | ✅ Pass | Using GITHUB_TOKEN |\" >> $GITHUB_STEP_SUMMARY\n    ;;\nesac\n\necho \"\" >> $GITHUB_STEP_SUMMARY\necho \"---\" >> $GITHUB_STEP_SUMMARY\necho \"*Generated at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')*\" >> $GITHUB_STEP_SUMMARY"
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+          REF_TYPE: ${{ github.ref_type }}
+          PROJECT_TYPE: ${{ inputs['project-type'] }}
+          BUILD_TYPE: ${{ inputs['build-type'] }}
+          CONTAINER_REGISTRY: ${{ inputs['container-registry'] }}
+          SIGN_ARTIFACTS: ${{ inputs['sign-artifacts'] }}
+          CHECK_AUTHORIZATION: ${{ inputs['check-authorization'] }}
+          ACTOR: ${{ github.actor }}
+          JOB_STATUS: ${{ job.status }}
+          OSPO_BOT_GPG_PRIV: ${{ secrets.OSPO_BOT_GPG_PRIV }}
+          OSPO_BOT_GHTOKEN: ${{ secrets.OSPO_BOT_GHTOKEN }}
+          OSPO_BOT_GPG_PUB: ${{ secrets.OSPO_BOT_GPG_PUB }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          MAVENCENTRAL_USERNAME: ${{ secrets.MAVENCENTRAL_USERNAME }}
+          MAVENCENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          bash scripts/validation/generate-prerequisites-summary.sh

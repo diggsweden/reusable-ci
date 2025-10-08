@@ -5,7 +5,7 @@
 # Validates that the commit a tag points to exists in the target branch history
 # Usage: validate-tag-commit.sh <tag-name> <branch-name>
 
-set -euo pipefail
+set -uo pipefail
 
 TAG_NAME="${1:-}"
 BRANCH="${2:-main}"

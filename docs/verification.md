@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+
+SPDX-License-Identifier: CC0-1.0
+-->
+
 # Artifact Verification Guide
 
 Documentation for verifying the authenticity and integrity of artifacts produced by DiggSweden workflows.
@@ -63,6 +69,7 @@ Maven/Spring Boot projects may produce multiple JARs, each with its own SBOM:
 The fat JAR SBOM is critical for security as it shows the complete dependency tree deployed to production.
 
 **Rationale for `-sbom` suffix:**
+
 - ✅ Explicit identification (users instantly recognize SBOM files)
 - ✅ Aligns with NTIA and GitHub naming conventions
 - ✅ Easier filtering and searching (`*-sbom.*.json`)
@@ -507,6 +514,7 @@ skopeo --version
 ## Additional Resources
 
 ### Container & Supply Chain Security
+
 - [Sigstore Documentation](https://docs.sigstore.dev/)
 - [Cosign Verification Guide](https://docs.sigstore.dev/cosign/verify/)
 - [SLSA Framework](https://slsa.dev/)
@@ -516,6 +524,7 @@ skopeo --version
 - [Podman Image Trust](https://docs.podman.io/en/latest/markdown/podman-image-trust.1.html)
 
 ### Code Signing & Verification
+
 - [Git Signing Documentation](https://git-scm.com/book/en/v2/Git-Tools-Signing-Your-Work)
 - [GitHub SSH Commit Verification](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification#ssh-commit-signature-verification)
 - [GPG Best Practices](https://www.gnupg.org/documentation/manuals/gnupg/OpenPGP-Key-Management.html)
@@ -523,6 +532,7 @@ skopeo --version
 - [NPM Package Provenance](https://docs.npmjs.com/generating-provenance-statements)
 
 ### GitHub Security Features
+
 - [GitHub Security Hardening](https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions)
 - [GitHub OIDC Token](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/about-security-hardening-with-openid-connect)
 - [GitHub Packages Authentication](https://docs.github.com/en/packages/learn-github-packages/introduction-to-github-packages#authenticating-to-github-packages)

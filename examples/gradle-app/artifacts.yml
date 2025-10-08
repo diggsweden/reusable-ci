@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Example: Gradle/Android Application
+
+artifacts:
+  - name: my-android-app
+    project-type: gradle
+    working-directory: .
+    config:
+      java-version: 21
+      gradle-tasks: build assembleDemoRelease bundleDemoRelease
+      gradle-version-file: gradle.properties
+
+# Optional: Container build (not common for Android apps)
+# containers:
+#   - name: my-app
+#     from: [my-android-app]
+#     container-file: Containerfile
+#     context: .

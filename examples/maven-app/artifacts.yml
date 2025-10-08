@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Example: Simple Maven Application with Container
+
+artifacts:
+  - name: my-app
+    project-type: maven
+    working-directory: .
+    build-type: application
+    config:
+      java-version: 21
+containers:
+  - name: my-app
+    from: [my-app]
+    container-file: Containerfile
+    context: .
+    platforms: linux/amd64,linux/arm64
+    enable-slsa: true
+    enable-sbom: true
+    enable-scan: true

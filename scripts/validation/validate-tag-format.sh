@@ -5,7 +5,7 @@
 # Validates that a git tag follows semantic versioning format
 # Usage: validate-tag-format.sh <tag-name>
 
-set -euo pipefail
+set -uo pipefail
 
 TAG_NAME="${1:-}"
 

@@ -18,7 +18,7 @@ VERSION="${3:-}"
 PROJECT_NAME="${4:-}"
 WORKING_DIR="${5:-.}"
 CONTAINER_IMAGE="${6:-}"
-CREATE_ZIP="${7:-false}"  # Optional: create ZIP archive of all SBOMs
+CREATE_ZIP="${7:-false}" # Optional: create ZIP archive of all SBOMs
 
 # Change to working directory
 cd "$WORKING_DIR" || exit 1
@@ -420,15 +420,15 @@ main() {
     echo "Generated files:"
     find . -maxdepth 1 -name '*-sbom.*.json' -type f -exec ls -lh {} +
     echo ""
-    
+
     # Create ZIP archive with all SBOMs (if requested)
     if [ "$CREATE_ZIP" = "true" ]; then
       echo "📦 Creating SBOM ZIP archive..."
       local sbom_zip="${project_name}-${version}-sboms.zip"
-      
+
       # Add all SBOM files to ZIP
       find . -maxdepth 1 -name '*-sbom.*.json' -type f -exec zip "$sbom_zip" {} +
-      
+
       if [ -f "$sbom_zip" ]; then
         echo "✅ Created SBOM ZIP: $sbom_zip"
         echo ""

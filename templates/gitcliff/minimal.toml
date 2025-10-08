@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
 # git-cliff ~ configuration file
 # https://git-cliff.org/docs/configuration
 [changelog]

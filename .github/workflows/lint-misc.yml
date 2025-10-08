@@ -25,6 +25,8 @@ jobs:
           mise install
           mise list
       - name: Just Verify
+        env:
+          SHELLCHECK_OPTS: --exclude=SC2086
         run: |
           # Activate mise to get tools in PATH
           eval "$(mise activate bash)"

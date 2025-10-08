@@ -1,36 +1,20 @@
 # Reusable CI/CD Workflows
 
-Reusable CI/CD workflows and scripts for DiggSweden projects. Implements security best practices, automated releases, and quality checks.
+Reusable CI/CD workflows and scripts.
+Implements best Open Source workflows, compliance, security best practices, automated releases, and quality checks.
 
-**Current version:** `@v2` (unified publishers design)  
-**Previous version:** `@v1` (stable, maintained for security fixes)
-
-> **Note:** v2 uses a unified publisher pattern. If upgrading from v1, see [Migration Guide](docs/MIGRATION_V1_TO_V2.md).
+**Current version:** `@v2-dev`
 
 ## Documentation
 
-- [Workflow Guide](docs/workflows.md)
-- [Artifact Verification](docs/verification.md)
-- [Scripts Reference](docs/scripts.md)
+- **[Configuration Reference](docs/configuration.md)** - Complete `artifacts.yml` field documentation
+- **[Publishing Guide](docs/publishing.md)** - Maven Central, NPM, and registry setup
+- **[Troubleshooting](docs/troubleshooting.md)** - Common errors and solutions
+- [Workflow Guide](docs/workflows.md) - Workflow configuration details
+- [Artifact Verification](docs/verification.md) - Security and verification
+- [Scripts Reference](docs/scripts.md) - Validation scripts
 
 ---
-
-## Table of Contents
-- [Introduction](#introduction)
-- [Quick Start](#quick-start)
-- [Monorepo Support (v2)](#monorepo-support-v2)
-- [Pull Request Workflow](#pull-request-workflow)
-- [Release Workflow](#release-workflow)
-- [Development Container Workflow](#development-container-workflow)
-- [Permissions in Reusable Workflows](#permissions-in-reusable-workflows)
-- [Available Components](#available-components)
-- [Workflow Reference](#workflow-reference)
-- [Environment Variables Matrix](#environment-variables-matrix)
-- [Prerequisites Check Matrix](#prerequisites-check-matrix)
-- [Permission Requirements Matrix](#permission-requirements-matrix)
-- [Getting Access to Secrets](#getting-access-to-secrets)
-- [Version Tag Format](#version-tag-format)
-- [Local Testing](#local-testing)
 
 ## Introduction
 
@@ -89,36 +73,39 @@ All required GitHub secrets are configured at the DiggSweden organization level.
 
 ### Customization Levels
 
-#### Option 1: Use Everything -
+#### Option 1: Use Everything (v2-dev - requires artifacts.yml)
 ```yaml
-uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v1
+uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
 with:
-  projectType: maven
-  artifactPublisher: maven-app-github
-  containerBuilder: containerimage-ghcr
-  releasePublisher: github-cli
+  artifacts-config: .github/artifacts.yml
+  release-publisher: github-cli
 ```
 
-#### Option 2: Configure What You Need
-```yaml
-uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v1
-with:
-  projectType: npm
-  containerBuilder: containerimage-ghcr  # Only build containers
-```
-
-#### Option 3: Build Your Own Flow
+#### Option 2: Build Your Own Flow
 ```yaml
 jobs:
-  my-build:
-    # Your custom steps
+  build-maven:
+    uses: diggsweden/reusable-ci/.github/workflows/build-maven.yml@v2-dev
+    with:
+      build-type: app
+      java-version: "21"
 
-  my-container:
-    needs: my-build
-    uses: diggsweden/reusable-ci/.github/workflows/build-container-ghcr.yml@v1
+  publish-github:
+    needs: build-maven
+    uses: diggsweden/reusable-ci/.github/workflows/publish-github.yml@v2-dev
+    with:
+      package-type: maven
+      artifact-source: maven-build-artifacts
+
+  build-container:
+    needs: build-maven
+    uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@v2-dev
+    with:
+      container-file: Containerfile
+      artifact-source: maven-build-artifacts
 ```
 
-#### Option 4: Complete Custom Implementation
+#### Option 3: Complete Custom Implementation
 ```yaml
 jobs:
   custom-everything:
@@ -129,44 +116,171 @@ jobs:
 
 ## Quick Start
 
+### For New Projects
+
+1. **Create artifacts configuration** - Define what to build:
+   ```yaml
+   # .github/artifacts.yml
+   artifacts:
+     - name: my-app
+       project-type: maven  # or npm, gradle
+       working-directory: .
+       config:
+         java-version: 21  # or node-version for npm
+   ```
+
+2. **Create release workflow** - Trigger builds on tags:
+   ```yaml
+   # .github/workflows/release-workflow.yml
+   name: Release
+   on:
+     push:
+       tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+   permissions:
+     contents: read
+   jobs:
+     release:
+       uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
+       permissions:
+         contents: write
+         packages: write
+         id-token: write
+         actions: read
+         security-events: write
+         attestations: write
+       secrets: inherit
+       with:
+         artifacts-config: .github/artifacts.yml
+   ```
+
+3. **Create your first release**:
+   ```bash
+   git tag -s v1.0.0 -m "Release v1.0.0"
+   git push origin v1.0.0
+   ```
+
+**See [Complete Examples](#single-artifact-example) below for Maven, NPM, and container configurations.**
+
 ---
 
-## v2 Clean Design
+## Architecture (v2)
 
-**v2 introduces a unified architecture** where everything is an artifact with publishers.
+**Decoupled build/publish architecture** with separate artifact and container handling for monorepo support.
+
+### Release Flow Diagram
+
+```text
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Tag Push (v1.0.0)                            │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │  Parse artifacts.yml    │
+                    │  Validate configuration │
+                    └────────────┬────────────┘
+                                 │
+           ┌─────────────────────┼─────────────────────┐
+           │                     │                     │
+   ┌───────▼────────┐   ┌───────▼────────┐   ┌───────▼────────┐
+   │  Build Maven   │   │   Build NPM    │   │  Build Gradle  │
+   │  Artifact 1    │   │   Artifact 2   │   │   Artifact 3   │
+   └───────┬────────┘   └───────┬────────┘   └───────┬────────┘
+           │                     │                     │
+           └─────────────────────┼─────────────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │  Publish to Registries  │
+                    │  - GitHub Packages      │
+                    │  - Maven Central        │
+                    │  - npmjs.org            │
+                    └────────────┬────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │   Build Containers      │
+                    │   (from artifacts)      │
+                    │   - Multi-platform      │
+                    │   - SLSA + SBOM + Scan  │
+                    └────────────┬────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │  Create GitHub Release  │
+                    │  - Changelog            │
+                    │  - Checksums            │
+                    │  - Signatures           │
+                    └─────────────────────────┘
+```
 
 ### Core Concepts
 
-**Publishers** follow the `{tech}-{type}-{target}` pattern:
-- `maven-app-github` - Maven application → GitHub Packages
-- `npm-app-github` - NPM application → GitHub Packages  
-- `container-image-ghcr` - Container image → ghcr.io
-- `maven-lib-mavencentral` - Maven library → Maven Central
+**Build Stage** - Language-specific builders create artifacts:
+- `build-maven` - Builds Maven projects (apps or libs)
+- `build-npm` - Builds NPM projects
+- `build-gradle` - Builds Gradle projects
 
-**No special cases.** Containers are just another publisher type, not a separate "builder".
+**Publish Stage** - Target-specific workflows publish artifacts:
+- `publish-github` - Publishes Maven/NPM/Gradle → GitHub Packages
+- `publish-mavencentral` - Publishes Maven libs → Maven Central
+
+**Container Stage** - Separate containers section references artifacts:
+- Containers defined in `containers[]` section
+- Reference artifacts by name via `from: [artifact-name]`
+- Built after all artifact builds complete
+- Support multi-artifact containers (combine multiple artifacts into one image)
+
+**Benefits:**
+- **DRY** - Build logic written once per language
+- **Flexible** - Easy to add new publish targets (GitLab, Artifactory, etc.)
+- **Composable** - Can publish same build to multiple registries
+- **Testable** - Can build without publishing
+- **Monorepo-friendly** - Multiple artifacts + containers in one repo
+- **Multi-artifact containers** - Combine multiple builds into one container
 
 ### Single Artifact Example
 
-```yaml
-# Simple: Maven app only
-with:
-  projectType: maven
-  publishers: maven-app-github
-  config.javaversion: 21
+**Note:** v2-dev requires an `artifacts.yml` configuration file. Inline configuration is no longer supported.
 
-# Common: Maven app + Container
-with:
-  projectType: maven
-  publishers: maven-app-github,container-image-ghcr
-  config.javaversion: 21
-  config.containerfile: Containerfile
-  config.platforms: linux/amd64,linux/arm64
-  releasePublisher: github-cli
+**`.github/artifacts.yml`** (Maven app only):
+```yaml
+artifacts:
+  - name: my-app
+    project-type: maven
+    working-directory: .
+    build-type: application
+    config:
+      java-version: 21
 ```
 
-### Monorepo Support
+**`.github/artifacts.yml`** (Maven app + Container):
+```yaml
+artifacts:
+  - name: my-app
+    project-type: maven
+    working-directory: .
+    build-type: application
+    config:
+      java-version: 21
 
-Build multiple artifacts from a single repository.
+containers:
+  - name: my-app
+    from: [my-app]
+    container-file: Containerfile
+    context: .
+    platforms: linux/amd64,linux/arm64
+```
+
+**`.github/workflows/release-workflow.yml`**:
+```yaml
+jobs:
+  release:
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
+    with:
+      artifacts-config: .github/artifacts.yml
+      release-publisher: github-cli
+```
+
+## Monorepo Support (v2-dev)
+
+Build multiple artifacts from a single repository with separate container handling.
 
 ### Basic Monorepo Example
 
@@ -174,25 +288,30 @@ Build multiple artifacts from a single repository.
 ```yaml
 artifacts:
   - name: backend
-    projectType: maven
-    workingDirectory: java-backend
-    publishers:
-      - maven-app-github
-      - container-image-ghcr
+    project-type: maven
+    working-directory: java-backend
+    build-type: application
     config:
-      javaversion: 21
-      containerfile: java-backend/Containerfile
-      platforms: linux/amd64,linux/arm64
-  
+      java-version: 21
+
   - name: frontend
-    projectType: npm
-    workingDirectory: frontend
-    publishers:
-      - npm-app-github
-      - container-image-ghcr
+    project-type: npm
+    working-directory: frontend
     config:
-      nodeversion: 22
-      containerfile: frontend/Containerfile
+      node-version: 22
+
+containers:
+  - name: backend
+    from: [backend]
+    container-file: java-backend/Containerfile
+    context: java-backend
+    platforms: linux/amd64,linux/arm64
+
+  - name: frontend
+    from: [frontend]
+    container-file: frontend/Containerfile
+    context: frontend
+    platforms: linux/amd64,linux/arm64
 ```
 
 **`.github/workflows/release-workflow.yml`**
@@ -209,7 +328,7 @@ permissions:
 
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
     permissions:
       contents: write
       packages: write
@@ -220,17 +339,17 @@ jobs:
     secrets: inherit
     with:
       # Point to artifacts config file
-      artifactsConfig: .github/artifacts.yml
-      
+      artifacts-config: .github/artifacts.yml
+
       # Shared configuration
-      changelogCreator: git-cliff
-      releasePublisher: github-cli
+      changelog-creator: git-cliff
+      release-publisher: github-cli
 ```
 
 ### Real-World Example: Wallet Issuer POC
 
 Repository structure:
-```
+```text
 wallet-issuer-poc/
 ├── java-backend/          # Spring Boot backend
 │   ├── src/
@@ -249,23 +368,24 @@ wallet-issuer-poc/
 ```yaml
 artifacts:
   - name: issuer-backend
-    projectType: maven
-    workingDirectory: java-backend
-    publishers:
-      - maven-app-github
-      - container-image-ghcr
+    project-type: maven
+    working-directory: java-backend
+    build-type: application
     config:
-      javaversion: 21
-      containerfile: Containerfile
-      platforms: linux/amd64,linux/arm64
-  
+      java-version: 21
+
   - name: issuer-frontend
-    projectType: npm
-    workingDirectory: frontend
-    publishers:
-      - npm-app-github
+    project-type: npm
+    working-directory: frontend
     config:
-      nodeversion: 22
+      node-version: 22
+
+containers:
+  - name: issuer-backend
+    from: [issuer-backend]
+    container-file: Containerfile
+    context: .
+    platforms: linux/amd64,linux/arm64
 ```
 
 **`.github/workflows/release-workflow.yml`**
@@ -297,88 +417,78 @@ jobs:
       security-events: write
       attestations: write
     secrets: inherit
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
     with:
-      artifactsConfig: .github/artifacts.yml
-      changelogCreator: git-cliff
-      releasePublisher: github-cli
+      artifacts-config: .github/artifacts.yml
+      changelog-creator: git-cliff
+      release-publisher: github-cli
 ```
 
 ### Artifact Configuration Reference
 
+> **Naming Convention:** All fields in `artifacts.yml` now use **`kebab-case`** consistently:
+> - **Top-level fields:** `project-type`, `working-directory`
+> - **Config fields:** `java-version`, `node-version`, `settings-path`
+> - **Container fields:** `container-file`, `enable-slsa`, `enable-sbom`, `enable-scan`
+> 
+> This matches the workflow input parameter naming convention for consistency.
+
 Each artifact in `artifacts.yml` supports these fields:
+
+**Artifacts section:**
 
 | Field | Required | Description | Example |
 |-------|----------|-------------|---------|
 | `name` | Yes | Artifact identifier | `backend-api` |
-| `projectType` | Yes | Build system type | `maven`, `npm`, `container` |
-| `workingDirectory` | Yes | Path to artifact source | `services/backend` |
-| `publishers` | Yes | Array of publishers | `[maven-app-github, container-image-ghcr]` |
-| `config.javaversion` | No | Java version (Maven) | `21` (default) |
-| `config.nodeversion` | No | Node version (NPM) | `22` (default) |
-| `config.containerfile` | No | Containerfile path | `Containerfile` |
-| `config.platforms` | No | Container platforms | `linux/amd64,linux/arm64` |
-| `config.npmtag` | No | NPM dist tag | `latest` |
-| `config.settingspath` | No | Maven settings path | `.mvn/settings.xml` |
-| `config.jreleaserenabled` | No | Enable JReleaser plugin | `true`, `false` |
-| `config.enableslsa` | No | Enable SLSA provenance | `true` (default) |
-| `config.enablesbom` | No | Generate SBOM | `true` (default) |
+| `project-type` | Yes | Build system type | `maven`, `npm`, `gradle` |
+| `working-directory` | Yes | Path to artifact source | `services/backend` |
+| `build-type` | No | Build type (Maven/Gradle only) | `application` (default), `library` |
+| `require-authorization` | No | Require user authorization | `false` (default), `true` |
+| `publish-to` | No | Publishing targets | `[github-packages]` (default) |
+| `config.java-version` | No | Java version (Maven/Gradle) | `21` (default) |
+| `config.node-version` | No | Node version (NPM) | `22` (default) |
+| `config.npm-tag` | No | NPM dist tag | `latest` |
+| `config.settings-path` | No | Maven settings path | `.mvn/settings.xml` |
 
-### Publisher Types
+**Containers section:**
 
-All publishers follow `{tech}-{type}-{target}` pattern:
+| Field | Required | Description | Example |
+|-------|----------|-------------|---------|
+| `name` | Yes | Container identifier | `backend-api` |
+| `from` | Yes | Array of artifact names | `[backend-api]` |
+| `container-file` | Yes | Path to Containerfile | `Containerfile` |
+| `context` | No | Docker build context | `.` (default) |
+| `platforms` | No | Target platforms | `linux/amd64,linux/arm64` |
+| `enable-slsa` | No | Enable SLSA provenance | `true` (default) |
+| `enable-sbom` | No | Generate SBOM | `true` (default) |
+| `enable-scan` | No | Trivy vulnerability scan | `true` (default) |
 
-| Publisher | Description |
-|-----------|-------------|
-| `maven-app-github` | Maven application → GitHub Packages |
-| `maven-lib-github` | Maven library → GitHub Packages |
-| `maven-lib-mavencentral` | Maven library → Maven Central |
-| `npm-app-github` | NPM application → GitHub Packages |
-| `npm-lib-github` | NPM library → GitHub Packages |
-| `container-image-ghcr` | Container image → ghcr.io |
-| `container-image-dockerhub` | Container image → Docker Hub |
+### Publishing Targets
 
-### How Monorepo Builds Work
+**Available Publishing Targets** (for `publish-to` field):
 
-1. **Detection**: Orchestrator detects `artifactsConfig` or `artifacts` input
-2. **Version Bump**: Each artifact's version file is updated (pom.xml, package.json)
-3. **Build & Publish**: Each artifact is built and published in parallel
-4. **Container Build**: (Optional) Container image built using all artifacts
-5. **Release**: Single GitHub release created with changelog
+| Target | Description | Requirements |
+|--------|-------------|--------------|
+| `github-packages` | GitHub Packages registry | GITHUB_TOKEN (automatic) |
+| `maven-central` | Maven Central (Sonatype OSSRH) | MAVENCENTRAL_USERNAME, MAVENCENTRAL_PASSWORD, build-type: library |
+| `npm-registry` | Public npmjs.org registry | NPM_TOKEN |
 
-### Migration from v1 to v2
+> **Default Behavior:** If `publish-to` is omitted, artifacts are published to `github-packages` only.
 
-**v2 uses a new unified design.** Existing v1 workflows need updates.
+**Container Configuration** (in separate `containers[]` section):
+- Containers reference artifacts via `from: [artifact-name]`
+- Built automatically after artifact builds complete
+- Support multi-artifact containers (e.g., `from: [api, worker, web]`)
 
-**Before (v1):**
-```yaml
-with:
-  projectType: maven
-  artifactPublisher: maven-app-github
-  artifact.javaversion: 21
-  containerBuilder: containerimage-ghcr
-  container.platforms: linux/amd64,linux/arm64
-  container.containerfile: Containerfile
-```
+### How Monorepo Builds Work (v2-dev)
 
-**After (v2 - single artifact):**
-```yaml
-with:
-  projectType: maven
-  publishers: maven-app-github,container-image-ghcr
-  config.javaversion: 21
-  config.platforms: linux/amd64,linux/arm64
-  config.containerfile: Containerfile
-```
-
-**Key changes:**
-1. `artifactPublisher` + `containerBuilder` → `publishers` (comma-separated)
-2. `artifact.*` → `config.*`
-3. `container.*` → `config.*`
-
-**For monorepo:** Use `artifactsConfig` instead of inline parameters.
-
-See [MIGRATION_V1_TO_V2.md](docs/MIGRATION_V1_TO_V2.md) for detailed guide.
+1. **Parse Config**: Reads `artifacts[]` and `containers[]` from `artifacts.yml`
+2. **Validate**: Checks container dependencies reference valid artifact names
+3. **Version Bump**: Each artifact's version file updated (pom.xml, package.json)
+4. **Build Stage**: Each artifact built in parallel (build-maven, build-npm, build-gradle)
+5. **Publish Stage**: Built artifacts published to registries (GitHub Packages, Maven Central)
+6. **Container Stage**: Containers built from artifacts (references via `from:` field)
+7. **Release**: Single GitHub release created with changelog and all artifacts
 
 ### Limitations
 
@@ -387,9 +497,11 @@ See [MIGRATION_V1_TO_V2.md](docs/MIGRATION_V1_TO_V2.md) for detailed guide.
 - **No change detection**: All artifacts build on every release (smart builds coming in future)
 - **Sequential version bumps**: Artifacts bump versions one at a time (parallel coming in future)
 
-### Example Repositories
+### Example Configurations
 
-- `examples/monorepo-artifacts.yml` - Example configuration file
+See the `examples/` directory for complete working examples:
+- `examples/monorepo-artifacts.yml` - Multiple artifacts with containers
+- `examples/multi-artifact-container.yml` - Combining multiple builds into one container
 
 ---
 
@@ -427,7 +539,7 @@ permissions:
 
 jobs:
   pr-checks:
-    uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@v1
+    uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@v2-dev
 
     # Pass organization-level secrets to the workflow
     # Required for access to private GitHub Packages
@@ -440,7 +552,7 @@ jobs:
       security-events: write # Required: Upload vulnerability scan results to GitHub Security tab
 
     with:
-      projectType: maven  # Determines build commands and dependency management (maven/npm)
+      project-type: maven  # Determines build commands and dependency management (maven/npm)
 
   test:
     needs: [pr-checks]
@@ -477,7 +589,7 @@ permissions:
 
 jobs:
   pr-checks:
-    uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@v1
+    uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@v2-dev
 
     # Pass organization-level secrets to the workflow
     # Required for accessing private @diggsweden/* packages in GitHub Packages
@@ -491,10 +603,10 @@ jobs:
 
     with:
       # REQUIRED PARAMETERS
-      projectType: maven              # Required. Valid: maven, npm
+      project-type: maven              # Required. Valid: maven, npm
 
       # OPTIONAL PARAMETERS (shown with defaults)
-      baseBranch: main               # Default: main. Base branch for commit linting
+      base-branch: main               # Default: main. Base branch for commit linting
 
       # LINTER CONTROLS (all default to true except publiccodelint)
       linters.commitlint: true       # Default: true. Validates commit messages follow conventions
@@ -537,7 +649,7 @@ Complete release process triggered by version tags.
 6. **GitHub Release** - Release creation with assets
 7. **Publishing** - Deployment to Maven Central, NPM, GitHub Packages
 
-### Basic Release Workflow
+### Basic Release Workflow (v2-dev)
 ```yaml
 # .github/workflows/release-workflow.yml
 name: Release Workflow
@@ -561,7 +673,7 @@ permissions:
 
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v1
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
     secrets: inherit  # Use org-level GPG keys and publishing credentials
     permissions:
       contents: write         # Create GitHub releases and tags
@@ -571,96 +683,27 @@ jobs:
       security-events: write # Upload container scan results
       attestations: write    # Attach SBOM to container images
     with:
-      projectType: maven
-      artifactPublisher: maven-app-github  # Publishes JAR to GitHub Packages
-      containerBuilder: containerimage-ghcr  # Creates Docker image in ghcr.io
-      releasePublisher: jreleaser  # Creates GitHub release with changelog
+      artifacts-config: .github/artifacts.yml  # Path to artifacts configuration
+      release-publisher: github-cli  # Creates GitHub release with changelog
 ```
 
-### Full Configuration Example (With Defaults)
+### Configuration Options (v2-dev)
+
+All configuration is now defined in `artifacts.yml`. See [Artifact Configuration Reference](#artifact-configuration-reference) for complete field documentation.
+
+**Shared workflow inputs:**
 ```yaml
-name: Release Workflow
-
-on:
-  push:
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"              # Stable: v1.0.0
-#      - "v[0-9]+.[0-9]+.[0-9]+-alpha*"       # Alpha: v1.0.0-alpha.1
-#      - "v[0-9]+.[0-9]+.[0-9]+-beta*"        # Beta: v1.0.0-beta.1
-#      - "v[0-9]+.[0-9]+.[0-9]+-rc*"          # RC: v1.0.0-rc.1
-      - "v[0-9]+.[0-9]+.[0-9]+-snapshot*"    # Snapshot: v1.0.0-snapshot
-      - "v[0-9]+.[0-9]+.[0-9]+-SNAPSHOT*"    # Snapshot: v1.0.0-SNAPSHOT
-
-permissions:
-  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
-
-jobs:
-  release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v1
-    secrets: inherit
-    permissions:
-      contents: write       # Create GitHub releases and tags
-      packages: write       # Push packages to GitHub Packages/ghcr.io
-      id-token: write      # Generate OIDC token for SLSA provenance
-      attestations: write  # Attach SBOM attestations to containers
-      security-events: write
-    with:
-      projectType: maven
-
-      # === PUBLISHERS & BUILDERS ===
-      # Artifact Publisher - Choose based on your package type:
-      artifactPublisher: maven-app-github        # Publishes JAR/WAR to GitHub Packages
-      # artifactPublisher: maven-lib-mavencentral # For libraries going to Maven Central (needs credentials)
-      # artifactPublisher: npm-app-github         # Publishes to GitHub NPM registry
-
-      containerBuilder: containerimage-ghcr      # Creates multi-arch Docker images in ghcr.io
-
-      changelogCreator: git-cliff                # Generates changelog from commit messages
-
-      # Release Publisher - Platform-specific:
-      releasePublisher: jreleaser               # Uses JReleaser (for Java projects)
-      # releasePublisher: github-cli            # Uses GitHub CLI (for Node.js projects)
-
-      # === ARTIFACT SETTINGS (showing defaults) ===
-      artifact.javaversion: "21"                # Default: "21". JDK version for Maven builds
-      artifact.nodeversion: "22"                # Default: "22". Node.js version for NPM builds  
-      artifact.attachpattern: "target/*.jar"    # Default: "target/*.jar". Files to attach to release
-      artifact.npmtag: "latest"                 # Default: "latest". NPM dist-tag
-      # artifact.settingspath: ".mvn/settings.xml" # No default. Custom Maven settings path
-      artifact.jreleaserenabled: false          # Default: false. Enable JReleaser Maven plugin
-
-      # === CONTAINER SETTINGS (showing defaults) ===
-      container.registry: "ghcr.io"             # Default: "ghcr.io". Container registry
-      container.platforms: "linux/amd64,linux/arm64"  # Default: "linux/amd64,linux/arm64". Target platforms
-      container.enableslsa: true                # Default: true. SLSA provenance attestation
-      container.enablesbom: true                # Default: true. Generate SBOM
-      container.enablescan: true                # Default: true. Trivy vulnerability scan
-      container.containerfile: "Containerfile"  # Default: "Containerfile". Dockerfile path
-
-      # === CHANGELOG SETTINGS (showing defaults) ===
-      changelogCreator: "git-cliff"             # Default: "git-cliff". Changelog generator
-      changelog.config: ".github-templates/gitcliff-templates/keepachangelog.toml" # Default template
-      changelog.skipversionbump: false          # Default: false. Skip version bump
-
-      # === RELEASE SETTINGS (showing defaults) ===
-      # releasePublisher: jreleaser             # No default. Choose jreleaser or github-cli
-      release.config: "jreleaser.yml"           # Default: "jreleaser.yml". JReleaser config
-      release.generatesbom: true                # Default: true. Generate SBOM for release
-      release.signartifacts: true               # Default: true. GPG sign artifacts
-      release.checkauthorization: false         # Default: false. Check user authorization
-      release.draft: false                      # Default: false. Create draft release
-      # releaseType: stable                     # Auto-detected from tag (v1.0.0=stable, v1.0.0-beta=prerelease)
-      branch: "main"                             # Default: "main". Base branch for changelog
-
-      # === ADVANCED SETTINGS (showing defaults) ===
-      workingDirectory: "."                     # Default: ".". Working directory
-      # file_pattern: Auto-detected based on projectType (Maven: "CHANGELOG.md pom.xml", NPM: "CHANGELOG.md package.json package-lock.json")
-
-      # Note: The following features are automatically handled by the workflows:
-      # - File pattern detection based on project type (Maven, NPM, Gradle, Python)
-      # - SHA-256 checksums in checksums.sha256 (generated by JReleaser or GitHub CLI)
-      # - GPG signing (when OSPO_BOT_GPG_* secrets are configured)
-      # - SLSA/SBOM catalogs (controlled by container.enableslsa and release.generatesbom)
+with:
+  artifacts-config: .github/artifacts.yml      # Required: Path to artifacts config
+  release-publisher: github-cli                # Optional: Create GitHub release
+  changelog-creator: git-cliff                 # Optional: Generate changelog
+  changelog.config: path/to/config.toml       # Optional: Custom changelog config
+  changelog.skipversionbump: false            # Optional: Skip version bump
+  release.generatesbom: true                  # Optional: Generate SBOM for release
+  release.signartifacts: true                 # Optional: GPG sign artifacts
+  release.checkauthorization: false           # Optional: Check user authorization
+  release.draft: false                        # Optional: Create draft release
+  branch: main                                # Optional: Base branch for changelog
 ```
 
 ### Release Types
@@ -712,12 +755,12 @@ permissions:
 
 jobs:
   dev-release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@v1
+    uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@v2-dev
     permissions:
       contents: write   # Version bump commits
       packages: write   # Push dev containers to ghcr.io
     with:
-      projectType: maven  # or npm
+      project-type: maven  # or npm
     secrets: inherit
 ```
 
@@ -817,129 +860,151 @@ You can use individual components instead of the full orchestrators.
 
 | Component | Purpose | Output | Required Secrets | Use When |
 |-----------|---------|--------|------------------|----------|
-| **maven-app-github** | Publishes Maven JARs to GitHub Packages | JAR artifacts in GitHub Packages | GITHUB_TOKEN | Java apps for internal distribution |
-| **maven-lib-mavencentral** | Publishes Maven libraries to Maven Central | Public Maven artifacts | MAVENCENTRAL_USERNAME, MAVENCENTRAL_PASSWORD | Open source Java libraries |
-| **npm-app-github** | Publishes NPM packages to GitHub registry | NPM packages in GitHub Packages | NPM_TOKEN | Node.js apps/libs for internal use |
+| **publish-github** | Publishes Maven/NPM/Gradle to GitHub Packages | Artifacts in GitHub Packages | GITHUB_TOKEN | Default publishing target |
+| **publish-mavencentral** | Publishes Maven libraries to Maven Central | Public Maven artifacts | MAVENCENTRAL_USERNAME, MAVENCENTRAL_PASSWORD | Public libraries (requires build-type: library) |
 
 #### Container Builders
 
 | Component | Purpose | Features | Build Time | Use When |
 |-----------|---------|----------|------------|----------|
-| **containerimage-ghcr** | Production multi-platform container builds | SLSA attestation, SBOM, vulnerability scanning, multi-arch | ~10-15 min | Production releases |
-| **containerimage-ghcr-dev** | Fast single-platform dev builds | Basic image only, SHA-based tags | ~2-3 min | Development/testing |
+| **publish-container** | Production multi-platform container builds | SLSA attestation, SBOM, vulnerability scanning, multi-arch | ~10-15 min | Production releases |
+| **publish-container-dev** | Fast single-platform dev builds | Basic image only, SHA-based tags | ~2-3 min | Development/testing |
 
 #### Release Tools
 
 | Component | Purpose | Creates/Updates | Required Secrets | Use When |
 |-----------|---------|----------------|------------------|----------|
-| **jreleaser** | Automated GitHub releases | GitHub release, changelog, signatures | RELEASE_TOKEN, GPG keys | Any production release |
-| **github-release** | Simple GitHub release creation | GitHub release with assets | GITHUB_TOKEN | Basic releases without JReleaser |
-| **version-bump-changelog** | Version management | Updated version files, changelog | GITHUB_TOKEN | Before releases |
+| **release-github** | GitHub release creation | GitHub release, changelog, signatures | RELEASE_TOKEN, GPG keys | Any production release |
+| **version-bump** | Version management | Updated version files | GITHUB_TOKEN, OSPO_BOT_GHTOKEN | Before releases |
+| **generate-changelog** | Changelog generation | Formatted changelog | GITHUB_TOKEN | Before releases |
 
 #### Validators
 
 | Component | Purpose | Validates | Blocks On | Use When |
 |-----------|---------|-----------|-----------|----------|
-| **validate-release-prerequisites** | Pre-release checks | Version match, permissions, secrets | Any validation failure | Before any release |
+| **release-prerequisites** | Pre-release checks | Version match, permissions, secrets | Any validation failure | Before any release |
 
-> **Note:** New features available in v2:
-> - ✅ **Monorepo support** - Build multiple services/packages from a single repository (see [Monorepo Support](#monorepo-support-v2))
->
-> **Note:** Additional components planned for the near future:
-> - **Gradle support** - For Gradle-based Java/Kotlin projects
-> - **NPM library publisher** - For publishing NPM libraries (not just applications)
->
-> To request a new component, open an issue in the `.github` repository.
+> **Note:** To request a new component or publisher, open an issue in the reusable-ci repository.
 
-### Publishers
+### Build Workflows
 
-#### `maven-app-github`
-Publishes Maven applications to GitHub Packages.
+#### `build-maven.yml`
+Builds Maven projects (apps or libraries).
 ```yaml
-uses: ./.github/workflows/publish-maven-app-github.yml
+uses: ./.github/workflows/build-maven.yml
 with:
-  javaVersion: "21"        # JDK version (17, 21, etc.)
-  workingDirectory: "."    # Subdirectory containing pom.xml
-  branch: main             # Branch to checkout for build
-  attachPattern: "target/*.jar"  # Files to attach to release (supports wildcards)
+  build-type: app           # "app" or "lib"
+  java-version: "21"        # JDK version
+  working-directory: "."    # Path to pom.xml
 ```
 
-#### `maven-lib-mavencentral`
+#### `build-npm.yml`
+Builds NPM projects.
+```yaml
+uses: ./.github/workflows/build-npm.yml
+with:
+  node-version: "22"        # Node.js version
+  working-directory: "."    # Path to package.json
+```
+
+#### `build-gradle.yml`
+Builds Gradle projects.
+```yaml
+uses: ./.github/workflows/build-gradle.yml
+with:
+  java-version: "21"        # JDK version
+  working-directory: "."    # Path to build.gradle
+  gradle-tasks: "build"     # Gradle tasks to run
+```
+
+### Publish Workflows
+
+#### `publish-github.yml`
+Publishes artifacts to GitHub Packages (Maven/NPM/Gradle).
+```yaml
+uses: ./.github/workflows/publish-github.yml
+with:
+  package-type: maven          # maven, npm, or gradle
+  artifact-source: maven-build-artifacts  # Name of workflow artifact
+  working-directory: "."
+```
+
+#### `publish-mavencentral.yml`
 Publishes Maven libraries to Maven Central.
 ```yaml
-uses: ./.github/workflows/publish-maven-lib-central.yml
+uses: ./.github/workflows/publish-mavencentral.yml
 with:
-  javaVersion: "21"
-  workingDirectory: "."
-  settingsPath: ".mvn/settings.xml"  # Maven settings with Central credentials
-  jreleaserEnabled: true              # Use JReleaser plugin from pom.xml
+  artifact-source: maven-build-artifacts  # Name of workflow artifact
+  working-directory: "."
+  settings-path: ".mvn/settings.xml"
 ```
 
-#### `npm-app-github`
-Publishes NPM packages to GitHub Packages.
-```yaml
-uses: ./.github/workflows/publish-npm-app-github.yml
-with:
-  nodeVersion: "22"       # Node.js version (20, 22, lts/*, etc.)
-  workingDirectory: "."
-  npmTag: "latest"        # Distribution tag (latest, next, beta)
-```
+### Container Workflows
 
-#### `containerimage-ghcr`
-Production container builds with full security features.
+#### `publish-container.yml`
+Production container builds with full security features. Supports multiple registries.
 ```yaml
-uses: ./.github/workflows/build-container-ghcr.yml
+uses: ./.github/workflows/publish-container.yml
 with:
-  containerfile: "Containerfile"        # Path to Container/Dockerfile
-  context: "."                          # Docker build context directory
-  platforms: "linux/amd64,linux/arm64"  # Multi-architecture support
-  enableSLSA: true                      # Generate supply chain attestation
-  enableSBOM: true                      # Embed Software Bill of Materials
-  enableScan: true                      # Run vulnerability scanning with Trivy
-  registry: "ghcr.io"                   # Container registry URL
-```
-
-#### `containerimage-ghcr-dev`
-Fast development container builds.
-```yaml
-uses: ./.github/workflows/build-container-ghcr-dev.yml
-with:
-  containerfile: "Dockerfile"
+  container-file: "Containerfile"
+  context: "."
+  platforms: "linux/amd64,linux/arm64"
+  enable-slsa: true
+  enable-sbom: true
+  enable-scan: true
   registry: "ghcr.io"
-  projectType: maven       # Build system (determines build commands)
-  workingDirectory: "."    # Where to run maven/npm build
+```
+
+#### `publish-container-dev.yml`
+Fast development container builds. Supports multiple registries.
+```yaml
+uses: ./.github/workflows/publish-container-dev.yml
+with:
+  container-file: "Dockerfile"
+  registry: "ghcr.io"
+  project-type: maven
+  working-directory: "."
 ```
 
 ### Other Components
 
-#### `version-bump-changelog`
-Handles version bumping and changelog generation.
+#### `version-bump.yml`
+Handles version bumping and updates version files.
 ```yaml
-uses: ./.github/workflows/version-bump-changelog.yml
+uses: ./.github/workflows/version-bump.yml
 with:
-  projectType: maven      # Determines version file (pom.xml vs package.json)
-  branch: main            # Base branch for changelog comparison
-  releaseType: stable     # stable or prerelease (affects version bump)
+  project-type: maven      # Determines version file (pom.xml vs package.json)
+  branch: main             # Base branch for comparison
+  working-directory: "."   # Path to project root
 ```
 
-#### `github-release`
+#### `generate-changelog.yml`
+Generates changelog from git commits.
+```yaml
+uses: ./.github/workflows/generate-changelog.yml
+with:
+  branch: main             # Base branch for changelog comparison
+  config-file: ""          # Optional: Custom changelog config
+```
+
+#### `release-github.yml`
 Creates GitHub releases with assets.
 ```yaml
-uses: ./.github/workflows/github-release.yml
+uses: ./.github/workflows/release-github.yml
 with:
-  attachPattern: "target/*.jar"  # Files to upload as release assets
-  generateSBOM: true              # Include CycloneDX/SPDX SBOM files
-  signArtifacts: true             # GPG sign all release artifacts
+  attach-artifacts: "target/*.jar"  # Files to upload as release assets
+  generate-sbom: true               # Include CycloneDX/SPDX SBOM files
+  sign-artifacts: true              # GPG sign all release artifacts
 ```
 
-#### `validate-release-prerequisites`
-Validates release requirements.
+#### `release-prerequisites.yml`
+Validates release requirements (called automatically by orchestrator).
 ```yaml
-uses: ./.github/workflows/validate-release-prerequisites.yml
+uses: ./.github/workflows/release-prerequisites.yml
 with:
-  projectType: maven
-  artifactPublisher: maven-app-github
-  checkAuthorization: true  # Verify user has permission to release
+  project-type: maven
+  build-type: application
+  check-authorization: true  # Verify user has permission to release
 ```
 
 ---
@@ -965,10 +1030,10 @@ with:
 | **OSPO_BOT_GPG_PUB** | GPG signing | During signing | GPG public key | Public key for verification |
 | **OSPO_BOT_GPG_PRIV** | GPG signing | During signing | Base64 GPG private key | Private key for signing |
 | **OSPO_BOT_GPG_PASS** | GPG signing | During signing | GPG key passphrase | Passphrase for GPG key |
-| **MAVENCENTRAL_USERNAME** | `maven-lib-mavencentral` | During publish | Sonatype username | Maven Central auth |
-| **MAVENCENTRAL_PASSWORD** | `maven-lib-mavencentral` | During publish | Sonatype password | Maven Central auth |
-| **NPM_TOKEN** | `npm-app-github` | During publish | GitHub NPM token | NPM registry auth |
-| **RELEASE_TOKEN** | JReleaser | During release | GitHub PAT | JReleaser operations |
+| **MAVENCENTRAL_USERNAME** | Maven Central publishing | During publish | Sonatype username | Maven Central auth |
+| **MAVENCENTRAL_PASSWORD** | Maven Central publishing | During publish | Sonatype password | Maven Central auth |
+| **NPM_TOKEN** | NPM publishing to npmjs.org | During publish | npmjs.org auth token | NPM public registry auth (not GitHub Packages) |
+| **RELEASE_TOKEN** | GitHub CLI | During release | GitHub PAT | GitHub release operations |
 | **AUTHORIZED_RELEASE_DEVELOPERS** | Production releases | Pre-release check | Comma-separated usernames | Who can release |
 
 ## Prerequisites Check Matrix
@@ -977,13 +1042,13 @@ with:
 |-------|----------------|-------------------|----------|------------|
 | **Version Match** | Release workflow | Tag matches project version | `v1.0.0` tag but pom.xml has `1.0.1` | Ensure tag matches version exactly |
 | **GPG Key** | When `signatures: true` | GPG key is valid and accessible | Key expired or malformed | Generate new GPG key, export as base64 |
-| **Maven Central Creds** | `maven-lib-mavencentral` | Can authenticate to Sonatype | Invalid username/password | Verify Sonatype account credentials |
-| **NPM Registry** | `npm-app-github` | Can authenticate to registry | Token expired or invalid scope | Generate new NPM token with publish scope |
-| **Container Registry** | `containerBuilder` set | Can push to registry | No write permission | Ensure `packages: write` permission |
+| **Maven Central Creds** | Maven Central publishing | Can authenticate to Sonatype | Invalid username/password | Verify Sonatype account credentials |
+| **NPM Registry** | NPM publishing to npmjs.org | Can authenticate to registry | Token expired or invalid scope | Generate new NPM token with publish scope |
+| **Container Registry** | Container in `containers[]` | Can push to registry | No write permission | Ensure `packages: write` permission |
 | **GitHub Release** | Release creation | Can create releases | No `contents: write` | Add permission to workflow |
 | **Protected Branch** | On push to main | User has bypass rights | Actor lacks permission | Add user to bypass list |
 | **Artifact Existence** | During upload | Build artifacts exist | `target/*.jar` not found | Ensure build succeeds first |
-| **Container/Dockerfile** | Container build | Dockerfile exists | No Dockerfile in root | Create Dockerfile or specify path |
+| **Container/Containerfile** | Container build | Containerfile exists | No Containerfile at specified path | Create Containerfile or specify correct path |
 | **License Compliance** | PR checks | Dependencies have compatible licenses | GPL in proprietary project | Review and replace dependencies |
 
 ## Permission Requirements Matrix
@@ -1011,9 +1076,10 @@ with:
 1. **Don't need to create secrets** - They already exist at DiggSweden org level
 2. **Request access** - Contact your DiggSweden GitHub org owner/admin
 3. **Specify which ones** - Tell them which secrets your repo needs:
-   - GPG signing → Request `GPG_SECRET_KEY` and `GPG_PASSPHRASE`
-   - Maven Central → Request `MAVEN_CENTRAL_USERNAME` and `MAVEN_CENTRAL_PASSWORD`
-   - NPM publishing → Request `NPM_TOKEN`
+   - GPG signing → Request `OSPO_BOT_GPG_PRIV`, `OSPO_BOT_GPG_PASS`, and `OSPO_BOT_GPG_PUB`
+   - Bot token → Request `OSPO_BOT_GHTOKEN` and `RELEASE_TOKEN`
+   - Maven Central → Request `MAVENCENTRAL_USERNAME` and `MAVENCENTRAL_PASSWORD`
+   - NPM public registry → Request `NPM_TOKEN` (only if publishing to npmjs.org)
 4. **Get enabled** - DiggSweden admin grants your repository access to the secrets
 
 - **No manual configuration** - Developers never touch secret values
@@ -1039,6 +1105,6 @@ with:
 
 The release workflow includes several validation scripts that you can run locally before creating a tag:
 
-See `.github/scripts/README.md` for detailed documentation.
+See `scripts/README.md` for detailed documentation on validation scripts.
 
 ---

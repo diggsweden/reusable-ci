@@ -47,26 +47,26 @@ on:
         required: false
         default: "main"
         type: string
-      projectType:
+      project-type:
         description: "Project type: maven, npm"
         required: true
         type: string
-      javaVersion:
+      java-version:
         description: "Java version for Maven projects (default: 21)"
         required: false
         default: '21'
         type: string
-      nodeVersion:
+      node-version:
         description: "Node.js version for NPM projects (default: 22)"
         required: false
         default: '22'
         type: string
-      gradleVersionFile:
+      gradle-version-file:
         description: "Path to Gradle version file (default: gradle.properties)"
         required: false
         default: 'gradle.properties'
         type: string
-      workingDirectory:
+      working-directory:
         description: "Working directory for the project"
         required: false
         default: '.'
@@ -76,7 +76,7 @@ on:
         required: false
         default: ".github-templates/templates/gitcliff/minimal.toml"
         type: string
-      file_pattern:
+      file-pattern:
         description: 'Files to commit (default: "CHANGELOG.md pom.xml"). NPM projects should set to "CHANGELOG.md package.json package-lock.json"'
         required: false
         type: string
@@ -97,11 +97,11 @@ jobs:
     uses: ./.github/workflows/generate-changelog.yml
     with:
       branch: ${{ inputs.branch }}
-      changelogConfig: ".github-templates/templates/gitcliff/keepachangelog.toml"
-      gitCliffArgs: "" # Empty means full history
-      outputFile: "CHANGELOG.md"
-      uploadAsArtifact: true
-      artifactName: "full-changelog"
+      changelog-config: ".github-templates/templates/gitcliff/keepachangelog.toml"
+      git-cliff-args: "" # Empty means full history
+      output-file: "CHANGELOG.md"
+      upload-as-artifact: true
+      artifact-name: "full-changelog"
   # Generate minimal changelog for commit message
   generate-minimal-changelog:
     name: Generate Minimal Changelog
@@ -110,11 +110,11 @@ jobs:
     uses: ./.github/workflows/generate-changelog.yml
     with:
       branch: ${{ inputs.branch }}
-      changelogConfig: ".github-templates/templates/gitcliff/minimal.toml"
-      gitCliffArgs: "--latest --strip header"
-      outputFile: "minimal-changelog.txt"
-      uploadAsArtifact: true
-      artifactName: "minimal-changelog"
+      changelog-config: ".github-templates/templates/gitcliff/minimal.toml"
+      git-cliff-args: "--latest --strip header"
+      output-file: "minimal-changelog.txt"
+      upload-as-artifact: true
+      artifact-name: "minimal-changelog"
   bump-version:
     name: Bump Version and Commit
     needs: [generate-full-changelog, generate-minimal-changelog]
@@ -144,44 +144,44 @@ jobs:
       - name: Set project type
         id: project-type
         run: |
-          PROJECT_TYPE="${{ inputs.projectType }}"
+          PROJECT_TYPE="${{ inputs['project-type'] }}"
           echo "Project type: ${PROJECT_TYPE}"
           echo "type=${PROJECT_TYPE}" >> "$GITHUB_OUTPUT"
       - name: Set up JDK for Maven
         if: ${{ steps.project-type.outputs.type == 'maven' }}
         uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
-          java-version: ${{ inputs.javaVersion }}
+          java-version: ${{ inputs['java-version'] }}
           distribution: 'temurin'
           # No cache here - we'll cache after version update
       - name: Update Maven version
         if: ${{ steps.project-type.outputs.type == 'maven' }}
-        working-directory: ${{ inputs.workingDirectory }}
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
         run: |
-          echo "Tag: ${GITHUB_REF_NAME}"
-          TAG="${GITHUB_REF_NAME#v}"
-          echo "Version: ${TAG}"
-          mvn $MAVEN_CLI_OPTS versions:set -DnewVersion="${TAG}" -DgenerateBackupPoms=false -DskipTests
+          bash .github-shared/scripts/version/bump-version.sh \
+            maven \
+            "${GITHUB_REF_NAME#v}" \
+            "${{ inputs['working-directory'] }}"
       - name: Setup Java again with cache after version update
         if: ${{ steps.project-type.outputs.type == 'maven' }}
         uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
-          java-version: ${{ inputs.javaVersion }}
+          java-version: ${{ inputs['java-version'] }}
           distribution: 'temurin'
           cache: maven
-          cache-dependency-path: ${{ inputs.workingDirectory }}/pom.xml
+          cache-dependency-path: ${{ inputs['working-directory'] }}/pom.xml
       - name: Pre-download dependencies with new version
         if: ${{ steps.project-type.outputs.type == 'maven' }}
-        working-directory: ${{ inputs.workingDirectory }}
+        working-directory: ${{ inputs['working-directory'] }}
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
         run: |
+          # shellcheck disable=SC2086
           echo "Pre-downloading dependencies with updated pom.xml..."
           mvn $MAVEN_CLI_OPTS dependency:resolve || true
           mvn $MAVEN_CLI_OPTS dependency:resolve-plugins || true
@@ -189,18 +189,16 @@ jobs:
         if: ${{ steps.project-type.outputs.type == 'npm' }}
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ inputs.nodeVersion }}
+          node-version: ${{ inputs['node-version'] }}
           # No cache here - we'll cache after version update
       - name: Update NPM version
         if: ${{ steps.project-type.outputs.type == 'npm' }}
-        working-directory: ${{ inputs.workingDirectory }}
+        working-directory: ${{ inputs['working-directory'] }}
         run: |
-          echo "Tag: ${GITHUB_REF_NAME}"
-          TAG="${GITHUB_REF_NAME#v}"
-          echo "Version: ${TAG}"
-
-          # Always use version from tag
-          npm version "${TAG}" --no-git-tag-version --allow-same-version
+          bash .github-shared/scripts/version/bump-version.sh \
+            npm \
+            "${GITHUB_REF_NAME#v}" \
+            "${{ inputs['working-directory'] }}"
 
           echo "Pre-installing dependencies..."
           npm ci --ignore-scripts || npm install --ignore-scripts || true
@@ -209,78 +207,46 @@ jobs:
         uses: actions/cache/save@v3
         with:
           path: ~/.npm
-          key: npm-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', inputs.workingDirectory)) }}
+          key: npm-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', inputs['working-directory'])) }}
       - name: Set up JDK for Gradle
         if: ${{ steps.project-type.outputs.type == 'gradle' }}
         uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
-          java-version: ${{ inputs.javaVersion }}
+          java-version: ${{ inputs['java-version'] }}
           distribution: 'temurin'
           cache: 'gradle'
       - name: Update Gradle version
         if: ${{ steps.project-type.outputs.type == 'gradle' }}
-        working-directory: ${{ inputs.workingDirectory }}
         run: |
           echo "::group::Update Gradle version"
-          
-          echo "Tag: ${GITHUB_REF_NAME}"
-          TAG="${GITHUB_REF_NAME#v}"
-          echo "Version: ${TAG}"
-          
-          VERSION_FILE="${{ inputs.gradleVersionFile }}"
-          echo "Version file: ${VERSION_FILE}"
-          
-          if [ ! -f "${VERSION_FILE}" ]; then
-            echo "::error::Gradle version file not found: ${VERSION_FILE}"
-            exit 1
-          fi
-          
-          # Update or add versionName property
-          if grep -q '^versionName=' "${VERSION_FILE}"; then
-            sed -i "s/^versionName=.*/versionName=${TAG}/" "${VERSION_FILE}"
-            echo "Updated versionName to ${TAG}"
-          else
-            echo "versionName=${TAG}" >> "${VERSION_FILE}"
-            echo "Added versionName=${TAG}"
-          fi
-          
-          # Auto-increment versionCode
-          if grep -q '^versionCode=' "${VERSION_FILE}"; then
-            CURRENT_CODE=$(grep '^versionCode=' "${VERSION_FILE}" | cut -d'=' -f2 | tr -d ' ')
-            NEW_CODE=$((CURRENT_CODE + 1))
-            sed -i "s/^versionCode=.*/versionCode=${NEW_CODE}/" "${VERSION_FILE}"
-            echo "Incremented versionCode: ${CURRENT_CODE} → ${NEW_CODE}"
-          else
-            echo "versionCode=1" >> "${VERSION_FILE}"
-            echo "Added versionCode=1"
-          fi
-          
-          echo "✅ Version updated successfully"
+          bash .github-shared/scripts/version/bump-version.sh \
+            gradle \
+            "${GITHUB_REF_NAME#v}" \
+            "${{ inputs['working-directory'] }}" \
+            "${{ inputs['gradle-version-file'] }}"
           echo "::endgroup::"
-          
-          cat "${VERSION_FILE}"
       - name: Download Full Changelog
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: full-changelog
-          path: ${{ inputs.workingDirectory }}
+          path: ${{ inputs['working-directory'] }}
       - name: Verify Full Changelog
-        working-directory: ${{ inputs.workingDirectory }}
+        working-directory: ${{ inputs['working-directory'] }}
         run: |
           if [ ! -f "CHANGELOG.md" ]; then
             echo "::error::Full changelog (CHANGELOG.md) not found"
             echo "This file is required for the version bump commit"
             exit 1
           fi
-          echo "✅ Full changelog found ($(wc -l < CHANGELOG.md) lines)"
+          echo "✓ Full changelog found ($(wc -l < CHANGELOG.md) lines)"
       - name: Download Minimal Changelog
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: minimal-changelog
-          path: ${{ inputs.workingDirectory }}
+          path: ${{ inputs['working-directory'] }}
       - name: Read Minimal Changelog
         id: minimal-changelog
-        working-directory: ${{ inputs.workingDirectory }}
+        working-directory: ${{ inputs['working-directory'] }}
         run: |
           if [ -f "minimal-changelog.txt" ]; then
             # Read content and escape for GitHub Actions
@@ -303,7 +269,7 @@ jobs:
             ${{ steps.minimal-changelog.outputs.content }}
 
             [skip ci]
-          file_pattern: ${{ inputs.file_pattern }}
+          file_pattern: ${{ inputs['file-pattern'] }}
           commit_author: "${{ steps.import-gpg.outputs.name }} <${{ steps.import-gpg.outputs.email }}>"
           commit_user_name: ${{ steps.import-gpg.outputs.name }}
           commit_user_email: ${{ steps.import-gpg.outputs.email }}
@@ -319,7 +285,7 @@ jobs:
             git tag -f -s "$LATEST_TAG" -m "$LATEST_TAG"
             git push --force origin "$LATEST_TAG"
           else
-            echo "❌ Tag $LATEST_TAG points to unexpected commit"
+            echo "✗ Tag $LATEST_TAG points to unexpected commit"
             echo "Expected: $PREV_SHA (HEAD~1)"
             echo "Found: $TAG_SHA"
             exit 1

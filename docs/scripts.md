@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+
+SPDX-License-Identifier: CC0-1.0
+-->
+
 # Scripts
 
 Shell scripts for SBOM generation and release validation.
@@ -21,6 +27,7 @@ scripts/
 Generates SBOM files in SPDX 2.3 and CycloneDX 1.6 JSON formats.
 
 **Syntax:**
+
 ```bash
 bash generate-sbom.sh [PROJECT_TYPE] [LAYERS] [VERSION] [PROJECT_NAME] [WORKING_DIR] [CONTAINER_IMAGE]
 ```
@@ -58,11 +65,13 @@ bash generate-sbom.sh maven "containerimage" "0.5.13" "my-app" "." "ghcr.io/org/
 ```
 
 **Auto-detection:**
+
 - Project type: pom.xml → maven, package.json → npm, build.gradle → gradle
 - Version: `mvn help:evaluate -Dexpression=project.version` or `jq -r .version package.json`
 - Name: artifactId, package name, or repository name
 
 **Output:**
+
 - SPDX: `{name}-{version}-{layer}-sbom.spdx.json`
 - CycloneDX: `{name}-{version}-{layer}-sbom.cyclonedx.json`
 
@@ -75,11 +84,13 @@ bash generate-sbom.sh maven "containerimage" "0.5.13" "my-app" "." "ghcr.io/org/
 Checks tag follows semantic versioning.
 
 **Syntax:**
+
 ```bash
 ./validate-tag-format.sh <tag-name>
 ```
 
 **Valid formats:**
+
 - `v1.0.0`
 - `v2.3.4-beta.1`
 - `v1.0.0-rc.2`
@@ -92,11 +103,13 @@ Checks tag follows semantic versioning.
 Checks tag is signed with GPG or SSH.
 
 **Syntax:**
+
 ```bash
 ./validate-tag-signature.sh <tag-name> <github-repository> [gpg-public-key]
 ```
 
 **Checks:**
+
 - Tag is annotated (not lightweight)
 - Has GPG or SSH signature
 - Verifies signature if public key provided
@@ -108,11 +121,13 @@ Checks tag is signed with GPG or SSH.
 Checks tag commit exists in branch history.
 
 **Syntax:**
+
 ```bash
 ./validate-tag-commit.sh <tag-name> <branch-name>
 ```
 
 **Checks:**
+
 - Tag commit in branch history
 - Tag not ahead of branch HEAD
 - Valid commit reference
@@ -122,6 +137,7 @@ Checks tag commit exists in branch history.
 ## Usage in Workflows
 
 **SBOM generation:**
+
 ```yaml
 - uses: actions/checkout@v4
   with:
@@ -135,6 +151,7 @@ Checks tag commit exists in branch history.
 ```
 
 **Tag validation:**
+
 ```yaml
 - uses: actions/checkout@v4
   with:
@@ -156,11 +173,13 @@ Checks tag commit exists in branch history.
 ## Examples
 
 **SBOM:**
+
 ```bash
 generate-sbom.sh maven "source,artifact"
 ```
 
 **Validation:**
+
 ```bash
 validate-tag-format.sh v1.0.0 && \
 validate-tag-signature.sh v1.0.0 diggsweden/repo && \

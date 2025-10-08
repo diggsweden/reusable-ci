@@ -41,11 +41,11 @@ on:
   workflow_call:
     inputs:
       # Project configuration
-      projectType:
+      project-type:
         description: "Project type: maven, npm, python"
         required: true
         type: string
-      baseBranch:
+      base-branch:
         description: "Base branch for commit linting"
         required: false
         default: "main"
@@ -83,19 +83,19 @@ jobs:
   commit-lint:
     name: Commit Lint
     if: ${{ inputs['linters.commitlint'] }}
-    uses: diggsweden/reusable-ci/.github/workflows/lint-commit.yml@v1
+    uses: ./.github/workflows/lint-commit.yml
     with:
-      base-branch: ${{ inputs.baseBranch }}
+      base-branch: ${{ inputs['base-branch'] }}
   # License header linting
   license-lint:
     name: License Lint
     if: ${{ inputs['linters.licenselint'] }}
-    uses: diggsweden/reusable-ci/.github/workflows/lint-license.yml@v1
+    uses: ./.github/workflows/lint-license.yml
   # Dependency security review
   dependency-review:
     name: Dependency Review
     if: ${{ inputs['linters.dependencyreview'] }}
-    uses: diggsweden/reusable-ci/.github/workflows/security-dependency-review.yml@v1
+    uses: ./.github/workflows/security-dependency-review.yml
   # Comprehensive linting with MegaLinter
   megalint:
     name: MegaLinter
@@ -103,12 +103,12 @@ jobs:
     permissions:
       contents: read
       security-events: write
-    uses: diggsweden/reusable-ci/.github/workflows/lint-mega.yml@v1
+    uses: ./.github/workflows/lint-mega.yml
   # Public code metadata linting
   publiccode-lint:
     name: Publiccode Lint
     if: ${{ inputs['linters.publiccodelint'] }}
-    uses: diggsweden/reusable-ci/.github/workflows/lint-publiccode.yml@v1
+    uses: ./.github/workflows/lint-publiccode.yml
   # Gather results from enabled linters (always runs to check status)
   lint-status:
     name: Lint Status Check
@@ -118,7 +118,7 @@ jobs:
     steps:
       - name: Check lint results
         run: |
-          echo "## Pull Request Check Status 📋" >> $GITHUB_STEP_SUMMARY
+          echo "## Pull Request Check Status" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           # Check each linter status
@@ -129,11 +129,11 @@ jobs:
           # Commit lint
           if [[ "${{ inputs['linters.commitlint'] }}" == "true" ]]; then
             if [[ "${{ needs.commit-lint.result }}" == "success" ]]; then
-              echo "| Commit Lint | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+              echo "| Commit Lint | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
             elif [[ "${{ needs.commit-lint.result }}" == "skipped" ]]; then
-              echo "| Commit Lint | ⏭️ Skipped |" >> $GITHUB_STEP_SUMMARY
+              echo "| Commit Lint | − Skipped |" >> $GITHUB_STEP_SUMMARY
             else
-              echo "| Commit Lint | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+              echo "| Commit Lint | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
             fi
           else
             echo "| Commit Lint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
@@ -142,11 +142,11 @@ jobs:
           # License lint
           if [[ "${{ inputs['linters.licenselint'] }}" == "true" ]]; then
             if [[ "${{ needs.license-lint.result }}" == "success" ]]; then
-              echo "| License Lint | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+              echo "| License Lint | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
             elif [[ "${{ needs.license-lint.result }}" == "skipped" ]]; then
-              echo "| License Lint | ⏭️ Skipped |" >> $GITHUB_STEP_SUMMARY
+              echo "| License Lint | − Skipped |" >> $GITHUB_STEP_SUMMARY
             else
-              echo "| License Lint | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+              echo "| License Lint | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
             fi
           else
             echo "| License Lint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
@@ -155,11 +155,11 @@ jobs:
           # Dependency review
           if [[ "${{ inputs['linters.dependencyreview'] }}" == "true" ]]; then
             if [[ "${{ needs.dependency-review.result }}" == "success" ]]; then
-              echo "| Dependency Review | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+              echo "| Dependency Review | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
             elif [[ "${{ needs.dependency-review.result }}" == "skipped" ]]; then
-              echo "| Dependency Review | ⏭️ Skipped |" >> $GITHUB_STEP_SUMMARY
+              echo "| Dependency Review | − Skipped |" >> $GITHUB_STEP_SUMMARY
             else
-              echo "| Dependency Review | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+              echo "| Dependency Review | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
             fi
           else
             echo "| Dependency Review | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
@@ -168,11 +168,11 @@ jobs:
           # MegaLinter
           if [[ "${{ inputs['linters.megalint'] }}" == "true" ]]; then
             if [[ "${{ needs.megalint.result }}" == "success" ]]; then
-              echo "| MegaLinter | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+              echo "| MegaLinter | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
             elif [[ "${{ needs.megalint.result }}" == "skipped" ]]; then
-              echo "| MegaLinter | ⏭️ Skipped |" >> $GITHUB_STEP_SUMMARY
+              echo "| MegaLinter | − Skipped |" >> $GITHUB_STEP_SUMMARY
             else
-              echo "| MegaLinter | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+              echo "| MegaLinter | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
             fi
           else
             echo "| MegaLinter | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
@@ -181,11 +181,11 @@ jobs:
           # Publiccode lint
           if [[ "${{ inputs['linters.publiccodelint'] }}" == "true" ]]; then
             if [[ "${{ needs.publiccode-lint.result }}" == "success" ]]; then
-              echo "| Publiccode Lint | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+              echo "| Publiccode Lint | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
             elif [[ "${{ needs.publiccode-lint.result }}" == "skipped" ]]; then
-              echo "| Publiccode Lint | ⏭️ Skipped |" >> $GITHUB_STEP_SUMMARY
+              echo "| Publiccode Lint | − Skipped |" >> $GITHUB_STEP_SUMMARY
             else
-              echo "| Publiccode Lint | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+              echo "| Publiccode Lint | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
             fi
           else
             echo "| Publiccode Lint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
@@ -211,9 +211,9 @@ jobs:
 
           echo "" >> $GITHUB_STEP_SUMMARY
           if [[ "$FAILED" == "true" ]]; then
-            echo "### ❌ Some checks failed" >> $GITHUB_STEP_SUMMARY
+            echo "### ✗ Some checks failed" >> $GITHUB_STEP_SUMMARY
             echo "Please review the failures above and fix any issues." >> $GITHUB_STEP_SUMMARY
             echo "Note: Individual linter failures are shown above. This status job always succeeds to provide summary." >> $GITHUB_STEP_SUMMARY
           else
-            echo "### ✅ All enabled checks passed" >> $GITHUB_STEP_SUMMARY
+            echo "### ✓ All enabled checks passed" >> $GITHUB_STEP_SUMMARY
           fi

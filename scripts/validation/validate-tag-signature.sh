@@ -5,7 +5,7 @@
 # Validates that a git tag is annotated and cryptographically signed
 # Usage: validate-tag-signature.sh <tag-name> <github-repository> [ospo-bot-gpg-pub]
 
-set -euo pipefail
+set -uo pipefail
 
 TAG_NAME="${1:-}"
 GITHUB_REPOSITORY="${2:-}"

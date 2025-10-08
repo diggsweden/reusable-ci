@@ -16,27 +16,27 @@ on:
         required: false
         default: "main"
         type: string
-      changelogConfig:
+      changelog-config:
         description: "Path to git-cliff configuration file"
         required: false
         default: ".github-templates/templates/gitcliff/default.toml"
         type: string
-      gitCliffArgs:
+      git-cliff-args:
         description: "Arguments for git-cliff (empty for full, '--latest' for latest release)"
         required: false
         default: ""
         type: string
-      outputFile:
+      output-file:
         description: "Output filename"
         required: false
         default: "ReleasenotesTmp"
         type: string
-      uploadAsArtifact:
+      upload-as-artifact:
         description: "Upload as artifact (true) or keep in workspace (false)"
         required: false
         default: true
         type: boolean
-      artifactName:
+      artifact-name:
         description: "Artifact name if uploading"
         required: false
         default: "release-changelog"
@@ -54,7 +54,7 @@ jobs:
           ref: ${{ inputs.branch }}
           fetch-depth: 0 # Need full history for git-cliff
       - name: Fetch git-cliff templates
-        if: ${{ startsWith(inputs.changelogConfig, '.github-templates/') }}
+        if: ${{ startsWith(inputs['changelog-config'], '.github-templates/') }}
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           repository: diggsweden/reusable-ci
@@ -65,17 +65,17 @@ jobs:
       - name: Generate Changelog with git-cliff
         uses: orhun/git-cliff-action@d77b37db2e3f7398432d34b72a12aa3e2ba87e51 # v4.6.0
         with:
-          config: ${{ inputs.changelogConfig }}
-          args: ${{ inputs.gitCliffArgs }}
+          config: ${{ inputs['changelog-config'] }}
+          args: ${{ inputs['git-cliff-args'] }}
         env:
-          OUTPUT: ${{ inputs.outputFile }}
+          OUTPUT: ${{ inputs['output-file'] }}
           GITHUB_REPO: ${{ github.repository }}
       - name: Verify Changelog Generation
-        run: "if [ -f \"${{ inputs.outputFile }}\" ]; then\n  echo \"✅ Changelog generated successfully: ${{ inputs.outputFile }}\"\n  echo \"File size: $(stat -c%s \"${{ inputs.outputFile }}\") bytes\"\n  echo \"Line count: $(wc -l < \"${{ inputs.outputFile }}\")\"\n  \n  # Show first few lines for debugging\n  echo \"\"\n  echo \"Preview (first 10 lines):\"\n  echo \"========================\"\n  head -10 \"${{ inputs.outputFile }}\"\nelse\n  echo \"❌ ERROR: No changelog generated\"\n  exit 1\nfi\n"
+        run: "if [ -f \"${{ inputs['output-file'] }}\" ]; then\n  echo \"✓ Changelog generated successfully: ${{ inputs['output-file'] }}\"\n  echo \"  • File size: $(stat -c%s \"${{ inputs['output-file'] }}\") bytes\"\n  echo \"  • Line count: $(wc -l < \"${{ inputs['output-file'] }}\")\"\n  \n  # Show first few lines for debugging\n  echo \"\"\n  echo \"Preview (first 10 lines):\"\n  echo \"========================\"\n  head -10 \"${{ inputs['output-file'] }}\"\nelse\n  echo \"✗ ERROR: No changelog generated\"\n  exit 1\nfi\n"
       - name: Upload Changelog Artifact
-        if: ${{ inputs.uploadAsArtifact }}
+        if: ${{ inputs['upload-as-artifact'] }}
         uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # v4.4.0
         with:
-          name: ${{ inputs.artifactName }}
-          path: ${{ inputs.outputFile }}
-          retention-days: 1
+          name: ${{ inputs['artifact-name'] }}
+          path: ${{ inputs['output-file'] }}
+          retention-days: 7

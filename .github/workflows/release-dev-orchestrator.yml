@@ -39,12 +39,12 @@ name: Release Dev Orchestrator
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
-      projectType:
+      project-type:
         description: "Project type: maven, npm"
         required: true
         type: string
-      containerfile:
-        description: "Path to Dockerfile/Containerfile"
+      container-file:
+        description: "Containerfile path"
         required: false
         default: "Containerfile"
         type: string
@@ -53,7 +53,7 @@ on:
         required: false
         default: "ghcr.io"
         type: string
-      workingDirectory:
+      working-directory:
         description: "Working directory"
         required: false
         default: "."
@@ -67,9 +67,9 @@ jobs:
       contents: read
       packages: write
     secrets: inherit
-    uses: ./.github/workflows/build-container-ghcr-dev.yml
+    uses: ./.github/workflows/publish-container-dev.yml
     with:
-      containerfile: ${{ inputs.containerfile }}
+      container-file: ${{ inputs['container-file'] }}
       registry: ${{ inputs.registry }}
-      projectType: ${{ inputs.projectType }}
-      workingDirectory: ${{ inputs.workingDirectory }}
+      project-type: ${{ inputs['project-type'] }}
+      working-directory: ${{ inputs['working-directory'] }}
