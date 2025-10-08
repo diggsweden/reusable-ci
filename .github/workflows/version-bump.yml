@@ -61,6 +61,11 @@ on:
         required: false
         default: '22'
         type: string
+      gradleVersionFile:
+        description: "Path to Gradle version file (default: gradle.properties)"
+        required: false
+        default: 'gradle.properties'
+        type: string
       workingDirectory:
         description: "Working directory for the project"
         required: false
@@ -205,6 +210,55 @@ jobs:
         with:
           path: ~/.npm
           key: npm-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', inputs.workingDirectory)) }}
+      - name: Set up JDK for Gradle
+        if: ${{ steps.project-type.outputs.type == 'gradle' }}
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          java-version: ${{ inputs.javaVersion }}
+          distribution: 'temurin'
+          cache: 'gradle'
+      - name: Update Gradle version
+        if: ${{ steps.project-type.outputs.type == 'gradle' }}
+        working-directory: ${{ inputs.workingDirectory }}
+        run: |
+          echo "::group::Update Gradle version"
+          
+          echo "Tag: ${GITHUB_REF_NAME}"
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "Version: ${TAG}"
+          
+          VERSION_FILE="${{ inputs.gradleVersionFile }}"
+          echo "Version file: ${VERSION_FILE}"
+          
+          if [ ! -f "${VERSION_FILE}" ]; then
+            echo "::error::Gradle version file not found: ${VERSION_FILE}"
+            exit 1
+          fi
+          
+          # Update or add versionName property
+          if grep -q '^versionName=' "${VERSION_FILE}"; then
+            sed -i "s/^versionName=.*/versionName=${TAG}/" "${VERSION_FILE}"
+            echo "Updated versionName to ${TAG}"
+          else
+            echo "versionName=${TAG}" >> "${VERSION_FILE}"
+            echo "Added versionName=${TAG}"
+          fi
+          
+          # Auto-increment versionCode
+          if grep -q '^versionCode=' "${VERSION_FILE}"; then
+            CURRENT_CODE=$(grep '^versionCode=' "${VERSION_FILE}" | cut -d'=' -f2 | tr -d ' ')
+            NEW_CODE=$((CURRENT_CODE + 1))
+            sed -i "s/^versionCode=.*/versionCode=${NEW_CODE}/" "${VERSION_FILE}"
+            echo "Incremented versionCode: ${CURRENT_CODE} → ${NEW_CODE}"
+          else
+            echo "versionCode=1" >> "${VERSION_FILE}"
+            echo "Added versionCode=1"
+          fi
+          
+          echo "✅ Version updated successfully"
+          echo "::endgroup::"
+          
+          cat "${VERSION_FILE}"
       - name: Download Full Changelog
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:

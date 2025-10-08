@@ -52,10 +52,12 @@ graph TD
     F -->|Maven App| G1[publish-maven-app-github.yml]
     F -->|Maven Lib| G2[publish-maven-lib-central.yml]
     F -->|NPM App| G3[publish-npm-app-github.yml]
+    F -->|Gradle App| G4[publish-gradle-app-github.yml]
 
     G1 --> H{Container Enabled?}
     G2 --> H
     G3 --> H
+    G4 --> H
 
     H -->|Yes| I[build-container-ghcr.yml]
     H -->|No| J{Release Publisher?}
@@ -295,6 +297,39 @@ your-repo/
         └── release-workflow.yml
 ```
 
+### Gradle Projects (Android/JVM)
+```text
+your-repo/
+├── build.gradle.kts
+├── settings.gradle.kts
+├── gradle.properties              # Version management (versionName, versionCode)
+├── CHANGELOG.md
+├── app/
+│   └── build.gradle.kts
+├── gradlew
+└── .github/
+    └── workflows/
+        ├── pullrequest-workflow.yml
+        ├── release-workflow.yml
+        └── test.yml (optional)
+```
+
+**Important:** For Gradle projects, version information must be stored in `gradle.properties`:
+```properties
+versionName=1.0.0
+versionCode=5
+```
+
+And read in `app/build.gradle.kts`:
+```kotlin
+android {
+    defaultConfig {
+        versionCode = (project.property("versionCode") as String).toInt()
+        versionName = project.property("versionName") as String
+    }
+}
+```
+
 ---
 
 ## Examples
@@ -339,6 +374,54 @@ jobs:
       artifact.jreleaserenabled: true            # JReleaser plugin in pom.xml
 ```
 
+### Android Application (Gradle)
+```yaml
+jobs:
+  release:
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    with:
+      projectType: gradle
+      publishers: gradle-app-github           # APK/AAB to GitHub Releases
+      releasePublisher: github-cli            # Create GitHub release
+      changelogCreator: git-cliff             # Generate CHANGELOG
+      
+      # Gradle configuration
+      config.javaversion: "21"
+      config.gradletasks: "build assembleDemoRelease bundleDemoRelease"
+      config.buildmodule: "app"
+      config.attachpattern: "app/build/outputs/**/*.{apk,aab}"
+      config.gradleversionfile: "gradle.properties"
+      
+      # Release options
+      release.signartifacts: true             # GPG sign artifacts
+      release.generatesbom: true              # Generate SBOM
+```
+
+**What this produces:**
+- APK (release) → `app/build/outputs/apk/demo/release/*.apk`
+- AAB (bundle) → `app/build/outputs/bundle/demoRelease/*.aab`
+- SBOM → `sbom.cyclonedx.json`
+- All attached to GitHub Release
+
+### JVM Application (Gradle, non-Android)
+```yaml
+jobs:
+  release:
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2
+    with:
+      projectType: gradle
+      publishers: gradle-app-github,container-image-ghcr
+      releasePublisher: github-cli
+      
+      config.javaversion: "21"
+      config.gradletasks: "build bootJar"          # Spring Boot example
+      config.containerfile: "Containerfile"
+```
+
 ### Development Builds
 ```yaml
 on:
@@ -353,4 +436,4 @@ jobs:
 
 ---
 
-*Last updated: 2024*
+*Last updated: 2025-10-08*

@@ -141,6 +141,31 @@ on:
         type: boolean
         default: true
       
+      # Gradle-specific configuration
+      config.gradletasks:
+        description: "Gradle build tasks (default: build assembleRelease bundleRelease)"
+        required: false
+        type: string
+        default: "build assembleRelease bundleRelease"
+      
+      config.buildmodule:
+        description: "Gradle module name (default: app)"
+        required: false
+        type: string
+        default: "app"
+      
+      config.enableandroidsigning:
+        description: "Enable Android keystore signing (default: false)"
+        required: false
+        type: boolean
+        default: false
+      
+      config.gradleversionfile:
+        description: "Path to Gradle version file (default: gradle.properties)"
+        required: false
+        type: string
+        default: "gradle.properties"
+      
       # === MONOREPO MODE ===
       artifactsConfig:
         description: "Path to artifacts config file for monorepo (e.g., .github/artifacts.yml)"
@@ -252,7 +277,7 @@ jobs:
                 echo "file_pattern=CHANGELOG.md pom.xml" >> $GITHUB_OUTPUT
                 ;;
               gradle)
-                echo "file_pattern=CHANGELOG.md build.gradle settings.gradle" >> $GITHUB_OUTPUT
+                echo "file_pattern=CHANGELOG.md gradle.properties build.gradle.kts settings.gradle.kts build.gradle settings.gradle" >> $GITHUB_OUTPUT
                 ;;
               python)
                 echo "file_pattern=CHANGELOG.md pyproject.toml" >> $GITHUB_OUTPUT
@@ -341,7 +366,11 @@ jobs:
               "registry": "${{ inputs['config.registry'] }}",
               "enableslsa": ${{ inputs['config.enableslsa'] }},
               "enablesbom": ${{ inputs['config.enablesbom'] }},
-              "enablescan": ${{ inputs['config.enablescan'] }}
+              "enablescan": ${{ inputs['config.enablescan'] }},
+              "gradletasks": "${{ inputs['config.gradletasks'] }}",
+              "buildmodule": "${{ inputs['config.buildmodule'] }}",
+              "enableandroidsigning": ${{ inputs['config.enableandroidsigning'] }},
+              "gradleversionfile": "${{ inputs['config.gradleversionfile'] }}"
             }
           }]
           EOF
@@ -403,6 +432,7 @@ jobs:
       file_pattern: ${{ needs.setup-defaults.outputs.file_pattern }}
       javaVersion: ${{ matrix.artifact.config.javaversion }}
       nodeVersion: ${{ matrix.artifact.config.nodeversion }}
+      gradleVersionFile: ${{ matrix.artifact.config.gradleversionfile }}
       workingDirectory: ${{ matrix.artifact.workingDirectory }}
   # Step 2a: Publish Maven Application
   publish-maven-app:
@@ -469,10 +499,34 @@ jobs:
       workingDirectory: ${{ matrix.artifact.workingDirectory }}
       branch: ${{ inputs.branch }}
       npmTag: ${{ matrix.artifact.config.npmtag }}
+  # Step 2d: Publish Gradle Application
+  publish-gradle-app:
+    name: Publish Gradle - ${{ matrix.artifact.name }}
+    needs: [detect-mode, version-and-changelog]
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(needs.detect-mode.outputs.artifacts) }}
+      fail-fast: false
+    # Only run for artifacts with gradle-app-github in publishers
+    if: ${{ !failure() && !cancelled() && contains(toJson(matrix.artifact.publishers), 'gradle-app-github') }}
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    secrets: inherit
+    uses: ./.github/workflows/publish-gradle-app-github.yml
+    with:
+      javaVersion: ${{ matrix.artifact.config.javaversion }}
+      gradleTasks: ${{ matrix.artifact.config.gradletasks }}
+      buildModule: ${{ matrix.artifact.config.buildmodule }}
+      attachPattern: ${{ matrix.artifact.config.attachpattern }}
+      enableSigning: ${{ matrix.artifact.config.enableandroidsigning }}
+      workingDirectory: ${{ matrix.artifact.workingDirectory }}
+      branch: ${{ inputs.branch }}
   # Step 3: Build and Publish Container Images
   publish-container:
     name: Publish Container - ${{ matrix.artifact.name }}
-    needs: [detect-mode, publish-maven-app, publish-npm-app]
+    needs: [detect-mode, publish-maven-app, publish-npm-app, publish-gradle-app]
     strategy:
       matrix:
         artifact: ${{ fromJson(needs.detect-mode.outputs.artifacts) }}
@@ -502,7 +556,7 @@ jobs:
   # Step 4: Create GitHub Release  
   create-release:
     name: Create GitHub Release
-    needs: [publish-maven-app, publish-npm-app, publish-maven-lib, publish-container]
+    needs: [publish-maven-app, publish-npm-app, publish-maven-lib, publish-gradle-app, publish-container]
     # Run even if previous jobs were skipped but at least one succeeded
     if: ${{ !failure() && !cancelled() && (inputs.releasePublisher == 'jreleaser' || inputs.releasePublisher == 'github-cli') }}
     permissions:
@@ -526,7 +580,7 @@ jobs:
   # Final summary
   release-summary:
     name: Release Summary
-    needs: [detect-mode, version-and-changelog, publish-maven-app, publish-npm-app, publish-maven-lib, publish-container, create-release]
+    needs: [detect-mode, version-and-changelog, publish-maven-app, publish-npm-app, publish-maven-lib, publish-gradle-app, publish-container, create-release]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -560,6 +614,7 @@ jobs:
           echo "| Maven Publish | ${{ needs.publish-maven-app.result == 'success' && '✅' || needs.publish-maven-app.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| NPM Publish | ${{ needs.publish-npm-app.result == 'success' && '✅' || needs.publish-npm-app.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Maven Central | ${{ needs.publish-maven-lib.result == 'success' && '✅' || needs.publish-maven-lib.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Gradle Publish | ${{ needs.publish-gradle-app.result == 'success' && '✅' || needs.publish-gradle-app.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Container Build | ${{ needs.publish-container.result == 'success' && '✅' || needs.publish-container.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| GitHub Release | ${{ needs.create-release.result == 'success' && '✅' || needs.create-release.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
           
