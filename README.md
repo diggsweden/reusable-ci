@@ -2,7 +2,10 @@
 
 Reusable CI/CD workflows and scripts for DiggSweden projects. Implements security best practices, automated releases, and quality checks.
 
-**Current version:** `@v1`
+**Current version:** `@v2` (unified publishers design)  
+**Previous version:** `@v1` (stable, maintained for security fixes)
+
+> **Note:** v2 uses a unified publisher pattern. If upgrading from v1, see [Migration Guide](docs/MIGRATION_V1_TO_V2.md).
 
 ## Documentation
 
@@ -15,6 +18,7 @@ Reusable CI/CD workflows and scripts for DiggSweden projects. Implements securit
 ## Table of Contents
 - [Introduction](#introduction)
 - [Quick Start](#quick-start)
+- [Monorepo Support (v2)](#monorepo-support-v2)
 - [Pull Request Workflow](#pull-request-workflow)
 - [Release Workflow](#release-workflow)
 - [Development Container Workflow](#development-container-workflow)
@@ -124,6 +128,268 @@ jobs:
 ```
 
 ## Quick Start
+
+---
+
+## v2 Clean Design
+
+**v2 introduces a unified architecture** where everything is an artifact with publishers.
+
+### Core Concepts
+
+**Publishers** follow the `{tech}-{type}-{target}` pattern:
+- `maven-app-github` - Maven application → GitHub Packages
+- `npm-app-github` - NPM application → GitHub Packages  
+- `container-image-ghcr` - Container image → ghcr.io
+- `maven-lib-mavencentral` - Maven library → Maven Central
+
+**No special cases.** Containers are just another publisher type, not a separate "builder".
+
+### Single Artifact Example
+
+```yaml
+# Simple: Maven app only
+with:
+  projectType: maven
+  publishers: maven-app-github
+  config.javaversion: 21
+
+# Common: Maven app + Container
+with:
+  projectType: maven
+  publishers: maven-app-github,container-image-ghcr
+  config.javaversion: 21
+  config.containerfile: Containerfile
+  config.platforms: linux/amd64,linux/arm64
+  releasePublisher: github-cli
+```
+
+### Monorepo Support
+
+Build multiple artifacts from a single repository.
+
+### Basic Monorepo Example
+
+**`.github/artifacts.yml`**
+```yaml
+artifacts:
+  - name: backend
+    projectType: maven
+    workingDirectory: java-backend
+    publishers:
+      - maven-app-github
+      - container-image-ghcr
+    config:
+      javaversion: 21
+      containerfile: java-backend/Containerfile
+      platforms: linux/amd64,linux/arm64
+  
+  - name: frontend
+    projectType: npm
+    workingDirectory: frontend
+    publishers:
+      - npm-app-github
+      - container-image-ghcr
+    config:
+      nodeversion: 22
+      containerfile: frontend/Containerfile
+```
+
+**`.github/workflows/release-workflow.yml`**
+```yaml
+name: Release Workflow
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      actions: read
+      security-events: write
+      attestations: write
+    secrets: inherit
+    with:
+      # Point to artifacts config file
+      artifactsConfig: .github/artifacts.yml
+      
+      # Shared configuration
+      changelogCreator: git-cliff
+      releasePublisher: github-cli
+```
+
+### Real-World Example: Wallet Issuer POC
+
+Repository structure:
+```
+wallet-issuer-poc/
+├── java-backend/          # Spring Boot backend
+│   ├── src/
+│   └── pom.xml
+├── frontend/              # React frontend
+│   ├── src/
+│   └── package.json
+├── Containerfile          # Combines both
+└── .github/
+    ├── artifacts.yml
+    └── workflows/
+        └── release-workflow.yml
+```
+
+**`.github/artifacts.yml`**
+```yaml
+artifacts:
+  - name: issuer-backend
+    projectType: maven
+    workingDirectory: java-backend
+    publishers:
+      - maven-app-github
+      - container-image-ghcr
+    config:
+      javaversion: 21
+      containerfile: Containerfile
+      platforms: linux/amd64,linux/arm64
+  
+  - name: issuer-frontend
+    projectType: npm
+    workingDirectory: frontend
+    publishers:
+      - npm-app-github
+    config:
+      nodeversion: 22
+```
+
+**`.github/workflows/release-workflow.yml`**
+```yaml
+name: Release Workflow
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-alpha*"
+      - "v[0-9]+.[0-9]+.[0-9]+-beta*"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      actions: read
+      security-events: write
+      attestations: write
+    secrets: inherit
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2
+    with:
+      artifactsConfig: .github/artifacts.yml
+      changelogCreator: git-cliff
+      releasePublisher: github-cli
+```
+
+### Artifact Configuration Reference
+
+Each artifact in `artifacts.yml` supports these fields:
+
+| Field | Required | Description | Example |
+|-------|----------|-------------|---------|
+| `name` | Yes | Artifact identifier | `backend-api` |
+| `projectType` | Yes | Build system type | `maven`, `npm`, `container` |
+| `workingDirectory` | Yes | Path to artifact source | `services/backend` |
+| `publishers` | Yes | Array of publishers | `[maven-app-github, container-image-ghcr]` |
+| `config.javaversion` | No | Java version (Maven) | `21` (default) |
+| `config.nodeversion` | No | Node version (NPM) | `22` (default) |
+| `config.containerfile` | No | Containerfile path | `Containerfile` |
+| `config.platforms` | No | Container platforms | `linux/amd64,linux/arm64` |
+| `config.npmtag` | No | NPM dist tag | `latest` |
+| `config.settingspath` | No | Maven settings path | `.mvn/settings.xml` |
+| `config.jreleaserenabled` | No | Enable JReleaser plugin | `true`, `false` |
+| `config.enableslsa` | No | Enable SLSA provenance | `true` (default) |
+| `config.enablesbom` | No | Generate SBOM | `true` (default) |
+
+### Publisher Types
+
+All publishers follow `{tech}-{type}-{target}` pattern:
+
+| Publisher | Description |
+|-----------|-------------|
+| `maven-app-github` | Maven application → GitHub Packages |
+| `maven-lib-github` | Maven library → GitHub Packages |
+| `maven-lib-mavencentral` | Maven library → Maven Central |
+| `npm-app-github` | NPM application → GitHub Packages |
+| `npm-lib-github` | NPM library → GitHub Packages |
+| `container-image-ghcr` | Container image → ghcr.io |
+| `container-image-dockerhub` | Container image → Docker Hub |
+
+### How Monorepo Builds Work
+
+1. **Detection**: Orchestrator detects `artifactsConfig` or `artifacts` input
+2. **Version Bump**: Each artifact's version file is updated (pom.xml, package.json)
+3. **Build & Publish**: Each artifact is built and published in parallel
+4. **Container Build**: (Optional) Container image built using all artifacts
+5. **Release**: Single GitHub release created with changelog
+
+### Migration from v1 to v2
+
+**v2 uses a new unified design.** Existing v1 workflows need updates.
+
+**Before (v1):**
+```yaml
+with:
+  projectType: maven
+  artifactPublisher: maven-app-github
+  artifact.javaversion: 21
+  containerBuilder: containerimage-ghcr
+  container.platforms: linux/amd64,linux/arm64
+  container.containerfile: Containerfile
+```
+
+**After (v2 - single artifact):**
+```yaml
+with:
+  projectType: maven
+  publishers: maven-app-github,container-image-ghcr
+  config.javaversion: 21
+  config.platforms: linux/amd64,linux/arm64
+  config.containerfile: Containerfile
+```
+
+**Key changes:**
+1. `artifactPublisher` + `containerBuilder` → `publishers` (comma-separated)
+2. `artifact.*` → `config.*`
+3. `container.*` → `config.*`
+
+**For monorepo:** Use `artifactsConfig` instead of inline parameters.
+
+See [MIGRATION_V1_TO_V2.md](docs/MIGRATION_V1_TO_V2.md) for detailed guide.
+
+### Limitations
+
+- **Unified versioning**: All artifacts share the same version (from git tag)
+- **Single changelog**: One changelog for the entire repository
+- **No change detection**: All artifacts build on every release (smart builds coming in future)
+- **Sequential version bumps**: Artifacts bump versions one at a time (parallel coming in future)
+
+### Example Repositories
+
+- `examples/monorepo-artifacts.yml` - Example configuration file
 
 ---
 
@@ -576,8 +842,10 @@ You can use individual components instead of the full orchestrators.
 |-----------|---------|-----------|-----------|----------|
 | **validate-release-prerequisites** | Pre-release checks | Version match, permissions, secrets | Any validation failure | Before any release |
 
-> **Note:** New components are created based on requests and needs. Currently planned for the near future:
-> - **Monorepo support** - Build multiple services/packages from a single repository
+> **Note:** New features available in v2:
+> - ✅ **Monorepo support** - Build multiple services/packages from a single repository (see [Monorepo Support](#monorepo-support-v2))
+>
+> **Note:** Additional components planned for the near future:
 > - **Gradle support** - For Gradle-based Java/Kotlin projects
 > - **NPM library publisher** - For publishing NPM libraries (not just applications)
 >

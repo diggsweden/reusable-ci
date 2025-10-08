@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Example artifacts.yml for monorepo support (v2)
+# Place this file in your repository (e.g., .github/artifacts.yml)
+# and reference it in your release workflow with: artifactsConfig: .github/artifacts.yml
+
+artifacts:
+  # Maven backend application with container image
+  - name: backend-api
+    projectType: maven
+    workingDirectory: services/backend
+    publishers:
+      - maven-app-github
+      - container-image-ghcr
+    config:
+      javaversion: 21
+      containerfile: services/backend/Containerfile
+      platforms: linux/amd64,linux/arm64
+  
+  # NPM frontend application with container image
+  - name: frontend-ui
+    projectType: npm
+    workingDirectory: packages/frontend
+    publishers:
+      - npm-app-github
+      - container-image-ghcr
+    config:
+      nodeversion: 22
+      containerfile: packages/frontend/Containerfile
+      platforms: linux/amd64,linux/arm64
+  
+  # Maven shared library (publish to Maven Central only, no container)
+  - name: shared-lib
+    projectType: maven
+    workingDirectory: libs/shared
+    publishers:
+      - maven-lib-mavencentral
+    config:
+      javaversion: 21
+      settingspath: .mvn/settings.xml
+      jreleaserenabled: true
