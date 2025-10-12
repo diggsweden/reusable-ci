@@ -111,6 +111,5 @@ versionCode=43  # Auto-incremented
 
 ## See Also
 
-- [Configuration Reference](../../docs/configuration.md)
+- [Artifacts Reference](../../docs/artifacts-reference.md)
 - [Publishing Guide](../../docs/publishing.md)
-- [Troubleshooting](../../docs/troubleshooting.md)

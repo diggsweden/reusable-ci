@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 SPDX-License-Identifier: CC0-1.0
 -->
 
-# Configuration Reference
+# Artifacts Reference
 
 Complete reference for `artifacts.yml` configuration format.
 
@@ -23,19 +23,7 @@ containers:
     # ... container configuration
 ```
 
----
 
-## Naming Convention
-
-**All fields use `kebab-case` consistently:**
-
-- Top-level: `project-type`, `working-directory`, `build-type`
-- Config fields: `java-version`, `node-version`, `settings-path`
-- Container fields: `container-file`, `enable-slsa`, `enable-sbom`
-
-This matches GitHub Actions workflow input parameter naming conventions.
-
----
 
 ## Artifacts Section
 
@@ -263,10 +251,11 @@ Containers reference artifacts via the `from:` field and are built after all art
 
 ---
 
-## Complete Examples
+## Quick Start Examples
 
-### Maven Application
+### Single Artifact (Maven)
 
+**`.github/artifacts.yml`**
 ```yaml
 artifacts:
   - name: my-app
@@ -275,6 +264,36 @@ artifacts:
     build-type: application
     config:
       java-version: 21
+```
+
+**`.github/workflows/release-workflow.yml`**
+```yaml
+jobs:
+  release:
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
+    with:
+      artifacts-config: .github/artifacts.yml
+      release-publisher: github-cli
+```
+
+### Single Artifact with Container (Maven)
+
+**`.github/artifacts.yml`**
+```yaml
+artifacts:
+  - name: my-app
+    project-type: maven
+    working-directory: .
+    build-type: application
+    config:
+      java-version: 21
+
+containers:
+  - name: my-app
+    from: [my-app]
+    container-file: Containerfile
+    context: .
+    platforms: linux/amd64,linux/arm64
 ```
 
 ### Maven Library (Multiple Targets)
@@ -318,83 +337,116 @@ artifacts:
       gradle-version-file: gradle.properties
 ```
 
-### Container from Artifact
+---
 
+## Monorepo Configuration
+
+Build multiple artifacts from a single repository.
+
+### Separate Containers (One Artifact → One Container)
+
+**`.github/artifacts.yml`**
 ```yaml
-containers:
-  - name: my-app
-    from: [my-app]
-    container-file: Containerfile
-    context: .
-    platforms: linux/amd64,linux/arm64
-    enable-slsa: true
-    enable-sbom: true
-    enable-scan: true
-```
-
-### Multi-Artifact Container
-
-```yaml
-# Build 3 artifacts
 artifacts:
-  - name: api
+  - name: backend
     project-type: maven
-    working-directory: services/api
+    working-directory: java-backend
     build-type: application
     config:
       java-version: 21
 
-  - name: worker
-    project-type: maven
-    working-directory: services/worker
-    build-type: application
-    config:
-      java-version: 21
-
-  - name: web
+  - name: frontend
     project-type: npm
-    working-directory: apps/web
+    working-directory: frontend
     config:
       node-version: 22
 
-# Combine into one container
 containers:
-  - name: combined-app
-    from: [api, worker, web]
-    container-file: Containerfile
-    context: .
-    platforms: linux/amd64,linux/arm64
+  - name: backend
+    from: [backend]
+    container-file: java-backend/Containerfile
+    context: java-backend
+
+  - name: frontend
+    from: [frontend]
+    container-file: frontend/Containerfile
+    context: frontend
 ```
 
+### Combined Container (Multiple Artifacts → One Container)
+
+**`.github/artifacts.yml`**
+```yaml
+artifacts:
+  - name: backend
+    project-type: maven
+    working-directory: java-backend
+
+  - name: frontend
+    project-type: npm
+    working-directory: frontend
+
+containers:
+  - name: full-stack-app
+    from: [backend, frontend]          # Multiple artifacts in one container
+    container-file: Containerfile
+    context: .
+```
+
+**`Containerfile`**
+```dockerfile
+FROM registry.access.redhat.com/ubi9/openjdk-21-runtime:latest
+COPY java-backend/target/*.jar app.jar
+COPY frontend/dist/ /app/static/
+CMD ["java", "-jar", "app.jar"]
+```
+
+### Workflow Configuration
+
+**`.github/workflows/release-workflow.yml`**
+```yaml
+name: Release Workflow
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      actions: read
+      security-events: write
+      attestations: write
+    secrets: inherit
+    with:
+      artifacts-config: .github/artifacts.yml
+      changelog-creator: git-cliff
+      release-publisher: github-cli
+```
+
+### Monorepo Limitations
+
+- **Unified versioning**: All artifacts share the same version (from git tag)
+- **Single changelog**: One changelog for the entire repository
+- **No change detection**: All artifacts build on every release (smart builds coming in future)
+- **Sequential version bumps**: Artifacts bump versions one at a time (parallel coming in future)
+
+
+## Complete Working Examples
+
+For complete working examples, see the [`examples/`](../examples/) directory:
+
+- **Maven Application**: [`examples/maven-app/`](../examples/maven-app/)
+- **NPM Application**: [`examples/npm-app/`](../examples/npm-app/)
+- **Gradle Application**: [`examples/gradle-app/`](../examples/gradle-app/)
+- **Monorepo**: [`examples/monorepo/`](../examples/monorepo/)
+
 ---
-
-## Validation
-
-The orchestrator validates your configuration at runtime:
-
-1. **Artifact names unique** - No duplicate names in `artifacts[]`
-2. **Container references valid** - All `from:` entries exist in `artifacts[]`
-3. **Project type valid** - Must be `maven`, `npm`, or `gradle`
-4. **Working directory exists** - Path must exist in repository
-5. **Build type valid** - Must be `application` or `library`
-6. **Publishing targets valid** - Must be known registry
-7. **Maven Central requirements** - Must have `build-type: library`
-
----
-
-## Best Practices
-
-1. **Use semantic artifact names** - `backend-api` not `app1`
-2. **Set explicit versions** - Don't rely on defaults
-3. **Enable security features** - Keep SLSA, SBOM, scanning enabled
-4. **Multi-platform for production** - Always build `linux/amd64,linux/arm64`
-5. **Require authorization for libraries** - Prevent accidental releases
-6. **Use settings-path for credentials** - Don't hardcode in pom.xml
-
----
-
-## See Also
-
-- [Publishing Guide](publishing.md) - Maven Central and NPM setup
-- [Workflows Guide](workflows.md) - Workflow configuration
-- [Troubleshooting](troubleshooting.md) - Common configuration errors

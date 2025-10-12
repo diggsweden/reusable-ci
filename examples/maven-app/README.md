@@ -66,6 +66,5 @@ See [release-workflow.yml](release-workflow.yml) in this directory.
 
 ## See Also
 
-- [Configuration Reference](../../docs/configuration.md)
+- [Artifacts Reference](../../docs/artifacts-reference.md)
 - [Publishing Guide](../../docs/publishing.md)
-- [Troubleshooting](../../docs/troubleshooting.md)

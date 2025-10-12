@@ -6,19 +6,6 @@ SPDX-License-Identifier: CC0-1.0
 
 # Workflow Architecture and Patterns
 
-Advanced workflow documentation for DiggSweden reusable CI/CD workflows.
-
-For basic usage, configuration, and getting started, see [README.md](../README.md).
-
-## Table of Contents
-
-- [Workflow Architecture](#workflow-architecture)
-- [Project Structure Required](#project-structure-required)
-- [Examples](#examples)
-
----
-
-## Workflow Architecture
 
 ### Pull Request Workflow Architecture
 
@@ -37,59 +24,51 @@ graph TD
     G --> H
     H --> I[Project test.yml]
 
-    style A fill:#e1f5ff
-    style B fill:#fff4e1
-    style H fill:#e8f5e9
-    style I fill:#f3e5f5
+    style A fill:#a7c080,stroke:#5c6a4a,color:#2b3339
+    style B fill:#e69875,stroke:#9d5c41,color:#2b3339
+    style H fill:#83c092,stroke:#5c856a,color:#2b3339
+    style I fill:#d699b6,stroke:#93647c,color:#2b3339
 ```
 
-### Release Workflow Architecture (v2-dev with Containers)
+### Release Workflow Architecture
 
 ```mermaid
 graph TD
     A[Tag Push: v*.*.* ] --> B[release-orchestrator.yml]
-    B --> C[release-prerequisites.yml]
-    C --> D[version-bump.yml]
-    D --> E1[generate-full-changelog.yml]
-    D --> E2[generate-minimal-changelog.yml]
-    E1 --> F{Project Type?}
-    E2 --> F
+    B --> C[Parse artifacts.yml]
+    C --> D[release-prerequisites.yml]
+    D --> E[version-bump.yml - Matrix]
+    
+    E --> F[build-maven.yml - Matrix]
+    E --> G[build-npm.yml - Matrix]
+    E --> H[build-gradle.yml - Matrix]
+    
+    F --> I[publish-github.yml - Matrix]
+    G --> I
+    H --> I
+    
+    F --> J[publish-mavencentral.yml - Matrix]
+    
+    I --> K[publish-container.yml - Matrix]
+    
+    K --> L[release-github.yml]
+    J --> L
+    
+    L --> M[Release Summary]
 
-    F -->|Maven| G1[build-maven.yml]
-    F -->|NPM| G2[build-npm.yml]
-    F -->|Gradle| G3[build-gradle.yml]
-
-    G1 --> H{Artifact Publisher?}
-    G2 --> H
-    G3 --> H
-
-    H -->|maven-app-github| I1[publish-github.yml]
-    H -->|npm-app-github| I1
-    H -->|gradle-app-github| I1
-    H -->|maven-lib-mavencentral| I2[publish-mavencentral.yml]
-
-    I1 --> J{Container Builder?}
-    I2 --> J
-
-    J -->|container-image| K[publish-container.yml]
-    J -->|None| L{Release Publisher?}
-    K --> L
-
-    L -->|github-cli| M[release-github.yml]
-
-    M --> N[release-summary]
-
-    style A fill:#e1f5ff
-    style B fill:#fff4e1
-    style C fill:#ffebee
-    style D fill:#f3e5f5
-    style G1 fill:#e1f5ff
-    style G2 fill:#e1f5ff
-    style G3 fill:#e1f5ff
-    style I1 fill:#e8f5e9
-    style I2 fill:#e8f5e9
-    style K fill:#e8f5e9
-    style N fill:#e0f2f1
+    style A fill:#a7c080,stroke:#5c6a4a,color:#2b3339
+    style B fill:#e69875,stroke:#9d5c41,color:#2b3339
+    style C fill:#e67e80,stroke:#9d4f50,color:#2b3339
+    style D fill:#e67e80,stroke:#9d4f50,color:#2b3339
+    style E fill:#d699b6,stroke:#93647c,color:#2b3339
+    style F fill:#a7c080,stroke:#5c6a4a,color:#2b3339
+    style G fill:#a7c080,stroke:#5c6a4a,color:#2b3339
+    style H fill:#a7c080,stroke:#5c6a4a,color:#2b3339
+    style I fill:#83c092,stroke:#5c856a,color:#2b3339
+    style J fill:#83c092,stroke:#5c856a,color:#2b3339
+    style K fill:#a7c080,stroke:#5c6a4a,color:#2b3339
+    style L fill:#83c092,stroke:#5c856a,color:#2b3339
+    style M fill:#7fbbb3,stroke:#5a8a82,color:#2b3339
 ```
 
 ### Component Interaction Flow
@@ -116,16 +95,16 @@ graph LR
     F -.creates.-> O[(GitHub Release)]
     F -.signs.-> P[(GPG Signatures)]
 
-    style B fill:#fff4e1
-    style C fill:#ffebee
-    style D fill:#e8f5e9
-    style E fill:#e1f5ff
-    style F fill:#f3e5f5
+    style B fill:#e69875,stroke:#9d5c41,color:#2b3339
+    style C fill:#e67e80,stroke:#9d4f50,color:#2b3339
+    style D fill:#83c092,stroke:#5c856a,color:#2b3339
+    style E fill:#a7c080,stroke:#5c6a4a,color:#2b3339
+    style F fill:#d699b6,stroke:#93647c,color:#2b3339
 ```
 
-### Workflow Execution Patterns (v2-dev)
+### Workflow Execution Patterns
 
-#### Pattern 1: Maven Library (cose-lib)
+#### Pattern 1: Maven Library
 
 ```mermaid
 graph LR
@@ -135,13 +114,13 @@ graph LR
     D --> E[Publish to Maven Central]
     E --> F[GitHub Release Created]
 
-    style A fill:#e1f5ff
-    style D fill:#e1f5ff
-    style E fill:#e8f5e9
-    style F fill:#f3e5f5
+    style A fill:#a7c080,stroke:#5c6a4a,color:#2b3339
+    style D fill:#a7c080,stroke:#5c6a4a,color:#2b3339
+    style E fill:#83c092,stroke:#5c856a,color:#2b3339
+    style F fill:#d699b6,stroke:#93647c,color:#2b3339
 ```
 
-#### Pattern 2: Maven/NPM Application with Container (issuer-poc, linter)
+#### Pattern 2: Maven/NPM Application with Container
 
 ```mermaid
 graph LR
@@ -152,11 +131,11 @@ graph LR
     E --> F[Build Container]
     F --> G[Create GitHub Release]
 
-    style A fill:#e1f5ff
-    style D fill:#e1f5ff
-    style E fill:#e8f5e9
-    style F fill:#e1f5ff
-    style G fill:#f3e5f5
+    style A fill:#a7c080,stroke:#5c6a4a,color:#2b3339
+    style D fill:#a7c080,stroke:#5c6a4a,color:#2b3339
+    style E fill:#83c092,stroke:#5c856a,color:#2b3339
+    style F fill:#a7c080,stroke:#5c6a4a,color:#2b3339
+    style G fill:#d699b6,stroke:#93647c,color:#2b3339
 ```
 
 #### Pattern 3: Multi-Registry Publishing
@@ -171,250 +150,12 @@ graph LR
     E1 --> F[Create Release]
     E2 --> F
 
-    style A fill:#e1f5ff
-    style D fill:#e1f5ff
-    style E1 fill:#e8f5e9
-    style E2 fill:#e8f5e9
-    style F fill:#f3e5f5
+    style A fill:#a7c080,stroke:#5c6a4a,color:#2b3339
+    style D fill:#a7c080,stroke:#5c6a4a,color:#2b3339
+    style E1 fill:#83c092,stroke:#5c856a,color:#2b3339
+    style E2 fill:#83c092,stroke:#5c856a,color:#2b3339
+    style F fill:#d699b6,stroke:#93647c,color:#2b3339
 ```
 
 ---
 
-## Project Structure Required
-
-### Maven Projects
-
-```text
-your-repo/
-├── pom.xml
-├── src/
-├── Containerfile (optional)
-└── .github/
-    └── workflows/
-        ├── pullrequest-workflow.yml
-        └── release-workflow.yml
-```
-
-### NPM Projects
-
-```text
-your-repo/
-├── package.json
-├── package-lock.json
-├── src/
-├── Containerfile (optional)
-└── .github/
-    └── workflows/
-        ├── pullrequest-workflow.yml
-        └── release-workflow.yml
-```
-
-### Gradle Projects (Android/JVM)
-
-```text
-your-repo/
-├── build.gradle.kts
-├── settings.gradle.kts
-├── gradle.properties              # Version management (versionName, versionCode)
-├── CHANGELOG.md
-├── app/
-│   └── build.gradle.kts
-├── gradlew
-└── .github/
-    └── workflows/
-        ├── pullrequest-workflow.yml
-        ├── release-workflow.yml
-        └── test.yml (optional)
-```
-
-**Important:** For Gradle projects, version information must be stored in `gradle.properties`:
-
-```properties
-versionName=1.0.0
-versionCode=5
-```
-
-And read in `app/build.gradle.kts`:
-
-```kotlin
-android {
-    defaultConfig {
-        versionCode = (project.property("versionCode") as String).toInt()
-        versionName = project.property("versionName") as String
-    }
-}
-```
-
----
-
-## Examples
-
-### Java Spring Boot Application
-
-```yaml
-# .github/artifacts.yml
-artifacts:
-  - name: my-app
-    project-type: maven
-    working-directory: .
-    publishers:
-      - maven-app-github
-    config:
-      javaversion: 21
-
-containers:
-  - name: my-app
-    from: [my-app]
-    containerfile: Containerfile
-    context: .
-    platforms: linux/amd64,linux/arm64
-
-# .github/workflows/release-workflow.yml
-jobs:
-  release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
-    with:
-      artifacts-config: .github/artifacts.yml
-      release-publisher: github-cli
-```
-
-### Node.js API Service
-
-```yaml
-# .github/artifacts.yml
-artifacts:
-  - name: api-service
-    project-type: npm
-    working-directory: .
-    publishers:
-      - npm-app-github
-    config:
-      nodeversion: 22
-
-containers:
-  - name: api-service
-    from: [api-service]
-    containerfile: Containerfile
-    context: .
-    platforms: linux/amd64,linux/arm64
-
-# .github/workflows/release-workflow.yml
-jobs:
-  release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
-    with:
-      artifacts-config: .github/artifacts.yml
-      release-publisher: github-cli
-```
-
-### Maven Library (No Container)
-
-```yaml
-# .github/artifacts.yml
-artifacts:
-  - name: my-lib
-    project-type: maven
-    working-directory: .
-    publishers:
-      - maven-lib-mavencentral
-    config:
-      javaversion: 21
-      settingspath: .mvn/settings.xml
-
-# No containers section needed
-
-# .github/workflows/release-workflow.yml
-jobs:
-  release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
-    with:
-      artifacts-config: .github/artifacts.yml
-      release-publisher: github-cli
-```
-
-### Android Application (Gradle)
-
-```yaml
-# .github/artifacts.yml
-artifacts:
-  - name: my-android-app
-    project-type: gradle
-    working-directory: .
-    publishers:
-      - gradle-app-github
-    config:
-      javaversion: 21
-      gradletasks: build assembleDemoRelease bundleDemoRelease
-      buildmodule: app
-      attachpattern: app/build/outputs/**/*.{apk,aab}
-      gradleversionfile: gradle.properties
-
-# .github/workflows/release-workflow.yml
-jobs:
-  release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
-    permissions:
-      contents: write
-      packages: write
-      id-token: write
-    with:
-      artifacts-config: .github/artifacts.yml
-      release-publisher: github-cli
-      changelog-creator: git-cliff
-      release.signartifacts: true
-      release.generatesbom: true
-```
-
-**What this produces:**
-
-- APK (release) → `app/build/outputs/apk/demo/release/*.apk`
-- AAB (bundle) → `app/build/outputs/bundle/demoRelease/*.aab`
-- SBOM → `sbom.cyclonedx.json`
-- All attached to GitHub Release
-
-### JVM Application (Gradle, non-Android)
-
-```yaml
-# .github/artifacts.yml
-artifacts:
-  - name: spring-boot-app
-    project-type: gradle
-    working-directory: .
-    publishers:
-      - gradle-app-github
-    config:
-      javaversion: 21
-      gradletasks: build bootJar
-
-containers:
-  - name: spring-boot-app
-    from: [spring-boot-app]
-    containerfile: Containerfile
-    context: .
-    platforms: linux/amd64,linux/arm64
-
-# .github/workflows/release-workflow.yml
-jobs:
-  release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
-    with:
-      artifacts-config: .github/artifacts.yml
-      release-publisher: github-cli
-```
-
-### Development Builds
-
-```yaml
-on:
-  push:
-    branches: [develop]
-jobs:
-  build:
-    uses: diggsweden/.github/.github/workflows/release-dev-orchestrator.yml@main
-    with:
-      project-type: maven  # Only builds container, no releases/artifacts
-```
-
----
-
-*Last updated: 2025-10-08*

@@ -12,55 +12,13 @@ Complete guide to publishing artifacts to different registries.
 
 The reusable workflows support multiple publishing targets:
 
-| Target | Artifact Types | Authentication | Public/Private |
+| Target | Artifact Types | Authentication |  |
 |--------|---------------|----------------|----------------|
-| **GitHub Packages** | Maven, NPM, Gradle, Containers | `GITHUB_TOKEN` (automatic) | Organization only |
-| **Maven Central** | Maven libraries | Sonatype credentials | Public |
-| **npmjs.org** | NPM packages | NPM token | Public |
-| **Container Registries** | Container images | Token/credentials | Configurable |
+| **Maven Central** | Maven libraries | Sonatype credentials |  |
+| **npmjs.org** | NPM packages | NPM token |  |
+| **Container Registries** | Container images | Token/credentials |  |
 
 ---
-
-## GitHub Packages (Default)
-
-**Overview:**
-
-- **No setup required** - Uses `GITHUB_TOKEN` automatically
-- **Always available** - Works for all DiggSweden projects
-- **Organization scoped** - Only accessible within DiggSweden org
-
-### GitHub Packages Configuration
-
-```yaml
-# .github/artifacts.yml
-artifacts:
-  - name: my-app
-    project-type: maven  # or npm, gradle
-    working-directory: .
-    # publish-to defaults to [github-packages]
-```
-
-### Accessing Published Artifacts
-
-#### Maven
-
-```xml
-<!-- ~/.m2/settings.xml or project settings -->
-<servers>
-  <server>
-    <id>github</id>
-    <username>YOUR_GITHUB_USERNAME</username>
-    <password>YOUR_GITHUB_TOKEN</password>
-  </server>
-</servers>
-
-<repositories>
-  <repository>
-    <id>github</id>
-    <url>https://maven.pkg.github.com/diggsweden/REPO_NAME</url>
-  </repository>
-</repositories>
-```
 
 #### NPM
 
@@ -73,9 +31,6 @@ npm config set //npm.pkg.github.com/:_authToken YOUR_GITHUB_TOKEN
 #### Containers
 
 ```bash
-# Login to GitHub Container Registry
-echo $GITHUB_TOKEN | podman login ghcr.io -u USERNAME --password-stdin
-
 # Pull image
 podman pull ghcr.io/diggsweden/repo-name:v1.0.0
 ```
@@ -84,28 +39,14 @@ podman pull ghcr.io/diggsweden/repo-name:v1.0.0
 
 ## Maven Central
 
-### Maven Central Overview
-
-- **Public distribution** - Available to all Java developers worldwide
-- **Libraries only** - Not for applications
-- **Requires approval** - GroupId must be claimed via Sonatype
-- **Signature required** - All artifacts must be GPG signed
-
 ### Maven Central Prerequisites
 
-1. **Sonatype OSSRH Account**
-   - Create account at <https://central.sonatype.com/>
-   - Claim your groupId (e.g., `se.digg`)
-   - Wait for approval (1-2 business days)
 
-2. **GPG Key Setup**
+1. **GPG Key Setup**
    - Already configured at DiggSweden org level
-   - Request access from GitHub administrators
-   - Required secrets: `OSPO_BOT_GPG_PRIV`, `OSPO_BOT_GPG_PASS`, `OSPO_BOT_GPG_PUB`
 
-3. **Maven Central Credentials**
-   - Request from DiggSweden GitHub administrators
-   - Required secrets: `MAVENCENTRAL_USERNAME`, `MAVENCENTRAL_PASSWORD`
+2. **Maven Central Credentials**
+   - Already configured at DiggSweden org level
 
 ### Configuration
 
@@ -166,13 +107,77 @@ Your `pom.xml` must include:
     <url>https://github.com/diggsweden/my-library/tree/main</url>
   </scm>
 
-  <!-- Distribution management (handled by workflow) -->
-  <distributionManagement>
-    <repository>
-      <id>ossrh</id>
-      <url>https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/</url>
-    </repository>
-  </distributionManagement>
+  <build>
+    <plugins>
+      <!-- Maven Central Publishing (modern approach) -->
+      <plugin>
+        <groupId>org.sonatype.central</groupId>
+        <artifactId>central-publishing-maven-plugin</artifactId>
+        <version>0.8.0</version>
+        <extensions>true</extensions>
+        <configuration>
+          <checksums>all</checksums>
+          <skipPublishing>false</skipPublishing>
+          <publishingServerId>central</publishingServerId>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <profile>
+      <id>central-release</id>
+      <build>
+        <plugins>
+          <!-- GPG Signing -->
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.8</version>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>sign</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          
+          <!-- Sources JAR -->
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <version>3.3.1</version>
+            <executions>
+              <execution>
+                <id>attach-sources</id>
+                <goals>
+                  <goal>jar-no-fork</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          
+          <!-- Javadoc JAR -->
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <version>3.11.3</version>
+            <executions>
+              <execution>
+                <id>attach-javadocs</id>
+                <goals>
+                  <goal>jar</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>
 ```
 
@@ -185,7 +190,7 @@ If you need custom repository configuration:
 <settings>
   <servers>
     <server>
-      <id>ossrh</id>
+      <id>central</id>
       <username>${env.MAVENCENTRAL_USERNAME}</username>
       <password>${env.MAVENCENTRAL_PASSWORD}</password>
     </server>
@@ -202,10 +207,17 @@ config:
 
 ### Maven Central Release Process
 
-1. **Tag your release:**
+1a. **Tag your release:**
 
    ```bash
    git tag -s v1.0.0 -m "Release v1.0.0"
+   git push origin v1.0.0
+   ```
+
+1b. **or, Tag your SNAPSHOT release:**
+
+   ```bash
+   git tag -s v1.0.0-SNAPSHOT -m "v1.0.0-SNAPSHOT"
    git push origin v1.0.0
    ```
 
@@ -221,6 +233,8 @@ config:
 
 ### Consuming Published Library
 
+#### Released Versions
+
 Users add to their `pom.xml`:
 
 ```xml
@@ -231,6 +245,52 @@ Users add to their `pom.xml`:
 </dependency>
 ```
 
+No additional configuration needed - Maven Central is included by default.
+
+#### Snapshot Versions
+
+To consume `-SNAPSHOT` versions, add snapshot repository to `~/.m2/settings.xml` or project `pom.xml`:
+
+```xml
+<!-- ~/.m2/settings.xml -->
+<settings>
+  <profiles>
+    <profile>
+      <id>snapshots</id>
+      <repositories>
+        <repository>
+          <id>maven-snapshots</id>
+          <url>https://s01.oss.sonatype.org/content/repositories/snapshots/</url>
+          <releases>
+            <enabled>false</enabled>
+          </releases>
+          <snapshots>
+            <enabled>true</enabled>
+            <updatePolicy>always</updatePolicy>
+          </snapshots>
+        </repository>
+      </repositories>
+    </profile>
+  </profiles>
+
+  <activeProfiles>
+    <activeProfile>snapshots</activeProfile>
+  </activeProfiles>
+</settings>
+```
+
+Then use snapshot version in your project:
+
+```xml
+<dependency>
+  <groupId>se.digg</groupId>
+  <artifactId>my-library</artifactId>
+  <version>1.0.0-SNAPSHOT</version>
+</dependency>
+```
+
+**Note:** Snapshots are development versions and may change frequently. Use `updatePolicy>always</updatePolicy>` to always check for latest snapshot.
+
 ---
 
 ## NPM Registry (npmjs.org)
@@ -240,17 +300,6 @@ Users add to their `pom.xml`:
 - **Public distribution** - Available to all Node.js developers
 - **Scoped packages** - Use `@diggsweden/` prefix
 - **No approval needed** - Publish immediately
-
-### NPM Prerequisites
-
-1. **npmjs.org Account**
-   - Create account at <https://www.npmjs.com/>
-   - Verify email address
-
-2. **NPM Token**
-   - Generate at <https://www.npmjs.com/settings/tokens>
-   - Type: "Automation" token
-   - Request DiggSweden administrators add as `NPM_TOKEN` secret
 
 ### NPM Configuration
 
@@ -330,12 +379,11 @@ npm install @diggsweden/my-package
 | Registry | Default | Authentication |
 |----------|---------|----------------|
 | `ghcr.io` | ✅ Yes | `GITHUB_TOKEN` (automatic) |
-| `docker.io` | No | `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` |
 | Custom | No | Custom credentials |
 
 ### GitHub Container Registry (ghcr.io)
 
-**Default and recommended** - No setup required:
+**Default** - No setup required:
 
 ```yaml
 containers:
@@ -403,113 +451,10 @@ jobs:
 
 ## Security Features
 
-### GPG Signing
+All published artifacts include security features:
 
-**Enabled by default** for all Maven Central and GitHub releases.
+- **GPG Signing** - JAR files, POM files, release checksums, git tags
+- **SBOM Generation** - SPDX and CycloneDX formats for all artifacts and containers
+- **SLSA Provenance** - Level 3 attestations for containers
 
-**What gets signed:**
-
-- JAR files (Maven)
-- POM files (Maven)
-- Release checksums
-- Git tags
-
-**Verification:**
-
-```bash
-# Verify JAR signature
-gpg --verify my-library-1.0.0.jar.asc my-library-1.0.0.jar
-
-# Import public key first
-curl -s https://api.github.com/repos/diggsweden/repo/contents/GPG_PUBLIC_KEY | \
-  jq -r .content | base64 -d | gpg --import
-```
-
-### SBOM Generation
-
-**Enabled by default** for all artifacts and containers.
-
-**Formats generated:**
-
-- SPDX JSON
-- CycloneDX JSON
-
-**Attached to:**
-
-- GitHub releases
-- Container images (as attestation)
-
-### SLSA Provenance
-
-**Enabled by default** for containers.
-
-**Verifiable with:**
-
-```bash
-# Install slsa-verifier
-gh release download -R slsa-framework/slsa-verifier
-
-# Verify container
-slsa-verifier verify-image ghcr.io/diggsweden/my-app:v1.0.0 \
-  --source-uri github.com/diggsweden/my-app
-```
-
----
-
-## Troubleshooting
-
-### Maven Central Troubleshooting
-
-**"Failed to deploy artifacts"**
-
-- Check Sonatype credentials are valid
-- Verify groupId is approved
-- Ensure `build-type: library` is set
-- Check all required POM fields present
-
-**"GPG signing failed"**
-
-- Request GPG secrets from administrators
-- Verify secrets are accessible to repository
-
-### NPM Issues
-
-**"Authentication failed"**
-
-- Check NPM_TOKEN is valid
-- Regenerate token if expired
-- Verify token has "Automation" type
-
-**"Package name already taken"**
-
-- Use scoped package: `@diggsweden/name`
-- Check if package exists: `npm view @diggsweden/name`
-
-### Container Troubleshooting
-
-**"Failed to push to registry"**
-
-- Check `packages: write` permission set
-- Verify registry authentication
-- Check registry exists and is accessible
-
----
-
-## Best Practices
-
-1. **Use GitHub Packages for internal** - No setup, works everywhere
-2. **Use Maven Central for public libraries** - Industry standard
-3. **Always enable signing** - Required for Maven Central, good practice
-4. **Test locally first** - Build and verify before tagging
-5. **Version carefully** - Can't unpublish from Maven Central
-6. **Keep secrets secure** - Never log or expose tokens
-7. **Monitor releases** - Check registry after publishing
-8. **Document changes** - Good changelogs help users
-
----
-
-## See Also
-
-- [Configuration Reference](configuration.md) - Complete artifacts.yml guide
-- [Troubleshooting](troubleshooting.md) - Common publishing errors
-- [Workflows Guide](workflows.md) - Workflow configuration
+For verification instructions, see [Artifact Verification Guide](verification.md).

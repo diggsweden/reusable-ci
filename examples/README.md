@@ -278,12 +278,10 @@ publish-to:
   - github-packages  # Explicit publishing target
 ```
 
-See [Troubleshooting Guide](../docs/troubleshooting.md) for more solutions.
 
 ---
 
 ## See Also
 
-- [Configuration Reference](../docs/configuration.md) - Complete field documentation
+- [Artifacts Reference](../docs/artifacts-reference.md) - Complete field documentation
 - [Publishing Guide](../docs/publishing.md) - Registry setup instructions
-- [Troubleshooting](../docs/troubleshooting.md) - Common errors and solutions

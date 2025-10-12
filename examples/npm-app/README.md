@@ -86,6 +86,5 @@ See [Publishing Guide](../../docs/publishing.md#npm-registry-npmjsorg) for detai
 
 ## See Also
 
-- [Configuration Reference](../../docs/configuration.md)
+- [Artifacts Reference](../../docs/artifacts-reference.md)
 - [Publishing Guide](../../docs/publishing.md)
-- [Troubleshooting](../../docs/troubleshooting.md)

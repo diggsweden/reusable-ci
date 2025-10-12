@@ -98,7 +98,7 @@ jobs:
     #   1. Tag Validation - Format, signature, uniqueness, commit availability
     #   2. Authorization - User permissions for non-SNAPSHOT releases
     #   3. Secrets & Credentials - GPG keys, tokens, publishing credentials
-    #   4. Summary Generation - Comprehensive validation report
+    #   4. Summary Generation -  validation report
     # ============================================================================
     steps:
       - name: Checkout repository
@@ -332,7 +332,7 @@ jobs:
           echo "✓ NPM token configured"
       # ============================================================================
       # SECTION 4: Summary Generation
-      # Creates comprehensive validation report
+      # Creates  validation report
       # ============================================================================
       - name: Generate Validation Summary
         if: always()

@@ -67,7 +67,7 @@ on:
         default: true
         type: boolean
       linters.megalint:
-        description: "Enable MegaLinter for comprehensive code quality checks"
+        description: "Enable MegaLinter for  code quality checks"
         required: false
         default: true
         type: boolean
@@ -96,7 +96,7 @@ jobs:
     name: Dependency Review
     if: ${{ inputs['linters.dependencyreview'] }}
     uses: ./.github/workflows/security-dependency-review.yml
-  # Comprehensive linting with MegaLinter
+  #  linting with MegaLinter
   megalint:
     name: MegaLinter
     if: ${{ inputs['linters.megalint'] }}

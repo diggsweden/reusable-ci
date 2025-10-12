@@ -4,7 +4,7 @@
 
 # GitHub Release Creator
 # 
-# Purpose: Creates GitHub releases with comprehensive security features including
+# Purpose: Creates GitHub releases with  security features including
 # artifact signing, SBOM generation, and checksum calculation using GitHub CLI.
 #
 # How it works:

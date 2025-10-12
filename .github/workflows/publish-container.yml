@@ -5,7 +5,7 @@
 # Container Image Publisher
 # 
 # Purpose: Builds and publishes production-grade container images to any OCI-compatible
-# registry with comprehensive security features including multi-platform support,
+# registry with  security features including multi-platform support,
 # vulnerability scanning, SBOM generation, and SLSA attestation (GHCR only).
 #
 # Supported Registries:
