@@ -68,8 +68,6 @@ Maven/Spring Boot projects may produce multiple JARs, each with its own SBOM:
 
 The fat JAR SBOM shows the dependency tree deployed to production.
 
-
-
 ### Compliance & Standards Alignment
 
 DiggSweden SBOM generation meets the following standards:
@@ -78,7 +76,6 @@ DiggSweden SBOM generation meets the following standards:
 - ✅ **[CISA SBOM Requirements](https://www.cisa.gov/sbom)** - Compliant with CISA guidance for federal cybersecurity
 - ✅ **[EU Cyber Resilience Act (CRA)](https://digital-strategy.ec.europa.eu/en/policies/cyber-resilience-act)** - Aligned with EU requirements for software transparency and security
 - ✅ **[SLSA Level 3 Provenance](https://slsa.dev/spec/v1.0/levels)** - Container SBOMs include cryptographically signed build provenance attestations
-
 
 ### SBOM Delivery & Access
 

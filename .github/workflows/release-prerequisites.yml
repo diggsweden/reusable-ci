@@ -355,4 +355,4 @@ jobs:
           MAVENCENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          bash scripts/validation/generate-prerequisites-summary.sh
+          bash .github-shared/scripts/validation/generate-prerequisites-summary.sh

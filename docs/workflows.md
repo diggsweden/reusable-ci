@@ -6,8 +6,7 @@ SPDX-License-Identifier: CC0-1.0
 
 # Workflow Architecture and Patterns
 
-
-### Pull Request Workflow Architecture
+## Pull Request Workflow Architecture
 
 ```mermaid
 graph TD
@@ -38,22 +37,22 @@ graph TD
     B --> C[Parse artifacts.yml]
     C --> D[release-prerequisites.yml]
     D --> E[version-bump.yml - Matrix]
-    
+
     E --> F[build-maven.yml - Matrix]
     E --> G[build-npm.yml - Matrix]
     E --> H[build-gradle.yml - Matrix]
-    
+
     F --> I[publish-github.yml - Matrix]
     G --> I
     H --> I
-    
+
     F --> J[publish-mavencentral.yml - Matrix]
-    
+
     I --> K[publish-container.yml - Matrix]
-    
+
     K --> L[release-github.yml]
     J --> L
-    
+
     L --> M[Release Summary]
 
     style A fill:#a7c080,stroke:#5c6a4a,color:#2b3339
@@ -158,4 +157,3 @@ graph LR
 ```
 
 ---
-

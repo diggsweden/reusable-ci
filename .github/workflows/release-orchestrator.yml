@@ -141,6 +141,26 @@ jobs:
       first-project-type: ${{ steps.parse.outputs.first-project-type }}
       first-build-type: ${{ steps.parse.outputs.first-build-type }}
       first-require-authorization: ${{ steps.parse.outputs.first-require-authorization }}
+      # Filtered artifact lists by project type
+      maven-artifacts: ${{ steps.parse.outputs.maven-artifacts }}
+      npm-artifacts: ${{ steps.parse.outputs.npm-artifacts }}
+      gradle-artifacts: ${{ steps.parse.outputs.gradle-artifacts }}
+      python-artifacts: ${{ steps.parse.outputs.python-artifacts }}
+      go-artifacts: ${{ steps.parse.outputs.go-artifacts }}
+      rust-artifacts: ${{ steps.parse.outputs.rust-artifacts }}
+      # Flags indicating presence of each type
+      has-maven: ${{ steps.parse.outputs.has-maven }}
+      has-npm: ${{ steps.parse.outputs.has-npm }}
+      has-gradle: ${{ steps.parse.outputs.has-gradle }}
+      has-python: ${{ steps.parse.outputs.has-python }}
+      has-go: ${{ steps.parse.outputs.has-go }}
+      has-rust: ${{ steps.parse.outputs.has-rust }}
+      # Filtered by publish target
+      mavencentral-artifacts: ${{ steps.parse.outputs.mavencentral-artifacts }}
+      github-packages-artifacts: ${{ steps.parse.outputs.github-packages-artifacts }}
+      has-mavencentral: ${{ steps.parse.outputs.has-mavencentral }}
+      has-github-packages: ${{ steps.parse.outputs.has-github-packages }}
+      is-draft-release: ${{ steps.parse.outputs.is-draft-release }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -151,7 +171,162 @@ jobs:
           sudo chmod +x /usr/local/bin/yq
       - name: Parse artifacts.yml
         id: parse
-        run: "if [ ! -f \"${{ inputs['artifacts-config'] }}\" ]; then\n  echo \"::error::File not found: ${{ inputs['artifacts-config'] }}\"\n  exit 1\nfi\n\nARTIFACTS=$(yq eval -o=json '.artifacts' \"${{ inputs['artifacts-config'] }}\")\nCONTAINERS=$(yq eval -o=json '.containers // []' \"${{ inputs['artifacts-config'] }}\")\n\nif [ \"$ARTIFACTS\" = \"null\" ] || [ \"$ARTIFACTS\" = \"[]\" ]; then\n  echo \"::error::No artifacts found in ${{ inputs['artifacts-config'] }}\"\n  exit 1\nfi\n\n# Validate projectType for all artifacts\nVALID_TYPES=\"maven npm gradle python go rust\"\nfor projectType in $(echo \"$ARTIFACTS\" | jq -r '.[].['project-type']'); do\n  if ! echo \"$VALID_TYPES\" | grep -qw \"$projectType\"; then\n    echo \"::error::Invalid projectType '$projectType'. Must be one of: $VALID_TYPES\"\n    exit 1\n  fi\ndone\n\n# Validate container dependencies\nARTIFACT_NAMES=$(echo \"$ARTIFACTS\" | jq -r '.[].name')\nCONTAINER_COUNT=$(echo \"$CONTAINERS\" | jq 'length')\n\nif [ \"$CONTAINER_COUNT\" -gt 0 ]; then\n  for container in $(echo \"$CONTAINERS\" | jq -c '.[]'); do\n    CONTAINER_NAME=$(echo \"$container\" | jq -r '.name')\n    FROM_ARTIFACTS=$(echo \"$container\" | jq -r '.from[]')\n    \n    for artifact in $FROM_ARTIFACTS; do\n      if ! echo \"$ARTIFACT_NAMES\" | grep -q \"^${artifact}$\"; then\n        echo \"::error::Container '$CONTAINER_NAME' references unknown artifact '$artifact'\"\n        exit 1\n      fi\n    done\n  done\nfi\n\necho \"artifacts=$ARTIFACTS\" >> $GITHUB_OUTPUT\necho \"containers=$CONTAINERS\" >> $GITHUB_OUTPUT\n\nARTIFACT_COUNT=$(echo \"$ARTIFACTS\" | jq 'length')\necho \"::notice::Loaded $ARTIFACT_COUNT artifacts, $CONTAINER_COUNT containers\"\n\necho \"## Configuration\" >> $GITHUB_STEP_SUMMARY\necho \"$ARTIFACTS\" | jq -r '.[] | \"### \\(.name)\\n- **Type:** \\(.['project-type'])\\n- **Build Type:** \\(.publishers | join(\", \"))\\n- **Directory:** \\(.['working-directory'])\\n\"' >> $GITHUB_STEP_SUMMARY\n\nif [ \"$CONTAINER_COUNT\" -gt 0 ]; then\n  echo \"\" >> $GITHUB_STEP_SUMMARY\n  echo \"## Containers\" >> $GITHUB_STEP_SUMMARY\n  echo \"$CONTAINERS\" | jq -r '.[] | \"### \\(.name)\\n- **From:** \\(.from | join(\", \"))\\n- **Containerfile:** \\.[\"container-file\"]\\n\"' >> $GITHUB_STEP_SUMMARY\nfi\n"
+        run: |
+          if [ ! -f "${{ inputs['artifacts-config'] }}" ]; then
+            echo "::error::File not found: ${{ inputs['artifacts-config'] }}"
+            exit 1
+          fi
+          
+          ARTIFACTS=$(yq eval -o=json '.artifacts' "${{ inputs['artifacts-config'] }}")
+          CONTAINERS=$(yq eval -o=json '.containers // []' "${{ inputs['artifacts-config'] }}")
+          
+          if [ "$ARTIFACTS" = "null" ] || [ "$ARTIFACTS" = "[]" ]; then
+            echo "::error::No artifacts found in ${{ inputs['artifacts-config'] }}"
+            exit 1
+          fi
+          
+          # Validate projectType for all artifacts
+          VALID_TYPES="maven npm gradle python go rust"
+          for projectType in $(echo "$ARTIFACTS" | jq -r '.[] | .["project-type"]'); do
+            if ! echo "$VALID_TYPES" | grep -qw "$projectType"; then
+              echo "::error::Invalid projectType '$projectType'. Must be one of: $VALID_TYPES"
+              exit 1
+            fi
+          done
+          
+          # Validate container dependencies
+          ARTIFACT_NAMES=$(echo "$ARTIFACTS" | jq -r '.[].name')
+          CONTAINER_COUNT=$(echo "$CONTAINERS" | jq 'length')
+          
+          if [ "$CONTAINER_COUNT" -gt 0 ]; then
+            for container in $(echo "$CONTAINERS" | jq -c '.[]'); do
+              CONTAINER_NAME=$(echo "$container" | jq -r '.name')
+              FROM_ARTIFACTS=$(echo "$container" | jq -r '.from[]')
+              
+              for artifact in $FROM_ARTIFACTS; do
+                if ! echo "$ARTIFACT_NAMES" | grep -q "^${artifact}$"; then
+                  echo "::error::Container '$CONTAINER_NAME' references unknown artifact '$artifact'"
+                  exit 1
+                fi
+              done
+              
+              # Warn if container has no dependencies
+              FROM_COUNT=$(echo "$container" | jq '.from | length')
+              if [ "$FROM_COUNT" -eq 0 ]; then
+                echo "::warning::Container '$CONTAINER_NAME' has empty 'from' array. No artifacts will be downloaded for this container."
+              fi
+            done
+          fi
+          
+          # Resolve artifact types for each container from their dependencies
+          CONTAINERS_WITH_TYPES=$(echo "$CONTAINERS" | jq -c --argjson artifacts "$ARTIFACTS" '
+            map(
+              . + {
+                "artifact-types": [
+                  .from[] as $dep |
+                  ($artifacts[] | select(.name == $dep) | .["project-type"])
+                ] | unique
+              }
+            )
+          ')
+          
+          # Output all artifacts
+          {
+            echo "artifacts<<EOF"
+            echo "$ARTIFACTS"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+          
+          {
+            echo "containers<<EOF"
+            echo "$CONTAINERS_WITH_TYPES"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+          
+          # Filter artifacts by project type and set has-* flags
+          for type in maven npm gradle python go rust; do
+            FILTERED=$(echo "$ARTIFACTS" | jq -c "[.[] | select(.[\"project-type\"] == \"$type\")]")
+            COUNT=$(echo "$FILTERED" | jq 'length')
+            
+            # Output filtered list
+            {
+              echo "${type}-artifacts<<EOF"
+              echo "$FILTERED"
+              echo "EOF"
+            } >> $GITHUB_OUTPUT
+            
+            # Output has-* flag
+            if [ "$COUNT" -gt 0 ]; then
+              echo "has-${type}=true" >> $GITHUB_OUTPUT
+            else
+              echo "has-${type}=false" >> $GITHUB_OUTPUT
+            fi
+          done
+          
+          # Validate Maven applications are not published to github-packages (libraries only)
+          MAVEN_APPS_TO_GITHUB=$(echo "$ARTIFACTS" | jq -r '.[] | select(.["project-type"] == "maven" and .["build-type"] == "application" and (.["publish-to"] // [] | contains(["github-packages"]))) | .name')
+          if [ -n "$MAVEN_APPS_TO_GITHUB" ]; then
+            echo "::warning::Maven applications should not be published to GitHub Packages (use only for libraries). JARs will be attached to GitHub Release instead. Skipping GitHub Packages publish for: $MAVEN_APPS_TO_GITHUB"
+          fi
+          
+          # Filter artifacts by publish target
+          for target in mavencentral github-packages; do
+            # For github-packages, exclude Maven applications
+            if [ "$target" = "github-packages" ]; then
+              FILTERED=$(echo "$ARTIFACTS" | jq -c "[.[] | select(.[\"publish-to\"] // [] | contains([\"${target}\"])) | select(.[\"project-type\"] != \"maven\" or .[\"build-type\"] != \"application\")]")
+            else
+              FILTERED=$(echo "$ARTIFACTS" | jq -c "[.[] | select(.[\"publish-to\"] // [] | contains([\"${target}\"]))]")
+            fi
+            COUNT=$(echo "$FILTERED" | jq 'length')
+            
+            # Output filtered list
+            {
+              echo "${target}-artifacts<<EOF"
+              echo "$FILTERED"
+              echo "EOF"
+            } >> $GITHUB_OUTPUT
+            
+            # Output has-* flag
+            if [ "$COUNT" -gt 0 ]; then
+              echo "has-${target}=true" >> $GITHUB_OUTPUT
+            else
+              echo "has-${target}=false" >> $GITHUB_OUTPUT
+            fi
+          done
+          
+          ARTIFACT_COUNT=$(echo "$ARTIFACTS" | jq 'length')
+          echo "::notice::Loaded $ARTIFACT_COUNT artifacts, $CONTAINER_COUNT containers"
+          
+          # Extract first artifact's type and build-type for legacy compatibility
+          FIRST_PROJECT_TYPE=$(echo "$ARTIFACTS" | jq -r '.[0]["project-type"]')
+          FIRST_BUILD_TYPE=$(echo "$ARTIFACTS" | jq -r '.[0]["build-type"] // "application"')
+          echo "first-project-type=$FIRST_PROJECT_TYPE" >> $GITHUB_OUTPUT
+          echo "first-build-type=$FIRST_BUILD_TYPE" >> $GITHUB_OUTPUT
+          
+          # Determine if release should be draft (SNAPSHOT or non-release version tags)
+          TAG_NAME="${{ github.ref_name }}"
+          IS_DRAFT="false"
+          
+          # Check if tag contains -SNAPSHOT (always draft)
+          if [[ "$TAG_NAME" == *"-SNAPSHOT"* ]]; then
+            IS_DRAFT="true"
+            echo "::notice::Tag contains -SNAPSHOT, creating draft release"
+          # Check if tag is a release version semver: vX.Y.Z or vX.Y.Z-prerelease
+          elif ! echo "$TAG_NAME" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$'; then
+            IS_DRAFT="true"
+            echo "::notice::Tag '$TAG_NAME' is not a release version semver (vX.Y.Z), creating draft release"
+          fi
+          
+          echo "is-draft-release=$IS_DRAFT" >> $GITHUB_OUTPUT
+          
+          echo "## Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "$ARTIFACTS" | jq -r '.[] | "### \(.name)\n- **Type:** \(.["project-type"])\n- **Publish To:** \(.["publish-to"] // [] | join(", "))\n- **Directory:** \(.["working-directory"])\n"' >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$CONTAINER_COUNT" -gt 0 ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## Containers" >> $GITHUB_STEP_SUMMARY
+            echo "$CONTAINERS_WITH_TYPES" | jq -r '.[] | "### \(.name)\n- **From:** \(.from | join(", "))\n- **Artifact Types:** \(.["artifact-types"] | join(", "))\n- **Containerfile:** \(.["container-file"])\n"' >> $GITHUB_STEP_SUMMARY
+          fi
   # Step 0c: Validate configuration
   validate-prerequisites:
     name: Validate Prerequisites
@@ -165,7 +340,7 @@ jobs:
       sign-artifacts: ${{ inputs['release.signartifacts'] }}
       check-authorization: ${{ needs.parse-config.outputs.first-require-authorization == 'true' || inputs['release.checkauthorization'] }}
       branch: ${{ inputs.branch }}
-      workflows-ref: ${{ github.ref_name }}
+      workflows-ref: v2-dev
   # Step 1: Version Bump (iterates over all artifacts)
   version-and-changelog:
     needs: [parse-config, validate-prerequisites]
@@ -192,10 +367,10 @@ jobs:
   build-maven:
     name: Build Maven - ${{ matrix.artifact.name }}
     needs: [parse-config, version-and-changelog]
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-maven == 'true' }}
     strategy:
       matrix:
-        artifact: ${{ fromJson(needs.parse-config.outputs.artifacts) }}
+        artifact: ${{ fromJson(needs.parse-config.outputs.maven-artifacts) }}
       fail-fast: false
     permissions:
       contents: read
@@ -206,14 +381,15 @@ jobs:
       java-version: ${{ matrix.artifact.config['java-version'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
       branch: ${{ inputs.branch }}
+      profile: ${{ matrix.artifact['build-type'] == 'library' && (matrix.artifact.config['maven-profile'] || 'central-release') || '' }}
   # Step 2b: Build NPM artifacts
   build-npm:
     name: Build NPM - ${{ matrix.artifact.name }}
     needs: [parse-config, version-and-changelog]
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-npm == 'true' }}
     strategy:
       matrix:
-        artifact: ${{ fromJson(needs.parse-config.outputs.artifacts) }}
+        artifact: ${{ fromJson(needs.parse-config.outputs.npm-artifacts) }}
       fail-fast: false
     permissions:
       contents: read
@@ -227,10 +403,10 @@ jobs:
   build-gradle:
     name: Build Gradle - ${{ matrix.artifact.name }}
     needs: [parse-config, version-and-changelog]
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-gradle == 'true' }}
     strategy:
       matrix:
-        artifact: ${{ fromJson(needs.parse-config.outputs.artifacts) }}
+        artifact: ${{ fromJson(needs.parse-config.outputs.gradle-artifacts) }}
       fail-fast: false
     permissions:
       contents: read
@@ -247,10 +423,10 @@ jobs:
   publish-github:
     name: Publish GitHub - ${{ matrix.artifact.name }}
     needs: [parse-config, build-maven, build-npm, build-gradle]
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-github-packages == 'true' }}
     strategy:
       matrix:
-        artifact: ${{ fromJson(needs.parse-config.outputs.artifacts) }}
+        artifact: ${{ fromJson(needs.parse-config.outputs.github-packages-artifacts) }}
       fail-fast: false
     permissions:
       contents: write
@@ -266,10 +442,10 @@ jobs:
   publish-mavencentral:
     name: Publish Maven Central - ${{ matrix.artifact.name }}
     needs: [parse-config, build-maven]
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-mavencentral == 'true' }}
     strategy:
       matrix:
-        artifact: ${{ fromJson(needs.parse-config.outputs.artifacts) }}
+        artifact: ${{ fromJson(needs.parse-config.outputs.mavencentral-artifacts) }}
       fail-fast: false
     permissions:
       contents: write
@@ -294,6 +470,7 @@ jobs:
       contents: read
       packages: write
       id-token: write
+      attestations: write
       security-events: write
       actions: read
     secrets: inherit
@@ -307,7 +484,7 @@ jobs:
       enable-sbom: ${{ matrix.container['enable-sbom'] == true || matrix.container['enable-sbom'] == null }}
       enable-scan: ${{ matrix.container['enable-scan'] == true || matrix.container['enable-scan'] == null }}
       registry: ghcr.io
-      project-type: container
+      artifact-types: ${{ join(matrix.container['artifact-types'], ',') }}
       push-image: true
   # Step 5: Create GitHub Release  
   create-release:
@@ -327,7 +504,7 @@ jobs:
       attach-artifacts: ${{ inputs['release.attachartifacts'] }}
       generate-sbom: ${{ inputs['release.generatesbom'] }}
       sign-artifacts: ${{ inputs['release.signartifacts'] }}
-      draft: ${{ inputs['release.draft'] }}
+      draft: ${{ inputs['release.draft'] || needs.parse-config.outputs.is-draft-release == 'true' }}
       project-type: ${{ needs.parse-config.outputs.first-project-type }}
       changelog-config: ${{ inputs['changelog.config'] }}
       make-latest: ${{ (inputs['release-type'] == 'stable' || (!inputs['release-type'] && !contains(github.ref_name, '-'))) && 'true' || 'false' }}

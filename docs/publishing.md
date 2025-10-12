@@ -20,7 +20,7 @@ The reusable workflows support multiple publishing targets:
 
 ---
 
-#### NPM
+### NPM
 
 ```bash
 # Configure npm to use GitHub Packages
@@ -40,7 +40,6 @@ podman pull ghcr.io/diggsweden/repo-name:v1.0.0
 ## Maven Central
 
 ### Maven Central Prerequisites
-
 
 1. **GPG Key Setup**
    - Already configured at DiggSweden org level
@@ -144,7 +143,7 @@ Your `pom.xml` must include:
               </execution>
             </executions>
           </plugin>
-          
+
           <!-- Sources JAR -->
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
@@ -159,7 +158,7 @@ Your `pom.xml` must include:
               </execution>
             </executions>
           </plugin>
-          
+
           <!-- Javadoc JAR -->
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
@@ -399,6 +398,23 @@ containers:
 ghcr.io/diggsweden/repo-name/container-name:v1.0.0
 ```
 
+**Namespace security:**
+- Images must follow pattern: `ghcr.io/OWNER/REPO_NAME` or `ghcr.io/OWNER/REPO_NAME-*`
+- Default owner: `github.repository_owner` (e.g., `diggsweden`)
+- Configurable via `enforce-namespace` input
+- Prevents pushing to unauthorized namespaces
+- Enforced automatically during container build
+
+**Custom namespace (optional):**
+
+```yaml
+containers:
+  - name: my-app
+    from: [my-app]
+    container-file: Containerfile
+    enforce-namespace: my-custom-org  # Override default
+```
+
 **Pull image:**
 
 ```bash
@@ -456,5 +472,6 @@ All published artifacts include security features:
 - **GPG Signing** - JAR files, POM files, release checksums, git tags
 - **SBOM Generation** - SPDX and CycloneDX formats for all artifacts and containers
 - **SLSA Provenance** - Level 3 attestations for containers
+- **Namespace Validation** - Enforces correct registry namespaces to prevent unauthorized publishing
 
 For verification instructions, see [Artifact Verification Guide](verification.md).

@@ -132,6 +132,14 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.branch }}
           token: ${{ secrets.OSPO_BOT_GHTOKEN }}
+      - name: Checkout .github repository for scripts
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: diggsweden/reusable-ci
+          ref: v2-dev
+          path: .github-shared
+          sparse-checkout: |
+            scripts/version
       - name: Import GPG key
         id: import-gpg
         uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0

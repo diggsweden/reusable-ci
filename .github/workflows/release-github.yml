@@ -143,11 +143,10 @@ jobs:
           name: container-sbom-${{ github.run_id }}
           path: ./sbom-artifacts/
       - name: Checkout .github repo for release scripts
-        if: ${{ inputs['generate-sbom'] }}
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           repository: diggsweden/reusable-ci
-          ref: v1
+          ref: v2-dev
           path: .github-shared
           sparse-checkout: |
             scripts/sbom
@@ -158,22 +157,22 @@ jobs:
         run: |
           case "${{ inputs['project-type'] }}" in
             maven)
-              echo "name=maven-artifacts" >> $GITHUB_OUTPUT
+              echo "name=maven-build-artifacts" >> $GITHUB_OUTPUT
               ;;
             npm)
-              echo "name=npm-artifacts" >> $GITHUB_OUTPUT
+              echo "name=npm-build-artifacts" >> $GITHUB_OUTPUT
               ;;
             gradle)
-              echo "name=gradle-artifacts" >> $GITHUB_OUTPUT
+              echo "name=gradle-build-artifacts" >> $GITHUB_OUTPUT
               ;;
             python)
-              echo "name=python-artifacts" >> $GITHUB_OUTPUT
+              echo "name=python-build-artifacts" >> $GITHUB_OUTPUT
               ;;
             go)
-              echo "name=go-artifacts" >> $GITHUB_OUTPUT
+              echo "name=go-build-artifacts" >> $GITHUB_OUTPUT
               ;;
             rust)
-              echo "name=rust-artifacts" >> $GITHUB_OUTPUT
+              echo "name=rust-build-artifacts" >> $GITHUB_OUTPUT
               ;;
             *)
               echo "name=build-artifacts" >> $GITHUB_OUTPUT  # Generic fallback

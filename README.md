@@ -57,7 +57,6 @@ Most projects require two or three files:
 2. `.github/workflows/release-workflow.yml` - For production releases
 3. `.github/workflows/release-workflow-dev.yml` - (Optional) For dev/feature branch releases
 
-
 ### How It Works
 
 1. Push code → PR workflow runs checks
@@ -66,7 +65,7 @@ Most projects require two or three files:
 
 ### Customization Levels
 
-#### Example 1: Just Use Flows As Is 
+#### Example 1: Just Use Flows As Is
 ```yaml
 uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
 with:
@@ -184,8 +183,6 @@ jobs:
    git push origin v1.0.0
    ```
 
-
-
 ---
 
 ## Conceptual View
@@ -287,7 +284,6 @@ jobs:
 - Reference artifacts by name via `from: [artifact-name]`
 - Built after all artifact builds complete
 - Support multi-artifact containers (combine multiple artifacts into one image)
-
 
 **Development builds (NOT from tags):**
 - Branch pushes create branch-aware tags: `0.5.9-dev-feat-feature-abc1234`

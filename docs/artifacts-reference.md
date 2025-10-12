@@ -23,8 +23,6 @@ containers:
     # ... container configuration
 ```
 
-
-
 ## Artifacts Section
 
 ### Artifact Required Fields
@@ -438,7 +436,6 @@ jobs:
 - **Single changelog**: One changelog for the entire repository
 - **No change detection**: All artifacts build on every release (smart builds coming in future)
 - **Sequential version bumps**: Artifacts bump versions one at a time (parallel coming in future)
-
 
 ## Complete Working Examples
 
