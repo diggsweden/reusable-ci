@@ -6,7 +6,7 @@ version = 1
 
 # misc
 [[annotations]]
-path = ["*.md","**/*.yml","**/*.multi-artifact"]
+path = ["**/*.md","**/*.json","**/*.yml","**/*.multi-artifact"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2025 The Reuseable CI Authors"
 SPDX-License-Identifier = "CC0-1.0"

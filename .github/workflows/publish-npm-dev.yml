@@ -1,0 +1,199 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Development NPM Package Publisher
+# 
+# Purpose: Fast npm package builds for development and testing.
+#
+# Supported Registries:
+# - GitHub Packages (npm.pkg.github.com) - Default, uses GITHUB_TOKEN
+# - npmjs.org - Set use-github-token=false, provide registry-password
+# - Any custom npm registry
+#
+# How it works:
+# 1. Generates dev version: ${BASE_VERSION}-dev-${BRANCH}-${SHORT_SHA}
+# 2. Applies version to package.json (no git commit)
+# 3. Runs npm ci, build (skips tests for speed)
+# 4. Creates npm pack tarball
+# 5. Publishes to registry with 'dev' tag
+# 6. Uploads tarball as workflow artifact
+#
+# Security controls:
+# - Minimal - optimized for speed
+# - Packages tagged with 'dev' not 'latest'
+# - No SBOM, no signing, no attestation
+#
+# Registry Authentication:
+#   GitHub Packages (default): Uses GITHUB_TOKEN (no secrets needed)
+#   Other registries: Set use-github-token=false and provide registry-password secret
+#
+# Required Secrets:
+#   registry-password: Required when use-github-token=false (for npmjs.org, etc)
+#
+# Required Permissions:
+#   contents: read
+#   packages: write  # Only if publishing to GitHub Packages
+#
+# Outputs:
+#   package-name: Published package name
+#   package-version: Published dev version
+#   tarball: Tarball filename
+
+name: Publish Dev NPM Package
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: "Node.js version"
+        required: false
+        default: "22"
+        type: string
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      registry:
+        description: "NPM registry URL"
+        required: false
+        default: "https://npm.pkg.github.com"
+        type: string
+      package-scope:
+        description: "Required package scope (e.g., @diggsweden). Leave empty to skip validation."
+        required: false
+        default: ""
+        type: string
+      registry-username:
+        description: "NPM registry username (defaults to github.actor for GitHub Packages)"
+        required: false
+        type: string
+      use-github-token:
+        description: "Use GITHUB_TOKEN for authentication (GitHub Packages only)"
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      registry-password:
+        description: "NPM registry auth token (required when use-github-token=false)"
+        required: false
+    outputs:
+      package-name:
+        description: "Published package name"
+        value: ${{ jobs.build-and-publish.outputs.package-name }}
+      package-version:
+        description: "Published dev version"
+        value: ${{ jobs.build-and-publish.outputs.package-version }}
+      tarball:
+        description: "Tarball filename"
+        value: ${{ jobs.build-and-publish.outputs.tarball }}
+permissions:
+  contents: read
+jobs:
+  build-and-publish:
+    name: Build & Publish Dev NPM Package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      package-name: ${{ steps.meta.outputs.name }}
+      package-version: ${{ steps.tags.outputs.dev_version }}
+      tarball: ${{ steps.pack.outputs.tarball }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          registry-url: ${{ inputs.registry }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+      - name: Read package metadata
+        id: meta
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "Package name: $NAME"
+      - name: Validate package scope
+        if: ${{ inputs.package-scope != '' }}
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          SCOPE="${{ inputs.package-scope }}"
+          if [[ "$NAME" != ${SCOPE}/* ]]; then
+            echo "::error::package.json name must be scoped as ${SCOPE}/<pkg>"
+            echo "Found: $NAME"
+            exit 1
+          fi
+          # Configure scoped registry
+          SCOPE_NAME="${SCOPE#@}"
+          npm config set "${SCOPE}:registry" "${{ inputs.registry }}"
+      - name: Checkout .github repository for scripts
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: diggsweden/reusable-ci
+          ref: v2-dev
+          path: .github-shared
+          sparse-checkout: |
+            scripts/version
+            scripts/registry
+      - name: Check registry authentication configuration
+        run: |
+          HAS_PASSWORD="false"
+          if [ -n "${{ secrets['registry-password'] }}" ]; then
+            HAS_PASSWORD="true"
+          fi
+
+          bash .github-shared/scripts/registry/validate-auth.sh \
+            "${{ inputs['use-github-token'] }}" \
+            "${{ inputs.registry }}" \
+            "https://npm.pkg.github.com" \
+            "$HAS_PASSWORD"
+      - name: Generate dev version tag
+        id: tags
+        shell: bash
+        run: |
+          DEV_VERSION=$(bash .github-shared/scripts/version/generate-dev-version.sh)
+          echo "dev_version=${DEV_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "📦 Dev version: ${DEV_VERSION}"
+      - name: Apply dev version to package.json
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          DEV_VERSION: ${{ steps.tags.outputs.dev_version }}
+        run: |
+          npm version "$DEV_VERSION" --no-git-tag-version --allow-same-version
+          echo "Applied version: $(node -p "require('./package.json').version")"
+      - name: Install dependencies
+        working-directory: ${{ inputs.working-directory }}
+        run: npm ci --prefer-offline --no-audit
+      - name: Build (if present)
+        working-directory: ${{ inputs.working-directory }}
+        run: npm run build --if-present
+      - name: Pack tarball
+        id: pack
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          FILE=$(npm pack --silent)
+          echo "tarball=$FILE" >> "$GITHUB_OUTPUT"
+          echo "Created: $FILE"
+      - name: Upload tarball as artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: npm-dev-package-${{ github.run_id }}
+          path: ${{ inputs.working-directory }}/${{ steps.pack.outputs.tarball }}
+          retention-days: 7
+      - name: Publish to NPM registry
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          NODE_AUTH_TOKEN: ${{ inputs['use-github-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+        run: |
+          PKG_NAME=$(node -p "require('./package.json').name")
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "Publishing ${PKG_NAME}@${PKG_VERSION} to ${{ inputs.registry }} with tag 'dev'"
+          npm publish --tag dev
+          echo "✅ Published successfully"

@@ -108,49 +108,54 @@ jobs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Checkout .github repository for scripts
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: diggsweden/reusable-ci
+          ref: v2-dev
+          path: .github-shared
+          sparse-checkout: |
+            scripts/version
+            scripts/registry
+            scripts/container
       # Maven build
       - name: Set up JDK
         if: inputs['project-type'] == 'maven'
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
           java-version: '21'
           distribution: 'temurin'
-          cache: 'maven' # This already caches ~/.m2/repository
-      - name: Build with Maven
-        if: inputs['project-type'] == 'maven'
-        working-directory: ${{ inputs['working-directory'] }}
-        run: |
-          # The setup-java cache handles dependencies
-          mvn clean package -DskipTests -Dstyle.color=always
+          cache: 'maven'
       # NPM build
       - name: Set up Node.js
         if: inputs['project-type'] == 'npm'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '22'
-          cache: 'npm' # This already caches ~/.npm
-      - name: Build with NPM
-        if: inputs['project-type'] == 'npm'
-        working-directory: ${{ inputs['working-directory'] }}
+          cache: 'npm'
+      # Build project (Maven, NPM, or Gradle)
+      - name: Build project
         run: |
-          npm ci --prefer-offline --no-audit
-          npm run build
+          bash .github-shared/scripts/container/build-project.sh \
+            "${{ inputs['project-type'] }}" \
+            "${{ inputs['working-directory'] }}"
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
       - name: Check registry authentication configuration
         run: |
-          if [ "${{ inputs['use-github-token'] }}" = "false" ] && [ -z "${{ secrets['registry-password'] }}" ]; then
-            echo "::error::registry-password secret is required when use-github-token=false"
-            exit 1
+          HAS_PASSWORD="false"
+          if [ -n "${{ secrets['registry-password'] }}" ]; then
+            HAS_PASSWORD="true"
           fi
 
-          if [ "${{ inputs.registry }}" != "ghcr.io" ] && [ "${{ inputs['use-github-token'] }}" = "true" ]; then
-            echo "::warning::Using GITHUB_TOKEN with non-GHCR registry (${{ inputs.registry }})"
-            echo "::warning::This will likely fail. Set use-github-token=false and provide registry-password secret"
-          fi
+          bash .github-shared/scripts/registry/validate-auth.sh \
+            "${{ inputs['use-github-token'] }}" \
+            "${{ inputs.registry }}" \
+            "ghcr.io" \
+            "$HAS_PASSWORD"
       - name: Login to Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
           registry: ${{ inputs.registry }}
           username: ${{ inputs['registry-username'] || github.actor }}
@@ -158,35 +163,15 @@ jobs:
       - name: Generate dev tags
         id: tags
         run: |
-          # Get the latest semver tag
-          git fetch --tags
-          # Use git describe to get the most recent tag, or sort -V for proper version sorting
-          LATEST_TAG=$(git describe --tags --match="v[0-9]*.[0-9]*.[0-9]*" --abbrev=0 2>/dev/null || git tag -l "v[0-9]*.[0-9]*.[0-9]*" | sort -V | tail -n1 || echo "")
-
-          # If no semver tag exists, use v0.0.0
-          if [ -z "$LATEST_TAG" ]; then
-            BASE_VERSION="0.0.0"
-          else
-            # Remove 'v' prefix if present
-            BASE_VERSION="${LATEST_TAG#v}"
-          fi
-
-          # Get branch name and sanitize for Docker tag
-          # Remove refs/heads/ prefix, replace slashes and special chars with dashes
-          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
-          SANITIZED_BRANCH=$(echo "$BRANCH_NAME" | sed 's|[^a-zA-Z0-9._-]|-|g' | sed 's|^-*||; s|-*$||')
-
-          # Dev tag with version, branch, and sha
-          SHORT_SHA=${GITHUB_SHA:0:7}
+          DEV_VERSION=$(bash .github-shared/scripts/version/generate-dev-version.sh)
           IMAGE_NAME="${{ inputs.registry }}/${{ github.repository }}"
-          DEV_TAG="${BASE_VERSION}-dev-${SANITIZED_BRANCH}-${SHORT_SHA}"
 
-          echo "tags=${IMAGE_NAME}:${DEV_TAG}" >> $GITHUB_OUTPUT
-          echo "image=${IMAGE_NAME}:${DEV_TAG}" >> $GITHUB_OUTPUT
-          echo "→ Dev tag: ${DEV_TAG}"
+          echo "tags=${IMAGE_NAME}:${DEV_VERSION}" >> $GITHUB_OUTPUT
+          echo "image=${IMAGE_NAME}:${DEV_VERSION}" >> $GITHUB_OUTPUT
+          echo "→ Dev tag: ${DEV_VERSION}"
       - name: Build and push
         id: build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: ${{ inputs['working-directory'] }}
           file: ${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}

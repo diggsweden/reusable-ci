@@ -123,7 +123,7 @@ jobs:
       contents: write
     steps:
       - name: Harden GitHub runner
-        uses: step-security/harden-runner@ec9f2d5744a09debf3a187a3f4f675c53b671911 # v2.13.0
+        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
         with:
           egress-policy: ${{ inputs.egress-policy }}
       - name: Checkout repository
@@ -195,7 +195,7 @@ jobs:
           mvn $MAVEN_CLI_OPTS dependency:resolve-plugins || true
       - name: Set up Node.js for NPM
         if: ${{ steps.project-type.outputs.type == 'npm' }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: ${{ inputs['node-version'] }}
           # No cache here - we'll cache after version update
@@ -212,7 +212,7 @@ jobs:
           npm ci --ignore-scripts || npm install --ignore-scripts || true
       - name: Save NPM cache
         if: ${{ steps.project-type.outputs.type == 'npm' }}
-        uses: actions/cache/save@v3
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.npm
           key: npm-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', inputs['working-directory'])) }}
@@ -234,7 +234,7 @@ jobs:
             "${{ inputs['gradle-version-file'] }}"
           echo "::endgroup::"
       - name: Download Full Changelog
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: full-changelog
           path: ${{ inputs['working-directory'] }}
@@ -248,7 +248,7 @@ jobs:
           fi
           echo "✓ Full changelog found ($(wc -l < CHANGELOG.md) lines)"
       - name: Download Minimal Changelog
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: minimal-changelog
           path: ${{ inputs['working-directory'] }}
@@ -269,7 +269,7 @@ jobs:
             echo "content=No changes for this release" >> "$GITHUB_OUTPUT"
           fi
       - name: Commit and Push Changes
-        uses: stefanzweifel/git-auto-commit-action@778341af668090896ca464160c2def5d1d1a3eb0 # v6.0.1
+        uses: stefanzweifel/git-auto-commit-action@28e16e81777b558cc906c8750092100bbb34c5e3 # v7.0.0
         with:
           commit_message: |
             chore(release): ${{ github.ref_name }}

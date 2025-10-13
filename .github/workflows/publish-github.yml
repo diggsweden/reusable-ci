@@ -59,7 +59,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - name: Download build artifacts
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: ${{ inputs['artifact-source'] }}
           path: ${{ inputs['working-directory'] }}/target/
@@ -97,7 +97,7 @@ jobs:
       # NPM publishing
       - name: Set up Node.js for NPM
         if: ${{ inputs['package-type'] == 'npm' }}
-        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '22'
           registry-url: 'https://npm.pkg.github.com'

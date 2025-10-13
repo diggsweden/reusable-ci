@@ -319,17 +319,9 @@ jobs:
           fi
 
           echo "✓ Maven Central credentials configured"
-      - name: Validate NPM Token
-        if: ${{ inputs['project-type'] == 'npm'  }}
-        run: |
-          if [ -z "${{ secrets.NPM_TOKEN }}" ]; then
-            echo "::error::Missing NPM_TOKEN secret"
-            echo "Required for publishing to npmjs.org"
-            echo "Generate token at https://www.npmjs.com/settings/~/tokens"
-            exit 1
-          fi
-
-          echo "✓ NPM token configured"
+      # NOTE: NPM publishing to npmjs.org not yet implemented in v2-dev
+      # NPM packages are attached to GitHub Release as tarballs
+      # This validation will be re-enabled when NPM publishing is added
       # ============================================================================
       # SECTION 4: Summary Generation
       # Creates  validation report

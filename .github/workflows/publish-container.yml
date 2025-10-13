@@ -199,9 +199,10 @@ jobs:
             scripts/container
             scripts/sbom
             scripts/release
+            scripts/registry
       - name: Download Maven artifacts
         if: ${{ contains(inputs['artifact-types'], 'maven') }}
-        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         continue-on-error: true
         with:
           name: maven-build-artifacts
@@ -211,7 +212,7 @@ jobs:
         run: bash .github-shared/scripts/container/verify-artifacts.sh maven target
       - name: Download NPM artifacts
         if: ${{ contains(inputs['artifact-types'], 'npm') }}
-        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         continue-on-error: true
         with:
           name: npm-build-artifacts
@@ -221,7 +222,7 @@ jobs:
         run: bash .github-shared/scripts/container/verify-artifacts.sh npm dist fi
       - name: Download Gradle artifacts
         if: ${{ contains(inputs['artifact-types'], 'gradle') }}
-        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         continue-on-error: true
         with:
           name: gradle-build-artifacts
@@ -250,18 +251,19 @@ jobs:
       - name: Check registry authentication configuration
         if: ${{ inputs['push-image'] }}
         run: |
-          if [ "${{ inputs['use-github-token'] }}" = "false" ] && [ -z "${{ secrets['registry-password'] }}" ]; then
-            echo "::error::registry-password secret is required when use-github-token=false"
-            exit 1
+          HAS_PASSWORD="false"
+          if [ -n "${{ secrets['registry-password'] }}" ]; then
+            HAS_PASSWORD="true"
           fi
 
-          if [ "${{ inputs.registry }}" != "ghcr.io" ] && [ "${{ inputs['use-github-token'] }}" = "true" ]; then
-            echo "::warning::Using GITHUB_TOKEN with non-GHCR registry (${{ inputs.registry }})"
-            echo "::warning::This will likely fail. Set use-github-token=false and provide registry-password secret"
-          fi
+          bash .github-shared/scripts/registry/validate-auth.sh \
+            "${{ inputs['use-github-token'] }}" \
+            "${{ inputs.registry }}" \
+            "ghcr.io" \
+            "$HAS_PASSWORD"
       - name: Log in to Container Registry
         if: ${{ inputs['push-image'] }}
-        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
           registry: ${{ inputs.registry }}
           username: ${{ inputs['registry-username'] || github.actor }}
@@ -347,33 +349,24 @@ jobs:
           vuln-type: 'os,library'
       - name: Upload Trivy scan results
         if: ${{ inputs['enable-scan'] && inputs['push-image'] }}
-        uses: github/codeql-action/upload-sarif@f1f6e5f6af878fb37288ce1c627459e94dbf7d01 # v3.30.1
+        uses: github/codeql-action/upload-sarif@v3.30.8
         with:
           sarif_file: 'trivy-results.sarif'
           category: 'container-scan'
       - name: Generate Container SBOMs (SPDX + CycloneDX)
         if: ${{ inputs['enable-sbom'] && inputs['push-image'] }}
         run: |
-          # Extract version and project name from GitHub context
           VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"  # Remove 'v' prefix
+          VERSION="${VERSION#v}"
           PROJECT_NAME=$(basename ${{ github.repository }})
-
-          # Use SBOM generation script for container layer
-          # Generate SBOM for each artifact type in multi-artifact containers
           IMAGE="${{ steps.image-name.outputs.name }}@${{ steps.build.outputs.digest }}"
-          IFS=',' read -ra ARTIFACT_TYPES <<< "${{ inputs['artifact-types'] }}"
-          
-          for ARTIFACT_TYPE in "${ARTIFACT_TYPES[@]}"; do
-            echo "Generating SBOM for artifact type: $ARTIFACT_TYPE"
-            bash .github-shared/scripts/sbom/generate-sbom.sh \
-              "$ARTIFACT_TYPE" \
-              "containerimage" \
-              "$VERSION" \
-              "$PROJECT_NAME" \
-              "." \
-              "$IMAGE"
-          done
+
+          bash .github-shared/scripts/sbom/generate-container-sbom.sh \
+            "${{ inputs['artifact-types'] }}" \
+            "$VERSION" \
+            "$PROJECT_NAME" \
+            "$IMAGE" \
+            ".github-shared/scripts/sbom"
       - name: Upload Container SBOMs
         if: ${{ inputs['enable-sbom'] && inputs['push-image'] }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -389,7 +382,8 @@ jobs:
         run: |
           SBOM_FILE=$(ls *-container-sbom.spdx.json 2>/dev/null | head -1)
           if [ -z "$SBOM_FILE" ]; then
-            echo "Error: No container SBOM file found matching pattern *-container-sbom.spdx.json"
+            echo "::error::No container SBOM file found matching pattern *-container-sbom.spdx.json"
+            echo "::error::SBOM generation step may have failed"
             exit 1
           fi
           echo "sbom-file=$SBOM_FILE" >> "$GITHUB_OUTPUT"
