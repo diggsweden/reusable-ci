@@ -14,36 +14,61 @@
     ":rebaseStalePrs",
     "mergeConfidence:all-badges"
   ],
-  "baseBranches": ["v2"],
+  "baseBranchPatterns": [
+    "v2"
+  ],
   "semanticCommitType": "build",
   "semanticCommitScope": "deps",
   "commitMessageLowerCase": "auto",
   "commitBody": "Signed-off-by: {{{gitAuthor}}}",
   "minimumReleaseAge": "7 days",
   "timezone": "Europe/Stockholm",
-  "labels": ["dependencies"],
+  "labels": [
+    "dependencies"
+  ],
   "vulnerabilityAlerts": {
-    "labels": ["security", "dependencies"]
+    "labels": [
+      "security",
+      "dependencies"
+    ]
   },
   "packageRules": [
     {
-      "matchManagers": ["github-actions"],
-      "matchPackageNames": ["slsa-framework/slsa-github-generator/**"],
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "slsa-framework/slsa-github-generator/**"
+      ],
       "enabled": false,
       "description": "SLSA generator should not be pinned per security best practices - use semantic versioning (e.g., @v2.1.0)"
     },
     {
-      "matchManagers": ["github-actions"],
-      "addLabels": ["actions"],
+      "matchManagers": [
+        "github-actions"
+      ],
+      "addLabels": [
+        "actions"
+      ],
       "automerge": true,
       "groupName": "GitHub Actions updates",
-      "matchUpdateTypes": ["minor", "patch"],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
       "pinDigests": true
     },
     {
-      "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["major"],
-      "addLabels": ["actions", "major-update"],
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "addLabels": [
+        "actions",
+        "major-update"
+      ],
       "groupName": "GitHub Actions major updates",
       "pinDigests": true
     }
