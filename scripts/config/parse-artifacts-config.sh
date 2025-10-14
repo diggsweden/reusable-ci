@@ -132,7 +132,6 @@ for target in maven-central github-packages; do
 done
 
 ARTIFACT_COUNT=$(echo "$ARTIFACTS" | jq 'length')
-echo "::notice::Loaded $ARTIFACT_COUNT artifacts, $CONTAINER_COUNT containers"
 
 # Extract first artifact's type and build-type for legacy compatibility
 FIRST_PROJECT_TYPE=$(echo "$ARTIFACTS" | jq -r '.[0]["project-type"]')
@@ -144,12 +143,12 @@ echo "first-build-type=$FIRST_BUILD_TYPE" >> $GITHUB_OUTPUT
 TAG_NAME="$GITHUB_REF_NAME"
 IS_DRAFT="false"
 
-# Check if tag contains -SNAPSHOT (always draft)
-if [[ "$TAG_NAME" == *"-SNAPSHOT"* ]]; then
+# Check if tag contains -SNAPSHOT or -snapshot (always draft)
+if [[ "$TAG_NAME" == *"-SNAPSHOT"* ]] || [[ "$TAG_NAME" == *"-snapshot"* ]]; then
   IS_DRAFT="true"
   echo "::notice::Tag contains -SNAPSHOT, creating draft release"
 # Check if tag is a release version semver: vX.Y.Z or vX.Y.Z-prerelease
-elif ! echo "$TAG_NAME" | grep -qE '^v?[0-9]+\\.[0-9]+\\.[0-9]+(-[a-zA-Z0-9]+(\\.[a-zA-Z0-9]+)*)?$'; then
+elif ! echo "$TAG_NAME" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$'; then
   IS_DRAFT="true"
   echo "::notice::Tag '$TAG_NAME' is not a release version semver (vX.Y.Z), creating draft release"
 fi
