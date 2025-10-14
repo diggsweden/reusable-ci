@@ -14,6 +14,7 @@
     ":rebaseStalePrs",
     "mergeConfidence:all-badges"
   ],
+  "baseBranches": ["v2"],
   "semanticCommitType": "build",
   "semanticCommitScope": "deps",
   "commitMessageLowerCase": "auto",
