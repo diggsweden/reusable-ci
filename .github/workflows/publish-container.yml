@@ -349,7 +349,7 @@ jobs:
           vuln-type: 'os,library'
       - name: Upload Trivy scan results
         if: ${{ inputs['enable-scan'] && inputs['push-image'] }}
-        uses: github/codeql-action/upload-sarif@v3.30.8
+        uses: github/codeql-action/upload-sarif@755f44910c12a3d7ca0d8c6e42c048b3362f7cec # v3.30.8
         with:
           sarif_file: 'trivy-results.sarif'
           category: 'container-scan'
@@ -412,7 +412,7 @@ jobs:
       actions: read
       id-token: write
       packages: write
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
     with:
       image: ${{ needs.build-and-push.outputs.image }}
       digest: ${{ needs.build-and-push.outputs.digest }}
