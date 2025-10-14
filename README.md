@@ -3,7 +3,7 @@
 Reusable CI/CD workflows and scripts.
 Implements best Open Source workflows, compliance, security best practices, automated releases, and quality checks.
 
-**Current version:** `@v2-dev`
+**Current version:** `@v2`
 
 ## Documentation
 
