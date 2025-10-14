@@ -433,7 +433,7 @@ podman pull ghcr.io/diggsweden/repo-name/my-app:v1.0.0
 # .github/workflows/release-workflow.yml
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2
     with:
       artifacts-config: .github/artifacts.yml
       container.registry: docker.io
@@ -454,7 +454,7 @@ docker.io/diggsweden/my-app:v1.0.0
 # .github/workflows/release-workflow.yml
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2
     with:
       artifacts-config: .github/artifacts.yml
       container.registry: registry.example.com

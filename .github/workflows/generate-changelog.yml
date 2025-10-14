@@ -59,7 +59,7 @@ jobs:
         with:
           repository: diggsweden/reusable-ci
           path: .github-templates
-          ref: v2-dev
+          ref: v2
           sparse-checkout: |
             templates/
       - name: Generate Changelog with git-cliff

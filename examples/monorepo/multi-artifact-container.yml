@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-# Example: Multiple artifacts building into ONE combined container (v2-dev)
+# Example: Multiple artifacts building into ONE combined container (v2)
 # Use case: Monorepo with 2 Maven services + 1 NPM frontend → 1 combined container image
 
 artifacts:

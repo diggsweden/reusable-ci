@@ -67,7 +67,7 @@ Most projects require two or three files:
 
 #### Example 1: Just Use Flows As Is
 ```yaml
-uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
+uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2
 with:
   artifacts-config: .github/artifacts.yml
   release-publisher: github-cli
@@ -77,21 +77,21 @@ with:
 ```yaml
 jobs:
   build-maven:
-    uses: diggsweden/reusable-ci/.github/workflows/build-maven.yml@v2-dev
+    uses: diggsweden/reusable-ci/.github/workflows/build-maven.yml@v2
     with:
       build-type: app
       java-version: "21"
 
   publish-github:
     needs: build-maven
-    uses: diggsweden/reusable-ci/.github/workflows/publish-github.yml@v2-dev
+    uses: diggsweden/reusable-ci/.github/workflows/publish-github.yml@v2
     with:
       package-type: maven
       artifact-source: maven-build-artifacts
 
   build-container:
     needs: build-maven
-    uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@v2-dev
+    uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@v2
     with:
       container-file: Containerfile
       artifact-source: maven-build-artifacts
@@ -123,7 +123,7 @@ jobs:
      contents: read
    jobs:
      pr-checks:
-       uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@v2-dev
+       uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@v2
        permissions:
          contents: read
          packages: read
@@ -144,7 +144,7 @@ jobs:
      contents: read
    jobs:
      release:
-       uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
+       uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2
        permissions:
          contents: write
          packages: write
@@ -168,7 +168,7 @@ jobs:
      contents: read
    jobs:
      dev-release:
-       uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@v2-dev
+       uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@v2
        permissions:
          contents: write
          packages: write

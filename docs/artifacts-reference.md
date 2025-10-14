@@ -268,7 +268,7 @@ artifacts:
 ```yaml
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2
     with:
       artifacts-config: .github/artifacts.yml
       release-publisher: github-cli
@@ -415,7 +415,7 @@ permissions:
 
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2-dev
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2
     permissions:
       contents: write
       packages: write

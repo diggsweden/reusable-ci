@@ -319,7 +319,7 @@ jobs:
           fi
 
           echo "✓ Maven Central credentials configured"
-      # NOTE: NPM publishing to npmjs.org not yet implemented in v2-dev
+      # NOTE: NPM publishing to npmjs.org not yet implemented in v2
       # NPM packages are attached to GitHub Release as tarballs
       # This validation will be re-enabled when NPM publishing is added
       # ============================================================================

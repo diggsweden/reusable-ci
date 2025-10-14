@@ -225,7 +225,7 @@ on:
 
 jobs:
   dev-release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@v2-dev
+    uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@v2
     with:
       artifacts-config: .github/artifacts.yml
     permissions:
