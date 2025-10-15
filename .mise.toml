@@ -18,4 +18,4 @@ paranoid = true      # Enable strict security checks and verification
 "aqua:zricethezav/gitleaks" = "v8.18.4"
 "aqua:siderolabs/conform" = "v0.1.0-alpha.30"
 "aqua:mvdan/sh" = "v3.10.0"
-"aqua:koalaman/shellcheck" = "v0.10.0"
+"aqua:koalaman/shellcheck" = "v0.11.0"
