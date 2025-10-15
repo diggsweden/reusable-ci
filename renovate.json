@@ -34,6 +34,7 @@
   },
   "packageRules": [
     {
+<<<<<<< Updated upstream
       "matchManagers": [
         "github-actions"
       ],
@@ -42,6 +43,17 @@
       ],
       "enabled": false,
       "description": "SLSA generator should not be pinned per security best practices - use semantic versioning (e.g., @v2.1.0)"
+||||||| Stash base
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["slsa-framework/slsa-github-generator/**"],
+      "enabled": false,
+      "description": "SLSA generator should not be pinned per security best practices - use semantic versioning (e.g., @v2.1.0)"
+=======
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["slsa-framework/slsa-github-generator"],
+      "pinDigests": false,
+      "description": "SLSA generator must use semantic versioning without digest pinning per security best practices"
+>>>>>>> Stashed changes
     },
     {
       "matchManagers": [
