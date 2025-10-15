@@ -14,7 +14,9 @@
     ":rebaseStalePrs",
     "mergeConfidence:all-badges"
   ],
-  "baseBranches": ["v2"],
+  "baseBranchPatterns": [
+    "v2"
+  ],
   "semanticCommitType": "build",
   "semanticCommitScope": "deps",
   "commitMessageLowerCase": "auto",
@@ -32,8 +34,12 @@
   },
   "packageRules": [
     {
-      "matchManagers": ["github-actions"],
-      "matchPackageNames": ["slsa-framework/slsa-github-generator"],
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "slsa-framework/slsa-github-generator"
+      ],
       "pinDigests": false,
       "description": "SLSA generator must use semantic versioning without digest pinning per security best practices"
     },
