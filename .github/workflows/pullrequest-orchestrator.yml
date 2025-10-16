@@ -46,9 +46,9 @@ on:
         required: true
         type: string
       base-branch:
-        description: "Base branch for commit linting"
+        description: "Base branch for commit linting (auto-detects PR target if empty)"
         required: false
-        default: "main"
+        default: ""
         type: string
       # Linter toggles (all can be disabled if needed)
       linters.commitlint:
