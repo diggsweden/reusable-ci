@@ -31,11 +31,15 @@ echo "Project type: $PROJECT_TYPE"
 echo "Requested layers: $LAYERS"
 echo ""
 
+# Syft version to install (pinned to avoid bugs in newer versions)
+# renovate: datasource=github-releases depName=anchore/syft
+SYFT_VERSION="v1.33.0"
+
 # Install Syft if not available
 install_syft() {
   if ! command -v syft &>/dev/null; then
-    echo "Installing Syft SBOM generator..."
-    curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /tmp
+    echo "Installing Syft SBOM generator (version: ${SYFT_VERSION})..."
+    curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /tmp "${SYFT_VERSION}"
     export PATH="/tmp:$PATH"
     echo "✅ Syft installed successfully"
   else

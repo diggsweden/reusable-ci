@@ -126,6 +126,17 @@
       ],
       "datasourceTemplate": "docker",
       "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/scripts/sbom/.+\\.sh$/"
+      ],
+      "description": "Update Syft version in SBOM generation script",
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)[\\s\\n]+SYFT_VERSION=\"(?<currentValue>v[0-9.]+)\""
+      ],
+      "versioningTemplate": "semver"
     }
   ],
   "prConcurrentLimit": 4,
