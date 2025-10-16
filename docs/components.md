@@ -201,6 +201,12 @@ Validates publiccode.yml file format.
 uses: ./.github/workflows/lint-publiccode.yml
 ```
 
+#### `lint-just-mise.yml`
+Runs just+mise-based linting using mise-managed tools (lightweight alternative to MegaLinter).
+```yaml
+uses: ./.github/workflows/lint-just-mise.yml
+```
+
 ### Security Workflows
 
 These workflows are automatically called by `pullrequest-orchestrator.yml`.

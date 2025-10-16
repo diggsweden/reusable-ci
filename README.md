@@ -131,6 +131,13 @@ jobs:
        secrets: inherit
        with:
          project-type: maven  # or npm, gradle
+         # Optional: Configure linters (all enabled by default)
+         # linters.commitlint: true
+         # linters.licenselint: true
+         # linters.dependencyreview: true
+         # linters.megalint: true        # Heavy, comprehensive
+         # linters.publiccodelint: false
+         # linters.justmiselint: false   # Lightweight, just+mise-based (requires justfile)
    ```
 
 3. **Create release workflow** - Trigger builds on tags:
