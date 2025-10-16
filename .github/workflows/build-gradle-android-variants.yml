@@ -1,0 +1,297 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Gradle Android Variants Builder
+# 
+# Purpose: Builds Android applications with multiple product flavors and build types,
+# creating separate artifacts for debug/release APKs and AABs with custom naming.
+#
+# Build Process:
+#   1. Set up JDK and Android SDK
+#   2. Build specified product flavors and build types
+#   3. Optional: Sign release builds
+#   4. Upload separate artifacts for each variant with custom names
+#
+# Features:
+#   - Multiple product flavors (demo, prod, staging, etc.)
+#   - Multiple build types (debug, release)
+#   - AAB (Android App Bundle) generation
+#   - Date-stamped artifact names
+#   - Custom artifact naming (playstore names, prefixes)
+#   - Configurable JDK distribution (temurin, zulu, adopt, corretto)
+#   - Android app signing
+#
+# Outputs:
+#   - Separate artifacts per variant with custom names
+#   - Examples: "2025-01-15 - testing_store - wallet-app - demo - APK debug"
+#
+# Required Secrets (for signing):
+#   ANDROID_KEYSTORE: Base64-encoded keystore file
+#   ANDROID_KEYSTORE_PASSWORD: Keystore password
+#   ANDROID_KEY_ALIAS: Key alias
+#   ANDROID_KEY_PASSWORD: Key password
+#
+# Required Permissions:
+#   contents: read  # Checkout code
+#
+name: Build Gradle Android Variants
+on:
+  workflow_call:
+    inputs:
+      # === REQUIRED ===
+      java-version:
+        description: "Java version (e.g., 17, 21)"
+        required: true
+        type: string
+      build-module:
+        description: "Gradle module to build (e.g., app)"
+        required: true
+        type: string
+      # === VARIANT CONFIGURATION ===
+      product-flavor:
+        description: "Product flavor to build (e.g., demo, prod, staging). Leave empty for no flavor."
+        required: false
+        default: ""
+        type: string
+      build-types:
+        description: "Build types to create (comma-separated: debug,release)"
+        required: false
+        default: "debug,release"
+        type: string
+      include-aab:
+        description: "Also build AAB (Android App Bundle)"
+        required: false
+        default: true
+        type: boolean
+      # === ARTIFACT NAMING ===
+      artifact-name-prefix:
+        description: "Prefix for artifact names (e.g., testing_store, production)"
+        required: false
+        default: ""
+        type: string
+      include-date-stamp:
+        description: "Include date in artifact names"
+        required: false
+        default: true
+        type: boolean
+      # === JDK CONFIGURATION ===
+      jdk-distribution:
+        description: "JDK distribution (temurin, zulu, adopt, corretto)"
+        required: false
+        default: "temurin"
+        type: string
+      # === BUILD CONFIGURATION ===
+      enable-signing:
+        description: "Enable Android app signing"
+        required: false
+        default: false
+        type: boolean
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      skip-tests:
+        description: "Skip tests during build"
+        required: false
+        default: false
+        type: boolean
+permissions:
+  contents: read
+jobs:
+  build-variants:
+    name: Build Android Variants
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+      
+      - name: Generate artifact names
+        id: artifact-names
+        run: |
+          DATE_STAMP=""
+          if [ "${{ inputs['include-date-stamp'] }}" = "true" ]; then
+            DATE_STAMP="$(date +'%Y-%m-%d') - "
+          fi
+          
+          PREFIX="${{ inputs['artifact-name-prefix'] }}"
+          if [ -n "$PREFIX" ]; then
+            PREFIX="${PREFIX} - "
+          fi
+          
+          REPO_NAME="${{ github.event.repository.name }}"
+          FLAVOR="${{ inputs['product-flavor'] }}"
+          FLAVOR_SUFFIX=""
+          if [ -n "$FLAVOR" ]; then
+            FLAVOR_SUFFIX=" - ${FLAVOR}"
+          fi
+          
+          DEBUG_NAME="${DATE_STAMP}${PREFIX}${REPO_NAME}${FLAVOR_SUFFIX} - APK debug"
+          RELEASE_NAME="${DATE_STAMP}${PREFIX}${REPO_NAME}${FLAVOR_SUFFIX} - APK release"
+          AAB_NAME="${DATE_STAMP}${PREFIX}${REPO_NAME}${FLAVOR_SUFFIX} - AAB release"
+          
+          echo "debug-name=${DEBUG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "release-name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "aab-name=${AAB_NAME}" >> "$GITHUB_OUTPUT"
+          
+          echo "Debug artifact: ${DEBUG_NAME}"
+          echo "Release artifact: ${RELEASE_NAME}"
+          echo "AAB artifact: ${AAB_NAME}"
+      
+      - name: Set up JDK
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          distribution: ${{ inputs['jdk-distribution'] }}
+          java-version: ${{ inputs['java-version'] }}
+          cache: 'gradle'
+      
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+      
+      - name: Make gradlew executable
+        working-directory: ${{ inputs['working-directory'] }}
+        run: chmod +x ./gradlew
+      
+      - name: Decode Android keystore
+        if: ${{ inputs['enable-signing'] }}
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.keystore
+            echo "✓ Android keystore decoded successfully"
+          else
+            echo "::error::ANDROID_KEYSTORE secret not found but enable-signing is true"
+            exit 1
+          fi
+      
+      - name: Get version info
+        id: version-info
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          if [ -f "gradle.properties" ]; then
+            VERSION=$(grep "versionName=" gradle.properties | cut -d'=' -f2 || echo "unknown")
+            VERSION_CODE=$(grep "versionCode=" gradle.properties | cut -d'=' -f2 || echo "unknown")
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "version-code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
+            echo "Version: ${VERSION} (${VERSION_CODE})"
+          else
+            echo "::warning::gradle.properties not found, version info unavailable"
+            echo "version=unknown" >> "$GITHUB_OUTPUT"
+            echo "version-code=unknown" >> "$GITHUB_OUTPUT"
+          fi
+      
+      - name: Determine build tasks
+        id: build-tasks
+        run: |
+          FLAVOR="${{ inputs['product-flavor'] }}"
+          FLAVOR_CAPITALIZED=""
+          if [ -n "$FLAVOR" ]; then
+            FLAVOR_CAPITALIZED="$(echo ${FLAVOR} | awk '{print toupper(substr($0,1,1)) tolower(substr($0,2))}')"
+          fi
+          
+          TASKS=""
+          
+          # Add base build task
+          TASKS="build"
+          
+          # Add debug APK task
+          if [[ "${{ inputs['build-types'] }}" == *"debug"* ]]; then
+            TASKS="${TASKS} assemble${FLAVOR_CAPITALIZED}Debug"
+          fi
+          
+          # Add release APK task
+          if [[ "${{ inputs['build-types'] }}" == *"release"* ]]; then
+            TASKS="${TASKS} assemble${FLAVOR_CAPITALIZED}Release"
+          fi
+          
+          # Add AAB task
+          if [ "${{ inputs['include-aab'] }}" = "true" ] && [[ "${{ inputs['build-types'] }}" == *"release"* ]]; then
+            TASKS="${TASKS} ${{ inputs['build-module'] }}:bundle${FLAVOR_CAPITALIZED}Release"
+          fi
+          
+          echo "tasks=${TASKS}" >> "$GITHUB_OUTPUT"
+          echo "Building with tasks: ${TASKS}"
+      
+      - name: Run Gradle build
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "Running Gradle tasks: ${{ steps.build-tasks.outputs.tasks }}"
+          ./gradlew ${{ steps.build-tasks.outputs.tasks }} ${{ inputs['skip-tests'] && '-x test' || '' }}
+      
+      - name: List built artifacts
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          echo "Built artifacts:"
+          find ${{ inputs['build-module'] }}/build/outputs -type f \( -name "*.apk" -o -name "*.aab" \) -ls || echo "No artifacts found"
+      
+      - name: Upload Debug APK
+        if: contains(inputs['build-types'], 'debug')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.artifact-names.outputs.debug-name }}
+          path: |
+            ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/apk/**/debug/*.apk
+          retention-days: 7
+      
+      - name: Upload Release APK
+        if: contains(inputs['build-types'], 'release')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.artifact-names.outputs.release-name }}
+          path: |
+            ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/apk/**/release/*.apk
+          retention-days: 7
+      
+      - name: Upload AAB
+        if: ${{ inputs['include-aab'] && contains(inputs['build-types'], 'release') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.artifact-names.outputs.aab-name }}
+          path: |
+            ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/bundle/**/*.aab
+          retention-days: 7
+      
+      - name: Generate build summary
+        run: |
+          echo "## Android Variants Build Summary 📱" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Java** | ${{ inputs['java-version'] }} (${{ inputs['jdk-distribution'] }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Module** | ${{ inputs['build-module'] }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Flavor** | ${{ inputs['product-flavor'] || 'default' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Build Types** | ${{ inputs['build-types'] }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Include AAB** | ${{ inputs['include-aab'] && '✓' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Signing** | ${{ inputs['enable-signing'] && '✓ Enabled' || '⊘ Disabled' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Tests** | ${{ inputs['skip-tests'] && '⊘ Skipped' || '✓ Executed' }} |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -n "${{ steps.version-info.outputs.version }}" ] && [ "${{ steps.version-info.outputs.version }}" != "unknown" ]; then
+            echo "| **Version** | ${{ steps.version-info.outputs.version }} (${{ steps.version-info.outputs.version-code }}) |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifacts Generated" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ inputs['build-types'] }}" == *"debug"* ]]; then
+            echo "- ✓ Debug APK: \`${{ steps.artifact-names.outputs.debug-name }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ "${{ inputs['build-types'] }}" == *"release"* ]]; then
+            echo "- ✓ Release APK: \`${{ steps.artifact-names.outputs.release-name }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ "${{ inputs['include-aab'] }}" = "true" ] && [[ "${{ inputs['build-types'] }}" == *"release"* ]]; then
+            echo "- ✓ Release AAB: \`${{ steps.artifact-names.outputs.aab-name }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "*Build completed at $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY
