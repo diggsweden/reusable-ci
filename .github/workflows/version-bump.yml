@@ -217,18 +217,18 @@ jobs:
           path: ~/.npm
           key: npm-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', inputs['working-directory'])) }}
       - name: Set up JDK for Gradle
-        if: ${{ steps.project-type.outputs.type == 'gradle' }}
+        if: ${{ steps.project-type.outputs.type == 'gradle' || steps.project-type.outputs.type == 'gradle-android' }}
         uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
           java-version: ${{ inputs['java-version'] }}
           distribution: 'temurin'
           cache: 'gradle'
       - name: Update Gradle version
-        if: ${{ steps.project-type.outputs.type == 'gradle' }}
+        if: ${{ steps.project-type.outputs.type == 'gradle' || steps.project-type.outputs.type == 'gradle-android' }}
         run: |
           echo "::group::Update Gradle version"
           bash .github-shared/scripts/version/bump-version.sh \
-            gradle \
+            ${{ steps.project-type.outputs.type }} \
             "${GITHUB_REF_NAME#v}" \
             "${{ inputs['working-directory'] }}" \
             "${{ inputs['gradle-version-file'] }}"

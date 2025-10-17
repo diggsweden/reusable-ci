@@ -145,6 +145,7 @@ jobs:
       maven-artifacts: ${{ steps.parse.outputs.maven-artifacts }}
       npm-artifacts: ${{ steps.parse.outputs.npm-artifacts }}
       gradle-artifacts: ${{ steps.parse.outputs.gradle-artifacts }}
+      gradleandroid-artifacts: ${{ steps.parse.outputs.gradleandroid-artifacts }}
       python-artifacts: ${{ steps.parse.outputs.python-artifacts }}
       go-artifacts: ${{ steps.parse.outputs.go-artifacts }}
       rust-artifacts: ${{ steps.parse.outputs.rust-artifacts }}
@@ -152,6 +153,7 @@ jobs:
       has-maven: ${{ steps.parse.outputs.has-maven }}
       has-npm: ${{ steps.parse.outputs.has-npm }}
       has-gradle: ${{ steps.parse.outputs.has-gradle }}
+      has-gradleandroid: ${{ steps.parse.outputs.has-gradleandroid }}
       has-python: ${{ steps.parse.outputs.has-python }}
       has-go: ${{ steps.parse.outputs.has-go }}
       has-rust: ${{ steps.parse.outputs.has-rust }}
@@ -273,10 +275,30 @@ jobs:
       enable-signing: ${{ matrix.artifact.config['enable-android-signing'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
       branch: ${{ inputs.branch }}
+  # Step 2d: Build Gradle Android artifacts
+  build-gradle-android:
+    name: Build Gradle Android - ${{ matrix.artifact.name }}
+    needs: [parse-config, version-and-changelog]
+    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-gradleandroid == 'true' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(needs.parse-config.outputs.gradleandroid-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/build-gradle.yml
+    with:
+      java-version: ${{ matrix.artifact.config['java-version'] }}
+      gradle-tasks: ${{ matrix.artifact.config['gradle-tasks'] }}
+      build-module: ${{ matrix.artifact.config['build-module'] }}
+      enable-signing: ${{ matrix.artifact.config['enable-android-signing'] }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      branch: ${{ inputs.branch }}
   # Step 3a: Publish to GitHub Packages
   publish-github:
     name: Publish GitHub - ${{ matrix.artifact.name }}
-    needs: [parse-config, build-maven, build-npm, build-gradle]
+    needs: [parse-config, build-maven, build-npm, build-gradle, build-gradle-android]
     if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-github-packages == 'true' }}
     strategy:
       matrix:
@@ -314,7 +336,7 @@ jobs:
   # Step 4: Build and Publish Container Images
   build-containers:
     name: Build Container - ${{ matrix.container.name }}
-    needs: [parse-config, build-maven, build-npm, build-gradle]
+    needs: [parse-config, build-maven, build-npm, build-gradle, build-gradle-android]
     if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.containers != '[]' }}
     strategy:
       matrix:
@@ -343,7 +365,7 @@ jobs:
   # Step 5: Create GitHub Release  
   create-release:
     name: Create GitHub Release
-    needs: [parse-config, publish-github, publish-mavencentral, build-containers]
+    needs: [parse-config, publish-github, publish-mavencentral, build-containers, build-gradle-android]
     # Run even if previous jobs were skipped but at least one succeeded
     if: ${{ !failure() && !cancelled() && inputs['release-publisher'] == 'github-cli' }}
     permissions:
@@ -365,7 +387,7 @@ jobs:
   # Final summary
   release-summary:
     name: Release Summary
-    needs: [parse-config, version-and-changelog, build-maven, build-npm, build-gradle, publish-github, publish-mavencentral, build-containers, create-release]
+    needs: [parse-config, version-and-changelog, build-maven, build-npm, build-gradle, build-gradle-android, publish-github, publish-mavencentral, build-containers, create-release]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -401,6 +423,7 @@ jobs:
           echo "| Build Maven | ${{ needs.build-maven.result == 'success' && '✓' || needs.build-maven.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Build NPM | ${{ needs.build-npm.result == 'success' && '✓' || needs.build-npm.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Build Gradle | ${{ needs.build-gradle.result == 'success' && '✓' || needs.build-gradle.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Gradle Android | ${{ needs.build-gradle-android.result == 'success' && '✓' || needs.build-gradle-android.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Publish GitHub | ${{ needs.publish-github.result == 'success' && '✓' || needs.publish-github.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Publish Maven Central | ${{ needs.publish-mavencentral.result == 'success' && '✓' || needs.publish-mavencentral.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Containers | ${{ needs.build-containers.result == 'success' && '✓' || needs.build-containers.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY

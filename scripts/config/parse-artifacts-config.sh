@@ -21,7 +21,7 @@ if [ "$ARTIFACTS" = "null" ] || [ "$ARTIFACTS" = "[]" ]; then
 fi
 
 # Validate projectType for all artifacts
-VALID_TYPES="maven npm gradle python go rust"
+VALID_TYPES="maven npm gradle gradle-android python go rust"
 for projectType in $(echo "$ARTIFACTS" | jq -r '.[] | .["project-type"]'); do
   if ! echo "$VALID_TYPES" | grep -qw "$projectType"; then
     echo "::error::Invalid projectType '$projectType'. Must be one of: $VALID_TYPES"
@@ -79,22 +79,25 @@ CONTAINERS_WITH_TYPES=$(echo "$CONTAINERS" | jq -c --argjson artifacts "$ARTIFAC
 } >> $GITHUB_OUTPUT
 
 # Filter artifacts by project type and set has-* flags
-for type in maven npm gradle python go rust; do
+for type in maven npm gradle gradle-android python go rust; do
   FILTERED=$(echo "$ARTIFACTS" | jq -c '[.[] | select(.["project-type"] == "'"${type}"'")]')
   COUNT=$(echo "$FILTERED" | jq 'length')
   
+  # Normalize type name for output (gradle-android -> gradleandroid)
+  TYPE_NAME=$(echo "$type" | tr -d '-')
+  
   # Output filtered list
   {
-    echo "${type}-artifacts<<EOF"
+    echo "${TYPE_NAME}-artifacts<<EOF"
     echo "$FILTERED"
     echo "EOF"
   } >> $GITHUB_OUTPUT
   
   # Output has-* flag
   if [ "$COUNT" -gt 0 ]; then
-    echo "has-${type}=true" >> $GITHUB_OUTPUT
+    echo "has-${TYPE_NAME}=true" >> $GITHUB_OUTPUT
   else
-    echo "has-${type}=false" >> $GITHUB_OUTPUT
+    echo "has-${TYPE_NAME}=false" >> $GITHUB_OUTPUT
   fi
 done
 
