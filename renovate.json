@@ -1,76 +1,15 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "osvVulnerabilityAlerts": true,
-  "dependencyDashboardOSVVulnerabilitySummary": "all",
   "extends": [
-    "config:best-practices",
-    "workarounds:all",
-    "security:openssf-scorecard",
-    ":configMigration",
-    ":dependencyDashboard",
-    ":gitSignOff",
-    ":automergeMinor",
-    ":semanticCommits",
-    ":rebaseStalePrs",
-    "mergeConfidence:all-badges"
+    "local>diggsweden/.github:renovate-base"
   ],
   "baseBranches": ["v2"],
-  "semanticCommitType": "build",
-  "semanticCommitScope": "deps",
-  "commitMessageLowerCase": "auto",
-  "commitBody": "Signed-off-by: {{{gitAuthor}}}",
-  "minimumReleaseAge": "7 days",
-  "timezone": "Europe/Stockholm",
-  "labels": [
-    "dependencies"
-  ],
-  "vulnerabilityAlerts": {
-    "labels": [
-      "security",
-      "dependencies"
-    ]
-  },
   "enabledManagers": [
     "github-actions",
     "mise",
     "custom.regex"
   ],
   "packageRules": [
-    {
-      "matchManagers": ["github-actions"],
-      "matchPackageNames": ["slsa-framework/slsa-github-generator"],
-      "pinDigests": false,
-      "description": "SLSA generator must use semantic versioning without digest pinning per security best practices"
-    },
-    {
-      "matchManagers": [
-        "github-actions"
-      ],
-      "addLabels": [
-        "actions"
-      ],
-      "automerge": true,
-      "groupName": "GitHub Actions updates",
-      "matchUpdateTypes": [
-        "minor",
-        "patch"
-      ],
-      "pinDigests": true
-    },
-    {
-      "matchManagers": [
-        "github-actions"
-      ],
-      "matchUpdateTypes": [
-        "major"
-      ],
-      "addLabels": [
-        "actions",
-        "major-update"
-      ],
-      "groupName": "GitHub Actions major updates",
-      "pinDigests": true
-    },
     {
       "description": "Group all mise tool dependencies",
       "matchManagers": [
@@ -149,15 +88,5 @@
       ],
       "versioningTemplate": "semver"
     }
-  ],
-  "prConcurrentLimit": 4,
-  "prCreation": "immediate",
-  "rangeStrategy": "auto",
-  "ignorePresets": [
-    ":prHourlyLimit2"
-  ],
-  "schedule": [
-    "after 8:00pm on Saturday",
-    "before 11:59pm on Sunday"
   ]
 }
