@@ -3,7 +3,6 @@
   "extends": [
     "local>diggsweden/.github:renovate-base"
   ],
-  "baseBranches": ["v2"],
   "enabledManagers": [
     "github-actions",
     "mise",
