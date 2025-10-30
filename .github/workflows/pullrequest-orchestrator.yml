@@ -59,12 +59,12 @@ on:
         type: string
       # Linter toggles (all can be disabled if needed)
       linters.commitlint:
-        description: "Enable commit message linting"
+        description: "⚠️ DEPRECATED v3.0: Enable commit message linting (migrate to justmiselint)"
         required: false
         default: true
         type: boolean
       linters.licenselint:
-        description: "Enable SPDX license header linting"
+        description: "⚠️ DEPRECATED v3.0: Enable SPDX license header linting (migrate to justmiselint)"
         required: false
         default: true
         type: boolean
@@ -74,17 +74,17 @@ on:
         default: true
         type: boolean
       linters.megalint:
-        description: "Enable MegaLinter for  code quality checks"
+        description: "⚠️ DEPRECATED v3.0: Enable MegaLinter (migrate to justmiselint)"
         required: false
         default: true
         type: boolean
       linters.publiccodelint:
-        description: "Enable publiccode.yml linting (default: false - not all repos have this)"
+        description: "⚠️ DEPRECATED v3.0: Enable publiccode.yml linting (migrate to justmiselint)"
         required: false
         default: false
         type: boolean
       linters.justmiselint:
-        description: "Enable just+mise-based linting (lightweight alternative to megalint)"
+        description: "✅ RECOMMENDED: Enable just+mise-based linting (replaces megalint, commitlint, licenselint, publiccodelint)"
         required: false
         default: false
         type: boolean
@@ -143,6 +143,31 @@ jobs:
           echo "## Pull Request Check Status" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
+          # Deprecation warnings
+          if [[ "${{ inputs['linters.megalint'] }}" == "true" ]] || \
+             [[ "${{ inputs['linters.commitlint'] }}" == "true" ]] || \
+             [[ "${{ inputs['linters.licenselint'] }}" == "true" ]] || \
+             [[ "${{ inputs['linters.publiccodelint'] }}" == "true" ]]; then
+            echo "> [!WARNING]" >> $GITHUB_STEP_SUMMARY
+            echo "> **DEPRECATED:** The following linters will be removed in version 3.0.0:" >> $GITHUB_STEP_SUMMARY
+            echo ">" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ inputs['linters.megalint'] }}" == "true" ]]; then
+              echo "> - **MegaLinter** - Migrate to \`linters.justmiselint: true\` (just+mise-based linting)" >> $GITHUB_STEP_SUMMARY
+            fi
+            if [[ "${{ inputs['linters.commitlint'] }}" == "true" ]]; then
+              echo "> - **Commit Lint** - Now handled by just+mise (conform)" >> $GITHUB_STEP_SUMMARY
+            fi
+            if [[ "${{ inputs['linters.licenselint'] }}" == "true" ]]; then
+              echo "> - **License Lint** - Now handled by just+mise (reuse)" >> $GITHUB_STEP_SUMMARY
+            fi
+            if [[ "${{ inputs['linters.publiccodelint'] }}" == "true" ]]; then
+              echo "> - **Publiccode Lint** - Now handled by just+mise" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo ">" >> $GITHUB_STEP_SUMMARY
+            echo "> Please update your workflow to use \`linters.justmiselint: true\` and disable deprecated linters." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
           # Check each linter status
           echo "### Linter Results" >> $GITHUB_STEP_SUMMARY
           echo "| Linter | Status |" >> $GITHUB_STEP_SUMMARY
@@ -151,11 +176,11 @@ jobs:
           # Commit lint
           if [[ "${{ inputs['linters.commitlint'] }}" == "true" ]]; then
             if [[ "${{ needs.commit-lint.result }}" == "success" ]]; then
-              echo "| Commit Lint | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
+              echo "| Commit Lint ⚠️ DEPRECATED | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
             elif [[ "${{ needs.commit-lint.result }}" == "skipped" ]]; then
-              echo "| Commit Lint | − Skipped |" >> $GITHUB_STEP_SUMMARY
+              echo "| Commit Lint ⚠️ DEPRECATED | − Skipped |" >> $GITHUB_STEP_SUMMARY
             else
-              echo "| Commit Lint | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
+              echo "| Commit Lint ⚠️ DEPRECATED | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
             fi
           else
             echo "| Commit Lint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
@@ -164,11 +189,11 @@ jobs:
           # License lint
           if [[ "${{ inputs['linters.licenselint'] }}" == "true" ]]; then
             if [[ "${{ needs.license-lint.result }}" == "success" ]]; then
-              echo "| License Lint | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
+              echo "| License Lint ⚠️ DEPRECATED | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
             elif [[ "${{ needs.license-lint.result }}" == "skipped" ]]; then
-              echo "| License Lint | − Skipped |" >> $GITHUB_STEP_SUMMARY
+              echo "| License Lint ⚠️ DEPRECATED | − Skipped |" >> $GITHUB_STEP_SUMMARY
             else
-              echo "| License Lint | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
+              echo "| License Lint ⚠️ DEPRECATED | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
             fi
           else
             echo "| License Lint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
@@ -190,11 +215,11 @@ jobs:
           # MegaLinter
           if [[ "${{ inputs['linters.megalint'] }}" == "true" ]]; then
             if [[ "${{ needs.megalint.result }}" == "success" ]]; then
-              echo "| MegaLinter | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
+              echo "| MegaLinter ⚠️ DEPRECATED | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
             elif [[ "${{ needs.megalint.result }}" == "skipped" ]]; then
-              echo "| MegaLinter | − Skipped |" >> $GITHUB_STEP_SUMMARY
+              echo "| MegaLinter ⚠️ DEPRECATED | − Skipped |" >> $GITHUB_STEP_SUMMARY
             else
-              echo "| MegaLinter | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
+              echo "| MegaLinter ⚠️ DEPRECATED | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
             fi
           else
             echo "| MegaLinter | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
@@ -203,11 +228,11 @@ jobs:
           # Publiccode lint
           if [[ "${{ inputs['linters.publiccodelint'] }}" == "true" ]]; then
             if [[ "${{ needs.publiccode-lint.result }}" == "success" ]]; then
-              echo "| Publiccode Lint | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
+              echo "| Publiccode Lint ⚠️ DEPRECATED | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
             elif [[ "${{ needs.publiccode-lint.result }}" == "skipped" ]]; then
-              echo "| Publiccode Lint | − Skipped |" >> $GITHUB_STEP_SUMMARY
+              echo "| Publiccode Lint ⚠️ DEPRECATED | − Skipped |" >> $GITHUB_STEP_SUMMARY
             else
-              echo "| Publiccode Lint | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
+              echo "| Publiccode Lint ⚠️ DEPRECATED | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
             fi
           else
             echo "| Publiccode Lint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY

@@ -141,17 +141,35 @@ lint-actions:
 
 # Lint shell scripts with shfmt and shellcheck
 lint-shell:
-    @printf '%b\n************ SHELL SCRIPT LINTING ***********%b\n\n' "{{yellow}}" "{{nc}}"
-    @echo "Running shellcheck on all shell scripts..."
-    @find scripts -type f -name "*.sh" -exec shellcheck {} + \
-    && echo "{{green}}{{checkmark}} Shellcheck passed{{nc}}" \
-    || { echo "{{red}}{{missing}} Shellcheck failed{{nc}}"; exit 1; }
-    @echo ""
-    @echo "Running shfmt on all shell scripts..."
-    @shfmt -d -i 2 scripts \
-    && echo "{{green}}{{checkmark}} Shell formatting passed{{nc}}" \
-    || { echo "{{red}}{{missing}} Shell formatting failed - run 'just lint-shell-fix' to fix{{nc}}"; exit 1; }
-    @printf '\n'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    printf '%b\n************ SHELL SCRIPT LINTING ***********%b\n\n' "{{yellow}}" "{{nc}}"
+    
+    # Check if we have shell scripts to lint
+    if [ -z "$(find scripts -type f -name '*.sh' 2>/dev/null | head -1)" ]; then
+        printf 'No shell scripts found, skipping\n'
+        printf '{{green}}{{checkmark}} Shell linting passed{{nc}}\n\n'
+        exit 0
+    fi
+    
+    echo "Running shellcheck on all shell scripts..."
+    if command -v shellcheck >/dev/null 2>&1; then
+        find scripts -type f -name "*.sh" | xargs shellcheck || exit 1
+        printf '{{green}}{{checkmark}} Shellcheck passed{{nc}}\n'
+    else
+        printf '{{yellow}}⚠ shellcheck not found, skipping{{nc}}\n'
+    fi
+    
+    echo ""
+    echo "Running shfmt on all shell scripts..."
+    if command -v shfmt >/dev/null 2>&1; then
+        shfmt -d -i 2 scripts || { printf '{{red}}{{missing}} Shell formatting failed - run just lint-shell-fix to fix{{nc}}\n'; exit 1; }
+        printf '{{green}}{{checkmark}} Shell formatting passed{{nc}}\n'
+    else
+        printf '{{yellow}}⚠ shfmt not found, skipping{{nc}}\n'
+    fi
+    
+    printf '\n'
 
 # Check for secrets with gitleaks (Go) - only scan commits different from main
 lint-secrets:
