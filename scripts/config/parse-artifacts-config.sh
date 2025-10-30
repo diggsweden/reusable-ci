@@ -37,14 +37,14 @@ if [ "$CONTAINER_COUNT" -gt 0 ]; then
   for container in $(echo "$CONTAINERS" | jq -c '.[]'); do
     CONTAINER_NAME=$(echo "$container" | jq -r '.name')
     FROM_ARTIFACTS=$(echo "$container" | jq -r '(.from // []) | .[]')
-    
+
     for artifact in $FROM_ARTIFACTS; do
       if ! echo "$ARTIFACT_NAMES" | grep -q "^${artifact}$"; then
         echo "::error::Container '$CONTAINER_NAME' references unknown artifact '$artifact'"
         exit 1
       fi
     done
-    
+
     # Warn if container has no dependencies
     FROM_COUNT=$(echo "$container" | jq '(.from // []) | length')
     if [ "$FROM_COUNT" -eq 0 ]; then
@@ -70,34 +70,34 @@ CONTAINERS_WITH_TYPES=$(echo "$CONTAINERS" | jq -c --argjson artifacts "$ARTIFAC
   echo "artifacts<<EOF"
   echo "$ARTIFACTS"
   echo "EOF"
-} >> $GITHUB_OUTPUT
+} >>"$GITHUB_OUTPUT"
 
 {
   echo "containers<<EOF"
   echo "$CONTAINERS_WITH_TYPES"
   echo "EOF"
-} >> $GITHUB_OUTPUT
+} >>"$GITHUB_OUTPUT"
 
 # Filter artifacts by project type and set has-* flags
 for type in maven npm gradle gradle-android python go rust; do
   FILTERED=$(echo "$ARTIFACTS" | jq -c '[.[] | select(.["project-type"] == "'"${type}"'")]')
   COUNT=$(echo "$FILTERED" | jq 'length')
-  
+
   # Normalize type name for output (gradle-android -> gradleandroid)
   TYPE_NAME=$(echo "$type" | tr -d '-')
-  
+
   # Output filtered list
   {
     echo "${TYPE_NAME}-artifacts<<EOF"
     echo "$FILTERED"
     echo "EOF"
-  } >> $GITHUB_OUTPUT
-  
+  } >>"$GITHUB_OUTPUT"
+
   # Output has-* flag
   if [ "$COUNT" -gt 0 ]; then
-    echo "has-${TYPE_NAME}=true" >> $GITHUB_OUTPUT
+    echo "has-${TYPE_NAME}=true" >>"$GITHUB_OUTPUT"
   else
-    echo "has-${TYPE_NAME}=false" >> $GITHUB_OUTPUT
+    echo "has-${TYPE_NAME}=false" >>"$GITHUB_OUTPUT"
   fi
 done
 
@@ -116,7 +116,7 @@ for target in maven-central github-packages; do
     FILTERED=$(echo "$ARTIFACTS" | jq -c '[.[] | select((.["publish-to"] // []) | contains(["'"${target}"'"]))]')
   fi
   COUNT=$(echo "$FILTERED" | jq 'length')
-  
+
   # Output filtered list
   # Normalize target name for output variable (remove hyphens: maven-central -> mavencentral)
   TARGET_NAME=$(echo "$target" | tr -d '-')
@@ -124,23 +124,21 @@ for target in maven-central github-packages; do
     echo "${TARGET_NAME}-artifacts<<EOF"
     echo "$FILTERED"
     echo "EOF"
-  } >> $GITHUB_OUTPUT
-  
+  } >>"$GITHUB_OUTPUT"
+
   # Output has-* flag
   if [ "$COUNT" -gt 0 ]; then
-    echo "has-${TARGET_NAME}=true" >> $GITHUB_OUTPUT
+    echo "has-${TARGET_NAME}=true" >>"$GITHUB_OUTPUT"
   else
-    echo "has-${TARGET_NAME}=false" >> $GITHUB_OUTPUT
+    echo "has-${TARGET_NAME}=false" >>"$GITHUB_OUTPUT"
   fi
 done
-
-ARTIFACT_COUNT=$(echo "$ARTIFACTS" | jq 'length')
 
 # Extract first artifact's type and build-type for legacy compatibility
 FIRST_PROJECT_TYPE=$(echo "$ARTIFACTS" | jq -r '.[0]["project-type"]')
 FIRST_BUILD_TYPE=$(echo "$ARTIFACTS" | jq -r '.[0]["build-type"] // "application"')
-echo "first-project-type=$FIRST_PROJECT_TYPE" >> $GITHUB_OUTPUT
-echo "first-build-type=$FIRST_BUILD_TYPE" >> $GITHUB_OUTPUT
+echo "first-project-type=$FIRST_PROJECT_TYPE" >>"$GITHUB_OUTPUT"
+echo "first-build-type=$FIRST_BUILD_TYPE" >>"$GITHUB_OUTPUT"
 
 # Determine if release should be draft (SNAPSHOT or non-release version tags)
 TAG_NAME="$GITHUB_REF_NAME"
@@ -156,13 +154,17 @@ elif ! echo "$TAG_NAME" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a
   echo "::notice::Tag '$TAG_NAME' is not a release version semver (vX.Y.Z), creating draft release"
 fi
 
-echo "is-draft-release=$IS_DRAFT" >> $GITHUB_OUTPUT
+echo "is-draft-release=$IS_DRAFT" >>"$GITHUB_OUTPUT"
 
-echo "## Configuration" >> $GITHUB_STEP_SUMMARY
-echo "$ARTIFACTS" | jq -r '.[] | "### \(.name)\n- **Type:** \(.["project-type"])\n- **Publish To:** \(.["publish-to"] // [] | join(", "))\n- **Directory:** \(.["working-directory"])\n"' >> $GITHUB_STEP_SUMMARY
+{
+  echo "## Configuration"
+  echo "$ARTIFACTS" | jq -r '.[] | "### \(.name)\n- **Type:** \(.["project-type"])\n- **Publish To:** \(.["publish-to"] // [] | join(", "))\n- **Directory:** \(.["working-directory"])\n"'
+} >>"$GITHUB_STEP_SUMMARY"
 
 if [ "$CONTAINER_COUNT" -gt 0 ]; then
-  echo "" >> $GITHUB_STEP_SUMMARY
-  echo "## Containers" >> $GITHUB_STEP_SUMMARY
-  echo "$CONTAINERS_WITH_TYPES" | jq -r '.[] | "### \(.name)\n- **From:** \((.from // []) | join(", "))\n- **Artifact Types:** \(.["artifact-types"] | join(", "))\n- **Containerfile:** \(.["container-file"])\n"' >> $GITHUB_STEP_SUMMARY
+  {
+    echo ""
+    echo "## Containers"
+    echo "$CONTAINERS_WITH_TYPES" | jq -r '.[] | "### \(.name)\n- **From:** \((.from // []) | join(", "))\n- **Artifact Types:** \(.["artifact-types"] | join(", "))\n- **Containerfile:** \(.["container-file"])\n"'
+  } >>"$GITHUB_STEP_SUMMARY"
 fi

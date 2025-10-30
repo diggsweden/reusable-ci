@@ -28,7 +28,7 @@ npm)
   echo "✓ NPM version updated"
   ;;
 
-gradle|gradle-android)
+gradle | gradle-android)
   cd "$WORKING_DIR"
   echo "Version file: $GRADLE_VERSION_FILE"
 

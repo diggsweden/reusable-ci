@@ -7,22 +7,29 @@
 # It provides a lightweight alternative to MegaLinter by leveraging individual
 # linting tools defined in the project's justfile and .mise.toml.
 #
+# Features:
+# - Automatically discovers all lint-* tasks from your justfile
+# - Runs each linter individually and captures output
+# - Generates a MegaLinter-style summary in GitHub Actions UI
+# - Shows pass/fail status, duration, and error details per linter
+# - Dynamic: works with any number of linters without configuration
+#
 # How to use:
 # 1. Ensure your project has:
 #    - .mise.toml with required tools (yamlfmt, actionlint, gitleaks, etc.)
-#    - justfile with lint tasks (lint, lint-yaml, lint-actions, etc.)
+#    - justfile with lint-* tasks (lint-java, lint-yaml, lint-actions, etc.)
+#    - Note: Tasks ending with -fix are automatically excluded
 #
 # 2. Add to your workflow file:
 #    jobs:
 #      just-mise-lint:
 #        uses: <orgname>/<reponame>/.github/workflows/lint-just-mise.yml@main
-#        with:
-#          lint-tasks: "lint"  # Optional: customize tasks
 #
 # 3. The workflow will:
-#    - Install just command runner
-#    - Install tools from .mise.toml via just install
-#    - Run specified just lint tasks
+#    - Install just command runner and mise
+#    - Install tools from .mise.toml via 'just install'
+#    - Auto-discover and run all lint-* tasks
+#    - Generate formatted summary with pass/fail status per linter
 name: Just-based Linting
 env:
   # renovate: datasource=github-releases depName=casey/just
@@ -32,13 +39,7 @@ env:
   MISE_VERSION: "2025.10.10"
   MISE_CHECKSUM: "d300a395d82092a4793c9d02a4fff15819ace22a027ddc58a83602aea24ee646"
 on:
-  workflow_call:
-    inputs:
-      lint-tasks:
-        description: "Space-separated list of just lint tasks to run (default: 'lint')"
-        required: false
-        default: "lint"
-        type: string
+  workflow_call: # yamllint disable-line rule:truthy
 permissions:
   contents: read
 jobs:
@@ -85,10 +86,17 @@ jobs:
         run: |
           mise trust
           just install
-      - name: Run linting tasks
+      - name: Checkout reusable-ci for scripts
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ github.action_ref || 'main' }}
+          path: .reusable-ci-scripts
+          sparse-checkout: |
+            scripts/run-just-linters.sh
+          sparse-checkout-cone-mode: false
+      - name: Run linting tasks with enhanced output
         run: |
           eval "$(mise activate bash)"
-          for task in ${{ inputs.lint-tasks }}; do
-            echo "Running: just $task"
-            just "$task"
-          done
+          chmod +x .reusable-ci-scripts/scripts/run-just-linters.sh
+          .reusable-ci-scripts/scripts/run-just-linters.sh

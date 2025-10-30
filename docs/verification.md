@@ -4,11 +4,146 @@ SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 SPDX-License-Identifier: CC0-1.0
 -->
 
-# Artifact Verification Guide
+# Verification Guide
 
-Documentation for verifying the authenticity and integrity of artifacts produced by DiggSweden workflows.
+Documentation for verifying code quality and the authenticity and integrity of artifacts produced by DiggSweden workflows.
 
-## Verification Methods
+## Code Quality Verification
+
+### Just+Mise Linting Workflow
+
+The `lint-just-mise.yml` workflow provides dynamic, MegaLinter-style output for code quality verification.
+
+#### Overview
+
+This lightweight linting workflow automatically discovers and runs linting tasks defined in your project's `justfile`, providing rich formatted output in GitHub Actions similar to MegaLinter but without the overhead.
+
+**Key Features:**
+- **Dynamic Discovery**: Automatically finds all `lint-*` tasks in your justfile
+- **Rich Output**: Individual linter results with pass/fail status, timing, and error details
+- **Zero Configuration**: No need to specify which linters to run - adapts automatically
+- **Excludes Fix Tasks**: Automatically skips `*-fix` tasks (e.g., `lint-yaml-fix`)
+- **MegaLinter-Style UI**: Formatted markdown tables in GitHub Actions Summary tab
+
+#### Requirements
+
+Your project must have:
+1. **justfile** with tasks named `lint-*` (e.g., `lint-java`, `lint-markdown`, `lint-yaml`)
+2. **.mise.toml** with required tools specified
+3. **install** task in justfile to set up tools via mise
+
+#### Usage
+
+Add to your pull request workflow:
+
+```yaml
+jobs:
+  lint:
+    uses: diggsweden/reusable-ci/.github/workflows/lint-just-mise.yml@main
+    permissions:
+      contents: read
+      security-events: write
+```
+
+#### Example Justfile Structure
+
+```just
+# Install development tools
+install:
+    mise install
+
+# Run all linters
+lint: lint-java lint-markdown lint-yaml lint-actions lint-shell lint-secrets
+
+# Individual linter tasks (auto-discovered)
+lint-java:
+    mvn checkstyle:check pmd:check spotbugs:check
+
+lint-markdown:
+    rumdl check .
+
+lint-yaml:
+    yamlfmt -lint .
+
+lint-actions:
+    actionlint
+
+lint-shell:
+    find . -name '*.sh' | xargs shellcheck
+
+lint-secrets:
+    gitleaks detect --no-banner
+
+# Fix tasks (automatically excluded from CI)
+lint-yaml-fix:
+    yamlfmt .
+
+lint-markdown-fix:
+    rumdl check --fix .
+```
+
+#### GitHub Actions Output
+
+The workflow generates a formatted summary showing:
+
+```markdown
+# 🔍 Just+Mise Linting Results
+
+**Linters Run:** 8
+**Started:** 2025-10-30 16:45:12 UTC
+
+## Individual Linter Results
+
+| Linter   | Status  | Duration | Details              |
+|----------|---------|----------|----------------------|
+| actions  | ✅ Pass | 0.03s    | Success              |
+| java     | ✅ Pass | 10.81s   | Success              |
+| markdown | ❌ Fail | 0.01s    | [View errors below]  |
+| yaml     | ✅ Pass | 0.15s    | Success              |
+
+## ❌ Failed Linters
+
+<details>
+<summary>❌ markdown - Click to expand error details</summary>
+
+**Exit code:** 1
+**Duration:** 0.01s
+
+### Output:
+```
+README.md:45 - Line too long (found 120, expected 100)
+```
+</details>
+
+---
+
+### Summary
+
+**Total Duration:** 11.89s
+**Pass:** ✅ 6 | **Fail:** ❌ 2
+```
+
+#### How It Works
+
+1. **Discovery**: Script discovers all tasks matching `lint-*` pattern (excludes `*-fix`)
+2. **Execution**: Each linter runs individually with output captured
+3. **Timing**: Duration tracked per linter
+4. **Summary**: Results formatted as markdown table in GitHub Actions Summary tab
+5. **Errors**: Failed linters show expandable error details
+
+#### Adding/Removing Linters
+
+Simply add or remove `lint-*` tasks in your justfile - no workflow changes needed:
+
+```just
+# Add a new linter - automatically discovered
+lint-rust:
+    cargo clippy -- -D warnings
+
+# Remove by deleting the task - automatically excluded
+```
+
+## Artifact Verification Methods
 
 | Artifact Type | Verification Methods | Security Level | What It Proves |
 |--------------|---------------------|----------------|----------------|
