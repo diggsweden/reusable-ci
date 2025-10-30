@@ -37,7 +37,7 @@ Production release workflow triggered by version tags.
 
 ### Custom Artifact Naming
 Artifacts are named with date stamps and custom prefixes:
-```
+```text
 2025-01-15 - testing_store - my-app - demo - APK debug
 2025-01-15 - testing_store - my-app - demo - APK release
 2025-01-15 - testing_store - my-app - demo - AAB release
@@ -129,7 +129,7 @@ jobs:
     with:
       product-flavor: "demo"
       artifact-name-prefix: "demo_store"
-  
+
   build-prod:
     uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android-variants.yml@v2
     with:
@@ -155,7 +155,7 @@ android {
         versionCode = project.property("versionCode").toString().toInt()
         versionName = project.property("versionName").toString()
     }
-    
+
     flavorDimensions += "version"
     productFlavors {
         create("demo") {
@@ -166,7 +166,7 @@ android {
             dimension = "version"
         }
     }
-    
+
     signingConfigs {
         create("release") {
             storeFile = file("release.keystore")
@@ -175,7 +175,7 @@ android {
             keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
         }
     }
-    
+
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")

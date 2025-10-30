@@ -12,14 +12,11 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+-alpha*"
       - "v[0-9]+.[0-9]+.[0-9]+-beta*"
       - "v[0-9]+.[0-9]+.[0-9]+-rc*"
-
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
-
 permissions:
   contents: read
-
 jobs:
   release:
     uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2

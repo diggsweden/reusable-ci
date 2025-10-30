@@ -6,16 +6,13 @@
 # This builds Android variants during development
 
 name: Build Workflow
-
 on:
   push:
     branches:
       - main
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   build:
     uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android-variants.yml@v2
@@ -32,4 +29,4 @@ jobs:
       include-aab: true
       artifact-name-prefix: "testing_store"
       include-date-stamp: true
-      enable-signing: false  # Set to true for signed builds
+      enable-signing: false # Set to true for signed builds
