@@ -31,7 +31,7 @@ print_header() {
 calculate_duration() {
   local start="$1"
   local end="$2"
-  
+
   if command -v bc >/dev/null 2>&1; then
     echo "$end - $start" | bc 2>/dev/null || echo "0"
   else
@@ -61,9 +61,9 @@ discover_linters() {
 
 init_github_summary() {
   local linter_count="$1"
-  
+
   [ -z "${GITHUB_STEP_SUMMARY:-}" ] && return
-  
+
   cat <<EOF >>"$GITHUB_STEP_SUMMARY"
 # 🔍 Just+Mise Linting Results
 
@@ -74,14 +74,14 @@ init_github_summary() {
 
 ## Individual Linter Results
 
-| Linter | Status | Duration | Details |
-|--------|--------|----------|---------|
+| Linter | Tools | Status | Duration | Details |
+|--------|-------|--------|----------|---------|
 EOF
 }
 
 add_failed_linters_header() {
   [ -z "${GITHUB_STEP_SUMMARY:-}" ] && return
-  
+
   if ! grep -q "^## ❌ Failed Linters" "$GITHUB_STEP_SUMMARY" 2>/dev/null; then
     cat <<EOF >>"$GITHUB_STEP_SUMMARY"
 
@@ -93,16 +93,35 @@ EOF
   fi
 }
 
+get_linter_tools() {
+  local linter_name="$1"
+
+  case "$linter_name" in
+  actions) echo "actionlint" ;;
+  commit) echo "conform" ;;
+  java) echo "checkstyle, pmd, spotbugs" ;;
+  license) echo "reuse" ;;
+  markdown) echo "rumdl" ;;
+  secrets) echo "gitleaks" ;;
+  shell) echo "shellcheck, shfmt" ;;
+  yaml) echo "yamlfmt" ;;
+  *) echo "-" ;;
+  esac
+}
+
 add_linter_result_to_summary() {
   local linter_name="$1"
   local status_emoji="$2"
   local duration="$3"
   local exit_code="$4"
-  
+
   [ -z "${GITHUB_STEP_SUMMARY:-}" ] && return
-  
-  printf "| %s | %s | %.2fs | " "$linter_name" "$status_emoji" "$duration" >>"$GITHUB_STEP_SUMMARY"
-  
+
+  local tools
+  tools=$(get_linter_tools "$linter_name")
+
+  printf "| %s | %s | %s | %.2fs | " "$linter_name" "$tools" "$status_emoji" "$duration" >>"$GITHUB_STEP_SUMMARY"
+
   if [ "$exit_code" -ne 0 ]; then
     echo "[View errors below](#-failed-linters) |" >>"$GITHUB_STEP_SUMMARY"
   else
@@ -115,11 +134,11 @@ add_error_details_to_summary() {
   local exit_code="$2"
   local duration="$3"
   local output_file="$4"
-  
+
   [ -z "${GITHUB_STEP_SUMMARY:-}" ] && return
-  
+
   add_failed_linters_header
-  
+
   cat <<EOF >>"$GITHUB_STEP_SUMMARY"
 
 <details>
@@ -143,20 +162,20 @@ EOF
 run_linter() {
   local task="$1"
   local linter_name="${task#lint-}"
-  
+
   print_header "🔧 Running ${task}"
   echo ""
-  
+
   local start
   start=$(date +%s.%N 2>/dev/null || date +%s)
-  
+
   local output_file
   output_file=$(mktemp)
-  
+
   local exit_code=0
   local status
   local status_emoji
-  
+
   if just "$task" >"$output_file" 2>&1; then
     status="${GREEN}✅ PASS${NC}"
     status_emoji="✅ Pass"
@@ -168,31 +187,31 @@ run_linter() {
     FAIL_COUNT=$((FAIL_COUNT + 1))
     OVERALL_STATUS=1
   fi
-  
+
   local end
   end=$(date +%s.%N 2>/dev/null || date +%s)
-  
+
   local duration
   duration=$(calculate_duration "$start" "$end")
-  
+
   cat "$output_file"
   echo ""
   echo -e "⏱️  Duration: ${duration}s"
   echo -e "${status}"
   echo ""
-  
+
   add_linter_result_to_summary "$linter_name" "$status_emoji" "$duration" "$exit_code"
-  
+
   if [ $exit_code -ne 0 ]; then
     add_error_details_to_summary "$linter_name" "$exit_code" "$duration" "$output_file"
   fi
-  
+
   rm -f "$output_file"
 }
 
 finalize_github_summary() {
   [ -z "${GITHUB_STEP_SUMMARY:-}" ] && return
-  
+
   cat <<EOF >>"$GITHUB_STEP_SUMMARY"
 
 ---
@@ -203,7 +222,7 @@ finalize_github_summary() {
 **Pass:** ✅ ${PASS_COUNT} | **Fail:** ❌ ${FAIL_COUNT}
 
 EOF
-  
+
   if [ $OVERALL_STATUS -eq 0 ]; then
     echo "### ✅ All linters passed successfully!" >>"$GITHUB_STEP_SUMMARY"
   else
@@ -219,7 +238,7 @@ print_console_summary() {
   echo -e "${RED}❌ Failed: ${FAIL_COUNT}${NC}"
   echo "⏱️  Total time: ${TOTAL_DURATION}s"
   echo ""
-  
+
   if [ $OVERALL_STATUS -eq 0 ]; then
     echo -e "${GREEN}✨ All checks passed! ✨${NC}"
   else
@@ -229,27 +248,27 @@ print_console_summary() {
 
 main() {
   print_header "🔍 Discovering linters from justfile..."
-  
+
   local lint_tasks
   lint_tasks=$(discover_linters)
-  
+
   LINTER_COUNT=$(echo "$lint_tasks" | wc -l)
   echo "Found ${LINTER_COUNT} linters: $(echo "$lint_tasks" | tr '\n' ' ')"
   echo ""
-  
+
   init_github_summary "$LINTER_COUNT"
-  
+
   while IFS= read -r task; do
     run_linter "$task"
   done <<<"$lint_tasks"
-  
+
   local total_end
   total_end=$(date +%s.%N 2>/dev/null || date +%s)
   TOTAL_DURATION=$(calculate_duration "$TOTAL_START" "$total_end")
-  
+
   print_console_summary
   finalize_github_summary
-  
+
   exit $OVERALL_STATUS
 }
 
