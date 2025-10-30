@@ -52,6 +52,11 @@ on:
         required: false
         default: ""
         type: string
+      workflows-ref:
+        description: "Branch/tag of reusable-ci to use for scripts (default: main)"
+        required: false
+        default: "main"
+        type: string
       # Linter toggles (all can be disabled if needed)
       linters.commitlint:
         description: "Enable commit message linting"
@@ -124,6 +129,8 @@ jobs:
       contents: read
       security-events: write
     uses: ./.github/workflows/lint-just-mise.yml
+    with:
+      workflows-ref: ${{ inputs.workflows-ref }}
   # Gather results from enabled linters (always runs to check status)
   lint-status:
     name: Lint Status Check

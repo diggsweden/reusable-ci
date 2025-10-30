@@ -17,7 +17,7 @@ permissions:
   contents: read
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v2
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@main
     permissions:
       contents: write
       packages: write

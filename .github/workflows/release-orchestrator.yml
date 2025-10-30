@@ -171,7 +171,7 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           repository: diggsweden/reusable-ci
-          ref: v2
+          ref: main
           path: .github-shared
       - name: Install yq
         run: |
@@ -196,7 +196,7 @@ jobs:
       sign-artifacts: ${{ inputs['release.signartifacts'] }}
       check-authorization: ${{ needs.parse-config.outputs.first-require-authorization == 'true' || inputs['release.checkauthorization'] }}
       branch: ${{ inputs.branch }}
-      workflows-ref: v2
+      workflows-ref: main
   # Step 1: Version Bump (iterates over all artifacts)
   version-and-changelog:
     needs: [parse-config, validate-prerequisites]
