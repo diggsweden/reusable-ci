@@ -96,7 +96,7 @@ EOF
 extract_linter_metadata_from_justfile() {
   local task_name="$1"
   local metadata_key="$2"
-  
+
   grep -B5 "^lint-${task_name}:" justfile 2>/dev/null | grep "# ${metadata_key}:" | sed "s/# ${metadata_key}: //" || echo ""
 }
 
@@ -185,14 +185,14 @@ run_linter() {
 
   local display_name
   local tools
-  
-  display_name=$(extract_linter_metadata_from_justfile "$linter_name" "linter-name:")
-  tools=$(extract_linter_metadata_from_justfile "$linter_name" "linter-tools:")
-  
+
+  display_name=$(extract_linter_metadata_from_justfile "$linter_name" "linter-name")
+  tools=$(extract_linter_metadata_from_justfile "$linter_name" "linter-tools")
+
   if [ -z "$display_name" ]; then
     display_name="$linter_name"
   fi
-  
+
   if [ -z "$tools" ]; then
     tools="-"
   fi

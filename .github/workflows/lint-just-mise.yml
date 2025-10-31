@@ -30,7 +30,7 @@
 #    - Install tools from .mise.toml via 'just install'
 #    - Auto-discover and run all lint-* tasks
 #    - Generate formatted summary with pass/fail status per linter
-name: Just-based Linting
+name: Quality Checks (Justfile)
 env:
   # renovate: datasource=github-releases depName=casey/just
   JUST_VERSION: "1.43.0"
@@ -50,7 +50,7 @@ permissions:
   contents: read
 jobs:
   just-mise-lint:
-    name: Just+Mise Lint
+    name: Quality Checks
     runs-on: ubuntu-latest
     permissions:
       contents: read
