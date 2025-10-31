@@ -116,6 +116,9 @@ lint: lint-markdown lint-yaml lint-actions lint-shell lint-secrets
     @echo "LINT_PASS" > /tmp/just_lint_status
 
 # Lint markdown files with rumdl (Rust)
+# linter-name: Markdown
+# linter-tools: rumdl
+# Lint markdown files with rumdl (Rust)
 lint-markdown:
     @printf '%b\n************ MARKDOWN LINTING (RUMDL) ***********%b\n\n' "{{yellow}}" "{{nc}}"
     @rumdl check . \
@@ -123,6 +126,8 @@ lint-markdown:
     || { echo "{{red}}{{missing}} Markdown linting failed - run 'just lint-markdown-fix' to fix{{nc}}"; exit 1; }
     @printf '\n'
 
+# linter-name: YAML Formatting
+# linter-tools: yamlfmt
 # Lint YAML files with yamlfmt (Go)
 lint-yaml:
     @printf '%b\n************ YAML LINTING (YAMLFMT) ***********%b\n\n' "{{yellow}}" "{{nc}}"
@@ -131,6 +136,8 @@ lint-yaml:
     || { echo "{{red}}{{missing}} YAML linting failed - run 'just lint-yaml-fix' to fix{{nc}}"; exit 1; }
     @printf '\n'
 
+# linter-name: GitHub Actions
+# linter-tools: actionlint
 # Lint GitHub Actions with actionlint (Go)
 lint-actions:
     @printf '%b\n************ GITHUB ACTIONS LINTING (ACTIONLINT) ***********%b\n\n' "{{yellow}}" "{{nc}}"
@@ -139,6 +146,8 @@ lint-actions:
     || { echo "{{red}}{{missing}} GitHub Actions linting failed{{nc}}"; exit 1; }
     @printf '\n'
 
+# linter-name: Shell Scripts
+# linter-tools: shellcheck, shfmt
 # Lint shell scripts with shfmt and shellcheck
 lint-shell:
     #!/usr/bin/env bash
@@ -171,6 +180,8 @@ lint-shell:
     
     printf '\n'
 
+# linter-name: Secret Scanning
+# linter-tools: gitleaks
 # Check for secrets with gitleaks (Go) - only scan commits different from main
 lint-secrets:
     @printf '%b\n************ SECRET SCANNING (GITLEAKS) ***********%b\n\n' "{{yellow}}" "{{nc}}"
@@ -217,6 +228,8 @@ lint-shell-fix:
     || { echo "{{red}}{{missing}} Failed to format shell scripts{{nc}}"; exit 1; }
     @printf '\n'
 
+# linter-name: License Headers
+# linter-tools: reuse
 # Check licenses with REUSE
 lint-license:
     @printf '%b************ LICENSE HEALTH (REUSE) ***********%b\n\n' "{{yellow}}" "{{nc}}"
@@ -230,6 +243,8 @@ lint-license:
     || echo "LICENSE_FAIL" > /tmp/just_license_status
     @printf '\n\n'
 
+# linter-name: Commit Messages
+# linter-tools: conform
 # Check commits with conform
 lint-commit:
     @printf '%b************ COMMIT HEALTH (CONFORM) ***********%b\n\n' "{{yellow}}" "{{nc}}"
