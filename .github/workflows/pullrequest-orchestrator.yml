@@ -129,8 +129,6 @@ jobs:
       contents: read
       security-events: write
     uses: ./.github/workflows/lint-just-mise.yml
-    with:
-      workflows-ref: ${{ inputs.workflows-ref }}
   # Gather results from enabled linters (always runs to check status)
   lint-status:
     name: Lint Status Check

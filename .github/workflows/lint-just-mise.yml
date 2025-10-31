@@ -40,12 +40,6 @@ env:
   MISE_CHECKSUM: "d300a395d82092a4793c9d02a4fff15819ace22a027ddc58a83602aea24ee646"
 on:
   workflow_call: # yamllint disable-line rule:truthy
-    inputs:
-      workflows-ref:
-        description: "Branch/tag of reusable-ci to use for scripts (default: main)"
-        required: false
-        default: "main"
-        type: string
 permissions:
   contents: read
 jobs:
@@ -96,7 +90,7 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ inputs.workflows-ref }}
+          ref: main
           path: .github-shared
           sparse-checkout: |
             scripts/run-just-linters.sh
