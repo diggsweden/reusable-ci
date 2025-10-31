@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
-
 # Development Container Image Publisher
 # 
 # Purpose: Fast container builds for development and testing. Optimized for quick
@@ -53,7 +52,7 @@
 #   digest: Image digest for verification
 name: Publish Dev Container Image
 on:
-  workflow_call: # yamllint disable-line rule:truthy
+  workflow_call:  # yamllint disable-line rule:truthy
     inputs:
       container-file:
         description: "Containerfile path"
@@ -95,7 +94,7 @@ on:
         description: "Image digest"
         value: ${{ jobs.build-and-push.outputs.digest }}
 permissions:
-  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
   build-and-push:
     name: Build and Push Dev Container
@@ -108,9 +107,9 @@ jobs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
       - name: Checkout .github repository for scripts
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
         with:
           repository: diggsweden/reusable-ci
           ref: main
@@ -122,7 +121,7 @@ jobs:
       # Maven build
       - name: Set up JDK
         if: inputs['project-type'] == 'maven'
-        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165  # v5.0.0
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -130,7 +129,7 @@ jobs:
       # NPM build
       - name: Set up Node.js
         if: inputs['project-type'] == 'npm'
-        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903  # v6.0.0
         with:
           node-version: '22'
           cache: 'npm'
@@ -141,7 +140,7 @@ jobs:
             "${{ inputs['project-type'] }}" \
             "${{ inputs['working-directory'] }}"
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435  # v3.11.1
       - name: Check registry authentication configuration
         run: |
           HAS_PASSWORD="false"
@@ -155,7 +154,7 @@ jobs:
             "ghcr.io" \
             "$HAS_PASSWORD"
       - name: Login to Container Registry
-        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef  # v3.6.0
         with:
           registry: ${{ inputs.registry }}
           username: ${{ inputs['registry-username'] || github.actor }}
@@ -171,7 +170,7 @@ jobs:
           echo "→ Dev tag: ${DEV_VERSION}"
       - name: Build and push
         id: build
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83  # v6.18.0
         with:
           context: ${{ inputs['working-directory'] }}
           file: ${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}

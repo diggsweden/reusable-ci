@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
-
 # Gradle Android Variants Builder
 # 
 # Purpose: Builds Android applications with multiple product flavors and build types,
@@ -107,7 +106,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
         with:
           fetch-depth: 0
       - name: Generate artifact names
@@ -142,13 +141,13 @@ jobs:
           echo "Release artifact: ${RELEASE_NAME}"
           echo "AAB artifact: ${AAB_NAME}"
       - name: Set up JDK
-        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165  # v5.0.0
         with:
           distribution: ${{ inputs['jdk-distribution'] }}
           java-version: ${{ inputs['java-version'] }}
           cache: 'gradle'
       - name: Set up Android SDK
-        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407  # v3.2.2
       - name: Make gradlew executable
         working-directory: ${{ inputs['working-directory'] }}
         run: chmod +x ./gradlew
@@ -227,7 +226,7 @@ jobs:
           find ${{ inputs['build-module'] }}/build/outputs -type f \( -name "*.apk" -o -name "*.aab" \) -ls || echo "No artifacts found"
       - name: Upload Debug APK
         if: contains(inputs['build-types'], 'debug')
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: ${{ steps.artifact-names.outputs.debug-name }}
           path: |
@@ -235,7 +234,7 @@ jobs:
           retention-days: 7
       - name: Upload Release APK
         if: contains(inputs['build-types'], 'release')
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: ${{ steps.artifact-names.outputs.release-name }}
           path: |
@@ -243,7 +242,7 @@ jobs:
           retention-days: 7
       - name: Upload AAB
         if: ${{ inputs['include-aab'] && contains(inputs['build-types'], 'release') }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: ${{ steps.artifact-names.outputs.aab-name }}
           path: |

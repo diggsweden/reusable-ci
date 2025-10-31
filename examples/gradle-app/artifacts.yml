@@ -1,9 +1,7 @@
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
-
 # Example: Gradle/Android Application
-
 artifacts:
   - name: my-android-app
     project-type: gradle

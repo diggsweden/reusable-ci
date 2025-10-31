@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Gitleaks configuration for secret scanning
+
+[extend]
+# Use default gitleaks rules
+useDefault = true
+
+# Allowlist for documentation containing example curl commands with placeholder tokens
+[allowlist]
+description = "Ignore documentation files with example GITHUB_TOKEN placeholders"
+paths = [
+  # Documentation with example curl commands using GITHUB_TOKEN as a placeholder (not a real token)
+  '''docs/verification\.md'''
+]

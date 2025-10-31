@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
-
 # GitHub Release Creator
 # 
 # Purpose: Creates GitHub releases with  security features including
@@ -36,7 +35,7 @@
 #   - sbom.json: CycloneDX/SPDX Software Bill of Materials
 name: Create GitHub Release
 on:
-  workflow_call: # yamllint disable-line rule:truthy
+  workflow_call:  # yamllint disable-line rule:truthy
     inputs:
       release-name:
         description: "Release name (supports template variables)"
@@ -88,7 +87,7 @@ on:
         default: "audit"
         type: string
 permissions:
-  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
   generate-changelog:
     name: Generate Release Changelog
@@ -111,11 +110,11 @@ jobs:
       id-token: write
     steps:
       - name: Harden GitHub runner
-        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
+        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a  # v2.13.1
         with:
           egress-policy: ${{ inputs.egress-policy }}
       - name: Checkout repository with moved tag
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
         with:
           fetch-depth: 0
           ref: ${{ inputs['checkout-ref'] }}
@@ -123,13 +122,13 @@ jobs:
       - name: Import GPG key
         if: ${{ inputs['sign-artifacts'] }}
         id: import-gpg
-        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec  # v6.3.0
         with:
           gpg_private_key: ${{ secrets.OSPO_BOT_GPG_PRIV }}
           passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
           git_user_signingkey: true
       - name: Download Release Changelog
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
         continue-on-error: true
         with:
           name: release-changelog
@@ -138,12 +137,12 @@ jobs:
       # Download container SBOM if it exists (from container build job)
       - name: Download container SBOM artifacts
         continue-on-error: true
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
         with:
           name: container-sbom-${{ github.run_id }}
           path: ./sbom-artifacts/
       - name: Checkout .github repo for release scripts
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
         with:
           repository: diggsweden/reusable-ci
           ref: main
@@ -181,7 +180,7 @@ jobs:
       # Download build artifacts based on project type
       - name: Download build artifacts
         continue-on-error: true
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
         with:
           name: ${{ steps.artifact-name.outputs.name }}
           path: ./release-artifacts/
@@ -350,7 +349,7 @@ jobs:
           gh release create "${ARGS[@]}"
       - name: Upload release artifacts summary
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: release-artifacts-${{ github.run_id }}
           path: |

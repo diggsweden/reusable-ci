@@ -1,10 +1,8 @@
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
-
 # Example: Android App Build Workflow (for development/CI builds)
 # This builds Android variants during development
-
 name: Build Workflow
 on:
   push:
@@ -29,4 +27,4 @@ jobs:
       include-aab: true
       artifact-name-prefix: "testing_store"
       include-date-stamp: true
-      enable-signing: false # Set to true for signed builds
+      enable-signing: false  # Set to true for signed builds

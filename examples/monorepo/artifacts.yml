@@ -1,11 +1,9 @@
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
-
 # Example artifacts.yml for monorepo support (v2)
 # Place this file in your repository (e.g., .github/artifacts.yml)
 # and reference it in your release workflow with: artifactsConfig: .github/artifacts.yml
-
 artifacts:
   # Maven backend application
   - name: backend-api

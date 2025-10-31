@@ -131,7 +131,7 @@ lint-markdown:
 # Lint YAML files with yamlfmt (Go)
 lint-yaml:
     @printf '%b\n************ YAML LINTING (YAMLFMT) ***********%b\n\n' "{{yellow}}" "{{nc}}"
-    @yamlfmt -lint . \
+    @yamlfmt -conf .yamlfmt -lint . \
     && echo "{{green}}{{checkmark}} YAML linting passed{{nc}}" \
     || { echo "{{red}}{{missing}} YAML linting failed - run 'just lint-yaml-fix' to fix{{nc}}"; exit 1; }
     @printf '\n'
@@ -215,7 +215,7 @@ lint-markdown-fix:
 # Fix YAML formatting with yamlfmt
 lint-yaml-fix:
     @printf '%b\n************ FIXING YAML (YAMLFMT) ***********%b\n\n' "{{yellow}}" "{{nc}}"
-    @yamlfmt . \
+    @yamlfmt -conf .yamlfmt . \
     && echo "{{green}}{{checkmark}} YAML files formatted{{nc}}" \
     || { echo "{{red}}{{missing}} Failed to format YAML files{{nc}}"; exit 1; }
     @printf '\n'

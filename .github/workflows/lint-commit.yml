@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
-
 # Description:
 # This workflow enforces commit message conventions using Conform.
 # It checks commit messages against a predefined set of rules to ensure consistency and compliance.
@@ -38,10 +37,10 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha }} # https://github.com/actions/checkout/issues/426
+          ref: ${{ github.event.pull_request.head.sha }}  # https://github.com/actions/checkout/issues/426
       - name: Determine base branch
         id: base
         run: |

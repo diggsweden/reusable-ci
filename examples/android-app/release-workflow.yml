@@ -1,9 +1,7 @@
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
-
 # Example: Android App Release Workflow
-
 name: Release Workflow
 on:
   push:

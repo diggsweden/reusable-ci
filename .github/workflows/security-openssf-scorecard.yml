@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
-
 # Description:
 # This workflow runs OpenSSF Scorecard to analyze your repository for security best practices.
 # It uploads the results as artifacts and integrates with GitHub's code scanning dashboard.
@@ -18,7 +17,7 @@
 # 2. The results will be available as artifacts and in the GitHub Code Scanning dashboard.
 name: OpenSSF Scorecard analysis
 on:
-  workflow_call: # yamllint disable-line rule:truthy
+  workflow_call:  # yamllint disable-line rule:truthy
     inputs:
       cron-schedule:
         description: "Cron schedule for the workflow (default: '30 1 * * 5' - weekly on Fridays at 01:30 UTC)"
@@ -49,15 +48,15 @@ jobs:
       id-token: write
     steps:
       - name: Harden GitHub runner
-        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
+        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a  # v2.13.1
         with:
           egress-policy: ${{ inputs.egress-policy }}
       - name: Checkout repository
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
         with:
           persist-credentials: false
       - name: "Run analysis"
-        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a  # v2.4.3
         with:
           results_file: results.sarif
           results_format: sarif
@@ -65,7 +64,7 @@ jobs:
       # Upload the results as artifacts (optional). Commenting out will disable
       # uploads of run results in SARIF format to the repository Actions tab.
       - name: "Upload artifact"
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: SARIF file
           path: results.sarif
@@ -73,6 +72,6 @@ jobs:
       # Upload the results to GitHub's code scanning dashboard (optional).
       # Commenting out will disable upload of results to your repo's Code Scanning dashboard
       - name: "Upload to code-scanning"
-        uses: github/codeql-action/upload-sarif@16140ae1a102900babc80a33c44059580f687047 # v4.30.9
+        uses: github/codeql-action/upload-sarif@16140ae1a102900babc80a33c44059580f687047  # v4.30.9
         with:
           sarif_file: results.sarif

@@ -1,9 +1,7 @@
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
-
 # Example: Simple Maven Application with Container
-
 artifacts:
   - name: my-app
     project-type: maven

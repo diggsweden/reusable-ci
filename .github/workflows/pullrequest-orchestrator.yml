@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
-
 # Pull Request Orchestrator
 # 
 # Purpose: Orchestrates all quality checks for pull requests and pushes, ensuring
@@ -89,7 +88,7 @@ on:
         default: false
         type: boolean
 permissions:
-  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
   # Commit message linting
   commit-lint:

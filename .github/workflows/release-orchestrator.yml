@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
-
 # Release Orchestrator
 # 
 # Purpose: Main orchestrator workflow that coordinates the complete release process for
@@ -49,7 +48,7 @@
 # Containers: Separate section with explicit dependencies
 name: Release Orchestrator
 on:
-  workflow_call: # yamllint disable-line rule:truthy
+  workflow_call:  # yamllint disable-line rule:truthy
     inputs:
       # === REQUIRED: artifacts.yml FILE ===
       artifacts-config:
@@ -125,9 +124,9 @@ on:
         default: ""
 concurrency:
   group: release-${{ github.repository }}-${{ github.ref }}
-  cancel-in-progress: false # Queue releases, don't cancel partial releases
+  cancel-in-progress: false  # Queue releases, don't cancel partial releases
 permissions:
-  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
   # Step 0b: Parse Configuration (v3 clean design)
   parse-config:
@@ -164,11 +163,11 @@ jobs:
       has-github-packages: ${{ steps.parse.outputs.has-github-packages }}
       is-draft-release: ${{ steps.parse.outputs.is-draft-release }}
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
         with:
           ref: ${{ inputs.branch }}
       - name: Checkout reusable-ci for scripts
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
         with:
           repository: diggsweden/reusable-ci
           ref: main
