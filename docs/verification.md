@@ -102,7 +102,7 @@ lint-java:
 
 **Order matters**: The last comment is the recipe description shown by `just --list`:
 
-```
+```text
 $ just --list
 ...
 lint-java          # Lint Java code (via Maven plugins)
@@ -141,7 +141,7 @@ The workflow generates a formatted summary showing:
 ### Output:
 ```
 README.md:45 - Line too long (found 120, expected 100)
-```
+```text
 </details>
 
 ---
