@@ -93,34 +93,23 @@ EOF
   fi
 }
 
-get_linter_tools() {
-  local linter_name="$1"
-
-  case "$linter_name" in
-  actions) echo "actionlint" ;;
-  commit) echo "conform" ;;
-  java) echo "checkstyle, pmd, spotbugs" ;;
-  license) echo "reuse" ;;
-  markdown) echo "rumdl" ;;
-  secrets) echo "gitleaks" ;;
-  shell) echo "shellcheck, shfmt" ;;
-  yaml) echo "yamlfmt" ;;
-  *) echo "-" ;;
-  esac
+extract_linter_metadata_from_justfile() {
+  local task_name="$1"
+  local metadata_key="$2"
+  
+  grep -B5 "^lint-${task_name}:" justfile 2>/dev/null | grep "# ${metadata_key}:" | sed "s/# ${metadata_key}: //" || echo ""
 }
 
 add_linter_result_to_summary() {
-  local linter_name="$1"
-  local status_emoji="$2"
-  local duration="$3"
-  local exit_code="$4"
+  local display_name="$1"
+  local tools="$2"
+  local status_emoji="$3"
+  local duration="$4"
+  local exit_code="$5"
 
   [ -z "${GITHUB_STEP_SUMMARY:-}" ] && return
 
-  local tools
-  tools=$(get_linter_tools "$linter_name")
-
-  printf "| %s | %s | %s | %.2fs | " "$linter_name" "$tools" "$status_emoji" "$duration" >>"$GITHUB_STEP_SUMMARY"
+  printf "| %s | %s | %s | %.2fs | " "$display_name" "$tools" "$status_emoji" "$duration" >>"$GITHUB_STEP_SUMMARY"
 
   if [ "$exit_code" -ne 0 ]; then
     echo "[View errors below](#-failed-linters) |" >>"$GITHUB_STEP_SUMMARY"
@@ -194,16 +183,30 @@ run_linter() {
   local duration
   duration=$(calculate_duration "$start" "$end")
 
+  local display_name
+  local tools
+  
+  display_name=$(extract_linter_metadata_from_justfile "$linter_name" "linter-name:")
+  tools=$(extract_linter_metadata_from_justfile "$linter_name" "linter-tools:")
+  
+  if [ -z "$display_name" ]; then
+    display_name="$linter_name"
+  fi
+  
+  if [ -z "$tools" ]; then
+    tools="-"
+  fi
+
   cat "$output_file"
   echo ""
   echo -e "⏱️  Duration: ${duration}s"
   echo -e "${status}"
   echo ""
 
-  add_linter_result_to_summary "$linter_name" "$status_emoji" "$duration" "$exit_code"
+  add_linter_result_to_summary "$display_name" "$tools" "$status_emoji" "$duration" "$exit_code"
 
   if [ $exit_code -ne 0 ]; then
-    add_error_details_to_summary "$linter_name" "$exit_code" "$duration" "$output_file"
+    add_error_details_to_summary "$display_name" "$exit_code" "$duration" "$output_file"
   fi
 
   rm -f "$output_file"

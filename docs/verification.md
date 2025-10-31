@@ -56,21 +56,27 @@ install:
 lint: lint-java lint-markdown lint-yaml lint-actions lint-shell lint-secrets
 
 # Individual linter tasks (auto-discovered)
+# Lint Java code
 lint-java:
     mvn checkstyle:check pmd:check spotbugs:check
 
+# Lint markdown files
 lint-markdown:
     rumdl check .
 
+# Lint YAML files
 lint-yaml:
     yamlfmt -lint .
 
+# Lint GitHub Actions
 lint-actions:
     actionlint
 
+# Lint shell scripts
 lint-shell:
     find . -name '*.sh' | xargs shellcheck
 
+# Scan for secrets
 lint-secrets:
     gitleaks detect --no-banner
 
@@ -81,6 +87,29 @@ lint-yaml-fix:
 lint-markdown-fix:
     rumdl check --fix .
 ```
+
+#### Linter Metadata (Optional)
+
+To customize linter names in GitHub UI, add metadata comments before `lint-*` tasks:
+
+```just
+# linter-name: Java Code Quality
+# linter-tools: checkstyle, pmd, spotbugs
+# Lint Java code (via Maven plugins)
+lint-java:
+    @mvn checkstyle:check pmd:check spotbugs:check
+```
+
+**Order matters**: The last comment is the recipe description shown by `just --list`:
+
+```
+$ just --list
+...
+lint-java          # Lint Java code (via Maven plugins)
+...
+```
+
+Both metadata lines optional. Defaults to task name if missing.
 
 #### GitHub Actions Output
 
