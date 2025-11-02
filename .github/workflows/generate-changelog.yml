@@ -74,7 +74,7 @@ jobs:
         run: "if [ -f \"${{ inputs['output-file'] }}\" ]; then\n  echo \"✓ Changelog generated successfully: ${{ inputs['output-file'] }}\"\n  echo \"  • File size: $(stat -c%s \"${{ inputs['output-file'] }}\") bytes\"\n  echo \"  • Line count: $(wc -l < \"${{ inputs['output-file'] }}\")\"\n  \n  # Show first few lines for debugging\n  echo \"\"\n  echo \"Preview (first 10 lines):\"\n  echo \"========================\"\n  head -10 \"${{ inputs['output-file'] }}\"\nelse\n  echo \"✗ ERROR: No changelog generated\"\n  exit 1\nfi\n"
       - name: Upload Changelog Artifact
         if: ${{ inputs['upload-as-artifact'] }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
         with:
           name: ${{ inputs['artifact-name'] }}
           path: ${{ inputs['output-file'] }}
