@@ -213,7 +213,7 @@ jobs:
     with:
       branch: ${{ inputs.branch }}
       project-type: ${{ matrix.artifact['project-type'] }}
-      file-pattern: ${{ inputs['file-pattern'] || (matrix.artifact['project-type'] == 'npm' && 'CHANGELOG.md package.json package-lock.json' || matrix.artifact['project-type'] == 'gradle' && 'CHANGELOG.md gradle.properties build.gradle.kts settings.gradle.kts build.gradle settings.gradle' || matrix.artifact['project-type'] == 'python' && 'CHANGELOG.md pyproject.toml' || 'CHANGELOG.md pom.xml') }}
+      file-pattern: ${{ inputs['file-pattern'] || (matrix.artifact['project-type'] == 'npm' && 'CHANGELOG.md package.json package-lock.json' || matrix.artifact['project-type'] == 'gradle' && 'CHANGELOG.md gradle.properties build.gradle.kts settings.gradle.kts build.gradle settings.gradle' || matrix.artifact['project-type'] == 'python' && 'CHANGELOG.md pyproject.toml' || 'CHANGELOG.md pom.xml **/pom.xml') }}
       java-version: ${{ matrix.artifact.config['java-version'] }}
       node-version: ${{ matrix.artifact.config['node-version'] }}
       gradle-version-file: ${{ matrix.artifact.config['gradle-version-file'] }}
