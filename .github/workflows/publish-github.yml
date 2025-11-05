@@ -61,23 +61,24 @@ jobs:
       packages: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           ref: main
       - name: Download build artifacts
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53  # v6.0.0
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: ${{ inputs['artifact-source'] }}
-          path: ${{ inputs['working-directory'] }}/target/
+          path: ${{ inputs['working-directory'] }}/
       - name: List downloaded artifacts
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           echo "Downloaded artifacts:"
-          ls -lh target/ || echo "No artifacts found"
+          find . -type f -name "*.jar" -path "*/target/*" ! -name "original-*.jar" -exec ls -lh {} \; || echo "No JAR artifacts found"
+          find . -type f -name "*.tgz" -path "*/target/*" -exec ls -lh {} \; || echo "No NPM artifacts found"
       # Maven publishing
       - name: Set up JDK for Maven
         if: ${{ inputs['package-type'] == 'maven' || inputs['package-type'] == 'gradle' }}
-        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165  # v5.0.0
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -90,20 +91,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_ACTOR: ${{ github.actor }}
+          MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
         run: |
           echo "Publishing to GitHub Packages..."
-          mvn deploy:deploy-file \
-            -DgroupId=$(mvn help:evaluate -Dexpression=project.groupId -q -DforceStdout) \
-            -DartifactId=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout) \
-            -Dversion=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout) \
-            -Dpackaging=jar \
-            -Dfile=target/*.jar \
-            -DrepositoryId=github \
-            -Durl=https://maven.pkg.github.com/${{ github.repository }}
+          # Use mvn deploy to handle multi-module projects correctly
+          mvn $MAVEN_CLI_OPTS deploy -DskipTests -DaltDeploymentRepository=github::default::https://maven.pkg.github.com/${{ github.repository }}
       # NPM publishing
       - name: Set up Node.js for NPM
         if: ${{ inputs['package-type'] == 'npm' }}
-        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903  # v6.0.0
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
           node-version: '22'
           registry-url: 'https://npm.pkg.github.com'

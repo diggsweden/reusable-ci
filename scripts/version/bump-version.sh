@@ -17,8 +17,8 @@ maven)
   cd "$WORKING_DIR"
   echo "Updating Maven version to $VERSION"
   # shellcheck disable=SC2086  # Word splitting is intentional for MAVEN_CLI_OPTS
-  mvn ${MAVEN_CLI_OPTS:-} versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false -DskipTests
-  echo "✓ Maven version updated"
+  mvn ${MAVEN_CLI_OPTS:-} versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false -DprocessAllModules=true -DskipTests
+  echo "✓ Maven version updated (including all sub-modules)"
   ;;
 
 npm)

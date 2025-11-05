@@ -37,10 +37,10 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha }}  # https://github.com/actions/checkout/issues/426
+          ref: ${{ github.event.pull_request.head.sha }} # https://github.com/actions/checkout/issues/426
       - name: Determine base branch
         id: base
         run: |

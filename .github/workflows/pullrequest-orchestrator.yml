@@ -88,7 +88,7 @@ on:
         default: false
         type: boolean
 permissions:
-  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
   # Commit message linting
   commit-lint:

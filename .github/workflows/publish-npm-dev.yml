@@ -100,11 +100,11 @@ jobs:
       tarball: ${{ steps.pack.outputs.tarball }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           fetch-depth: 0
       - name: Setup Node.js
-        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903  # v6.0.0
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
           node-version: ${{ inputs.node-version }}
           registry-url: ${{ inputs.registry }}
@@ -132,7 +132,7 @@ jobs:
           SCOPE_NAME="${SCOPE#@}"
           npm config set "${SCOPE}:registry" "${{ inputs.registry }}"
       - name: Checkout .github repository for scripts
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           repository: diggsweden/reusable-ci
           ref: main
@@ -180,7 +180,7 @@ jobs:
           echo "tarball=$FILE" >> "$GITHUB_OUTPUT"
           echo "Created: $FILE"
       - name: Upload tarball as artifact
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: npm-dev-package-${{ github.run_id }}
           path: ${{ inputs.working-directory }}/${{ steps.pack.outputs.tarball }}

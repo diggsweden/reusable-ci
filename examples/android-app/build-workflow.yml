@@ -27,4 +27,4 @@ jobs:
       include-aab: true
       artifact-name-prefix: "testing_store"
       include-date-stamp: true
-      enable-signing: false  # Set to true for signed builds
+      enable-signing: false # Set to true for signed builds

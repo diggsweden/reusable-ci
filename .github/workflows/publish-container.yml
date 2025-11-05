@@ -57,7 +57,7 @@
 #   - custom: User-defined tags
 name: Publish Container Image
 on:
-  workflow_call:  # yamllint disable-line rule:truthy
+  workflow_call: # yamllint disable-line rule:truthy
     inputs:
       container-file:
         description: "Containerfile path"
@@ -163,7 +163,7 @@ on:
         description: "Image metadata JSON"
         value: ${{ jobs.build-and-push.outputs.metadata }}
 permissions:
-  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
   build-and-push:
     name: Build and Push Container
@@ -171,25 +171,25 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write  # Required for SLSA provenance
-      attestations: write  # Required for SBOM attestation
-      security-events: write  # Required for security scanning
-      actions: read  # Required for SLSA provenance v2
+      id-token: write # Required for SLSA provenance
+      attestations: write # Required for SBOM attestation
+      security-events: write # Required for security scanning
+      actions: read # Required for SLSA provenance v2
     outputs:
       image: ${{ steps.image.outputs.image }}
       digest: ${{ steps.build.outputs.digest }}
       metadata: ${{ steps.metadata.outputs.json }}
     steps:
       - name: Harden GitHub runner
-        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a  # v2.13.1
+        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
         with:
           egress-policy: ${{ inputs.egress-policy }}
       - name: Checkout repository
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           ref: ${{ inputs.branch }}
       - name: Checkout .github repository for scripts
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           repository: diggsweden/reusable-ci
           ref: main
@@ -201,7 +201,7 @@ jobs:
             scripts/registry
       - name: Download Maven artifacts
         if: ${{ contains(inputs['artifact-types'], 'maven') }}
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53  # v6.0.0
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         continue-on-error: true
         with:
           name: maven-build-artifacts
@@ -211,7 +211,7 @@ jobs:
         run: bash .github-shared/scripts/container/verify-artifacts.sh maven target
       - name: Download NPM artifacts
         if: ${{ contains(inputs['artifact-types'], 'npm') }}
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53  # v6.0.0
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         continue-on-error: true
         with:
           name: npm-build-artifacts
@@ -221,7 +221,7 @@ jobs:
         run: bash .github-shared/scripts/container/verify-artifacts.sh npm dist fi
       - name: Download Gradle artifacts
         if: ${{ contains(inputs['artifact-types'], 'gradle') }}
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53  # v6.0.0
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         continue-on-error: true
         with:
           name: gradle-build-artifacts
@@ -243,10 +243,10 @@ jobs:
           echo "Using containerfile: $CONTAINERFILE"
           echo "containerfile=$CONTAINERFILE" >> "$GITHUB_OUTPUT"
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392  # v3.6.0
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
       - name: Set up Buildx
         id: buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435  # v3.11.1
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
       - name: Check registry authentication configuration
         if: ${{ inputs['push-image'] }}
         run: |
@@ -262,7 +262,7 @@ jobs:
             "$HAS_PASSWORD"
       - name: Log in to Container Registry
         if: ${{ inputs['push-image'] }}
-        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef  # v3.6.0
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
           registry: ${{ inputs.registry }}
           username: ${{ inputs['registry-username'] || github.actor }}
@@ -280,7 +280,7 @@ jobs:
         run: "IMAGE_NAME=\"${{ steps.image-name.outputs.name }}\"\nREPO_NAME=\"${{ github.repository }}\"\nREPO_OWNER=\"${{ github.repository_owner }}\"\nREGISTRY=\"${{ inputs.registry }}\"\nENFORCE_NAMESPACE=\"${{ inputs['enforce-namespace'] || github.repository_owner }}\"\n\necho \"Validating image namespace...\"\necho \"  Image: $IMAGE_NAME\"\necho \"  Repository: $REPO_NAME\"\necho \"  Registry: $REGISTRY\"\necho \"  Enforced namespace: $ENFORCE_NAMESPACE\"\n\n# Extract repo name without org\nREPO_SHORT=\"${REPO_NAME##*/}\"\n\n# For GHCR, enforce strict namespace matching\nif [[ \"$REGISTRY\" == \"ghcr.io\" ]]; then\n  # Must be ghcr.io/NAMESPACE/REPO_NAME or ghcr.io/NAMESPACE/REPO_NAME-*\n  EXPECTED_PREFIX=\"ghcr.io/${ENFORCE_NAMESPACE}/${REPO_SHORT}\"\n  \n  if [[ ! \"$IMAGE_NAME\" =~ ^${EXPECTED_PREFIX}(-.*)?$ ]]; then\n    echo \"::error::Security: Image name must start with '${EXPECTED_PREFIX}'\"\n    echo \"::error::Got: $IMAGE_NAME\"\n    echo \"::error::This prevents pushing to unauthorized namespaces\"\n    exit 1\n  fi\n  \n  echo \"✓ Image namespace validated: $IMAGE_NAME\"\nelse\n  echo \"⚠ Non-GHCR registry - namespace validation skipped\"\nfi\n"
       - name: Extract Image Metadata
         id: metadata
-        uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f  # v5.8.0
+        uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f # v5.8.0
         with:
           images: ${{ steps.image-name.outputs.name }}
           flavor: |
@@ -302,7 +302,7 @@ jobs:
             type=sha,prefix={{branch}}-,enable=${{ github.ref_type != 'tag' }}
       - name: Build Container Image
         id: build
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83  # v6.18.0
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: ${{ inputs.context }}
           file: ${{ steps.containerfile.outputs.containerfile }}
@@ -331,7 +331,7 @@ jobs:
           touch "/tmp/digests/${digest#sha256:}"
       - name: Upload digest
         if: ${{ inputs['push-image'] && inputs['enable-slsa'] && inputs.registry == 'ghcr.io' }}
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: digests-${{ github.run_id }}-${{ github.run_attempt }}
           path: /tmp/digests/*
@@ -339,7 +339,7 @@ jobs:
           retention-days: 1
       - name: Scan Container Image
         if: ${{ inputs['enable-scan'] && inputs['push-image'] }}
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8  # v0.33.1
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
         with:
           image-ref: ${{ steps.image-name.outputs.name }}@${{ steps.build.outputs.digest }}
           format: 'sarif'
@@ -348,7 +348,7 @@ jobs:
           vuln-type: 'os,library'
       - name: Upload Trivy scan results
         if: ${{ inputs['enable-scan'] && inputs['push-image'] }}
-        uses: github/codeql-action/upload-sarif@4e94bd11f71e507f7f87df81788dff88d1dacbfb  # v4.31.0
+        uses: github/codeql-action/upload-sarif@4e94bd11f71e507f7f87df81788dff88d1dacbfb # v4.31.0
         with:
           sarif_file: 'trivy-results.sarif'
           category: 'container-scan'
@@ -368,7 +368,7 @@ jobs:
             ".github-shared/scripts/sbom"
       - name: Upload Container SBOMs
         if: ${{ inputs['enable-sbom'] && inputs['push-image'] }}
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: container-sbom-${{ github.run_id }}
           path: |
@@ -389,7 +389,7 @@ jobs:
           echo "Found SBOM file: $SBOM_FILE"
       - name: Attest Container SBOM
         if: ${{ inputs['enable-sbom'] && inputs['push-image'] && inputs['enable-slsa'] }}
-        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34  # v3.0.0
+        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3.0.0
         with:
           subject-name: ${{ steps.image-name.outputs.name }}
           subject-digest: ${{ steps.build.outputs.digest }}

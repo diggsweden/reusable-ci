@@ -60,17 +60,22 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 0
       - name: Set up JDK
-        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165  # v5.0.0
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
           java-version: ${{ inputs['java-version'] }}
           distribution: 'temurin'
           cache: maven
           cache-dependency-path: ${{ inputs['working-directory'] }}/pom.xml
+      - name: Install dependencies for multi-module projects
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          echo "Installing project modules to local repository..."
+          mvn $MAVEN_CLI_OPTS install -DskipTests
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs['working-directory'] }}
@@ -123,19 +128,26 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           echo "Built artifacts:"
-          ls -lh target/*.jar 2>/dev/null || echo "No JAR files found"
-          ls -lh target/*.war 2>/dev/null || echo "No WAR files found"
+          ls -lh target/*.jar 2>/dev/null || echo "No JAR files in root target/"
+          ls -lh target/*.war 2>/dev/null || echo "No WAR files in root target/"
+          
+          echo "Checking for multi-module artifacts:"
+          find . -type f -name "*.jar" -path "*/target/*" ! -name "original-*.jar" -exec ls -lh {} \; 2>/dev/null || echo "No JAR files found in sub-modules"
       - name: Upload Maven artifacts
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: maven-build-artifacts
           path: |
             ${{ inputs['working-directory'] }}/target/*.jar
             ${{ inputs['working-directory'] }}/target/*.war
             ${{ inputs['working-directory'] }}/target/*.pom
+            ${{ inputs['working-directory'] }}/**/target/*.jar
+            ${{ inputs['working-directory'] }}/**/target/*.war
+            ${{ inputs['working-directory'] }}/**/target/*.pom
             !${{ inputs['working-directory'] }}/target/original-*.jar
+            !${{ inputs['working-directory'] }}/**/target/original-*.jar
           retention-days: 7
-          if-no-files-found: error
+          if-no-files-found: warn
       - name: Generate build summary
         run: |
           echo "## Maven Build Summary 🔨" >> $GITHUB_STEP_SUMMARY

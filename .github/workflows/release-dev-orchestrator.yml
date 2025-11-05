@@ -40,7 +40,7 @@
 #   - ~3-5 min vs ~12-15 min build time
 name: Release Dev Orchestrator
 on:
-  workflow_call:  # yamllint disable-line rule:truthy
+  workflow_call: # yamllint disable-line rule:truthy
     inputs:
       project-type:
         description: "Project type: maven, npm"
@@ -108,7 +108,7 @@ on:
         description: "Published NPM package version (if published)"
         value: ${{ jobs.publish-npm-dev.outputs.package-version }}
 permissions:
-  contents: read  # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
   build-dev-container:
     name: Build Dev Container
@@ -147,7 +147,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout .github repository for scripts
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           repository: diggsweden/reusable-ci
           ref: main

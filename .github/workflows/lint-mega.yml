@@ -19,7 +19,7 @@
 # 3. The results will be available as artifacts and in the GitHub Security tab.
 name: MegaLinter
 on:
-  workflow_call:  # yamllint disable-line rule:truthy
+  workflow_call: # yamllint disable-line rule:truthy
     inputs:
       megalinter-config:
         description: "Path to the MegaLinter configuration file (e.g., .mega-linter.yml)"
@@ -41,22 +41,22 @@ jobs:
       contents: read
       security-events: write
     env:
-      MEGALINTER_CONFIG: ${{ inputs.megalinter-config }}  # Use the input value
+      MEGALINTER_CONFIG: ${{ inputs.megalinter-config }} # Use the input value
     steps:
       - name: Harden GitHub runner
-        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a  # v2.13.1
+        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
         with:
           egress-policy: ${{ inputs.egress-policy }}
       - name: Checkout repository
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           fetch-depth: 10
       - name: MegaLinter lint
         id: ml
-        uses: oxsecurity/megalinter@62c799d895af9bcbca5eacfebca29d527f125a57  # v9.1.0
+        uses: oxsecurity/megalinter@62c799d895af9bcbca5eacfebca29d527f125a57 # v9.1.0
       - name: Archive MegaLinter artifacts
         if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: MegaLinter reports
           path: |
@@ -64,6 +64,6 @@ jobs:
           retention-days: 5
       - name: Upload MegaLinter scan results to GitHub Security tab
         if: success() || failure()
-        uses: github/codeql-action/upload-sarif@4e94bd11f71e507f7f87df81788dff88d1dacbfb  # v4.31.0
+        uses: github/codeql-action/upload-sarif@4e94bd11f71e507f7f87df81788dff88d1dacbfb # v4.31.0
         with:
           sarif_file: "megalinter-reports/megalinter-report.sarif"
