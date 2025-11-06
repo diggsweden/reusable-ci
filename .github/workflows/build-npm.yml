@@ -102,7 +102,7 @@ jobs:
         id: pack
         working-directory: ${{ inputs['working-directory'] }}
         run: |
-          TARBALL=$(npm pack)
+          TARBALL=$(npm pack 2>&1 | tail -n 1)
           echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
           echo "Created tarball: $TARBALL"
           ls -lh "$TARBALL"
