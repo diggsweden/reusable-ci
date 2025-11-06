@@ -158,9 +158,9 @@ jobs:
       has-rust: ${{ steps.parse.outputs.has-rust }}
       # Filtered by publish target
       mavencentral-artifacts: ${{ steps.parse.outputs.mavencentral-artifacts }}
-      github-packages-artifacts: ${{ steps.parse.outputs.github-packages-artifacts }}
+      githubpackages-artifacts: ${{ steps.parse.outputs.githubpackages-artifacts }}
       has-mavencentral: ${{ steps.parse.outputs.has-mavencentral }}
-      has-github-packages: ${{ steps.parse.outputs.has-github-packages }}
+      has-githubpackages: ${{ steps.parse.outputs.has-githubpackages }}
       is-draft-release: ${{ steps.parse.outputs.is-draft-release }}
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -298,10 +298,10 @@ jobs:
   publish-github:
     name: Publish GitHub - ${{ matrix.artifact.name }}
     needs: [parse-config, build-maven, build-npm, build-gradle, build-gradle-android]
-    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-github-packages == 'true' }}
+    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-githubpackages == 'true' }}
     strategy:
       matrix:
-        artifact: ${{ fromJson(needs.parse-config.outputs.github-packages-artifacts) }}
+        artifact: ${{ fromJson(needs.parse-config.outputs.githubpackages-artifacts) }}
       fail-fast: false
     permissions:
       contents: write
