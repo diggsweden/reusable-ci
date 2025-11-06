@@ -74,7 +74,7 @@ jobs:
         run: |
           echo "Downloaded artifacts:"
           find . -type f -name "*.jar" -path "*/target/*" ! -name "original-*.jar" -exec ls -lh {} \; || echo "No JAR artifacts found"
-          find . -type f -name "*.tgz" -path "*/target/*" -exec ls -lh {} \; || echo "No NPM artifacts found"
+          find . -type f -name "*.tgz" -exec ls -lh {} \; || echo "No NPM tarball found"
       # Maven publishing
       - name: Set up JDK for Maven
         if: ${{ inputs['package-type'] == 'maven' || inputs['package-type'] == 'gradle' }}
@@ -111,7 +111,13 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Publishing to GitHub NPM registry..."
-          npm publish
+          TARBALL=$(find . -maxdepth 1 -name "*.tgz" -type f | head -n 1)
+          if [ -z "$TARBALL" ]; then
+            echo "::error::No tarball found. build-npm must create and upload a tarball."
+            exit 1
+          fi
+          echo "Publishing tarball: $TARBALL"
+          npm publish "$TARBALL"
       # Optional: Attach artifacts to GitHub release
       - name: Upload artifacts to release
         if: ${{ inputs['attach-pattern'] != '' }}

@@ -98,14 +98,19 @@ jobs:
             echo "build/ directory:"
             ls -lh build/ || true
           fi
+      - name: Pack NPM tarball
+        id: pack
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          TARBALL=$(npm pack)
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
+          echo "Created tarball: $TARBALL"
+          ls -lh "$TARBALL"
       - name: Upload NPM artifacts
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: npm-build-artifacts
-          path: |
-            ${{ inputs['working-directory'] }}/
-            !${{ inputs['working-directory'] }}/node_modules/
-            !${{ inputs['working-directory'] }}/.git/
+          path: ${{ inputs['working-directory'] }}/${{ steps.pack.outputs.tarball }}
           retention-days: 7
           if-no-files-found: error
       - name: Generate build summary
