@@ -96,7 +96,7 @@ jobs:
           # Check in all target directories (supports multi-module projects)
           SOURCES_COUNT=$(find . -type f -name "*-sources.jar" -path "*/target/*" | wc -l)
           JAVADOC_COUNT=$(find . -type f -name "*-javadoc.jar" -path "*/target/*" | wc -l)
-          
+
           if [ "$SOURCES_COUNT" -eq 0 ]; then
             echo "::error::Missing sources JAR. Maven Central requires sources."
             echo "::error::Build with build-type: lib to generate sources and javadoc JARs"

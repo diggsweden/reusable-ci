@@ -4,9 +4,38 @@
 
 version = 1
 
-# misc
+# misc - test explicit paths first
 [[annotations]]
-path = ["**/*.md","**/*.json","**/*.yml","**/*.multi-artifact"]
-precedence = "aggregate"
-SPDX-FileCopyrightText = "2025 The Reuseable CI Authors"
+path = "README.md"
+SPDX-FileCopyrightText = "2025 The Reusable CI Authors"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = ".gitgnore"
+SPDX-FileCopyrightText = "2025 The Reusable CI Authors"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = "renovate.json"
+SPDX-FileCopyrightText = "2025 The Reusable CI Authors"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = ".github/workflows/generate-changelog.yml"
+SPDX-FileCopyrightText = "2025 The Reusable CI Authors"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = "docs/components.md"
+SPDX-FileCopyrightText = "2025 The Reusable CI Authors"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = "docs/reference.md"
+SPDX-FileCopyrightText = "2025 The Reusable CI Authors"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = "examples/Containerfile.multi-artifact"
+SPDX-FileCopyrightText = "2025 The Reusable CI Authors"
 SPDX-License-Identifier = "CC0-1.0"

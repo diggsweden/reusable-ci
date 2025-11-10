@@ -105,7 +105,8 @@ verify-deps:
         printf '%b{{missing}} Missing tools detected!%b\n\n' "{{red}}" "{{nc}}"; \
         printf '%bTo fix:%b\n' "{{yellow}}" "{{nc}}"; \
         printf '1. Install: %bmise install%b\n' "{{green}}" "{{nc}}"; \
-        printf '2. Activate: %beval "$(mise activate bash)"%b\n' "{{green}}" "{{nc}}"; \
+        printf '2. Activate (bash/zsh): %beval "$(mise activate bash)"%b\n' "{{green}}" "{{nc}}"; \
+        printf '   Activate (fish): %bmise activate fish | source%b\n' "{{green}}" "{{nc}}"; \
         exit 1; \
     else \
         printf '%b{{checkmark}} All required tools installed!%b\n' "{{green}}" "{{nc}}"; \
@@ -252,7 +253,7 @@ lint-commit:
     default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); \
     if [ -z "$default_branch" ]; then default_branch="main"; fi; \
     if [ "$(git rev-list --count ${default_branch}..)" = "0" ]; then \
-        printf "%s" "{{green}} No commits found in current branch: {{yellow}}$currentBranch{{nc}}, compared to: {{yellow}}${default_branch}{{nc}} {{nc}}"; \
+        printf "%s\n" "{{green}} No commits found in current branch: {{yellow}}$currentBranch{{nc}}, compared to: {{yellow}}${default_branch}{{nc}}"; \
         echo "COMMIT_SKIP" > /tmp/just_commit_status; \
     else \
         conform enforce --base-branch=${default_branch} \

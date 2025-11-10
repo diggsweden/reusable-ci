@@ -130,7 +130,7 @@ jobs:
           echo "Built artifacts:"
           ls -lh target/*.jar 2>/dev/null || echo "No JAR files in root target/"
           ls -lh target/*.war 2>/dev/null || echo "No WAR files in root target/"
-          
+
           echo "Checking for multi-module artifacts:"
           find . -type f -name "*.jar" -path "*/target/*" ! -name "original-*.jar" -exec ls -lh {} \; 2>/dev/null || echo "No JAR files found in sub-modules"
       - name: Upload Maven artifacts

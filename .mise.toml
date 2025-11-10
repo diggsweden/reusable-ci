@@ -19,3 +19,4 @@ paranoid = true      # Enable strict security checks and verification
 "aqua:siderolabs/conform" = "v0.1.0-alpha.30"
 "aqua:mvdan/sh" = "v3.12.0"
 "aqua:koalaman/shellcheck" = "v0.11.0"
+"pipx:reuse" = "6.2.0"

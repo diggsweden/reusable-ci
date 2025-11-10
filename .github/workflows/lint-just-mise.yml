@@ -82,6 +82,8 @@ jobs:
           rm -rf mise.tar.gz mise
           mise --version
       - name: Install development tools
+        env:
+          MISE_GITHUB_TOKEN: ${{ github.token }}
         run: |
           mise trust
           just install
