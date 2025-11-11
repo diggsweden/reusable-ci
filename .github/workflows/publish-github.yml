@@ -101,7 +101,7 @@ jobs:
         if: ${{ inputs['package-type'] == 'npm' }}
         uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
-          node-version: '22'
+          node-version: '24'
           registry-url: 'https://npm.pkg.github.com'
           scope: '@${{ github.repository_owner }}'
       - name: Publish NPM to GitHub Packages
