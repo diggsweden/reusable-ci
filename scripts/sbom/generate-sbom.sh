@@ -33,7 +33,7 @@ echo ""
 
 # Syft version to install (pinned to avoid bugs in newer versions)
 # renovate: datasource=github-releases depName=anchore/syft
-SYFT_VERSION="v1.36.0"
+SYFT_VERSION="v1.37.0"
 
 # Install Syft if not available
 install_syft() {
