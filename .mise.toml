@@ -10,6 +10,18 @@
 experimental = true  # Enable experimental features (required for ubi backend)
 paranoid = true      # Enable strict security checks and verification
 
+[env]
+# These will be available during tool installation AND runtime
+HTTP_PROXY = "{{ get_env(name='HTTP_PROXY', default='') }}"
+HTTPS_PROXY = "{{ get_env(name='HTTPS_PROXY', default='') }}"
+NO_PROXY = "{{ get_env(name='NO_PROXY', default='') }}"
+http_proxy = "{{ get_env(name='http_proxy', default='') }}"
+https_proxy = "{{ get_env(name='https_proxy', default='') }}"
+no_proxy = "{{ get_env(name='no_proxy', default='') }}"
+
+# Pip/pipx configuration
+PIP_INDEX_URL = "{{ get_env(name='PIP_INDEX_URL', default='') }}"
+
 [tools]
 "aqua:casey/just" = "1.43.0"
 "ubi:rvben/rumdl" = "v0.0.173"
