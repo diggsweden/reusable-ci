@@ -76,10 +76,10 @@ on:
         default: ".github-templates/templates/gitcliff/minimal.toml"
         type: string
       file-pattern:
-        description: 'Files to commit (default: "CHANGELOG.md pom.xml **/pom.xml"). NPM projects should set to "CHANGELOG.md package.json package-lock.json"'
+        description: 'Files to commit (default: "CHANGELOG.md :(glob)**/pom.xml"). NPM projects should set to "CHANGELOG.md package.json package-lock.json"'
         required: false
         type: string
-        default: 'CHANGELOG.md pom.xml **/pom.xml'
+        default: 'CHANGELOG.md :(glob)**/pom.xml'
       egress-policy:
         description: "Egress policy for the Harden Runner step (e.g., audit, block)"
         required: false
