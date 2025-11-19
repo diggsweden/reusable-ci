@@ -160,6 +160,7 @@ jobs:
           if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
             echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.keystore
             echo "✓ Android keystore decoded successfully"
+            echo "ANDROID_KEYSTORE_PATH=$PWD/release.keystore" >> "$GITHUB_ENV"
           else
             echo "::error::ANDROID_KEYSTORE secret not found but enable-signing is true"
             exit 1
