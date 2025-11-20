@@ -87,8 +87,13 @@ on:
         required: false
         default: false
         type: boolean
+      linters.swiftformat:
+        description: "Enable swift-format (Google Swift Style Guide) for iOS/macOS projects"
+        required: false
+        default: false
+        type: boolean
       linters.swiftlint:
-        description: "Enable Swift linting (swift-format) for iOS/macOS projects"
+        description: "Enable SwiftLint (comprehensive linting rules) for iOS/macOS projects"
         required: false
         default: false
         type: boolean
@@ -136,10 +141,13 @@ jobs:
   # Swift linting
   swift-lint:
     name: Swift Lint
-    if: ${{ inputs['linters.swiftlint'] }}
+    if: ${{ inputs['linters.swiftformat'] || inputs['linters.swiftlint'] }}
     permissions:
       contents: read
     uses: ./.github/workflows/lint-swift.yml
+    with:
+      enable-swiftformat: ${{ inputs['linters.swiftformat'] }}
+      enable-swiftlint: ${{ inputs['linters.swiftlint'] }}
   # Gather results from enabled linters (always runs to check status)
   lint-status:
     name: Lint Status Check
@@ -261,7 +269,7 @@ jobs:
           fi
 
           # Swift lint
-          if [[ "${{ inputs['linters.swiftlint'] }}" == "true" ]]; then
+          if [[ "${{ inputs['linters.swiftformat'] }}" == "true" ]] || [[ "${{ inputs['linters.swiftlint'] }}" == "true" ]]; then
             if [[ "${{ needs.swift-lint.result }}" == "success" ]]; then
               echo "| Swift Lint | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
             elif [[ "${{ needs.swift-lint.result }}" == "skipped" ]]; then
@@ -293,7 +301,7 @@ jobs:
           if [[ "${{ inputs['linters.justmiselint'] }}" == "true" ]] && [[ "${{ needs.just-mise-lint.result }}" == "failure" ]]; then
             FAILED=true
           fi
-          if [[ "${{ inputs['linters.swiftlint'] }}" == "true" ]] && [[ "${{ needs.swift-lint.result }}" == "failure" ]]; then
+          if ([[ "${{ inputs['linters.swiftformat'] }}" == "true" ]] || [[ "${{ inputs['linters.swiftlint'] }}" == "true" ]]) && [[ "${{ needs.swift-lint.result }}" == "failure" ]]; then
             FAILED=true
           fi
 

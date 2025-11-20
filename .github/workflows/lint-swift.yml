@@ -30,13 +30,18 @@ on:
         required: false
         default: "."
         type: string
+      enable-swiftformat:
+        description: "Enable swift-format linting"
+        required: false
+        default: true
+        type: boolean
       swift-format-version:
         description: "swift-format version (e.g., 510.1.0)"
         required: false
         default: ""
         type: string
       enable-swiftlint:
-        description: "Enable SwiftLint in addition to swift-format"
+        description: "Enable SwiftLint linting"
         required: false
         default: false
         type: boolean
@@ -65,6 +70,7 @@ permissions:
 jobs:
   swift-format-lint:
     name: Swift Format Lint
+    if: ${{ inputs['enable-swiftformat'] }}
     runs-on: ${{ inputs.macos-version }}
     permissions:
       contents: read
@@ -203,12 +209,16 @@ jobs:
           echo "| Linter | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
           
-          if [ "${{ needs.swift-format-lint.result }}" = "success" ]; then
-            echo "| swift-format | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
-          elif [ "${{ needs.swift-format-lint.result }}" = "skipped" ]; then
-            echo "| swift-format | − Skipped |" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs['enable-swiftformat'] }}" = "true" ]; then
+            if [ "${{ needs.swift-format-lint.result }}" = "success" ]; then
+              echo "| swift-format | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
+            elif [ "${{ needs.swift-format-lint.result }}" = "skipped" ]; then
+              echo "| swift-format | − Skipped |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| swift-format | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
+            fi
           else
-            echo "| swift-format | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
+            echo "| swift-format | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
           fi
           
           if [ "${{ inputs['enable-swiftlint'] }}" = "true" ]; then
@@ -223,7 +233,7 @@ jobs:
             echo "| SwiftLint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
           fi
           
-          if [ "${{ needs.swift-format-lint.result }}" = "failure" ] || \
+          if ([ "${{ inputs['enable-swiftformat'] }}" = "true" ] && [ "${{ needs.swift-format-lint.result }}" = "failure" ]) || \
              ([ "${{ inputs['enable-swiftlint'] }}" = "true" ] && [ "${{ needs.swiftlint.result }}" = "failure" ]); then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### ✗ Linting failed" >> $GITHUB_STEP_SUMMARY
