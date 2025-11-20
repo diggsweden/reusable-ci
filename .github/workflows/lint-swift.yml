@@ -87,17 +87,17 @@ jobs:
         id: find-files
         working-directory: ${{ inputs['working-directory'] }}
         run: |
-          readarray -t files < <(git ls-files '${{ inputs['file-pattern'] }}')
+          FILE_COUNT=$(git ls-files '${{ inputs['file-pattern'] }}' | wc -l | tr -d ' ')
           
-          if [ ${#files[@]} -eq 0 ]; then
+          if [ "$FILE_COUNT" -eq 0 ]; then
             echo "found=false" >> "$GITHUB_OUTPUT"
             echo "No Swift files found matching pattern: ${{ inputs['file-pattern'] }}"
             exit 0
           fi
           
           echo "found=true" >> "$GITHUB_OUTPUT"
-          echo "count=${#files[@]}" >> "$GITHUB_OUTPUT"
-          echo "Found ${#files[@]} Swift files to lint"
+          echo "count=${FILE_COUNT}" >> "$GITHUB_OUTPUT"
+          echo "Found ${FILE_COUNT} Swift files to lint"
 
       - name: Run swift-format lint
         if: steps.find-files.outputs.found == 'true'
@@ -105,10 +105,14 @@ jobs:
         run: |
           set +e
           
-          readarray -t files < <(git ls-files '${{ inputs['file-pattern'] }}')
+          # Get list of Swift files
+          SWIFT_FILES=$(git ls-files '${{ inputs['file-pattern'] }}')
+          FILE_COUNT=$(echo "$SWIFT_FILES" | wc -l | tr -d ' ')
           
-          echo "Running swift-format on ${#files[@]} files..."
-          swift-format lint -s "${files[@]}" > lint-output.txt 2>&1
+          echo "Running swift-format on ${FILE_COUNT} files..."
+          
+          # Run swift-format on all files at once (avoid array issues on macOS)
+          echo "$SWIFT_FILES" | xargs swift-format lint -s > lint-output.txt 2>&1
           LINT_EXIT_CODE=$?
           
           cat lint-output.txt
