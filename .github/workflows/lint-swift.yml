@@ -1,0 +1,228 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+# Swift Lint Workflow
+# 
+# Purpose: Runs Swift code linting and formatting checks using swift-format
+# and optionally SwiftLint for iOS/macOS projects.
+#
+# How it works:
+# 1. Checks out the repository
+# 2. Installs swift-format (and optionally SwiftLint)
+# 3. Runs linting on all Swift files
+# 4. Reports violations and fails if errors are found
+#
+# Features:
+#   - swift-format linting (Google Swift Style Guide)
+#   - Optional SwiftLint support
+#   - Configurable file patterns
+#   - Detailed error reporting
+#
+# Required Permissions:
+#   contents: read  # Checkout code
+#
+name: Swift Lint
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: "Working directory for linting"
+        required: false
+        default: "."
+        type: string
+      swift-format-version:
+        description: "swift-format version (e.g., 510.1.0)"
+        required: false
+        default: ""
+        type: string
+      enable-swiftlint:
+        description: "Enable SwiftLint in addition to swift-format"
+        required: false
+        default: false
+        type: boolean
+      swiftlint-config:
+        description: "Path to SwiftLint configuration file"
+        required: false
+        default: ".swiftlint.yml"
+        type: string
+      file-pattern:
+        description: "File pattern for Swift files to lint (git ls-files pattern)"
+        required: false
+        default: "*.swift"
+        type: string
+      fail-on-warning:
+        description: "Fail the build on linting warnings"
+        required: false
+        default: false
+        type: boolean
+      macos-version:
+        description: "macOS runner version (macos-13, macos-14, macos-15)"
+        required: false
+        default: "macos-15"
+        type: string
+permissions:
+  contents: read
+jobs:
+  swift-format-lint:
+    name: Swift Format Lint
+    runs-on: ${{ inputs.macos-version }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Install swift-format
+        run: |
+          if [ -n "${{ inputs['swift-format-version'] }}" ]; then
+            brew install swift-format@${{ inputs['swift-format-version'] }}
+          else
+            brew install swift-format
+          fi
+          swift-format --version
+
+      - name: Find Swift files
+        id: find-files
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          readarray -t files < <(git ls-files '${{ inputs['file-pattern'] }}')
+          
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No Swift files found matching pattern: ${{ inputs['file-pattern'] }}"
+            exit 0
+          fi
+          
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          echo "count=${#files[@]}" >> "$GITHUB_OUTPUT"
+          echo "Found ${#files[@]} Swift files to lint"
+
+      - name: Run swift-format lint
+        if: steps.find-files.outputs.found == 'true'
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          set +e
+          
+          readarray -t files < <(git ls-files '${{ inputs['file-pattern'] }}')
+          
+          echo "Running swift-format on ${#files[@]} files..."
+          swift-format lint -s "${files[@]}" > lint-output.txt 2>&1
+          LINT_EXIT_CODE=$?
+          
+          cat lint-output.txt
+          
+          if [ $LINT_EXIT_CODE -ne 0 ]; then
+            echo "::error::swift-format found formatting issues"
+            echo "## Swift Format Issues 🔴" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat lint-output.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "✓ swift-format passed"
+            echo "## Swift Format ✅" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "All Swift files are properly formatted." >> $GITHUB_STEP_SUMMARY
+          fi
+
+  swiftlint:
+    name: SwiftLint
+    if: ${{ inputs['enable-swiftlint'] }}
+    runs-on: ${{ inputs.macos-version }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Install SwiftLint
+        run: |
+          brew install swiftlint
+          swiftlint version
+
+      - name: Run SwiftLint
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          set +e
+          
+          if [ -f "${{ inputs['swiftlint-config'] }}" ]; then
+            echo "Using SwiftLint configuration: ${{ inputs['swiftlint-config'] }}"
+            swiftlint lint --config "${{ inputs['swiftlint-config'] }}" --reporter github-actions-logging > swiftlint-output.txt 2>&1
+          else
+            echo "No SwiftLint configuration found, using defaults"
+            swiftlint lint --reporter github-actions-logging > swiftlint-output.txt 2>&1
+          fi
+          
+          SWIFTLINT_EXIT_CODE=$?
+          
+          cat swiftlint-output.txt
+          
+          if [ $SWIFTLINT_EXIT_CODE -ne 0 ]; then
+            if [ "${{ inputs['fail-on-warning'] }}" = "true" ]; then
+              echo "::error::SwiftLint found issues"
+              echo "## SwiftLint Issues 🔴" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              cat swiftlint-output.txt >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              exit 1
+            else
+              echo "::warning::SwiftLint found issues but fail-on-warning is false"
+              echo "## SwiftLint Warnings ⚠️" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              cat swiftlint-output.txt >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "✓ SwiftLint passed"
+            echo "## SwiftLint ✅" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "No SwiftLint violations found." >> $GITHUB_STEP_SUMMARY
+          fi
+
+  summary:
+    name: Lint Summary
+    runs-on: ubuntu-latest
+    needs: [swift-format-lint, swiftlint]
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          echo "## Swift Linting Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Linter | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.swift-format-lint.result }}" = "success" ]; then
+            echo "| swift-format | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.swift-format-lint.result }}" = "skipped" ]; then
+            echo "| swift-format | − Skipped |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| swift-format | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ inputs['enable-swiftlint'] }}" = "true" ]; then
+            if [ "${{ needs.swiftlint.result }}" = "success" ]; then
+              echo "| SwiftLint | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
+            elif [ "${{ needs.swiftlint.result }}" = "skipped" ]; then
+              echo "| SwiftLint | − Skipped |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| SwiftLint | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| SwiftLint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ needs.swift-format-lint.result }}" = "failure" ] || \
+             ([ "${{ inputs['enable-swiftlint'] }}" = "true" ] && [ "${{ needs.swiftlint.result }}" = "failure" ]); then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### ✗ Linting failed" >> $GITHUB_STEP_SUMMARY
+            echo "Please fix the issues above." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi

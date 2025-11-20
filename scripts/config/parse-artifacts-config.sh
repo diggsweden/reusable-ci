@@ -21,7 +21,7 @@ if [ "$ARTIFACTS" = "null" ] || [ "$ARTIFACTS" = "[]" ]; then
 fi
 
 # Validate projectType for all artifacts
-VALID_TYPES="maven npm gradle gradle-android python go rust"
+VALID_TYPES="maven npm gradle gradle-android xcode-ios python go rust"
 for projectType in $(echo "$ARTIFACTS" | jq -r '.[] | .["project-type"]'); do
   if ! echo "$VALID_TYPES" | grep -qw "$projectType"; then
     echo "::error::Invalid projectType '$projectType'. Must be one of: $VALID_TYPES"
@@ -79,7 +79,7 @@ CONTAINERS_WITH_TYPES=$(echo "$CONTAINERS" | jq -c --argjson artifacts "$ARTIFAC
 } >>"$GITHUB_OUTPUT"
 
 # Filter artifacts by project type and set has-* flags
-for type in maven npm gradle gradle-android python go rust; do
+for type in maven npm gradle gradle-android xcode-ios python go rust; do
   FILTERED=$(echo "$ARTIFACTS" | jq -c '[.[] | select(.["project-type"] == "'"${type}"'")]')
   COUNT=$(echo "$FILTERED" | jq 'length')
 

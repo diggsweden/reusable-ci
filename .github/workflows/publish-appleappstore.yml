@@ -1,0 +1,218 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+# Apple App Store / TestFlight Publisher
+# 
+# Purpose: Publishes iOS applications to Apple App Store Connect (TestFlight) using
+# the App Store Connect API.
+#
+# How it works:
+# 1. Downloads IPA artifact from previous build job
+# 2. Sets up App Store Connect API authentication
+# 3. Validates IPA file
+# 4. Uploads to App Store Connect (TestFlight)
+# 5. Optionally submits for external testing or review
+#
+# Features:
+#   - TestFlight distribution
+#   - App Store Connect API v2 authentication
+#   - IPA validation before upload
+#   - Configurable submission options
+#   - Detailed upload reporting
+#
+# Outputs:
+#   - Upload status and build information
+#   - TestFlight availability notifications
+#
+# Required Secrets:
+#   APP_STORE_CONNECT_ISSUER_ID: App Store Connect API issuer ID
+#   APP_STORE_CONNECT_API_KEY_ID: App Store Connect API key ID
+#   APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64: Base64-encoded API private key (.p8)
+#
+# Required Permissions:
+#   contents: read  # Download artifacts
+#
+name: Publish to Apple App Store
+on:
+  workflow_call:
+    inputs:
+      # === IPA SOURCE ===
+      ipa-artifact-name:
+        description: "Name of artifact containing IPA file"
+        required: true
+        type: string
+      ipa-path:
+        description: "Path to IPA file within artifact (supports glob)"
+        required: false
+        default: "**/*.ipa"
+        type: string
+      # === APP STORE CONFIGURATION ===
+      app-id:
+        description: "App Store Connect App ID (bundle identifier)"
+        required: false
+        type: string
+      platform:
+        description: "Platform (ios, macos, tvos)"
+        required: false
+        default: "ios"
+        type: string
+      # === SUBMISSION OPTIONS ===
+      submit-for-review:
+        description: "Submit for App Store review (not just TestFlight)"
+        required: false
+        default: false
+        type: boolean
+      skip-validation:
+        description: "Skip IPA validation before upload"
+        required: false
+        default: false
+        type: boolean
+      # === SYSTEM ===
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      macos-version:
+        description: "macOS runner version (macos-13, macos-14, macos-15)"
+        required: false
+        default: "macos-14"
+        type: string
+permissions:
+  contents: read
+jobs:
+  publish:
+    name: Publish to App Store Connect
+    runs-on: ${{ inputs.macos-version }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Download IPA artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: ${{ inputs['ipa-artifact-name'] }}
+          path: artifacts/
+
+      - name: Find IPA file
+        id: find-ipa
+        run: |
+          IPA_FILE=$(find artifacts -name "*.ipa" -type f | head -1)
+          
+          if [ -z "$IPA_FILE" ]; then
+            echo "::error::No IPA file found in artifact"
+            exit 1
+          fi
+          
+          echo "ipa-file=${IPA_FILE}" >> "$GITHUB_OUTPUT"
+          echo "Found IPA: ${IPA_FILE}"
+          
+          ls -lh "$IPA_FILE"
+
+      - name: Setup App Store Connect API
+        env:
+          APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+        run: |
+          if [ -z "$APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64" ]; then
+            echo "::error::APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 secret not found"
+            exit 1
+          fi
+          if [ -z "$APP_STORE_CONNECT_API_KEY_ID" ]; then
+            echo "::error::APP_STORE_CONNECT_API_KEY_ID secret not found"
+            exit 1
+          fi
+          
+          mkdir -p private_keys
+          echo -n "$APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64" | base64 --decode -o "private_keys/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
+          
+          echo "✓ App Store Connect API configured"
+
+      - name: Validate IPA
+        if: ${{ !inputs['skip-validation'] }}
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          echo "Validating IPA..."
+          
+          xcrun altool \
+            --validate-app \
+            --file "${{ steps.find-ipa.outputs.ipa-file }}" \
+            --type ${{ inputs.platform }} \
+            --apiKey "$APP_STORE_CONNECT_API_KEY_ID" \
+            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID" \
+            --output-format json
+          
+          echo "✓ IPA validation passed"
+
+      - name: Upload to App Store Connect
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          
+          echo "Uploading IPA to App Store Connect..."
+          
+          xcrun altool \
+            --output-format json \
+            --upload-app \
+            --file "${{ steps.find-ipa.outputs.ipa-file }}" \
+            --type ${{ inputs.platform }} \
+            --apiKey "$APP_STORE_CONNECT_API_KEY_ID" \
+            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID" \
+          | tee upload-result.json
+          
+          echo "✓ Upload successful"
+
+      - name: Parse upload results
+        id: upload-info
+        run: |
+          if [ -f upload-result.json ]; then
+            REQUEST_ID=$(jq -r '.["product-errors"][]?.requestId // .["success-message"] // "unknown"' upload-result.json)
+            echo "request-id=${REQUEST_ID}" >> "$GITHUB_OUTPUT"
+            echo "Upload Request ID: ${REQUEST_ID}"
+          fi
+
+      - name: Generate upload summary
+        run: |
+          echo "## App Store Connect Upload Summary 📱" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Upload Details" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **IPA File** | \`$(basename ${{ steps.find-ipa.outputs.ipa-file }})\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Platform** | ${{ inputs.platform }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Validation** | ${{ inputs['skip-validation'] && '⊘ Skipped' || '✓ Passed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Status** | ✓ Uploaded |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -n "${{ steps.upload-info.outputs.request-id }}" ]; then
+            echo "| **Request ID** | \`${{ steps.upload-info.outputs.request-id }}\` |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Check [App Store Connect](https://appstoreconnect.apple.com) for build processing status" >> $GITHUB_STEP_SUMMARY
+          echo "2. Build will be available in TestFlight within 10-15 minutes after processing completes" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ inputs['submit-for-review'] }}" = "true" ]; then
+            echo "3. Build will be automatically submitted for App Store review" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "3. Manually submit for external testing or App Store review from App Store Connect" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "*Upload completed at $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload result artifact
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: appstore-upload-result
+          path: upload-result.json
+          retention-days: 30

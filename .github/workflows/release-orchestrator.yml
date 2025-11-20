@@ -145,6 +145,7 @@ jobs:
       npm-artifacts: ${{ steps.parse.outputs.npm-artifacts }}
       gradle-artifacts: ${{ steps.parse.outputs.gradle-artifacts }}
       gradleandroid-artifacts: ${{ steps.parse.outputs.gradleandroid-artifacts }}
+      xcodeios-artifacts: ${{ steps.parse.outputs.xcodeios-artifacts }}
       python-artifacts: ${{ steps.parse.outputs.python-artifacts }}
       go-artifacts: ${{ steps.parse.outputs.go-artifacts }}
       rust-artifacts: ${{ steps.parse.outputs.rust-artifacts }}
@@ -153,6 +154,7 @@ jobs:
       has-npm: ${{ steps.parse.outputs.has-npm }}
       has-gradle: ${{ steps.parse.outputs.has-gradle }}
       has-gradleandroid: ${{ steps.parse.outputs.has-gradleandroid }}
+      has-xcodeios: ${{ steps.parse.outputs.has-xcodeios }}
       has-python: ${{ steps.parse.outputs.has-python }}
       has-go: ${{ steps.parse.outputs.has-go }}
       has-rust: ${{ steps.parse.outputs.has-rust }}
@@ -294,10 +296,33 @@ jobs:
       enable-signing: ${{ matrix.artifact.config['enable-android-signing'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
       branch: ${{ inputs.branch }}
+  # Step 2e: Build Xcode iOS/macOS artifacts
+  build-xcode:
+    name: Build Xcode - ${{ matrix.artifact.name }}
+    needs: [parse-config, version-and-changelog]
+    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-xcodeios == 'true' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(needs.parse-config.outputs.xcodeios-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/build-xcode-variants.yml
+    with:
+      xcode-version: ${{ matrix.artifact.config['xcode-version'] }}
+      scheme: ${{ matrix.artifact.config['scheme'] }}
+      workspace: ${{ matrix.artifact.config['workspace'] }}
+      project: ${{ matrix.artifact.config['project'] }}
+      configuration: ${{ matrix.artifact.config['configuration'] || 'Release' }}
+      enable-code-signing: ${{ matrix.artifact.config['enable-code-signing'] != false }}
+      export-options-var: ${{ matrix.artifact.config['export-options-var'] || 'EXPORT_OPTIONS_BASE64' }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-14' }}
   # Step 3a: Publish to GitHub Packages
   publish-github:
     name: Publish GitHub - ${{ matrix.artifact.name }}
-    needs: [parse-config, build-maven, build-npm, build-gradle, build-gradle-android]
+    needs: [parse-config, build-maven, build-npm, build-gradle, build-gradle-android, build-xcode]
     if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-githubpackages == 'true' }}
     strategy:
       matrix:
@@ -332,10 +357,29 @@ jobs:
       artifact-source: maven-build-artifacts
       working-directory: ${{ matrix.artifact['working-directory'] }}
       settings-path: ${{ matrix.artifact.config['settings-path'] }}
+  # Step 3c: Publish to Apple App Store / TestFlight
+  publish-appleappstore:
+    name: Publish Apple App Store - ${{ matrix.artifact.name }}
+    needs: [parse-config, build-xcode]
+    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-xcodeios == 'true' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(needs.parse-config.outputs.xcodeios-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/publish-appleappstore.yml
+    with:
+      ipa-artifact-name: ${{ matrix.artifact.name }}-IPA
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-14' }}
+      submit-for-review: ${{ matrix.artifact.config['submit-for-review'] || false }}
+      skip-validation: ${{ matrix.artifact.config['skip-validation'] || false }}
   # Step 4: Build and Publish Container Images
   build-containers:
     name: Build Container - ${{ matrix.container.name }}
-    needs: [parse-config, build-maven, build-npm, build-gradle, build-gradle-android]
+    needs: [parse-config, build-maven, build-npm, build-gradle, build-gradle-android, build-xcode]
     if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.containers != '[]' }}
     strategy:
       matrix:
@@ -364,7 +408,7 @@ jobs:
   # Step 5: Create GitHub Release  
   create-release:
     name: Create GitHub Release
-    needs: [parse-config, publish-github, publish-mavencentral, build-containers, build-gradle-android]
+    needs: [parse-config, publish-github, publish-mavencentral, publish-appleappstore, build-containers, build-gradle-android, build-xcode]
     # Run even if previous jobs were skipped but at least one succeeded
     if: ${{ !failure() && !cancelled() && inputs['release-publisher'] == 'github-cli' }}
     permissions:
@@ -386,7 +430,7 @@ jobs:
   # Final summary
   release-summary:
     name: Release Summary
-    needs: [parse-config, version-and-changelog, build-maven, build-npm, build-gradle, build-gradle-android, publish-github, publish-mavencentral, build-containers, create-release]
+    needs: [parse-config, version-and-changelog, build-maven, build-npm, build-gradle, build-gradle-android, build-xcode, publish-github, publish-mavencentral, publish-appleappstore, build-containers, create-release]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -423,8 +467,10 @@ jobs:
           echo "| Build NPM | ${{ needs.build-npm.result == 'success' && '✓' || needs.build-npm.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Build Gradle | ${{ needs.build-gradle.result == 'success' && '✓' || needs.build-gradle.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Build Gradle Android | ${{ needs.build-gradle-android.result == 'success' && '✓' || needs.build-gradle-android.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Xcode | ${{ needs.build-xcode.result == 'success' && '✓' || needs.build-xcode.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Publish GitHub | ${{ needs.publish-github.result == 'success' && '✓' || needs.publish-github.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Publish Maven Central | ${{ needs.publish-mavencentral.result == 'success' && '✓' || needs.publish-mavencentral.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Publish Apple App Store | ${{ needs.publish-appleappstore.result == 'success' && '✓' || needs.publish-appleappstore.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Containers | ${{ needs.build-containers.result == 'success' && '✓' || needs.build-containers.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| GitHub Release | ${{ needs.create-release.result == 'success' && '✓' || needs.create-release.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
 

@@ -38,7 +38,7 @@ containers:
 
 - **Type:** `string`
 - **Description:** Build system type
-- **Valid values:** `maven`, `npm`, `gradle`
+- **Valid values:** `maven`, `npm`, `gradle`, `gradle-android`, `xcode-ios`
 - **Example:** `project-type: maven`
 
 #### `working-directory`
@@ -146,6 +146,99 @@ containers:
 - **Description:** File containing version properties
 - **Default:** `gradle.properties`
 - **Example:** `gradle-version-file: gradle.properties`
+
+---
+
+### Configuration Fields (Xcode iOS/macOS)
+
+#### `config.xcode-version`
+
+- **Type:** `string`
+- **Description:** Xcode version to use for building
+- **Required:** Yes
+- **Valid values:** `15.4`, `16.0`, `16.1`, etc.
+- **Example:** `xcode-version: "16.1"`
+
+#### `config.scheme`
+
+- **Type:** `string`
+- **Description:** Xcode scheme to build
+- **Required:** Yes
+- **Example:** `scheme: "Wallet Demo"`
+
+#### `config.workspace`
+
+- **Type:** `string`
+- **Description:** Xcode workspace file (mutually exclusive with `project`)
+- **Required:** One of `workspace` or `project`
+- **Example:** `workspace: "MyApp.xcworkspace"`
+
+#### `config.project`
+
+- **Type:** `string`
+- **Description:** Xcode project file (mutually exclusive with `workspace`)
+- **Required:** One of `workspace` or `project`
+- **Example:** `project: "MyApp.xcodeproj"`
+
+#### `config.configuration`
+
+- **Type:** `string`
+- **Description:** Build configuration
+- **Default:** `Release`
+- **Valid values:** `Debug`, `Release`, or custom configurations
+- **Example:** `configuration: Release`
+
+#### `config.enable-code-signing`
+
+- **Type:** `boolean`
+- **Description:** Enable iOS/macOS code signing and IPA export
+- **Default:** `true`
+- **Example:** `enable-code-signing: true`
+- **Requires secrets:**
+  - `CERTIFICATE_BASE64` - Base64-encoded .p12 certificate
+  - `CERTIFICATE_PASSPHRASE` - Certificate password
+  - `PROVISIONING_PROFILE_BASE64` - Base64-encoded provisioning profile
+  - `KEYCHAIN_PASSWORD` - Temporary keychain password
+
+#### `config.export-options-var`
+
+- **Type:** `string`
+- **Description:** Name of GitHub variable containing base64-encoded exportOptions.plist
+- **Default:** `EXPORT_OPTIONS_BASE64`
+- **Example:** `export-options-var: EXPORT_OPTIONS_BASE64`
+- **Note:** Variable should contain base64-encoded exportOptions.plist for IPA export
+
+#### `config.macos-version`
+
+- **Type:** `string`
+- **Description:** macOS runner version
+- **Default:** `macos-14`
+- **Valid values:** `macos-13`, `macos-14`, `macos-15`
+- **Example:** `macos-version: macos-14`
+
+#### `config.destination`
+
+- **Type:** `string`
+- **Description:** Build destination for xcodebuild
+- **Default:** `generic/platform=iOS`
+- **Example:** `destination: generic/platform=macOS` (for macOS apps)
+
+#### `config.submit-for-review`
+
+- **Type:** `boolean`
+- **Description:** Submit to Apple App Store for review (not just TestFlight)
+- **Default:** `false`
+- **Example:** `submit-for-review: false` (TestFlight only)
+- **Example:** `submit-for-review: true` (Submit for App Store review)
+- **Note:** Use `false` for beta testing, `true` for production releases
+
+#### `config.skip-validation`
+
+- **Type:** `boolean`
+- **Description:** Skip IPA validation before upload to App Store Connect
+- **Default:** `false`
+- **Example:** `skip-validation: false` (Recommended - validates before upload)
+- **Note:** Only set to `true` if validation fails incorrectly
 
 ---
 
@@ -327,12 +420,101 @@ artifacts:
 ```yaml
 artifacts:
   - name: my-android-app
-    project-type: gradle
+    project-type: gradle-android
     working-directory: .
     config:
       java-version: 21
       gradle-tasks: build assembleDemoRelease bundleDemoRelease
       gradle-version-file: gradle.properties
+```
+
+### iOS/macOS App (Xcode)
+
+```yaml
+artifacts:
+  - name: my-ios-app
+    project-type: xcode-ios
+    working-directory: .
+    build-type: application
+    publish-to: []  # iOS apps don't publish to package registries
+    config:
+      xcode-version: "16.1"
+      scheme: "MyApp"
+      project: "MyApp.xcodeproj"
+      configuration: Release
+      enable-code-signing: true
+      export-options-var: EXPORT_OPTIONS_BASE64
+      macos-version: macos-14
+```
+
+**Required Secrets:**
+```
+CERTIFICATE_BASE64
+CERTIFICATE_PASSPHRASE
+PROVISIONING_PROFILE_BASE64
+KEYCHAIN_PASSWORD
+APP_STORE_CONNECT_ISSUER_ID
+APP_STORE_CONNECT_API_KEY_ID
+APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64
+```
+
+**Required Variables:**
+```
+EXPORT_OPTIONS_BASE64
+```
+
+**Encoding certificates/profiles to base64:**
+```bash
+# Certificate
+base64 -i certificate.p12 -o certificate.txt
+
+# Provisioning Profile
+base64 -i profile.mobileprovision -o profile.txt
+
+# Export Options
+base64 -i exportOptions.plist -o exportOptions.txt
+```
+
+### Multiple iOS Schemes (Demo, Production)
+
+```yaml
+artifacts:
+  - name: wallet-ios-demo
+    project-type: xcode-ios
+    working-directory: .
+    config:
+      xcode-version: "16.1"
+      scheme: "Wallet Demo"
+      project: "Wallet.xcodeproj"
+      configuration: Release
+      submit-for-review: false  # TestFlight only for demo builds
+      
+  - name: wallet-ios-production
+    project-type: xcode-ios
+    working-directory: .
+    config:
+      xcode-version: "16.1"
+      scheme: "Wallet Production"
+      project: "Wallet.xcodeproj"
+      configuration: Release
+      submit-for-review: true  # Submit to App Store for production
+```
+
+### iOS App Store Submission Options
+
+```yaml
+artifacts:
+  - name: my-ios-app
+    project-type: xcode-ios
+    working-directory: .
+    config:
+      xcode-version: "16.1"
+      scheme: "MyApp"
+      project: "MyApp.xcodeproj"
+      
+      # App Store submission options
+      submit-for-review: true   # Submit to App Store (not just TestFlight)
+      skip-validation: false    # Validate IPA before upload (recommended)
 ```
 
 ---

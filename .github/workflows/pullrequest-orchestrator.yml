@@ -87,6 +87,11 @@ on:
         required: false
         default: false
         type: boolean
+      linters.swiftlint:
+        description: "Enable Swift linting (swift-format) for iOS/macOS projects"
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
@@ -128,12 +133,19 @@ jobs:
       contents: read
       security-events: write
     uses: ./.github/workflows/lint-just-mise.yml
+  # Swift linting
+  swift-lint:
+    name: Swift Lint
+    if: ${{ inputs['linters.swiftlint'] }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/lint-swift.yml
   # Gather results from enabled linters (always runs to check status)
   lint-status:
     name: Lint Status Check
     runs-on: ubuntu-latest
     if: always()
-    needs: [commit-lint, license-lint, dependency-review, megalint, publiccode-lint, just-mise-lint]
+    needs: [commit-lint, license-lint, dependency-review, megalint, publiccode-lint, just-mise-lint, swift-lint]
     steps:
       - name: Check lint results
         run: |
@@ -248,6 +260,19 @@ jobs:
             echo "| Just+Mise Lint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
           fi
 
+          # Swift lint
+          if [[ "${{ inputs['linters.swiftlint'] }}" == "true" ]]; then
+            if [[ "${{ needs.swift-lint.result }}" == "success" ]]; then
+              echo "| Swift Lint | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
+            elif [[ "${{ needs.swift-lint.result }}" == "skipped" ]]; then
+              echo "| Swift Lint | − Skipped |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| Swift Lint | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| Swift Lint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
+          fi
+
           # Check if any enabled linter failed
           FAILED=false
           if [[ "${{ inputs['linters.commitlint'] }}" == "true" ]] && [[ "${{ needs.commit-lint.result }}" == "failure" ]]; then
@@ -266,6 +291,9 @@ jobs:
             FAILED=true
           fi
           if [[ "${{ inputs['linters.justmiselint'] }}" == "true" ]] && [[ "${{ needs.just-mise-lint.result }}" == "failure" ]]; then
+            FAILED=true
+          fi
+          if [[ "${{ inputs['linters.swiftlint'] }}" == "true" ]] && [[ "${{ needs.swift-lint.result }}" == "failure" ]]; then
             FAILED=true
           fi
 

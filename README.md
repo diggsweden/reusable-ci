@@ -106,10 +106,10 @@ jobs:
    # .github/artifacts.yml
    artifacts:
      - name: my-app
-       project-type: maven  # or npm, gradle
+       project-type: maven  # or npm, gradle, gradle-android, xcode-ios
        working-directory: .
        config:
-         java-version: 21  # or node-version for npm
+         java-version: 21  # or node-version for npm, xcode-version for xcode-ios
    ```
 
 2. **Create pull request workflow** - Run checks on PRs:
@@ -129,15 +129,16 @@ jobs:
          packages: read
          security-events: write
        secrets: inherit
-       with:
-         project-type: maven  # or npm, gradle
-         # Optional: Configure linters (all enabled by default)
-         # linters.commitlint: true
-         # linters.licenselint: true
-         # linters.dependencyreview: true
-         # linters.megalint: true        # Heavy, comprehensive
-         # linters.publiccodelint: false
-         # linters.justmiselint: false   # Lightweight, just+mise-based (requires justfile)
+        with:
+          project-type: maven  # or npm, gradle, gradle-android, xcode-ios
+          # Optional: Configure linters (all enabled by default)
+          # linters.commitlint: true
+          # linters.licenselint: true
+          # linters.dependencyreview: true
+          # linters.megalint: true        # Heavy, comprehensive
+          # linters.publiccodelint: false
+          # linters.justmiselint: false   # Lightweight, just+mise-based (requires justfile)
+          # linters.swiftlint: false      # Swift linting for iOS/macOS projects
    ```
 
 3. **Create release workflow** - Trigger builds on tags:
@@ -180,9 +181,9 @@ jobs:
          contents: write
          packages: write
        secrets: inherit
-       with:
-         project-type: maven  # or npm, gradle
-   ```
+        with:
+          project-type: maven  # or npm, gradle, gradle-android, xcode-ios
+    ```
 
 5. **Create your first release**:
    ```bash
@@ -281,10 +282,13 @@ jobs:
 - `build-maven` - Builds Maven projects (apps or libs)
 - `build-npm` - Builds NPM projects
 - `build-gradle` - Builds Gradle projects
+- `build-gradle-android` - Builds Android apps (APK/AAB)
+- `build-xcode` - Builds iOS/macOS apps (IPA)
 
 **Publish Stage** - Target-specific workflows publish artifacts:
 - `publish-github` - Publishes Maven/NPM/Gradle → GitHub Packages
 - `publish-mavencentral` - Publishes Maven libs → Maven Central
+- `publish-appleappstore` - Publishes iOS/macOS apps → TestFlight/Apple App Store
 
 **Container Stage** - Separate containers section references artifacts:
 - Containers defined in `containers[]` section
