@@ -233,6 +233,7 @@ jobs:
           BUILD_CMD="$BUILD_CMD -scheme '${{ inputs.scheme }}'"
           BUILD_CMD="$BUILD_CMD -configuration ${{ inputs.configuration }}"
           BUILD_CMD="$BUILD_CMD -archivePath build/app.xcarchive"
+          BUILD_CMD="$BUILD_CMD -destination '${{ inputs.destination }}'"
 
           echo "Running: $BUILD_CMD"
           eval "$BUILD_CMD" | xcbeautify
@@ -292,6 +293,7 @@ jobs:
            echo "| **Xcode** | ${{ inputs.xcode-version }} |" >> $GITHUB_STEP_SUMMARY
            echo "| **Scheme** | ${{ inputs.scheme }} |" >> $GITHUB_STEP_SUMMARY
            echo "| **Configuration** | ${{ inputs.configuration }} |" >> $GITHUB_STEP_SUMMARY
+           echo "| **Destination** | ${{ inputs.destination }} |" >> $GITHUB_STEP_SUMMARY
            echo "| **Signing** | ${{ inputs['enable-code-signing'] && '✓ Enabled' || '⊘ Disabled' }} |" >> $GITHUB_STEP_SUMMARY
 
           if [ -n "${{ steps.version-info.outputs.version }}" ] && [ "${{ steps.version-info.outputs.version }}" != "unknown" ]; then
