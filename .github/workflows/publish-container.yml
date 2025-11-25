@@ -72,7 +72,7 @@ on:
       branch:
         description: "Branch to checkout (default: main)"
         required: false
-        default: "v1"
+        default: "main"
         type: string
       platforms:
         description: "Comma-separated list of platforms to build"
