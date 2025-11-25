@@ -156,7 +156,7 @@ jobs:
           repository: diggsweden/reusable-ci
           ref: ${{ github.workflow_sha }}
           path: .github-shared
-          sparse-checkout: scripts/lint
+          sparse-checkout: scripts
       - name: Check lint results
         run: |
           bash .github-shared/scripts/lint/generate-status-report.sh \

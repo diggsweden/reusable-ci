@@ -114,10 +114,7 @@ jobs:
           repository: diggsweden/reusable-ci
           ref: ${{ github.workflow_sha }}
           path: .github-shared
-          sparse-checkout: |
-            scripts/version
-            scripts/registry
-            scripts/container
+          sparse-checkout: scripts
       # Maven build
       - name: Set up JDK
         if: inputs['project-type'] == 'maven'

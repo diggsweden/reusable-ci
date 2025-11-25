@@ -194,11 +194,7 @@ jobs:
           repository: diggsweden/reusable-ci
           ref: ${{ github.workflow_sha }}
           path: .github-shared
-          sparse-checkout: |
-            scripts/container
-            scripts/sbom
-            scripts/release
-            scripts/registry
+          sparse-checkout: scripts
       - name: Download Maven artifacts
         if: ${{ contains(inputs['artifact-types'], 'maven') }}
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0

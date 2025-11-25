@@ -137,9 +137,7 @@ jobs:
           repository: diggsweden/reusable-ci
           ref: ${{ github.workflow_sha }}
           path: .github-shared
-          sparse-checkout: |
-            scripts/version
-            scripts/registry
+          sparse-checkout: scripts
       - name: Check registry authentication configuration
         run: |
           HAS_PASSWORD="false"
