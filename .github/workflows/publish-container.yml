@@ -273,7 +273,37 @@ jobs:
             "${{ github.repository_owner }}" >> "$GITHUB_OUTPUT"
       - name: Validate Image Namespace
         if: ${{ inputs['push-image'] }}
-        run: "IMAGE_NAME=\"${{ steps.image-name.outputs.name }}\"\nREPO_NAME=\"${{ github.repository }}\"\nREPO_OWNER=\"${{ github.repository_owner }}\"\nREGISTRY=\"${{ inputs.registry }}\"\nENFORCE_NAMESPACE=\"${{ inputs['enforce-namespace'] || github.repository_owner }}\"\n\necho \"Validating image namespace...\"\necho \"  Image: $IMAGE_NAME\"\necho \"  Repository: $REPO_NAME\"\necho \"  Registry: $REGISTRY\"\necho \"  Enforced namespace: $ENFORCE_NAMESPACE\"\n\n# Extract repo name without org\nREPO_SHORT=\"${REPO_NAME##*/}\"\n\n# For GHCR, enforce strict namespace matching\nif [[ \"$REGISTRY\" == \"ghcr.io\" ]]; then\n  # Must be ghcr.io/NAMESPACE/REPO_NAME or ghcr.io/NAMESPACE/REPO_NAME-*\n  EXPECTED_PREFIX=\"ghcr.io/${ENFORCE_NAMESPACE}/${REPO_SHORT}\"\n  \n  if [[ ! \"$IMAGE_NAME\" =~ ^${EXPECTED_PREFIX}(-.*)?$ ]]; then\n    echo \"::error::Security: Image name must start with '${EXPECTED_PREFIX}'\"\n    echo \"::error::Got: $IMAGE_NAME\"\n    echo \"::error::This prevents pushing to unauthorized namespaces\"\n    exit 1\n  fi\n  \n  echo \"✓ Image namespace validated: $IMAGE_NAME\"\nelse\n  echo \"⚠ Non-GHCR registry - namespace validation skipped\"\nfi\n"
+        run: |
+          IMAGE_NAME="${{ steps.image-name.outputs.name }}"
+          REPO_NAME="${{ github.repository }}"
+          REGISTRY="${{ inputs.registry }}"
+          ENFORCE_NAMESPACE="${{ inputs['enforce-namespace'] || github.repository_owner }}"
+
+          echo "Validating image namespace..."
+          echo "  Image: $IMAGE_NAME"
+          echo "  Repository: $REPO_NAME"
+          echo "  Registry: $REGISTRY"
+          echo "  Enforced namespace: $ENFORCE_NAMESPACE"
+
+          # Extract repo name without org
+          REPO_SHORT="${REPO_NAME##*/}"
+
+          # For GHCR, enforce strict namespace matching
+          if [[ "$REGISTRY" == "ghcr.io" ]]; then
+            # Must be ghcr.io/NAMESPACE/REPO_NAME or ghcr.io/NAMESPACE/REPO_NAME-*
+            EXPECTED_PREFIX="ghcr.io/${ENFORCE_NAMESPACE}/${REPO_SHORT}"
+
+            if [[ ! "$IMAGE_NAME" =~ ^${EXPECTED_PREFIX}(-.*)?$ ]]; then
+              echo "::error::Security: Image name must start with '${EXPECTED_PREFIX}'"
+              echo "::error::Got: $IMAGE_NAME"
+              echo "::error::This prevents pushing to unauthorized namespaces"
+              exit 1
+            fi
+
+            echo "✓ Image namespace validated: $IMAGE_NAME"
+          else
+            echo "⚠ Non-GHCR registry - namespace validation skipped"
+          fi
       - name: Extract Image Metadata
         id: metadata
         uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v5.9.0

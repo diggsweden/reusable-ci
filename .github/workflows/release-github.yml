@@ -133,7 +133,16 @@ jobs:
         with:
           name: release-changelog
       - name: Verify Changelog
-        run: "if [ -f \"ReleasenotesTmp\" ]; then\n  echo \"Changelog artifact downloaded successfully\"\n  echo \"File size: $(stat -c%s ReleasenotesTmp) bytes\"\nelse\n  echo \"No changelog artifact found - creating fallback\"\n  echo \"# Release ${{ github.ref_name }}\" > ReleasenotesTmp\n  echo \"\" >> ReleasenotesTmp  \n  echo \"Release created from commit ${{ github.sha }}\" >> ReleasenotesTmp\nfi\n"
+        run: |
+          if [ -f "ReleasenotesTmp" ]; then
+            echo "Changelog artifact downloaded successfully"
+            echo "File size: $(stat -c%s ReleasenotesTmp) bytes"
+          else
+            echo "No changelog artifact found - creating fallback"
+            echo "# Release ${{ github.ref_name }}" > ReleasenotesTmp
+            echo "" >> ReleasenotesTmp
+            echo "Release created from commit ${{ github.sha }}" >> ReleasenotesTmp
+          fi
       # Download container SBOM if it exists (from container build job)
       - name: Download container SBOM artifacts
         continue-on-error: true

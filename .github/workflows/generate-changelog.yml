@@ -71,7 +71,21 @@ jobs:
           OUTPUT: ${{ inputs['output-file'] }}
           GITHUB_REPO: ${{ github.repository }}
       - name: Verify Changelog Generation
-        run: "if [ -f \"${{ inputs['output-file'] }}\" ]; then\n  echo \"✓ Changelog generated successfully: ${{ inputs['output-file'] }}\"\n  echo \"  • File size: $(stat -c%s \"${{ inputs['output-file'] }}\") bytes\"\n  echo \"  • Line count: $(wc -l < \"${{ inputs['output-file'] }}\")\"\n  \n  # Show first few lines for debugging\n  echo \"\"\n  echo \"Preview (first 10 lines):\"\n  echo \"========================\"\n  head -10 \"${{ inputs['output-file'] }}\"\nelse\n  echo \"✗ ERROR: No changelog generated\"\n  exit 1\nfi\n"
+        run: |
+          if [ -f "${{ inputs['output-file'] }}" ]; then
+            echo "✓ Changelog generated successfully: ${{ inputs['output-file'] }}"
+            echo "  • File size: $(stat -c%s "${{ inputs['output-file'] }}") bytes"
+            echo "  • Line count: $(wc -l < "${{ inputs['output-file'] }}")"
+
+            # Show first few lines for debugging
+            echo ""
+            echo "Preview (first 10 lines):"
+            echo "========================"
+            head -10 "${{ inputs['output-file'] }}"
+          else
+            echo "✗ ERROR: No changelog generated"
+            exit 1
+          fi
       - name: Upload Changelog Artifact
         if: ${{ inputs['upload-as-artifact'] }}
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
