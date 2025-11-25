@@ -325,6 +325,8 @@ jobs:
       configuration: ${{ matrix.artifact.config['configuration'] || 'Release' }}
       enable-code-signing: ${{ matrix.artifact.config['enable-code-signing'] != false }}
       export-options-var: ${{ matrix.artifact.config['export-options-var'] || 'EXPORT_OPTIONS_BASE64' }}
+      artifact-name: ${{ matrix.artifact.name }}
+      include-tag: false
       working-directory: ${{ matrix.artifact['working-directory'] }}
       macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-14' }}
   # Step 3a: Publish to GitHub Packages
@@ -379,7 +381,7 @@ jobs:
     secrets: inherit
     uses: ./.github/workflows/publish-appleappstore.yml
     with:
-      ipa-artifact-name: ${{ matrix.artifact.name }}-IPA
+      ipa-artifact-name: ${{ matrix.artifact.name }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
       macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-14' }}
       submit-for-review: ${{ matrix.artifact.config['submit-for-review'] || false }}

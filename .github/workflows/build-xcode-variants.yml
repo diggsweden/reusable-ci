@@ -76,13 +76,13 @@ on:
         default: "EXPORT_OPTIONS_BASE64"
         type: string
       # === ARTIFACT NAMING ===
-      artifact-name-prefix:
-        description: "Prefix for artifact names (e.g., demo_store, production)"
+      artifact-name:
+        description: "Exact artifact name (overrides auto-generated name if set)"
         required: false
         default: ""
         type: string
-      include-date-stamp:
-        description: "Include date in artifact names"
+      include-tag:
+        description: "Include git tag/ref in artifact name"
         required: false
         default: true
         type: boolean
@@ -120,21 +120,17 @@ jobs:
       - name: Generate artifact names
         id: artifact-names
         run: |
-          DATE_STAMP=""
-          if [ "${{ inputs['include-date-stamp'] }}" = "true" ]; then
-            DATE_STAMP="$(date +'%Y-%m-%d') - "
+          if [ -n "${{ inputs['artifact-name'] }}" ]; then
+            BASE_NAME="${{ inputs['artifact-name'] }}"
+          else
+            BASE_NAME="${{ github.event.repository.name }}"
           fi
 
-          PREFIX="${{ inputs['artifact-name-prefix'] }}"
-          if [ -n "$PREFIX" ]; then
-            PREFIX="${PREFIX} - "
+          if [ "${{ inputs['include-tag'] }}" = "true" ]; then
+            IPA_NAME="${BASE_NAME}-${{ github.ref_name }}"
+          else
+            IPA_NAME="${BASE_NAME}"
           fi
-
-          REPO_NAME="${{ github.event.repository.name }}"
-          SCHEME="${{ inputs.scheme }}"
-          CONFIG="${{ inputs.configuration }}"
-
-          IPA_NAME="${DATE_STAMP}${PREFIX}${REPO_NAME} - ${SCHEME} - IPA ${CONFIG}"
 
           echo "ipa-name=${IPA_NAME}" >> "$GITHUB_OUTPUT"
           echo "IPA artifact: ${IPA_NAME}"
