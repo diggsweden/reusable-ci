@@ -234,6 +234,7 @@ jobs:
           BUILD_CMD="$BUILD_CMD -configuration ${{ inputs.configuration }}"
           BUILD_CMD="$BUILD_CMD -archivePath build/app.xcarchive"
           BUILD_CMD="$BUILD_CMD -destination '${{ inputs.destination }}'"
+          BUILD_CMD="$BUILD_CMD -skipPackagePluginValidation"
 
           echo "Running: $BUILD_CMD"
           eval "$BUILD_CMD" | xcbeautify
