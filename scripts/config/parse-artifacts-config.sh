@@ -134,11 +134,13 @@ for target in maven-central github-packages; do
   fi
 done
 
-# Extract first artifact's type and build-type for legacy compatibility
+# Extract first artifact's type, build-type, and require-authorization for legacy compatibility
 FIRST_PROJECT_TYPE=$(printf "%s" "$ARTIFACTS" | jq -r '.[0]["project-type"]')
 FIRST_BUILD_TYPE=$(printf "%s" "$ARTIFACTS" | jq -r '.[0]["build-type"] // "application"')
+FIRST_REQUIRE_AUTH=$(printf "%s" "$ARTIFACTS" | jq -r '.[0]["require-authorization"] // false')
 printf "first-project-type=%s\n" "$FIRST_PROJECT_TYPE" >>"$GITHUB_OUTPUT"
 printf "first-build-type=%s\n" "$FIRST_BUILD_TYPE" >>"$GITHUB_OUTPUT"
+printf "first-require-authorization=%s\n" "$FIRST_REQUIRE_AUTH" >>"$GITHUB_OUTPUT"
 
 # Determine if release should be draft (SNAPSHOT or non-release version tags)
 TAG_NAME="$GITHUB_REF_NAME"
