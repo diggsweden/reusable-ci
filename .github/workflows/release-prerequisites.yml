@@ -271,7 +271,27 @@ jobs:
 
           echo "✓ GitHub push token validated"
       - name: Validate Release Token
-        run: "# RELEASE_TOKEN is required for creating GitHub releases\nTOKEN=\"${{ secrets.RELEASE_TOKEN }}\"\nif [ -z \"$TOKEN\" ]; then\n  echo \"::error::Missing RELEASE_TOKEN secret\"\n  echo \"This token is required for creating GitHub releases\"\n  echo \"GITHUB_TOKEN cannot be used as it lacks permissions when workflows chain\"\n  echo \"Add it in Settings → Secrets → Actions\"\n  exit 1\nelse\n  # Test RELEASE_TOKEN\n  RESPONSE=$(curl -s -o /dev/null -w \"%{http_code}\" \\\n    -H \"Authorization: token $TOKEN\" \\\n    https://api.github.com/repos/${{ github.repository }}/releases)\n  \n  if [ \"$RESPONSE\" != \"200\" ]; then\n    echo \"::error::RELEASE_TOKEN is invalid or lacks permissions\"\n    exit 1\n  fi\n  echo \"Release token validated\"\nfi\n"
+        run: |
+          # RELEASE_TOKEN is required for creating GitHub releases
+          TOKEN="${{ secrets.RELEASE_TOKEN }}"
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Missing RELEASE_TOKEN secret"
+            echo "This token is required for creating GitHub releases"
+            echo "GITHUB_TOKEN cannot be used as it lacks permissions when workflows chain"
+            echo "Add it in Settings → Secrets → Actions"
+            exit 1
+          else
+            # Test RELEASE_TOKEN
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: token $TOKEN" \
+              https://api.github.com/repos/${{ github.repository }}/releases)
+
+            if [ "$RESPONSE" != "200" ]; then
+              echo "::error::RELEASE_TOKEN is invalid or lacks permissions"
+              exit 1
+            fi
+            echo "Release token validated"
+          fi
       - name: Validate Bot Token Permissions
         env:
           GH_TOKEN: ${{ secrets.OSPO_BOT_GHTOKEN }}
