@@ -127,6 +127,17 @@ jobs:
           echo "=== GitHub context ==="
           echo "action_repository: ${{ github.action_repository }}"
           echo "action_ref: ${{ github.action_ref }}"
+      - name: Verify Triggered by Tag
+        run: |
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            echo "::error::❌ Release workflow must be triggered by pushing a tag"
+            echo "::error::Current trigger: ${{ github.ref_type }} (${{ github.ref }})"
+            echo "::error::To create a release, push a signed tag:"
+            echo "::error::  git tag -s v1.0.0 -m 'Release v1.0.0'"
+            echo "::error::  git push origin v1.0.0"
+            exit 1
+          fi
+          echo "✓ Triggered by tag: ${{ github.ref_name }}"
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
         with:
