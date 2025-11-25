@@ -137,9 +137,7 @@ jobs:
           repository: diggsweden/reusable-ci
           ref: ${{ github.workflow_sha }}
           path: .github-shared
-          sparse-checkout: |
-            scripts/version
-            scripts/config
+          sparse-checkout: scripts
       - name: Import GPG key
         id: import-gpg
         uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0

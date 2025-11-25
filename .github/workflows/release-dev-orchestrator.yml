@@ -152,8 +152,7 @@ jobs:
           repository: diggsweden/reusable-ci
           ref: ${{ github.workflow_sha }}
           path: .github-shared
-          sparse-checkout: |
-            scripts/release
+          sparse-checkout: scripts
       - name: Generate Dev Release Summary
         run: |
           bash .github-shared/scripts/release/generate-dev-summary.sh \

@@ -93,9 +93,7 @@ jobs:
           repository: diggsweden/reusable-ci
           ref: ${{ github.workflow_sha }}
           path: .github-shared
-          sparse-checkout: |
-            scripts/run-just-linters.sh
-          sparse-checkout-cone-mode: false
+          sparse-checkout: scripts
       - name: Run linting tasks with enhanced output
         run: |
           eval "$(mise activate bash)"

@@ -147,9 +147,7 @@ jobs:
           repository: diggsweden/reusable-ci
           ref: ${{ github.workflow_sha }}
           path: .github-shared
-          sparse-checkout: |
-            scripts/sbom
-            scripts/release
+          sparse-checkout: scripts
       # Determine artifact name based on project type
       - name: Determine artifact name
         id: artifact-name

@@ -106,8 +106,7 @@ jobs:
           repository: diggsweden/reusable-ci
           ref: ${{ github.workflow_sha }}
           path: .github-shared
-          sparse-checkout: |
-            scripts/validation
+          sparse-checkout: scripts
       - name: Debug - List checked out files
         run: |
           echo "=== Workspace structure ==="
