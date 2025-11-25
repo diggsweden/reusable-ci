@@ -179,7 +179,7 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: main
+          ref: ${{ github.workflow_sha }}
           path: .github-shared
       - name: Install yq
         run: |
@@ -204,7 +204,6 @@ jobs:
       sign-artifacts: ${{ inputs['release.signartifacts'] }}
       check-authorization: ${{ needs.parse-config.outputs.first-require-authorization == 'true' || inputs['release.checkauthorization'] }}
       branch: ${{ inputs.branch }}
-      workflows-ref: main
   # Step 1: Version Bump (iterates over all artifacts)
   # File patterns auto-detected in version-bump.yml by scripts/config/get-file-pattern.sh based on project-type
   version-and-changelog:

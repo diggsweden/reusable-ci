@@ -51,11 +51,6 @@ on:
         required: false
         default: ""
         type: string
-      workflows-ref:
-        description: "Branch/tag of reusable-ci to use for scripts (default: main)"
-        required: false
-        default: "main"
-        type: string
       # Linter toggles (all can be disabled if needed)
       linters.commitlint:
         description: "⚠️ DEPRECATED v3.0: Enable commit message linting (migrate to justmiselint)"
@@ -159,7 +154,7 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ inputs['workflows-ref'] }}
+          ref: ${{ github.workflow_sha }}
           path: .github-shared
           sparse-checkout: scripts/lint
       - name: Check lint results
