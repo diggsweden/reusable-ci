@@ -23,13 +23,13 @@ CREATE_ZIP="${7:-false}" # Optional: create ZIP archive of all SBOMs
 # Change to working directory
 cd "$WORKING_DIR" || exit 1
 
-echo "================================================"
-echo "SBOM Generation Script"
-echo "================================================"
-echo "Working directory: $(pwd)"
-echo "Project type: $PROJECT_TYPE"
-echo "Requested layers: $LAYERS"
-echo ""
+printf "================================================\n"
+printf "SBOM Generation Script\n"
+printf "================================================\n"
+printf "Working directory: %s\n" "$(pwd)"
+printf "Project type: %s\n" "$PROJECT_TYPE"
+printf "Requested layers: %s\n" "$LAYERS"
+printf "\n"
 
 # Syft version to install (pinned to avoid bugs in newer versions)
 # renovate: datasource=github-releases depName=anchore/syft
@@ -38,14 +38,14 @@ SYFT_VERSION="v1.37.0"
 # Install Syft if not available
 install_syft() {
   if ! command -v syft &>/dev/null; then
-    echo "Installing Syft SBOM generator (version: ${SYFT_VERSION})..."
+    printf "Installing Syft SBOM generator (version: %s)...\n" "${SYFT_VERSION}"
     curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /tmp "${SYFT_VERSION}"
     export PATH="/tmp:$PATH"
-    echo "✅ Syft installed successfully"
+    printf "✅ Syft installed successfully\n"
   else
-    echo "✅ Syft already installed: $(syft version --output json | grep -o '"version":"[^"]*"' | cut -d'"' -f4)"
+    printf "✅ Syft already installed: %s\n" "$(syft version --output json | grep -o '"version":"[^"]*"' | cut -d'"' -f4)"
   fi
-  echo ""
+  printf "\n"
 }
 
 # Generate both SPDX and CycloneDX SBOMs for a target
@@ -72,16 +72,16 @@ generate_dual_sboms() {
 
   # Validate they exist and aren't empty
   if [ -f "$spdx_file" ] && [ -s "$spdx_file" ]; then
-    echo "   ✅ $spdx_file"
+    printf "   ✅ %s\n" "$spdx_file"
   else
-    echo "   ❌ Failed to generate: $spdx_file" >&2
+    printf "   ❌ Failed to generate: %s\n" "$spdx_file" >&2
     return 1
   fi
 
   if [ -f "$cdx_file" ] && [ -s "$cdx_file" ]; then
-    echo "   ✅ $cdx_file"
+    printf "   ✅ %s\n" "$cdx_file"
   else
-    echo "   ❌ Failed to generate: $cdx_file" >&2
+    printf "   ❌ Failed to generate: %s\n" "$cdx_file" >&2
     return 1
   fi
 }
@@ -98,14 +98,14 @@ detect_project_type() {
     else
       PROJECT_TYPE="unknown"
     fi
-    echo "Auto-detected project type: $PROJECT_TYPE"
+    printf "Auto-detected project type: %s\n" "$PROJECT_TYPE"
   fi
 }
 
 # Extract version from project files
 get_version() {
   if [ -n "$VERSION" ]; then
-    echo "$VERSION"
+    printf "%s" "$VERSION"
     return
   fi
 
@@ -115,42 +115,42 @@ get_version() {
   maven)
     if [ -f "pom.xml" ]; then
       if detected_version=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout 2>&1); then
-        echo "$detected_version"
+        printf "%s" "$detected_version"
         return
       else
-        echo "⚠️  Warning: Could not extract version from pom.xml" >&2
+        printf "⚠️  Warning: Could not extract version from pom.xml\n" >&2
       fi
     fi
     ;;
   npm)
     if [ -f "package.json" ]; then
       if detected_version=$(node -p "require('./package.json').version" 2>&1); then
-        echo "$detected_version"
+        printf "%s" "$detected_version"
         return
       else
-        echo "⚠️  Warning: Could not extract version from package.json" >&2
+        printf "⚠️  Warning: Could not extract version from package.json\n" >&2
       fi
     fi
     ;;
   gradle)
     if [ -f "build.gradle" ]; then
       if detected_version=$(grep -oP "version\s*=\s*['\"]?\K[^'\"]*" build.gradle 2>&1 | head -1); then
-        echo "$detected_version"
+        printf "%s" "$detected_version"
         return
       else
-        echo "⚠️  Warning: Could not extract version from build.gradle" >&2
+        printf "⚠️  Warning: Could not extract version from build.gradle\n" >&2
       fi
     fi
     ;;
   esac
 
-  echo "unknown"
+  printf "unknown"
 }
 
 # Extract project name from project files
 get_project_name() {
   if [ -n "$PROJECT_NAME" ]; then
-    echo "$PROJECT_NAME"
+    printf "%s" "$PROJECT_NAME"
     return
   fi
 
@@ -160,30 +160,30 @@ get_project_name() {
   maven)
     if [ -f "pom.xml" ]; then
       if detected_name=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout 2>&1); then
-        echo "$detected_name"
+        printf "%s" "$detected_name"
         return
       else
-        echo "⚠️  Warning: Could not extract artifactId from pom.xml" >&2
+        printf "⚠️  Warning: Could not extract artifactId from pom.xml\n" >&2
       fi
     fi
     ;;
   npm)
     if [ -f "package.json" ]; then
       if detected_name=$(node -p "require('./package.json').name" 2>&1 | sed 's/@.*\///'); then
-        echo "$detected_name"
+        printf "%s" "$detected_name"
         return
       else
-        echo "⚠️  Warning: Could not extract name from package.json" >&2
+        printf "⚠️  Warning: Could not extract name from package.json\n" >&2
       fi
     fi
     ;;
   gradle)
     if [ -f "settings.gradle" ]; then
       if detected_name=$(grep -oP "rootProject.name\s*=\s*['\"]?\K[^'\"]*" settings.gradle 2>&1); then
-        echo "$detected_name"
+        printf "%s" "$detected_name"
         return
       else
-        echo "⚠️  Warning: Could not extract name from settings.gradle" >&2
+        printf "⚠️  Warning: Could not extract name from settings.gradle\n" >&2
       fi
     fi
     ;;
@@ -197,21 +197,21 @@ generate_source_layer() {
   local name=$1
   local version=$2
 
-  echo "📦 Generating Source layer SBOMs..."
+  printf "📦 Generating Source layer SBOMs...\n"
 
   if [ -f "pom.xml" ]; then
-    echo "   Scanning pom.xml for Maven dependencies..."
+    printf "   Scanning pom.xml for Maven dependencies...\n"
     generate_dual_sboms "pom.xml" "$name" "$version" "pom" "${name}-${version}-pom"
   elif [ -f "package.json" ]; then
-    echo "   Scanning package.json for NPM dependencies..."
+    printf "   Scanning package.json for NPM dependencies...\n"
     generate_dual_sboms "." "$name" "$version" "package" "${name}-${version}-package"
   elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
-    echo "   Scanning build.gradle for Gradle dependencies..."
+    printf "   Scanning build.gradle for Gradle dependencies...\n"
     generate_dual_sboms "." "$name" "$version" "gradle" "${name}-${version}-gradle"
   else
-    echo "   ⚠️  No build manifest found (pom.xml, package.json, build.gradle)"
+    printf "   ⚠️  No build manifest found (pom.xml, package.json, build.gradle)\n"
   fi
-  echo ""
+  printf "\n"
 }
 
 # Generate Artifact layer SBOMs (Maven JARs, NPM tar archives, Gradle JARs, etc.)
@@ -220,12 +220,12 @@ generate_artifact_layer() {
   local version=$2
   local layer_name
 
-  echo "📦 Generating Artifact layer SBOMs..."
+  printf "📦 Generating Artifact layer SBOMs...\n"
 
   # Handle different project types
   case "$PROJECT_TYPE" in
   maven)
-    echo "   Project type: Maven (looking for JAR files)"
+    printf "   Project type: Maven (looking for JAR files)\n"
 
     # Maven JARs can be in multiple locations:
     # 1. target/ directory (from local build or JReleaser workflow)
@@ -260,19 +260,19 @@ generate_artifact_layer() {
 
     if [ ${#artifacts[@]} -gt 0 ]; then
       for artifact in "${artifacts[@]}"; do
-        echo "   Scanning JAR file: $artifact"
+        printf "   Scanning JAR file: %s\n" "$artifact"
         local jar_basename
         jar_basename=$(basename "$artifact" .jar)
         generate_dual_sboms "$artifact" "$name" "$version" "jar" "${jar_basename}-jar"
       done
     else
-      echo "   ⚠️  No JAR files found in target/ or ./release-artifacts/ directories"
-      echo "      Searched for: ${name}.jar or ${name}-*.jar"
+      printf "   ⚠️  No JAR files found in target/ or ./release-artifacts/ directories\n"
+      printf "      Searched for: %s.jar or %s-*.jar\n" "${name}" "${name}"
     fi
     ;;
 
   npm)
-    echo "   Project type: NPM (looking for tar archive files)"
+    printf "   Project type: NPM (looking for tar archive files)\n"
 
     # NPM tar archives can be in multiple locations:
     # 1. Current directory (from npm pack)
@@ -295,24 +295,24 @@ generate_artifact_layer() {
 
     if [ ${#artifacts[@]} -gt 0 ]; then
       for artifact in "${artifacts[@]}"; do
-        echo "   Scanning NPM tar archive: $artifact"
+        printf "   Scanning NPM tar archive: %s\n" "$artifact"
         local tgz_basename
         tgz_basename=$(basename "$artifact" .tgz)
         generate_dual_sboms "$artifact" "$name" "$version" "tararchive" "${tgz_basename}-tararchive"
       done
     else
-      echo "   ⚠️  No NPM tar archive (.tgz) found"
-      echo "      Searched in: current directory and ./release-artifacts/"
+      printf "   ⚠️  No NPM tar archive (.tgz) found\n"
+      printf "      Searched in: current directory and ./release-artifacts/\n"
     fi
     ;;
 
   gradle)
-    echo "   Project type: Gradle (looking for JAR files)"
+    printf "   Project type: Gradle (looking for JAR files)\n"
 
     # Gradle builds to build/libs/
     if [ ! -d "build/libs" ]; then
-      echo "   ⚠️  No build/libs/ directory found, skipping JAR layer"
-      echo ""
+      printf "   ⚠️  No build/libs/ directory found, skipping JAR layer\n"
+      printf "\n"
       return
     fi
 
@@ -326,23 +326,23 @@ generate_artifact_layer() {
 
     if [ ${#artifacts[@]} -gt 0 ]; then
       for artifact in "${artifacts[@]}"; do
-        echo "   Scanning JAR file: $artifact"
+        printf "   Scanning JAR file: %s\n" "$artifact"
         local jar_basename
         jar_basename=$(basename "$artifact" .jar)
         generate_dual_sboms "$artifact" "$name" "$version" "jar" "${jar_basename}-jar"
       done
     else
-      echo "   ⚠️  No JAR files found in build/libs/ directory"
+      printf "   ⚠️  No JAR files found in build/libs/ directory\n"
     fi
     ;;
 
   *)
-    echo "   ⚠️  Unknown project type: $PROJECT_TYPE"
-    echo "   Skipping artifact layer SBOM generation"
+    printf "   ⚠️  Unknown project type: %s\n" "$PROJECT_TYPE"
+    printf "   Skipping artifact layer SBOM generation\n"
     ;;
   esac
 
-  echo ""
+  printf "\n"
 }
 
 # Generate Container layer SBOMs
@@ -350,17 +350,17 @@ generate_container_layer() {
   local name=$1
   local version=$2
 
-  echo "📦 Generating Container layer SBOMs..."
+  printf "📦 Generating Container layer SBOMs...\n"
 
   if [ -z "$CONTAINER_IMAGE" ]; then
-    echo "   ⚠️  No container image specified, skipping container layer"
-    echo ""
+    printf "   ⚠️  No container image specified, skipping container layer\n"
+    printf "\n"
     return
   fi
 
-  echo "   Scanning container image: $CONTAINER_IMAGE"
+  printf "   Scanning container image: %s\n" "$CONTAINER_IMAGE"
   generate_dual_sboms "$CONTAINER_IMAGE" "$name" "$version" "container" "${name}-${version}-container"
-  echo ""
+  printf "\n"
 }
 
 # Main execution
@@ -373,11 +373,11 @@ main() {
   version=$(get_version)
   project_name=$(get_project_name)
 
-  echo "Project Information:"
-  echo "  Name: $project_name"
-  echo "  Version: $version"
-  echo "  Type: $PROJECT_TYPE"
-  echo ""
+  printf "Project Information:\n"
+  printf "  Name: %s\n" "$project_name"
+  printf "  Version: %s\n" "$version"
+  printf "  Type: %s\n" "$PROJECT_TYPE"
+  printf "\n"
 
   # Parse requested layers (comma-separated)
   # Supported layer names:
@@ -388,7 +388,7 @@ main() {
 
   for layer in "${LAYER_ARRAY[@]}"; do
     # Trim whitespace
-    layer=$(echo "$layer" | xargs)
+    layer=$(printf "%s" "$layer" | xargs)
 
     case "$layer" in
     source)
@@ -401,53 +401,53 @@ main() {
       generate_container_layer "$project_name" "$version"
       ;;
     *)
-      echo "⚠️  Unknown layer type: $layer"
-      echo "   Valid options: source, artifact, containerimage"
-      echo ""
+      printf "⚠️  Unknown layer type: %s\n" "$layer"
+      printf "   Valid options: source, artifact, containerimage\n"
+      printf "\n"
       return 1
       ;;
     esac
   done
 
-  echo "================================================"
-  echo "SBOM Generation Complete"
-  echo "================================================"
-  echo ""
+  printf "================================================\n"
+  printf "SBOM Generation Complete\n"
+  printf "================================================\n"
+  printf "\n"
 
   # Summary statistics
   local sbom_count
   sbom_count=$(find . -maxdepth 1 -name '*-sbom.*.json' -type f 2>/dev/null | wc -l)
 
   if [ "$sbom_count" -gt 0 ]; then
-    echo "✅ Successfully generated $sbom_count SBOM files"
-    echo ""
-    echo "Generated files:"
+    printf "✅ Successfully generated %s SBOM files\n" "$sbom_count"
+    printf "\n"
+    printf "Generated files:\n"
     find . -maxdepth 1 -name '*-sbom.*.json' -type f -exec ls -lh {} +
-    echo ""
+    printf "\n"
 
     # Create ZIP archive with all SBOMs (if requested)
     if [ "$CREATE_ZIP" = "true" ]; then
-      echo "📦 Creating SBOM ZIP archive..."
+      printf "📦 Creating SBOM ZIP archive...\n"
       local sbom_zip="${project_name}-${version}-sboms.zip"
 
       # Add all SBOM files to ZIP
       find . -maxdepth 1 -name '*-sbom.*.json' -type f -exec zip "$sbom_zip" {} +
 
       if [ -f "$sbom_zip" ]; then
-        echo "✅ Created SBOM ZIP: $sbom_zip"
-        echo ""
-        echo "ZIP contents:"
+        printf "✅ Created SBOM ZIP: %s\n" "$sbom_zip"
+        printf "\n"
+        printf "ZIP contents:\n"
         unzip -l "$sbom_zip"
       else
-        echo "⚠️ Failed to create SBOM ZIP"
+        printf "⚠️ Failed to create SBOM ZIP\n"
       fi
-      echo ""
+      printf "\n"
     fi
   else
-    echo "❌ No SBOM files generated"
+    printf "❌ No SBOM files generated\n"
     return 1
   fi
-  echo ""
+  printf "\n"
 }
 
 # Run main function

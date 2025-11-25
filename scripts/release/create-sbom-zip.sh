@@ -16,11 +16,11 @@ SBOM_COUNT=$(find . -maxdepth 1 -name '*-sbom.*.json' 2>/dev/null | wc -l)
 [ -d "./sbom-artifacts" ] && SBOM_COUNT=$((SBOM_COUNT + $(find ./sbom-artifacts -name '*-container-sbom.*.json' 2>/dev/null | wc -l)))
 
 if [ "$SBOM_COUNT" -eq 0 ]; then
-  echo "No SBOMs found, skipping ZIP creation"
+  printf "No SBOMs found, skipping ZIP creation\n"
   exit 0
 fi
 
-echo "Creating SBOM zip archive with all 3 layers"
+printf "Creating SBOM zip archive with all 3 layers\n"
 SBOM_ZIP="${PROJECT_NAME}-${VERSION}-sboms.zip"
 
 # Add all three layers to ZIP
@@ -33,7 +33,7 @@ for sbom in *-pom-sbom.spdx.json *-pom-sbom.cyclonedx.json \
   *-tararchive-sbom.spdx.json *-tararchive-sbom.cyclonedx.json; do
   if [ -f "$sbom" ]; then
     zip "$SBOM_ZIP" "$sbom"
-    echo "  Added: $sbom"
+    printf "  Added: %s\n" "$sbom"
   fi
 done
 
@@ -42,12 +42,12 @@ if [ -d "./sbom-artifacts" ]; then
   for sbom in ./sbom-artifacts/*-container-sbom.*.json; do
     if [ -f "$sbom" ]; then
       zip -j "$SBOM_ZIP" "$sbom"
-      echo "  Added: $(basename "$sbom")"
+      printf "  Added: %s\n" "$(basename "$sbom")"
     fi
   done
 fi
 
-echo "SBOM ZIP contents:"
+printf "SBOM ZIP contents:\n"
 unzip -l "$SBOM_ZIP"
 
-echo "Created SBOM ZIP: $SBOM_ZIP"
+printf "Created SBOM ZIP: %s\n" "$SBOM_ZIP"

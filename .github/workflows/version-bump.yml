@@ -153,8 +153,8 @@ jobs:
         id: project-type
         run: |
           PROJECT_TYPE="${{ inputs['project-type'] }}"
-          echo "Project type: ${PROJECT_TYPE}"
-          echo "type=${PROJECT_TYPE}" >> "$GITHUB_OUTPUT"
+          printf "Project type: %s\n" "${PROJECT_TYPE}"
+          printf "type=%s\n" "${PROJECT_TYPE}" >> "$GITHUB_OUTPUT"
       - name: Set up JDK for Maven
         if: ${{ steps.project-type.outputs.type == 'maven' }}
         uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
@@ -188,7 +188,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # shellcheck disable=SC2086
-          echo "Pre-downloading dependencies with updated pom.xml..."
+          printf "Pre-downloading dependencies with updated pom.xml...\n"
           mvn $MAVEN_CLI_OPTS dependency:resolve || true
           mvn $MAVEN_CLI_OPTS dependency:resolve-plugins || true
       - name: Set up Node.js for NPM
@@ -206,7 +206,7 @@ jobs:
             "${GITHUB_REF_NAME#v}" \
             "${{ inputs['working-directory'] }}"
 
-          echo "Pre-installing dependencies..."
+          printf "Pre-installing dependencies...\n"
           npm ci --ignore-scripts || npm install --ignore-scripts || true
       - name: Save NPM cache
         if: ${{ steps.project-type.outputs.type == 'npm' }}
@@ -224,13 +224,13 @@ jobs:
       - name: Update Gradle version
         if: ${{ steps.project-type.outputs.type == 'gradle' || steps.project-type.outputs.type == 'gradle-android' }}
         run: |
-          echo "::group::Update Gradle version"
+          printf "::group::Update Gradle version\n"
           bash .github-shared/scripts/version/bump-version.sh \
             ${{ steps.project-type.outputs.type }} \
             "${GITHUB_REF_NAME#v}" \
             "${{ inputs['working-directory'] }}" \
             "${{ inputs['gradle-version-file'] }}"
-          echo "::endgroup::"
+          printf "::endgroup::\n"
       - name: Download Full Changelog
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
@@ -240,11 +240,11 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           if [ ! -f "CHANGELOG.md" ]; then
-            echo "::error::Full changelog (CHANGELOG.md) not found"
-            echo "This file is required for the version bump commit"
+            printf "::error::Full changelog (CHANGELOG.md) not found\n"
+            printf "This file is required for the version bump commit\n"
             exit 1
           fi
-          echo "✓ Full changelog found ($(wc -l < CHANGELOG.md) lines)"
+          printf "✓ Full changelog found (%s lines)\n" "$(wc -l < CHANGELOG.md)"
       - name: Download Minimal Changelog
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
@@ -259,12 +259,12 @@ jobs:
             CONTENT=$(cat minimal-changelog.txt)
             # Use EOF delimiter to handle multiline content
             {
-              echo "content<<EOF"
-              echo "$CONTENT"
-              echo "EOF"
+              printf "content<<EOF\n"
+              printf "%s\n" "$CONTENT"
+              printf "EOF\n"
             } >> "$GITHUB_OUTPUT"
           else
-            echo "content=No changes for this release" >> "$GITHUB_OUTPUT"
+            printf "content=No changes for this release\n" >> "$GITHUB_OUTPUT"
           fi
       - name: Determine file pattern
         id: file-pattern
@@ -275,7 +275,7 @@ jobs:
             PATTERN=$(bash .github-shared/scripts/config/get-file-pattern.sh \
               "${{ inputs['project-type'] }}" "")
           fi
-          echo "pattern=$PATTERN" >> "$GITHUB_OUTPUT"
+          printf "pattern=%s\n" "$PATTERN" >> "$GITHUB_OUTPUT"
       - name: Commit and Push Changes
         uses: stefanzweifel/git-auto-commit-action@28e16e81777b558cc906c8750092100bbb34c5e3 # v7.0.0
         with:
@@ -297,12 +297,12 @@ jobs:
           TAG_SHA=$(git rev-list -n 1 "$LATEST_TAG")
 
           if [ "$TAG_SHA" = "$PREV_SHA" ]; then
-            echo "Moving tag $LATEST_TAG from previous commit to current"
+            printf "Moving tag %s from previous commit to current\n" "$LATEST_TAG"
             git tag -f -s "$LATEST_TAG" -m "$LATEST_TAG"
             git push --force origin "$LATEST_TAG"
           else
-            echo "✗ Tag $LATEST_TAG points to unexpected commit"
-            echo "Expected: $PREV_SHA (HEAD~1)"
-            echo "Found: $TAG_SHA"
+            printf "✗ Tag %s points to unexpected commit\n" "$LATEST_TAG"
+            printf "Expected: %s (HEAD~1)\n" "$PREV_SHA"
+            printf "Found: %s\n" "$TAG_SHA"
             exit 1
           fi

@@ -12,54 +12,54 @@ GITHUB_REPOSITORY="${2:-}"
 OSPO_BOT_GPG_PUB="${3:-}"
 
 if [[ -z "$TAG_NAME" ]]; then
-  echo "::error::Usage: validate-tag-signature.sh <tag-name> <github-repository>"
+  printf "::error::Usage: validate-tag-signature.sh <tag-name> <github-repository>\n"
   exit 1
 fi
 
-echo "## Validating Release Tag Security"
+printf "## Validating Release Tag Security\n"
 
 # Check if tag is annotated using git cat-file
 # For annotated tags: git cat-file -t <tag> returns "tag"
 # For lightweight tags: git cat-file -t <tag> returns "commit"
-TAG_TYPE=$(git cat-file -t "$TAG_NAME" 2>/dev/null || echo "unknown")
+TAG_TYPE=$(git cat-file -t "$TAG_NAME" 2>/dev/null || printf "unknown")
 
-echo "Tag '$TAG_NAME' object type: $TAG_TYPE"
+printf "Tag '%s' object type: %s\n" "$TAG_NAME" "$TAG_TYPE"
 
 if [[ "$TAG_TYPE" != "tag" ]]; then
-  echo "❌ Tag '$TAG_NAME' is a lightweight tag (not annotated)"
-  echo "📝 Requirement: Use annotated tags for releases"
-  echo "💡 Example: git tag -a v1.0.0 -m 'Release v1.0.0'"
+  printf "❌ Tag '%s' is a lightweight tag (not annotated)\n" "$TAG_NAME"
+  printf "📝 Requirement: Use annotated tags for releases\n"
+  printf "💡 Example: git tag -a v1.0.0 -m 'Release v1.0.0'\n"
   if [[ -n "$GITHUB_REPOSITORY" ]]; then
-    echo "📚 https://github.com/${GITHUB_REPOSITORY}/blob/main/.github/WORKFLOWS.md#tag-requirements"
+    printf "📚 https://github.com/%s/blob/main/.github/WORKFLOWS.md#tag-requirements\n" "${GITHUB_REPOSITORY}"
   fi
   exit 1
 fi
 
-echo "✅ Tag '$TAG_NAME' is annotated"
+printf "✅ Tag '%s' is annotated\n" "$TAG_NAME"
 
 # Check if tag has any signature (GPG or SSH)
-echo "Checking tag signature..."
+printf "Checking tag signature...\n"
 TAG_CONTENT=$(git cat-file tag "$TAG_NAME")
 
 HAS_GPG_SIG=false
 HAS_SSH_SIG=false
 
-if echo "$TAG_CONTENT" | grep -q "BEGIN PGP SIGNATURE"; then
+if printf "%s" "$TAG_CONTENT" | grep -q "BEGIN PGP SIGNATURE"; then
   HAS_GPG_SIG=true
-  echo "✅ Tag has a GPG signature"
+  printf "✅ Tag has a GPG signature\n"
 fi
 
-if echo "$TAG_CONTENT" | grep -q "BEGIN SSH SIGNATURE"; then
+if printf "%s" "$TAG_CONTENT" | grep -q "BEGIN SSH SIGNATURE"; then
   HAS_SSH_SIG=true
-  echo "✅ Tag has an SSH signature"
+  printf "✅ Tag has an SSH signature\n"
 fi
 
 if [[ "$HAS_GPG_SIG" == "false" ]] && [[ "$HAS_SSH_SIG" == "false" ]]; then
-  echo "::error::❌ Tag '$TAG_NAME' is not signed"
-  echo ""
-  echo "Release tags must be cryptographically signed."
-  echo "Create with: git tag -s v1.0.0 -m \"Release v1.0.0\""
-  echo "Learn more: https://docs.github.com/en/authentication/managing-commit-signature-verification"
+  printf "::error::❌ Tag '%s' is not signed\n" "$TAG_NAME"
+  printf "\n"
+  printf "Release tags must be cryptographically signed.\n"
+  printf "Create with: git tag -s v1.0.0 -m \"Release v1.0.0\"\n"
+  printf "Learn more: https://docs.github.com/en/authentication/managing-commit-signature-verification\n"
   exit 1
 fi
 
@@ -67,34 +67,34 @@ fi
 if [[ "$HAS_GPG_SIG" == "true" ]]; then
   # Import GPG keys for verification (if available)
   if [[ -n "$OSPO_BOT_GPG_PUB" ]]; then
-    echo "$OSPO_BOT_GPG_PUB" | gpg --import 2>/dev/null || true
+    printf "%s" "$OSPO_BOT_GPG_PUB" | gpg --import 2>/dev/null || true
   fi
 
   if git tag -v "$TAG_NAME" 2>/dev/null; then
-    echo "✅ GPG signature verification successful"
-    SIGNER=$(git tag -v "$TAG_NAME" 2>&1 | grep "Good signature from" | sed 's/.*Good signature from "\(.*\)".*/\1/' || echo "Unknown")
-    echo "   Signed by: $SIGNER"
+    printf "✅ GPG signature verification successful\n"
+    SIGNER=$(git tag -v "$TAG_NAME" 2>&1 | grep "Good signature from" | sed 's/.*Good signature from "\(.*\)".*/\1/' || printf "Unknown")
+    printf "   Signed by: %s\n" "$SIGNER"
   else
-    echo "ℹ️ GPG signature present (verification requires signer's public key)"
+    printf "ℹ️ GPG signature present (verification requires signer's public key)\n"
   fi
 fi
 
 if [[ "$HAS_SSH_SIG" == "true" ]]; then
-  echo "ℹ️ SSH signature present"
-  echo "   GitHub will show 'Verified' if the SSH key is uploaded to the signer's account"
+  printf "ℹ️ SSH signature present\n"
+  printf "   GitHub will show 'Verified' if the SSH key is uploaded to the signer's account\n"
 fi
 
 # Display tag information
-echo ""
-echo "### Tag Security Summary:"
-echo "✅ Tag is annotated (not lightweight)"
-echo "✅ Tag is cryptographically signed"
-echo "✅ Release security requirements met"
-echo ""
-echo "### Tag Information:"
-echo "Tagged commit: $(git rev-list -n 1 "$TAG_NAME")"
-echo "Tagger: $(git for-each-ref "refs/tags/$TAG_NAME" --format='%(taggername) <%(taggeremail)>')"
-echo "Tag date: $(git for-each-ref "refs/tags/$TAG_NAME" --format='%(taggerdate:iso8601)')"
-echo ""
-echo "Tag message:"
+printf "\n"
+printf "### Tag Security Summary:\n"
+printf "✅ Tag is annotated (not lightweight)\n"
+printf "✅ Tag is cryptographically signed\n"
+printf "✅ Release security requirements met\n"
+printf "\n"
+printf "### Tag Information:\n"
+printf "Tagged commit: %s\n" "$(git rev-list -n 1 "$TAG_NAME")"
+printf "Tagger: %s\n" "$(git for-each-ref "refs/tags/$TAG_NAME" --format='%(taggername) <%(taggeremail)>')"
+printf "Tag date: %s\n" "$(git for-each-ref "refs/tags/$TAG_NAME" --format='%(taggerdate:iso8601)')"
+printf "\n"
+printf "Tag message:\n"
 git tag -l -n999 "$TAG_NAME" | sed 's/^[^ ]* */  /'

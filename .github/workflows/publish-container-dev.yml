@@ -162,9 +162,9 @@ jobs:
           DEV_VERSION=$(bash .github-shared/scripts/version/generate-dev-version.sh)
           IMAGE_NAME="${{ inputs.registry }}/${{ github.repository }}"
 
-          echo "tags=${IMAGE_NAME}:${DEV_VERSION}" >> $GITHUB_OUTPUT
-          echo "image=${IMAGE_NAME}:${DEV_VERSION}" >> $GITHUB_OUTPUT
-          echo "→ Dev tag: ${DEV_VERSION}"
+          printf "tags=%s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}" >> $GITHUB_OUTPUT
+          printf "image=%s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}" >> $GITHUB_OUTPUT
+          printf "→ Dev tag: %s\n" "${DEV_VERSION}"
       - name: Build and push
         id: build
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
@@ -182,4 +182,4 @@ jobs:
       - name: Set outputs
         id: image
         run: |-
-          echo "image=${{ steps.tags.outputs.image }}" >> $GITHUB_OUTPUT
+          printf "image=%s\n" "${{ steps.tags.outputs.image }}" >> $GITHUB_OUTPUT

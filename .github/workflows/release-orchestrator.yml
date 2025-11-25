@@ -462,7 +462,7 @@ jobs:
           | **Released By** | @${{ github.actor }} |
           EOF
 
-          echo "| **Released At** | $RELEASE_TIME |" >> $GITHUB_STEP_SUMMARY
+          printf "| **Released At** | %s |\n" "$RELEASE_TIME" >> $GITHUB_STEP_SUMMARY
 
           cat >> $GITHUB_STEP_SUMMARY << 'EOF'
 
@@ -471,17 +471,17 @@ jobs:
           |-----|--------|
           EOF
 
-          echo "| Version Bump | ${{ needs.version-and-changelog.result == 'success' && '✓' || needs.version-and-changelog.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build Maven | ${{ needs.build-maven.result == 'success' && '✓' || needs.build-maven.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build NPM | ${{ needs.build-npm.result == 'success' && '✓' || needs.build-npm.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build Gradle | ${{ needs.build-gradle.result == 'success' && '✓' || needs.build-gradle.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build Gradle Android | ${{ needs.build-gradle-android.result == 'success' && '✓' || needs.build-gradle-android.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build Xcode | ${{ needs.build-xcode.result == 'success' && '✓' || needs.build-xcode.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Publish GitHub | ${{ needs.publish-github.result == 'success' && '✓' || needs.publish-github.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Publish Maven Central | ${{ needs.publish-mavencentral.result == 'success' && '✓' || needs.publish-mavencentral.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Publish Apple App Store | ${{ needs.publish-appleappstore.result == 'success' && '✓' || needs.publish-appleappstore.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Containers | ${{ needs.build-containers.result == 'success' && '✓' || needs.build-containers.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| GitHub Release | ${{ needs.create-release.result == 'success' && '✓' || needs.create-release.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
+          printf "| Version Bump | %s |\n" "${{ needs.version-and-changelog.result == 'success' && '✓' || needs.version-and-changelog.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Build Maven | %s |\n" "${{ needs.build-maven.result == 'success' && '✓' || needs.build-maven.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Build NPM | %s |\n" "${{ needs.build-npm.result == 'success' && '✓' || needs.build-npm.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Build Gradle | %s |\n" "${{ needs.build-gradle.result == 'success' && '✓' || needs.build-gradle.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Build Gradle Android | %s |\n" "${{ needs.build-gradle-android.result == 'success' && '✓' || needs.build-gradle-android.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Build Xcode | %s |\n" "${{ needs.build-xcode.result == 'success' && '✓' || needs.build-xcode.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Publish GitHub | %s |\n" "${{ needs.publish-github.result == 'success' && '✓' || needs.publish-github.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Publish Maven Central | %s |\n" "${{ needs.publish-mavencentral.result == 'success' && '✓' || needs.publish-mavencentral.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Publish Apple App Store | %s |\n" "${{ needs.publish-appleappstore.result == 'success' && '✓' || needs.publish-appleappstore.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Containers | %s |\n" "${{ needs.build-containers.result == 'success' && '✓' || needs.build-containers.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| GitHub Release | %s |\n" "${{ needs.create-release.result == 'success' && '✓' || needs.create-release.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
 
           cat >> $GITHUB_STEP_SUMMARY << 'EOF'
 

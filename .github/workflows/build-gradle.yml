@@ -88,10 +88,10 @@ jobs:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE }}
         run: |
           if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.keystore
-            echo "✓ Android keystore decoded successfully"
+            printf "%s" "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.keystore
+            printf "✓ Android keystore decoded successfully\n"
           else
-            echo "::error::ANDROID_KEYSTORE secret not found but enableSigning is true"
+            printf "::error::ANDROID_KEYSTORE secret not found but enableSigning is true\n"
             exit 1
           fi
       - name: Get version info
@@ -101,11 +101,11 @@ jobs:
           if [ -f "gradle.properties" ]; then
             VERSION=$(grep "versionName=" gradle.properties | cut -d'=' -f2)
             VERSION_CODE=$(grep "versionCode=" gradle.properties | cut -d'=' -f2)
-            echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "VERSION_CODE=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
-            echo "Version: ${VERSION} (${VERSION_CODE})"
+            printf "VERSION=%s\n" "${VERSION}" >> "$GITHUB_OUTPUT"
+            printf "VERSION_CODE=%s\n" "${VERSION_CODE}" >> "$GITHUB_OUTPUT"
+            printf "Version: %s (%s)\n" "${VERSION}" "${VERSION_CODE}"
           else
-            echo "::warning::gradle.properties not found, version info unavailable"
+            printf "::warning::gradle.properties not found, version info unavailable\n"
           fi
       - name: Run Gradle build
         working-directory: ${{ inputs['working-directory'] }}
@@ -114,13 +114,13 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          echo "Running Gradle tasks: ${{ inputs['gradle-tasks'] }}"
+          printf "Running Gradle tasks: %s\n" "${{ inputs['gradle-tasks'] }}"
           ./gradlew ${{ inputs['gradle-tasks'] }} ${{ inputs['skip-tests'] && '-x test' || '' }}
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         run: |
-          echo "Built artifacts:"
-          find ${{ inputs['build-module'] }}/build/outputs -type f \( -name "*.apk" -o -name "*.aab" -o -name "*.jar" \) -ls || echo "No artifacts found"
+          printf "Built artifacts:\n"
+          find ${{ inputs['build-module'] }}/build/outputs -type f \( -name "*.apk" -o -name "*.aab" -o -name "*.jar" \) -ls || printf "No artifacts found\n"
       - name: Upload Gradle artifacts
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
@@ -133,17 +133,17 @@ jobs:
           if-no-files-found: error
       - name: Generate build summary
         run: |
-          echo "## Gradle Build Summary 🔨" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Java:** ${{ inputs['java-version'] }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Module:** ${{ inputs['build-module'] }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tasks:** ${{ inputs['gradle-tasks'] }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tests:** ${{ inputs['skip-tests'] && '⊘ Skipped' || '✓ Executed' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Signing:** ${{ inputs['enable-signing'] && '✓ Enabled' || '⊘ Disabled' }}" >> $GITHUB_STEP_SUMMARY
+          printf "## Gradle Build Summary 🔨\n" >> $GITHUB_STEP_SUMMARY
+          printf "\n" >> $GITHUB_STEP_SUMMARY
+          printf "- **Java:** %s\n" "${{ inputs['java-version'] }}" >> $GITHUB_STEP_SUMMARY
+          printf "- **Module:** %s\n" "${{ inputs['build-module'] }}" >> $GITHUB_STEP_SUMMARY
+          printf "- **Tasks:** %s\n" "${{ inputs['gradle-tasks'] }}" >> $GITHUB_STEP_SUMMARY
+          printf "- **Tests:** %s\n" "${{ inputs['skip-tests'] && '⊘ Skipped' || '✓ Executed' }}" >> $GITHUB_STEP_SUMMARY
+          printf "- **Signing:** %s\n" "${{ inputs['enable-signing'] && '✓ Enabled' || '⊘ Disabled' }}" >> $GITHUB_STEP_SUMMARY
 
           if [ -n "${{ steps.version-info.outputs.VERSION }}" ]; then
-            echo "- **Version:** ${{ steps.version-info.outputs.VERSION }} (${{ steps.version-info.outputs.VERSION_CODE }})" >> $GITHUB_STEP_SUMMARY
+            printf "- **Version:** %s (%s)\n" "${{ steps.version-info.outputs.VERSION }}" "${{ steps.version-info.outputs.VERSION_CODE }}" >> $GITHUB_STEP_SUMMARY
           fi
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "*Build completed at $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY
+          printf "\n" >> $GITHUB_STEP_SUMMARY
+          printf "*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY

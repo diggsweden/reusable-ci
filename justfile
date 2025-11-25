@@ -17,7 +17,7 @@ missing := '✗'
 
 # Default recipe - show help
 default:
-    @echo "Available commands:"
+    @printf "Available commands:\n"
     @just --list --unsorted | grep -v "default"
 
 # Run all quality verifications
@@ -25,8 +25,8 @@ verify: verify-deps lint lint-license lint-commit _summary
 
 # Check tool dependencies
 verify-deps:
-    @echo "Checking required tools..."
-    @echo "========================="
+    @printf "Checking required tools...\n"
+    @printf "=========================\n"
     @missing_tools=""; \
     if command -v mise >/dev/null 2>&1; then \
         printf "{{green}}{{checkmark}}{{nc}} mise $(mise version 2>/dev/null | cut -d' ' -f1)\n"; \
@@ -72,7 +72,7 @@ verify-deps:
     fi; \
     if command -v gitleaks >/dev/null 2>&1; then \
         gitleaks_ver=$(gitleaks version 2>&1 | head -1); \
-        if echo "$gitleaks_ver" | grep -q "build process"; then \
+        if printf "%s" "$gitleaks_ver" | grep -q "build process"; then \
             mise_ver=$(grep gitleaks .mise.toml 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
             printf "{{green}}{{checkmark}}{{nc}} gitleaks ${mise_ver:-installed}\n"; \
         else \
@@ -100,7 +100,7 @@ verify-deps:
         printf "{{red}}{{missing}}{{nc}} shellcheck\n"; \
         missing_tools="$missing_tools shellcheck"; \
     fi; \
-    echo ""; \
+    printf "\n"; \
     if [ -n "$missing_tools" ]; then \
         printf '%b{{missing}} Missing tools detected!%b\n\n' "{{red}}" "{{nc}}"; \
         printf '%bTo fix:%b\n' "{{yellow}}" "{{nc}}"; \
@@ -114,7 +114,7 @@ verify-deps:
 
 # Run all linters
 lint: lint-markdown lint-yaml lint-actions lint-shell lint-secrets
-    @echo "LINT_PASS" > /tmp/just_lint_status
+    @printf "LINT_PASS" > /tmp/just_lint_status
 
 # Lint markdown files with rumdl (Rust)
 # linter-name: Markdown
@@ -123,8 +123,8 @@ lint: lint-markdown lint-yaml lint-actions lint-shell lint-secrets
 lint-markdown:
     @printf '%b\n************ MARKDOWN LINTING (RUMDL) ***********%b\n\n' "{{yellow}}" "{{nc}}"
     @rumdl check . \
-    && echo "{{green}}{{checkmark}} Markdown linting passed{{nc}}" \
-    || { echo "{{red}}{{missing}} Markdown linting failed - run 'just lint-markdown-fix' to fix{{nc}}"; exit 1; }
+    && printf "{{green}}{{checkmark}} Markdown linting passed{{nc}}\n" \
+    || { printf "{{red}}{{missing}} Markdown linting failed - run 'just lint-markdown-fix' to fix{{nc}}\n"; exit 1; }
     @printf '\n'
 
 # linter-name: YAML Formatting
@@ -133,8 +133,8 @@ lint-markdown:
 lint-yaml:
     @printf '%b\n************ YAML LINTING (YAMLFMT) ***********%b\n\n' "{{yellow}}" "{{nc}}"
     @yamlfmt -conf .yamlfmt -lint . \
-    && echo "{{green}}{{checkmark}} YAML linting passed{{nc}}" \
-    || { echo "{{red}}{{missing}} YAML linting failed - run 'just lint-yaml-fix' to fix{{nc}}"; exit 1; }
+    && printf "{{green}}{{checkmark}} YAML linting passed{{nc}}\n" \
+    || { printf "{{red}}{{missing}} YAML linting failed - run 'just lint-yaml-fix' to fix{{nc}}\n"; exit 1; }
     @printf '\n'
 
 # linter-name: GitHub Actions
@@ -143,8 +143,8 @@ lint-yaml:
 lint-actions:
     @printf '%b\n************ GITHUB ACTIONS LINTING (ACTIONLINT) ***********%b\n\n' "{{yellow}}" "{{nc}}"
     @actionlint -shellcheck= -pyflakes= -ignore 'unknown permission scope "attestations"' \
-    && echo "{{green}}{{checkmark}} GitHub Actions linting passed{{nc}}" \
-    || { echo "{{red}}{{missing}} GitHub Actions linting failed{{nc}}"; exit 1; }
+    && printf "{{green}}{{checkmark}} GitHub Actions linting passed{{nc}}\n" \
+    || { printf "{{red}}{{missing}} GitHub Actions linting failed{{nc}}\n"; exit 1; }
     @printf '\n'
 
 # linter-name: Shell Scripts
@@ -162,7 +162,7 @@ lint-shell:
         exit 0
     fi
     
-    echo "Running shellcheck on all shell scripts..."
+    printf "Running shellcheck on all shell scripts...\n"
     if command -v shellcheck >/dev/null 2>&1; then
         find scripts -type f -name "*.sh" | xargs shellcheck || exit 1
         printf '{{green}}{{checkmark}} Shellcheck passed{{nc}}\n'
@@ -170,8 +170,8 @@ lint-shell:
         printf '{{yellow}}⚠ shellcheck not found, skipping{{nc}}\n'
     fi
     
-    echo ""
-    echo "Running shfmt on all shell scripts..."
+    printf "\n"
+    printf "Running shfmt on all shell scripts...\n"
     if command -v shfmt >/dev/null 2>&1; then
         shfmt -d -i 2 scripts || { printf '{{red}}{{missing}} Shell formatting failed - run just lint-shell-fix to fix{{nc}}\n'; exit 1; }
         printf '{{green}}{{checkmark}} Shell formatting passed{{nc}}\n'
@@ -187,46 +187,46 @@ lint-shell:
 lint-secrets:
     @printf '%b\n************ SECRET SCANNING (GITLEAKS) ***********%b\n\n' "{{yellow}}" "{{nc}}"
     @# Get the default branch (usually main or master)
-    @default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main"); \
+    @default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || printf "main"); \
     current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); \
     if [ "$current_branch" = "$default_branch" ]; then \
-        echo "On default branch, scanning all commits..."; \
+        printf "On default branch, scanning all commits...\n"; \
         gitleaks detect --no-banner; \
     else \
-        echo "Scanning commits different from $default_branch..."; \
+        printf "Scanning commits different from %s...\n" "$default_branch"; \
         gitleaks detect --no-banner --log-opts="$default_branch..HEAD"; \
     fi \
-    && echo "{{green}}{{checkmark}} No secrets found{{nc}}" \
-    || { echo "{{red}}{{missing}} Secret scanning failed{{nc}}"; exit 1; }
+    && printf "{{green}}{{checkmark}} No secrets found{{nc}}\n" \
+    || { printf "{{red}}{{missing}} Secret scanning failed{{nc}}\n"; exit 1; }
     @printf '\n'
 
 # Fix all auto-fixable issues
 lint-fix: lint-markdown-fix lint-yaml-fix lint-shell-fix
-    @echo "{{green}}{{checkmark}} All auto-fixable issues resolved{{nc}}"
-    @echo "Note: Some issues may require manual fixes"
+    @printf "{{green}}{{checkmark}} All auto-fixable issues resolved{{nc}}\n"
+    @printf "Note: Some issues may require manual fixes\n"
 
 # Fix markdown issues with rumdl
 lint-markdown-fix:
     @printf '%b\n************ FIXING MARKDOWN (RUMDL) ***********%b\n\n' "{{yellow}}" "{{nc}}"
     @rumdl check --fix . \
-    && echo "{{green}}{{checkmark}} Markdown files fixed{{nc}}" \
-    || { echo "{{red}}{{missing}} Failed to fix markdown files{{nc}}"; exit 1; }
+    && printf "{{green}}{{checkmark}} Markdown files fixed{{nc}}\n" \
+    || { printf "{{red}}{{missing}} Failed to fix markdown files{{nc}}\n"; exit 1; }
     @printf '\n'
 
 # Fix YAML formatting with yamlfmt
 lint-yaml-fix:
     @printf '%b\n************ FIXING YAML (YAMLFMT) ***********%b\n\n' "{{yellow}}" "{{nc}}"
     @yamlfmt -conf .yamlfmt . \
-    && echo "{{green}}{{checkmark}} YAML files formatted{{nc}}" \
-    || { echo "{{red}}{{missing}} Failed to format YAML files{{nc}}"; exit 1; }
+    && printf "{{green}}{{checkmark}} YAML files formatted{{nc}}\n" \
+    || { printf "{{red}}{{missing}} Failed to format YAML files{{nc}}\n"; exit 1; }
     @printf '\n'
 
 # Fix shell script formatting
 lint-shell-fix:
     @printf '%b************ FIXING SHELL SCRIPTS ***********%b\n\n' "{{yellow}}" "{{nc}}"
     @shfmt -w -i 2 scripts \
-    && echo "{{green}}{{checkmark}} Shell scripts formatted{{nc}}" \
-    || { echo "{{red}}{{missing}} Failed to format shell scripts{{nc}}"; exit 1; }
+    && printf "{{green}}{{checkmark}} Shell scripts formatted{{nc}}\n" \
+    || { printf "{{red}}{{missing}} Failed to format shell scripts{{nc}}\n"; exit 1; }
     @printf '\n'
 
 # linter-name: License Headers
@@ -235,13 +235,13 @@ lint-shell-fix:
 lint-license:
     @printf '%b************ LICENSE HEALTH (REUSE) ***********%b\n\n' "{{yellow}}" "{{nc}}"
     @command -v reuse >/dev/null 2>&1 || { \
-        echo "Error: reuse not installed."; \
-        echo "Install with: apt install reuse"; \
+        printf "Error: reuse not installed.\n"; \
+        printf "Install with: apt install reuse\n"; \
         exit 1; \
     }
     @reuse lint \
-    && echo "LICENSE_PASS" > /tmp/just_license_status \
-    || echo "LICENSE_FAIL" > /tmp/just_license_status
+    && printf "LICENSE_PASS" > /tmp/just_license_status \
+    || printf "LICENSE_FAIL" > /tmp/just_license_status
     @printf '\n\n'
 
 # linter-name: Commit Messages
@@ -254,11 +254,11 @@ lint-commit:
     if [ -z "$default_branch" ]; then default_branch="main"; fi; \
     if [ "$(git rev-list --count ${default_branch}..)" = "0" ]; then \
         printf "%s\n" "{{green}} No commits found in current branch: {{yellow}}$currentBranch{{nc}}, compared to: {{yellow}}${default_branch}{{nc}}"; \
-        echo "COMMIT_SKIP" > /tmp/just_commit_status; \
+        printf "COMMIT_SKIP" > /tmp/just_commit_status; \
     else \
         conform enforce --base-branch=${default_branch} \
-        && echo "COMMIT_PASS" > /tmp/just_commit_status \
-        || echo "COMMIT_FAIL" > /tmp/just_commit_status; \
+        && printf "COMMIT_PASS" > /tmp/just_commit_status \
+        || printf "COMMIT_FAIL" > /tmp/just_commit_status; \
     fi
     @printf '\n\n'
 

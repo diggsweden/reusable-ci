@@ -133,13 +133,13 @@ jobs:
           RELEASE_NAME="${DATE_STAMP}${PREFIX}${REPO_NAME}${FLAVOR_SUFFIX} - APK release"
           AAB_NAME="${DATE_STAMP}${PREFIX}${REPO_NAME}${FLAVOR_SUFFIX} - AAB release"
 
-          echo "debug-name=${DEBUG_NAME}" >> "$GITHUB_OUTPUT"
-          echo "release-name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
-          echo "aab-name=${AAB_NAME}" >> "$GITHUB_OUTPUT"
+          printf "debug-name=%s\n" "${DEBUG_NAME}" >> "$GITHUB_OUTPUT"
+          printf "release-name=%s\n" "${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+          printf "aab-name=%s\n" "${AAB_NAME}" >> "$GITHUB_OUTPUT"
 
-          echo "Debug artifact: ${DEBUG_NAME}"
-          echo "Release artifact: ${RELEASE_NAME}"
-          echo "AAB artifact: ${AAB_NAME}"
+          printf "Debug artifact: %s\n" "${DEBUG_NAME}"
+          printf "Release artifact: %s\n" "${RELEASE_NAME}"
+          printf "AAB artifact: %s\n" "${AAB_NAME}"
       - name: Set up JDK
         uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
@@ -158,11 +158,11 @@ jobs:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE }}
         run: |
           if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.keystore
-            echo "✓ Android keystore decoded successfully"
-            echo "ANDROID_KEYSTORE_PATH=$PWD/release.keystore" >> "$GITHUB_ENV"
+            printf "%s" "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.keystore
+            printf "✓ Android keystore decoded successfully\n"
+            printf "ANDROID_KEYSTORE_PATH=%s/release.keystore\n" "$PWD" >> "$GITHUB_ENV"
           else
-            echo "::error::ANDROID_KEYSTORE secret not found but enable-signing is true"
+            printf "::error::ANDROID_KEYSTORE secret not found but enable-signing is true\n"
             exit 1
           fi
       - name: Get version info
@@ -170,15 +170,15 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           if [ -f "gradle.properties" ]; then
-            VERSION=$(grep "versionName=" gradle.properties | cut -d'=' -f2 || echo "unknown")
-            VERSION_CODE=$(grep "versionCode=" gradle.properties | cut -d'=' -f2 || echo "unknown")
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "version-code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
-            echo "Version: ${VERSION} (${VERSION_CODE})"
+            VERSION=$(grep "versionName=" gradle.properties | cut -d'=' -f2 || printf "unknown")
+            VERSION_CODE=$(grep "versionCode=" gradle.properties | cut -d'=' -f2 || printf "unknown")
+            printf "version=%s\n" "${VERSION}" >> "$GITHUB_OUTPUT"
+            printf "version-code=%s\n" "${VERSION_CODE}" >> "$GITHUB_OUTPUT"
+            printf "Version: %s (%s)\n" "${VERSION}" "${VERSION_CODE}"
           else
-            echo "::warning::gradle.properties not found, version info unavailable"
-            echo "version=unknown" >> "$GITHUB_OUTPUT"
-            echo "version-code=unknown" >> "$GITHUB_OUTPUT"
+            printf "::warning::gradle.properties not found, version info unavailable\n"
+            printf "version=unknown\n" >> "$GITHUB_OUTPUT"
+            printf "version-code=unknown\n" >> "$GITHUB_OUTPUT"
           fi
       - name: Determine build tasks
         id: build-tasks
@@ -186,7 +186,7 @@ jobs:
           FLAVOR="${{ inputs['product-flavor'] }}"
           FLAVOR_CAPITALIZED=""
           if [ -n "$FLAVOR" ]; then
-            FLAVOR_CAPITALIZED="$(echo ${FLAVOR} | awk '{print toupper(substr($0,1,1)) tolower(substr($0,2))}')"
+            FLAVOR_CAPITALIZED="$(printf "%s" "${FLAVOR}" | awk '{print toupper(substr($0,1,1)) tolower(substr($0,2))}')"
           fi
 
           TASKS=""
@@ -209,8 +209,8 @@ jobs:
             TASKS="${TASKS} ${{ inputs['build-module'] }}:bundle${FLAVOR_CAPITALIZED}Release"
           fi
 
-          echo "tasks=${TASKS}" >> "$GITHUB_OUTPUT"
-          echo "Building with tasks: ${TASKS}"
+          printf "tasks=%s\n" "${TASKS}" >> "$GITHUB_OUTPUT"
+          printf "Building with tasks: %s\n" "${TASKS}"
       - name: Run Gradle build
         working-directory: ${{ inputs['working-directory'] }}
         env:
@@ -218,13 +218,13 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          echo "Running Gradle tasks: ${{ steps.build-tasks.outputs.tasks }}"
+          printf "Running Gradle tasks: %s\n" "${{ steps.build-tasks.outputs.tasks }}"
           ./gradlew ${{ steps.build-tasks.outputs.tasks }} ${{ inputs['skip-tests'] && '-x test' || '' }}
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         run: |
-          echo "Built artifacts:"
-          find ${{ inputs['build-module'] }}/build/outputs -type f \( -name "*.apk" -o -name "*.aab" \) -ls || echo "No artifacts found"
+          printf "Built artifacts:\n"
+          find ${{ inputs['build-module'] }}/build/outputs -type f \( -name "*.apk" -o -name "*.aab" \) -ls || printf "No artifacts found\n"
       - name: Upload Debug APK
         if: contains(inputs['build-types'], 'debug')
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
@@ -251,34 +251,34 @@ jobs:
           retention-days: 7
       - name: Generate build summary
         run: |
-          echo "## Android Variants Build Summary 📱" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Configuration" >> $GITHUB_STEP_SUMMARY
-          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **Java** | ${{ inputs['java-version'] }} (${{ inputs['jdk-distribution'] }}) |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Module** | ${{ inputs['build-module'] }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Flavor** | ${{ inputs['product-flavor'] || 'default' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Build Types** | ${{ inputs['build-types'] }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Include AAB** | ${{ inputs['include-aab'] && '✓' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Signing** | ${{ inputs['enable-signing'] && '✓ Enabled' || '⊘ Disabled' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Tests** | ${{ inputs['skip-tests'] && '⊘ Skipped' || '✓ Executed' }} |" >> $GITHUB_STEP_SUMMARY
+          printf "## Android Variants Build Summary 📱\n" >> $GITHUB_STEP_SUMMARY
+          printf "\n" >> $GITHUB_STEP_SUMMARY
+          printf "### Configuration\n" >> $GITHUB_STEP_SUMMARY
+          printf "| Setting | Value |\n" >> $GITHUB_STEP_SUMMARY
+          printf "|---------|-------|\n" >> $GITHUB_STEP_SUMMARY
+          printf "| **Java** | %s (%s) |\n" "${{ inputs['java-version'] }}" "${{ inputs['jdk-distribution'] }}" >> $GITHUB_STEP_SUMMARY
+          printf "| **Module** | %s |\n" "${{ inputs['build-module'] }}" >> $GITHUB_STEP_SUMMARY
+          printf "| **Flavor** | %s |\n" "${{ inputs['product-flavor'] || 'default' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| **Build Types** | %s |\n" "${{ inputs['build-types'] }}" >> $GITHUB_STEP_SUMMARY
+          printf "| **Include AAB** | %s |\n" "${{ inputs['include-aab'] && '✓' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| **Signing** | %s |\n" "${{ inputs['enable-signing'] && '✓ Enabled' || '⊘ Disabled' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| **Tests** | %s |\n" "${{ inputs['skip-tests'] && '⊘ Skipped' || '✓ Executed' }}" >> $GITHUB_STEP_SUMMARY
 
           if [ -n "${{ steps.version-info.outputs.version }}" ] && [ "${{ steps.version-info.outputs.version }}" != "unknown" ]; then
-            echo "| **Version** | ${{ steps.version-info.outputs.version }} (${{ steps.version-info.outputs.version-code }}) |" >> $GITHUB_STEP_SUMMARY
+            printf "| **Version** | %s (%s) |\n" "${{ steps.version-info.outputs.version }}" "${{ steps.version-info.outputs.version-code }}" >> $GITHUB_STEP_SUMMARY
           fi
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Artifacts Generated" >> $GITHUB_STEP_SUMMARY
+          printf "\n" >> $GITHUB_STEP_SUMMARY
+          printf "### Artifacts Generated\n" >> $GITHUB_STEP_SUMMARY
           if [[ "${{ inputs['build-types'] }}" == *"debug"* ]]; then
-            echo "- ✓ Debug APK: \`${{ steps.artifact-names.outputs.debug-name }}\`" >> $GITHUB_STEP_SUMMARY
+            printf "- ✓ Debug APK: \`%s\`\n" "${{ steps.artifact-names.outputs.debug-name }}" >> $GITHUB_STEP_SUMMARY
           fi
           if [[ "${{ inputs['build-types'] }}" == *"release"* ]]; then
-            echo "- ✓ Release APK: \`${{ steps.artifact-names.outputs.release-name }}\`" >> $GITHUB_STEP_SUMMARY
+            printf "- ✓ Release APK: \`%s\`\n" "${{ steps.artifact-names.outputs.release-name }}" >> $GITHUB_STEP_SUMMARY
           fi
           if [ "${{ inputs['include-aab'] }}" = "true" ] && [[ "${{ inputs['build-types'] }}" == *"release"* ]]; then
-            echo "- ✓ Release AAB: \`${{ steps.artifact-names.outputs.aab-name }}\`" >> $GITHUB_STEP_SUMMARY
+            printf "- ✓ Release AAB: \`%s\`\n" "${{ steps.artifact-names.outputs.aab-name }}" >> $GITHUB_STEP_SUMMARY
           fi
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "*Build completed at $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY
+          printf "\n" >> $GITHUB_STEP_SUMMARY
+          printf "*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY

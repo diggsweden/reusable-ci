@@ -74,65 +74,65 @@ jobs:
       - name: Install dependencies for multi-module projects
         working-directory: ${{ inputs['working-directory'] }}
         run: |
-          echo "Installing project modules to local repository..."
+          printf "Installing project modules to local repository...\n"
           mvn $MAVEN_CLI_OPTS install -DskipTests
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
-          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          printf "VERSION=%s\n" "${VERSION}" >> "$GITHUB_OUTPUT"
 
           if [[ "${VERSION}" == *-SNAPSHOT ]]; then
-            echo "IS_SNAPSHOT=true" >> "$GITHUB_OUTPUT"
+            printf "IS_SNAPSHOT=true\n" >> "$GITHUB_OUTPUT"
           else
-            echo "IS_SNAPSHOT=false" >> "$GITHUB_OUTPUT"
+            printf "IS_SNAPSHOT=false\n" >> "$GITHUB_OUTPUT"
           fi
 
           GROUP_ID=$(mvn help:evaluate -Dexpression=project.groupId -q -DforceStdout)
           ARTIFACT_ID=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout)
-          echo "GROUP_ID=${GROUP_ID}" >> "$GITHUB_OUTPUT"
-          echo "ARTIFACT_ID=${ARTIFACT_ID}" >> "$GITHUB_OUTPUT"
+          printf "GROUP_ID=%s\n" "${GROUP_ID}" >> "$GITHUB_OUTPUT"
+          printf "ARTIFACT_ID=%s\n" "${ARTIFACT_ID}" >> "$GITHUB_OUTPUT"
 
-          echo "Project: ${GROUP_ID}:${ARTIFACT_ID}:${VERSION}"
+          printf "Project: %s:%s:%s\n" "${GROUP_ID}" "${ARTIFACT_ID}" "${VERSION}"
       - name: Build application
         if: ${{ inputs['build-type'] == 'app' }}
         working-directory: ${{ inputs['working-directory'] }}
         run: |
-          echo "Building Maven application..."
+          printf "Building Maven application...\n"
           mvn $MAVEN_CLI_OPTS clean package ${{ inputs['skip-tests'] && '-DskipTests' || '' }}
       - name: Build library with sources and javadoc
         if: ${{ inputs['build-type'] == 'lib' }}
         working-directory: ${{ inputs['working-directory'] }}
         run: |
-          echo "Building Maven library with sources and javadoc..."
+          printf "Building Maven library with sources and javadoc...\n"
 
           # Determine profile argument
           PROFILE_ARG=""
           if [ -n "${{ inputs['profile'] }}" ]; then
             PROFILE_ARG="-P${{ inputs['profile'] }}"
-            echo "Using Maven profile: ${{ inputs['profile'] }}"
+            printf "Using Maven profile: %s\n" "${{ inputs['profile'] }}"
           fi
 
           mvn $MAVEN_CLI_OPTS clean compile $PROFILE_ARG
 
           if [ "${{ inputs['skip-tests'] }}" != "true" ]; then
-            echo "Running tests..."
+            printf "Running tests...\n"
             mvn $MAVEN_CLI_OPTS test $PROFILE_ARG
           fi
 
-          echo "Creating library package with sources and javadoc..."
+          printf "Creating library package with sources and javadoc...\n"
           # Skip GPG signing during build (will be done during publish)
           mvn $MAVEN_CLI_OPTS package -DskipTests=${{ inputs['skip-tests'] }} $PROFILE_ARG -Dgpg.skip=true
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         run: |
-          echo "Built artifacts:"
-          ls -lh target/*.jar 2>/dev/null || echo "No JAR files in root target/"
-          ls -lh target/*.war 2>/dev/null || echo "No WAR files in root target/"
+          printf "Built artifacts:\n"
+          ls -lh target/*.jar 2>/dev/null || printf "No JAR files in root target/\n"
+          ls -lh target/*.war 2>/dev/null || printf "No WAR files in root target/\n"
 
-          echo "Checking for multi-module artifacts:"
-          find . -type f -name "*.jar" -path "*/target/*" ! -name "original-*.jar" -exec ls -lh {} \; 2>/dev/null || echo "No JAR files found in sub-modules"
+          printf "Checking for multi-module artifacts:\n"
+          find . -type f -name "*.jar" -path "*/target/*" ! -name "original-*.jar" -exec ls -lh {} \; 2>/dev/null || printf "No JAR files found in sub-modules\n"
       - name: Upload Maven artifacts
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
@@ -150,12 +150,12 @@ jobs:
           if-no-files-found: warn
       - name: Generate build summary
         run: |
-          echo "## Maven Build Summary 🔨" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Type:** ${{ inputs['build-type'] }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Artifact:** \`${{ steps.version-info.outputs.GROUP_ID }}:${{ steps.version-info.outputs.ARTIFACT_ID }}:${{ steps.version-info.outputs.VERSION }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Java:** ${{ inputs['java-version'] }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tests:** ${{ inputs['skip-tests'] && '⊘ Skipped' || '✓ Executed' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Snapshot:** ${{ steps.version-info.outputs.IS_SNAPSHOT }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "*Build completed at $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY
+          printf "## Maven Build Summary 🔨\n" >> $GITHUB_STEP_SUMMARY
+          printf "\n" >> $GITHUB_STEP_SUMMARY
+          printf "- **Type:** %s\n" "${{ inputs['build-type'] }}" >> $GITHUB_STEP_SUMMARY
+          printf "- **Artifact:** \`%s:%s:%s\`\n" "${{ steps.version-info.outputs.GROUP_ID }}" "${{ steps.version-info.outputs.ARTIFACT_ID }}" "${{ steps.version-info.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          printf "- **Java:** %s\n" "${{ inputs['java-version'] }}" >> $GITHUB_STEP_SUMMARY
+          printf "- **Tests:** %s\n" "${{ inputs['skip-tests'] && '⊘ Skipped' || '✓ Executed' }}" >> $GITHUB_STEP_SUMMARY
+          printf "- **Snapshot:** %s\n" "${{ steps.version-info.outputs.IS_SNAPSHOT }}" >> $GITHUB_STEP_SUMMARY
+          printf "\n" >> $GITHUB_STEP_SUMMARY
+          printf "*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
