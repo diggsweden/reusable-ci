@@ -155,161 +155,20 @@ jobs:
     if: always()
     needs: [commit-lint, license-lint, dependency-review, megalint, publiccode-lint, just-mise-lint, swift-lint]
     steps:
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['workflows-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/lint
       - name: Check lint results
         run: |
-          echo "## Pull Request Check Status" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Deprecation warnings
-          if [[ "${{ inputs['linters.megalint'] }}" == "true" ]] || \
-             [[ "${{ inputs['linters.commitlint'] }}" == "true" ]] || \
-             [[ "${{ inputs['linters.licenselint'] }}" == "true" ]] || \
-             [[ "${{ inputs['linters.publiccodelint'] }}" == "true" ]]; then
-            echo "> [!WARNING]" >> $GITHUB_STEP_SUMMARY
-            echo "> **DEPRECATED:** The following linters will be removed in version 3.0.0:" >> $GITHUB_STEP_SUMMARY
-            echo ">" >> $GITHUB_STEP_SUMMARY
-            if [[ "${{ inputs['linters.megalint'] }}" == "true" ]]; then
-              echo "> - **MegaLinter** - Migrate to \`linters.justmiselint: true\` (just+mise-based linting)" >> $GITHUB_STEP_SUMMARY
-            fi
-            if [[ "${{ inputs['linters.commitlint'] }}" == "true" ]]; then
-              echo "> - **Commit Lint** - Now handled by just+mise (conform)" >> $GITHUB_STEP_SUMMARY
-            fi
-            if [[ "${{ inputs['linters.licenselint'] }}" == "true" ]]; then
-              echo "> - **License Lint** - Now handled by just+mise (reuse)" >> $GITHUB_STEP_SUMMARY
-            fi
-            if [[ "${{ inputs['linters.publiccodelint'] }}" == "true" ]]; then
-              echo "> - **Publiccode Lint** - Now handled by just+mise" >> $GITHUB_STEP_SUMMARY
-            fi
-            echo ">" >> $GITHUB_STEP_SUMMARY
-            echo "> Please update your workflow to use \`linters.justmiselint: true\` and disable deprecated linters." >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # Check each linter status
-          echo "### Linter Results" >> $GITHUB_STEP_SUMMARY
-          echo "| Linter | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
-
-          # Commit lint
-          if [[ "${{ inputs['linters.commitlint'] }}" == "true" ]]; then
-            if [[ "${{ needs.commit-lint.result }}" == "success" ]]; then
-              echo "| Commit Lint ⚠️ DEPRECATED | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
-            elif [[ "${{ needs.commit-lint.result }}" == "skipped" ]]; then
-              echo "| Commit Lint ⚠️ DEPRECATED | − Skipped |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| Commit Lint ⚠️ DEPRECATED | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "| Commit Lint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # License lint
-          if [[ "${{ inputs['linters.licenselint'] }}" == "true" ]]; then
-            if [[ "${{ needs.license-lint.result }}" == "success" ]]; then
-              echo "| License Lint ⚠️ DEPRECATED | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
-            elif [[ "${{ needs.license-lint.result }}" == "skipped" ]]; then
-              echo "| License Lint ⚠️ DEPRECATED | − Skipped |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| License Lint ⚠️ DEPRECATED | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "| License Lint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # Dependency review
-          if [[ "${{ inputs['linters.dependencyreview'] }}" == "true" ]]; then
-            if [[ "${{ needs.dependency-review.result }}" == "success" ]]; then
-              echo "| Dependency Review | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
-            elif [[ "${{ needs.dependency-review.result }}" == "skipped" ]]; then
-              echo "| Dependency Review | − Skipped |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| Dependency Review | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "| Dependency Review | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # MegaLinter
-          if [[ "${{ inputs['linters.megalint'] }}" == "true" ]]; then
-            if [[ "${{ needs.megalint.result }}" == "success" ]]; then
-              echo "| MegaLinter ⚠️ DEPRECATED | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
-            elif [[ "${{ needs.megalint.result }}" == "skipped" ]]; then
-              echo "| MegaLinter ⚠️ DEPRECATED | − Skipped |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| MegaLinter ⚠️ DEPRECATED | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "| MegaLinter | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # Publiccode lint
-          if [[ "${{ inputs['linters.publiccodelint'] }}" == "true" ]]; then
-            if [[ "${{ needs.publiccode-lint.result }}" == "success" ]]; then
-              echo "| Publiccode Lint ⚠️ DEPRECATED | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
-            elif [[ "${{ needs.publiccode-lint.result }}" == "skipped" ]]; then
-              echo "| Publiccode Lint ⚠️ DEPRECATED | − Skipped |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| Publiccode Lint ⚠️ DEPRECATED | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "| Publiccode Lint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # Just+Mise lint
-          if [[ "${{ inputs['linters.justmiselint'] }}" == "true" ]]; then
-            if [[ "${{ needs.just-mise-lint.result }}" == "success" ]]; then
-              echo "| Just+Mise Lint | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
-            elif [[ "${{ needs.just-mise-lint.result }}" == "skipped" ]]; then
-              echo "| Just+Mise Lint | − Skipped |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| Just+Mise Lint | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "| Just+Mise Lint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # Swift lint
-          if [[ "${{ inputs['linters.swiftformat'] }}" == "true" ]] || [[ "${{ inputs['linters.swiftlint'] }}" == "true" ]]; then
-            if [[ "${{ needs.swift-lint.result }}" == "success" ]]; then
-              echo "| Swift Lint | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
-            elif [[ "${{ needs.swift-lint.result }}" == "skipped" ]]; then
-              echo "| Swift Lint | − Skipped |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| Swift Lint | ✗ Fail |" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "| Swift Lint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # Check if any enabled linter failed
-          FAILED=false
-          if [[ "${{ inputs['linters.commitlint'] }}" == "true" ]] && [[ "${{ needs.commit-lint.result }}" == "failure" ]]; then
-            FAILED=true
-          fi
-          if [[ "${{ inputs['linters.licenselint'] }}" == "true" ]] && [[ "${{ needs.license-lint.result }}" == "failure" ]]; then
-            FAILED=true
-          fi
-          if [[ "${{ inputs['linters.dependencyreview'] }}" == "true" ]] && [[ "${{ needs.dependency-review.result }}" == "failure" ]]; then
-            FAILED=true
-          fi
-          if [[ "${{ inputs['linters.megalint'] }}" == "true" ]] && [[ "${{ needs.megalint.result }}" == "failure" ]]; then
-            FAILED=true
-          fi
-          if [[ "${{ inputs['linters.publiccodelint'] }}" == "true" ]] && [[ "${{ needs.publiccode-lint.result }}" == "failure" ]]; then
-            FAILED=true
-          fi
-          if [[ "${{ inputs['linters.justmiselint'] }}" == "true" ]] && [[ "${{ needs.just-mise-lint.result }}" == "failure" ]]; then
-            FAILED=true
-          fi
-          if ([[ "${{ inputs['linters.swiftformat'] }}" == "true" ]] || [[ "${{ inputs['linters.swiftlint'] }}" == "true" ]]) && [[ "${{ needs.swift-lint.result }}" == "failure" ]]; then
-            FAILED=true
-          fi
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [[ "$FAILED" == "true" ]]; then
-            echo "### ✗ Some checks failed" >> $GITHUB_STEP_SUMMARY
-            echo "Please review the failures above and fix any issues." >> $GITHUB_STEP_SUMMARY
-            echo "Note: Individual linter failures are shown above. This status job always succeeds to provide summary." >> $GITHUB_STEP_SUMMARY
-          else
-            echo "### ✓ All enabled checks passed" >> $GITHUB_STEP_SUMMARY
-          fi
+          bash .github-shared/scripts/lint/generate-status-report.sh \
+            "Commit Lint|${{ inputs['linters.commitlint'] }}|${{ needs.commit-lint.result }}|true" \
+            "License Lint|${{ inputs['linters.licenselint'] }}|${{ needs.license-lint.result }}|true" \
+            "Dependency Review|${{ inputs['linters.dependencyreview'] }}|${{ needs.dependency-review.result }}|false" \
+            "MegaLinter|${{ inputs['linters.megalint'] }}|${{ needs.megalint.result }}|true" \
+            "Publiccode Lint|${{ inputs['linters.publiccodelint'] }}|${{ needs.publiccode-lint.result }}|true" \
+            "Just+Mise Lint|${{ inputs['linters.justmiselint'] }}|${{ needs.just-mise-lint.result }}|false" \
+            "Swift Lint|${{ inputs['linters.swiftformat'] == 'true' || inputs['linters.swiftlint'] == 'true' }}|${{ needs.swift-lint.result }}|false"
