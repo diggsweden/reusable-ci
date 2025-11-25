@@ -448,7 +448,7 @@ artifacts:
 ```
 
 **Required Secrets:**
-```
+```text
 CERTIFICATE_BASE64
 CERTIFICATE_PASSPHRASE
 PROVISIONING_PROFILE_BASE64
@@ -459,7 +459,7 @@ APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64
 ```
 
 **Required Variables:**
-```
+```text
 EXPORT_OPTIONS_BASE64
 ```
 
@@ -488,7 +488,7 @@ artifacts:
       project: "Wallet.xcodeproj"
       configuration: Release
       submit-for-review: false  # TestFlight only for demo builds
-      
+
   - name: wallet-ios-production
     project-type: xcode-ios
     working-directory: .
@@ -511,7 +511,7 @@ artifacts:
       xcode-version: "16.1"
       scheme: "MyApp"
       project: "MyApp.xcodeproj"
-      
+
       # App Store submission options
       submit-for-review: true   # Submit to App Store (not just TestFlight)
       skip-validation: false    # Validate IPA before upload (recommended)

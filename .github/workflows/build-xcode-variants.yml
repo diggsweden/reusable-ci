@@ -226,24 +226,24 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p build
-          
+
           BUILD_CMD="xcodebuild archive"
-          
+
           if [ -n "${{ inputs.workspace }}" ]; then
             BUILD_CMD="$BUILD_CMD -workspace ${{ inputs.workspace }}"
           elif [ -n "${{ inputs.project }}" ]; then
             BUILD_CMD="$BUILD_CMD -project ${{ inputs.project }}"
           fi
-          
+
           BUILD_CMD="$BUILD_CMD -scheme '${{ inputs.scheme }}'"
           BUILD_CMD="$BUILD_CMD -configuration ${{ inputs.configuration }}"
           BUILD_CMD="$BUILD_CMD -archivePath build/app.xcarchive"
           BUILD_CMD="$BUILD_CMD -destination '${{ inputs.destination }}'"
-          
+
           if [ "${{ inputs.skip-tests }}" = "true" ]; then
             BUILD_CMD="$BUILD_CMD -skipTests"
           fi
-          
+
           echo "Running: $BUILD_CMD"
           eval "$BUILD_CMD" | xcbeautify
 
@@ -254,14 +254,14 @@ jobs:
           EXPORT_OPTIONS_BASE64: ${{ vars[inputs.export-options-var] }}
         run: |
           set -o pipefail
-          
+
           if [ -z "$EXPORT_OPTIONS_BASE64" ]; then
             echo "::error::Export options not found in variable ${{ inputs.export-options-var }}"
             exit 1
           fi
-          
+
           echo "$EXPORT_OPTIONS_BASE64" | base64 --decode > export-options.plist
-          
+
           xcodebuild -exportArchive \
             -archivePath build/app.xcarchive \
             -exportPath build/export \

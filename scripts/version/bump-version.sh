@@ -59,6 +59,28 @@ gradle | gradle-android)
   cat "$GRADLE_VERSION_FILE"
   ;;
 
+xcode-ios)
+  cd "$WORKING_DIR"
+  echo "Updating Xcode version to $VERSION"
+
+  # Verify agvtool can read the project
+  if ! agvtool what-version &>/dev/null; then
+    echo "::error::Project not configured for agvtool (Apple Generic Versioning)"
+    echo "::error::Please configure your Xcode project:"
+    echo "::error::  1. Open project in Xcode"
+    echo "::error::  2. Select project in navigator"
+    echo "::error::  3. Build Settings → Versioning System → 'Apple Generic'"
+    echo "::error::  4. Build Settings → Current Project Version → Set to '1'"
+    exit 1
+  fi
+
+  # Update version and build number
+  agvtool new-marketing-version "$VERSION"
+  agvtool next-version -all
+
+  echo "✓ Xcode version updated to $VERSION"
+  ;;
+
 *)
   echo "::error::Unknown project type: $PROJECT_TYPE"
   exit 1

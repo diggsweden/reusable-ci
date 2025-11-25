@@ -76,10 +76,10 @@ on:
         default: ".github-templates/templates/gitcliff/minimal.toml"
         type: string
       file-pattern:
-        description: 'Files to commit (default: "CHANGELOG.md :(glob)**/pom.xml"). NPM projects should set to "CHANGELOG.md package.json package-lock.json"'
+        description: 'Files to commit during version bump (auto-detected based on project-type if not provided)'
         required: false
         type: string
-        default: 'CHANGELOG.md :(glob)**/pom.xml'
+        default: ""
       egress-policy:
         description: "Egress policy for the Harden Runner step (e.g., audit, block)"
         required: false
@@ -139,6 +139,7 @@ jobs:
           path: .github-shared
           sparse-checkout: |
             scripts/version
+            scripts/config
       - name: Import GPG key
         id: import-gpg
         uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
@@ -267,6 +268,16 @@ jobs:
           else
             echo "content=No changes for this release" >> "$GITHUB_OUTPUT"
           fi
+      - name: Determine file pattern
+        id: file-pattern
+        run: |
+          if [ -n "${{ inputs['file-pattern'] }}" ]; then
+            PATTERN="${{ inputs['file-pattern'] }}"
+          else
+            PATTERN=$(bash .github-shared/scripts/config/get-file-pattern.sh \
+              "${{ inputs['project-type'] }}" "")
+          fi
+          echo "pattern=$PATTERN" >> "$GITHUB_OUTPUT"
       - name: Commit and Push Changes
         uses: stefanzweifel/git-auto-commit-action@28e16e81777b558cc906c8750092100bbb34c5e3 # v7.0.0
         with:
@@ -276,7 +287,7 @@ jobs:
             ${{ steps.minimal-changelog.outputs.content }}
 
             [skip ci]
-          file_pattern: ${{ inputs['file-pattern'] }}
+          file_pattern: ${{ steps.file-pattern.outputs.pattern }}
           commit_author: "${{ steps.import-gpg.outputs.name }} <${{ steps.import-gpg.outputs.email }}>"
           commit_user_name: ${{ steps.import-gpg.outputs.name }}
           commit_user_email: ${{ steps.import-gpg.outputs.email }}

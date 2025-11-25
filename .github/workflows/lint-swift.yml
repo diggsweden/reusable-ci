@@ -94,13 +94,13 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           FILE_COUNT=$(git ls-files '${{ inputs['file-pattern'] }}' | wc -l | tr -d ' ')
-          
+
           if [ "$FILE_COUNT" -eq 0 ]; then
             echo "found=false" >> "$GITHUB_OUTPUT"
             echo "No Swift files found matching pattern: ${{ inputs['file-pattern'] }}"
             exit 0
           fi
-          
+
           echo "found=true" >> "$GITHUB_OUTPUT"
           echo "count=${FILE_COUNT}" >> "$GITHUB_OUTPUT"
           echo "Found ${FILE_COUNT} Swift files to lint"
@@ -110,19 +110,19 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           set +e
-          
+
           # Get list of Swift files
           SWIFT_FILES=$(git ls-files '${{ inputs['file-pattern'] }}')
           FILE_COUNT=$(echo "$SWIFT_FILES" | wc -l | tr -d ' ')
-          
+
           echo "Running swift-format on ${FILE_COUNT} files..."
-          
+
           # Run swift-format on all files at once (avoid array issues on macOS)
           echo "$SWIFT_FILES" | xargs swift-format lint -s > lint-output.txt 2>&1
           LINT_EXIT_CODE=$?
-          
+
           cat lint-output.txt
-          
+
           if [ $LINT_EXIT_CODE -ne 0 ]; then
             echo "::error::swift-format found formatting issues"
             echo "## Swift Format Issues 🔴" >> $GITHUB_STEP_SUMMARY
@@ -159,7 +159,7 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           set +e
-          
+
           if [ -f "${{ inputs['swiftlint-config'] }}" ]; then
             echo "Using SwiftLint configuration: ${{ inputs['swiftlint-config'] }}"
             swiftlint lint --config "${{ inputs['swiftlint-config'] }}" --reporter github-actions-logging > swiftlint-output.txt 2>&1
@@ -167,11 +167,11 @@ jobs:
             echo "No SwiftLint configuration found, using defaults"
             swiftlint lint --reporter github-actions-logging > swiftlint-output.txt 2>&1
           fi
-          
+
           SWIFTLINT_EXIT_CODE=$?
-          
+
           cat swiftlint-output.txt
-          
+
           if [ $SWIFTLINT_EXIT_CODE -ne 0 ]; then
             if [ "${{ inputs['fail-on-warning'] }}" = "true" ]; then
               echo "::error::SwiftLint found issues"
@@ -208,7 +208,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Linter | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
-          
+
           if [ "${{ inputs['enable-swiftformat'] }}" = "true" ]; then
             if [ "${{ needs.swift-format-lint.result }}" = "success" ]; then
               echo "| swift-format | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
@@ -220,7 +220,7 @@ jobs:
           else
             echo "| swift-format | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
           fi
-          
+
           if [ "${{ inputs['enable-swiftlint'] }}" = "true" ]; then
             if [ "${{ needs.swiftlint.result }}" = "success" ]; then
               echo "| SwiftLint | ✓ Pass |" >> $GITHUB_STEP_SUMMARY
@@ -232,7 +232,7 @@ jobs:
           else
             echo "| SwiftLint | 🔸 Disabled |" >> $GITHUB_STEP_SUMMARY
           fi
-          
+
           if ([ "${{ inputs['enable-swiftformat'] }}" = "true" ] && [ "${{ needs.swift-format-lint.result }}" = "failure" ]) || \
              ([ "${{ inputs['enable-swiftlint'] }}" = "true" ] && [ "${{ needs.swiftlint.result }}" = "failure" ]); then
             echo "" >> $GITHUB_STEP_SUMMARY

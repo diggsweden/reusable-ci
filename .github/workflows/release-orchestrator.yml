@@ -102,10 +102,11 @@ on:
         default: true
         type: boolean
       release.checkauthorization:
-        description: "Check if user is authorized for non-SNAPSHOT releases (default: false, typically true for public libraries)"
+        description: "Check if user is authorized for non-SNAPSHOT releases"
         required: false
         default: false
         type: boolean
+        # Note: Typically set to true for public libraries publishing to Maven Central
       release.draft:
         description: "Create as draft release (default: false)"
         required: false
@@ -118,10 +119,16 @@ on:
         default: "."
         type: string
       file-pattern:
-        description: "Files to commit in version bump (auto-detected based on projectType if not specified: Maven='CHANGELOG.md pom.xml', NPM='CHANGELOG.md package.json package-lock.json', Gradle='CHANGELOG.md build.gradle settings.gradle')"
+        description: "Files to commit in version bump (auto-detected by project type if not specified)"
         required: false
         type: string
         default: ""
+        # Auto-detected patterns by project type:
+        # - Maven: CHANGELOG.md pom.xml
+        # - NPM: CHANGELOG.md package.json package-lock.json
+        # - Gradle: CHANGELOG.md build.gradle settings.gradle
+        # - Gradle Android: CHANGELOG.md build.gradle settings.gradle gradle.properties
+        # - Xcode iOS: CHANGELOG.md project.pbxproj
 concurrency:
   group: release-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: false # Queue releases, don't cancel partial releases
@@ -199,6 +206,7 @@ jobs:
       branch: ${{ inputs.branch }}
       workflows-ref: main
   # Step 1: Version Bump (iterates over all artifacts)
+  # File patterns auto-detected in version-bump.yml by scripts/config/get-file-pattern.sh based on project-type
   version-and-changelog:
     needs: [parse-config, validate-prerequisites]
     name: Version Bump - ${{ matrix.artifact.name }}
@@ -215,7 +223,7 @@ jobs:
     with:
       branch: ${{ inputs.branch }}
       project-type: ${{ matrix.artifact['project-type'] }}
-      file-pattern: ${{ inputs['file-pattern'] || (matrix.artifact['project-type'] == 'npm' && 'CHANGELOG.md package.json package-lock.json' || matrix.artifact['project-type'] == 'gradle' && 'CHANGELOG.md gradle.properties build.gradle.kts settings.gradle.kts build.gradle settings.gradle' || matrix.artifact['project-type'] == 'python' && 'CHANGELOG.md pyproject.toml' || 'CHANGELOG.md :(glob)**/pom.xml') }}
+      file-pattern: ${{ inputs['file-pattern'] }}
       java-version: ${{ matrix.artifact.config['java-version'] }}
       node-version: ${{ matrix.artifact.config['node-version'] }}
       gradle-version-file: ${{ matrix.artifact.config['gradle-version-file'] }}
