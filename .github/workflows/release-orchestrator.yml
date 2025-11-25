@@ -328,10 +328,19 @@ jobs:
       include-tag: false
       working-directory: ${{ matrix.artifact['working-directory'] }}
       macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-14' }}
+  # Sync point: Wait for all builds to complete before publishing/containers
+  await-builds:
+    name: Await Builds
+    needs: [parse-config, version-and-changelog, build-maven, build-npm, build-gradle, build-gradle-android, build-xcode]
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: All builds complete
+        run: printf "All build jobs have completed successfully\n"
   # Step 3a: Publish to GitHub Packages
   publish-github:
     name: Publish GitHub - ${{ matrix.artifact.name }}
-    needs: [parse-config, build-maven, build-npm, build-gradle, build-gradle-android, build-xcode]
+    needs: [parse-config, await-builds]
     if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-githubpackages == 'true' }}
     strategy:
       matrix:
@@ -388,7 +397,7 @@ jobs:
   # Step 4: Build and Publish Container Images
   build-containers:
     name: Build Container - ${{ matrix.container.name }}
-    needs: [parse-config, build-maven, build-npm, build-gradle, build-gradle-android, build-xcode]
+    needs: [parse-config, await-builds]
     if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.containers != '[]' }}
     strategy:
       matrix:
@@ -417,7 +426,7 @@ jobs:
   # Step 5: Create GitHub Release  
   create-release:
     name: Create GitHub Release
-    needs: [parse-config, publish-github, publish-mavencentral, publish-appleappstore, build-containers, build-gradle-android, build-xcode]
+    needs: [parse-config, await-builds, publish-github, publish-mavencentral, publish-appleappstore, build-containers]
     # Run even if previous jobs were skipped but at least one succeeded
     if: ${{ !failure() && !cancelled() && inputs['release-publisher'] == 'github-cli' }}
     permissions:
@@ -439,7 +448,7 @@ jobs:
   # Final summary
   release-summary:
     name: Release Summary
-    needs: [parse-config, version-and-changelog, build-maven, build-npm, build-gradle, build-gradle-android, build-xcode, publish-github, publish-mavencentral, publish-appleappstore, build-containers, create-release]
+    needs: [parse-config, version-and-changelog, await-builds, build-maven, build-npm, build-gradle, build-gradle-android, build-xcode, publish-github, publish-mavencentral, publish-appleappstore, build-containers, create-release]
     if: always()
     runs-on: ubuntu-latest
     permissions:
