@@ -45,7 +45,7 @@ on:
       checkout-ref:
         description: "Git ref to checkout (branch or tag)"
         required: false
-        default: "v1"
+        default: "main"
         type: string
       attach-artifacts:
         description: "Glob patterns for artifacts to attach (newline or comma separated)"

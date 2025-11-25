@@ -70,7 +70,7 @@ on:
       branch:
         description: "Target branch for release (default: main)"
         required: false
-        default: "v1"
+        default: "main"
         type: string
   workflow_dispatch: # Allow manual validation
     inputs:
