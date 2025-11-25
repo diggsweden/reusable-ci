@@ -97,11 +97,6 @@ on:
         required: false
         default: "generic/platform=iOS"
         type: string
-      skip-tests:
-        description: "Skip tests during build"
-        required: false
-        default: true
-        type: boolean
       # === MACOS RUNNER ===
       macos-version:
         description: "macOS runner version (macos-13, macos-14, macos-15)"
@@ -240,10 +235,6 @@ jobs:
           BUILD_CMD="$BUILD_CMD -archivePath build/app.xcarchive"
           BUILD_CMD="$BUILD_CMD -destination '${{ inputs.destination }}'"
 
-          if [ "${{ inputs.skip-tests }}" = "true" ]; then
-            BUILD_CMD="$BUILD_CMD -skipTests"
-          fi
-
           echo "Running: $BUILD_CMD"
           eval "$BUILD_CMD" | xcbeautify
 
@@ -300,11 +291,10 @@ jobs:
           echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| **Xcode** | ${{ inputs.xcode-version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Scheme** | ${{ inputs.scheme }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Configuration** | ${{ inputs.configuration }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Destination** | ${{ inputs.destination }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Signing** | ${{ inputs['enable-code-signing'] && '✓ Enabled' || '⊘ Disabled' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Tests** | ${{ inputs.skip-tests && '⊘ Skipped' || '✓ Executed' }} |" >> $GITHUB_STEP_SUMMARY
+           echo "| **Scheme** | ${{ inputs.scheme }} |" >> $GITHUB_STEP_SUMMARY
+           echo "| **Configuration** | ${{ inputs.configuration }} |" >> $GITHUB_STEP_SUMMARY
+           echo "| **Destination** | ${{ inputs.destination }} |" >> $GITHUB_STEP_SUMMARY
+           echo "| **Signing** | ${{ inputs['enable-code-signing'] && '✓ Enabled' || '⊘ Disabled' }} |" >> $GITHUB_STEP_SUMMARY
 
           if [ -n "${{ steps.version-info.outputs.version }}" ] && [ "${{ steps.version-info.outputs.version }}" != "unknown" ]; then
             echo "| **Version** | ${{ steps.version-info.outputs.version }} (${{ steps.version-info.outputs.build }}) |" >> $GITHUB_STEP_SUMMARY
