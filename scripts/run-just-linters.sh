@@ -18,13 +18,13 @@ PASS_COUNT=0
 FAIL_COUNT=0
 
 print_separator() {
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
 }
 
 print_header() {
   local text="$1"
   print_separator
-  echo -e "${BLUE}${text}${NC}"
+  printf '%s%s%s\n' "${BLUE}" "$text" "${NC}"
   print_separator
 }
 
@@ -33,15 +33,15 @@ calculate_duration() {
   local end="$2"
 
   if command -v bc >/dev/null 2>&1; then
-    echo "$end - $start" | bc 2>/dev/null || echo "0"
+    printf "%s - %s\n" "$end" "$start" | bc 2>/dev/null || printf "0"
   else
-    echo "$((end - start))"
+    printf "%d" "$((end - start))"
   fi
 }
 
 discover_linters() {
   if ! command -v just >/dev/null 2>&1; then
-    echo -e "${RED}${CROSSMARK} Error: 'just' command not found${NC}"
+    printf '%s%s Error: '\''just'\'' command not found%s\n' "${RED}" "$CROSSMARK" "${NC}"
     exit 1
   fi
 
@@ -49,14 +49,14 @@ discover_linters() {
   linters=$(just --summary 2>/dev/null | tr ' ' '\n' | grep '^lint-' | grep -v '\-fix$' || true)
 
   if [ -z "$linters" ]; then
-    echo -e "${RED}${CROSSMARK} No lint-* tasks found in justfile${NC}"
-    echo ""
-    echo "Expected tasks named: lint-java, lint-markdown, lint-yaml, etc."
-    echo "Note: Tasks ending with -fix are automatically excluded (e.g., lint-yaml-fix)"
+    printf "%s%s No lint-* tasks found in justfile%s\n" "${RED}" "$CROSSMARK" "${NC}"
+    printf "\n"
+    printf "Expected tasks named: lint-java, lint-markdown, lint-yaml, etc.\n"
+    printf "Note: Tasks ending with -fix are automatically excluded (e.g., lint-yaml-fix)\n"
     exit 1
   fi
 
-  echo "$linters"
+  printf "%s" "$linters"
 }
 
 init_github_summary() {
@@ -97,7 +97,7 @@ extract_linter_metadata_from_justfile() {
   local task_name="$1"
   local metadata_key="$2"
 
-  grep -B5 "^lint-${task_name}:" justfile 2>/dev/null | grep "# ${metadata_key}:" | sed "s/# ${metadata_key}: //" || echo ""
+  grep -B5 "^lint-${task_name}:" justfile 2>/dev/null | grep "# ${metadata_key}:" | sed "s/# ${metadata_key}: //" || printf ""
 }
 
 add_linter_result_to_summary() {
@@ -112,9 +112,9 @@ add_linter_result_to_summary() {
   printf "| %s | %s | %s | %.2fs | " "$display_name" "$tools" "$status_emoji" "$duration" >>"$GITHUB_STEP_SUMMARY"
 
   if [ "$exit_code" -ne 0 ]; then
-    echo "[View errors below](#-failed-linters) |" >>"$GITHUB_STEP_SUMMARY"
+    printf "[View errors below](#-failed-linters) |\n" >>"$GITHUB_STEP_SUMMARY"
   else
-    echo "Success |" >>"$GITHUB_STEP_SUMMARY"
+    printf "Success |\n" >>"$GITHUB_STEP_SUMMARY"
   fi
 }
 
@@ -153,7 +153,7 @@ run_linter() {
   local linter_name="${task#lint-}"
 
   print_header "🔧 Running ${task}"
-  echo ""
+  printf "\n"
 
   local start
   start=$(date +%s.%N 2>/dev/null || date +%s)
@@ -198,10 +198,10 @@ run_linter() {
   fi
 
   cat "$output_file"
-  echo ""
-  echo -e "⏱️  Duration: ${duration}s"
-  echo -e "${status}"
-  echo ""
+  printf "\n"
+  printf "⏱️  Duration: %ss\n" "$duration"
+  printf '%s\n' "$status"
+  printf "\n"
 
   add_linter_result_to_summary "$display_name" "$tools" "$status_emoji" "$duration" "$exit_code"
 
@@ -227,25 +227,25 @@ finalize_github_summary() {
 EOF
 
   if [ $OVERALL_STATUS -eq 0 ]; then
-    echo "### ✅ All linters passed successfully!" >>"$GITHUB_STEP_SUMMARY"
+    printf "### ✅ All linters passed successfully!\n" >>"$GITHUB_STEP_SUMMARY"
   else
-    echo "### ⚠️ Please fix the failing linters before merging." >>"$GITHUB_STEP_SUMMARY"
+    printf "### ⚠️ Please fix the failing linters before merging.\n" >>"$GITHUB_STEP_SUMMARY"
   fi
 }
 
 print_console_summary() {
   print_header "📊 SUMMARY"
-  echo ""
-  echo "Total linters: ${LINTER_COUNT}"
-  echo -e "${GREEN}✅ Passed: ${PASS_COUNT}${NC}"
-  echo -e "${RED}❌ Failed: ${FAIL_COUNT}${NC}"
-  echo "⏱️  Total time: ${TOTAL_DURATION}s"
-  echo ""
+  printf "\n"
+  printf "Total linters: %s\n" "${LINTER_COUNT}"
+  printf '%s✅ Passed: %s%s\n' "${GREEN}" "${PASS_COUNT}" "${NC}"
+  printf '%s❌ Failed: %s%s\n' "${RED}" "${FAIL_COUNT}" "${NC}"
+  printf "⏱️  Total time: %ss\n" "${TOTAL_DURATION}"
+  printf "\n"
 
   if [ $OVERALL_STATUS -eq 0 ]; then
-    echo -e "${GREEN}✨ All checks passed! ✨${NC}"
+    printf '%s✨ All checks passed! ✨%s\n' "${GREEN}" "${NC}"
   else
-    echo -e "${RED}⚠️  Some checks failed. Please review the output above.${NC}"
+    printf "%s⚠️  Some checks failed. Please review the output above.%s\n" "${RED}" "${NC}"
   fi
 }
 
@@ -255,9 +255,9 @@ main() {
   local lint_tasks
   lint_tasks=$(discover_linters)
 
-  LINTER_COUNT=$(echo "$lint_tasks" | wc -l)
-  echo "Found ${LINTER_COUNT} linters: $(echo "$lint_tasks" | tr '\n' ' ')"
-  echo ""
+  LINTER_COUNT=$(printf "%s" "$lint_tasks" | wc -l)
+  printf "Found %s linters: %s\n" "${LINTER_COUNT}" "$(printf "%s" "$lint_tasks" | tr '\n' ' ')"
+  printf "\n"
 
   init_github_summary "$LINTER_COUNT"
 

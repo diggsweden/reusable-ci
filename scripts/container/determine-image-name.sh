@@ -22,4 +22,4 @@ if [[ "$IMAGE_NAME" != *"/"* ]] || [[ "$IMAGE_NAME" != *"."* ]]; then
   fi
 fi
 
-echo "name=$IMAGE_NAME"
+printf "name=%s\n" "$IMAGE_NAME"

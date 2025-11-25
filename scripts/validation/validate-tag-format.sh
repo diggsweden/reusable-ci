@@ -10,21 +10,21 @@ set -uo pipefail
 TAG_NAME="${1:-}"
 
 if [[ -z "$TAG_NAME" ]]; then
-  echo "::error::Usage: validate-tag-format.sh <tag-name>"
+  printf "::error::Usage: validate-tag-format.sh <tag-name>\n"
   exit 1
 fi
 
-echo "## Validating Tag Format"
+printf "## Validating Tag Format\n"
 
 # Check if tag follows semantic versioning pattern
 # Must start with 'v' followed by X.Y.Z where X, Y, Z are numbers
 # Can optionally have pre-release suffix (e.g., -alpha.1, -beta.2, -rc.1, -dev)
 if [[ ! "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9\.\-]+)?$ ]]; then
-  echo "::error::❌ Invalid tag format: '$TAG_NAME'"
-  echo ""
-  echo "Tags must follow semantic versioning: vMAJOR.MINOR.PATCH[-PRERELEASE]"
-  echo "Valid: v1.0.0, v2.3.4-beta.1, v1.0.0-rc.2, v3.0.0-alpha, v1.0.0-dev"
-  echo "Learn more: https://semver.org"
+  printf "::error::❌ Invalid tag format: '%s'\n" "$TAG_NAME"
+  printf "\n"
+  printf "Tags must follow semantic versioning: vMAJOR.MINOR.PATCH[-PRERELEASE]\n"
+  printf "Valid: v1.0.0, v2.3.4-beta.1, v1.0.0-rc.2, v3.0.0-alpha, v1.0.0-dev\n"
+  printf "Learn more: https://semver.org\n"
   exit 1
 fi
 
@@ -36,25 +36,25 @@ if [[ "$TAG_NAME" =~ $VERSION_PATTERN ]]; then
   PATCH="${BASH_REMATCH[3]}"
   PRERELEASE="${BASH_REMATCH[5]}"
 
-  echo "✅ Valid semantic version tag"
-  echo "   Version: $MAJOR.$MINOR.$PATCH"
+  printf "✅ Valid semantic version tag\n"
+  printf "   Version: %s.%s.%s\n" "$MAJOR" "$MINOR" "$PATCH"
   if [[ -n "$PRERELEASE" ]]; then
-    echo "   Pre-release: $PRERELEASE"
+    printf "   Pre-release: %s\n" "$PRERELEASE"
 
     # Validate pre-release format matches our allowed patterns
     if [[ "$PRERELEASE" =~ ^(alpha|beta|rc|snapshot|SNAPSHOT|dev)(\.[0-9]+)?$ ]]; then
-      echo "   ✅ Pre-release identifier follows convention"
+      printf "   ✅ Pre-release identifier follows convention\n"
     else
-      echo "   ℹ️ Non-standard pre-release identifier: $PRERELEASE"
-      echo "      Standard identifiers: alpha, beta, rc, snapshot, SNAPSHOT, dev"
-      echo "      (Release will proceed - this is informational only)"
+      printf "   ℹ️ Non-standard pre-release identifier: %s\n" "$PRERELEASE"
+      printf "      Standard identifiers: alpha, beta, rc, snapshot, SNAPSHOT, dev\n"
+      printf "      (Release will proceed - this is informational only)\n"
     fi
   else
-    echo "   Type: Stable release"
+    printf "   Type: Stable release\n"
   fi
 fi
 
-echo ""
-echo "### Tag Format Summary:"
-echo "✅ Tag follows semantic versioning (vX.Y.Z)"
-echo "✅ Tag format validation passed"
+printf "\n"
+printf "### Tag Format Summary:\n"
+printf "✅ Tag follows semantic versioning (vX.Y.Z)\n"
+printf "✅ Tag format validation passed\n"

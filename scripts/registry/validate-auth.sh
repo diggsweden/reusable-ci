@@ -33,14 +33,14 @@ HAS_PASSWORD="$4"
 
 # Error: Using custom auth but no password provided
 if [ "$USE_GITHUB_TOKEN" = "false" ] && [ "$HAS_PASSWORD" = "false" ]; then
-  echo "::error::registry-password secret is required when use-github-token=false"
+  printf "::error::registry-password secret is required when use-github-token=false\n"
   exit 1
 fi
 
 # Warning: Using GITHUB_TOKEN with non-default registry
 if [ "$REGISTRY" != "$EXPECTED_REGISTRY" ] && [ "$USE_GITHUB_TOKEN" = "true" ]; then
-  echo "::warning::Using GITHUB_TOKEN with non-$EXPECTED_REGISTRY registry ($REGISTRY)"
-  echo "::warning::This will likely fail. Set use-github-token=false and provide registry-password secret"
+  printf "::warning::Using GITHUB_TOKEN with non-%s registry (%s)\n" "$EXPECTED_REGISTRY" "$REGISTRY"
+  printf "::warning::This will likely fail. Set use-github-token=false and provide registry-password secret\n"
 fi
 
-echo "✓ Registry authentication configuration is valid"
+printf "✓ Registry authentication configuration is valid\n"

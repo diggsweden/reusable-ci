@@ -7,71 +7,71 @@
 
 set -euo pipefail
 
-echo "## Pull Request Check Status" >> "$GITHUB_STEP_SUMMARY"
-echo "" >> "$GITHUB_STEP_SUMMARY"
+{
+  printf "## Pull Request Check Status\n\n"
 
-# First pass: collect deprecated linters that are enabled
-DEPRECATED_LIST=""
-for linter in "$@"; do
-  IFS='|' read -r name enabled result deprecated <<< "$linter"
-  if [[ "$enabled" == "true" && "$deprecated" == "true" ]]; then
-    DEPRECATED_LIST="$DEPRECATED_LIST$name|"
-  fi
-done
-
-# Show deprecation warning if any deprecated linters are enabled
-if [[ -n "$DEPRECATED_LIST" ]]; then
-  echo "> [!WARNING]" >> "$GITHUB_STEP_SUMMARY"
-  echo "> **DEPRECATED:** The following linters will be removed in version 3.0.0:" >> "$GITHUB_STEP_SUMMARY"
-  echo ">" >> "$GITHUB_STEP_SUMMARY"
-  
-  IFS='|' read -ra DEPRECATED_ARRAY <<< "$DEPRECATED_LIST"
-  for name in "${DEPRECATED_ARRAY[@]}"; do
-    [[ -z "$name" ]] && continue
-    echo "> - **$name** - Migrate to \`linters.justmiselint: true\`" >> "$GITHUB_STEP_SUMMARY"
+  # First pass: collect deprecated linters that are enabled
+  DEPRECATED_LIST=""
+  for linter in "$@"; do
+    IFS='|' read -r name enabled result deprecated <<<"$linter"
+    if [[ "$enabled" == "true" && "$deprecated" == "true" ]]; then
+      DEPRECATED_LIST="$DEPRECATED_LIST$name|"
+    fi
   done
-  
-  echo ">" >> "$GITHUB_STEP_SUMMARY"
-  echo "> Please update your workflow to use \`linters.justmiselint: true\` and disable deprecated linters." >> "$GITHUB_STEP_SUMMARY"
-  echo "" >> "$GITHUB_STEP_SUMMARY"
-fi
 
-# Status table
-echo "### Linter Results" >> "$GITHUB_STEP_SUMMARY"
-echo "| Linter | Status |" >> "$GITHUB_STEP_SUMMARY"
-echo "|--------|--------|" >> "$GITHUB_STEP_SUMMARY"
+  # Show deprecation warning if any deprecated linters are enabled
+  if [[ -n "$DEPRECATED_LIST" ]]; then
+    printf "> [!WARNING]\n"
+    printf "> **DEPRECATED:** The following linters will be removed in version 3.0.0:\n"
+    printf ">\n"
 
-FAILED=false
-for linter in "$@"; do
-  IFS='|' read -r name enabled result deprecated <<< "$linter"
-  
-  # Add deprecated marker to name if applicable
-  DISPLAY_NAME="$name"
-  if [[ "$enabled" == "true" && "$deprecated" == "true" ]]; then
-    DISPLAY_NAME="$name ⚠️ DEPRECATED"
+    IFS='|' read -ra DEPRECATED_ARRAY <<<"$DEPRECATED_LIST"
+    for name in "${DEPRECATED_ARRAY[@]}"; do
+      [[ -z "$name" ]] && continue
+      printf "> - **%s** - Migrate to \`linters.justmiselint: true\`\n" "$name"
+    done
+
+    printf ">\n"
+    printf "> Please update your workflow to use \`linters.justmiselint: true\` and disable deprecated linters.\n\n"
   fi
-  
-  if [[ "$enabled" != "true" ]]; then
-    echo "| $name | 🔸 Disabled |" >> "$GITHUB_STEP_SUMMARY"
-  elif [[ "$result" == "success" ]]; then
-    echo "| $DISPLAY_NAME | ✓ Pass |" >> "$GITHUB_STEP_SUMMARY"
-  elif [[ "$result" == "skipped" ]]; then
-    echo "| $DISPLAY_NAME | − Skipped |" >> "$GITHUB_STEP_SUMMARY"
+
+  # Status table
+  printf "### Linter Results\n"
+  printf "| Linter | Status |\n"
+  printf "|--------|--------|\n"
+
+  FAILED=false
+  for linter in "$@"; do
+    IFS='|' read -r name enabled result deprecated <<<"$linter"
+
+    # Add deprecated marker to name if applicable
+    DISPLAY_NAME="$name"
+    if [[ "$enabled" == "true" && "$deprecated" == "true" ]]; then
+      DISPLAY_NAME="$name ⚠️ DEPRECATED"
+    fi
+
+    if [[ "$enabled" != "true" ]]; then
+      printf "| %s | 🔸 Disabled |\n" "$name"
+    elif [[ "$result" == "success" ]]; then
+      printf "| %s | ✓ Pass |\n" "$DISPLAY_NAME"
+    elif [[ "$result" == "skipped" ]]; then
+      printf "| %s | − Skipped |\n" "$DISPLAY_NAME"
+    else
+      printf "| %s | ✗ Fail |\n" "$DISPLAY_NAME"
+      FAILED=true
+    fi
+  done
+
+  printf "\n"
+
+  if [[ "$FAILED" == "true" ]]; then
+    printf "### ✗ Some checks failed\n"
+    printf "Please review the failures above and fix any issues.\n"
+    printf "Note: Individual linter failures are shown above. This status job always succeeds to provide summary.\n"
   else
-    echo "| $DISPLAY_NAME | ✗ Fail |" >> "$GITHUB_STEP_SUMMARY"
-    FAILED=true
+    printf "### ✓ All enabled checks passed\n"
   fi
-done
-
-echo "" >> "$GITHUB_STEP_SUMMARY"
-
-if [[ "$FAILED" == "true" ]]; then
-  echo "### ✗ Some checks failed" >> "$GITHUB_STEP_SUMMARY"
-  echo "Please review the failures above and fix any issues." >> "$GITHUB_STEP_SUMMARY"
-  echo "Note: Individual linter failures are shown above. This status job always succeeds to provide summary." >> "$GITHUB_STEP_SUMMARY"
-else
-  echo "### ✓ All enabled checks passed" >> "$GITHUB_STEP_SUMMARY"
-fi
+} >>"$GITHUB_STEP_SUMMARY"
 
 # Do NOT exit 1 on failure - this job provides summary only
 exit 0

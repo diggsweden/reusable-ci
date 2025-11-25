@@ -15,40 +15,40 @@ PROJECT_TYPE="${1:-}"
 CUSTOM_PATTERN="${2:-}"
 
 if [ -z "$PROJECT_TYPE" ]; then
-  echo "Error: PROJECT_TYPE is required" >&2
+  printf "Error: PROJECT_TYPE is required\n" >&2
   exit 1
 fi
 
 # If custom pattern provided, use it
 if [ -n "$CUSTOM_PATTERN" ]; then
-  echo "$CUSTOM_PATTERN"
+  printf "%s\n" "$CUSTOM_PATTERN"
   exit 0
 fi
 
 # Return default pattern based on project type
 case "$PROJECT_TYPE" in
 maven)
-  echo "CHANGELOG.md :(glob)**/pom.xml"
+  printf "CHANGELOG.md :(glob)**/pom.xml\n"
   ;;
 npm)
-  echo "CHANGELOG.md package.json package-lock.json"
+  printf "CHANGELOG.md package.json package-lock.json\n"
   ;;
 gradle | gradle-android)
-  echo "CHANGELOG.md gradle.properties build.gradle.kts settings.gradle.kts build.gradle settings.gradle"
+  printf "CHANGELOG.md gradle.properties build.gradle.kts settings.gradle.kts build.gradle settings.gradle\n"
   ;;
 xcode-ios)
-  echo "CHANGELOG.md :(glob)**/*.xcodeproj/project.pbxproj"
+  printf "CHANGELOG.md :(glob)**/*.xcodeproj/project.pbxproj\n"
   ;;
 python)
-  echo "CHANGELOG.md pyproject.toml"
+  printf "CHANGELOG.md pyproject.toml\n"
   ;;
 go)
-  echo "CHANGELOG.md go.mod"
+  printf "CHANGELOG.md go.mod\n"
   ;;
 rust)
-  echo "CHANGELOG.md Cargo.toml Cargo.lock"
+  printf "CHANGELOG.md Cargo.toml Cargo.lock\n"
   ;;
 *)
-  echo "CHANGELOG.md"
+  printf "CHANGELOG.md\n"
   ;;
 esac

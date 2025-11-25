@@ -25,7 +25,7 @@ git fetch --tags || true
 
 # Find latest semver tag using git describe or fallback to sorted tag list
 LATEST_TAG=$(git describe --tags --match="v[0-9]*.[0-9]*.[0-9]*" --abbrev=0 2>/dev/null ||
-  git tag -l "v[0-9]*.[0-9]*.[0-9]*" | sort -V | tail -n1 || echo "")
+  git tag -l "v[0-9]*.[0-9]*.[0-9]*" | sort -V | tail -n1 || printf "")
 
 if [ -z "$LATEST_TAG" ]; then
   BASE_VERSION="0.0.0"
@@ -37,10 +37,10 @@ fi
 # - Replace non-alphanumeric (except . _ -) with dash
 # - Remove leading/trailing dashes
 BRANCH_NAME="${GITHUB_REF#refs/heads/}"
-SANITIZED_BRANCH=$(echo "$BRANCH_NAME" | sed 's|[^a-zA-Z0-9._-]|-|g' | sed 's|^-*||; s|-*$||')
+SANITIZED_BRANCH=$(printf "%s" "$BRANCH_NAME" | sed 's|[^a-zA-Z0-9._-]|-|g' | sed 's|^-*||; s|-*$||')
 
 # Get short SHA (7 characters)
 SHORT_SHA=$(git rev-parse --short=7 HEAD)
 
 # Output final dev version
-echo "${BASE_VERSION}-dev-${SANITIZED_BRANCH}-${SHORT_SHA}"
+printf "%s-dev-%s-%s\n" "${BASE_VERSION}" "${SANITIZED_BRANCH}" "${SHORT_SHA}"

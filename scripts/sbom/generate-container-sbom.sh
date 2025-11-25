@@ -33,7 +33,7 @@ SCRIPT_DIR="$5"
 
 # Handle empty artifact-types (containers building from source with no dependencies)
 if [ -z "$ARTIFACT_TYPES" ]; then
-  echo "No artifact dependencies - generating SBOM from container image only"
+  printf "No artifact dependencies - generating SBOM from container image only\n"
   bash "$SCRIPT_DIR/generate-sbom.sh" \
     "container" \
     "containerimage" \
@@ -46,7 +46,7 @@ else
   IFS=',' read -ra TYPES <<<"$ARTIFACT_TYPES"
 
   for ARTIFACT_TYPE in "${TYPES[@]}"; do
-    echo "Generating SBOM for artifact type: $ARTIFACT_TYPE"
+    printf "Generating SBOM for artifact type: %s\n" "$ARTIFACT_TYPE"
     bash "$SCRIPT_DIR/generate-sbom.sh" \
       "$ARTIFACT_TYPE" \
       "containerimage" \
@@ -57,4 +57,4 @@ else
   done
 fi
 
-echo "✓ Container SBOM generation completed"
+printf "✓ Container SBOM generation completed\n"

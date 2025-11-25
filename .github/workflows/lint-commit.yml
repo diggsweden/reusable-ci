@@ -46,16 +46,16 @@ jobs:
         run: |
           # If explicitly provided, use it
           if [ -n "${{ inputs.base-branch }}" ]; then
-            echo "branch=${{ inputs.base-branch }}" >> "$GITHUB_OUTPUT"
-            echo "Using explicitly provided base: ${{ inputs.base-branch }}"
+            printf "branch=%s\n" "${{ inputs.base-branch }}" >> "$GITHUB_OUTPUT"
+            printf "Using explicitly provided base: %s\n" "${{ inputs.base-branch }}"
           # For PRs, use the PR target branch
           elif [ "${{ github.event_name }}" = "pull_request" ] && [ -n "${{ github.base_ref }}" ]; then
-            echo "branch=${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
-            echo "Auto-detected PR base: ${{ github.base_ref }}"
+            printf "branch=%s\n" "${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
+            printf "Auto-detected PR base: %s\n" "${{ github.base_ref }}"
           # Fallback to main
           else
-            echo "branch=main" >> "$GITHUB_OUTPUT"
-            echo "Using default base: main"
+            printf "branch=main\n" >> "$GITHUB_OUTPUT"
+            printf "Using default base: main\n"
           fi
       - name: Setup base branch
         run: git fetch origin ${{ steps.base.outputs.branch }}:${{ steps.base.outputs.branch }}

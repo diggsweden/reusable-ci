@@ -115,8 +115,8 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         run: |
           NAME=$(node -p "require('./package.json').name")
-          echo "name=$NAME" >> "$GITHUB_OUTPUT"
-          echo "Package name: $NAME"
+          printf "name=%s\n" "$NAME" >> "$GITHUB_OUTPUT"
+          printf "Package name: %s\n" "$NAME"
       - name: Validate package scope
         if: ${{ inputs.package-scope != '' }}
         working-directory: ${{ inputs.working-directory }}
@@ -124,8 +124,8 @@ jobs:
           NAME=$(node -p "require('./package.json').name")
           SCOPE="${{ inputs.package-scope }}"
           if [[ "$NAME" != ${SCOPE}/* ]]; then
-            echo "::error::package.json name must be scoped as ${SCOPE}/<pkg>"
-            echo "Found: $NAME"
+            printf "::error::package.json name must be scoped as %s/<pkg>\n" "${SCOPE}"
+            printf "Found: %s\n" "$NAME"
             exit 1
           fi
           # Configure scoped registry
@@ -155,15 +155,15 @@ jobs:
         shell: bash
         run: |
           DEV_VERSION=$(bash .github-shared/scripts/version/generate-dev-version.sh)
-          echo "dev_version=${DEV_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "📦 Dev version: ${DEV_VERSION}"
+          printf "dev_version=%s\n" "${DEV_VERSION}" >> "$GITHUB_OUTPUT"
+          printf "📦 Dev version: %s\n" "${DEV_VERSION}"
       - name: Apply dev version to package.json
         working-directory: ${{ inputs.working-directory }}
         env:
           DEV_VERSION: ${{ steps.tags.outputs.dev_version }}
         run: |
           npm version "$DEV_VERSION" --no-git-tag-version --allow-same-version
-          echo "Applied version: $(node -p "require('./package.json').version")"
+          printf "Applied version: %s\n" "$(node -p "require('./package.json').version")"
       - name: Install dependencies
         working-directory: ${{ inputs.working-directory }}
         run: npm ci --prefer-offline --no-audit
@@ -175,8 +175,8 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         run: |
           FILE=$(npm pack --silent)
-          echo "tarball=$FILE" >> "$GITHUB_OUTPUT"
-          echo "Created: $FILE"
+          printf "tarball=%s\n" "$FILE" >> "$GITHUB_OUTPUT"
+          printf "Created: %s\n" "$FILE"
       - name: Upload tarball as artifact
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
@@ -190,6 +190,6 @@ jobs:
         run: |
           PKG_NAME=$(node -p "require('./package.json').name")
           PKG_VERSION=$(node -p "require('./package.json').version")
-          echo "Publishing ${PKG_NAME}@${PKG_VERSION} to ${{ inputs.registry }} with tag 'dev'"
+          printf "Publishing %s@%s to %s with tag 'dev'\n" "${PKG_NAME}" "${PKG_VERSION}" "${{ inputs.registry }}"
           npm publish --tag dev
-          echo "✅ Published successfully"
+          printf "✅ Published successfully\n"

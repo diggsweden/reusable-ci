@@ -67,35 +67,35 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           NAME=$(node -p "require('./package.json').name")
-          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "NAME=${NAME}" >> "$GITHUB_OUTPUT"
-          echo "Package: ${NAME}@${VERSION}"
+          printf "VERSION=%s\n" "${VERSION}" >> "$GITHUB_OUTPUT"
+          printf "NAME=%s\n" "${NAME}" >> "$GITHUB_OUTPUT"
+          printf "Package: %s@%s\n" "${NAME}" "${VERSION}"
       - name: Install dependencies
         working-directory: ${{ inputs['working-directory'] }}
         run: npm ci
       - name: Run tests
         if: ${{ !inputs['skip-tests'] }}
         working-directory: ${{ inputs['working-directory'] }}
-        run: npm test || echo "::warning::No tests configured"
+        run: npm test || printf "::warning::No tests configured\n"
       - name: Build application
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           if grep -q '"build"' package.json; then
-            echo "Running build script..."
+            printf "Running build script...\n"
             npm run build
           else
-            echo "No build script found, skipping build step"
+            printf "No build script found, skipping build step\n"
           fi
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         run: |
-          echo "Package contents:"
+          printf "Package contents:\n"
           if [ -d "dist" ]; then
-            echo "dist/ directory:"
+            printf "dist/ directory:\n"
             ls -lh dist/ || true
           fi
           if [ -d "build" ]; then
-            echo "build/ directory:"
+            printf "build/ directory:\n"
             ls -lh build/ || true
           fi
       - name: Pack NPM tarball
@@ -103,8 +103,8 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           TARBALL=$(npm pack 2>&1 | tail -n 1)
-          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
-          echo "Created tarball: $TARBALL"
+          printf "tarball=%s\n" "$TARBALL" >> "$GITHUB_OUTPUT"
+          printf "Created tarball: %s\n" "$TARBALL"
           ls -lh "$TARBALL"
       - name: Upload NPM artifacts
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
@@ -115,10 +115,10 @@ jobs:
           if-no-files-found: error
       - name: Generate build summary
         run: |
-          echo "## NPM Build Summary 🔨" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Package:** \`${{ steps.version-info.outputs.NAME }}@${{ steps.version-info.outputs.VERSION }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Node.js:** ${{ inputs['node-version'] }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tests:** ${{ inputs['skip-tests'] && '⊘ Skipped' || '✓ Executed' }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "*Build completed at $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY
+          printf "## NPM Build Summary 🔨\n" >> $GITHUB_STEP_SUMMARY
+          printf "\n" >> $GITHUB_STEP_SUMMARY
+          printf "- **Package:** \`%s@%s\`\n" "${{ steps.version-info.outputs.NAME }}" "${{ steps.version-info.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          printf "- **Node.js:** %s\n" "${{ inputs['node-version'] }}" >> $GITHUB_STEP_SUMMARY
+          printf "- **Tests:** %s\n" "${{ inputs['skip-tests'] && '⊘ Skipped' || '✓ Executed' }}" >> $GITHUB_STEP_SUMMARY
+          printf "\n" >> $GITHUB_STEP_SUMMARY
+          printf "*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY

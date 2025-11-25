@@ -90,7 +90,7 @@ jobs:
       - name: Verify artifacts for Maven Central
         working-directory: ${{ inputs['working-directory'] }}
         run: |
-          echo "Checking for required artifacts..."
+          printf "Checking for required artifacts...\n"
 
           # Maven Central requires: main JAR, sources JAR, javadoc JAR, POM
           # Check in all target directories (supports multi-module projects)
@@ -98,51 +98,51 @@ jobs:
           JAVADOC_COUNT=$(find . -type f -name "*-javadoc.jar" -path "*/target/*" | wc -l)
 
           if [ "$SOURCES_COUNT" -eq 0 ]; then
-            echo "::error::Missing sources JAR. Maven Central requires sources."
-            echo "::error::Build with build-type: lib to generate sources and javadoc JARs"
+            printf "::error::Missing sources JAR. Maven Central requires sources.\n"
+            printf "::error::Build with build-type: lib to generate sources and javadoc JARs\n"
             exit 1
           fi
 
           if [ "$JAVADOC_COUNT" -eq 0 ]; then
-            echo "::error::Missing javadoc JAR. Maven Central requires javadoc."
-            echo "::error::Build with build-type: lib to generate sources and javadoc JARs"
+            printf "::error::Missing javadoc JAR. Maven Central requires javadoc.\n"
+            printf "::error::Build with build-type: lib to generate sources and javadoc JARs\n"
             exit 1
           fi
 
-          echo "✓ All required artifacts present:"
-          echo "  - Sources JARs: $SOURCES_COUNT"
-          echo "  - Javadoc JARs: $JAVADOC_COUNT"
+          printf "✓ All required artifacts present:\n"
+          printf "  - Sources JARs: %s\n" "$SOURCES_COUNT"
+          printf "  - Javadoc JARs: %s\n" "$JAVADOC_COUNT"
           find . -type f -name "*.jar" -path "*/target/*" ! -name "original-*.jar" -exec ls -lh {} \;
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
-          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          printf "VERSION=%s\n" "${VERSION}" >> "$GITHUB_OUTPUT"
 
           if [[ "${VERSION}" == *-SNAPSHOT ]]; then
-            echo "IS_SNAPSHOT=true" >> "$GITHUB_OUTPUT"
+            printf "IS_SNAPSHOT=true\n" >> "$GITHUB_OUTPUT"
           else
-            echo "IS_SNAPSHOT=false" >> "$GITHUB_OUTPUT"
+            printf "IS_SNAPSHOT=false\n" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "Project version: ${VERSION}"
+          printf "Project version: %s\n" "${VERSION}"
       - name: Deploy to Maven Central
         working-directory: ${{ inputs['working-directory'] }}
         env:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVENCENTRAL_USERNAME }}
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD }}
         run: |
-          echo "Deploying to Maven Central..."
+          printf "Deploying to Maven Central...\n"
 
           # Use settings file if provided
           SETTINGS_ARG=""
           if [ -n "${{ inputs['settings-path'] }}" ]; then
             if [ -f "${{ inputs['settings-path'] }}" ]; then
               SETTINGS_ARG="--settings ${{ inputs['settings-path'] }}"
-              echo "Using settings file: ${{ inputs['settings-path'] }}"
+              printf "Using settings file: %s\n" "${{ inputs['settings-path'] }}"
             else
-              echo "::error::Settings file specified but not found: ${{ inputs['settings-path'] }}"
+              printf "::error::Settings file specified but not found: %s\n" "${{ inputs['settings-path'] }}"
               exit 1
             fi
           fi
@@ -151,18 +151,18 @@ jobs:
           mvn $MAVEN_CLI_OPTS deploy $SETTINGS_ARG -P${{ inputs.profile }} -DskipTests
       - name: Generate publish summary
         run: |
-          echo "## Published to Maven Central 🚀" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version:** ${{ steps.version-info.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Type:** ${{ steps.version-info.outputs.IS_SNAPSHOT == 'true' && 'SNAPSHOT' || 'Release' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Registry:** [Maven Central](https://central.sonatype.com/)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          printf "## Published to Maven Central 🚀\n" >> $GITHUB_STEP_SUMMARY
+          printf "\n" >> $GITHUB_STEP_SUMMARY
+          printf "- **Version:** %s\n" "${{ steps.version-info.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          printf "- **Type:** %s\n" "${{ steps.version-info.outputs.IS_SNAPSHOT == 'true' && 'SNAPSHOT' || 'Release' }}" >> $GITHUB_STEP_SUMMARY
+          printf "- **Registry:** [Maven Central](https://central.sonatype.com/)\n" >> $GITHUB_STEP_SUMMARY
+          printf "\n" >> $GITHUB_STEP_SUMMARY
 
           if [ "${{ steps.version-info.outputs.IS_SNAPSHOT }}" = "true" ]; then
-            echo "⚠️ **SNAPSHOT** releases are available immediately in the snapshot repository." >> $GITHUB_STEP_SUMMARY
+            printf "⚠️ **SNAPSHOT** releases are available immediately in the snapshot repository.\n" >> $GITHUB_STEP_SUMMARY
           else
-            echo "✓ **Release** deployed to staging. Will be published to Central within 30 minutes." >> $GITHUB_STEP_SUMMARY
+            printf "✓ **Release** deployed to staging. Will be published to Central within 30 minutes.\n" >> $GITHUB_STEP_SUMMARY
           fi
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "*Published at $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY
+          printf "\n" >> $GITHUB_STEP_SUMMARY
+          printf "*Published at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY

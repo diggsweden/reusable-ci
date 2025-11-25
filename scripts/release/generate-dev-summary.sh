@@ -51,25 +51,25 @@ BUILD_TIME=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
 # Status icons
 get_status_icon() {
   case "$1" in
-  success) echo "✓" ;;
-  failure) echo "✗" ;;
-  skipped) echo "−" ;;
-  *) echo "?" ;;
+  success) printf "✓" ;;
+  failure) printf "✗" ;;
+  skipped) printf "−" ;;
+  *) printf "?" ;;
   esac
 }
 
 CONTAINER_ICON=$(get_status_icon "$CONTAINER_STATUS")
 NPM_ICON=$(get_status_icon "$NPM_STATUS")
 
-echo "================================================"
-echo "Generating Dev Release Summary"
-echo "================================================"
-echo "Project Type: $PROJECT_TYPE"
-echo "Branch: $BRANCH"
-echo "Commit: $SHORT_SHA"
-echo "Container Image: ${CONTAINER_IMAGE:-none}"
-echo "NPM Package: ${NPM_PACKAGE_NAME:-none}@${NPM_PACKAGE_VERSION:-none}"
-echo ""
+printf "================================================\n"
+printf "Generating Dev Release Summary\n"
+printf "================================================\n"
+printf "Project Type: %s\n" "$PROJECT_TYPE"
+printf "Branch: %s\n" "$BRANCH"
+printf "Commit: %s\n" "$SHORT_SHA"
+printf "Container Image: %s\n" "${CONTAINER_IMAGE:-none}"
+printf "NPM Package: %s@%s\n" "${NPM_PACKAGE_NAME:-none}" "${NPM_PACKAGE_VERSION:-none}"
+printf "\n"
 
 # Generate summary
 cat >>"$GITHUB_STEP_SUMMARY" <<EOF
@@ -164,5 +164,4 @@ cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 **Note:** These are development artifacts tagged with \`dev\`. Not for production use.
 EOF
 
-echo "✅ Dev release summary generated successfully"
-echo ""
+printf "✅ Dev release summary generated successfully\n\n"

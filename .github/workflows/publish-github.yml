@@ -72,9 +72,9 @@ jobs:
       - name: List downloaded artifacts
         working-directory: ${{ inputs['working-directory'] }}
         run: |
-          echo "Downloaded artifacts:"
-          find . -type f -name "*.jar" -path "*/target/*" ! -name "original-*.jar" -exec ls -lh {} \; || echo "No JAR artifacts found"
-          find . -type f -name "*.tgz" -exec ls -lh {} \; || echo "No NPM tarball found"
+          printf "Downloaded artifacts:\n"
+          find . -type f -name "*.jar" -path "*/target/*" ! -name "original-*.jar" -exec ls -lh {} \; || printf "No JAR artifacts found\n"
+          find . -type f -name "*.tgz" -exec ls -lh {} \; || printf "No NPM tarball found\n"
       # Maven publishing
       - name: Set up JDK for Maven
         if: ${{ inputs['package-type'] == 'maven' || inputs['package-type'] == 'gradle' }}
@@ -93,7 +93,7 @@ jobs:
           GITHUB_ACTOR: ${{ github.actor }}
           MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
         run: |
-          echo "Publishing to GitHub Packages..."
+          printf "Publishing to GitHub Packages...\n"
           # Use mvn deploy to handle multi-module projects correctly
           mvn $MAVEN_CLI_OPTS deploy -DskipTests -DaltDeploymentRepository=github::default::https://maven.pkg.github.com/${{ github.repository }}
       # NPM publishing
@@ -110,13 +110,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Publishing to GitHub NPM registry..."
+          printf "Publishing to GitHub NPM registry...\n"
           TARBALL=$(find . -maxdepth 1 -name "*.tgz" -type f | head -n 1)
           if [ -z "$TARBALL" ]; then
-            echo "::error::No tarball found. build-npm must create and upload a tarball."
+            printf "::error::No tarball found. build-npm must create and upload a tarball.\n"
             exit 1
           fi
-          echo "Publishing tarball: $TARBALL"
+          printf "Publishing tarball: %s\n" "$TARBALL"
           npm publish "$TARBALL"
       # Optional: Attach artifacts to GitHub release
       - name: Upload artifacts to release
@@ -127,16 +127,16 @@ jobs:
         run: |
           for file in ${{ inputs['attach-pattern'] }}; do
             if [ -f "$file" ]; then
-              echo "Uploading $file to release..."
-              gh release upload "${{ github.ref_name }}" "$file" --clobber || echo "::warning::Failed to upload $file"
+              printf "Uploading %s to release...\n" "$file"
+              gh release upload "${{ github.ref_name }}" "$file" --clobber || printf "::warning::Failed to upload %s\n" "$file"
             fi
           done
       - name: Generate publish summary
         run: |
-          echo "## Published to GitHub Packages 📦" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Package Type:** ${{ inputs['package-type'] }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Registry:** GitHub Packages" >> $GITHUB_STEP_SUMMARY
-          echo "- **Repository:** [${{ github.repository }}](https://github.com/${{ github.repository }}/packages)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "*Published at $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY
+          printf "## Published to GitHub Packages 📦\n" >> $GITHUB_STEP_SUMMARY
+          printf "\n" >> $GITHUB_STEP_SUMMARY
+          printf "- **Package Type:** %s\n" "${{ inputs['package-type'] }}" >> $GITHUB_STEP_SUMMARY
+          printf "- **Registry:** GitHub Packages\n" >> $GITHUB_STEP_SUMMARY
+          printf "- **Repository:** [%s](https://github.com/%s/packages)\n" "${{ github.repository }}" "${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          printf "\n" >> $GITHUB_STEP_SUMMARY
+          printf "*Published at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
