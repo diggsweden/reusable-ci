@@ -99,9 +99,9 @@ on:
         type: string
       # === MACOS RUNNER ===
       macos-version:
-        description: "macOS runner version (macos-13, macos-14, macos-15)"
+        description: "macOS runner version (macos-13, macos-14, macos-15, macos-26)"
         required: false
-        default: "macos-15"
+        default: "macos-26"
         type: string
 permissions:
   contents: read
