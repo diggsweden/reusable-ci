@@ -22,7 +22,7 @@ permissions:
   contents: read
 jobs:
   reuse:
-    name: License (REUSE) analysis
+    name: License (REUSE) Analysis
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

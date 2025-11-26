@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 # SPDX-License-Identifier: CC0-1.0
 
@@ -122,7 +122,7 @@ else
   cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 
 ### 🐳 Container Image
-❌ Not published
+✗ Not published
 EOF
 fi
 
@@ -149,7 +149,7 @@ elif [ "$PROJECT_TYPE" = "npm" ]; then
   cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 
 ### 📦 NPM Package
-❌ Not published
+✗ Not published
 EOF
 fi
 
@@ -164,4 +164,4 @@ cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 **Note:** These are development artifacts tagged with \`dev\`. Not for production use.
 EOF
 
-printf "✅ Dev release summary generated successfully\n\n"
+printf "✓ Dev release summary generated successfully\n\n"

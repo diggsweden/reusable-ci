@@ -227,7 +227,9 @@ jobs:
       node-version: ${{ matrix.artifact.config['node-version'] }}
       gradle-version-file: ${{ matrix.artifact.config['gradle-version-file'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
-  # Step 2a: Build Maven artifacts
+  # ===== BUILD PHASE =====
+  # NOTE: Build jobs use `if: !failure() && !cancelled() && ...` to run independently.
+  # This ensures maven/npm/gradle builds proceed even when other build types are skipped.
   build-maven:
     name: Build Maven - ${{ matrix.artifact.name }}
     needs: [parse-config, version-and-changelog]
