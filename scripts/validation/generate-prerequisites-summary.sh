@@ -1,7 +1,26 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
+#
+# Generates a release prerequisites summary for GITHUB_STEP_SUMMARY
+#
+# Expected environment variables:
+#   TAG_NAME             - Git tag name (e.g., v1.0.0)
+#   COMMIT_SHA           - Full commit SHA being released
+#   REF_TYPE             - GitHub ref type (tag or branch)
+#   PROJECT_TYPE         - Project type (maven, npm, gradle, etc.)
+#   BUILD_TYPE           - Build type (application or library)
+#   CONTAINER_REGISTRY   - Container registry URL (optional)
+#   SIGN_ARTIFACTS       - Enable GPG signing (true/false, default: false)
+#   CHECK_AUTHORIZATION  - Check user authorization (true/false, default: false)
+#   ACTOR                - GitHub actor triggering the release
+#   JOB_STATUS           - Current job status (success/failure)
+#
+# Optional secrets (checked for availability):
+#   OSPO_BOT_GPG_PRIV, OSPO_BOT_GPG_PASS, OSPO_BOT_GPG_PUB
+#   OSPO_BOT_GHTOKEN, RELEASE_TOKEN
+#   MAVENCENTRAL_USERNAME, MAVENCENTRAL_PASSWORD, NPM_TOKEN, PUBLISH_TO
 
 set -euo pipefail
 

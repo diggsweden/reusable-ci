@@ -29,7 +29,7 @@ permissions:
   contents: read
 jobs:
   dependency-review:
-    name: Dependency Review analysis
+    name: Dependency Review Analysis
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:

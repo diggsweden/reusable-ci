@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 # SPDX-License-Identifier: CC0-1.0
 
@@ -26,7 +26,7 @@ TAG_TYPE=$(git cat-file -t "$TAG_NAME" 2>/dev/null || printf "unknown")
 printf "Tag '%s' object type: %s\n" "$TAG_NAME" "$TAG_TYPE"
 
 if [[ "$TAG_TYPE" != "tag" ]]; then
-  printf "❌ Tag '%s' is a lightweight tag (not annotated)\n" "$TAG_NAME"
+  printf "✗ Tag '%s' is a lightweight tag (not annotated)\n" "$TAG_NAME"
   printf "📝 Requirement: Use annotated tags for releases\n"
   printf "💡 Example: git tag -a v1.0.0 -m 'Release v1.0.0'\n"
   if [[ -n "$GITHUB_REPOSITORY" ]]; then
@@ -35,7 +35,7 @@ if [[ "$TAG_TYPE" != "tag" ]]; then
   exit 1
 fi
 
-printf "✅ Tag '%s' is annotated\n" "$TAG_NAME"
+printf "✓ Tag '%s' is annotated\n" "$TAG_NAME"
 
 # Check if tag has any signature (GPG or SSH)
 printf "Checking tag signature...\n"
@@ -46,16 +46,16 @@ HAS_SSH_SIG=false
 
 if printf "%s" "$TAG_CONTENT" | grep -q "BEGIN PGP SIGNATURE"; then
   HAS_GPG_SIG=true
-  printf "✅ Tag has a GPG signature\n"
+  printf "✓ Tag has a GPG signature\n"
 fi
 
 if printf "%s" "$TAG_CONTENT" | grep -q "BEGIN SSH SIGNATURE"; then
   HAS_SSH_SIG=true
-  printf "✅ Tag has an SSH signature\n"
+  printf "✓ Tag has an SSH signature\n"
 fi
 
 if [[ "$HAS_GPG_SIG" == "false" ]] && [[ "$HAS_SSH_SIG" == "false" ]]; then
-  printf "::error::❌ Tag '%s' is not signed\n" "$TAG_NAME"
+  printf "::error::✗ Tag '%s' is not signed\n" "$TAG_NAME"
   printf "\n"
   printf "Release tags must be cryptographically signed.\n"
   printf "Create with: git tag -s v1.0.0 -m \"Release v1.0.0\"\n"
@@ -71,7 +71,7 @@ if [[ "$HAS_GPG_SIG" == "true" ]]; then
   fi
 
   if git tag -v "$TAG_NAME" 2>/dev/null; then
-    printf "✅ GPG signature verification successful\n"
+    printf "✓ GPG signature verification successful\n"
     SIGNER=$(git tag -v "$TAG_NAME" 2>&1 | grep "Good signature from" | sed 's/.*Good signature from "\(.*\)".*/\1/' || printf "Unknown")
     printf "   Signed by: %s\n" "$SIGNER"
   else
@@ -87,9 +87,9 @@ fi
 # Display tag information
 printf "\n"
 printf "### Tag Security Summary:\n"
-printf "✅ Tag is annotated (not lightweight)\n"
-printf "✅ Tag is cryptographically signed\n"
-printf "✅ Release security requirements met\n"
+printf "✓ Tag is annotated (not lightweight)\n"
+printf "✓ Tag is cryptographically signed\n"
+printf "✓ Release security requirements met\n"
 printf "\n"
 printf "### Tag Information:\n"
 printf "Tagged commit: %s\n" "$(git rev-list -n 1 "$TAG_NAME")"

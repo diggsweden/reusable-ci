@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 # SPDX-License-Identifier: CC0-1.0
 
@@ -29,7 +29,7 @@ printf "Branch '%s' HEAD: %s\n" "$BRANCH" "$BRANCH_HEAD"
 if ! git merge-base --is-ancestor "$TAG_COMMIT" "origin/$BRANCH" 2>/dev/null; then
   # Check if tag is ahead of branch
   if git merge-base --is-ancestor "$BRANCH_HEAD" "$TAG_COMMIT" 2>/dev/null; then
-    printf "::error::❌ Tag commit is AHEAD of branch HEAD\n"
+    printf "::error::✗ Tag commit is AHEAD of branch HEAD\n"
     printf "\n"
     printf "Tag '%s' points to: %s\n" "$TAG_NAME" "$TAG_COMMIT"
     printf "Branch '%s' is at: %s\n" "$BRANCH" "$BRANCH_HEAD"
@@ -47,7 +47,7 @@ if ! git merge-base --is-ancestor "$TAG_COMMIT" "origin/$BRANCH" 2>/dev/null; th
     printf "\n"
     exit 1
   else
-    printf "::error::❌ Tag commit is not in the history of branch '%s'\n" "$BRANCH"
+    printf "::error::✗ Tag commit is not in the history of branch '%s'\n" "$BRANCH"
     printf "\n"
     printf "Tag '%s' points to commit %s\n" "$TAG_NAME" "$TAG_COMMIT"
     printf "This commit is NOT an ancestor of origin/%s\n" "$BRANCH"
@@ -66,11 +66,11 @@ if ! git merge-base --is-ancestor "$TAG_COMMIT" "origin/$BRANCH" 2>/dev/null; th
   fi
 fi
 
-printf "✅ Tag commit %s is in branch '%s' history\n" "$TAG_COMMIT" "$BRANCH"
+printf "✓ Tag commit %s is in branch '%s' history\n" "$TAG_COMMIT" "$BRANCH"
 
 # Check position relative to branch HEAD
 if [ "$TAG_COMMIT" = "$BRANCH_HEAD" ]; then
-  printf "✅ Tag points to branch HEAD (ideal)\n"
+  printf "✓ Tag points to branch HEAD (ideal)\n"
 else
   printf "ℹ️  Tag commit is an ancestor of branch HEAD\n"
   printf "   This is normal for existing releases\n"
