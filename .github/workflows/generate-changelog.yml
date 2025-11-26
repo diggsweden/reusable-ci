@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+#
 # Generate Changelog
 # 
 # This reusable workflow generates a changelog using git-cliff with flexible configuration.
