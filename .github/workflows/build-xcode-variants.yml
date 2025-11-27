@@ -117,6 +117,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Checkout .github repository for scripts
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ github.workflow_sha }}
+          path: .github-shared
+          sparse-checkout: scripts
+
       - name: Generate artifact names
         id: artifact-names
         run: |
@@ -154,63 +162,15 @@ jobs:
           CERTIFICATE_PASSPHRASE: ${{ secrets.CERTIFICATE_PASSPHRASE }}
           PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          if [ -z "$CERTIFICATE_BASE64" ]; then
-            printf "::error::CERTIFICATE_BASE64 secret not found but enable-code-signing is true\n"
-            exit 1
-          fi
-          if [ -z "$PROVISIONING_PROFILE_BASE64" ]; then
-            printf "::error::PROVISIONING_PROFILE_BASE64 secret not found but enable-code-signing is true\n"
-            exit 1
-          fi
-          if [ -z "$KEYCHAIN_PASSWORD" ]; then
-            printf "::error::KEYCHAIN_PASSWORD secret not found but enable-code-signing is true\n"
-            exit 1
-          fi
-
-          CERTIFICATE_PATH="$RUNNER_TEMP/certificate.p12"
-          PP_PATH="$RUNNER_TEMP/pp.mobileprovision"
-          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
-
-          printf "%s" "$CERTIFICATE_BASE64" | base64 --decode -o "$CERTIFICATE_PATH"
-          printf "%s" "$PROVISIONING_PROFILE_BASE64" | base64 --decode -o "$PP_PATH"
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          security import "$CERTIFICATE_PATH" -P "$CERTIFICATE_PASSPHRASE" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles
-
-          printf "✓ Code signing configured successfully\n"
+        run: bash .github-shared/scripts/xcode/setup-code-signing.sh
 
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs['working-directory'] }}
         run: |
-          if [ -n "${{ inputs.project }}" ]; then
-            PROJECT_FILE="${{ inputs.project }}"
-          elif [ -n "${{ inputs.workspace }}" ]; then
-            PROJECT_FILE=$(find . -name "*.xcodeproj" -type d | head -1)
-          else
-            PROJECT_FILE=$(find . -name "*.xcodeproj" -type d | head -1)
-          fi
-
-          if [ -f "$PROJECT_FILE/project.pbxproj" ]; then
-            VERSION=$(grep -m1 'MARKETING_VERSION' "$PROJECT_FILE/project.pbxproj" | awk -F' = ' '{print $2}' | tr -d ';' || printf "unknown")
-            BUILD=$(grep -m1 'CURRENT_PROJECT_VERSION' "$PROJECT_FILE/project.pbxproj" | awk -F' = ' '{print $2}' | tr -d ';' || printf "unknown")
-            printf "version=%s\n" "${VERSION}" >> "$GITHUB_OUTPUT"
-            printf "build=%s\n" "${BUILD}" >> "$GITHUB_OUTPUT"
-            printf "Version: %s (%s)\n" "${VERSION}" "${BUILD}"
-          else
-            printf "::warning::Could not determine version from project file\n"
-            printf "version=unknown\n" >> "$GITHUB_OUTPUT"
-            printf "build=unknown\n" >> "$GITHUB_OUTPUT"
-          fi
+          bash .github-shared/scripts/xcode/get-version-info.sh \
+            "${{ inputs.project }}" \
+            "${{ inputs.workspace }}" >> "$GITHUB_OUTPUT"
 
       - name: Archive app
         working-directory: ${{ inputs['working-directory'] }}
@@ -282,28 +242,12 @@ jobs:
 
       - name: Generate build summary
         run: |
-          printf "## Xcode Build Summary 📱\n" >> $GITHUB_STEP_SUMMARY
-          printf "\n" >> $GITHUB_STEP_SUMMARY
-          printf "### Configuration\n" >> $GITHUB_STEP_SUMMARY
-          printf "| Setting | Value |\n" >> $GITHUB_STEP_SUMMARY
-          printf "|---------|-------|\n" >> $GITHUB_STEP_SUMMARY
-          printf "| **Xcode** | %s |\n" "${{ inputs.xcode-version }}" >> $GITHUB_STEP_SUMMARY
-          printf "| **Scheme** | %s |\n" "${{ inputs.scheme }}" >> $GITHUB_STEP_SUMMARY
-          printf "| **Configuration** | %s |\n" "${{ inputs.configuration }}" >> $GITHUB_STEP_SUMMARY
-          printf "| **Destination** | %s |\n" "${{ inputs.destination }}" >> $GITHUB_STEP_SUMMARY
-          printf "| **Signing** | %s |\n" "${{ inputs['enable-code-signing'] && '✓ Enabled' || '⊘ Disabled' }}" >> $GITHUB_STEP_SUMMARY
-
-          if [ -n "${{ steps.version-info.outputs.version }}" ] && [ "${{ steps.version-info.outputs.version }}" != "unknown" ]; then
-            printf "| **Version** | %s (%s) |\n" "${{ steps.version-info.outputs.version }}" "${{ steps.version-info.outputs.build }}" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          printf "\n" >> $GITHUB_STEP_SUMMARY
-          printf "### Artifacts Generated\n" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ inputs['enable-code-signing'] }}" = "true" ]; then
-            printf "- ✓ IPA: \`%s\`\n" "${{ steps.artifact-names.outputs.ipa-name }}" >> $GITHUB_STEP_SUMMARY
-          else
-            printf "- ✓ Archive: \`%s-archive\`\n" "${{ steps.artifact-names.outputs.ipa-name }}" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          printf "\n" >> $GITHUB_STEP_SUMMARY
-          printf "*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          bash .github-shared/scripts/summary/xcode-build-summary.sh \
+            "${{ inputs.xcode-version }}" \
+            "${{ inputs.scheme }}" \
+            "${{ inputs.configuration }}" \
+            "${{ inputs.destination }}" \
+            "${{ inputs['enable-code-signing'] }}" \
+            "${{ steps.version-info.outputs.version }}" \
+            "${{ steps.version-info.outputs.build }}" \
+            "${{ steps.artifact-names.outputs.ipa-name }}" >> "$GITHUB_STEP_SUMMARY"
