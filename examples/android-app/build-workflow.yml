@@ -19,7 +19,7 @@ jobs:
       packages: write
     secrets: inherit
     with:
-      java-version: "21"
+      java-version: "25"
       jdk-distribution: "zulu"
       build-module: "app"
       product-flavor: "demo"

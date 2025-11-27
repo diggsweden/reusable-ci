@@ -7,7 +7,7 @@ artifacts:
     project-type: gradle
     working-directory: .
     config:
-      java-version: 21
+      java-version: 25
       gradle-tasks: build assembleDemoRelease bundleDemoRelease
       gradle-version-file: gradle.properties
 

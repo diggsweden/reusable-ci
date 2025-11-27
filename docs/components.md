@@ -54,7 +54,7 @@ Builds Maven projects (apps or libraries).
 uses: ./.github/workflows/build-maven.yml
 with:
   build-type: application   # "application" or "library"
-  java-version: "21"        # JDK version
+  java-version: "25"        # JDK version
   working-directory: "."    # Path to pom.xml
 ```
 
@@ -63,7 +63,7 @@ Builds NPM projects.
 ```yaml
 uses: ./.github/workflows/build-npm.yml
 with:
-  node-version: "22"        # Node.js version
+  node-version: "24"        # Node.js version
   working-directory: "."    # Path to package.json
 ```
 
@@ -72,7 +72,7 @@ Builds Gradle projects.
 ```yaml
 uses: ./.github/workflows/build-gradle.yml
 with:
-  java-version: "21"        # JDK version
+  java-version: "25"        # JDK version
   working-directory: "."    # Path to build.gradle
   gradle-tasks: "build"     # Gradle tasks to run
 ```

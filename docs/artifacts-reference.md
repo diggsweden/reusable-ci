@@ -97,9 +97,9 @@ containers:
 
 - **Type:** `string` or `number`
 - **Description:** JDK version for Maven/Gradle builds
-- **Default:** `21`
-- **Valid values:** `8`, `11`, `17`, `21`, `23`
-- **Example:** `java-version: 21`
+- **Default:** `25`
+- **Valid values:** `8`, `11`, `17`, `21`, `25`
+- **Example:** `java-version: 25`
 
 #### `config.settings-path`
 
@@ -117,9 +117,9 @@ containers:
 
 - **Type:** `string` or `number`
 - **Description:** Node.js version for NPM builds
-- **Default:** `22`
-- **Valid values:** `18`, `20`, `22`, `23`
-- **Example:** `node-version: 22`
+- **Default:** `24`
+- **Valid values:** `18`, `20`, `22`, `24`
+- **Example:** `node-version: 24`
 
 #### `config.npm-tag`
 
@@ -354,7 +354,7 @@ artifacts:
     working-directory: .
     build-type: application
     config:
-      java-version: 21
+      java-version: 25
 ```
 
 **`.github/workflows/release-workflow.yml`**
@@ -377,7 +377,7 @@ artifacts:
     working-directory: .
     build-type: application
     config:
-      java-version: 21
+      java-version: 25
 
 containers:
   - name: my-app
@@ -400,7 +400,7 @@ artifacts:
       - github-packages
       - maven-central
     config:
-      java-version: 21
+      java-version: 25
       settings-path: .mvn/settings.xml
 ```
 
@@ -412,7 +412,7 @@ artifacts:
     project-type: npm
     working-directory: frontend
     config:
-      node-version: 22
+      node-version: 24
 ```
 
 ### Gradle Android App
@@ -423,7 +423,7 @@ artifacts:
     project-type: gradle-android
     working-directory: .
     config:
-      java-version: 21
+      java-version: 25
       gradle-tasks: build assembleDemoRelease bundleDemoRelease
       gradle-version-file: gradle.properties
 ```
@@ -533,13 +533,13 @@ artifacts:
     working-directory: java-backend
     build-type: application
     config:
-      java-version: 21
+      java-version: 25
 
   - name: frontend
     project-type: npm
     working-directory: frontend
     config:
-      node-version: 22
+      node-version: 24
 
 containers:
   - name: backend
