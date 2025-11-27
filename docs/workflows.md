@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 
 SPDX-License-Identifier: CC0-1.0
 -->
