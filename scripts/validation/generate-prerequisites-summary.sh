@@ -43,7 +43,7 @@ cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 - **Type:** $REF_TYPE
 EOF
 
-if [ "$REF_TYPE" = "tag" ]; then
+if [[ "$REF_TYPE" = "tag" ]]; then
   TAGGER_INFO=$(git for-each-ref refs/tags/"$TAG_NAME" --format='%(taggername) <%(taggeremail)>' 2>/dev/null || printf "N/A")
   TAG_DATE=$(git for-each-ref refs/tags/"$TAG_NAME" --format='%(taggerdate:short)' 2>/dev/null || printf "N/A")
   TAG_MESSAGE=$(git tag -l -n1 "$TAG_NAME" | sed "s/^$TAG_NAME *//" | head -1 || printf "No message")
@@ -99,8 +99,8 @@ cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 |--------|---------|--------|
 EOF
 
-if [ "$SIGN_ARTIFACTS" = "true" ]; then
-  if [ -n "${OSPO_BOT_GPG_PRIV:-}" ]; then
+if [[ "$SIGN_ARTIFACTS" = "true" ]]; then
+  if [[ -n "${OSPO_BOT_GPG_PRIV:-}" ]]; then
     printf "| OSPO_BOT_GPG_PRIV | Sign commits/artifacts | ✓ Available |\n" >>"$GITHUB_STEP_SUMMARY"
     printf "| OSPO_BOT_GPG_PASS | GPG passphrase | ✓ Available |\n" >>"$GITHUB_STEP_SUMMARY"
   else
@@ -109,7 +109,7 @@ if [ "$SIGN_ARTIFACTS" = "true" ]; then
   fi
 fi
 
-if [ -n "${OSPO_BOT_GHTOKEN:-}" ]; then
+if [[ -n "${OSPO_BOT_GHTOKEN:-}" ]]; then
   printf "| OSPO_BOT_GHTOKEN | Push commits | ✓ Available |\n" >>"$GITHUB_STEP_SUMMARY"
 
   BOT_STATUS="❓ Not verified"
@@ -125,29 +125,29 @@ else
   printf "| Bot Token Status | Repository access | ❓ No token |\n" >>"$GITHUB_STEP_SUMMARY"
 fi
 
-if [ "$SIGN_ARTIFACTS" = "true" ]; then
-  if [ -n "${OSPO_BOT_GPG_PUB:-}" ]; then
+if [[ "$SIGN_ARTIFACTS" = "true" ]]; then
+  if [[ -n "${OSPO_BOT_GPG_PUB:-}" ]]; then
     printf "| OSPO_BOT_GPG_PUB | GPG verification | ✓ Available |\n" >>"$GITHUB_STEP_SUMMARY"
   else
     printf "| OSPO_BOT_GPG_PUB | GPG verification | ✗ Required |\n" >>"$GITHUB_STEP_SUMMARY"
   fi
 fi
 
-if [ -n "${RELEASE_TOKEN:-}" ]; then
+if [[ -n "${RELEASE_TOKEN:-}" ]]; then
   printf "| RELEASE_TOKEN | Create releases | ✓ Available |\n" >>"$GITHUB_STEP_SUMMARY"
 else
   printf "| RELEASE_TOKEN | Create releases | ✗ Required |\n" >>"$GITHUB_STEP_SUMMARY"
 fi
 
-if [ -n "${PUBLISH_TO:-}" ]; then
+if [[ -n "${PUBLISH_TO:-}" ]]; then
   if printf "%s" "$PUBLISH_TO" | grep -q "maven-central"; then
-    if [ -n "${MAVENCENTRAL_USERNAME:-}" ]; then
+    if [[ -n "${MAVENCENTRAL_USERNAME:-}" ]]; then
       printf "| MAVENCENTRAL_USERNAME | Maven Central auth | ✓ Available |\n" >>"$GITHUB_STEP_SUMMARY"
     else
       printf "| MAVENCENTRAL_USERNAME | Maven Central auth | ✗ Missing |\n" >>"$GITHUB_STEP_SUMMARY"
     fi
 
-    if [ -n "${MAVENCENTRAL_PASSWORD:-}" ]; then
+    if [[ -n "${MAVENCENTRAL_PASSWORD:-}" ]]; then
       printf "| MAVENCENTRAL_PASSWORD | Maven Central auth | ✓ Available |\n" >>"$GITHUB_STEP_SUMMARY"
     else
       printf "| MAVENCENTRAL_PASSWORD | Maven Central auth | ✗ Missing |\n" >>"$GITHUB_STEP_SUMMARY"
@@ -155,7 +155,7 @@ if [ -n "${PUBLISH_TO:-}" ]; then
   fi
 
   if printf "%s" "$PUBLISH_TO" | grep -q "npmjs"; then
-    if [ -n "${NPM_TOKEN:-}" ]; then
+    if [[ -n "${NPM_TOKEN:-}" ]]; then
       printf "| NPM_TOKEN | NPM registry auth | ✓ Available |\n" >>"$GITHUB_STEP_SUMMARY"
     else
       printf "| NPM_TOKEN | NPM registry auth | ✗ Missing |\n" >>"$GITHUB_STEP_SUMMARY"
@@ -163,7 +163,7 @@ if [ -n "${PUBLISH_TO:-}" ]; then
   fi
 fi
 
-if [ "$JOB_STATUS" = "success" ]; then
+if [[ "$JOB_STATUS" = "success" ]]; then
   {
     printf "\n"
     printf "### ✅ All required prerequisites are configured!\n"
@@ -185,7 +185,7 @@ cat >>"$GITHUB_STEP_SUMMARY" <<'EOF'
 |------------|--------|---------|
 EOF
 
-if [ "$REF_TYPE" = "tag" ]; then
+if [[ "$REF_TYPE" = "tag" ]]; then
   if [[ "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
     printf "| Semantic Version | ✓ Pass | \`%s\` follows vX.Y.Z |\n" "$TAG_NAME" >>"$GITHUB_STEP_SUMMARY"
   else
@@ -202,21 +202,21 @@ if [ "$REF_TYPE" = "tag" ]; then
   fi
 fi
 
-if [ "$CHECK_AUTHORIZATION" = "true" ]; then
+if [[ "$CHECK_AUTHORIZATION" = "true" ]]; then
   printf "| User Authorization | ✓ Pass | %s authorized |\n" "$ACTOR" >>"$GITHUB_STEP_SUMMARY"
 elif [[ "$TAG_NAME" =~ -SNAPSHOT$ ]]; then
   printf "| User Authorization | − Skip | SNAPSHOT release |\n" >>"$GITHUB_STEP_SUMMARY"
 fi
 
-if [ -n "${OSPO_BOT_GHTOKEN:-}" ]; then
+if [[ -n "${OSPO_BOT_GHTOKEN:-}" ]]; then
   printf "| Push Token | ✓ Pass | Valid GitHub token |\n" >>"$GITHUB_STEP_SUMMARY"
 else
   printf "| Push Token | ✗ Fail | Missing OSPO_BOT_GHTOKEN |\n" >>"$GITHUB_STEP_SUMMARY"
 fi
 
-if [ -n "${PUBLISH_TO:-}" ]; then
+if [[ -n "${PUBLISH_TO:-}" ]]; then
   if printf "%s" "$PUBLISH_TO" | grep -q "maven-central"; then
-    if [ -n "${MAVENCENTRAL_USERNAME:-}" ]; then
+    if [[ -n "${MAVENCENTRAL_USERNAME:-}" ]]; then
       printf "| Maven Central | ✓ Pass | Credentials configured |\n" >>"$GITHUB_STEP_SUMMARY"
     else
       printf "| Maven Central | ✗ Fail | Missing credentials |\n" >>"$GITHUB_STEP_SUMMARY"
@@ -224,7 +224,7 @@ if [ -n "${PUBLISH_TO:-}" ]; then
   fi
 
   if printf "%s" "$PUBLISH_TO" | grep -q "npmjs"; then
-    if [ -n "${NPM_TOKEN:-}" ]; then
+    if [[ -n "${NPM_TOKEN:-}" ]]; then
       printf "| NPM Registry | ✓ Pass | Token configured |\n" >>"$GITHUB_STEP_SUMMARY"
     else
       printf "| NPM Registry | ✗ Fail | Missing NPM_TOKEN |\n" >>"$GITHUB_STEP_SUMMARY"

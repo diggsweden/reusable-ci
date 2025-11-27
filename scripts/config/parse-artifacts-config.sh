@@ -7,7 +7,7 @@
 # This script is called by release-orchestrator.yml
 set -euo pipefail
 
-if [ ! -f "$ARTIFACTS_CONFIG" ]; then
+if [[ ! -f "$ARTIFACTS_CONFIG" ]]; then
   printf "::error::File not found: %s\n" "$ARTIFACTS_CONFIG"
   exit 1
 fi
@@ -15,7 +15,7 @@ fi
 ARTIFACTS=$(yq eval -o=json '.artifacts' "$ARTIFACTS_CONFIG")
 CONTAINERS=$(yq eval -o=json '.containers // []' "$ARTIFACTS_CONFIG")
 
-if [ "$ARTIFACTS" = "null" ] || [ "$ARTIFACTS" = "[]" ]; then
+if [[ "$ARTIFACTS" = "null" || "$ARTIFACTS" = "[]" ]]; then
   printf "::error::No artifacts found in %s\n" "$ARTIFACTS_CONFIG"
   exit 1
 fi
@@ -33,7 +33,7 @@ done
 ARTIFACT_NAMES=$(printf "%s" "$ARTIFACTS" | jq -r '.[].name')
 CONTAINER_COUNT=$(printf "%s" "$CONTAINERS" | jq 'length')
 
-if [ "$CONTAINER_COUNT" -gt 0 ]; then
+if [[ "$CONTAINER_COUNT" -gt 0 ]]; then
   for container in $(printf "%s" "$CONTAINERS" | jq -c '.[]'); do
     CONTAINER_NAME=$(printf "%s" "$container" | jq -r '.name')
     FROM_ARTIFACTS=$(printf "%s" "$container" | jq -r '(.from // []) | .[]')
@@ -47,7 +47,7 @@ if [ "$CONTAINER_COUNT" -gt 0 ]; then
 
     # Warn if container has no dependencies
     FROM_COUNT=$(printf "%s" "$container" | jq '(.from // []) | length')
-    if [ "$FROM_COUNT" -eq 0 ]; then
+    if [[ "$FROM_COUNT" -eq 0 ]]; then
       printf "::warning::Container '%s' has empty 'from' array. No artifacts will be downloaded for this container.\n" "$CONTAINER_NAME"
     fi
   done
@@ -94,7 +94,7 @@ for type in maven npm gradle gradle-android xcode-ios python go rust; do
   } >>"$GITHUB_OUTPUT"
 
   # Output has-* flag
-  if [ "$COUNT" -gt 0 ]; then
+  if [[ "$COUNT" -gt 0 ]]; then
     printf "has-%s=true\n" "${TYPE_NAME}" >>"$GITHUB_OUTPUT"
   else
     printf "has-%s=false\n" "${TYPE_NAME}" >>"$GITHUB_OUTPUT"
@@ -103,14 +103,14 @@ done
 
 # Validate Maven applications are not published to github-packages (libraries only)
 MAVEN_APPS_TO_GITHUB=$(printf "%s" "$ARTIFACTS" | jq -r '.[] | select(.["project-type"] == "maven" and .["build-type"] == "application" and (.["publish-to"] // [] | contains(["github-packages"]))) | .name')
-if [ -n "$MAVEN_APPS_TO_GITHUB" ]; then
+if [[ -n "$MAVEN_APPS_TO_GITHUB" ]]; then
   printf "::warning::Maven applications should not be published to GitHub Packages (use only for libraries). JARs will be attached to GitHub Release instead. Skipping GitHub Packages publish for: %s\n" "$MAVEN_APPS_TO_GITHUB"
 fi
 
 # Filter artifacts by publish target
 for target in maven-central github-packages; do
   # For github-packages, exclude Maven applications
-  if [ "$target" = "github-packages" ]; then
+  if [[ "$target" = "github-packages" ]]; then
     FILTERED=$(printf "%s" "$ARTIFACTS" | jq -c '[.[] | select((.["publish-to"] // []) | contains(["'"${target}"'"])) | select(.["project-type"] != "maven" or .["build-type"] != "application")]')
   else
     FILTERED=$(printf "%s" "$ARTIFACTS" | jq -c '[.[] | select((.["publish-to"] // []) | contains(["'"${target}"'"]))]')
@@ -127,7 +127,7 @@ for target in maven-central github-packages; do
   } >>"$GITHUB_OUTPUT"
 
   # Output has-* flag
-  if [ "$COUNT" -gt 0 ]; then
+  if [[ "$COUNT" -gt 0 ]]; then
     printf "has-%s=true\n" "${TARGET_NAME}" >>"$GITHUB_OUTPUT"
   else
     printf "has-%s=false\n" "${TARGET_NAME}" >>"$GITHUB_OUTPUT"
@@ -165,7 +165,7 @@ printf "is-draft-release=%s\n" "$IS_DRAFT" >>"$GITHUB_OUTPUT"
   printf "%s" "$ARTIFACTS" | jq -r '.[] | "### \(.name)\n- **Type:** \(.["project-type"])\n- **Publish To:** \(.["publish-to"] // [] | join(", "))\n- **Directory:** \(.["working-directory"])\n"'
 } >>"$GITHUB_STEP_SUMMARY"
 
-if [ "$CONTAINER_COUNT" -gt 0 ]; then
+if [[ "$CONTAINER_COUNT" -gt 0 ]]; then
   {
     printf "\n"
     printf "## Containers\n"

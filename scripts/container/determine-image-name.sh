@@ -10,12 +10,12 @@ IMAGE_NAME="${2}"
 REPOSITORY="${3}"
 REPOSITORY_OWNER="${4}"
 
-if [ -z "$IMAGE_NAME" ]; then
+if [[ -z "$IMAGE_NAME" ]]; then
   IMAGE_NAME="$REPOSITORY"
 fi
 
 if [[ "$IMAGE_NAME" != *"/"* ]] || [[ "$IMAGE_NAME" != *"."* ]]; then
-  if [ "$REGISTRY" = "docker.io" ]; then
+  if [[ "$REGISTRY" = "docker.io" ]]; then
     IMAGE_NAME="$REPOSITORY_OWNER/$IMAGE_NAME"
   else
     IMAGE_NAME="$REGISTRY/$IMAGE_NAME"

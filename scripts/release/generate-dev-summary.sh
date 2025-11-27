@@ -91,7 +91,7 @@ cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 EOF
 
 # Add NPM status if NPM project
-if [ "$PROJECT_TYPE" = "npm" ]; then
+if [[ "$PROJECT_TYPE" = "npm" ]]; then
   cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 | Publish NPM Package | $NPM_ICON |
 EOF
@@ -104,7 +104,7 @@ cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 EOF
 
 # Container artifact
-if [ -n "$CONTAINER_IMAGE" ] && [ "$CONTAINER_STATUS" = "success" ]; then
+if [[ -n "$CONTAINER_IMAGE" && "$CONTAINER_STATUS" = "success" ]]; then
   cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 
 ### 🐳 Container Image
@@ -127,7 +127,7 @@ EOF
 fi
 
 # NPM artifact
-if [ -n "$NPM_PACKAGE_NAME" ] && [ -n "$NPM_PACKAGE_VERSION" ] && [ "$NPM_STATUS" = "success" ]; then
+if [[ -n "$NPM_PACKAGE_NAME" && -n "$NPM_PACKAGE_VERSION" && "$NPM_STATUS" = "success" ]]; then
   cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 
 ### 📦 NPM Package
@@ -145,7 +145,7 @@ npm install $NPM_PACKAGE_NAME@$NPM_PACKAGE_VERSION
 npm install $NPM_PACKAGE_NAME@dev
 \`\`\`
 EOF
-elif [ "$PROJECT_TYPE" = "npm" ]; then
+elif [[ "$PROJECT_TYPE" = "npm" ]]; then
   cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 
 ### 📦 NPM Package

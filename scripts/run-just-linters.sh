@@ -48,7 +48,7 @@ discover_linters() {
   local linters
   linters=$(just --summary 2>/dev/null | tr ' ' '\n' | grep '^lint-' | grep -v '\-fix$' || true)
 
-  if [ -z "$linters" ]; then
+  if [[ -z "$linters" ]]; then
     printf "%s%s No lint-* tasks found in justfile%s\n" "${RED}" "$CROSSMARK" "${NC}"
     printf "\n"
     printf "Expected tasks named: lint-java, lint-markdown, lint-yaml, etc.\n"
@@ -111,7 +111,7 @@ add_linter_result_to_summary() {
 
   printf "| %s | %s | %s | %.2fs | " "$display_name" "$tools" "$status_emoji" "$duration" >>"$GITHUB_STEP_SUMMARY"
 
-  if [ "$exit_code" -ne 0 ]; then
+  if [[ "$exit_code" -ne 0 ]]; then
     printf "[View errors below](#-failed-linters) |\n" >>"$GITHUB_STEP_SUMMARY"
   else
     printf "Success |\n" >>"$GITHUB_STEP_SUMMARY"
@@ -189,11 +189,11 @@ run_linter() {
   display_name=$(extract_linter_metadata_from_justfile "$linter_name" "linter-name")
   tools=$(extract_linter_metadata_from_justfile "$linter_name" "linter-tools")
 
-  if [ -z "$display_name" ]; then
+  if [[ -z "$display_name" ]]; then
     display_name="$linter_name"
   fi
 
-  if [ -z "$tools" ]; then
+  if [[ -z "$tools" ]]; then
     tools="-"
   fi
 
@@ -205,7 +205,7 @@ run_linter() {
 
   add_linter_result_to_summary "$display_name" "$tools" "$status_emoji" "$duration" "$exit_code"
 
-  if [ $exit_code -ne 0 ]; then
+  if [[ $exit_code -ne 0 ]]; then
     add_error_details_to_summary "$display_name" "$exit_code" "$duration" "$output_file"
   fi
 
@@ -226,7 +226,7 @@ finalize_github_summary() {
 
 EOF
 
-  if [ $OVERALL_STATUS -eq 0 ]; then
+  if [[ $OVERALL_STATUS -eq 0 ]]; then
     printf "### ✅ All linters passed successfully!\n" >>"$GITHUB_STEP_SUMMARY"
   else
     printf "### ⚠️ Please fix the failing linters before merging.\n" >>"$GITHUB_STEP_SUMMARY"
@@ -242,7 +242,7 @@ print_console_summary() {
   printf "⏱️  Total time: %ss\n" "${TOTAL_DURATION}"
   printf "\n"
 
-  if [ $OVERALL_STATUS -eq 0 ]; then
+  if [[ $OVERALL_STATUS -eq 0 ]]; then
     printf '%s✨ All checks passed! ✨%s\n' "${GREEN}" "${NC}"
   else
     printf "%s⚠️  Some checks failed. Please review the output above.%s\n" "${RED}" "${NC}"
