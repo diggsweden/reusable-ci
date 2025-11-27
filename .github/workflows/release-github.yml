@@ -157,33 +157,11 @@ jobs:
           ref: ${{ github.workflow_sha }}
           path: .github-shared
           sparse-checkout: scripts
-      # Determine artifact name based on project type
       - name: Determine artifact name
         id: artifact-name
         run: |
-          case "${{ inputs['project-type'] }}" in
-            maven)
-              printf "name=maven-build-artifacts\n" >> $GITHUB_OUTPUT
-              ;;
-            npm)
-              printf "name=npm-build-artifacts\n" >> $GITHUB_OUTPUT
-              ;;
-            gradle)
-              printf "name=gradle-build-artifacts\n" >> $GITHUB_OUTPUT
-              ;;
-            python)
-              printf "name=python-build-artifacts\n" >> $GITHUB_OUTPUT
-              ;;
-            go)
-              printf "name=go-build-artifacts\n" >> $GITHUB_OUTPUT
-              ;;
-            rust)
-              printf "name=rust-build-artifacts\n" >> $GITHUB_OUTPUT
-              ;;
-            *)
-              printf "name=build-artifacts\n" >> $GITHUB_OUTPUT  # Generic fallback
-              ;;
-          esac
+          bash .github-shared/scripts/release/determine-artifact-name.sh \
+            "${{ inputs['project-type'] }}" >> "$GITHUB_OUTPUT"
       # Download build artifacts based on project type
       - name: Download build artifacts
         continue-on-error: true
@@ -258,98 +236,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
-          # Build command arguments
-          ARGS=()
-          ARGS+=("${{ github.ref_name }}")
-          ARGS+=("--title" "${{ github.ref_name }}")
-
-          # Add flags
-          if [ "${{ inputs.draft }}" = "true" ]; then
-            ARGS+=("--draft")
-          fi
-
-          # Auto-detect prerelease from version tag
-          if [[ "${{ github.ref_name }}" =~ -(alpha|beta|rc|dev|snapshot) ]]; then
-            ARGS+=("--prerelease")
-          fi
-
-          if [ "${{ inputs['make-latest'] }}" != "true" ]; then
-            ARGS+=("--latest=false")
-          fi
-
-          # Add release notes from git-cliff
-          if [ -f "release-notes.md" ] && [ -s "release-notes.md" ]; then
-            ARGS+=("--notes-file" "release-notes.md")
-          fi
-
-          # Add specified artifacts
-          if [ -n "${{ inputs['attach-artifacts'] }}" ]; then
-            # Split comma-separated patterns and add each file
-            IFS=',' read -ra PATTERNS <<< "${{ inputs['attach-artifacts'] }}"
-            for pattern in "${PATTERNS[@]}"; do
-              pattern=$(printf "%s" "$pattern" | xargs)
-              for file in $pattern; do
-                [ -f "$file" ] && ARGS+=("$file")
-              done
-            done
-          fi
-
-          # Track added files to avoid duplicates
-          declare -A ADDED_FILES
-
-          # Add release artifacts from build (supports multi-module with find)
-          if [ -d "./release-artifacts" ]; then
-            while IFS= read -r -d '' file; do
-              BASENAME=$(basename "$file")
-              ARGS+=("$file")
-              ADDED_FILES[$BASENAME]=1
-              # Add signature if it exists in current directory
-              if [ -f "${BASENAME}.asc" ]; then
-                ARGS+=("${BASENAME}.asc")
-                ADDED_FILES["${BASENAME}.asc"]=1
-              fi
-            done < <(find ./release-artifacts -type f \( -name "*.jar" -o -name "*.tgz" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*.war" \) ! -name "original-*.jar" -print0)
-          fi
-
-          # Add SBOM zip
-          PROJECT_NAME=$(basename ${{ github.repository }})
-          VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"  # Remove 'v' prefix
-          SBOM_ZIP="${PROJECT_NAME}-${VERSION}-sboms.zip"
-          if [ -f "$SBOM_ZIP" ]; then
-            ARGS+=("$SBOM_ZIP")
-            ADDED_FILES["$SBOM_ZIP"]=1
-            if [ -f "${SBOM_ZIP}.asc" ]; then
-              ARGS+=("${SBOM_ZIP}.asc")
-              ADDED_FILES["${SBOM_ZIP}.asc"]=1
-            fi
-          fi
-
-          # Add checksums and signature
-          if [ -f "checksums.sha256" ]; then
-            ARGS+=("checksums.sha256")
-            ADDED_FILES["checksums.sha256"]=1
-            if [ -f "checksums.sha256.asc" ]; then
-              ARGS+=("checksums.sha256.asc")
-              ADDED_FILES["checksums.sha256.asc"]=1
-            fi
-          fi
-
-          # Add any signature files not already added
-          for sig in *.asc; do
-            if [ -f "$sig" ]; then
-              # Check if not already added
-              BASENAME=$(basename "$sig")
-              if [[ -z "${ADDED_FILES[$BASENAME]:-}" ]]; then
-                ARGS+=("$sig")
-                ADDED_FILES[$BASENAME]=1
-              fi
-            fi
-          done
-
-          # Create the release
-          printf "Creating release with gh release create\n"
-          gh release create "${ARGS[@]}"
+          bash .github-shared/scripts/release/create-github-release.sh \
+            "${{ github.ref_name }}" \
+            "${{ github.repository }}" \
+            "${{ inputs.draft }}" \
+            "${{ inputs['make-latest'] }}" \
+            "${{ inputs['attach-artifacts'] }}" \
+            "release-notes.md"
       - name: Upload release artifacts summary
         if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0

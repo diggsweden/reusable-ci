@@ -274,36 +274,11 @@ jobs:
       - name: Validate Image Namespace
         if: ${{ inputs['push-image'] }}
         run: |
-          IMAGE_NAME="${{ steps.image-name.outputs.name }}"
-          REPO_NAME="${{ github.repository }}"
-          REGISTRY="${{ inputs.registry }}"
-          ENFORCE_NAMESPACE="${{ inputs['enforce-namespace'] || github.repository_owner }}"
-
-          printf "Validating image namespace...\n"
-          printf "  Image: %s\n" "$IMAGE_NAME"
-          printf "  Repository: %s\n" "$REPO_NAME"
-          printf "  Registry: %s\n" "$REGISTRY"
-          printf "  Enforced namespace: %s\n" "$ENFORCE_NAMESPACE"
-
-          # Extract repo name without org
-          REPO_SHORT="${REPO_NAME##*/}"
-
-          # For GHCR, enforce strict namespace matching
-          if [[ "$REGISTRY" == "ghcr.io" ]]; then
-            # Must be ghcr.io/NAMESPACE/REPO_NAME or ghcr.io/NAMESPACE/REPO_NAME-*
-            EXPECTED_PREFIX="ghcr.io/${ENFORCE_NAMESPACE}/${REPO_SHORT}"
-
-            if [[ ! "$IMAGE_NAME" =~ ^${EXPECTED_PREFIX}(-.*)?$ ]]; then
-              printf "::error::Security: Image name must start with '%s'\n" "${EXPECTED_PREFIX}"
-              printf "::error::Got: %s\n" "$IMAGE_NAME"
-              printf "::error::This prevents pushing to unauthorized namespaces\n"
-              exit 1
-            fi
-
-            printf "✓ Image namespace validated: %s\n" "$IMAGE_NAME"
-          else
-            printf "⚠ Non-GHCR registry - namespace validation skipped\n"
-          fi
+          bash .github-shared/scripts/container/validate-namespace.sh \
+            "${{ steps.image-name.outputs.name }}" \
+            "${{ github.repository }}" \
+            "${{ inputs.registry }}" \
+            "${{ inputs['enforce-namespace'] || github.repository_owner }}"
       - name: Extract Image Metadata
         id: metadata
         uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v5.9.0
