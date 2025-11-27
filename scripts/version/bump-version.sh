@@ -32,7 +32,7 @@ gradle | gradle-android)
   cd "$WORKING_DIR"
   printf "Version file: %s\n" "$GRADLE_VERSION_FILE"
 
-  if [ ! -f "$GRADLE_VERSION_FILE" ]; then
+  if [[ ! -f "$GRADLE_VERSION_FILE" ]]; then
     printf "::error::Gradle version file not found: %s\n" "$GRADLE_VERSION_FILE"
     exit 1
   fi

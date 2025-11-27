@@ -14,13 +14,13 @@ set -euo pipefail
 PROJECT_TYPE="${1:-}"
 CUSTOM_PATTERN="${2:-}"
 
-if [ -z "$PROJECT_TYPE" ]; then
+if [[ -z "$PROJECT_TYPE" ]]; then
   printf "Error: PROJECT_TYPE is required\n" >&2
   exit 1
 fi
 
 # If custom pattern provided, use it
-if [ -n "$CUSTOM_PATTERN" ]; then
+if [[ -n "$CUSTOM_PATTERN" ]]; then
   printf "%s\n" "$CUSTOM_PATTERN"
   exit 0
 fi

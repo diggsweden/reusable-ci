@@ -32,7 +32,7 @@ IMAGE="$4"
 SCRIPT_DIR="$5"
 
 # Handle empty artifact-types (containers building from source with no dependencies)
-if [ -z "$ARTIFACT_TYPES" ]; then
+if [[ -z "$ARTIFACT_TYPES" ]]; then
   printf "No artifact dependencies - generating SBOM from container image only\n"
   bash "$SCRIPT_DIR/generate-sbom.sh" \
     "container" \

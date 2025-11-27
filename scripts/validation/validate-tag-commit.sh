@@ -69,7 +69,7 @@ fi
 printf "✓ Tag commit %s is in branch '%s' history\n" "$TAG_COMMIT" "$BRANCH"
 
 # Check position relative to branch HEAD
-if [ "$TAG_COMMIT" = "$BRANCH_HEAD" ]; then
+if [[ "$TAG_COMMIT" = "$BRANCH_HEAD" ]]; then
   printf "✓ Tag points to branch HEAD (ideal)\n"
 else
   printf "ℹ️  Tag commit is an ancestor of branch HEAD\n"

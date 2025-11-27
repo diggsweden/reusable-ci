@@ -58,7 +58,7 @@ generate_dual_sboms() {
 
   local spdx_file cdx_file
 
-  if [ -n "$custom_basename" ]; then
+  if [[ -n "$custom_basename" ]]; then
     spdx_file="${custom_basename}-sbom.spdx.json"
     cdx_file="${custom_basename}-sbom.cyclonedx.json"
   else
@@ -71,14 +71,14 @@ generate_dual_sboms() {
   syft "$scan_target" -o cyclonedx-json >"$cdx_file"
 
   # Validate they exist and aren't empty
-  if [ -f "$spdx_file" ] && [ -s "$spdx_file" ]; then
+  if [[ -f "$spdx_file" && -s "$spdx_file" ]]; then
     printf "   ✅ %s\n" "$spdx_file"
   else
     printf "   ❌ Failed to generate: %s\n" "$spdx_file" >&2
     return 1
   fi
 
-  if [ -f "$cdx_file" ] && [ -s "$cdx_file" ]; then
+  if [[ -f "$cdx_file" && -s "$cdx_file" ]]; then
     printf "   ✅ %s\n" "$cdx_file"
   else
     printf "   ❌ Failed to generate: %s\n" "$cdx_file" >&2
@@ -88,12 +88,12 @@ generate_dual_sboms() {
 
 # Auto-detect project type from build files
 detect_project_type() {
-  if [ "$PROJECT_TYPE" = "auto" ]; then
-    if [ -f "pom.xml" ]; then
+  if [[ "$PROJECT_TYPE" = "auto" ]]; then
+    if [[ -f "pom.xml" ]]; then
       PROJECT_TYPE="maven"
-    elif [ -f "package.json" ]; then
+    elif [[ -f "package.json" ]]; then
       PROJECT_TYPE="npm"
-    elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+    elif [[ -f "build.gradle" || -f "build.gradle.kts" ]]; then
       PROJECT_TYPE="gradle"
     else
       PROJECT_TYPE="unknown"
@@ -104,7 +104,7 @@ detect_project_type() {
 
 # Extract version from project files
 get_version() {
-  if [ -n "$VERSION" ]; then
+  if [[ -n "$VERSION" ]]; then
     printf "%s" "$VERSION"
     return
   fi
@@ -113,7 +113,7 @@ get_version() {
 
   case "$PROJECT_TYPE" in
   maven)
-    if [ -f "pom.xml" ]; then
+    if [[ -f "pom.xml" ]]; then
       if detected_version=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout 2>&1); then
         printf "%s" "$detected_version"
         return
@@ -123,7 +123,7 @@ get_version() {
     fi
     ;;
   npm)
-    if [ -f "package.json" ]; then
+    if [[ -f "package.json" ]]; then
       if detected_version=$(node -p "require('./package.json').version" 2>&1); then
         printf "%s" "$detected_version"
         return
@@ -133,7 +133,7 @@ get_version() {
     fi
     ;;
   gradle)
-    if [ -f "build.gradle" ]; then
+    if [[ -f "build.gradle" ]]; then
       if detected_version=$(grep -oP "version\s*=\s*['\"]?\K[^'\"]*" build.gradle 2>&1 | head -1); then
         printf "%s" "$detected_version"
         return
@@ -149,7 +149,7 @@ get_version() {
 
 # Extract project name from project files
 get_project_name() {
-  if [ -n "$PROJECT_NAME" ]; then
+  if [[ -n "$PROJECT_NAME" ]]; then
     printf "%s" "$PROJECT_NAME"
     return
   fi
@@ -158,7 +158,7 @@ get_project_name() {
 
   case "$PROJECT_TYPE" in
   maven)
-    if [ -f "pom.xml" ]; then
+    if [[ -f "pom.xml" ]]; then
       if detected_name=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout 2>&1); then
         printf "%s" "$detected_name"
         return
@@ -168,7 +168,7 @@ get_project_name() {
     fi
     ;;
   npm)
-    if [ -f "package.json" ]; then
+    if [[ -f "package.json" ]]; then
       if detected_name=$(node -p "require('./package.json').name" 2>&1 | sed 's/@.*\///'); then
         printf "%s" "$detected_name"
         return
@@ -178,7 +178,7 @@ get_project_name() {
     fi
     ;;
   gradle)
-    if [ -f "settings.gradle" ]; then
+    if [[ -f "settings.gradle" ]]; then
       if detected_name=$(grep -oP "rootProject.name\s*=\s*['\"]?\K[^'\"]*" settings.gradle 2>&1); then
         printf "%s" "$detected_name"
         return
@@ -199,13 +199,13 @@ generate_source_layer() {
 
   printf "📦 Generating Source layer SBOMs...\n"
 
-  if [ -f "pom.xml" ]; then
+  if [[ -f "pom.xml" ]]; then
     printf "   Scanning pom.xml for Maven dependencies...\n"
     generate_dual_sboms "pom.xml" "$name" "$version" "pom" "${name}-${version}-pom"
-  elif [ -f "package.json" ]; then
+  elif [[ -f "package.json" ]]; then
     printf "   Scanning package.json for NPM dependencies...\n"
     generate_dual_sboms "." "$name" "$version" "package" "${name}-${version}-package"
-  elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+  elif [[ -f "build.gradle" || -f "build.gradle.kts" ]]; then
     printf "   Scanning build.gradle for Gradle dependencies...\n"
     generate_dual_sboms "." "$name" "$version" "gradle" "${name}-${version}-gradle"
   else
@@ -233,7 +233,7 @@ generate_artifact_layer() {
     local artifacts=()
 
     # Collect all JARs from release-artifacts (common in GitHub CLI release workflows)
-    if [ -d "./release-artifacts" ]; then
+    if [[ -d "./release-artifacts" ]]; then
       while IFS= read -r -d '' artifact; do
         artifacts+=("$artifact")
       done < <(find ./release-artifacts -maxdepth 1 -type f \
@@ -246,7 +246,7 @@ generate_artifact_layer() {
     fi
 
     # Fallback to target/ directory if no artifacts found yet
-    if [ ${#artifacts[@]} -eq 0 ] && [ -d "target" ]; then
+    if [[ ${#artifacts[@]} -eq 0 && -d "target" ]]; then
       while IFS= read -r -d '' artifact; do
         artifacts+=("$artifact")
       done < <(find target -maxdepth 1 -type f \
@@ -258,7 +258,7 @@ generate_artifact_layer() {
         -print0 2>/dev/null)
     fi
 
-    if [ ${#artifacts[@]} -gt 0 ]; then
+    if [[ ${#artifacts[@]} -gt 0 ]]; then
       for artifact in "${artifacts[@]}"; do
         printf "   Scanning JAR file: %s\n" "$artifact"
         local jar_basename
@@ -280,20 +280,20 @@ generate_artifact_layer() {
     local artifacts=()
 
     # Collect all tgz files from release-artifacts (common in release workflows)
-    if [ -d "./release-artifacts" ]; then
+    if [[ -d "./release-artifacts" ]]; then
       while IFS= read -r -d '' artifact; do
         artifacts+=("$artifact")
       done < <(find ./release-artifacts -maxdepth 1 -name "*.tgz" -type f -print0 2>/dev/null)
     fi
 
     # Fallback to current directory if no artifacts found yet
-    if [ ${#artifacts[@]} -eq 0 ]; then
+    if [[ ${#artifacts[@]} -eq 0 ]]; then
       while IFS= read -r -d '' artifact; do
         artifacts+=("$artifact")
       done < <(find . -maxdepth 1 -name "*.tgz" -type f -print0 2>/dev/null)
     fi
 
-    if [ ${#artifacts[@]} -gt 0 ]; then
+    if [[ ${#artifacts[@]} -gt 0 ]]; then
       for artifact in "${artifacts[@]}"; do
         printf "   Scanning NPM tar archive: %s\n" "$artifact"
         local tgz_basename
@@ -310,7 +310,7 @@ generate_artifact_layer() {
     printf "   Project type: Gradle (looking for JAR files)\n"
 
     # Gradle builds to build/libs/
-    if [ ! -d "build/libs" ]; then
+    if [[ ! -d "build/libs" ]]; then
       printf "   ⚠️  No build/libs/ directory found, skipping JAR layer\n"
       printf "\n"
       return
@@ -324,7 +324,7 @@ generate_artifact_layer() {
       ! -name "*-javadoc.jar" \
       -print0 2>/dev/null)
 
-    if [ ${#artifacts[@]} -gt 0 ]; then
+    if [[ ${#artifacts[@]} -gt 0 ]]; then
       for artifact in "${artifacts[@]}"; do
         printf "   Scanning JAR file: %s\n" "$artifact"
         local jar_basename
@@ -352,7 +352,7 @@ generate_container_layer() {
 
   printf "📦 Generating Container layer SBOMs...\n"
 
-  if [ -z "$CONTAINER_IMAGE" ]; then
+  if [[ -z "$CONTAINER_IMAGE" ]]; then
     printf "   ⚠️  No container image specified, skipping container layer\n"
     printf "\n"
     return
@@ -418,7 +418,7 @@ main() {
   local sbom_count
   sbom_count=$(find . -maxdepth 1 -name '*-sbom.*.json' -type f 2>/dev/null | wc -l)
 
-  if [ "$sbom_count" -gt 0 ]; then
+  if [[ "$sbom_count" -gt 0 ]]; then
     printf "✅ Successfully generated %s SBOM files\n" "$sbom_count"
     printf "\n"
     printf "Generated files:\n"
@@ -426,14 +426,14 @@ main() {
     printf "\n"
 
     # Create ZIP archive with all SBOMs (if requested)
-    if [ "$CREATE_ZIP" = "true" ]; then
+    if [[ "$CREATE_ZIP" = "true" ]]; then
       printf "📦 Creating SBOM ZIP archive...\n"
       local sbom_zip="${project_name}-${version}-sboms.zip"
 
       # Add all SBOM files to ZIP
       find . -maxdepth 1 -name '*-sbom.*.json' -type f -exec zip "$sbom_zip" {} +
 
-      if [ -f "$sbom_zip" ]; then
+      if [[ -f "$sbom_zip" ]]; then
         printf "✅ Created SBOM ZIP: %s\n" "$sbom_zip"
         printf "\n"
         printf "ZIP contents:\n"

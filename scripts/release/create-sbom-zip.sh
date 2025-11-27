@@ -15,7 +15,7 @@ VERSION="${VERSION#v}" # Remove 'v' prefix if present
 SBOM_COUNT=$(find . -maxdepth 1 -name '*-sbom.*.json' 2>/dev/null | wc -l)
 [ -d "./sbom-artifacts" ] && SBOM_COUNT=$((SBOM_COUNT + $(find ./sbom-artifacts -name '*-container-sbom.*.json' 2>/dev/null | wc -l)))
 
-if [ "$SBOM_COUNT" -eq 0 ]; then
+if [[ "$SBOM_COUNT" -eq 0 ]]; then
   printf "No SBOMs found, skipping ZIP creation\n"
   exit 0
 fi
@@ -31,16 +31,16 @@ for sbom in *-pom-sbom.spdx.json *-pom-sbom.cyclonedx.json \
   *-gradle-sbom.spdx.json *-gradle-sbom.cyclonedx.json \
   *-jar-sbom.spdx.json *-jar-sbom.cyclonedx.json \
   *-tararchive-sbom.spdx.json *-tararchive-sbom.cyclonedx.json; do
-  if [ -f "$sbom" ]; then
+  if [[ -f "$sbom" ]]; then
     zip "$SBOM_ZIP" "$sbom"
     printf "  Added: %s\n" "$sbom"
   fi
 done
 
 # Add container SBOMs to zip if they exist (Layer 3)
-if [ -d "./sbom-artifacts" ]; then
+if [[ -d "./sbom-artifacts" ]]; then
   for sbom in ./sbom-artifacts/*-container-sbom.*.json; do
-    if [ -f "$sbom" ]; then
+    if [[ -f "$sbom" ]]; then
       zip -j "$SBOM_ZIP" "$sbom"
       printf "  Added: %s\n" "$(basename "$sbom")"
     fi

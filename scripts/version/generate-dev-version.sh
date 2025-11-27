@@ -27,7 +27,7 @@ git fetch --tags || true
 LATEST_TAG=$(git describe --tags --match="v[0-9]*.[0-9]*.[0-9]*" --abbrev=0 2>/dev/null ||
   git tag -l "v[0-9]*.[0-9]*.[0-9]*" | sort -V | tail -n1 || printf "")
 
-if [ -z "$LATEST_TAG" ]; then
+if [[ -z "$LATEST_TAG" ]]; then
   BASE_VERSION="0.0.0"
 else
   BASE_VERSION="${LATEST_TAG#v}"
