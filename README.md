@@ -84,7 +84,7 @@ jobs:
 
   publish-github:
     needs: build-maven
-    uses: diggsweden/reusable-ci/.github/workflows/publish-github.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/publish-maven-github.yml@main
     with:
       package-type: maven
       artifact-source: maven-build-artifacts
@@ -287,8 +287,8 @@ jobs:
 
 **Publish Stage** - Target-specific workflows publish artifacts:
 - `publish-github` - Publishes Maven/NPM/Gradle → GitHub Packages
-- `publish-mavencentral` - Publishes Maven libs → Maven Central
-- `publish-appleappstore` - Publishes iOS/macOS apps → TestFlight/Apple App Store
+- `publish-maven-central` - Publishes Maven libs → Maven Central
+- `publish-apple-appstore` - Publishes iOS/macOS apps → TestFlight/Apple App Store
 
 **Container Stage** - Separate containers section references artifacts:
 - Containers defined in `containers[]` section

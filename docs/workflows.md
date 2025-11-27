@@ -48,7 +48,7 @@ graph TD
     G --> I
     H --> I
 
-    F --> J[publish-mavencentral.yml - Matrix]
+    F --> J[publish-maven-central.yml - Matrix]
 
     I --> K[publish-container.yml - Matrix]
 

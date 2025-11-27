@@ -23,7 +23,7 @@
 #   contents: read   # Download artifacts
 #   packages: write  # Publish to GitHub Packages
 #
-name: Publish to GitHub Packages
+name: Publish Maven to GitHub Packages
 on:
   workflow_call:
     inputs:
@@ -53,7 +53,7 @@ on:
 permissions:
   contents: read
 jobs:
-  publish-github:
+  publish-maven-github:
     name: Publish to GitHub Packages (${{ inputs['package-type'] }})
     runs-on: ubuntu-latest
     permissions:

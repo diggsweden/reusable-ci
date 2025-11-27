@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
-# Xcode iOS/macOS Variants Builder
+# Xcode iOS Builder
 # 
 # Purpose: Builds iOS/macOS applications with Xcode, creating IPA files for
 # distribution to TestFlight or App Store.
@@ -36,7 +36,7 @@
 # Required Permissions:
 #   contents: read  # Checkout code
 #
-name: Build Xcode Variants
+name: Build Xcode iOS
 on:
   workflow_call:
     inputs:
@@ -107,7 +107,7 @@ permissions:
   contents: read
 jobs:
   build-variants:
-    name: Build Xcode Variants
+    name: Build Xcode iOS
     runs-on: ${{ inputs.macos-version }}
     permissions:
       contents: read
