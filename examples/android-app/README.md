@@ -66,7 +66,7 @@ jobs:
   build:
     uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
     with:
-      java-version: "21"
+      java-version: "25"
       build-module: "app"
       product-flavor: "demo"
 ```
@@ -79,7 +79,7 @@ jobs:
     uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
     secrets: inherit  # Required for signing secrets
     with:
-      java-version: "21"
+      java-version: "25"
       build-module: "app"
       product-flavor: "prod"
       enable-signing: true
@@ -98,7 +98,7 @@ jobs:
   build:
     uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
     with:
-      java-version: "21"
+      java-version: "25"
       build-module: "app"
       build-types: "release"  # Only release builds
       include-aab: true
@@ -112,7 +112,7 @@ jobs:
   build:
     uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
     with:
-      java-version: "21"
+      java-version: "25"
       build-module: "app"
       artifact-name-prefix: "production_store"  # Custom prefix
       include-date-stamp: true  # Include date in name
@@ -188,7 +188,7 @@ android {
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `java-version` | Yes | - | Java version (e.g., 17, 21) |
+| `java-version` | Yes | - | Java version (e.g., 17, 25) |
 | `build-module` | Yes | - | Gradle module to build |
 | `product-flavor` | No | "" | Product flavor (demo, prod, etc.) |
 | `build-types` | No | "debug,release" | Comma-separated build types |

@@ -69,7 +69,7 @@ on:
       node-version:
         description: "Node.js version for npm projects"
         required: false
-        default: "22"
+        default: "24"
         type: string
       npm-registry:
         description: "NPM registry URL"

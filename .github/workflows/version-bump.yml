@@ -51,14 +51,14 @@ on:
         required: true
         type: string
       java-version:
-        description: "Java version for Maven projects (default: 21)"
+        description: "Java version for Maven projects (default: 25)"
         required: false
-        default: '21'
+        default: '25'
         type: string
       node-version:
-        description: "Node.js version for NPM projects (default: 22)"
+        description: "Node.js version for NPM projects (default: 24)"
         required: false
-        default: '22'
+        default: '24'
         type: string
       gradle-version-file:
         description: "Path to Gradle version file (default: gradle.properties)"

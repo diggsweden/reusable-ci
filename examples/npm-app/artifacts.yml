@@ -7,7 +7,7 @@ artifacts:
     project-type: npm
     working-directory: .
     config:
-      node-version: 22
+      node-version: 24
 containers:
   - name: my-app
     from: [my-app]
