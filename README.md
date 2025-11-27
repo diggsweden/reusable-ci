@@ -3,8 +3,6 @@
 Reusable CI/CD workflows and scripts.
 Implements best Open Source workflows, compliance, security best practices, automated releases, and quality checks.
 
-**Current version:** `2.0.0`
-
 ## Documentation
 
 **Getting Started:**
@@ -24,9 +22,9 @@ Implements best Open Source workflows, compliance, security best practices, auto
 
 ## Introduction
 
-There are two main workflow chains:
+There are two main workflow chains (and a dev-release flow):
 
-1. **Pull Request Chain** - Runs on every PR and push
+1. **The Pull Request Chain** - Run on PR and push
    - Linting and code quality checks
    - Security scanning
    - License compliance
