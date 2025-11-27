@@ -9,7 +9,7 @@ artifacts:
     build-type: application
     config:
       java-version: 21
-      # Note: For Android variants, use build-gradle-android-variants workflow
+      # Note: For Android variants, use build-gradle-android workflow
       # This artifacts.yml is for release orchestrator integration
       gradle-tasks: build assembleDemoRelease bundleDemoRelease
       build-module: app

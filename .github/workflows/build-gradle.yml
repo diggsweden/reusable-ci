@@ -22,6 +22,11 @@ name: Build Gradle Project
 on:
   workflow_call:
     inputs:
+      build-type:
+        description: "Build type: app (application) or plugin (Gradle plugin)"
+        required: false
+        default: "app"
+        type: string
       java-version:
         description: "Java version"
         required: true
@@ -60,7 +65,7 @@ permissions:
   contents: read
 jobs:
   build-gradle:
-    name: Build Gradle Project
+    name: Build Gradle ${{ inputs['build-type'] }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

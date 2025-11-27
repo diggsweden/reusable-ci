@@ -55,7 +55,7 @@ permissions:
 env:
   MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
 jobs:
-  publish-mavencentral:
+  publish-maven-central:
     name: Publish to Maven Central
     runs-on: ubuntu-latest
     permissions:

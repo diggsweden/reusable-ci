@@ -21,7 +21,7 @@ See [Workflow Guide](workflows.md) for orchestrator documentation and [Artifacts
 | Component | Purpose | Output | Required Secrets | Use When |
 |-----------|---------|--------|------------------|----------|
 | **publish-github** | Publishes Maven/NPM/Gradle to GitHub Packages | Artifacts in GitHub Packages | GITHUB_TOKEN | Default publishing target |
-| **publish-mavencentral** | Publishes Maven libraries to Maven Central | Public Maven artifacts | MAVENCENTRAL_USERNAME, MAVENCENTRAL_PASSWORD | Public libraries (requires build-type: library) |
+| **publish-maven-central** | Publishes Maven libraries to Maven Central | Public Maven artifacts | MAVENCENTRAL_USERNAME, MAVENCENTRAL_PASSWORD | Public libraries (requires build-type: library) |
 
 #### Container Builders
 
@@ -82,17 +82,17 @@ with:
 #### `publish-github.yml`
 Publishes artifacts to GitHub Packages (Maven/NPM/Gradle).
 ```yaml
-uses: ./.github/workflows/publish-github.yml
+uses: ./.github/workflows/publish-maven-github.yml
 with:
   package-type: maven          # maven, npm, or gradle
   artifact-source: maven-build-artifacts  # Name of workflow artifact
   working-directory: "."
 ```
 
-#### `publish-mavencentral.yml`
+#### `publish-maven-central.yml`
 Publishes Maven libraries to Maven Central.
 ```yaml
-uses: ./.github/workflows/publish-mavencentral.yml
+uses: ./.github/workflows/publish-maven-central.yml
 with:
   artifact-source: maven-build-artifacts  # Name of workflow artifact
   working-directory: "."

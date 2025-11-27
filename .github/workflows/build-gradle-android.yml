@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
 # SPDX-License-Identifier: CC0-1.0
-# Gradle Android Variants Builder
+# Gradle Android Builder
 # 
 # Purpose: Builds Android applications with multiple product flavors and build types,
 # creating separate artifacts for debug/release APKs and AABs with custom naming.
@@ -34,7 +34,7 @@
 # Required Permissions:
 #   contents: read  # Checkout code
 #
-name: Build Gradle Android Variants
+name: Build Gradle Android
 on:
   workflow_call:
     inputs:
@@ -100,7 +100,7 @@ permissions:
   contents: read
 jobs:
   build-variants:
-    name: Build Android Variants
+    name: Build Gradle Android
     runs-on: ubuntu-latest
     permissions:
       contents: read

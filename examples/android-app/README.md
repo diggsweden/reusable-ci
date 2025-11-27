@@ -64,7 +64,7 @@ Choose your preferred JDK:
 ```yaml
 jobs:
   build:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android-variants.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
     with:
       java-version: "21"
       build-module: "app"
@@ -76,7 +76,7 @@ jobs:
 ```yaml
 jobs:
   build:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android-variants.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
     secrets: inherit  # Required for signing secrets
     with:
       java-version: "21"
@@ -96,7 +96,7 @@ jobs:
 ```yaml
 jobs:
   build:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android-variants.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
     with:
       java-version: "21"
       build-module: "app"
@@ -110,7 +110,7 @@ jobs:
 ```yaml
 jobs:
   build:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android-variants.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
     with:
       java-version: "21"
       build-module: "app"
@@ -125,13 +125,13 @@ Build multiple flavors in parallel:
 ```yaml
 jobs:
   build-demo:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android-variants.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
     with:
       product-flavor: "demo"
       artifact-name-prefix: "demo_store"
 
   build-prod:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android-variants.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
     with:
       product-flavor: "prod"
       artifact-name-prefix: "production_store"
