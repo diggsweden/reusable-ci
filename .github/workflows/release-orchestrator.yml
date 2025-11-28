@@ -171,6 +171,9 @@ jobs:
       has-mavencentral: ${{ steps.parse.outputs.has-mavencentral }}
       has-githubpackages: ${{ steps.parse.outputs.has-githubpackages }}
       is-draft-release: ${{ steps.parse.outputs.is-draft-release }}
+      # SBOM generation settings
+      needs-sbom: ${{ steps.parse.outputs.needs-sbom }}
+      sbom-artifacts: ${{ steps.parse.outputs.sbom-artifacts }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
@@ -441,7 +444,7 @@ jobs:
       release-name: "${{ github.ref_name }}"
       checkout-ref: ${{ inputs.branch }}
       attach-artifacts: ${{ inputs['release.attachartifacts'] }}
-      generate-sbom: ${{ inputs['release.generatesbom'] }}
+      generate-sbom: ${{ inputs['release.generatesbom'] && needs.parse-config.outputs.needs-sbom == 'true' }}
       sign-artifacts: ${{ inputs['release.signartifacts'] }}
       draft: ${{ inputs['release.draft'] || needs.parse-config.outputs.is-draft-release == 'true' }}
       project-type: ${{ needs.parse-config.outputs.first-project-type }}

@@ -38,7 +38,7 @@ containers:
 
 - **Type:** `string`
 - **Description:** Build system type
-- **Valid values:** `maven`, `npm`, `gradle`, `gradle-android`, `xcode-ios`
+- **Valid values:** `maven`, `npm`, `gradle`, `gradle-android`, `xcode-ios`, `python`, `go`, `rust`
 - **Example:** `project-type: maven`
 
 #### `working-directory`
@@ -88,6 +88,18 @@ containers:
   ```
 
 - **Behavior:** Workflows only run if target is listed
+
+#### `generate-sbom`
+
+- **Type:** `boolean`
+- **Description:** Generate SBOM (Software Bill of Materials) for this artifact during release
+- **Default:** Automatic based on project type:
+  - `true` for: `maven`, `npm`, `gradle`, `python`, `go`, `rust`
+  - `false` for: `xcode-ios`, `gradle-android`
+- **Example:** `generate-sbom: false`
+- **Use case:** Override default behavior for specific artifacts
+- **Formats generated:** SPDX and CycloneDX (JSON)
+- **Note:** SBOM generation uses [Syft](https://github.com/anchore/syft) which has varying support for different ecosystems
 
 ---
 
