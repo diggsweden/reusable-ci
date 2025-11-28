@@ -8,7 +8,7 @@ readonly REPOSITORY="${1:?Usage: $0 <repository>}"
 printf "Validating bot token permissions...\n"
 
 if ! gh api user --silent 2>/dev/null; then
-  printf "::error::OSPO_BOT_GHTOKEN is invalid or expired\n"
+  printf "::error::RELEASE_BOT_TOKEN is invalid or expired\n"
   exit 1
 fi
 

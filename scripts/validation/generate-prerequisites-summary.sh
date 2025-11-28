@@ -141,26 +141,24 @@ generate_secrets_status() {
     secret_row "OSPO_BOT_GPG_PASS" "GPG passphrase" "OSPO_BOT_GPG_PASS"
   fi
 
-  if [[ -n "${OSPO_BOT_GHTOKEN:-}" ]]; then
-    summary "| OSPO_BOT_GHTOKEN | Push commits | ✓ Available |"
+  if [[ -n "${RELEASE_BOT_TOKEN:-}" ]]; then
+    summary "| RELEASE_BOT_TOKEN | Push commits & releases | ✓ Available |"
 
     local bot_status="❓ Not verified"
-    if GH_TOKEN="$OSPO_BOT_GHTOKEN" gh api repos/"${GITHUB_REPOSITORY:-}" --silent 2>/dev/null; then
+    if GH_TOKEN="$RELEASE_BOT_TOKEN" gh api repos/"${GITHUB_REPOSITORY:-}" --silent 2>/dev/null; then
       bot_status="✓ Valid token"
     else
       bot_status="✗ Invalid/No access"
     fi
     summary "| Bot Token Status | Repository access | $bot_status |"
   else
-    summary "| OSPO_BOT_GHTOKEN | Push commits | ✗ Missing |"
+    summary "| RELEASE_BOT_TOKEN | Push commits & releases | ✗ Missing |"
     summary "| Bot Token Status | Repository access | ❓ No token |"
   fi
 
   if [[ "$SIGN_ARTIFACTS" = "true" ]]; then
     secret_row "OSPO_BOT_GPG_PUB" "GPG verification" "OSPO_BOT_GPG_PUB"
   fi
-
-  secret_row "RELEASE_TOKEN" "Create releases" "RELEASE_TOKEN"
 
   if [[ -n "${PUBLISH_TO:-}" ]]; then
     if printf "%s" "$PUBLISH_TO" | grep -q "maven-central"; then
@@ -215,10 +213,10 @@ generate_validation_results() {
     validation_row "User Authorization" "− Skip" "SNAPSHOT release"
   fi
 
-  if [[ -n "${OSPO_BOT_GHTOKEN:-}" ]]; then
-    validation_row "Push Token" "✓ Pass" "Valid GitHub token"
+  if [[ -n "${RELEASE_BOT_TOKEN:-}" ]]; then
+    validation_row "Release Bot Token" "✓ Pass" "Valid GitHub token"
   else
-    validation_row "Push Token" "✗ Fail" "Missing OSPO_BOT_GHTOKEN"
+    validation_row "Release Bot Token" "✗ Fail" "Missing RELEASE_BOT_TOKEN"
   fi
 
   if [[ -n "${PUBLISH_TO:-}" ]]; then
