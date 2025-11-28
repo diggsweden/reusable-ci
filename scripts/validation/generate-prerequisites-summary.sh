@@ -16,11 +16,6 @@
 #   CHECK_AUTHORIZATION  - Check user authorization (true/false, default: false)
 #   ACTOR                - GitHub actor triggering the release
 #   JOB_STATUS           - Current job status (success/failure)
-#
-# Optional secrets (checked for availability):
-#   OSPO_BOT_GPG_PRIV, OSPO_BOT_GPG_PASS, OSPO_BOT_GPG_PUB
-#   OSPO_BOT_GHTOKEN, RELEASE_TOKEN
-#   MAVENCENTRAL_USERNAME, MAVENCENTRAL_PASSWORD, NPM_TOKEN, PUBLISH_TO
 
 set -euo pipefail
 
@@ -35,209 +30,234 @@ CHECK_AUTHORIZATION="${CHECK_AUTHORIZATION:-false}"
 ACTOR="${ACTOR:-}"
 JOB_STATUS="${JOB_STATUS:-}"
 
-cat >>"$GITHUB_STEP_SUMMARY" <<EOF
-# 📋 Release Prerequisites Validation Report
+summary() {
+  printf "%s\n" "$1" >>"$GITHUB_STEP_SUMMARY"
+}
 
-## 🏷️ Release Tag
-- **Tag:** \`$TAG_NAME\`
-- **Type:** $REF_TYPE
-EOF
+secret_row() {
+  local name="$1"
+  local purpose="$2"
+  local var_name="$3"
+  local status
 
-if [[ "$REF_TYPE" = "tag" ]]; then
-  TAGGER_INFO=$(git for-each-ref refs/tags/"$TAG_NAME" --format='%(taggername) <%(taggeremail)>' 2>/dev/null || printf "N/A")
-  TAG_DATE=$(git for-each-ref refs/tags/"$TAG_NAME" --format='%(taggerdate:short)' 2>/dev/null || printf "N/A")
-  TAG_MESSAGE=$(git tag -l -n1 "$TAG_NAME" | sed "s/^$TAG_NAME *//" | head -1 || printf "No message")
+  if [[ -n "${!var_name:-}" ]]; then
+    status="✓ Available"
+  else
+    status="✗ Missing"
+  fi
 
-  TAG_SIGNATURE="Not signed"
+  summary "| $name | $purpose | $status |"
+}
+
+validation_row() {
+  local name="$1"
+  local result="$2"
+  local details="$3"
+  summary "| $name | $result | $details |"
+}
+
+detect_signature() {
+  local content="$1"
+  if printf "%s" "$content" | grep -q "BEGIN PGP SIGNATURE"; then
+    printf "GPG signed"
+  elif printf "%s" "$content" | grep -q "BEGIN SSH SIGNATURE"; then
+    printf "SSH signed"
+  else
+    printf "Not signed"
+  fi
+}
+
+generate_tag_info() {
+  summary "# 📋 Release Prerequisites Validation Report"
+  summary ""
+  summary "## 🏷️ Release Tag"
+  summary "- **Tag:** \`$TAG_NAME\`"
+  summary "- **Type:** $REF_TYPE"
+
+  if [[ "$REF_TYPE" != "tag" ]]; then
+    return
+  fi
+
+  local tagger_info tag_date tag_message tag_signature
+  tagger_info=$(git for-each-ref refs/tags/"$TAG_NAME" --format='%(taggername) <%(taggeremail)>' 2>/dev/null || printf "N/A")
+  tag_date=$(git for-each-ref refs/tags/"$TAG_NAME" --format='%(taggerdate:short)' 2>/dev/null || printf "N/A")
+  tag_message=$(git tag -l -n1 "$TAG_NAME" | sed "s/^$TAG_NAME *//" | head -1 || printf "No message")
+
+  tag_signature="Not signed"
   if git tag -v "$TAG_NAME" >/dev/null 2>&1; then
-    TAG_SIGNATURE="GPG signed"
+    tag_signature="GPG signed"
   elif git show "$TAG_NAME" 2>/dev/null | grep -q "BEGIN SSH SIGNATURE"; then
-    TAG_SIGNATURE="SSH signed"
+    tag_signature="SSH signed"
   fi
 
-  cat >>"$GITHUB_STEP_SUMMARY" <<EOF
-- **Tagger:** $TAGGER_INFO
-- **Tag Date:** $TAG_DATE
-- **Tag Signature:** $TAG_SIGNATURE
-- **Tag Message:** $TAG_MESSAGE
-EOF
-fi
+  summary "- **Tagger:** $tagger_info"
+  summary "- **Tag Date:** $tag_date"
+  summary "- **Tag Signature:** $tag_signature"
+  summary "- **Tag Message:** $tag_message"
+}
 
-COMMIT_AUTHOR=$(git log -1 --format='%an <%ae>' "$COMMIT_SHA")
-COMMIT_DATE=$(git log -1 --format='%cs' "$COMMIT_SHA")
-COMMIT_MESSAGE=$(git log -1 --format='%s' "$COMMIT_SHA")
+generate_commit_info() {
+  local commit_author commit_date commit_message commit_signature commit_content
 
-COMMIT_SIGNATURE="Not signed"
-COMMIT_CONTENT=$(git cat-file commit "$COMMIT_SHA")
-if printf "%s" "$COMMIT_CONTENT" | grep -q "BEGIN PGP SIGNATURE"; then
-  COMMIT_SIGNATURE="GPG signed"
-elif printf "%s" "$COMMIT_CONTENT" | grep -q "BEGIN SSH SIGNATURE"; then
-  COMMIT_SIGNATURE="SSH signed"
-fi
+  commit_author=$(git log -1 --format='%an <%ae>' "$COMMIT_SHA")
+  commit_date=$(git log -1 --format='%cs' "$COMMIT_SHA")
+  commit_message=$(git log -1 --format='%s' "$COMMIT_SHA")
+  commit_content=$(git cat-file commit "$COMMIT_SHA")
+  commit_signature=$(detect_signature "$commit_content")
 
-cat >>"$GITHUB_STEP_SUMMARY" <<EOF
+  summary ""
+  summary "## 📦 Tagged Commit"
+  summary "- **SHA:** \`$COMMIT_SHA\`"
+  summary "- **Author:** $commit_author"
+  summary "- **Date:** $commit_date"
+  summary "- **Signature:** $commit_signature"
+  summary "- **Message:** $commit_message"
+}
 
-## 📦 Tagged Commit
-- **SHA:** \`$COMMIT_SHA\`
-- **Author:** $COMMIT_AUTHOR
-- **Date:** $COMMIT_DATE
-- **Signature:** $COMMIT_SIGNATURE
-- **Message:** $COMMIT_MESSAGE
+generate_configuration() {
+  local signing_status
+  [[ "$SIGN_ARTIFACTS" = "true" ]] && signing_status="Enabled" || signing_status="Disabled"
 
-## ⚙️ Configuration
-| Setting | Value |
-|---------|-------|
-| **Project Type** | $PROJECT_TYPE |
-| **Build Type** | $BUILD_TYPE |
-| **Container Registry** | $CONTAINER_REGISTRY |
-| **Release Publisher** | GitHub CLI |
-| **GPG Signing** | $([ "$SIGN_ARTIFACTS" = "true" ] && printf "Enabled" || printf "Disabled") |
+  summary ""
+  summary "## ⚙️ Configuration"
+  summary "| Setting | Value |"
+  summary "|---------|-------|"
+  summary "| **Project Type** | $PROJECT_TYPE |"
+  summary "| **Build Type** | $BUILD_TYPE |"
+  summary "| **Container Registry** | $CONTAINER_REGISTRY |"
+  summary "| **Release Publisher** | GitHub CLI |"
+  summary "| **GPG Signing** | $signing_status |"
+}
 
-## 🔑 Required Secrets Status
+generate_secrets_status() {
+  summary ""
+  summary "## 🔑 Required Secrets Status"
+  summary ""
+  summary "| Secret | Purpose | Status |"
+  summary "|--------|---------|--------|"
 
-| Secret | Purpose | Status |
-|--------|---------|--------|
-EOF
-
-if [[ "$SIGN_ARTIFACTS" = "true" ]]; then
-  if [[ -n "${OSPO_BOT_GPG_PRIV:-}" ]]; then
-    printf "| OSPO_BOT_GPG_PRIV | Sign commits/artifacts | ✓ Available |\n" >>"$GITHUB_STEP_SUMMARY"
-    printf "| OSPO_BOT_GPG_PASS | GPG passphrase | ✓ Available |\n" >>"$GITHUB_STEP_SUMMARY"
-  else
-    printf "| OSPO_BOT_GPG_PRIV | Sign commits/artifacts | ✗ Missing |\n" >>"$GITHUB_STEP_SUMMARY"
-    printf "| OSPO_BOT_GPG_PASS | GPG passphrase | ✗ Missing |\n" >>"$GITHUB_STEP_SUMMARY"
-  fi
-fi
-
-if [[ -n "${OSPO_BOT_GHTOKEN:-}" ]]; then
-  printf "| OSPO_BOT_GHTOKEN | Push commits | ✓ Available |\n" >>"$GITHUB_STEP_SUMMARY"
-
-  BOT_STATUS="❓ Not verified"
-  if GH_TOKEN="$OSPO_BOT_GHTOKEN" gh api repos/"${GITHUB_REPOSITORY:-}" --silent 2>/dev/null; then
-    BOT_STATUS="✓ Valid token"
-  else
-    BOT_STATUS="✗ Invalid/No access"
+  if [[ "$SIGN_ARTIFACTS" = "true" ]]; then
+    secret_row "OSPO_BOT_GPG_PRIV" "Sign commits/artifacts" "OSPO_BOT_GPG_PRIV"
+    secret_row "OSPO_BOT_GPG_PASS" "GPG passphrase" "OSPO_BOT_GPG_PASS"
   fi
 
-  printf "| Bot Token Status | Repository access | %s |\n" "$BOT_STATUS" >>"$GITHUB_STEP_SUMMARY"
-else
-  printf "| OSPO_BOT_GHTOKEN | Push commits | ✗ Missing |\n" >>"$GITHUB_STEP_SUMMARY"
-  printf "| Bot Token Status | Repository access | ❓ No token |\n" >>"$GITHUB_STEP_SUMMARY"
-fi
+  if [[ -n "${OSPO_BOT_GHTOKEN:-}" ]]; then
+    summary "| OSPO_BOT_GHTOKEN | Push commits | ✓ Available |"
 
-if [[ "$SIGN_ARTIFACTS" = "true" ]]; then
-  if [[ -n "${OSPO_BOT_GPG_PUB:-}" ]]; then
-    printf "| OSPO_BOT_GPG_PUB | GPG verification | ✓ Available |\n" >>"$GITHUB_STEP_SUMMARY"
-  else
-    printf "| OSPO_BOT_GPG_PUB | GPG verification | ✗ Required |\n" >>"$GITHUB_STEP_SUMMARY"
-  fi
-fi
-
-if [[ -n "${RELEASE_TOKEN:-}" ]]; then
-  printf "| RELEASE_TOKEN | Create releases | ✓ Available |\n" >>"$GITHUB_STEP_SUMMARY"
-else
-  printf "| RELEASE_TOKEN | Create releases | ✗ Required |\n" >>"$GITHUB_STEP_SUMMARY"
-fi
-
-if [[ -n "${PUBLISH_TO:-}" ]]; then
-  if printf "%s" "$PUBLISH_TO" | grep -q "maven-central"; then
-    if [[ -n "${MAVENCENTRAL_USERNAME:-}" ]]; then
-      printf "| MAVENCENTRAL_USERNAME | Maven Central auth | ✓ Available |\n" >>"$GITHUB_STEP_SUMMARY"
+    local bot_status="❓ Not verified"
+    if GH_TOKEN="$OSPO_BOT_GHTOKEN" gh api repos/"${GITHUB_REPOSITORY:-}" --silent 2>/dev/null; then
+      bot_status="✓ Valid token"
     else
-      printf "| MAVENCENTRAL_USERNAME | Maven Central auth | ✗ Missing |\n" >>"$GITHUB_STEP_SUMMARY"
+      bot_status="✗ Invalid/No access"
+    fi
+    summary "| Bot Token Status | Repository access | $bot_status |"
+  else
+    summary "| OSPO_BOT_GHTOKEN | Push commits | ✗ Missing |"
+    summary "| Bot Token Status | Repository access | ❓ No token |"
+  fi
+
+  if [[ "$SIGN_ARTIFACTS" = "true" ]]; then
+    secret_row "OSPO_BOT_GPG_PUB" "GPG verification" "OSPO_BOT_GPG_PUB"
+  fi
+
+  secret_row "RELEASE_TOKEN" "Create releases" "RELEASE_TOKEN"
+
+  if [[ -n "${PUBLISH_TO:-}" ]]; then
+    if printf "%s" "$PUBLISH_TO" | grep -q "maven-central"; then
+      secret_row "MAVENCENTRAL_USERNAME" "Maven Central auth" "MAVENCENTRAL_USERNAME"
+      secret_row "MAVENCENTRAL_PASSWORD" "Maven Central auth" "MAVENCENTRAL_PASSWORD"
     fi
 
-    if [[ -n "${MAVENCENTRAL_PASSWORD:-}" ]]; then
-      printf "| MAVENCENTRAL_PASSWORD | Maven Central auth | ✓ Available |\n" >>"$GITHUB_STEP_SUMMARY"
-    else
-      printf "| MAVENCENTRAL_PASSWORD | Maven Central auth | ✗ Missing |\n" >>"$GITHUB_STEP_SUMMARY"
+    if printf "%s" "$PUBLISH_TO" | grep -q "npmjs"; then
+      secret_row "NPM_TOKEN" "NPM registry auth" "NPM_TOKEN"
     fi
   fi
+}
 
-  if printf "%s" "$PUBLISH_TO" | grep -q "npmjs"; then
-    if [[ -n "${NPM_TOKEN:-}" ]]; then
-      printf "| NPM_TOKEN | NPM registry auth | ✓ Available |\n" >>"$GITHUB_STEP_SUMMARY"
+generate_job_status() {
+  summary ""
+  if [[ "$JOB_STATUS" = "success" ]]; then
+    summary "### ✅ All required prerequisites are configured!"
+    summary "Ready to proceed with release 🚀"
+  else
+    summary "### ❌ Prerequisites validation failed"
+    summary "Please configure the missing secrets before attempting release"
+  fi
+}
+
+generate_validation_results() {
+  summary ""
+  summary "## ✅ Validation Results"
+  summary ""
+  summary "| Validation | Result | Details |"
+  summary "|------------|--------|---------|"
+
+  if [[ "$REF_TYPE" = "tag" ]]; then
+    if [[ "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+      validation_row "Semantic Version" "✓ Pass" "\`$TAG_NAME\` follows vX.Y.Z"
     else
-      printf "| NPM_TOKEN | NPM registry auth | ✗ Missing |\n" >>"$GITHUB_STEP_SUMMARY"
+      validation_row "Semantic Version" "✗ Fail" "Invalid format"
     fi
-  fi
-fi
 
-if [[ "$JOB_STATUS" = "success" ]]; then
-  {
-    printf "\n"
-    printf "### ✅ All required prerequisites are configured!\n"
-    printf "Ready to proceed with release 🚀\n"
-  } >>"$GITHUB_STEP_SUMMARY"
-else
-  {
-    printf "\n"
-    printf "### ❌ Prerequisites validation failed\n"
-    printf "Please configure the missing secrets before attempting release\n"
-  } >>"$GITHUB_STEP_SUMMARY"
-fi
+    validation_row "Tag Type" "✓ Pass" "Annotated (not lightweight)"
+    validation_row "Tag Signature" "✓ Pass" "GPG/SSH signed"
 
-cat >>"$GITHUB_STEP_SUMMARY" <<'EOF'
-
-## ✅ Validation Results
-
-| Validation | Result | Details |
-|------------|--------|---------|
-EOF
-
-if [[ "$REF_TYPE" = "tag" ]]; then
-  if [[ "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-    printf "| Semantic Version | ✓ Pass | \`%s\` follows vX.Y.Z |\n" "$TAG_NAME" >>"$GITHUB_STEP_SUMMARY"
-  else
-    printf "| Semantic Version | ✗ Fail | Invalid format |\n" >>"$GITHUB_STEP_SUMMARY"
-  fi
-
-  printf "| Tag Type | ✓ Pass | Annotated (not lightweight) |\n" >>"$GITHUB_STEP_SUMMARY"
-  printf "| Tag Signature | ✓ Pass | GPG/SSH signed |\n" >>"$GITHUB_STEP_SUMMARY"
-
-  if [[ "$TAG_NAME" =~ -(alpha|beta|rc|snapshot|SNAPSHOT|dev) ]]; then
-    printf "| Release Type | 🚧 Pre-release | \`%s\` version |\n" "${BASH_REMATCH[1]}" >>"$GITHUB_STEP_SUMMARY"
-  else
-    printf "| Release Type | 🎯 Stable | Production release |\n" >>"$GITHUB_STEP_SUMMARY"
-  fi
-fi
-
-if [[ "$CHECK_AUTHORIZATION" = "true" ]]; then
-  printf "| User Authorization | ✓ Pass | %s authorized |\n" "$ACTOR" >>"$GITHUB_STEP_SUMMARY"
-elif [[ "$TAG_NAME" =~ -SNAPSHOT$ ]]; then
-  printf "| User Authorization | − Skip | SNAPSHOT release |\n" >>"$GITHUB_STEP_SUMMARY"
-fi
-
-if [[ -n "${OSPO_BOT_GHTOKEN:-}" ]]; then
-  printf "| Push Token | ✓ Pass | Valid GitHub token |\n" >>"$GITHUB_STEP_SUMMARY"
-else
-  printf "| Push Token | ✗ Fail | Missing OSPO_BOT_GHTOKEN |\n" >>"$GITHUB_STEP_SUMMARY"
-fi
-
-if [[ -n "${PUBLISH_TO:-}" ]]; then
-  if printf "%s" "$PUBLISH_TO" | grep -q "maven-central"; then
-    if [[ -n "${MAVENCENTRAL_USERNAME:-}" ]]; then
-      printf "| Maven Central | ✓ Pass | Credentials configured |\n" >>"$GITHUB_STEP_SUMMARY"
+    if [[ "$TAG_NAME" =~ -(alpha|beta|rc|snapshot|SNAPSHOT|dev) ]]; then
+      validation_row "Release Type" "🚧 Pre-release" "\`${BASH_REMATCH[1]}\` version"
     else
-      printf "| Maven Central | ✗ Fail | Missing credentials |\n" >>"$GITHUB_STEP_SUMMARY"
+      validation_row "Release Type" "🎯 Stable" "Production release"
     fi
   fi
 
-  if printf "%s" "$PUBLISH_TO" | grep -q "npmjs"; then
-    if [[ -n "${NPM_TOKEN:-}" ]]; then
-      printf "| NPM Registry | ✓ Pass | Token configured |\n" >>"$GITHUB_STEP_SUMMARY"
-    else
-      printf "| NPM Registry | ✗ Fail | Missing NPM_TOKEN |\n" >>"$GITHUB_STEP_SUMMARY"
+  if [[ "$CHECK_AUTHORIZATION" = "true" ]]; then
+    validation_row "User Authorization" "✓ Pass" "$ACTOR authorized"
+  elif [[ "$TAG_NAME" =~ -SNAPSHOT$ ]]; then
+    validation_row "User Authorization" "− Skip" "SNAPSHOT release"
+  fi
+
+  if [[ -n "${OSPO_BOT_GHTOKEN:-}" ]]; then
+    validation_row "Push Token" "✓ Pass" "Valid GitHub token"
+  else
+    validation_row "Push Token" "✗ Fail" "Missing OSPO_BOT_GHTOKEN"
+  fi
+
+  if [[ -n "${PUBLISH_TO:-}" ]]; then
+    if printf "%s" "$PUBLISH_TO" | grep -q "maven-central"; then
+      if [[ -n "${MAVENCENTRAL_USERNAME:-}" ]]; then
+        validation_row "Maven Central" "✓ Pass" "Credentials configured"
+      else
+        validation_row "Maven Central" "✗ Fail" "Missing credentials"
+      fi
+    fi
+
+    if printf "%s" "$PUBLISH_TO" | grep -q "npmjs"; then
+      if [[ -n "${NPM_TOKEN:-}" ]]; then
+        validation_row "NPM Registry" "✓ Pass" "Token configured"
+      else
+        validation_row "NPM Registry" "✗ Fail" "Missing NPM_TOKEN"
+      fi
+    fi
+
+    if printf "%s" "$PUBLISH_TO" | grep -q "github-packages"; then
+      validation_row "GitHub Packages" "✓ Pass" "Using GITHUB_TOKEN"
     fi
   fi
+}
 
-  if printf "%s" "$PUBLISH_TO" | grep -q "github-packages"; then
-    printf "| GitHub Packages | ✓ Pass | Using GITHUB_TOKEN |\n" >>"$GITHUB_STEP_SUMMARY"
-  fi
-fi
+generate_footer() {
+  summary ""
+  summary "---"
+  summary "*Generated at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')*"
+}
 
-{
-  printf "\n"
-  printf "---\n"
-  printf "*Generated at: %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-} >>"$GITHUB_STEP_SUMMARY"
+main() {
+  generate_tag_info
+  generate_commit_info
+  generate_configuration
+  generate_secrets_status
+  generate_job_status
+  generate_validation_results
+  generate_footer
+}
+
+main
