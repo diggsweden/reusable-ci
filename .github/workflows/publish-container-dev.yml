@@ -139,6 +139,30 @@ jobs:
           bash .github-shared/scripts/container/build-project.sh \
             "${{ inputs['project-type'] }}" \
             "${{ inputs['working-directory'] }}"
+      - name: Upload Maven artifacts
+        if: ${{ inputs['project-type'] == 'maven' }}
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: maven-dev-artifacts-${{ github.run_id }}
+          path: |
+            ${{ inputs['working-directory'] }}/target/*.jar
+            ${{ inputs['working-directory'] }}/target/*.war
+            ${{ inputs['working-directory'] }}/**/target/*.jar
+            ${{ inputs['working-directory'] }}/**/target/*.war
+            !${{ inputs['working-directory'] }}/target/original-*.jar
+            !${{ inputs['working-directory'] }}/**/target/original-*.jar
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Upload Gradle artifacts
+        if: ${{ inputs['project-type'] == 'gradle' }}
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: gradle-dev-artifacts-${{ github.run_id }}
+          path: |
+            ${{ inputs['working-directory'] }}/build/libs/*.jar
+            ${{ inputs['working-directory'] }}/**/build/libs/*.jar
+          retention-days: 7
+          if-no-files-found: warn
       - name: Set up Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
       - name: Check registry authentication configuration

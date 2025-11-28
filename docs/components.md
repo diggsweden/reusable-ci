@@ -234,3 +234,14 @@ uses: ./.github/workflows/security-openssf-scorecard.yml
 | `pullrequest-orchestrator.yml` | Run CI checks on PRs | Every repository |
 | `release-orchestrator.yml` | Full release process | Production releases |
 | `release-dev-orchestrator.yml` | Dev container builds | Development branches |
+
+### Dev vs Production Release
+
+| Aspect | Dev | Production |
+|--------|-----|------------|
+| Build time | ~3-5 min | ~12-15 min |
+| Container image | ✓ | ✓ + SLSA + SBOM |
+| Build artifacts | ✓ (JARs/tarballs) | ✓ |
+| NPM publish | ✓ (dev tag) | ✓ |
+| Maven publish | — | ✓ (libraries only) |
+| GitHub Release | — | ✓ |
