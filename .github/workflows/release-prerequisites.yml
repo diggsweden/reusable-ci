@@ -185,34 +185,25 @@ jobs:
             exit 1
           fi
           printf "✓ GPG public key configured\n"
-      - name: Validate GitHub Push Token
+      - name: Validate Release Bot Token
         run: |
-          if [[ -z "${{ secrets.OSPO_BOT_GHTOKEN }}" ]]; then
-            printf "::error::Missing OSPO_BOT_GHTOKEN secret\n"
+          if [[ -z "${{ secrets.RELEASE_BOT_TOKEN }}" ]]; then
+            printf "::error::Missing RELEASE_BOT_TOKEN secret\n"
             printf "This token is required for:\n"
             printf "  - Pushing version bump commits\n"
             printf "  - Moving tags after version bump\n"
-            printf "  - Pushing changelog updates\n"
+            printf "  - Creating GitHub releases\n"
             printf "\n"
-            printf "Create a PAT with 'repo' scope and add as OSPO_BOT_GHTOKEN secret\n"
+            printf "Create a PAT with 'contents:write' permission and add as RELEASE_BOT_TOKEN secret\n"
             exit 1
           fi
           bash .github-shared/scripts/validation/validate-github-token.sh \
-            "${{ secrets.OSPO_BOT_GHTOKEN }}" \
-            "${{ github.repository }}"
-      - name: Validate Release Token
-        run: |
-          bash .github-shared/scripts/validation/validate-release-token.sh \
-            "${{ secrets.RELEASE_TOKEN }}" \
+            "${{ secrets.RELEASE_BOT_TOKEN }}" \
             "${{ github.repository }}"
       - name: Validate Bot Token Permissions
         env:
-          GH_TOKEN: ${{ secrets.OSPO_BOT_GHTOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
         run: |
-          if [[ -z "${{ secrets.OSPO_BOT_GHTOKEN }}" ]]; then
-            printf "::error::Cannot validate bot permissions without OSPO_BOT_GHTOKEN\n"
-            exit 1
-          fi
           bash .github-shared/scripts/validation/validate-bot-permissions.sh "${{ github.repository }}"
       - name: Validate Maven Central Credentials
         if: ${{ inputs['build-type'] == 'library' }}
@@ -251,9 +242,8 @@ jobs:
           ACTOR: ${{ github.actor }}
           JOB_STATUS: ${{ job.status }}
           OSPO_BOT_GPG_PRIV: ${{ secrets.OSPO_BOT_GPG_PRIV }}
-          OSPO_BOT_GHTOKEN: ${{ secrets.OSPO_BOT_GHTOKEN }}
+          RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
           OSPO_BOT_GPG_PUB: ${{ secrets.OSPO_BOT_GPG_PUB }}
-          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           MAVENCENTRAL_USERNAME: ${{ secrets.MAVENCENTRAL_USERNAME }}
           MAVENCENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -133,7 +133,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ inputs.branch }}
-          token: ${{ secrets.OSPO_BOT_GHTOKEN }}
+          token: ${{ secrets.RELEASE_BOT_TOKEN }}
       - name: Checkout .github repository for scripts
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:

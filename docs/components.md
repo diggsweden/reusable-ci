@@ -34,8 +34,8 @@ See [Workflow Guide](workflows.md) for orchestrator documentation and [Artifacts
 
 | Component | Purpose | Creates/Updates | Required Secrets | Use When |
 |-----------|---------|----------------|------------------|----------|
-| **release-github** | GitHub release creation | GitHub release, changelog, signatures | RELEASE_TOKEN, GPG keys | Any production release |
-| **version-bump** | Version management | Updated version files | GITHUB_TOKEN, OSPO_BOT_GHTOKEN | Before releases |
+| **release-github** | GitHub release creation | GitHub release, changelog, signatures | RELEASE_BOT_TOKEN, GPG keys | Any production release |
+| **version-bump** | Version management | Updated version files | GITHUB_TOKEN, RELEASE_BOT_TOKEN | Before releases |
 | **generate-changelog** | Changelog generation | Formatted changelog | GITHUB_TOKEN | Before releases |
 
 #### Validators

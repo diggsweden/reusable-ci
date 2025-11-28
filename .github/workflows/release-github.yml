@@ -235,7 +235,7 @@ jobs:
           fi
       - name: Create GitHub Release
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
         run: |
           bash .github-shared/scripts/release/create-github-release.sh \
             "${{ github.ref_name }}" \
