@@ -413,7 +413,7 @@ bash bump-version.sh <project-type> <version> [working-dir] [gradle-version-file
 
 | Parameter | Default | Example |
 |-----------|---------|---------|
-| `PROJECT_TYPE` | - | `maven`, `npm`, `gradle` |
+| `PROJECT_TYPE` | - | `maven`, `npm`, `gradle`, `xcode-ios` |
 | `VERSION` | - | `1.0.0` |
 | `WORKING_DIR` | `.` | `/path/to/project` |
 | `GRADLE_VERSION_FILE` | `gradle.properties` | `version.properties` |
@@ -425,6 +425,13 @@ bash bump-version.sh <project-type> <version> [working-dir] [gradle-version-file
 | Maven | `mvn versions:set` | `pom.xml` |
 | NPM | `npm version` | `package.json` |
 | Gradle | Updates properties | `gradle.properties` |
+| Xcode iOS | Updates xcconfig | `versions.xcconfig` |
+
+**Xcode iOS specifics:**
+
+- Updates `MARKETING_VERSION` in xcconfig file
+- Creates `versions.xcconfig` if missing
+- Configurable via `XCODE_VERSION_FILE` env var
 
 **Gradle specifics:**
 
@@ -443,6 +450,12 @@ bash bump-version.sh npm 2.3.4 ./packages/app
 
 # Gradle with custom properties file
 bash bump-version.sh gradle 3.0.0 . version.properties
+
+# Xcode iOS project
+bash bump-version.sh xcode-ios 1.2.0 .
+
+# Xcode iOS with custom config file
+XCODE_VERSION_FILE=Config/Version.xcconfig bash bump-version.sh xcode-ios 1.2.0 .
 ```
 
 ---
