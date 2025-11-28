@@ -329,7 +329,7 @@ jobs:
       artifact-name: ${{ matrix.artifact.name }}
       include-tag: false
       working-directory: ${{ matrix.artifact['working-directory'] }}
-      macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-14' }}
+      macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
   # Sync point: Wait for all builds to complete before publishing/containers
   await-builds:
     name: Await Builds
@@ -393,7 +393,7 @@ jobs:
     with:
       ipa-artifact-name: ${{ matrix.artifact.name }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
-      macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-14' }}
+      macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
       submit-for-review: ${{ matrix.artifact.config['submit-for-review'] || false }}
       skip-validation: ${{ matrix.artifact.config['skip-validation'] || false }}
   # Step 4: Build and Publish Container Images

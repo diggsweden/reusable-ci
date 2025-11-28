@@ -168,6 +168,7 @@ jobs:
   build-and-push:
     name: Build and Push Container
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -239,6 +240,7 @@ jobs:
           printf "Using containerfile: %s\n" "$CONTAINERFILE"
           printf "containerfile=%s\n" "$CONTAINERFILE" >> "$GITHUB_OUTPUT"
       - name: Set up QEMU
+        if: contains(inputs.platforms, ',') || contains(inputs.platforms, 'arm')
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
       - name: Set up Buildx
         id: buildx

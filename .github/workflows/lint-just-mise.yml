@@ -45,6 +45,7 @@ jobs:
   just-mise-lint:
     name: Quality Checks
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       security-events: write
@@ -81,6 +82,13 @@ jobs:
           chmod +x /usr/local/bin/mise
           rm -rf mise.tar.gz mise
           mise --version
+      - name: Cache mise tools
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.local/share/mise
+          key: mise-${{ env.MISE_VERSION }}-${{ runner.os }}-${{ hashFiles('.mise.toml') }}
+          restore-keys: |
+            mise-${{ env.MISE_VERSION }}-${{ runner.os }}-
       - name: Install development tools
         env:
           MISE_GITHUB_TOKEN: ${{ github.token }}

@@ -31,6 +31,7 @@ jobs:
   dependency-review:
     name: Dependency Review Analysis
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: github.event_name == 'pull_request'
     steps:
       - name: Checkout repository
