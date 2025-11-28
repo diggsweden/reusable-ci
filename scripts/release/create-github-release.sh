@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 # SPDX-License-Identifier: CC0-1.0
+
+# Create GitHub Release with artifacts
+# Usage: create-github-release.sh <tag-name> <repository> <draft> <make-latest> <attach-artifacts> [release-notes-file]
+
 set -euo pipefail
 
 readonly TAG_NAME="${1:?Usage: $0 <tag-name> <repository> <draft> <make-latest> <attach-artifacts> [release-notes-file]}"
@@ -10,7 +14,12 @@ readonly MAKE_LATEST="${4:-true}"
 readonly ATTACH_ARTIFACTS="${5:-}"
 readonly RELEASE_NOTES_FILE="${6:-release-notes.md}"
 
-PROJECT_NAME=$(basename "$REPOSITORY")
+readonly PROJECT_NAME=$(basename "$REPOSITORY")
+readonly VERSION="${TAG_NAME#v}"
+readonly PRERELEASE_REGEX='-(alpha|beta|rc|dev|snapshot)'
+
+declare -A ADDED_FILES
+ARGS=()
 
 cleanup_existing_release() {
   local tag="$1"
@@ -32,81 +41,90 @@ cleanup_existing_release() {
   fi
 }
 
-cleanup_existing_release "$TAG_NAME"
+add_file() {
+  local file="$1"
+  local basename
 
-ARGS=()
-ARGS+=("$TAG_NAME")
-ARGS+=("--title" "$TAG_NAME")
+  [[ -f "$file" ]] || return 0
 
-if [[ "$DRAFT" == "true" ]]; then
-  ARGS+=("--draft")
-fi
+  basename=$(basename "$file")
+  if [[ -z "${ADDED_FILES[$basename]:-}" ]]; then
+    ARGS+=("$file")
+    ADDED_FILES["$basename"]=1
+  fi
+}
 
-if [[ "$TAG_NAME" =~ -(alpha|beta|rc|dev|snapshot) ]]; then
-  ARGS+=("--prerelease")
-fi
+add_file_with_signature() {
+  local file="$1"
+  add_file "$file"
+  add_file "${file}.asc"
+}
 
-if [[ "$MAKE_LATEST" != "true" ]]; then
-  ARGS+=("--latest=false")
-fi
+build_release_args() {
+  ARGS+=("$TAG_NAME" "--title" "$TAG_NAME")
 
-if [[ -f "$RELEASE_NOTES_FILE" ]] && [[ -s "$RELEASE_NOTES_FILE" ]]; then
-  ARGS+=("--notes-file" "$RELEASE_NOTES_FILE")
-fi
+  [[ "$DRAFT" == "true" ]] && ARGS+=("--draft")
+  [[ "$TAG_NAME" =~ $PRERELEASE_REGEX ]] && ARGS+=("--prerelease")
+  [[ "$MAKE_LATEST" != "true" ]] && ARGS+=("--latest=false")
 
-if [[ -n "$ATTACH_ARTIFACTS" ]]; then
+  if [[ -f "$RELEASE_NOTES_FILE" && -s "$RELEASE_NOTES_FILE" ]]; then
+    ARGS+=("--notes-file" "$RELEASE_NOTES_FILE")
+  fi
+}
+
+collect_pattern_artifacts() {
+  [[ -z "$ATTACH_ARTIFACTS" ]] && return
+
+  local pattern
   IFS=',' read -ra PATTERNS <<<"$ATTACH_ARTIFACTS"
   for pattern in "${PATTERNS[@]}"; do
     pattern=$(printf "%s" "$pattern" | xargs)
     for file in $pattern; do
-      [[ -f "$file" ]] && ARGS+=("$file")
+      add_file "$file"
     done
   done
-fi
+}
 
-declare -A ADDED_FILES
+collect_release_artifacts() {
+  [[ -d "./release-artifacts" ]] || return
 
-if [[ -d "./release-artifacts" ]]; then
+  local file basename
   while IFS= read -r -d '' file; do
-    BASENAME=$(basename "$file")
-    ARGS+=("$file")
-    ADDED_FILES[$BASENAME]=1
-    if [[ -f "${BASENAME}.asc" ]]; then
-      ARGS+=("${BASENAME}.asc")
-      ADDED_FILES["${BASENAME}.asc"]=1
-    fi
-  done < <(find ./release-artifacts -type f \( -name "*.jar" -o -name "*.tgz" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*.war" \) ! -name "original-*.jar" -print0)
-fi
+    basename=$(basename "$file")
+    add_file "$file"
+    add_file "${basename}.asc"
+  done < <(find ./release-artifacts -type f \
+    \( -name "*.jar" -o -name "*.tgz" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*.war" \) \
+    ! -name "original-*.jar" -print0)
+}
 
-VERSION="${TAG_NAME#v}"
-SBOM_ZIP="${PROJECT_NAME}-${VERSION}-sboms.zip"
-if [[ -f "$SBOM_ZIP" ]]; then
-  ARGS+=("$SBOM_ZIP")
-  ADDED_FILES["$SBOM_ZIP"]=1
-  if [[ -f "${SBOM_ZIP}.asc" ]]; then
-    ARGS+=("${SBOM_ZIP}.asc")
-    ADDED_FILES["${SBOM_ZIP}.asc"]=1
-  fi
-fi
+collect_sbom_artifacts() {
+  local sbom_zip="${PROJECT_NAME}-${VERSION}-sboms.zip"
+  add_file_with_signature "$sbom_zip"
+}
 
-if [[ -f "checksums.sha256" ]]; then
-  ARGS+=("checksums.sha256")
-  ADDED_FILES["checksums.sha256"]=1
-  if [[ -f "checksums.sha256.asc" ]]; then
-    ARGS+=("checksums.sha256.asc")
-    ADDED_FILES["checksums.sha256.asc"]=1
-  fi
-fi
+collect_checksum_artifacts() {
+  add_file_with_signature "checksums.sha256"
+}
 
-for sig in *.asc; do
-  if [[ -f "$sig" ]]; then
-    BASENAME=$(basename "$sig")
-    if [[ -z "${ADDED_FILES[$BASENAME]:-}" ]]; then
-      ARGS+=("$sig")
-      ADDED_FILES[$BASENAME]=1
-    fi
-  fi
-done
+collect_remaining_signatures() {
+  for sig in *.asc; do
+    add_file "$sig"
+  done
+}
 
-printf "Creating release with gh release create\n"
-gh release create "${ARGS[@]}"
+main() {
+  cleanup_existing_release "$TAG_NAME"
+
+  build_release_args
+  collect_pattern_artifacts
+  collect_release_artifacts
+  collect_sbom_artifacts
+  collect_checksum_artifacts
+  collect_remaining_signatures
+
+  printf "Creating release with gh release create\n"
+  gh release create "${ARGS[@]}"
+}
+
+main

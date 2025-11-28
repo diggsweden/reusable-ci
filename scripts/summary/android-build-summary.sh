@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 # SPDX-License-Identifier: CC0-1.0
+
+# Generate Android build summary for GitHub Actions step summary
+# Usage: android-build-summary.sh <java-version> <jdk-dist> <module> <flavor> <build-types> \
+#        <include-aab> <signing> <tests> <version> <version-code> <debug-name> <release-name> <aab-name>
+
 set -euo pipefail
 
 readonly JAVA_VERSION="${1:?Usage: $0 <java-version> <jdk-dist> <module> <flavor> <build-types> <include-aab> <signing> <tests> <version> <version-code> <debug-name> <release-name> <aab-name>}"
@@ -17,9 +22,17 @@ readonly DEBUG_NAME="${11:-}"
 readonly RELEASE_NAME="${12:-}"
 readonly AAB_NAME="${13:-}"
 
-{
-  printf "## Android Variants Build Summary 📱\n"
-  printf "\n"
+bool_icon() {
+  [[ "$1" == "true" ]] && printf "✓" || printf "✗"
+}
+
+bool_status() {
+  [[ "$1" == "true" ]] && printf "✓ Enabled" || printf "⊘ Disabled"
+}
+
+generate_summary() {
+  printf "## Android Variants Build Summary 📱\n\n"
+
   printf "### Configuration\n"
   printf "| Setting | Value |\n"
   printf "|---------|-------|\n"
@@ -27,26 +40,29 @@ readonly AAB_NAME="${13:-}"
   printf "| **Module** | %s |\n" "$BUILD_MODULE"
   printf "| **Flavor** | %s |\n" "${FLAVOR:-default}"
   printf "| **Build Types** | %s |\n" "$BUILD_TYPES"
-  printf "| **Include AAB** | %s |\n" "$([[ "$INCLUDE_AAB" == "true" ]] && echo "✓" || echo "✗")"
-  printf "| **Signing** | %s |\n" "$([[ "$SIGNING" == "true" ]] && echo "✓ Enabled" || echo "⊘ Disabled")"
-  printf "| **Tests** | %s |\n" "$([[ "$SKIP_TESTS" == "true" ]] && echo "⊘ Skipped" || echo "✓ Executed")"
+  printf "| **Include AAB** | %s |\n" "$(bool_icon "$INCLUDE_AAB")"
+  printf "| **Signing** | %s |\n" "$(bool_status "$SIGNING")"
+  printf "| **Tests** | %s |\n" "$([[ "$SKIP_TESTS" == "true" ]] && printf "⊘ Skipped" || printf "✓ Executed")"
 
-  if [[ -n "$VERSION" ]] && [[ "$VERSION" != "unknown" ]]; then
+  if [[ -n "$VERSION" && "$VERSION" != "unknown" ]]; then
     printf "| **Version** | %s (%s) |\n" "$VERSION" "$VERSION_CODE"
   fi
 
-  printf "\n"
-  printf "### Artifacts Generated\n"
+  printf "\n### Artifacts Generated\n"
+
   if [[ "$BUILD_TYPES" == *"debug"* ]]; then
     printf "- ✓ Debug APK: \`%s\`\n" "$DEBUG_NAME"
   fi
+
   if [[ "$BUILD_TYPES" == *"release"* ]]; then
     printf "- ✓ Release APK: \`%s\`\n" "$RELEASE_NAME"
   fi
-  if [[ "$INCLUDE_AAB" == "true" ]] && [[ "$BUILD_TYPES" == *"release"* ]]; then
+
+  if [[ "$INCLUDE_AAB" == "true" && "$BUILD_TYPES" == *"release"* ]]; then
     printf "- ✓ Release AAB: \`%s\`\n" "$AAB_NAME"
   fi
 
-  printf "\n"
-  printf "*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+  printf "\n*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 }
+
+generate_summary
