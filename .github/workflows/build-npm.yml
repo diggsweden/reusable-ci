@@ -47,6 +47,7 @@ jobs:
   build-npm:
     name: Build NPM Project
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:

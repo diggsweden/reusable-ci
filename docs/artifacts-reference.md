@@ -212,9 +212,9 @@ containers:
 
 - **Type:** `string`
 - **Description:** macOS runner version
-- **Default:** `macos-14`
-- **Valid values:** `macos-13`, `macos-14`, `macos-15`
-- **Example:** `macos-version: macos-14`
+- **Default:** `macos-26`
+- **Valid values:** `macos-15`, `macos-26`
+- **Example:** `macos-version: macos-26`
 
 #### `config.destination`
 
@@ -444,7 +444,7 @@ artifacts:
       configuration: Release
       enable-code-signing: true
       export-options-var: EXPORT_OPTIONS_BASE64
-      macos-version: macos-14
+      macos-version: macos-26
 ```
 
 **Required Secrets:**

@@ -74,9 +74,9 @@ on:
         default: "."
         type: string
       macos-version:
-        description: "macOS runner version (macos-13, macos-14, macos-15)"
+        description: "macOS runner version (macos-13, macos-14, macos-15, macos-26)"
         required: false
-        default: "macos-14"
+        default: "macos-26"
         type: string
 permissions:
   contents: read
@@ -84,6 +84,7 @@ jobs:
   publish:
     name: Publish to App Store Connect
     runs-on: ${{ inputs.macos-version }}
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:

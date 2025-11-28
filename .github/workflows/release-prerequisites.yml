@@ -87,6 +87,7 @@ jobs:
   validate:
     name: Validate Prerequisites
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # ============================================================================
     # This job validates all prerequisites required for a successful release:
     #   1. Tag Validation - Format, signature, uniqueness, commit availability
@@ -172,15 +173,8 @@ jobs:
       # ============================================================================
       # SECTION 3: Secrets and Credentials Validation
       # Validates GPG keys, GitHub tokens, and publishing credentials
+      # Note: GPG key was already imported above for tag validation
       # ============================================================================
-      - name: Validate GPG Configuration
-        if: ${{ inputs['sign-artifacts'] }}
-        id: gpg-test
-        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
-        with:
-          gpg_private_key: ${{ secrets.OSPO_BOT_GPG_PRIV }}
-          passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
-          git_user_signingkey: true
       - name: Validate GPG Public Key
         if: ${{ inputs['sign-artifacts'] }}
         run: |

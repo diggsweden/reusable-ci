@@ -91,6 +91,7 @@ jobs:
   build-and-publish:
     name: Build & Publish Dev NPM Package
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
