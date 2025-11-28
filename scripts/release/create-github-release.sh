@@ -12,6 +12,28 @@ readonly RELEASE_NOTES_FILE="${6:-release-notes.md}"
 
 PROJECT_NAME=$(basename "$REPOSITORY")
 
+cleanup_existing_release() {
+  local tag="$1"
+  local release_info is_draft is_prerelease
+
+  if ! release_info=$(gh release view "$tag" --json isDraft,isPrerelease 2>/dev/null); then
+    return 0
+  fi
+
+  is_draft=$(printf "%s" "$release_info" | jq -r '.isDraft')
+  is_prerelease=$(printf "%s" "$release_info" | jq -r '.isPrerelease')
+
+  if [[ "$is_draft" == "true" || "$is_prerelease" == "true" ]]; then
+    printf "Removing existing draft/prerelease for tag: %s\n" "$tag"
+    gh release delete "$tag" --yes
+  else
+    printf "::error::Release %s already exists and is not a draft/prerelease. Cannot overwrite.\n" "$tag"
+    exit 1
+  fi
+}
+
+cleanup_existing_release "$TAG_NAME"
+
 ARGS=()
 ARGS+=("$TAG_NAME")
 ARGS+=("--title" "$TAG_NAME")
