@@ -90,6 +90,11 @@ on:
         required: false
         default: "audit"
         type: string
+      reusable-ci-ref:
+        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        required: false
+        default: "main"
+        type: string
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
@@ -106,6 +111,7 @@ jobs:
       output-file: "CHANGELOG.md"
       upload-as-artifact: true
       artifact-name: "full-changelog"
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   # Generate minimal changelog for commit message
   generate-minimal-changelog:
     name: Generate Minimal Changelog
@@ -119,6 +125,7 @@ jobs:
       output-file: "minimal-changelog.txt"
       upload-as-artifact: true
       artifact-name: "minimal-changelog"
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   bump-version:
     name: Bump Version and Commit
     needs: [generate-full-changelog, generate-minimal-changelog]
@@ -140,7 +147,7 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: main
+          ref: ${{ inputs.reusable-ci-ref }}
           path: .github-shared
           sparse-checkout: |
             scripts/version

@@ -90,6 +90,11 @@ on:
         required: false
         default: true
         type: boolean
+      reusable-ci-ref:
+        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        required: false
+        default: "main"
+        type: string
     secrets:
       registry-password:
         description: "NPM registry auth token (required when use-github-token=false)"
@@ -122,6 +127,7 @@ jobs:
       registry: ${{ inputs.registry }}
       project-type: ${{ inputs['project-type'] }}
       working-directory: ${{ inputs['working-directory'] }}
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   publish-npm-dev:
     name: Publish Dev NPM Package
     if: ${{ inputs['project-type'] == 'npm' && inputs['publish-npm'] }}
@@ -136,6 +142,7 @@ jobs:
       package-scope: ${{ inputs['package-scope'] }}
       registry-username: ${{ inputs['npm-registry-username'] }}
       use-github-token: ${{ inputs['use-github-token'] }}
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
     secrets:
       registry-password: ${{ secrets.registry-password }}
   dev-release-summary:
@@ -150,7 +157,7 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ inputs.reusable-ci-ref }}
           path: .github-shared
           sparse-checkout: scripts
       - name: Generate Dev Release Summary

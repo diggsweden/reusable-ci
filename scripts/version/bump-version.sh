@@ -27,7 +27,7 @@ update_or_add_property() {
     sed -i "s/^${key}.*/${key}${separator}${value}/" "$file"
     log "Updated ${key} to ${value}"
   else
-    printf "%s%s%s\n" "$key" "$separator" "$value" >> "$file"
+    printf "%s%s%s\n" "$key" "$separator" "$value" >>"$file"
     log "Added ${key}${separator}${value}"
   fi
 }
@@ -42,7 +42,7 @@ increment_version_code() {
     sed -i "s/^versionCode=.*/versionCode=$new_code/" "$file"
     log "Incremented versionCode: ${current_code} → ${new_code}"
   else
-    printf "versionCode=1\n" >> "$file"
+    printf "versionCode=1\n" >>"$file"
     log "Added versionCode=1"
   fi
 }
@@ -94,7 +94,7 @@ xcode-ios)
 
   if [[ ! -f "$XCCONFIG_FILE" ]]; then
     log "Creating ${XCCONFIG_FILE}"
-    printf "MARKETING_VERSION = %s\n" "$VERSION" > "$XCCONFIG_FILE"
+    printf "MARKETING_VERSION = %s\n" "$VERSION" >"$XCCONFIG_FILE"
     log_success "Created ${XCCONFIG_FILE} with MARKETING_VERSION = ${VERSION}"
   else
     update_or_add_property "$XCCONFIG_FILE" "MARKETING_VERSION" "$VERSION" " = "

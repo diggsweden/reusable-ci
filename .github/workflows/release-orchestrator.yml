@@ -129,6 +129,11 @@ on:
         # - Gradle: CHANGELOG.md build.gradle settings.gradle
         # - Gradle Android: CHANGELOG.md build.gradle settings.gradle gradle.properties
         # - Xcode iOS: CHANGELOG.md project.pbxproj
+      reusable-ci-ref:
+        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        required: false
+        default: "main"
+        type: string
 concurrency:
   group: release-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: false # Queue releases, don't cancel partial releases
@@ -182,7 +187,7 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ inputs.reusable-ci-ref }}
           path: .github-shared
       - name: Install yq
         run: |
@@ -207,6 +212,7 @@ jobs:
       sign-artifacts: ${{ inputs['release.signartifacts'] }}
       check-authorization: ${{ needs.parse-config.outputs.first-require-authorization == 'true' || inputs['release.checkauthorization'] }}
       branch: ${{ inputs.branch }}
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   # Step 1: Version Bump (iterates over all artifacts)
   # File patterns auto-detected in version-bump.yml by scripts/config/get-file-pattern.sh based on project-type
   version-and-changelog:
@@ -230,6 +236,7 @@ jobs:
       node-version: ${{ matrix.artifact.config['node-version'] }}
       gradle-version-file: ${{ matrix.artifact.config['gradle-version-file'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   # ===== BUILD PHASE =====
   # NOTE: Build jobs use `if: !failure() && !cancelled() && ...` to run independently.
   # This ensures maven/npm/gradle builds proceed even when other build types are skipped.
@@ -333,6 +340,7 @@ jobs:
       include-tag: false
       working-directory: ${{ matrix.artifact['working-directory'] }}
       macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   # Sync point: Wait for all builds to complete before publishing/containers
   await-builds:
     name: Await Builds
@@ -428,6 +436,7 @@ jobs:
       registry: ghcr.io
       artifact-types: ${{ join(matrix.container['artifact-types'], ',') }}
       push-image: true
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   # Step 5: Create GitHub Release  
   create-release:
     name: Create GitHub Release
@@ -448,6 +457,7 @@ jobs:
       sign-artifacts: ${{ inputs['release.signartifacts'] }}
       draft: ${{ inputs['release.draft'] || needs.parse-config.outputs.is-draft-release == 'true' }}
       project-type: ${{ needs.parse-config.outputs.first-project-type }}
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
       changelog-config: ${{ inputs['changelog.config'] }}
       make-latest: ${{ (inputs['release-type'] == 'stable' || (!inputs['release-type'] && !contains(github.ref_name, '-'))) && 'true' || 'false' }}
   # Final summary

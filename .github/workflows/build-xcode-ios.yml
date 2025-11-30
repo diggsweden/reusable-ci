@@ -103,6 +103,11 @@ on:
         required: false
         default: "macos-26"
         type: string
+      reusable-ci-ref:
+        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        required: false
+        default: "main"
+        type: string
 permissions:
   contents: read
 jobs:
@@ -122,7 +127,7 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ inputs.reusable-ci-ref }}
           path: .github-shared
           sparse-checkout: scripts
 
