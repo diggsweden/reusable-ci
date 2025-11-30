@@ -64,8 +64,8 @@ on:
         required: false
         default: "ghcr.io"
         type: string
-      project-type:
-        description: "Project type: maven, npm"
+      artifact-types:
+        description: "Comma-separated artifact types (maven,npm,gradle)"
         required: true
         type: string
       working-directory:
@@ -123,51 +123,45 @@ jobs:
           ref: ${{ inputs.reusable-ci-ref }}
           path: .github-shared
           sparse-checkout: scripts
-      # Maven build
-      - name: Set up JDK
-        if: inputs['project-type'] == 'maven'
-        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+      - name: Download Maven artifacts
+        if: ${{ contains(inputs['artifact-types'], 'maven') }}
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
-          java-version: '25'
-          distribution: 'temurin'
-          cache: 'maven'
-      # NPM build
-      - name: Set up Node.js
-        if: inputs['project-type'] == 'npm'
-        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
-        with:
-          node-version: '24'
-          cache: 'npm'
-      # Build project (Maven, NPM, or Gradle)
-      - name: Build project
+          name: maven-build-artifacts
+          path: ${{ inputs['working-directory'] }}
+      - name: Verify Maven artifacts
+        if: ${{ contains(inputs['artifact-types'], 'maven') }}
         run: |
-          bash .github-shared/scripts/container/build-project.sh \
-            "${{ inputs['project-type'] }}" \
-            "${{ inputs['working-directory'] }}"
-      - name: Upload Maven artifacts
-        if: ${{ inputs['project-type'] == 'maven' }}
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+          bash .github-shared/scripts/container/verify-artifacts.sh \
+            maven \
+            "${{ inputs['working-directory'] }}/target" \
+            "${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}"
+      - name: Download NPM artifacts
+        if: ${{ contains(inputs['artifact-types'], 'npm') }}
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
-          name: maven-dev-artifacts-${{ github.run_id }}
-          path: |
-            ${{ inputs['working-directory'] }}/target/*.jar
-            ${{ inputs['working-directory'] }}/target/*.war
-            ${{ inputs['working-directory'] }}/**/target/*.jar
-            ${{ inputs['working-directory'] }}/**/target/*.war
-            !${{ inputs['working-directory'] }}/target/original-*.jar
-            !${{ inputs['working-directory'] }}/**/target/original-*.jar
-          retention-days: 7
-          if-no-files-found: warn
-      - name: Upload Gradle artifacts
-        if: ${{ inputs['project-type'] == 'gradle' }}
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+          name: npm-build-artifacts
+          path: ${{ inputs['working-directory'] }}
+      - name: Verify NPM artifacts
+        if: ${{ contains(inputs['artifact-types'], 'npm') }}
+        run: |
+          bash .github-shared/scripts/container/verify-artifacts.sh \
+            npm \
+            "${{ inputs['working-directory'] }}/dist" \
+            "${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}"
+      - name: Download Gradle artifacts
+        if: ${{ contains(inputs['artifact-types'], 'gradle') }}
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
-          name: gradle-dev-artifacts-${{ github.run_id }}
-          path: |
-            ${{ inputs['working-directory'] }}/build/libs/*.jar
-            ${{ inputs['working-directory'] }}/**/build/libs/*.jar
-          retention-days: 7
-          if-no-files-found: warn
+          name: gradle-build-artifacts
+          path: ${{ inputs['working-directory'] }}
+      - name: Verify Gradle artifacts
+        if: ${{ contains(inputs['artifact-types'], 'gradle') }}
+        run: |
+          bash .github-shared/scripts/container/verify-artifacts.sh \
+            gradle \
+            "${{ inputs['working-directory'] }}/build/libs" \
+            "${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}"
       - name: Set up Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
       - name: Check registry authentication configuration

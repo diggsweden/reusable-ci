@@ -61,16 +61,21 @@ on:
         required: false
         default: "."
         type: string
+      java-version:
+        description: "Java version (for maven/gradle)"
+        required: false
+        default: "25"
+        type: string
+      node-version:
+        description: "Node.js version (for npm)"
+        required: false
+        default: "24"
+        type: string
       publish-npm:
         description: "Publish NPM package to registry (npm projects only)"
         required: false
         default: true
         type: boolean
-      node-version:
-        description: "Node.js version for npm projects"
-        required: false
-        default: "24"
-        type: string
       npm-registry:
         description: "NPM registry URL"
         required: false
@@ -115,8 +120,43 @@ on:
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
+  build-maven-dev:
+    name: Build Maven Dev
+    if: ${{ inputs['project-type'] == 'maven' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-maven.yml
+    with:
+      build-type: app
+      java-version: ${{ inputs['java-version'] }}
+      working-directory: ${{ inputs['working-directory'] }}
+      branch: ${{ github.ref_name }}
+      profile: ""
+  build-npm-dev:
+    name: Build NPM Dev
+    if: ${{ inputs['project-type'] == 'npm' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-npm.yml
+    with:
+      node-version: ${{ inputs['node-version'] }}
+      working-directory: ${{ inputs['working-directory'] }}
+      branch: ${{ github.ref_name }}
+  build-gradle-dev:
+    name: Build Gradle Dev
+    if: ${{ inputs['project-type'] == 'gradle' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-gradle.yml
+    with:
+      java-version: ${{ inputs['java-version'] }}
+      gradle-tasks: "build"
+      working-directory: ${{ inputs['working-directory'] }}
+      branch: ${{ github.ref_name }}
   build-dev-container:
-    name: Build Dev Container
+    name: Build Container Dev
+    needs: [build-maven-dev, build-npm-dev, build-gradle-dev]
+    if: "!failure() && !cancelled() &&\n(needs.build-maven-dev.result == 'success' || \n needs.build-npm-dev.result == 'success' || \n needs.build-gradle-dev.result == 'success')\n"
     permissions:
       contents: read
       packages: write
@@ -125,12 +165,13 @@ jobs:
     with:
       container-file: ${{ inputs['container-file'] }}
       registry: ${{ inputs.registry }}
-      project-type: ${{ inputs['project-type'] }}
+      artifact-types: ${{ inputs['project-type'] }}
       working-directory: ${{ inputs['working-directory'] }}
       reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   publish-npm-dev:
     name: Publish Dev NPM Package
-    if: ${{ inputs['project-type'] == 'npm' && inputs['publish-npm'] }}
+    needs: [build-npm-dev]
+    if: ${{ !failure() && !cancelled() && inputs['project-type'] == 'npm' && inputs['publish-npm'] }}
     permissions:
       contents: read
       packages: write

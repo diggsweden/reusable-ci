@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: CC0-1.0
 # Development NPM Package Publisher
 # 
-# Purpose: Fast npm package builds for development and testing.
+# Purpose: Publishes pre-built npm packages for development and testing.
 #
 # Supported Registries:
 # - GitHub Packages (npm.pkg.github.com) - Default, uses GITHUB_TOKEN
@@ -11,9 +11,9 @@
 # - Any custom npm registry
 #
 # How it works:
-# 1. Generates dev version: ${BASE_VERSION}-dev-${BRANCH}-${SHORT_SHA}
-# 2. Applies version to package.json (no git commit)
-# 3. Runs npm ci, build (skips tests for speed)
+# 1. Downloads pre-built artifacts from build-npm.yml
+# 2. Generates dev version: ${BASE_VERSION}-dev-${BRANCH}-${SHORT_SHA}
+# 3. Applies version to package.json (no git commit)
 # 4. Creates npm pack tarball
 # 5. Publishes to registry with 'dev' tag
 # 6. Uploads tarball as workflow artifact
@@ -22,6 +22,10 @@
 # - Minimal - optimized for speed
 # - Packages tagged with 'dev' not 'latest'
 # - No SBOM, no signing, no attestation
+#
+# Dependencies:
+# - Requires build-npm.yml to have run first
+# - Downloads npm-build-artifacts
 #
 # Registry Authentication:
 #   GitHub Packages (default): Uses GITHUB_TOKEN (no secrets needed)
@@ -137,6 +141,11 @@ jobs:
           # Configure scoped registry
           SCOPE_NAME="${SCOPE#@}"
           npm config set "${SCOPE}:registry" "${{ inputs.registry }}"
+      - name: Download NPM build artifacts
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: npm-build-artifacts
+          path: ${{ inputs.working-directory }}/dist/
       - name: Checkout .github repository for scripts
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
@@ -170,12 +179,6 @@ jobs:
         run: |
           npm version "$DEV_VERSION" --no-git-tag-version --allow-same-version
           printf "Applied version: %s\n" "$(node -p "require('./package.json').version")"
-      - name: Install dependencies
-        working-directory: ${{ inputs.working-directory }}
-        run: npm ci --prefer-offline --no-audit
-      - name: Build (if present)
-        working-directory: ${{ inputs.working-directory }}
-        run: npm run build --if-present
       - name: Pack tarball
         id: pack
         working-directory: ${{ inputs.working-directory }}

@@ -54,7 +54,7 @@ env:
   MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
 jobs:
   build-maven:
-    name: Build Maven ${{ inputs['build-type'] }}
+    name: Build Maven Project
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -153,10 +153,10 @@ jobs:
         run: |
           printf "## Maven Build Summary 🔨\n" >> $GITHUB_STEP_SUMMARY
           printf "\n" >> $GITHUB_STEP_SUMMARY
-          printf "- **Type:** %s\n" "${{ inputs['build-type'] }}" >> $GITHUB_STEP_SUMMARY
-          printf "- **Artifact:** \`%s:%s:%s\`\n" "${{ steps.version-info.outputs.GROUP_ID }}" "${{ steps.version-info.outputs.ARTIFACT_ID }}" "${{ steps.version-info.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
-          printf "- **Java:** %s\n" "${{ inputs['java-version'] }}" >> $GITHUB_STEP_SUMMARY
-          printf "- **Tests:** %s\n" "${{ inputs['skip-tests'] && '⊘ Skipped' || '✓ Executed' }}" >> $GITHUB_STEP_SUMMARY
-          printf "- **Snapshot:** %s\n" "${{ steps.version-info.outputs.IS_SNAPSHOT }}" >> $GITHUB_STEP_SUMMARY
+          printf "%s **Type:** %s\n" "-" "${{ inputs['build-type'] }}" >> $GITHUB_STEP_SUMMARY
+          printf "%s **Artifact:** \`%s:%s:%s\`\n" "-" "${{ steps.version-info.outputs.GROUP_ID }}" "${{ steps.version-info.outputs.ARTIFACT_ID }}" "${{ steps.version-info.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          printf "%s **Java:** %s\n" "-" "${{ inputs['java-version'] }}" >> $GITHUB_STEP_SUMMARY
+          printf "%s **Tests:** %s\n" "-" "${{ inputs['skip-tests'] && '⊘ Skipped' || '✓ Executed' }}" >> $GITHUB_STEP_SUMMARY
+          printf "%s **Snapshot:** %s\n" "-" "${{ steps.version-info.outputs.IS_SNAPSHOT }}" >> $GITHUB_STEP_SUMMARY
           printf "\n" >> $GITHUB_STEP_SUMMARY
           printf "*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
