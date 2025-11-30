@@ -65,7 +65,7 @@ permissions:
   contents: read
 jobs:
   build-gradle:
-    name: Build Gradle ${{ inputs['build-type'] }}
+    name: Build Gradle Project
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

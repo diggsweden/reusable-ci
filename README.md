@@ -312,3 +312,9 @@ jobs:
 - Tags like `v1.0.0-dev` are explicitly excluded from releases
 
 ---
+
+## License
+
+This project is licensed under the [CC0-1.0 License](LICENSE).
+
+---
