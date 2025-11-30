@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
 # Release Prerequisites Validator
@@ -70,12 +70,12 @@ on:
       branch:
         description: "Target branch for release (default: main)"
         required: false
-        default: "v1"
+        default: "main"
         type: string
-      workflows-ref:
-        description: ".github repository ref for validation scripts (default: main)"
+      reusable-ci-ref:
+        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
         required: false
-        default: "v1"
+        default: "main"
         type: string
   workflow_dispatch: # Allow manual validation
     inputs:
@@ -92,6 +92,7 @@ jobs:
   validate:
     name: Validate Prerequisites
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # ============================================================================
     # This job validates all prerequisites required for a successful release:
     #   1. Tag Validation - Format, signature, uniqueness, commit availability
@@ -109,35 +110,34 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ inputs['workflows-ref'] }}
+          ref: ${{ inputs.reusable-ci-ref }}
           path: .github-shared
-          sparse-checkout: |
-            scripts/validation
+          sparse-checkout: scripts
       - name: Debug - List checked out files
         run: |
-          echo "=== Workspace structure ==="
+          printf "=== Workspace structure ===\n"
           ls -la
-          echo ""
-          echo "=== .github-shared structure ==="
-          ls -la .github-shared/ || echo ".github-shared not found"
-          echo ""
-          echo "=== Looking for scripts ==="
-          find .github-shared -name "validate-*.sh" 2>/dev/null || echo "No scripts found"
-          echo ""
-          echo "=== GitHub context ==="
-          echo "action_repository: ${{ github.action_repository }}"
-          echo "action_ref: ${{ github.action_ref }}"
+          printf "\n"
+          printf "=== .github-shared structure ===\n"
+          ls -la .github-shared/ || printf ".github-shared not found\n"
+          printf "\n"
+          printf "=== Looking for scripts ===\n"
+          find .github-shared -name "validate-*.sh" 2>/dev/null || printf "No scripts found\n"
+          printf "\n"
+          printf "=== GitHub context ===\n"
+          printf "action_repository: %s\n" "${{ github.action_repository }}"
+          printf "action_ref: %s\n" "${{ github.action_ref }}"
       - name: Verify Triggered by Tag
         run: |
           if [ "${{ github.ref_type }}" != "tag" ]; then
-            echo "::error::❌ Release workflow must be triggered by pushing a tag"
-            echo "::error::Current trigger: ${{ github.ref_type }} (${{ github.ref }})"
-            echo "::error::To create a release, push a signed tag:"
-            echo "::error::  git tag -s v1.0.0 -m 'Release v1.0.0'"
-            echo "::error::  git push origin v1.0.0"
+            printf "::error::❌ Release workflow must be triggered by pushing a tag\n"
+            printf "::error::Current trigger: %s (%s)\n" "${{ github.ref_type }}" "${{ github.ref }}"
+            printf "::error::To create a release, push a signed tag:\n"
+            printf "::error::  git tag -s v1.0.0 -m 'Release v1.0.0'\n"
+            printf "::error::  git push origin v1.0.0\n"
             exit 1
           fi
-          echo "✓ Triggered by tag: ${{ github.ref_name }}"
+          printf "✓ Triggered by tag: %s\n" "${{ github.ref_name }}"
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
         with:
@@ -148,7 +148,7 @@ jobs:
           git_config_global: true
       - name: Fetch all tags
         run: |
-          echo "Fetching all tags to ensure we have tag objects..."
+          printf "Fetching all tags to ensure we have tag objects...\n"
           git fetch --tags --force
       - name: Validate Tag Format
         if: ${{ github.ref_type == 'tag' }}
@@ -160,32 +160,7 @@ jobs:
         run: bash .github-shared/scripts/validation/validate-tag-signature.sh "${{ github.ref_name }}" "${{ github.repository }}" "$OSPO_BOT_GPG_PUB"
       - name: Validate Tag Uniqueness
         if: ${{ github.ref_type == 'tag' }}
-        run: |
-          echo "→ Validating Tag Points to Unique Commit"
-          TAG_NAME="${{ github.ref_name }}"
-
-          # Get the commit SHA this tag points to
-          TAG_COMMIT=$(git rev-parse "$TAG_NAME^{commit}")
-          echo "✓ Tag '$TAG_NAME' points to commit: $TAG_COMMIT"
-
-          # Find all other tags pointing to the same commit
-          OTHER_TAGS=$(git tag --points-at "$TAG_COMMIT" | grep -v "^${TAG_NAME}$" || true)
-
-          if [ -n "$OTHER_TAGS" ]; then
-            echo "::error::Tag '$TAG_NAME' points to the same commit as other tag(s)"
-            echo ""
-            echo "The following tags also point to commit $TAG_COMMIT:"
-            echo "$OTHER_TAGS" | sed 's/^/  - /'
-            echo ""
-            echo "Multiple tags on the same commit cause changelog generation issues."
-            echo "This is a known limitation in git-cliff:"
-            echo "https://github.com/orhun/git-cliff/issues/1036"
-            echo ""
-            exit 1
-          fi
-
-          echo "✓ Tag '$TAG_NAME' points to a unique commit"
-          echo "✓ No other tags found on commit $TAG_COMMIT"
+        run: bash .github-shared/scripts/validation/validate-tag-uniqueness.sh "${{ github.ref_name }}"
       - name: Validate Tag Commit Availability
         if: ${{ github.ref_type == 'tag' }}
         run: bash .github-shared/scripts/validation/validate-tag-commit.sh "${{ github.ref_name }}" "${{ inputs.branch }}"
@@ -196,139 +171,61 @@ jobs:
       - name: Check Release Authorization
         if: ${{ inputs['check-authorization'] }}
         run: |
-          # Check if this is a SNAPSHOT release
-          TAG_NAME="${{ github.ref_name }}"
-          if [[ "${TAG_NAME}" == *-SNAPSHOT ]]; then
-            echo "− SNAPSHOT release - authorization check skipped"
-            exit 0
-          fi
-
-          # For non-SNAPSHOT releases, check if actor is authorized
-          AUTHORIZED_DEVS="${{ secrets.AUTHORIZED_RELEASE_DEVELOPERS }}"
-          ACTOR="${{ github.actor }}"
-
-          if [ -z "$AUTHORIZED_DEVS" ]; then
-            echo "::warning::AUTHORIZED_RELEASE_DEVELOPERS secret not configured"
-            echo "All users with tag push access can create releases"
-            echo "✓ Authorization check passed (no restrictions configured)"
-            exit 0
-          fi
-
-          # Check if current actor is in the authorized list
-          if echo ",$AUTHORIZED_DEVS," | grep -q ",$ACTOR,"; then
-            echo "✓ User '$ACTOR' is authorized to create production releases"
-          else
-            echo "::error::User '$ACTOR' is not authorized to create non-SNAPSHOT releases"
-            echo "Only the following users can create production releases:"
-            echo "$AUTHORIZED_DEVS" | tr ',' '\n' | sed 's/^/  - /'
-            echo ""
-            echo "If you need to create a release, please:"
-            echo "1. Contact one of the authorized developers"
-            echo "2. Or create a SNAPSHOT release instead (tag with -SNAPSHOT suffix)"
-            exit 1
-          fi
+          bash .github-shared/scripts/validation/validate-authorization.sh \
+            "${{ github.ref_name }}" \
+            "${{ github.actor }}" \
+            "${{ secrets.AUTHORIZED_RELEASE_DEVELOPERS }}"
       # ============================================================================
       # SECTION 3: Secrets and Credentials Validation
       # Validates GPG keys, GitHub tokens, and publishing credentials
+      # Note: GPG key was already imported above for tag validation
       # ============================================================================
-      - name: Validate GPG Configuration
-        if: ${{ inputs['sign-artifacts'] }}
-        id: gpg-test
-        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
-        with:
-          gpg_private_key: ${{ secrets.OSPO_BOT_GPG_PRIV }}
-          passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
-          git_user_signingkey: true
       - name: Validate GPG Public Key
         if: ${{ inputs['sign-artifacts'] }}
         run: |
           if [ -z "${{ secrets.OSPO_BOT_GPG_PUB }}" ]; then
-            echo "::error::Missing OSPO_BOT_GPG_PUB secret"
-            echo "This secret is needed for GPG operations and signing"
-            echo "Add it in Settings → Secrets → Actions"
+            printf "::error::Missing OSPO_BOT_GPG_PUB secret\n"
+            printf "This secret is needed for GPG operations and signing\n"
+            printf "Add it in Settings → Secrets → Actions\n"
             exit 1
           fi
-          echo "✓ GPG public key configured"
-      - name: Validate GitHub Push Token
+          printf "✓ GPG public key configured\n"
+      - name: Validate Release Bot Token
         run: |
-          # OSPO_BOT_GHTOKEN is required for pushing version bumps
-          if [ -z "${{ secrets.OSPO_BOT_GHTOKEN }}" ]; then
-            echo "::error::Missing OSPO_BOT_GHTOKEN secret"
-            echo "This token is required for:"
-            echo "  - Pushing version bump commits"
-            echo "  - Moving tags after version bump"
-            echo "  - Pushing changelog updates"
-            echo ""
-            echo "Create a PAT with 'repo' scope and add as OSPO_BOT_GHTOKEN secret"
+          if [[ -z "${{ secrets.RELEASE_BOT_TOKEN }}" ]]; then
+            printf "::error::Missing RELEASE_BOT_TOKEN secret\n"
+            printf "This token is required for:\n"
+            printf "  - Pushing version bump commits\n"
+            printf "  - Moving tags after version bump\n"
+            printf "  - Creating GitHub releases\n"
+            printf "\n"
+            printf "Create a PAT with 'contents:write' permission and add as RELEASE_BOT_TOKEN secret\n"
             exit 1
           fi
-
-          # Test token validity and permissions
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: token ${{ secrets.OSPO_BOT_GHTOKEN }}" \
-            https://api.github.com/repos/${{ github.repository }})
-
-          if [ "$RESPONSE" != "200" ]; then
-            echo "::error::OSPO_BOT_GHTOKEN is invalid or lacks permissions"
-            echo "HTTP Response: $RESPONSE"
-            echo "Ensure the token has 'repo' scope"
-            exit 1
-          fi
-
-          echo "✓ GitHub push token validated"
-      - name: Validate Release Token
-        run: "# RELEASE_TOKEN is required for creating GitHub releases\nTOKEN=\"${{ secrets.RELEASE_TOKEN }}\"\nif [ -z \"$TOKEN\" ]; then\n  echo \"::error::Missing RELEASE_TOKEN secret\"\n  echo \"This token is required for creating GitHub releases\"\n  echo \"GITHUB_TOKEN cannot be used as it lacks permissions when workflows chain\"\n  echo \"Add it in Settings → Secrets → Actions\"\n  exit 1\nelse\n  # Test RELEASE_TOKEN\n  RESPONSE=$(curl -s -o /dev/null -w \"%{http_code}\" \\\n    -H \"Authorization: token $TOKEN\" \\\n    https://api.github.com/repos/${{ github.repository }}/releases)\n  \n  if [ \"$RESPONSE\" != \"200\" ]; then\n    echo \"::error::RELEASE_TOKEN is invalid or lacks permissions\"\n    exit 1\n  fi\n  echo \"Release token validated\"\nfi\n"
+          bash .github-shared/scripts/validation/validate-github-token.sh \
+            "${{ secrets.RELEASE_BOT_TOKEN }}" \
+            "${{ github.repository }}"
       - name: Validate Bot Token Permissions
         env:
-          GH_TOKEN: ${{ secrets.OSPO_BOT_GHTOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
         run: |
-          echo "Validating bot token permissions..."
-
-          # Check if the bot token is available
-          if [ -z "${{ secrets.OSPO_BOT_GHTOKEN }}" ]; then
-            echo "::error::Cannot validate bot permissions without OSPO_BOT_GHTOKEN"
-            exit 1
-          fi
-
-          # Test if token can authenticate (without revealing details)
-          if ! gh api user --silent 2>/dev/null; then
-            echo "::error::OSPO_BOT_GHTOKEN is invalid or expired"
-            exit 1
-          fi
-
-          # Test if token has basic repository access (without revealing who/what permissions)
-          if ! gh api repos/${{ github.repository }} --silent 2>/dev/null; then
-            echo "::error::Bot token cannot access this repository"
-            echo "Please ensure the bot has appropriate repository access"
-            exit 1
-          fi
-
-          # Try to check for write permissions by querying branches (less revealing)
-          if ! gh api repos/${{ github.repository }}/branches --silent 2>/dev/null; then
-            echo "::warning::Bot token may have limited permissions"
-            echo "Ensure the bot has sufficient permissions to:"
-            echo "  - Push commits to branches"
-            echo "  - Create and move tags"
-            echo "  - Bypass branch protection (if enabled)"
-          fi
-
-          echo "✓ Bot token is valid and has repository access"
+          bash .github-shared/scripts/validation/validate-bot-permissions.sh "${{ github.repository }}"
       - name: Validate Maven Central Credentials
         if: ${{ inputs['build-type'] == 'library' }}
         run: |
           if [ -z "${{ secrets.MAVENCENTRAL_USERNAME }}" ]; then
-            echo "::error::Missing MAVENCENTRAL_USERNAME secret"
-            echo "Required for publishing to Maven Central"
+            printf "::error::Missing MAVENCENTRAL_USERNAME secret\n"
+            printf "Required for publishing to Maven Central\n"
             exit 1
           fi
 
           if [ -z "${{ secrets.MAVENCENTRAL_PASSWORD }}" ]; then
-            echo "::error::Missing MAVENCENTRAL_PASSWORD secret"
-            echo "Required for publishing to Maven Central"
+            printf "::error::Missing MAVENCENTRAL_PASSWORD secret\n"
+            printf "Required for publishing to Maven Central\n"
             exit 1
           fi
 
-          echo "✓ Maven Central credentials configured"
+          printf "✓ Maven Central credentials configured\n"
       # NOTE: NPM publishing to npmjs.org not yet implemented in v2
       # NPM packages are attached to GitHub Release as tarballs
       # This validation will be re-enabled when NPM publishing is added
@@ -350,9 +247,8 @@ jobs:
           ACTOR: ${{ github.actor }}
           JOB_STATUS: ${{ job.status }}
           OSPO_BOT_GPG_PRIV: ${{ secrets.OSPO_BOT_GPG_PRIV }}
-          OSPO_BOT_GHTOKEN: ${{ secrets.OSPO_BOT_GHTOKEN }}
+          RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
           OSPO_BOT_GPG_PUB: ${{ secrets.OSPO_BOT_GPG_PUB }}
-          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           MAVENCENTRAL_USERNAME: ${{ secrets.MAVENCENTRAL_USERNAME }}
           MAVENCENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

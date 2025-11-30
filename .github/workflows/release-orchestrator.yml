@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
 # Release Orchestrator
@@ -129,6 +129,11 @@ on:
         # - Gradle: CHANGELOG.md build.gradle settings.gradle
         # - Gradle Android: CHANGELOG.md build.gradle settings.gradle gradle.properties
         # - Xcode iOS: CHANGELOG.md project.pbxproj
+      reusable-ci-ref:
+        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        required: false
+        default: "main"
+        type: string
 concurrency:
   group: release-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: false # Queue releases, don't cancel partial releases
@@ -171,6 +176,9 @@ jobs:
       has-mavencentral: ${{ steps.parse.outputs.has-mavencentral }}
       has-githubpackages: ${{ steps.parse.outputs.has-githubpackages }}
       is-draft-release: ${{ steps.parse.outputs.is-draft-release }}
+      # SBOM generation settings
+      needs-sbom: ${{ steps.parse.outputs.needs-sbom }}
+      sbom-artifacts: ${{ steps.parse.outputs.sbom-artifacts }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
@@ -179,7 +187,7 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: main
+          ref: ${{ inputs.reusable-ci-ref }}
           path: .github-shared
       - name: Install yq
         run: |
@@ -204,7 +212,7 @@ jobs:
       sign-artifacts: ${{ inputs['release.signartifacts'] }}
       check-authorization: ${{ needs.parse-config.outputs.first-require-authorization == 'true' || inputs['release.checkauthorization'] }}
       branch: ${{ inputs.branch }}
-      workflows-ref: main
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   # Step 1: Version Bump (iterates over all artifacts)
   # File patterns auto-detected in version-bump.yml by scripts/config/get-file-pattern.sh based on project-type
   version-and-changelog:
@@ -228,7 +236,10 @@ jobs:
       node-version: ${{ matrix.artifact.config['node-version'] }}
       gradle-version-file: ${{ matrix.artifact.config['gradle-version-file'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
-  # Step 2a: Build Maven artifacts
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
+  # ===== BUILD PHASE =====
+  # NOTE: Build jobs use `if: !failure() && !cancelled() && ...` to run independently.
+  # This ensures maven/npm/gradle builds proceed even when other build types are skipped.
   build-maven:
     name: Build Maven - ${{ matrix.artifact.name }}
     needs: [parse-config, version-and-changelog]
@@ -316,7 +327,7 @@ jobs:
     permissions:
       contents: read
     secrets: inherit
-    uses: ./.github/workflows/build-xcode-variants.yml
+    uses: ./.github/workflows/build-xcode-ios.yml
     with:
       xcode-version: ${{ matrix.artifact.config['xcode-version'] }}
       scheme: ${{ matrix.artifact.config['scheme'] }}
@@ -328,11 +339,21 @@ jobs:
       artifact-name: ${{ matrix.artifact.name }}
       include-tag: false
       working-directory: ${{ matrix.artifact['working-directory'] }}
-      macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-14' }}
+      macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
+  # Sync point: Wait for all builds to complete before publishing/containers
+  await-builds:
+    name: Await Builds
+    needs: [parse-config, version-and-changelog, build-maven, build-npm, build-gradle, build-gradle-android, build-xcode]
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: All builds complete
+        run: printf "All build jobs have completed successfully\n"
   # Step 3a: Publish to GitHub Packages
-  publish-github:
+  publish-maven-github:
     name: Publish GitHub - ${{ matrix.artifact.name }}
-    needs: [parse-config, build-maven, build-npm, build-gradle, build-gradle-android, build-xcode]
+    needs: [parse-config, await-builds]
     if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-githubpackages == 'true' }}
     strategy:
       matrix:
@@ -342,14 +363,14 @@ jobs:
       contents: write
       packages: write
     secrets: inherit
-    uses: ./.github/workflows/publish-github.yml
+    uses: ./.github/workflows/publish-maven-github.yml
     with:
       artifact-source: ${{ matrix.artifact['project-type'] }}-build-artifacts
       package-type: ${{ matrix.artifact['project-type'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
       attach-pattern: ${{ matrix.artifact.config['attach-pattern'] }}
   # Step 3b: Publish to Maven Central
-  publish-mavencentral:
+  publish-maven-central:
     name: Publish Maven Central - ${{ matrix.artifact.name }}
     needs: [parse-config, build-maven]
     if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-mavencentral == 'true' }}
@@ -362,13 +383,13 @@ jobs:
       packages: write
       id-token: write
     secrets: inherit
-    uses: ./.github/workflows/publish-mavencentral.yml
+    uses: ./.github/workflows/publish-maven-central.yml
     with:
       artifact-source: maven-build-artifacts
       working-directory: ${{ matrix.artifact['working-directory'] }}
       settings-path: ${{ matrix.artifact.config['settings-path'] }}
   # Step 3c: Publish to Apple App Store / TestFlight
-  publish-appleappstore:
+  publish-apple-appstore:
     name: Publish Apple App Store - ${{ matrix.artifact.name }}
     needs: [parse-config, build-xcode]
     if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-xcodeios == 'true' }}
@@ -379,17 +400,17 @@ jobs:
     permissions:
       contents: read
     secrets: inherit
-    uses: ./.github/workflows/publish-appleappstore.yml
+    uses: ./.github/workflows/publish-apple-appstore.yml
     with:
       ipa-artifact-name: ${{ matrix.artifact.name }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
-      macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-14' }}
+      macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
       submit-for-review: ${{ matrix.artifact.config['submit-for-review'] || false }}
       skip-validation: ${{ matrix.artifact.config['skip-validation'] || false }}
   # Step 4: Build and Publish Container Images
   build-containers:
     name: Build Container - ${{ matrix.container.name }}
-    needs: [parse-config, build-maven, build-npm, build-gradle, build-gradle-android, build-xcode]
+    needs: [parse-config, await-builds]
     if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.containers != '[]' }}
     strategy:
       matrix:
@@ -415,10 +436,11 @@ jobs:
       registry: ghcr.io
       artifact-types: ${{ join(matrix.container['artifact-types'], ',') }}
       push-image: true
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   # Step 5: Create GitHub Release  
   create-release:
     name: Create GitHub Release
-    needs: [parse-config, publish-github, publish-mavencentral, publish-appleappstore, build-containers, build-gradle-android, build-xcode]
+    needs: [parse-config, await-builds, publish-maven-github, publish-maven-central, publish-apple-appstore, build-containers]
     # Run even if previous jobs were skipped but at least one succeeded
     if: ${{ !failure() && !cancelled() && inputs['release-publisher'] == 'github-cli' }}
     permissions:
@@ -431,16 +453,17 @@ jobs:
       release-name: "${{ github.ref_name }}"
       checkout-ref: ${{ inputs.branch }}
       attach-artifacts: ${{ inputs['release.attachartifacts'] }}
-      generate-sbom: ${{ inputs['release.generatesbom'] }}
+      generate-sbom: ${{ inputs['release.generatesbom'] && needs.parse-config.outputs.needs-sbom == 'true' }}
       sign-artifacts: ${{ inputs['release.signartifacts'] }}
       draft: ${{ inputs['release.draft'] || needs.parse-config.outputs.is-draft-release == 'true' }}
       project-type: ${{ needs.parse-config.outputs.first-project-type }}
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
       changelog-config: ${{ inputs['changelog.config'] }}
       make-latest: ${{ (inputs['release-type'] == 'stable' || (!inputs['release-type'] && !contains(github.ref_name, '-'))) && 'true' || 'false' }}
   # Final summary
   release-summary:
     name: Release Summary
-    needs: [parse-config, version-and-changelog, build-maven, build-npm, build-gradle, build-gradle-android, build-xcode, publish-github, publish-mavencentral, publish-appleappstore, build-containers, create-release]
+    needs: [parse-config, version-and-changelog, await-builds, build-maven, build-npm, build-gradle, build-gradle-android, build-xcode, publish-maven-github, publish-maven-central, publish-apple-appstore, build-containers, create-release]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -463,7 +486,7 @@ jobs:
           | **Released By** | @${{ github.actor }} |
           EOF
 
-          echo "| **Released At** | $RELEASE_TIME |" >> $GITHUB_STEP_SUMMARY
+          printf "| **Released At** | %s |\n" "$RELEASE_TIME" >> $GITHUB_STEP_SUMMARY
 
           cat >> $GITHUB_STEP_SUMMARY << 'EOF'
 
@@ -472,17 +495,17 @@ jobs:
           |-----|--------|
           EOF
 
-          echo "| Version Bump | ${{ needs.version-and-changelog.result == 'success' && '✓' || needs.version-and-changelog.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build Maven | ${{ needs.build-maven.result == 'success' && '✓' || needs.build-maven.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build NPM | ${{ needs.build-npm.result == 'success' && '✓' || needs.build-npm.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build Gradle | ${{ needs.build-gradle.result == 'success' && '✓' || needs.build-gradle.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build Gradle Android | ${{ needs.build-gradle-android.result == 'success' && '✓' || needs.build-gradle-android.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build Xcode | ${{ needs.build-xcode.result == 'success' && '✓' || needs.build-xcode.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Publish GitHub | ${{ needs.publish-github.result == 'success' && '✓' || needs.publish-github.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Publish Maven Central | ${{ needs.publish-mavencentral.result == 'success' && '✓' || needs.publish-mavencentral.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Publish Apple App Store | ${{ needs.publish-appleappstore.result == 'success' && '✓' || needs.publish-appleappstore.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Containers | ${{ needs.build-containers.result == 'success' && '✓' || needs.build-containers.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| GitHub Release | ${{ needs.create-release.result == 'success' && '✓' || needs.create-release.result == 'skipped' && '−' || '✗' }} |" >> $GITHUB_STEP_SUMMARY
+          printf "| Version Bump | %s |\n" "${{ needs.version-and-changelog.result == 'success' && '✓' || needs.version-and-changelog.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Build Maven | %s |\n" "${{ needs.build-maven.result == 'success' && '✓' || needs.build-maven.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Build NPM | %s |\n" "${{ needs.build-npm.result == 'success' && '✓' || needs.build-npm.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Build Gradle | %s |\n" "${{ needs.build-gradle.result == 'success' && '✓' || needs.build-gradle.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Build Gradle Android | %s |\n" "${{ needs.build-gradle-android.result == 'success' && '✓' || needs.build-gradle-android.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Build Xcode | %s |\n" "${{ needs.build-xcode.result == 'success' && '✓' || needs.build-xcode.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Publish GitHub | %s |\n" "${{ needs.publish-maven-github.result == 'success' && '✓' || needs.publish-maven-github.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Publish Maven Central | %s |\n" "${{ needs.publish-maven-central.result == 'success' && '✓' || needs.publish-maven-central.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Publish Apple App Store | %s |\n" "${{ needs.publish-apple-appstore.result == 'success' && '✓' || needs.publish-apple-appstore.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| Containers | %s |\n" "${{ needs.build-containers.result == 'success' && '✓' || needs.build-containers.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| GitHub Release | %s |\n" "${{ needs.create-release.result == 'success' && '✓' || needs.create-release.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
 
           cat >> $GITHUB_STEP_SUMMARY << 'EOF'
 

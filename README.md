@@ -1,9 +1,20 @@
 # Reusable CI/CD Workflows
 
+<!--
+SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+
+SPDX-License-Identifier: CC0-1.0
+-->
+
+[![Tag](https://img.shields.io/github/v/tag/diggsweden/reusable-ci?style=for-the-badge&color=green)](https://github.com/diggsweden/reusable-ci/tags)
+
+[![License: CC0-1.0](https://img.shields.io/badge/License-CC0--1.0-blue?style=for-the-badge)](LICENSE)
+[![REUSE](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.reuse.software%2Fstatus%2Fgithub.com%2Fdiggsweden%2Freusable-ci&query=status&style=for-the-badge&label=REUSE&color=lightblue)](https://api.reuse.software/info/github.com/diggsweden/reusable-ci)
+
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/diggsweden/reusable-ci/badge?style=for-the-badge)](https://scorecard.dev/viewer/?uri=github.com/diggsweden/reusable-ci)
+
 Reusable CI/CD workflows and scripts.
 Implements best Open Source workflows, compliance, security best practices, automated releases, and quality checks.
-
-**Current version:** `2.0.0`
 
 ## Documentation
 
@@ -24,9 +35,9 @@ Implements best Open Source workflows, compliance, security best practices, auto
 
 ## Introduction
 
-There are two main workflow chains:
+There are two main workflow chains (and a dev-release flow):
 
-1. **Pull Request Chain** - Runs on every PR and push
+1. **The Pull Request Chain** - Run on PR and push
    - Linting and code quality checks
    - Security scanning
    - License compliance
@@ -84,7 +95,7 @@ jobs:
 
   publish-github:
     needs: build-maven
-    uses: diggsweden/reusable-ci/.github/workflows/publish-github.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/publish-maven-github.yml@main
     with:
       package-type: maven
       artifact-source: maven-build-artifacts
@@ -287,8 +298,8 @@ jobs:
 
 **Publish Stage** - Target-specific workflows publish artifacts:
 - `publish-github` - Publishes Maven/NPM/Gradle → GitHub Packages
-- `publish-mavencentral` - Publishes Maven libs → Maven Central
-- `publish-appleappstore` - Publishes iOS/macOS apps → TestFlight/Apple App Store
+- `publish-maven-central` - Publishes Maven libs → Maven Central
+- `publish-apple-appstore` - Publishes iOS/macOS apps → TestFlight/Apple App Store
 
 **Container Stage** - Separate containers section references artifacts:
 - Containers defined in `containers[]` section

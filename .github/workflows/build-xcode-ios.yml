@@ -1,7 +1,7 @@
-# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
-# Xcode iOS/macOS Variants Builder
+# Xcode iOS Builder
 # 
 # Purpose: Builds iOS/macOS applications with Xcode, creating IPA files for
 # distribution to TestFlight or App Store.
@@ -36,7 +36,7 @@
 # Required Permissions:
 #   contents: read  # Checkout code
 #
-name: Build Xcode Variants
+name: Build Xcode iOS
 on:
   workflow_call:
     inputs:
@@ -103,19 +103,33 @@ on:
         required: false
         default: "macos-26"
         type: string
+      reusable-ci-ref:
+        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        required: false
+        default: "main"
+        type: string
 permissions:
   contents: read
 jobs:
   build-variants:
-    name: Build Xcode Variants
+    name: Build Xcode iOS
     runs-on: ${{ inputs.macos-version }}
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+
+      - name: Checkout .github repository for scripts
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs.reusable-ci-ref }}
+          path: .github-shared
+          sparse-checkout: scripts
 
       - name: Generate artifact names
         id: artifact-names
@@ -132,8 +146,8 @@ jobs:
             IPA_NAME="${BASE_NAME}"
           fi
 
-          echo "ipa-name=${IPA_NAME}" >> "$GITHUB_OUTPUT"
-          echo "IPA artifact: ${IPA_NAME}"
+          printf "ipa-name=%s\n" "${IPA_NAME}" >> "$GITHUB_OUTPUT"
+          printf "IPA artifact: %s\n" "${IPA_NAME}"
 
       - name: Select Xcode version
         run: |
@@ -145,7 +159,7 @@ jobs:
           if ! command -v xcbeautify &> /dev/null; then
             brew install xcbeautify
           fi
-          echo "✓ xcbeautify installed"
+          printf "✓ xcbeautify installed\n"
 
       - name: Setup code signing
         if: ${{ inputs['enable-code-signing'] }}
@@ -154,63 +168,15 @@ jobs:
           CERTIFICATE_PASSPHRASE: ${{ secrets.CERTIFICATE_PASSPHRASE }}
           PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          if [ -z "$CERTIFICATE_BASE64" ]; then
-            echo "::error::CERTIFICATE_BASE64 secret not found but enable-code-signing is true"
-            exit 1
-          fi
-          if [ -z "$PROVISIONING_PROFILE_BASE64" ]; then
-            echo "::error::PROVISIONING_PROFILE_BASE64 secret not found but enable-code-signing is true"
-            exit 1
-          fi
-          if [ -z "$KEYCHAIN_PASSWORD" ]; then
-            echo "::error::KEYCHAIN_PASSWORD secret not found but enable-code-signing is true"
-            exit 1
-          fi
-
-          CERTIFICATE_PATH="$RUNNER_TEMP/certificate.p12"
-          PP_PATH="$RUNNER_TEMP/pp.mobileprovision"
-          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
-
-          echo -n "$CERTIFICATE_BASE64" | base64 --decode -o "$CERTIFICATE_PATH"
-          echo -n "$PROVISIONING_PROFILE_BASE64" | base64 --decode -o "$PP_PATH"
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          security import "$CERTIFICATE_PATH" -P "$CERTIFICATE_PASSPHRASE" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles
-
-          echo "✓ Code signing configured successfully"
+        run: bash .github-shared/scripts/xcode/setup-code-signing.sh
 
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs['working-directory'] }}
         run: |
-          if [ -n "${{ inputs.project }}" ]; then
-            PROJECT_FILE="${{ inputs.project }}"
-          elif [ -n "${{ inputs.workspace }}" ]; then
-            PROJECT_FILE=$(find . -name "*.xcodeproj" -type d | head -1)
-          else
-            PROJECT_FILE=$(find . -name "*.xcodeproj" -type d | head -1)
-          fi
-
-          if [ -f "$PROJECT_FILE/project.pbxproj" ]; then
-            VERSION=$(grep -m1 'MARKETING_VERSION' "$PROJECT_FILE/project.pbxproj" | awk -F' = ' '{print $2}' | tr -d ';' || echo "unknown")
-            BUILD=$(grep -m1 'CURRENT_PROJECT_VERSION' "$PROJECT_FILE/project.pbxproj" | awk -F' = ' '{print $2}' | tr -d ';' || echo "unknown")
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "build=${BUILD}" >> "$GITHUB_OUTPUT"
-            echo "Version: ${VERSION} (${BUILD})"
-          else
-            echo "::warning::Could not determine version from project file"
-            echo "version=unknown" >> "$GITHUB_OUTPUT"
-            echo "build=unknown" >> "$GITHUB_OUTPUT"
-          fi
+          bash .github-shared/scripts/xcode/get-version-info.sh \
+            "${{ inputs.project }}" \
+            "${{ inputs.workspace }}" >> "$GITHUB_OUTPUT"
 
       - name: Archive app
         working-directory: ${{ inputs['working-directory'] }}
@@ -232,7 +198,7 @@ jobs:
           BUILD_CMD="$BUILD_CMD -destination '${{ inputs.destination }}'"
           BUILD_CMD="$BUILD_CMD -skipPackagePluginValidation"
 
-          echo "Running: $BUILD_CMD"
+          printf "Running: %s\n" "$BUILD_CMD"
           eval "$BUILD_CMD" | xcbeautify
 
       - name: Export IPA
@@ -244,11 +210,11 @@ jobs:
           set -o pipefail
 
           if [ -z "$EXPORT_OPTIONS_BASE64" ]; then
-            echo "::error::Export options not found in variable ${{ inputs.export-options-var }}"
+            printf "::error::Export options not found in variable %s\n" "${{ inputs.export-options-var }}"
             exit 1
           fi
 
-          echo "$EXPORT_OPTIONS_BASE64" | base64 --decode > export-options.plist
+          printf "%s" "$EXPORT_OPTIONS_BASE64" | base64 --decode > export-options.plist
 
           xcodebuild -exportArchive \
             -archivePath build/app.xcarchive \
@@ -259,8 +225,8 @@ jobs:
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         run: |
-          echo "Built artifacts:"
-          find build -type f \( -name "*.ipa" -o -name "*.xcarchive" \) -ls || echo "No artifacts found"
+          printf "Built artifacts:\n"
+          find build -type f \( -name "*.ipa" -o -name "*.xcarchive" \) -ls || printf "No artifacts found\n"
 
       - name: Upload IPA artifact
         if: ${{ inputs['enable-code-signing'] }}
@@ -282,28 +248,12 @@ jobs:
 
       - name: Generate build summary
         run: |
-          echo "## Xcode Build Summary 📱" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Configuration" >> $GITHUB_STEP_SUMMARY
-          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
-           echo "| **Xcode** | ${{ inputs.xcode-version }} |" >> $GITHUB_STEP_SUMMARY
-           echo "| **Scheme** | ${{ inputs.scheme }} |" >> $GITHUB_STEP_SUMMARY
-           echo "| **Configuration** | ${{ inputs.configuration }} |" >> $GITHUB_STEP_SUMMARY
-           echo "| **Destination** | ${{ inputs.destination }} |" >> $GITHUB_STEP_SUMMARY
-           echo "| **Signing** | ${{ inputs['enable-code-signing'] && '✓ Enabled' || '⊘ Disabled' }} |" >> $GITHUB_STEP_SUMMARY
-
-          if [ -n "${{ steps.version-info.outputs.version }}" ] && [ "${{ steps.version-info.outputs.version }}" != "unknown" ]; then
-            echo "| **Version** | ${{ steps.version-info.outputs.version }} (${{ steps.version-info.outputs.build }}) |" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Artifacts Generated" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ inputs['enable-code-signing'] }}" = "true" ]; then
-            echo "- ✓ IPA: \`${{ steps.artifact-names.outputs.ipa-name }}\`" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "- ✓ Archive: \`${{ steps.artifact-names.outputs.ipa-name }}-archive\`" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "*Build completed at $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY
+          bash .github-shared/scripts/summary/xcode-build-summary.sh \
+            "${{ inputs.xcode-version }}" \
+            "${{ inputs.scheme }}" \
+            "${{ inputs.configuration }}" \
+            "${{ inputs.destination }}" \
+            "${{ inputs['enable-code-signing'] }}" \
+            "${{ steps.version-info.outputs.version }}" \
+            "${{ steps.version-info.outputs.build }}" \
+            "${{ steps.artifact-names.outputs.ipa-name }}" >> "$GITHUB_STEP_SUMMARY"

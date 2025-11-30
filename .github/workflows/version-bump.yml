@@ -47,7 +47,7 @@ on:
         default: "main"
         type: string
       project-type:
-        description: "Project type: maven, npm"
+        description: "Project type: maven, npm, gradle, gradle-android, xcode-ios"
         required: true
         type: string
       java-version:
@@ -64,6 +64,11 @@ on:
         description: "Path to Gradle version file (default: gradle.properties)"
         required: false
         default: 'gradle.properties'
+        type: string
+      xcode-version-file:
+        description: "Path to Xcode version xcconfig file (default: versions.xcconfig)"
+        required: false
+        default: 'versions.xcconfig'
         type: string
       working-directory:
         description: "Working directory for the project"
@@ -85,6 +90,11 @@ on:
         required: false
         default: "audit"
         type: string
+      reusable-ci-ref:
+        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        required: false
+        default: "main"
+        type: string
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
@@ -101,6 +111,7 @@ jobs:
       output-file: "CHANGELOG.md"
       upload-as-artifact: true
       artifact-name: "full-changelog"
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   # Generate minimal changelog for commit message
   generate-minimal-changelog:
     name: Generate Minimal Changelog
@@ -114,6 +125,7 @@ jobs:
       output-file: "minimal-changelog.txt"
       upload-as-artifact: true
       artifact-name: "minimal-changelog"
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   bump-version:
     name: Bump Version and Commit
     needs: [generate-full-changelog, generate-minimal-changelog]
@@ -135,7 +147,7 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: main
+          ref: ${{ inputs.reusable-ci-ref }}
           path: .github-shared
           sparse-checkout: |
             scripts/version
@@ -232,6 +244,17 @@ jobs:
             "${GITHUB_REF_NAME#v}" \
             "${{ inputs['working-directory'] }}" \
             "${{ inputs['gradle-version-file'] }}"
+          echo "::endgroup::"
+      - name: Update Xcode version
+        if: ${{ steps.project-type.outputs.type == 'xcode-ios' }}
+        env:
+          XCODE_VERSION_FILE: ${{ inputs['xcode-version-file'] }}
+        run: |
+          echo "::group::Update Xcode version"
+          bash .github-shared/scripts/version/bump-version.sh \
+            xcode-ios \
+            "${GITHUB_REF_NAME#v}" \
+            "${{ inputs['working-directory'] }}"
           echo "::endgroup::"
       - name: Download Full Changelog
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0

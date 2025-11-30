@@ -1,5 +1,5 @@
-#!/bin/bash
-# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
 
@@ -33,27 +33,27 @@ cd "$WORKING_DIR" || exit 1
 
 case "$PROJECT_TYPE" in
 maven)
-  echo "Building Maven project..."
+  printf "Building Maven project...\n"
   mvn clean package -DskipTests -Dstyle.color=always
-  echo "✓ Maven build completed"
+  printf "✓ Maven build completed\n"
   ;;
 
 npm)
-  echo "Building NPM project..."
+  printf "Building NPM project...\n"
   npm ci --prefer-offline --no-audit
   npm run build
-  echo "✓ NPM build completed"
+  printf "✓ NPM build completed\n"
   ;;
 
 gradle)
-  echo "Building Gradle project..."
+  printf "Building Gradle project...\n"
   ./gradlew clean build -x test
-  echo "✓ Gradle build completed"
+  printf "✓ Gradle build completed\n"
   ;;
 
 *)
-  echo "::error::Unsupported project type: $PROJECT_TYPE"
-  echo "Supported types: maven, npm, gradle"
+  printf "::error::Unsupported project type: %s\n" "$PROJECT_TYPE"
+  printf "Supported types: maven, npm, gradle\n"
   exit 1
   ;;
 esac

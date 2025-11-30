@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 
 SPDX-License-Identifier: CC0-1.0
 -->
@@ -61,7 +61,7 @@ artifacts:
       - github-packages              # Also publish to GitHub
       - maven-central                # Publish to Maven Central
     config:
-      java-version: 21
+      java-version: 25
       settings-path: .mvn/settings.xml  # Optional: custom settings
 ```
 
@@ -312,7 +312,7 @@ artifacts:
       - github-packages  # Also publish to GitHub
       - npmjs            # Publish to npmjs.org
     config:
-      node-version: 22
+      node-version: 24
       npm-tag: latest    # or 'next', 'beta'
 ```
 

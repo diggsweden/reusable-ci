@@ -1,5 +1,5 @@
-#!/bin/bash
-# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 # SPDX-License-Identifier: CC0-1.0
 
 # Generate Development Release Summary
@@ -51,25 +51,25 @@ BUILD_TIME=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
 # Status icons
 get_status_icon() {
   case "$1" in
-  success) echo "✓" ;;
-  failure) echo "✗" ;;
-  skipped) echo "−" ;;
-  *) echo "?" ;;
+  success) printf "✓" ;;
+  failure) printf "✗" ;;
+  skipped) printf "−" ;;
+  *) printf "?" ;;
   esac
 }
 
 CONTAINER_ICON=$(get_status_icon "$CONTAINER_STATUS")
 NPM_ICON=$(get_status_icon "$NPM_STATUS")
 
-echo "================================================"
-echo "Generating Dev Release Summary"
-echo "================================================"
-echo "Project Type: $PROJECT_TYPE"
-echo "Branch: $BRANCH"
-echo "Commit: $SHORT_SHA"
-echo "Container Image: ${CONTAINER_IMAGE:-none}"
-echo "NPM Package: ${NPM_PACKAGE_NAME:-none}@${NPM_PACKAGE_VERSION:-none}"
-echo ""
+printf "================================================\n"
+printf "Generating Dev Release Summary\n"
+printf "================================================\n"
+printf "Project Type: %s\n" "$PROJECT_TYPE"
+printf "Branch: %s\n" "$BRANCH"
+printf "Commit: %s\n" "$SHORT_SHA"
+printf "Container Image: %s\n" "${CONTAINER_IMAGE:-none}"
+printf "NPM Package: %s@%s\n" "${NPM_PACKAGE_NAME:-none}" "${NPM_PACKAGE_VERSION:-none}"
+printf "\n"
 
 # Generate summary
 cat >>"$GITHUB_STEP_SUMMARY" <<EOF
@@ -91,7 +91,7 @@ cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 EOF
 
 # Add NPM status if NPM project
-if [ "$PROJECT_TYPE" = "npm" ]; then
+if [[ "$PROJECT_TYPE" = "npm" ]]; then
   cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 | Publish NPM Package | $NPM_ICON |
 EOF
@@ -104,7 +104,7 @@ cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 EOF
 
 # Container artifact
-if [ -n "$CONTAINER_IMAGE" ] && [ "$CONTAINER_STATUS" = "success" ]; then
+if [[ -n "$CONTAINER_IMAGE" && "$CONTAINER_STATUS" = "success" ]]; then
   cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 
 ### 🐳 Container Image
@@ -122,12 +122,12 @@ else
   cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 
 ### 🐳 Container Image
-❌ Not published
+✗ Not published
 EOF
 fi
 
 # NPM artifact
-if [ -n "$NPM_PACKAGE_NAME" ] && [ -n "$NPM_PACKAGE_VERSION" ] && [ "$NPM_STATUS" = "success" ]; then
+if [[ -n "$NPM_PACKAGE_NAME" && -n "$NPM_PACKAGE_VERSION" && "$NPM_STATUS" = "success" ]]; then
   cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 
 ### 📦 NPM Package
@@ -145,11 +145,11 @@ npm install $NPM_PACKAGE_NAME@$NPM_PACKAGE_VERSION
 npm install $NPM_PACKAGE_NAME@dev
 \`\`\`
 EOF
-elif [ "$PROJECT_TYPE" = "npm" ]; then
+elif [[ "$PROJECT_TYPE" = "npm" ]]; then
   cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 
 ### 📦 NPM Package
-❌ Not published
+✗ Not published
 EOF
 fi
 
@@ -164,5 +164,4 @@ cat >>"$GITHUB_STEP_SUMMARY" <<EOF
 **Note:** These are development artifacts tagged with \`dev\`. Not for production use.
 EOF
 
-echo "✅ Dev release summary generated successfully"
-echo ""
+printf "✓ Dev release summary generated successfully\n\n"

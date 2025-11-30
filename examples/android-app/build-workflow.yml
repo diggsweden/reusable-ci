@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
 # Example: Android App Build Workflow (for development/CI builds)
@@ -13,13 +13,13 @@ permissions:
   contents: read
 jobs:
   build:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android-variants.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
     permissions:
       contents: read
       packages: write
     secrets: inherit
     with:
-      java-version: "21"
+      java-version: "25"
       jdk-distribution: "zulu"
       build-module: "app"
       product-flavor: "demo"

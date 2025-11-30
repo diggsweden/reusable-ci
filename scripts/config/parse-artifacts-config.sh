@@ -1,170 +1,252 @@
-#!/bin/bash
-# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
 
 # Parse artifacts.yml configuration
 # This script is called by release-orchestrator.yml
-set -e
+set -euo pipefail
 
-if [ ! -f "$ARTIFACTS_CONFIG" ]; then
-  echo "::error::File not found: $ARTIFACTS_CONFIG"
+readonly VALID_PROJECT_TYPES="maven npm gradle gradle-android xcode-ios python go rust"
+readonly SBOM_SUPPORTED_TYPES="maven npm gradle python go rust"
+readonly PUBLISH_TARGETS="maven-central github-packages"
+
+die() {
+  printf "::error::%s\n" "$1"
   exit 1
-fi
+}
 
-ARTIFACTS=$(yq eval -o=json '.artifacts' "$ARTIFACTS_CONFIG")
-CONTAINERS=$(yq eval -o=json '.containers // []' "$ARTIFACTS_CONFIG")
+warn() {
+  printf "::warning::%s\n" "$1"
+}
 
-if [ "$ARTIFACTS" = "null" ] || [ "$ARTIFACTS" = "[]" ]; then
-  echo "::error::No artifacts found in $ARTIFACTS_CONFIG"
-  exit 1
-fi
+notice() {
+  printf "::notice::%s\n" "$1"
+}
 
-# Validate projectType for all artifacts
-VALID_TYPES="maven npm gradle gradle-android xcode-ios python go rust"
-for projectType in $(echo "$ARTIFACTS" | jq -r '.[] | .["project-type"]'); do
-  if ! echo "$VALID_TYPES" | grep -qw "$projectType"; then
-    echo "::error::Invalid projectType '$projectType'. Must be one of: $VALID_TYPES"
-    exit 1
-  fi
-done
+output() {
+  printf "%s\n" "$1" >>"$GITHUB_OUTPUT"
+}
 
-# Validate container dependencies
-ARTIFACT_NAMES=$(echo "$ARTIFACTS" | jq -r '.[].name')
-CONTAINER_COUNT=$(echo "$CONTAINERS" | jq 'length')
+output_multiline() {
+  local name="$1"
+  local value="$2"
+  {
+    printf "%s<<EOF\n" "$name"
+    printf "%s\n" "$value"
+    printf "EOF\n"
+  } >>"$GITHUB_OUTPUT"
+}
 
-if [ "$CONTAINER_COUNT" -gt 0 ]; then
-  for container in $(echo "$CONTAINERS" | jq -c '.[]'); do
-    CONTAINER_NAME=$(echo "$container" | jq -r '.name')
-    FROM_ARTIFACTS=$(echo "$container" | jq -r '(.from // []) | .[]')
+summary() {
+  printf "%s\n" "$1" >>"$GITHUB_STEP_SUMMARY"
+}
 
-    for artifact in $FROM_ARTIFACTS; do
-      if ! echo "$ARTIFACT_NAMES" | grep -q "^${artifact}$"; then
-        echo "::error::Container '$CONTAINER_NAME' references unknown artifact '$artifact'"
-        exit 1
-      fi
+normalize_name() {
+  printf "%s" "$1" | tr -d '-'
+}
+
+load_config() {
+  [[ -f "$ARTIFACTS_CONFIG" ]] || die "File not found: $ARTIFACTS_CONFIG"
+
+  ARTIFACTS=$(yq eval -o=json '.artifacts' "$ARTIFACTS_CONFIG")
+  CONTAINERS=$(yq eval -o=json '.containers // []' "$ARTIFACTS_CONFIG")
+
+  [[ "$ARTIFACTS" != "null" && "$ARTIFACTS" != "[]" ]] || die "No artifacts found in $ARTIFACTS_CONFIG"
+}
+
+validate_project_types() {
+  local project_type
+  for project_type in $(printf "%s" "$ARTIFACTS" | jq -r '.[] | .["project-type"]'); do
+    printf "%s" "$VALID_PROJECT_TYPES" | grep -qw "$project_type" ||
+      die "Invalid projectType '$project_type'. Must be one of: $VALID_PROJECT_TYPES"
+  done
+}
+
+validate_containers() {
+  local artifact_names container container_name from_artifacts artifact from_count
+
+  [[ $(printf "%s" "$CONTAINERS" | jq 'length') -gt 0 ]] || return 0
+
+  artifact_names=$(printf "%s" "$ARTIFACTS" | jq -r '.[].name')
+
+  while IFS= read -r container; do
+    container_name=$(printf "%s" "$container" | jq -r '.name')
+    from_artifacts=$(printf "%s" "$container" | jq -r '(.from // []) | .[]')
+
+    for artifact in $from_artifacts; do
+      printf "%s" "$artifact_names" | grep -q "^${artifact}$" ||
+        die "Container '$container_name' references unknown artifact '$artifact'"
     done
 
-    # Warn if container has no dependencies
-    FROM_COUNT=$(echo "$container" | jq '(.from // []) | length')
-    if [ "$FROM_COUNT" -eq 0 ]; then
-      echo "::warning::Container '$CONTAINER_NAME' has empty 'from' array. No artifacts will be downloaded for this container."
+    from_count=$(printf "%s" "$container" | jq '(.from // []) | length')
+    [[ "$from_count" -gt 0 ]] ||
+      warn "Container '$container_name' has empty 'from' array. No artifacts will be downloaded for this container."
+  done < <(printf "%s" "$CONTAINERS" | jq -c '.[]')
+}
+
+resolve_container_types() {
+  CONTAINERS_WITH_TYPES=$(printf "%s" "$CONTAINERS" | jq -c --argjson artifacts "$ARTIFACTS" '
+    map(
+      . + {
+        "artifact-types": [
+          (.from // [])[] as $dep |
+          ($artifacts[] | select(.name == $dep) | .["project-type"])
+        ] | unique
+      }
+    )
+  ')
+}
+
+output_artifacts_by_type() {
+  local type filtered count type_name
+
+  for type in $VALID_PROJECT_TYPES; do
+    filtered=$(printf "%s" "$ARTIFACTS" | jq -c '[.[] | select(.["project-type"] == "'"${type}"'")]')
+    count=$(printf "%s" "$filtered" | jq 'length')
+    type_name=$(normalize_name "$type")
+
+    output_multiline "${type_name}-artifacts" "$filtered"
+
+    if [[ "$count" -gt 0 ]]; then
+      output "has-${type_name}=true"
+    else
+      output "has-${type_name}=false"
     fi
   done
-fi
+}
 
-# Resolve artifact types for each container from their dependencies
-CONTAINERS_WITH_TYPES=$(echo "$CONTAINERS" | jq -c --argjson artifacts "$ARTIFACTS" '
-  map(
-    . + {
-      "artifact-types": [
-        (.from // [])[] as $dep |
-        ($artifacts[] | select(.name == $dep) | .["project-type"])
-      ] | unique
-    }
-  )
-')
+validate_maven_publish() {
+  local maven_apps_to_github
+  maven_apps_to_github=$(printf "%s" "$ARTIFACTS" | jq -r '
+    .[] | select(
+      .["project-type"] == "maven" and
+      .["build-type"] == "application" and
+      (.["publish-to"] // [] | contains(["github-packages"]))
+    ) | .name
+  ')
 
-# Output all artifacts
-{
-  echo "artifacts<<EOF"
-  echo "$ARTIFACTS"
-  echo "EOF"
-} >>"$GITHUB_OUTPUT"
+  [[ -z "$maven_apps_to_github" ]] ||
+    warn "Maven applications should not be published to GitHub Packages (use only for libraries). Skipping for: $maven_apps_to_github"
+}
 
-{
-  echo "containers<<EOF"
-  echo "$CONTAINERS_WITH_TYPES"
-  echo "EOF"
-} >>"$GITHUB_OUTPUT"
+output_artifacts_by_publish_target() {
+  local target filtered count target_name
 
-# Filter artifacts by project type and set has-* flags
-for type in maven npm gradle gradle-android xcode-ios python go rust; do
-  FILTERED=$(echo "$ARTIFACTS" | jq -c '[.[] | select(.["project-type"] == "'"${type}"'")]')
-  COUNT=$(echo "$FILTERED" | jq 'length')
+  for target in $PUBLISH_TARGETS; do
+    if [[ "$target" = "github-packages" ]]; then
+      filtered=$(printf "%s" "$ARTIFACTS" | jq -c '
+        [.[] | select(
+          (.["publish-to"] // []) | contains(["'"${target}"'"])
+        ) | select(
+          .["project-type"] != "maven" or .["build-type"] != "application"
+        )]
+      ')
+    else
+      filtered=$(printf "%s" "$ARTIFACTS" | jq -c '
+        [.[] | select((.["publish-to"] // []) | contains(["'"${target}"'"]))]
+      ')
+    fi
 
-  # Normalize type name for output (gradle-android -> gradleandroid)
-  TYPE_NAME=$(echo "$type" | tr -d '-')
+    count=$(printf "%s" "$filtered" | jq 'length')
+    target_name=$(normalize_name "$target")
 
-  # Output filtered list
-  {
-    echo "${TYPE_NAME}-artifacts<<EOF"
-    echo "$FILTERED"
-    echo "EOF"
-  } >>"$GITHUB_OUTPUT"
+    output_multiline "${target_name}-artifacts" "$filtered"
 
-  # Output has-* flag
-  if [ "$COUNT" -gt 0 ]; then
-    echo "has-${TYPE_NAME}=true" >>"$GITHUB_OUTPUT"
-  else
-    echo "has-${TYPE_NAME}=false" >>"$GITHUB_OUTPUT"
+    if [[ "$count" -gt 0 ]]; then
+      output "has-${target_name}=true"
+    else
+      output "has-${target_name}=false"
+    fi
+  done
+}
+
+output_first_artifact_info() {
+  local first_project_type first_build_type first_require_auth
+
+  first_project_type=$(printf "%s" "$ARTIFACTS" | jq -r '.[0]["project-type"]')
+  first_build_type=$(printf "%s" "$ARTIFACTS" | jq -r '.[0]["build-type"] // "application"')
+  first_require_auth=$(printf "%s" "$ARTIFACTS" | jq -r '.[0]["require-authorization"] // false')
+
+  output "first-project-type=$first_project_type"
+  output "first-build-type=$first_build_type"
+  output "first-require-authorization=$first_require_auth"
+}
+
+compute_sbom_settings() {
+  local artifacts_with_sbom needs_sbom sbom_artifacts
+
+  artifacts_with_sbom=$(printf "%s" "$ARTIFACTS" | jq -c --arg supported "$SBOM_SUPPORTED_TYPES" '
+    map(
+      . as $item |
+      . + {
+        "generate-sbom": (
+          if $item["generate-sbom"] != null then
+            $item["generate-sbom"]
+          else
+            ($supported | split(" ") | index($item["project-type"]) != null)
+          end
+        )
+      }
+    )
+  ')
+
+  needs_sbom=$(printf "%s" "$artifacts_with_sbom" | jq 'any(.["generate-sbom"] == true)')
+  sbom_artifacts=$(printf "%s" "$artifacts_with_sbom" | jq -c '[.[] | select(.["generate-sbom"] == true)]')
+
+  output "needs-sbom=$needs_sbom"
+  output_multiline "sbom-artifacts" "$sbom_artifacts"
+}
+
+determine_draft_release() {
+  local tag_name="$GITHUB_REF_NAME"
+  local is_draft="false"
+
+  if [[ "$tag_name" == *"-SNAPSHOT"* ]] || [[ "$tag_name" == *"-snapshot"* ]]; then
+    is_draft="true"
+    notice "Tag contains -SNAPSHOT, creating draft release"
+  elif ! printf "%s" "$tag_name" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$'; then
+    is_draft="true"
+    notice "Tag '$tag_name' is not a release version semver (vX.Y.Z), creating draft release"
   fi
-done
 
-# Validate Maven applications are not published to github-packages (libraries only)
-MAVEN_APPS_TO_GITHUB=$(echo "$ARTIFACTS" | jq -r '.[] | select(.["project-type"] == "maven" and .["build-type"] == "application" and (.["publish-to"] // [] | contains(["github-packages"]))) | .name')
-if [ -n "$MAVEN_APPS_TO_GITHUB" ]; then
-  echo "::warning::Maven applications should not be published to GitHub Packages (use only for libraries). JARs will be attached to GitHub Release instead. Skipping GitHub Packages publish for: $MAVEN_APPS_TO_GITHUB"
-fi
+  output "is-draft-release=$is_draft"
+}
 
-# Filter artifacts by publish target
-for target in maven-central github-packages; do
-  # For github-packages, exclude Maven applications
-  if [ "$target" = "github-packages" ]; then
-    FILTERED=$(echo "$ARTIFACTS" | jq -c '[.[] | select((.["publish-to"] // []) | contains(["'"${target}"'"])) | select(.["project-type"] != "maven" or .["build-type"] != "application")]')
-  else
-    FILTERED=$(echo "$ARTIFACTS" | jq -c '[.[] | select((.["publish-to"] // []) | contains(["'"${target}"'"]))]')
+generate_summary() {
+  local container_count
+
+  summary "## Configuration"
+  printf "%s" "$ARTIFACTS" | jq -r '
+    .[] | "### \(.name)\n- **Type:** \(.["project-type"])\n- **Publish To:** \(.["publish-to"] // [] | join(", "))\n- **Directory:** \(.["working-directory"])\n"
+  ' >>"$GITHUB_STEP_SUMMARY"
+
+  container_count=$(printf "%s" "$CONTAINERS" | jq 'length')
+  if [[ "$container_count" -gt 0 ]]; then
+    summary ""
+    summary "## Containers"
+    printf "%s" "$CONTAINERS_WITH_TYPES" | jq -r '
+      .[] | "### \(.name)\n- **From:** \((.from // []) | join(", "))\n- **Artifact Types:** \(.["artifact-types"] | join(", "))\n- **Containerfile:** \(.["container-file"])\n"
+    ' >>"$GITHUB_STEP_SUMMARY"
   fi
-  COUNT=$(echo "$FILTERED" | jq 'length')
+}
 
-  # Output filtered list
-  # Normalize target name for output variable (remove hyphens: maven-central -> mavencentral)
-  TARGET_NAME=$(echo "$target" | tr -d '-')
-  {
-    echo "${TARGET_NAME}-artifacts<<EOF"
-    echo "$FILTERED"
-    echo "EOF"
-  } >>"$GITHUB_OUTPUT"
+main() {
+  load_config
+  validate_project_types
+  validate_containers
+  resolve_container_types
 
-  # Output has-* flag
-  if [ "$COUNT" -gt 0 ]; then
-    echo "has-${TARGET_NAME}=true" >>"$GITHUB_OUTPUT"
-  else
-    echo "has-${TARGET_NAME}=false" >>"$GITHUB_OUTPUT"
-  fi
-done
+  output_multiline "artifacts" "$ARTIFACTS"
+  output_multiline "containers" "$CONTAINERS_WITH_TYPES"
 
-# Extract first artifact's type and build-type for legacy compatibility
-FIRST_PROJECT_TYPE=$(echo "$ARTIFACTS" | jq -r '.[0]["project-type"]')
-FIRST_BUILD_TYPE=$(echo "$ARTIFACTS" | jq -r '.[0]["build-type"] // "application"')
-echo "first-project-type=$FIRST_PROJECT_TYPE" >>"$GITHUB_OUTPUT"
-echo "first-build-type=$FIRST_BUILD_TYPE" >>"$GITHUB_OUTPUT"
+  output_artifacts_by_type
+  validate_maven_publish
+  output_artifacts_by_publish_target
+  output_first_artifact_info
+  compute_sbom_settings
+  determine_draft_release
+  generate_summary
+}
 
-# Determine if release should be draft (SNAPSHOT or non-release version tags)
-TAG_NAME="$GITHUB_REF_NAME"
-IS_DRAFT="false"
-
-# Check if tag contains -SNAPSHOT or -snapshot (always draft)
-if [[ "$TAG_NAME" == *"-SNAPSHOT"* ]] || [[ "$TAG_NAME" == *"-snapshot"* ]]; then
-  IS_DRAFT="true"
-  echo "::notice::Tag contains -SNAPSHOT, creating draft release"
-# Check if tag is a release version semver: vX.Y.Z or vX.Y.Z-prerelease
-elif ! echo "$TAG_NAME" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$'; then
-  IS_DRAFT="true"
-  echo "::notice::Tag '$TAG_NAME' is not a release version semver (vX.Y.Z), creating draft release"
-fi
-
-echo "is-draft-release=$IS_DRAFT" >>"$GITHUB_OUTPUT"
-
-{
-  echo "## Configuration"
-  echo "$ARTIFACTS" | jq -r '.[] | "### \(.name)\n- **Type:** \(.["project-type"])\n- **Publish To:** \(.["publish-to"] // [] | join(", "))\n- **Directory:** \(.["working-directory"])\n"'
-} >>"$GITHUB_STEP_SUMMARY"
-
-if [ "$CONTAINER_COUNT" -gt 0 ]; then
-  {
-    echo ""
-    echo "## Containers"
-    echo "$CONTAINERS_WITH_TYPES" | jq -r '.[] | "### \(.name)\n- **From:** \((.from // []) | join(", "))\n- **Artifact Types:** \(.["artifact-types"] | join(", "))\n- **Containerfile:** \(.["container-file"])\n"'
-  } >>"$GITHUB_STEP_SUMMARY"
-fi
+main

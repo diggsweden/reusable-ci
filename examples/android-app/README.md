@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 
 SPDX-License-Identifier: CC0-1.0
 -->
@@ -64,9 +64,9 @@ Choose your preferred JDK:
 ```yaml
 jobs:
   build:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android-variants.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
     with:
-      java-version: "21"
+      java-version: "25"
       build-module: "app"
       product-flavor: "demo"
 ```
@@ -76,10 +76,10 @@ jobs:
 ```yaml
 jobs:
   build:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android-variants.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
     secrets: inherit  # Required for signing secrets
     with:
-      java-version: "21"
+      java-version: "25"
       build-module: "app"
       product-flavor: "prod"
       enable-signing: true
@@ -96,9 +96,9 @@ jobs:
 ```yaml
 jobs:
   build:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android-variants.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
     with:
-      java-version: "21"
+      java-version: "25"
       build-module: "app"
       build-types: "release"  # Only release builds
       include-aab: true
@@ -110,9 +110,9 @@ jobs:
 ```yaml
 jobs:
   build:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android-variants.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
     with:
-      java-version: "21"
+      java-version: "25"
       build-module: "app"
       artifact-name-prefix: "production_store"  # Custom prefix
       include-date-stamp: true  # Include date in name
@@ -125,13 +125,13 @@ Build multiple flavors in parallel:
 ```yaml
 jobs:
   build-demo:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android-variants.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
     with:
       product-flavor: "demo"
       artifact-name-prefix: "demo_store"
 
   build-prod:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android-variants.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
     with:
       product-flavor: "prod"
       artifact-name-prefix: "production_store"
@@ -188,7 +188,7 @@ android {
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `java-version` | Yes | - | Java version (e.g., 17, 21) |
+| `java-version` | Yes | - | Java version (e.g., 17, 25) |
 | `build-module` | Yes | - | Gradle module to build |
 | `product-flavor` | No | "" | Product flavor (demo, prod, etc.) |
 | `build-types` | No | "debug,release" | Comma-separated build types |

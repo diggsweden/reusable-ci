@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 
 SPDX-License-Identifier: CC0-1.0
 -->
@@ -38,7 +38,7 @@ containers:
 
 - **Type:** `string`
 - **Description:** Build system type
-- **Valid values:** `maven`, `npm`, `gradle`, `gradle-android`, `xcode-ios`
+- **Valid values:** `maven`, `npm`, `gradle`, `gradle-android`, `xcode-ios`, `python`, `go`, `rust`
 - **Example:** `project-type: maven`
 
 #### `working-directory`
@@ -89,6 +89,18 @@ containers:
 
 - **Behavior:** Workflows only run if target is listed
 
+#### `generate-sbom`
+
+- **Type:** `boolean`
+- **Description:** Generate SBOM (Software Bill of Materials) for this artifact during release
+- **Default:** Automatic based on project type:
+  - `true` for: `maven`, `npm`, `gradle`, `python`, `go`, `rust`
+  - `false` for: `xcode-ios`, `gradle-android`
+- **Example:** `generate-sbom: false`
+- **Use case:** Override default behavior for specific artifacts
+- **Formats generated:** SPDX and CycloneDX (JSON)
+- **Note:** SBOM generation uses [Syft](https://github.com/anchore/syft) which has varying support for different ecosystems
+
 ---
 
 ### Configuration Fields (Maven/Gradle)
@@ -97,9 +109,9 @@ containers:
 
 - **Type:** `string` or `number`
 - **Description:** JDK version for Maven/Gradle builds
-- **Default:** `21`
-- **Valid values:** `8`, `11`, `17`, `21`, `23`
-- **Example:** `java-version: 21`
+- **Default:** `25`
+- **Valid values:** `8`, `11`, `17`, `21`, `25`
+- **Example:** `java-version: 25`
 
 #### `config.settings-path`
 
@@ -117,9 +129,9 @@ containers:
 
 - **Type:** `string` or `number`
 - **Description:** Node.js version for NPM builds
-- **Default:** `22`
-- **Valid values:** `18`, `20`, `22`, `23`
-- **Example:** `node-version: 22`
+- **Default:** `24`
+- **Valid values:** `18`, `20`, `22`, `24`
+- **Example:** `node-version: 24`
 
 #### `config.npm-tag`
 
@@ -212,9 +224,9 @@ containers:
 
 - **Type:** `string`
 - **Description:** macOS runner version
-- **Default:** `macos-14`
-- **Valid values:** `macos-13`, `macos-14`, `macos-15`
-- **Example:** `macos-version: macos-14`
+- **Default:** `macos-26`
+- **Valid values:** `macos-15`, `macos-26`
+- **Example:** `macos-version: macos-26`
 
 #### `config.destination`
 
@@ -354,7 +366,7 @@ artifacts:
     working-directory: .
     build-type: application
     config:
-      java-version: 21
+      java-version: 25
 ```
 
 **`.github/workflows/release-workflow.yml`**
@@ -377,7 +389,7 @@ artifacts:
     working-directory: .
     build-type: application
     config:
-      java-version: 21
+      java-version: 25
 
 containers:
   - name: my-app
@@ -400,7 +412,7 @@ artifacts:
       - github-packages
       - maven-central
     config:
-      java-version: 21
+      java-version: 25
       settings-path: .mvn/settings.xml
 ```
 
@@ -412,7 +424,7 @@ artifacts:
     project-type: npm
     working-directory: frontend
     config:
-      node-version: 22
+      node-version: 24
 ```
 
 ### Gradle Android App
@@ -423,7 +435,7 @@ artifacts:
     project-type: gradle-android
     working-directory: .
     config:
-      java-version: 21
+      java-version: 25
       gradle-tasks: build assembleDemoRelease bundleDemoRelease
       gradle-version-file: gradle.properties
 ```
@@ -444,7 +456,7 @@ artifacts:
       configuration: Release
       enable-code-signing: true
       export-options-var: EXPORT_OPTIONS_BASE64
-      macos-version: macos-14
+      macos-version: macos-26
 ```
 
 **Required Secrets:**
@@ -533,13 +545,13 @@ artifacts:
     working-directory: java-backend
     build-type: application
     config:
-      java-version: 21
+      java-version: 25
 
   - name: frontend
     project-type: npm
     working-directory: frontend
     config:
-      node-version: 22
+      node-version: 24
 
 containers:
   - name: backend

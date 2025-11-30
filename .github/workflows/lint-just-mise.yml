@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
 # Description:
@@ -39,12 +39,19 @@ env:
   MISE_CHECKSUM: "d300a395d82092a4793c9d02a4fff15819ace22a027ddc58a83602aea24ee646"
 on:
   workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      reusable-ci-ref:
+        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        required: false
+        default: "main"
+        type: string
 permissions:
   contents: read
 jobs:
   just-mise-lint:
     name: Quality Checks
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       security-events: write
@@ -63,7 +70,7 @@ jobs:
           cd /tmp
           curl -sSfL "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz" -o just.tar.gz
           # Verify checksum for security
-          echo "${JUST_CHECKSUM}  just.tar.gz" | sha256sum -c
+          printf "%s  just.tar.gz" "${JUST_CHECKSUM}" | sha256sum -c
           tar -xzf just.tar.gz
           sudo mv just /usr/local/bin/just
           chmod +x /usr/local/bin/just
@@ -75,12 +82,19 @@ jobs:
           cd /tmp
           curl -sSfL "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-x64-musl.tar.gz" -o mise.tar.gz
           # Verify checksum for security
-          echo "${MISE_CHECKSUM}  mise.tar.gz" | sha256sum -c
+          printf "%s  mise.tar.gz" "${MISE_CHECKSUM}" | sha256sum -c
           tar -xzf mise.tar.gz
           sudo mv mise/bin/mise /usr/local/bin/mise
           chmod +x /usr/local/bin/mise
           rm -rf mise.tar.gz mise
           mise --version
+      - name: Cache mise tools
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.local/share/mise
+          key: mise-${{ env.MISE_VERSION }}-${{ runner.os }}-${{ hashFiles('.mise.toml') }}
+          restore-keys: |
+            mise-${{ env.MISE_VERSION }}-${{ runner.os }}-
       - name: Install development tools
         env:
           MISE_GITHUB_TOKEN: ${{ github.token }}
@@ -91,11 +105,9 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: main
+          ref: ${{ inputs.reusable-ci-ref }}
           path: .github-shared
-          sparse-checkout: |
-            scripts/run-just-linters.sh
-          sparse-checkout-cone-mode: false
+          sparse-checkout: scripts
       - name: Run linting tasks with enhanced output
         run: |
           eval "$(mise activate bash)"

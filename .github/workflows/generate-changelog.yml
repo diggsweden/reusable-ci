@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+#
 # Generate Changelog
 # 
 # This reusable workflow generates a changelog using git-cliff with flexible configuration.
@@ -41,12 +45,18 @@ on:
         required: false
         default: "release-changelog"
         type: string
+      reusable-ci-ref:
+        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        required: false
+        default: "main"
+        type: string
 permissions:
   contents: read
 jobs:
   generate-changelog:
     name: Generate
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout Repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -59,7 +69,7 @@ jobs:
         with:
           repository: diggsweden/reusable-ci
           path: .github-templates
-          ref: main
+          ref: ${{ inputs.reusable-ci-ref }}
           sparse-checkout: |
             templates/
       - name: Generate Changelog with git-cliff
@@ -71,7 +81,21 @@ jobs:
           OUTPUT: ${{ inputs['output-file'] }}
           GITHUB_REPO: ${{ github.repository }}
       - name: Verify Changelog Generation
-        run: "if [ -f \"${{ inputs['output-file'] }}\" ]; then\n  echo \"✓ Changelog generated successfully: ${{ inputs['output-file'] }}\"\n  echo \"  • File size: $(stat -c%s \"${{ inputs['output-file'] }}\") bytes\"\n  echo \"  • Line count: $(wc -l < \"${{ inputs['output-file'] }}\")\"\n  \n  # Show first few lines for debugging\n  echo \"\"\n  echo \"Preview (first 10 lines):\"\n  echo \"========================\"\n  head -10 \"${{ inputs['output-file'] }}\"\nelse\n  echo \"✗ ERROR: No changelog generated\"\n  exit 1\nfi\n"
+        run: |
+          if [ -f "${{ inputs['output-file'] }}" ]; then
+            printf "✓ Changelog generated successfully: %s\n" "${{ inputs['output-file'] }}"
+            printf "  • File size: %s bytes\n" "$(stat -c%s "${{ inputs['output-file'] }}")"
+            printf "  • Line count: %s\n" "$(wc -l < "${{ inputs['output-file'] }}")"
+
+            # Show first few lines for debugging
+            printf "\n"
+            printf "Preview (first 10 lines):\n"
+            printf "========================\n"
+            head -10 "${{ inputs['output-file'] }}"
+          else
+            printf "✗ ERROR: No changelog generated\n"
+            exit 1
+          fi
       - name: Upload Changelog Artifact
         if: ${{ inputs['upload-as-artifact'] }}
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0

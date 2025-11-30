@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
 # Example: Simple NPM Application with Container
@@ -7,7 +7,7 @@ artifacts:
     project-type: npm
     working-directory: .
     config:
-      node-version: 22
+      node-version: 24
 containers:
   - name: my-app
     from: [my-app]

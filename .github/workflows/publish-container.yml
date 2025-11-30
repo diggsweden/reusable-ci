@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
 # Container Image Publisher
@@ -72,7 +72,7 @@ on:
       branch:
         description: "Branch to checkout (default: main)"
         required: false
-        default: "v1"
+        default: "main"
         type: string
       platforms:
         description: "Comma-separated list of platforms to build"
@@ -148,6 +148,11 @@ on:
         description: "Enforce namespace validation (defaults to repository owner)"
         required: false
         type: string
+      reusable-ci-ref:
+        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        required: false
+        default: "main"
+        type: string
     secrets:
       registry-password:
         description: "Registry password/token (required when use-github-token=false)"
@@ -168,6 +173,7 @@ jobs:
   build-and-push:
     name: Build and Push Container
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -192,13 +198,9 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: main
+          ref: ${{ inputs.reusable-ci-ref }}
           path: .github-shared
-          sparse-checkout: |
-            scripts/container
-            scripts/sbom
-            scripts/release
-            scripts/registry
+          sparse-checkout: scripts
       - name: Download Maven artifacts
         if: ${{ contains(inputs['artifact-types'], 'maven') }}
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
@@ -236,13 +238,14 @@ jobs:
 
           # Verify the file exists
           if [ ! -f "$CONTAINERFILE" ]; then
-            echo "Error: Containerfile '$CONTAINERFILE' not found"
+            printf "Error: Containerfile '%s' not found\n" "$CONTAINERFILE"
             exit 1
           fi
 
-          echo "Using containerfile: $CONTAINERFILE"
-          echo "containerfile=$CONTAINERFILE" >> "$GITHUB_OUTPUT"
+          printf "Using containerfile: %s\n" "$CONTAINERFILE"
+          printf "containerfile=%s\n" "$CONTAINERFILE" >> "$GITHUB_OUTPUT"
       - name: Set up QEMU
+        if: contains(inputs.platforms, ',') || contains(inputs.platforms, 'arm')
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
       - name: Set up Buildx
         id: buildx
@@ -277,7 +280,12 @@ jobs:
             "${{ github.repository_owner }}" >> "$GITHUB_OUTPUT"
       - name: Validate Image Namespace
         if: ${{ inputs['push-image'] }}
-        run: "IMAGE_NAME=\"${{ steps.image-name.outputs.name }}\"\nREPO_NAME=\"${{ github.repository }}\"\nREPO_OWNER=\"${{ github.repository_owner }}\"\nREGISTRY=\"${{ inputs.registry }}\"\nENFORCE_NAMESPACE=\"${{ inputs['enforce-namespace'] || github.repository_owner }}\"\n\necho \"Validating image namespace...\"\necho \"  Image: $IMAGE_NAME\"\necho \"  Repository: $REPO_NAME\"\necho \"  Registry: $REGISTRY\"\necho \"  Enforced namespace: $ENFORCE_NAMESPACE\"\n\n# Extract repo name without org\nREPO_SHORT=\"${REPO_NAME##*/}\"\n\n# For GHCR, enforce strict namespace matching\nif [[ \"$REGISTRY\" == \"ghcr.io\" ]]; then\n  # Must be ghcr.io/NAMESPACE/REPO_NAME or ghcr.io/NAMESPACE/REPO_NAME-*\n  EXPECTED_PREFIX=\"ghcr.io/${ENFORCE_NAMESPACE}/${REPO_SHORT}\"\n  \n  if [[ ! \"$IMAGE_NAME\" =~ ^${EXPECTED_PREFIX}(-.*)?$ ]]; then\n    echo \"::error::Security: Image name must start with '${EXPECTED_PREFIX}'\"\n    echo \"::error::Got: $IMAGE_NAME\"\n    echo \"::error::This prevents pushing to unauthorized namespaces\"\n    exit 1\n  fi\n  \n  echo \"✓ Image namespace validated: $IMAGE_NAME\"\nelse\n  echo \"⚠ Non-GHCR registry - namespace validation skipped\"\nfi\n"
+        run: |
+          bash .github-shared/scripts/container/validate-namespace.sh \
+            "${{ steps.image-name.outputs.name }}" \
+            "${{ github.repository }}" \
+            "${{ inputs.registry }}" \
+            "${{ inputs['enforce-namespace'] || github.repository_owner }}"
       - name: Extract Image Metadata
         id: metadata
         uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v5.9.0
@@ -319,10 +327,10 @@ jobs:
       - name: Check SLSA compatibility
         if: ${{ inputs['push-image'] && inputs['enable-slsa'] && inputs.registry != 'ghcr.io' }}
         run: |
-          echo "::notice::SLSA provenance generation only supports ghcr.io registry"
-          echo "::notice::Current registry: ${{ inputs.registry }}"
-          echo "::notice::SLSA provenance attestation will be skipped"
-          echo "::notice::To enable SLSA: Use registry: ghcr.io or set enable-slsa: false"
+          printf "::notice::SLSA provenance generation only supports ghcr.io registry\n"
+          printf "::notice::Current registry: %s\n" "${{ inputs.registry }}"
+          printf "::notice::SLSA provenance attestation will be skipped\n"
+          printf "::notice::To enable SLSA: Use registry: ghcr.io or set enable-slsa: false\n"
       - name: Export digest
         if: ${{ inputs['push-image'] && inputs['enable-slsa'] && inputs.registry == 'ghcr.io' }}
         run: |
@@ -381,12 +389,12 @@ jobs:
         run: |
           SBOM_FILE=$(ls *-container-sbom.spdx.json 2>/dev/null | head -1)
           if [ -z "$SBOM_FILE" ]; then
-            echo "::error::No container SBOM file found matching pattern *-container-sbom.spdx.json"
-            echo "::error::SBOM generation step may have failed"
+            printf "::error::No container SBOM file found matching pattern *-container-sbom.spdx.json\n"
+            printf "::error::SBOM generation step may have failed\n"
             exit 1
           fi
-          echo "sbom-file=$SBOM_FILE" >> "$GITHUB_OUTPUT"
-          echo "Found SBOM file: $SBOM_FILE"
+          printf "sbom-file=%s\n" "$SBOM_FILE" >> "$GITHUB_OUTPUT"
+          printf "Found SBOM file: %s\n" "$SBOM_FILE"
       - name: Attest Container SBOM
         if: ${{ inputs['enable-sbom'] && inputs['push-image'] && inputs['enable-slsa'] }}
         uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3.0.0
@@ -399,10 +407,10 @@ jobs:
         id: image
         run: |
           IMAGE_NAME="${{ steps.image-name.outputs.name }}"
-          echo "image=$IMAGE_NAME" >> "$GITHUB_OUTPUT"
-          echo "Image: $IMAGE_NAME"
-          echo "Digest: ${{ steps.build.outputs.digest }}"
-          echo "Metadata: ${{ steps.metadata.outputs.json }}"
+          printf "image=%s\n" "$IMAGE_NAME" >> "$GITHUB_OUTPUT"
+          printf "Image: %s\n" "$IMAGE_NAME"
+          printf "Digest: %s\n" "${{ steps.build.outputs.digest }}"
+          printf "Metadata: %s\n" "${{ steps.metadata.outputs.json }}"
   # Generate SLSA provenance (called as separate job if enabled)
   provenance:
     needs: [build-and-push]

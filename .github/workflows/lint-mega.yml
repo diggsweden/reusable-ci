@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
 # Description:
@@ -35,8 +35,9 @@ permissions:
   contents: read
 jobs:
   megalinter:
-    name: Megalinter analysis
+    name: MegaLinter Analysis
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       security-events: write

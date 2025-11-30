@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
 # Development NPM Package Publisher
@@ -45,7 +45,7 @@ on:
       node-version:
         description: "Node.js version"
         required: false
-        default: "22"
+        default: "24"
         type: string
       working-directory:
         description: "Working directory"
@@ -71,6 +71,11 @@ on:
         required: false
         default: true
         type: boolean
+      reusable-ci-ref:
+        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        required: false
+        default: "main"
+        type: string
     secrets:
       registry-password:
         description: "NPM registry auth token (required when use-github-token=false)"
@@ -91,6 +96,7 @@ jobs:
   build-and-publish:
     name: Build & Publish Dev NPM Package
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
@@ -115,8 +121,8 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         run: |
           NAME=$(node -p "require('./package.json').name")
-          echo "name=$NAME" >> "$GITHUB_OUTPUT"
-          echo "Package name: $NAME"
+          printf "name=%s\n" "$NAME" >> "$GITHUB_OUTPUT"
+          printf "Package name: %s\n" "$NAME"
       - name: Validate package scope
         if: ${{ inputs.package-scope != '' }}
         working-directory: ${{ inputs.working-directory }}
@@ -124,8 +130,8 @@ jobs:
           NAME=$(node -p "require('./package.json').name")
           SCOPE="${{ inputs.package-scope }}"
           if [[ "$NAME" != ${SCOPE}/* ]]; then
-            echo "::error::package.json name must be scoped as ${SCOPE}/<pkg>"
-            echo "Found: $NAME"
+            printf "::error::package.json name must be scoped as %s/<pkg>\n" "${SCOPE}"
+            printf "Found: %s\n" "$NAME"
             exit 1
           fi
           # Configure scoped registry
@@ -135,11 +141,9 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: main
+          ref: ${{ inputs.reusable-ci-ref }}
           path: .github-shared
-          sparse-checkout: |
-            scripts/version
-            scripts/registry
+          sparse-checkout: scripts
       - name: Check registry authentication configuration
         run: |
           HAS_PASSWORD="false"
@@ -157,15 +161,15 @@ jobs:
         shell: bash
         run: |
           DEV_VERSION=$(bash .github-shared/scripts/version/generate-dev-version.sh)
-          echo "dev_version=${DEV_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "📦 Dev version: ${DEV_VERSION}"
+          printf "dev_version=%s\n" "${DEV_VERSION}" >> "$GITHUB_OUTPUT"
+          printf "📦 Dev version: %s\n" "${DEV_VERSION}"
       - name: Apply dev version to package.json
         working-directory: ${{ inputs.working-directory }}
         env:
           DEV_VERSION: ${{ steps.tags.outputs.dev_version }}
         run: |
           npm version "$DEV_VERSION" --no-git-tag-version --allow-same-version
-          echo "Applied version: $(node -p "require('./package.json').version")"
+          printf "Applied version: %s\n" "$(node -p "require('./package.json').version")"
       - name: Install dependencies
         working-directory: ${{ inputs.working-directory }}
         run: npm ci --prefer-offline --no-audit
@@ -177,8 +181,8 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         run: |
           FILE=$(npm pack --silent)
-          echo "tarball=$FILE" >> "$GITHUB_OUTPUT"
-          echo "Created: $FILE"
+          printf "tarball=%s\n" "$FILE" >> "$GITHUB_OUTPUT"
+          printf "Created: %s\n" "$FILE"
       - name: Upload tarball as artifact
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
@@ -192,6 +196,6 @@ jobs:
         run: |
           PKG_NAME=$(node -p "require('./package.json').name")
           PKG_VERSION=$(node -p "require('./package.json').version")
-          echo "Publishing ${PKG_NAME}@${PKG_VERSION} to ${{ inputs.registry }} with tag 'dev'"
+          printf "Publishing %s@%s to %s with tag 'dev'\n" "${PKG_NAME}" "${PKG_VERSION}" "${{ inputs.registry }}"
           npm publish --tag dev
-          echo "✅ Published successfully"
+          printf "✅ Published successfully\n"

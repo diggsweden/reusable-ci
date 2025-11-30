@@ -11,44 +11,37 @@
 
 set -euo pipefail
 
-PROJECT_TYPE="${1:-}"
-CUSTOM_PATTERN="${2:-}"
+get_pattern() {
+  local project_type="$1"
 
-if [ -z "$PROJECT_TYPE" ]; then
-  echo "Error: PROJECT_TYPE is required" >&2
-  exit 1
-fi
+  case "$project_type" in
+  maven) printf "CHANGELOG.md :(glob)**/pom.xml" ;;
+  npm) printf "CHANGELOG.md package.json package-lock.json" ;;
+  gradle | gradle-android) printf "CHANGELOG.md gradle.properties build.gradle.kts settings.gradle.kts build.gradle settings.gradle" ;;
+  xcode-ios) printf "CHANGELOG.md versions.xcconfig :(glob)**/*.xcconfig" ;;
+  python) printf "CHANGELOG.md pyproject.toml" ;;
+  go) printf "CHANGELOG.md go.mod" ;;
+  rust) printf "CHANGELOG.md Cargo.toml Cargo.lock" ;;
+  *) printf "CHANGELOG.md" ;;
+  esac
+}
 
-# If custom pattern provided, use it
-if [ -n "$CUSTOM_PATTERN" ]; then
-  echo "$CUSTOM_PATTERN"
-  exit 0
-fi
+main() {
+  local project_type="${1:-}"
+  local custom_pattern="${2:-}"
 
-# Return default pattern based on project type
-case "$PROJECT_TYPE" in
-maven)
-  echo "CHANGELOG.md :(glob)**/pom.xml"
-  ;;
-npm)
-  echo "CHANGELOG.md package.json package-lock.json"
-  ;;
-gradle | gradle-android)
-  echo "CHANGELOG.md gradle.properties build.gradle.kts settings.gradle.kts build.gradle settings.gradle"
-  ;;
-xcode-ios)
-  echo "CHANGELOG.md :(glob)**/*.xcodeproj/project.pbxproj"
-  ;;
-python)
-  echo "CHANGELOG.md pyproject.toml"
-  ;;
-go)
-  echo "CHANGELOG.md go.mod"
-  ;;
-rust)
-  echo "CHANGELOG.md Cargo.toml Cargo.lock"
-  ;;
-*)
-  echo "CHANGELOG.md"
-  ;;
-esac
+  if [[ -z "$project_type" ]]; then
+    printf "Error: PROJECT_TYPE is required\n" >&2
+    exit 1
+  fi
+
+  if [[ -n "$custom_pattern" ]]; then
+    printf "%s\n" "$custom_pattern"
+    exit 0
+  fi
+
+  get_pattern "$project_type"
+  printf "\n"
+}
+
+main "$@"

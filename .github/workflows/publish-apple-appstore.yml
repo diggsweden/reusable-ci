@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
 # Apple App Store / TestFlight Publisher
@@ -74,9 +74,9 @@ on:
         default: "."
         type: string
       macos-version:
-        description: "macOS runner version (macos-13, macos-14, macos-15)"
+        description: "macOS runner version (macos-13, macos-14, macos-15, macos-26)"
         required: false
-        default: "macos-14"
+        default: "macos-26"
         type: string
 permissions:
   contents: read
@@ -84,13 +84,14 @@ jobs:
   publish:
     name: Publish to App Store Connect
     runs-on: ${{ inputs.macos-version }}
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Download IPA artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -104,12 +105,12 @@ jobs:
           IPA_FILE=$(find artifacts -name "*.ipa" -type f | head -1)
 
           if [ -z "$IPA_FILE" ]; then
-            echo "::error::No IPA file found in artifact"
+            printf "::error::No IPA file found in artifact\n"
             exit 1
           fi
 
-          echo "ipa-file=${IPA_FILE}" >> "$GITHUB_OUTPUT"
-          echo "Found IPA: ${IPA_FILE}"
+          printf "ipa-file=%s\n" "${IPA_FILE}" >> "$GITHUB_OUTPUT"
+          printf "Found IPA: %s\n" "${IPA_FILE}"
 
           ls -lh "$IPA_FILE"
 
@@ -119,18 +120,18 @@ jobs:
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
         run: |
           if [ -z "$APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64" ]; then
-            echo "::error::APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 secret not found"
+            printf "::error::APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 secret not found\n"
             exit 1
           fi
           if [ -z "$APP_STORE_CONNECT_API_KEY_ID" ]; then
-            echo "::error::APP_STORE_CONNECT_API_KEY_ID secret not found"
+            printf "::error::APP_STORE_CONNECT_API_KEY_ID secret not found\n"
             exit 1
           fi
 
           mkdir -p private_keys
-          echo -n "$APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64" | base64 --decode -o "private_keys/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
+          printf "%s" "$APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64" | base64 --decode -o "private_keys/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
 
-          echo "✓ App Store Connect API configured"
+          printf "✓ App Store Connect API configured\n"
 
       - name: Validate IPA
         if: ${{ !inputs['skip-validation'] }}
@@ -138,7 +139,7 @@ jobs:
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
-          echo "Validating IPA..."
+          printf "Validating IPA...\n"
 
           xcrun altool \
             --validate-app \
@@ -148,7 +149,7 @@ jobs:
             --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID" \
             --output-format json
 
-          echo "✓ IPA validation passed"
+          printf "✓ IPA validation passed\n"
 
       - name: Upload to App Store Connect
         env:
@@ -157,7 +158,7 @@ jobs:
         run: |
           set -o pipefail
 
-          echo "Uploading IPA to App Store Connect..."
+          printf "Uploading IPA to App Store Connect...\n"
 
           xcrun altool \
             --output-format json \
@@ -168,46 +169,46 @@ jobs:
             --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID" \
           | tee upload-result.json
 
-          echo "✓ Upload successful"
+          printf "✓ Upload successful\n"
 
       - name: Parse upload results
         id: upload-info
         run: |
           if [ -f upload-result.json ]; then
             REQUEST_ID=$(jq -r '.["product-errors"][]?.requestId // .["success-message"] // "unknown"' upload-result.json)
-            echo "request-id=${REQUEST_ID}" >> "$GITHUB_OUTPUT"
-            echo "Upload Request ID: ${REQUEST_ID}"
+            printf "request-id=%s\n" "${REQUEST_ID}" >> "$GITHUB_OUTPUT"
+            printf "Upload Request ID: %s\n" "${REQUEST_ID}"
           fi
 
       - name: Generate upload summary
         run: |
-          echo "## App Store Connect Upload Summary 📱" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Upload Details" >> $GITHUB_STEP_SUMMARY
-          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **IPA File** | \`$(basename ${{ steps.find-ipa.outputs.ipa-file }})\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Platform** | ${{ inputs.platform }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Validation** | ${{ inputs['skip-validation'] && '⊘ Skipped' || '✓ Passed' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Status** | ✓ Uploaded |" >> $GITHUB_STEP_SUMMARY
+          printf "## App Store Connect Upload Summary 📱\n" >> $GITHUB_STEP_SUMMARY
+          printf "\n" >> $GITHUB_STEP_SUMMARY
+          printf "### Upload Details\n" >> $GITHUB_STEP_SUMMARY
+          printf "| Property | Value |\n" >> $GITHUB_STEP_SUMMARY
+          printf "|----------|-------|\n" >> $GITHUB_STEP_SUMMARY
+          printf "| **IPA File** | \`%s\` |\n" "$(basename ${{ steps.find-ipa.outputs.ipa-file }})" >> $GITHUB_STEP_SUMMARY
+          printf "| **Platform** | %s |\n" "${{ inputs.platform }}" >> $GITHUB_STEP_SUMMARY
+          printf "| **Validation** | %s |\n" "${{ inputs['skip-validation'] && '⊘ Skipped' || '✓ Passed' }}" >> $GITHUB_STEP_SUMMARY
+          printf "| **Status** | ✓ Uploaded |\n" >> $GITHUB_STEP_SUMMARY
 
           if [ -n "${{ steps.upload-info.outputs.request-id }}" ]; then
-            echo "| **Request ID** | \`${{ steps.upload-info.outputs.request-id }}\` |" >> $GITHUB_STEP_SUMMARY
+            printf "| **Request ID** | \`%s\` |\n" "${{ steps.upload-info.outputs.request-id }}" >> $GITHUB_STEP_SUMMARY
           fi
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
-          echo "1. Check [App Store Connect](https://appstoreconnect.apple.com) for build processing status" >> $GITHUB_STEP_SUMMARY
-          echo "2. Build will be available in TestFlight within 10-15 minutes after processing completes" >> $GITHUB_STEP_SUMMARY
+          printf "\n" >> $GITHUB_STEP_SUMMARY
+          printf "### Next Steps\n" >> $GITHUB_STEP_SUMMARY
+          printf "1. Check [App Store Connect](https://appstoreconnect.apple.com) for build processing status\n" >> $GITHUB_STEP_SUMMARY
+          printf "2. Build will be available in TestFlight within 10-15 minutes after processing completes\n" >> $GITHUB_STEP_SUMMARY
 
           if [ "${{ inputs['submit-for-review'] }}" = "true" ]; then
-            echo "3. Build will be automatically submitted for App Store review" >> $GITHUB_STEP_SUMMARY
+            printf "3. Build will be automatically submitted for App Store review\n" >> $GITHUB_STEP_SUMMARY
           else
-            echo "3. Manually submit for external testing or App Store review from App Store Connect" >> $GITHUB_STEP_SUMMARY
+            printf "3. Manually submit for external testing or App Store review from App Store Connect\n" >> $GITHUB_STEP_SUMMARY
           fi
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "*Upload completed at $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY
+          printf "\n" >> $GITHUB_STEP_SUMMARY
+          printf "*Upload completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload result artifact
         if: always()

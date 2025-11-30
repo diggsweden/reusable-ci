@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
 # GitHub Release Creator
@@ -45,7 +45,7 @@ on:
       checkout-ref:
         description: "Git ref to checkout (branch or tag)"
         required: false
-        default: "v1"
+        default: "main"
         type: string
       attach-artifacts:
         description: "Glob patterns for artifacts to attach (newline or comma separated)"
@@ -86,6 +86,11 @@ on:
         required: false
         default: "audit"
         type: string
+      reusable-ci-ref:
+        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        required: false
+        default: "main"
+        type: string
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
@@ -100,10 +105,12 @@ jobs:
       output-file: "ReleasenotesTmp"
       upload-as-artifact: true
       artifact-name: "release-changelog"
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   create-release:
     name: Create GitHub Release
     needs: [generate-changelog]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
       packages: read
@@ -133,7 +140,16 @@ jobs:
         with:
           name: release-changelog
       - name: Verify Changelog
-        run: "if [ -f \"ReleasenotesTmp\" ]; then\n  echo \"Changelog artifact downloaded successfully\"\n  echo \"File size: $(stat -c%s ReleasenotesTmp) bytes\"\nelse\n  echo \"No changelog artifact found - creating fallback\"\n  echo \"# Release ${{ github.ref_name }}\" > ReleasenotesTmp\n  echo \"\" >> ReleasenotesTmp  \n  echo \"Release created from commit ${{ github.sha }}\" >> ReleasenotesTmp\nfi\n"
+        run: |
+          if [ -f "ReleasenotesTmp" ]; then
+            printf "Changelog artifact downloaded successfully\n"
+            printf "File size: %s bytes\n" "$(stat -c%s ReleasenotesTmp)"
+          else
+            printf "No changelog artifact found - creating fallback\n"
+            printf "# Release %s\n" "${{ github.ref_name }}" > ReleasenotesTmp
+            printf "\n" >> ReleasenotesTmp
+            printf "Release created from commit %s\n" "${{ github.sha }}" >> ReleasenotesTmp
+          fi
       # Download container SBOM if it exists (from container build job)
       - name: Download container SBOM artifacts
         continue-on-error: true
@@ -145,38 +161,14 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: main
+          ref: ${{ inputs.reusable-ci-ref }}
           path: .github-shared
-          sparse-checkout: |
-            scripts/sbom
-            scripts/release
-      # Determine artifact name based on project type
+          sparse-checkout: scripts
       - name: Determine artifact name
         id: artifact-name
         run: |
-          case "${{ inputs['project-type'] }}" in
-            maven)
-              echo "name=maven-build-artifacts" >> $GITHUB_OUTPUT
-              ;;
-            npm)
-              echo "name=npm-build-artifacts" >> $GITHUB_OUTPUT
-              ;;
-            gradle)
-              echo "name=gradle-build-artifacts" >> $GITHUB_OUTPUT
-              ;;
-            python)
-              echo "name=python-build-artifacts" >> $GITHUB_OUTPUT
-              ;;
-            go)
-              echo "name=go-build-artifacts" >> $GITHUB_OUTPUT
-              ;;
-            rust)
-              echo "name=rust-build-artifacts" >> $GITHUB_OUTPUT
-              ;;
-            *)
-              echo "name=build-artifacts" >> $GITHUB_OUTPUT  # Generic fallback
-              ;;
-          esac
+          bash .github-shared/scripts/release/determine-artifact-name.sh \
+            "${{ inputs['project-type'] }}" >> "$GITHUB_OUTPUT"
       # Download build artifacts based on project type
       - name: Download build artifacts
         continue-on-error: true
@@ -200,7 +192,7 @@ jobs:
             "$VERSION" \
             "$PROJECT_NAME"
 
-          echo "Layer 3: Container SBOMs will be downloaded from container build job"
+          printf "Layer 3: Container SBOMs will be downloaded from container build job\n"
       - name: Generate checksums
         run: |
           bash .github-shared/scripts/release/generate-checksums.sh \
@@ -213,15 +205,15 @@ jobs:
         run: |
           # Sign the checksums file
           if [ -s checksums.sha256 ]; then
-            echo "Signing checksums.sha256 with GPG"
+            printf "Signing checksums.sha256 with GPG\n"
             gpg --armor --detach-sign --default-key ${{ steps.import-gpg.outputs.keyid }} checksums.sha256
           fi
 
           # Sign individual artifacts (JARs, tgz, etc.) - supports multi-module
           if [ -d "./release-artifacts" ]; then
-            echo "Signing individual artifacts"
+            printf "Signing individual artifacts\n"
             while IFS= read -r -d '' artifact; do
-              echo "Signing $(basename "$artifact")"
+              printf "Signing %s\n" "$(basename "$artifact")"
               gpg --armor --detach-sign --default-key ${{ steps.import-gpg.outputs.keyid }} "$artifact"
               mv "${artifact}.asc" "$(basename "${artifact}").asc"
             done < <(find ./release-artifacts -type f \( -name "*.jar" -o -name "*.tgz" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*.war" \) ! -name "original-*.jar" -print0)
@@ -242,107 +234,22 @@ jobs:
           # Use git-cliff generated release notes
           if [ -f "ReleasenotesTmp" ]; then
             cp ReleasenotesTmp release-notes.md
-            echo "Using git-cliff generated release notes"
+            printf "Using git-cliff generated release notes\n"
           else
-            echo "No release notes generated by git-cliff"
+            printf "No release notes generated by git-cliff\n"
             touch release-notes.md
           fi
       - name: Create GitHub Release
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
         run: |
-          # Build command arguments
-          ARGS=()
-          ARGS+=("${{ github.ref_name }}")
-          ARGS+=("--title" "${{ github.ref_name }}")
-
-          # Add flags
-          if [ "${{ inputs.draft }}" = "true" ]; then
-            ARGS+=("--draft")
-          fi
-
-          # Auto-detect prerelease from version tag
-          if [[ "${{ github.ref_name }}" =~ -(alpha|beta|rc|dev|snapshot) ]]; then
-            ARGS+=("--prerelease")
-          fi
-
-          if [ "${{ inputs['make-latest'] }}" != "true" ]; then
-            ARGS+=("--latest=false")
-          fi
-
-          # Add release notes from git-cliff
-          if [ -f "release-notes.md" ] && [ -s "release-notes.md" ]; then
-            ARGS+=("--notes-file" "release-notes.md")
-          fi
-
-          # Add specified artifacts
-          if [ -n "${{ inputs['attach-artifacts'] }}" ]; then
-            # Split comma-separated patterns and add each file
-            IFS=',' read -ra PATTERNS <<< "${{ inputs['attach-artifacts'] }}"
-            for pattern in "${PATTERNS[@]}"; do
-              pattern=$(echo "$pattern" | xargs)
-              for file in $pattern; do
-                [ -f "$file" ] && ARGS+=("$file")
-              done
-            done
-          fi
-
-          # Track added files to avoid duplicates
-          declare -A ADDED_FILES
-
-          # Add release artifacts from build (supports multi-module with find)
-          if [ -d "./release-artifacts" ]; then
-            while IFS= read -r -d '' file; do
-              BASENAME=$(basename "$file")
-              ARGS+=("$file")
-              ADDED_FILES[$BASENAME]=1
-              # Add signature if it exists in current directory
-              if [ -f "${BASENAME}.asc" ]; then
-                ARGS+=("${BASENAME}.asc")
-                ADDED_FILES["${BASENAME}.asc"]=1
-              fi
-            done < <(find ./release-artifacts -type f \( -name "*.jar" -o -name "*.tgz" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*.war" \) ! -name "original-*.jar" -print0)
-          fi
-
-          # Add SBOM zip
-          PROJECT_NAME=$(basename ${{ github.repository }})
-          VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"  # Remove 'v' prefix
-          SBOM_ZIP="${PROJECT_NAME}-${VERSION}-sboms.zip"
-          if [ -f "$SBOM_ZIP" ]; then
-            ARGS+=("$SBOM_ZIP")
-            ADDED_FILES["$SBOM_ZIP"]=1
-            if [ -f "${SBOM_ZIP}.asc" ]; then
-              ARGS+=("${SBOM_ZIP}.asc")
-              ADDED_FILES["${SBOM_ZIP}.asc"]=1
-            fi
-          fi
-
-          # Add checksums and signature
-          if [ -f "checksums.sha256" ]; then
-            ARGS+=("checksums.sha256")
-            ADDED_FILES["checksums.sha256"]=1
-            if [ -f "checksums.sha256.asc" ]; then
-              ARGS+=("checksums.sha256.asc")
-              ADDED_FILES["checksums.sha256.asc"]=1
-            fi
-          fi
-
-          # Add any signature files not already added
-          for sig in *.asc; do
-            if [ -f "$sig" ]; then
-              # Check if not already added
-              BASENAME=$(basename "$sig")
-              if [[ -z "${ADDED_FILES[$BASENAME]:-}" ]]; then
-                ARGS+=("$sig")
-                ADDED_FILES[$BASENAME]=1
-              fi
-            fi
-          done
-
-          # Create the release
-          echo "Creating release with gh release create"
-          gh release create "${ARGS[@]}"
+          bash .github-shared/scripts/release/create-github-release.sh \
+            "${{ github.ref_name }}" \
+            "${{ github.repository }}" \
+            "${{ inputs.draft }}" \
+            "${{ inputs['make-latest'] }}" \
+            "${{ inputs['attach-artifacts'] }}" \
+            "release-notes.md"
       - name: Upload release artifacts summary
         if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0

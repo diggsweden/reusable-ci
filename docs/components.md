@@ -21,7 +21,7 @@ See [Workflow Guide](workflows.md) for orchestrator documentation and [Artifacts
 | Component | Purpose | Output | Required Secrets | Use When |
 |-----------|---------|--------|------------------|----------|
 | **publish-github** | Publishes Maven/NPM/Gradle to GitHub Packages | Artifacts in GitHub Packages | GITHUB_TOKEN | Default publishing target |
-| **publish-mavencentral** | Publishes Maven libraries to Maven Central | Public Maven artifacts | MAVENCENTRAL_USERNAME, MAVENCENTRAL_PASSWORD | Public libraries (requires build-type: library) |
+| **publish-maven-central** | Publishes Maven libraries to Maven Central | Public Maven artifacts | MAVENCENTRAL_USERNAME, MAVENCENTRAL_PASSWORD | Public libraries (requires build-type: library) |
 
 #### Container Builders
 
@@ -34,8 +34,8 @@ See [Workflow Guide](workflows.md) for orchestrator documentation and [Artifacts
 
 | Component | Purpose | Creates/Updates | Required Secrets | Use When |
 |-----------|---------|----------------|------------------|----------|
-| **release-github** | GitHub release creation | GitHub release, changelog, signatures | RELEASE_TOKEN, GPG keys | Any production release |
-| **version-bump** | Version management | Updated version files | GITHUB_TOKEN, OSPO_BOT_GHTOKEN | Before releases |
+| **release-github** | GitHub release creation | GitHub release, changelog, signatures | RELEASE_BOT_TOKEN, GPG keys | Any production release |
+| **version-bump** | Version management | Updated version files | GITHUB_TOKEN, RELEASE_BOT_TOKEN | Before releases |
 | **generate-changelog** | Changelog generation | Formatted changelog | GITHUB_TOKEN | Before releases |
 
 #### Validators
@@ -54,7 +54,7 @@ Builds Maven projects (apps or libraries).
 uses: ./.github/workflows/build-maven.yml
 with:
   build-type: application   # "application" or "library"
-  java-version: "21"        # JDK version
+  java-version: "25"        # JDK version
   working-directory: "."    # Path to pom.xml
 ```
 
@@ -63,7 +63,7 @@ Builds NPM projects.
 ```yaml
 uses: ./.github/workflows/build-npm.yml
 with:
-  node-version: "22"        # Node.js version
+  node-version: "24"        # Node.js version
   working-directory: "."    # Path to package.json
 ```
 
@@ -72,7 +72,7 @@ Builds Gradle projects.
 ```yaml
 uses: ./.github/workflows/build-gradle.yml
 with:
-  java-version: "21"        # JDK version
+  java-version: "25"        # JDK version
   working-directory: "."    # Path to build.gradle
   gradle-tasks: "build"     # Gradle tasks to run
 ```
@@ -82,17 +82,17 @@ with:
 #### `publish-github.yml`
 Publishes artifacts to GitHub Packages (Maven/NPM/Gradle).
 ```yaml
-uses: ./.github/workflows/publish-github.yml
+uses: ./.github/workflows/publish-maven-github.yml
 with:
   package-type: maven          # maven, npm, or gradle
   artifact-source: maven-build-artifacts  # Name of workflow artifact
   working-directory: "."
 ```
 
-#### `publish-mavencentral.yml`
+#### `publish-maven-central.yml`
 Publishes Maven libraries to Maven Central.
 ```yaml
-uses: ./.github/workflows/publish-mavencentral.yml
+uses: ./.github/workflows/publish-maven-central.yml
 with:
   artifact-source: maven-build-artifacts  # Name of workflow artifact
   working-directory: "."
@@ -234,3 +234,14 @@ uses: ./.github/workflows/security-openssf-scorecard.yml
 | `pullrequest-orchestrator.yml` | Run CI checks on PRs | Every repository |
 | `release-orchestrator.yml` | Full release process | Production releases |
 | `release-dev-orchestrator.yml` | Dev container builds | Development branches |
+
+### Dev vs Production Release
+
+| Aspect | Dev | Production |
+|--------|-----|------------|
+| Build time | ~3-5 min | ~12-15 min |
+| Container image | ✓ | ✓ + SLSA + SBOM |
+| Build artifacts | ✓ (JARs/tarballs) | ✓ |
+| NPM publish | ✓ (dev tag) | ✓ |
+| Maven publish | — | ✓ (libraries only) |
+| GitHub Release | — | ✓ |

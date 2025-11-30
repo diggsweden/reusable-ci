@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
 # Example artifacts.yml for monorepo support (v2)
@@ -11,13 +11,13 @@ artifacts:
     working-directory: services/backend
     build-type: application
     config:
-      java-version: 21
+      java-version: 25
   # NPM frontend application
   - name: frontend-ui
     project-type: npm
     working-directory: packages/frontend
     config:
-      node-version: 22
+      node-version: 24
   # Maven shared library (publish to Maven Central)
   - name: shared-lib
     project-type: maven
@@ -28,7 +28,7 @@ artifacts:
       - github-packages
       - maven-central
     config:
-      java-version: 21
+      java-version: 25
       settings-path: .mvn/settings.xml
 # Containers are separate - they reference artifacts by name
 containers:

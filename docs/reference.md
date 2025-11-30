@@ -3,14 +3,13 @@
 | Variable/Secret | Required For | When Checked | Expected Value | Notes |
 |-----------------|--------------|--------------|----------------|--------|
 | **GITHUB_TOKEN** | All workflows | Always | Valid GitHub token | Provided by GitHub Actions |
-| **OSPO_BOT_GHTOKEN** | Release workflows | During release | GitHub PAT with repo scope | Bot token for releases |
+| **RELEASE_BOT_TOKEN** | Release workflows | During release | GitHub PAT | Bot token for pushing commits, tags, and creating releases |
 | **OSPO_BOT_GPG_PUB** | GPG signing | During signing | GPG public key | Public key for verification |
 | **OSPO_BOT_GPG_PRIV** | GPG signing | During signing | Base64 GPG private key | Private key for signing |
 | **OSPO_BOT_GPG_PASS** | GPG signing | During signing | GPG key passphrase | Passphrase for GPG key |
 | **MAVENCENTRAL_USERNAME** | Maven Central publishing | During publish | Sonatype username | Maven Central auth |
 | **MAVENCENTRAL_PASSWORD** | Maven Central publishing | During publish | Sonatype password | Maven Central auth |
 | **NPM_TOKEN** | NPM publishing to npmjs.org | During publish | npmjs.org auth token | NPM public registry auth (not GitHub Packages) |
-| **RELEASE_TOKEN** | GitHub CLI | During release | GitHub PAT | GitHub release operations |
 | **AUTHORIZED_RELEASE_DEVELOPERS** | Production releases | Pre-release check | Comma-separated usernames | Who can release |
 
 ## Prerequisites Check Matrix
@@ -53,13 +52,21 @@
 1. **Don't need to create secrets** - They already exist at DiggSweden org level
 2. **Request access** - Contact your DiggSweden GitHub org owner/admin
 3. **Specify which ones** - Tell them which secrets your repo needs:
+   - Release bot token → Request `RELEASE_BOT_TOKEN`
    - GPG signing → Request `OSPO_BOT_GPG_PRIV`, `OSPO_BOT_GPG_PASS`, and `OSPO_BOT_GPG_PUB`
-   - Bot token → Request `OSPO_BOT_GHTOKEN` and `RELEASE_TOKEN`
    - Maven Central → Request `MAVENCENTRAL_USERNAME` and `MAVENCENTRAL_PASSWORD`
    - NPM public registry → Request `NPM_TOKEN` (only if publishing to npmjs.org)
 4. **Get enabled** - DiggSweden admin grants your repository access to the secrets
 
 - **No manual configuration** - Developers never touch secret values
+
+### RELEASE_BOT_TOKEN
+
+Used for pushing commits, moving tags, and creating GitHub releases.
+
+**Requires a fine-grained PAT** with `contents: write` permission, scoped to specific repositories. Classic PATs are rejected.
+
+Note: GitHub Packages uploads use `GITHUB_TOKEN` (automatic, no configuration needed).
 
 ---
 

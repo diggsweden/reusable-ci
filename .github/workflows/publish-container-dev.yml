@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
 # Development Container Image Publisher
@@ -82,6 +82,11 @@ on:
         required: false
         default: true
         type: boolean
+      reusable-ci-ref:
+        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        required: false
+        default: "main"
+        type: string
     secrets:
       registry-password:
         description: "Registry password/token (required when use-github-token=false)"
@@ -99,6 +104,7 @@ jobs:
   build-and-push:
     name: Build and Push Dev Container
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -108,22 +114,21 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0
       - name: Checkout .github repository for scripts
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: main
+          ref: ${{ inputs.reusable-ci-ref }}
           path: .github-shared
-          sparse-checkout: |
-            scripts/version
-            scripts/registry
-            scripts/container
+          sparse-checkout: scripts
       # Maven build
       - name: Set up JDK
         if: inputs['project-type'] == 'maven'
         uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
-          java-version: '21'
+          java-version: '25'
           distribution: 'temurin'
           cache: 'maven'
       # NPM build
@@ -131,7 +136,7 @@ jobs:
         if: inputs['project-type'] == 'npm'
         uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
       # Build project (Maven, NPM, or Gradle)
       - name: Build project
@@ -139,6 +144,30 @@ jobs:
           bash .github-shared/scripts/container/build-project.sh \
             "${{ inputs['project-type'] }}" \
             "${{ inputs['working-directory'] }}"
+      - name: Upload Maven artifacts
+        if: ${{ inputs['project-type'] == 'maven' }}
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: maven-dev-artifacts-${{ github.run_id }}
+          path: |
+            ${{ inputs['working-directory'] }}/target/*.jar
+            ${{ inputs['working-directory'] }}/target/*.war
+            ${{ inputs['working-directory'] }}/**/target/*.jar
+            ${{ inputs['working-directory'] }}/**/target/*.war
+            !${{ inputs['working-directory'] }}/target/original-*.jar
+            !${{ inputs['working-directory'] }}/**/target/original-*.jar
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Upload Gradle artifacts
+        if: ${{ inputs['project-type'] == 'gradle' }}
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: gradle-dev-artifacts-${{ github.run_id }}
+          path: |
+            ${{ inputs['working-directory'] }}/build/libs/*.jar
+            ${{ inputs['working-directory'] }}/**/build/libs/*.jar
+          retention-days: 7
+          if-no-files-found: warn
       - name: Set up Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
       - name: Check registry authentication configuration
@@ -165,9 +194,9 @@ jobs:
           DEV_VERSION=$(bash .github-shared/scripts/version/generate-dev-version.sh)
           IMAGE_NAME="${{ inputs.registry }}/${{ github.repository }}"
 
-          echo "tags=${IMAGE_NAME}:${DEV_VERSION}" >> $GITHUB_OUTPUT
-          echo "image=${IMAGE_NAME}:${DEV_VERSION}" >> $GITHUB_OUTPUT
-          echo "→ Dev tag: ${DEV_VERSION}"
+          printf "tags=%s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}" >> $GITHUB_OUTPUT
+          printf "image=%s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}" >> $GITHUB_OUTPUT
+          printf "→ Dev tag: %s\n" "${DEV_VERSION}"
       - name: Build and push
         id: build
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
@@ -185,4 +214,4 @@ jobs:
       - name: Set outputs
         id: image
         run: |-
-          echo "image=${{ steps.tags.outputs.image }}" >> $GITHUB_OUTPUT
+          printf "image=%s\n" "${{ steps.tags.outputs.image }}" >> $GITHUB_OUTPUT
