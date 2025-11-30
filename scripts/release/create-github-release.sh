@@ -14,8 +14,10 @@ readonly MAKE_LATEST="${4:-true}"
 readonly ATTACH_ARTIFACTS="${5:-}"
 readonly RELEASE_NOTES_FILE="${6:-release-notes.md}"
 
-readonly PROJECT_NAME=$(basename "$REPOSITORY")
-readonly VERSION="${TAG_NAME#v}"
+PROJECT_NAME=$(basename "$REPOSITORY")
+readonly PROJECT_NAME
+VERSION="${TAG_NAME#v}"
+readonly VERSION
 readonly PRERELEASE_REGEX='-(alpha|beta|rc|dev|snapshot)'
 
 declare -A ADDED_FILES

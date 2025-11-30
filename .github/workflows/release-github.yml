@@ -86,6 +86,11 @@ on:
         required: false
         default: "audit"
         type: string
+      reusable-ci-ref:
+        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        required: false
+        default: "main"
+        type: string
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
@@ -100,6 +105,7 @@ jobs:
       output-file: "ReleasenotesTmp"
       upload-as-artifact: true
       artifact-name: "release-changelog"
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   create-release:
     name: Create GitHub Release
     needs: [generate-changelog]
@@ -155,7 +161,7 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ inputs.reusable-ci-ref }}
           path: .github-shared
           sparse-checkout: scripts
       - name: Determine artifact name

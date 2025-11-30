@@ -45,6 +45,11 @@ on:
         required: false
         default: "release-changelog"
         type: string
+      reusable-ci-ref:
+        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        required: false
+        default: "main"
+        type: string
 permissions:
   contents: read
 jobs:
@@ -64,7 +69,7 @@ jobs:
         with:
           repository: diggsweden/reusable-ci
           path: .github-templates
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ inputs.reusable-ci-ref }}
           sparse-checkout: |
             templates/
       - name: Generate Changelog with git-cliff

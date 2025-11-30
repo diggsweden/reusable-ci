@@ -15,14 +15,14 @@ get_pattern() {
   local project_type="$1"
 
   case "$project_type" in
-    maven)          printf "CHANGELOG.md :(glob)**/pom.xml" ;;
-    npm)            printf "CHANGELOG.md package.json package-lock.json" ;;
-    gradle|gradle-android) printf "CHANGELOG.md gradle.properties build.gradle.kts settings.gradle.kts build.gradle settings.gradle" ;;
-    xcode-ios)      printf "CHANGELOG.md versions.xcconfig :(glob)**/*.xcconfig" ;;
-    python)         printf "CHANGELOG.md pyproject.toml" ;;
-    go)             printf "CHANGELOG.md go.mod" ;;
-    rust)           printf "CHANGELOG.md Cargo.toml Cargo.lock" ;;
-    *)              printf "CHANGELOG.md" ;;
+  maven) printf "CHANGELOG.md :(glob)**/pom.xml" ;;
+  npm) printf "CHANGELOG.md package.json package-lock.json" ;;
+  gradle | gradle-android) printf "CHANGELOG.md gradle.properties build.gradle.kts settings.gradle.kts build.gradle settings.gradle" ;;
+  xcode-ios) printf "CHANGELOG.md versions.xcconfig :(glob)**/*.xcconfig" ;;
+  python) printf "CHANGELOG.md pyproject.toml" ;;
+  go) printf "CHANGELOG.md go.mod" ;;
+  rust) printf "CHANGELOG.md Cargo.toml Cargo.lock" ;;
+  *) printf "CHANGELOG.md" ;;
   esac
 }
 
