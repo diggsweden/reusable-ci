@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# ⚠️ INTERNAL USE ONLY - PR validation workflow for reusable-ci itself
+# This workflow validates pull requests to reusable-ci using pullrequest-orchestrator.
+# For templates to use in YOUR project, see examples/ directory.
+name: Self Pull Request
+on:
+  pull_request:
+    branches:
+      - main
+      - feat/**
+  push:
+    branches:
+      - main
+      - feat/**
+concurrency:
+  group: pr-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  validate:
+    uses: ./.github/workflows/pullrequest-orchestrator.yml
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    with:
+      project-type: npm
+      linters.justmiselint: true
+      linters.dependencyreview: true
+      linters.commitlint: false
+      linters.licenselint: false
+      linters.megalint: false

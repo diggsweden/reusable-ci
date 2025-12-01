@@ -51,6 +51,10 @@ setup-devtools:
 check-tools: _ensure-devtools
     @{{devtools_dir}}/scripts/check-tools.sh --check-devtools mise git just rumdl yamlfmt actionlint gitleaks shellcheck shfmt conform reuse
 
+# Install tools via mise (alias for tools-install)
+[group('setup')]
+install: tools-install
+
 # Install tools via mise
 [group('setup')]
 tools-install: _ensure-devtools
