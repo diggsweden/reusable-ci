@@ -145,24 +145,24 @@ jobs:
         run: |
           printf "## Gradle Build Summary 🔨\n" >> $GITHUB_STEP_SUMMARY
           printf "\n" >> $GITHUB_STEP_SUMMARY
-          printf "- **Java:** %s\n" "${{ inputs['java-version'] }}" >> $GITHUB_STEP_SUMMARY
-          printf "- **Module:** %s\n" "${{ inputs['build-module'] }}" >> $GITHUB_STEP_SUMMARY
-          printf "- **Tasks:** %s\n" "${{ inputs['gradle-tasks'] }}" >> $GITHUB_STEP_SUMMARY
+          printf "%s **Java:** %s\n" "-" "${{ inputs['java-version'] }}" >> $GITHUB_STEP_SUMMARY
+          printf "%s **Module:** %s\n" "-" "${{ inputs['build-module'] }}" >> $GITHUB_STEP_SUMMARY
+          printf "%s **Tasks:** %s\n" "-" "${{ inputs['gradle-tasks'] }}" >> $GITHUB_STEP_SUMMARY
 
           if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
-            printf "- **Tests:** %s\n" "⊘ Skipped" >> $GITHUB_STEP_SUMMARY
+            printf "%s **Tests:** %s\n" "-" "⊘ Skipped" >> $GITHUB_STEP_SUMMARY
           else
-            printf "- **Tests:** %s\n" "✓ Executed" >> $GITHUB_STEP_SUMMARY
+            printf "%s **Tests:** %s\n" "-" "✓ Executed" >> $GITHUB_STEP_SUMMARY
           fi
 
           if [ "${{ inputs['enable-signing'] }}" = "true" ]; then
-            printf "- **Signing:** %s\n" "✓ Enabled" >> $GITHUB_STEP_SUMMARY
+            printf "%s **Signing:** %s\n" "-" "✓ Enabled" >> $GITHUB_STEP_SUMMARY
           else
-            printf "- **Signing:** %s\n" "⊘ Disabled" >> $GITHUB_STEP_SUMMARY
+            printf "%s **Signing:** %s\n" "-" "⊘ Disabled" >> $GITHUB_STEP_SUMMARY
           fi
 
           if [ -n "${{ steps.version-info.outputs.VERSION }}" ]; then
-            printf "- **Version:** %s (%s)\n" "${{ steps.version-info.outputs.VERSION }}" "${{ steps.version-info.outputs.VERSION_CODE }}" >> $GITHUB_STEP_SUMMARY
+            printf "%s **Version:** %s (%s)\n" "-" "${{ steps.version-info.outputs.VERSION }}" "${{ steps.version-info.outputs.VERSION_CODE }}" >> $GITHUB_STEP_SUMMARY
           fi
 
           printf "\n" >> $GITHUB_STEP_SUMMARY

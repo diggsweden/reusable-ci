@@ -118,13 +118,13 @@ jobs:
         run: |
           printf "## NPM Build Summary 🔨\n" >> $GITHUB_STEP_SUMMARY
           printf "\n" >> $GITHUB_STEP_SUMMARY
-          printf "- **Package:** \`%s@%s\`\n" "${{ steps.version-info.outputs.NAME }}" "${{ steps.version-info.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
-          printf "- **Node.js:** %s\n" "${{ inputs['node-version'] }}" >> $GITHUB_STEP_SUMMARY
+          printf "%s **Package:** \`%s@%s\`\n" "-" "${{ steps.version-info.outputs.NAME }}" "${{ steps.version-info.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          printf "%s **Node.js:** %s\n" "-" "${{ inputs['node-version'] }}" >> $GITHUB_STEP_SUMMARY
 
           if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
-            printf "- **Tests:** %s\n" "⊘ Skipped" >> $GITHUB_STEP_SUMMARY
+            printf "%s **Tests:** %s\n" "-" "⊘ Skipped" >> $GITHUB_STEP_SUMMARY
           else
-            printf "- **Tests:** %s\n" "✓ Executed" >> $GITHUB_STEP_SUMMARY
+            printf "%s **Tests:** %s\n" "-" "✓ Executed" >> $GITHUB_STEP_SUMMARY
           fi
 
           printf "\n" >> $GITHUB_STEP_SUMMARY
