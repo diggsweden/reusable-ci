@@ -5,7 +5,7 @@
 # Create GitHub Release with artifacts
 # Usage: create-github-release.sh <tag-name> <repository> <draft> <make-latest> <attach-artifacts> [release-notes-file] [artifact-name]
 
-set -euo pipefail
+set -uo pipefail
 
 readonly TAG_NAME="${1:?Usage: $0 <tag-name> <repository> <draft> <make-latest> <attach-artifacts> [release-notes-file] [artifact-name]}"
 readonly REPOSITORY="${2:?Usage: $0 <tag-name> <repository> <draft> <make-latest> <attach-artifacts> [release-notes-file] [artifact-name]}"
