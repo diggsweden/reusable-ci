@@ -120,6 +120,12 @@ jobs:
           printf "\n" >> $GITHUB_STEP_SUMMARY
           printf "- **Package:** \`%s@%s\`\n" "${{ steps.version-info.outputs.NAME }}" "${{ steps.version-info.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
           printf "- **Node.js:** %s\n" "${{ inputs['node-version'] }}" >> $GITHUB_STEP_SUMMARY
-          printf "- **Tests:** %s\n" "${{ inputs['skip-tests'] && '⊘ Skipped' || '✓ Executed' }}" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
+            printf "- **Tests:** %s\n" "⊘ Skipped" >> $GITHUB_STEP_SUMMARY
+          else
+            printf "- **Tests:** %s\n" "✓ Executed" >> $GITHUB_STEP_SUMMARY
+          fi
+
           printf "\n" >> $GITHUB_STEP_SUMMARY
           printf "*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY

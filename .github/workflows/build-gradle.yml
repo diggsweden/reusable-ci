@@ -121,7 +121,11 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           printf "Running Gradle tasks: %s\n" "${{ inputs['gradle-tasks'] }}"
-          ./gradlew ${{ inputs['gradle-tasks'] }} ${{ inputs['skip-tests'] && '-x test' || '' }}
+          if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
+            ./gradlew ${{ inputs['gradle-tasks'] }} -x test
+          else
+            ./gradlew ${{ inputs['gradle-tasks'] }}
+          fi
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         run: |
@@ -144,8 +148,18 @@ jobs:
           printf "- **Java:** %s\n" "${{ inputs['java-version'] }}" >> $GITHUB_STEP_SUMMARY
           printf "- **Module:** %s\n" "${{ inputs['build-module'] }}" >> $GITHUB_STEP_SUMMARY
           printf "- **Tasks:** %s\n" "${{ inputs['gradle-tasks'] }}" >> $GITHUB_STEP_SUMMARY
-          printf "- **Tests:** %s\n" "${{ inputs['skip-tests'] && '⊘ Skipped' || '✓ Executed' }}" >> $GITHUB_STEP_SUMMARY
-          printf "- **Signing:** %s\n" "${{ inputs['enable-signing'] && '✓ Enabled' || '⊘ Disabled' }}" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
+            printf "- **Tests:** %s\n" "⊘ Skipped" >> $GITHUB_STEP_SUMMARY
+          else
+            printf "- **Tests:** %s\n" "✓ Executed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ inputs['enable-signing'] }}" = "true" ]; then
+            printf "- **Signing:** %s\n" "✓ Enabled" >> $GITHUB_STEP_SUMMARY
+          else
+            printf "- **Signing:** %s\n" "⊘ Disabled" >> $GITHUB_STEP_SUMMARY
+          fi
 
           if [ -n "${{ steps.version-info.outputs.VERSION }}" ]; then
             printf "- **Version:** %s (%s)\n" "${{ steps.version-info.outputs.VERSION }}" "${{ steps.version-info.outputs.VERSION_CODE }}" >> $GITHUB_STEP_SUMMARY

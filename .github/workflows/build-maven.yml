@@ -101,7 +101,11 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           printf "Building Maven application...\n"
-          mvn $MAVEN_CLI_OPTS clean package ${{ inputs['skip-tests'] && '-DskipTests' || '' }}
+          if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
+            mvn $MAVEN_CLI_OPTS clean package -DskipTests
+          else
+            mvn $MAVEN_CLI_OPTS clean package
+          fi
       - name: Build library with sources and javadoc
         if: ${{ inputs['build-type'] == 'lib' }}
         working-directory: ${{ inputs['working-directory'] }}
@@ -156,7 +160,13 @@ jobs:
           printf "%s **Type:** %s\n" "-" "${{ inputs['build-type'] }}" >> $GITHUB_STEP_SUMMARY
           printf "%s **Artifact:** \`%s:%s:%s\`\n" "-" "${{ steps.version-info.outputs.GROUP_ID }}" "${{ steps.version-info.outputs.ARTIFACT_ID }}" "${{ steps.version-info.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
           printf "%s **Java:** %s\n" "-" "${{ inputs['java-version'] }}" >> $GITHUB_STEP_SUMMARY
-          printf "%s **Tests:** %s\n" "-" "${{ inputs['skip-tests'] && '⊘ Skipped' || '✓ Executed' }}" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
+            printf "%s **Tests:** %s\n" "-" "⊘ Skipped" >> $GITHUB_STEP_SUMMARY
+          else
+            printf "%s **Tests:** %s\n" "-" "✓ Executed" >> $GITHUB_STEP_SUMMARY
+          fi
+
           printf "%s **Snapshot:** %s\n" "-" "${{ steps.version-info.outputs.IS_SNAPSHOT }}" >> $GITHUB_STEP_SUMMARY
           printf "\n" >> $GITHUB_STEP_SUMMARY
           printf "*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY

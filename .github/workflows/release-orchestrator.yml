@@ -499,17 +499,104 @@ jobs:
           |-----|--------|
           EOF
 
-          printf "| Version Bump | %s |\n" "${{ needs.version-and-changelog.result == 'success' && '✓' || needs.version-and-changelog.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
-          printf "| Build Maven | %s |\n" "${{ needs.build-maven.result == 'success' && '✓' || needs.build-maven.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
-          printf "| Build NPM | %s |\n" "${{ needs.build-npm.result == 'success' && '✓' || needs.build-npm.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
-          printf "| Build Gradle | %s |\n" "${{ needs.build-gradle.result == 'success' && '✓' || needs.build-gradle.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
-          printf "| Build Gradle Android | %s |\n" "${{ needs.build-gradle-android.result == 'success' && '✓' || needs.build-gradle-android.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
-          printf "| Build Xcode | %s |\n" "${{ needs.build-xcode.result == 'success' && '✓' || needs.build-xcode.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
-          printf "| Publish GitHub | %s |\n" "${{ needs.publish-maven-github.result == 'success' && '✓' || needs.publish-maven-github.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
-          printf "| Publish Maven Central | %s |\n" "${{ needs.publish-maven-central.result == 'success' && '✓' || needs.publish-maven-central.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
-          printf "| Publish Apple App Store | %s |\n" "${{ needs.publish-apple-appstore.result == 'success' && '✓' || needs.publish-apple-appstore.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
-          printf "| Containers | %s |\n" "${{ needs.build-containers.result == 'success' && '✓' || needs.build-containers.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
-          printf "| GitHub Release | %s |\n" "${{ needs.create-release.result == 'success' && '✓' || needs.create-release.result == 'skipped' && '−' || '✗' }}" >> $GITHUB_STEP_SUMMARY
+          # Version Bump
+          if [ "${{ needs.version-and-changelog.result }}" = "success" ]; then
+            printf "| Version Bump | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.version-and-changelog.result }}" = "skipped" ]; then
+            printf "| Version Bump | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+          else
+            printf "| Version Bump | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Build Maven
+          if [ "${{ needs.build-maven.result }}" = "success" ]; then
+            printf "| Build Maven | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.build-maven.result }}" = "skipped" ]; then
+            printf "| Build Maven | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+          else
+            printf "| Build Maven | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Build NPM
+          if [ "${{ needs.build-npm.result }}" = "success" ]; then
+            printf "| Build NPM | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.build-npm.result }}" = "skipped" ]; then
+            printf "| Build NPM | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+          else
+            printf "| Build NPM | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Build Gradle
+          if [ "${{ needs.build-gradle.result }}" = "success" ]; then
+            printf "| Build Gradle | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.build-gradle.result }}" = "skipped" ]; then
+            printf "| Build Gradle | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+          else
+            printf "| Build Gradle | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Build Gradle Android
+          if [ "${{ needs.build-gradle-android.result }}" = "success" ]; then
+            printf "| Build Gradle Android | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.build-gradle-android.result }}" = "skipped" ]; then
+            printf "| Build Gradle Android | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+          else
+            printf "| Build Gradle Android | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Build Xcode
+          if [ "${{ needs.build-xcode.result }}" = "success" ]; then
+            printf "| Build Xcode | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.build-xcode.result }}" = "skipped" ]; then
+            printf "| Build Xcode | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+          else
+            printf "| Build Xcode | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Publish GitHub
+          if [ "${{ needs.publish-maven-github.result }}" = "success" ]; then
+            printf "| Publish GitHub | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.publish-maven-github.result }}" = "skipped" ]; then
+            printf "| Publish GitHub | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+          else
+            printf "| Publish GitHub | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Publish Maven Central
+          if [ "${{ needs.publish-maven-central.result }}" = "success" ]; then
+            printf "| Publish Maven Central | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.publish-maven-central.result }}" = "skipped" ]; then
+            printf "| Publish Maven Central | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+          else
+            printf "| Publish Maven Central | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Publish Apple App Store
+          if [ "${{ needs.publish-apple-appstore.result }}" = "success" ]; then
+            printf "| Publish Apple App Store | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.publish-apple-appstore.result }}" = "skipped" ]; then
+            printf "| Publish Apple App Store | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+          else
+            printf "| Publish Apple App Store | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Containers
+          if [ "${{ needs.build-containers.result }}" = "success" ]; then
+            printf "| Containers | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.build-containers.result }}" = "skipped" ]; then
+            printf "| Containers | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+          else
+            printf "| Containers | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # GitHub Release
+          if [ "${{ needs.create-release.result }}" = "success" ]; then
+            printf "| GitHub Release | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.create-release.result }}" = "skipped" ]; then
+            printf "| GitHub Release | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+          else
+            printf "| GitHub Release | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+          fi
 
           cat >> $GITHUB_STEP_SUMMARY << 'EOF'
 
