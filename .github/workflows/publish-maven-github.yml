@@ -146,8 +146,8 @@ jobs:
         run: |
           printf "## Published to GitHub Packages 📦\n" >> $GITHUB_STEP_SUMMARY
           printf "\n" >> $GITHUB_STEP_SUMMARY
-          printf "- **Package Type:** %s\n" "${{ inputs['package-type'] }}" >> $GITHUB_STEP_SUMMARY
-          printf "- **Registry:** GitHub Packages\n" >> $GITHUB_STEP_SUMMARY
-          printf "- **Repository:** [%s](https://github.com/%s/packages)\n" "${{ github.repository }}" "${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          printf "%s **Package Type:** %s\n" "-" "${{ inputs['package-type'] }}" >> $GITHUB_STEP_SUMMARY
+          printf "%s **Registry:** GitHub Packages\n" "-" >> $GITHUB_STEP_SUMMARY
+          printf "%s **Repository:** [%s](https://github.com/%s/packages)\n" "-" "${{ github.repository }}" "${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
           printf "\n" >> $GITHUB_STEP_SUMMARY
           printf "*Published at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
