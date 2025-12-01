@@ -392,7 +392,7 @@ jobs:
       java-version: ${{ matrix.artifact.config['java-version'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
       settings-path: ${{ matrix.artifact.config['settings-path'] }}
-      profile: ${{ matrix.artifact.config['profile'] }}
+      profile: ${{ matrix.artifact.config['profile'] || 'central-release' }}
   # Step 3c: Publish to Apple App Store / TestFlight
   publish-apple-appstore:
     name: Publish Apple App Store - ${{ matrix.artifact.name }}
