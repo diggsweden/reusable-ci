@@ -156,6 +156,8 @@ jobs:
             rm "$TARBALL"
             printf "Extracted contents:\n"
             ls -lh dist/ 2>/dev/null || ls -lh build/ 2>/dev/null || true
+            printf "\nVerifying dist/cli.js exists:\n"
+            test -f dist/cli.js && printf "✓ dist/cli.js found\n" || printf "✗ dist/cli.js NOT found\n"
           else
             printf "::error::No tarball found in artifacts\n"
             exit 1
@@ -197,7 +199,8 @@ jobs:
         id: pack
         working-directory: ${{ inputs.working-directory }}
         run: |
-          FILE=$(npm pack --silent)
+          printf "Running npm pack...\n"
+          FILE=$(npm pack 2>&1 | tail -n 1)
           printf "tarball=%s\n" "$FILE" >> "$GITHUB_OUTPUT"
           printf "Created: %s\n" "$FILE"
       - name: Upload tarball as artifact
