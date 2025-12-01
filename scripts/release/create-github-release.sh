@@ -3,18 +3,19 @@
 # SPDX-License-Identifier: CC0-1.0
 
 # Create GitHub Release with artifacts
-# Usage: create-github-release.sh <tag-name> <repository> <draft> <make-latest> <attach-artifacts> [release-notes-file]
+# Usage: create-github-release.sh <tag-name> <repository> <draft> <make-latest> <attach-artifacts> [release-notes-file] [artifact-name]
 
 set -euo pipefail
 
-readonly TAG_NAME="${1:?Usage: $0 <tag-name> <repository> <draft> <make-latest> <attach-artifacts> [release-notes-file]}"
-readonly REPOSITORY="${2:?Usage: $0 <tag-name> <repository> <draft> <make-latest> <attach-artifacts> [release-notes-file]}"
+readonly TAG_NAME="${1:?Usage: $0 <tag-name> <repository> <draft> <make-latest> <attach-artifacts> [release-notes-file] [artifact-name]}"
+readonly REPOSITORY="${2:?Usage: $0 <tag-name> <repository> <draft> <make-latest> <attach-artifacts> [release-notes-file] [artifact-name]}"
 readonly DRAFT="${3:-false}"
 readonly MAKE_LATEST="${4:-true}"
 readonly ATTACH_ARTIFACTS="${5:-}"
 readonly RELEASE_NOTES_FILE="${6:-release-notes.md}"
+readonly ARTIFACT_NAME="${7:-$(basename "$REPOSITORY")}"
 
-PROJECT_NAME=$(basename "$REPOSITORY")
+PROJECT_NAME="$ARTIFACT_NAME"
 readonly PROJECT_NAME
 VERSION="${TAG_NAME#v}"
 readonly VERSION
@@ -102,7 +103,12 @@ collect_release_artifacts() {
 
 collect_sbom_artifacts() {
   local sbom_zip="${PROJECT_NAME}-${VERSION}-sboms.zip"
-  add_file_with_signature "$sbom_zip"
+  if [[ -f "$sbom_zip" ]]; then
+    printf "Adding SBOM ZIP: %s\n" "$sbom_zip"
+    add_file_with_signature "$sbom_zip"
+  else
+    printf "::warning::SBOM ZIP not found: %s\n" "$sbom_zip"
+  fi
 }
 
 collect_checksum_artifacts() {
