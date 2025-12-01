@@ -312,6 +312,8 @@ generate_artifact_layer_maven() {
   # Search for JAR files matching the artifact name (excluding sources, javadoc, tests, and original artifacts)
   collect_artifacts artifacts find_artifacts "./release-artifacts" -name "${name}-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" ! -name "original-*.jar"
 
+  [[ ${#artifacts[@]} -eq 0 ]] && collect_artifacts artifacts find_artifacts "./release-artifacts/target" -name "${name}-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" ! -name "original-*.jar"
+
   [[ ${#artifacts[@]} -eq 0 ]] && collect_artifacts artifacts find_artifacts "target" -name "${name}-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" ! -name "original-*.jar"
 
   scan_artifacts "$name" "$version" "jar" "jar" "${artifacts[@]}" || log_warning "No JAR files found"
