@@ -112,7 +112,11 @@ collect_sbom_artifacts() {
 }
 
 collect_checksum_artifacts() {
-  add_file_with_signature "checksums.sha256"
+  if [[ -s "checksums.sha256" ]]; then
+    add_file_with_signature "checksums.sha256"
+  else
+    printf "::warning::No checksums.sha256 or file is empty - skipping\n"
+  fi
 }
 
 collect_remaining_signatures() {
