@@ -207,7 +207,7 @@ jobs:
         continue-on-error: true
         with:
           name: maven-build-artifacts
-          path: target/
+          path: ./
       - name: Verify Maven artifacts
         if: ${{ contains(inputs['artifact-types'], 'maven') }}
         run: bash .github-shared/scripts/container/verify-artifacts.sh maven target
