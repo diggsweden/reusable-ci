@@ -91,6 +91,11 @@ on:
         required: false
         default: "main"
         type: string
+      has-containers:
+        description: "Whether containers were built (to determine if container SBOMs exist)"
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
@@ -152,6 +157,7 @@ jobs:
           fi
       # Download container SBOM if it exists (from container build job)
       - name: Download container SBOM artifacts
+        if: ${{ inputs['has-containers'] }}
         continue-on-error: true
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
