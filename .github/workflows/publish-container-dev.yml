@@ -142,6 +142,16 @@ jobs:
         with:
           name: npm-build-artifacts
           path: ${{ inputs['working-directory'] }}
+      - name: Extract NPM tarball
+        if: ${{ contains(inputs['artifact-types'], 'npm') }}
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          TARBALL=$(ls *.tgz 2>/dev/null || ls *.tar.gz 2>/dev/null | head -1)
+          if [ -n "$TARBALL" ]; then
+            printf "Extracting %s...\n" "$TARBALL"
+            tar -xzf "$TARBALL" --strip-components=1
+            rm "$TARBALL"
+          fi
       - name: Verify NPM artifacts
         if: ${{ contains(inputs['artifact-types'], 'npm') }}
         run: |
