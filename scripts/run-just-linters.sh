@@ -5,10 +5,18 @@
 
 set -euo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# Disable colors in CI environments where ANSI codes show as literal text
+if [[ -n "${GITHUB_ACTIONS:-}" ]] || [[ -n "${CI:-}" ]]; then
+  RED=''
+  GREEN=''
+  BLUE=''
+  NC=''
+else
+  RED='\033[0;31m'
+  GREEN='\033[0;32m'
+  BLUE='\033[0;34m'
+  NC='\033[0m'
+fi
 
 CROSSMARK='✗'
 
