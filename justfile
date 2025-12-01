@@ -5,281 +5,162 @@
 # Quality checks and automation for reusable-ci
 # Run 'just' to see available commands
 
-# Terminal colors
-red := '\033[0;31m'
-green := '\033[0;32m'
-yellow := '\033[0;33m'
-nc := '\033[0m'
+devtools_repo := env("DEVBASE_JUSTKIT_REPO", "https://github.com/diggsweden/devbase-justkit")
+devtools_dir := env("XDG_DATA_HOME", env("HOME") + "/.local/share") + "/devbase-justkit"
+lint := devtools_dir + "/linters"
+colors := devtools_dir + "/utils/colors.sh"
 
-# Unicode symbols (works across platforms)
-checkmark := '✓'
-missing := '✗'
+# ==================================================================================== #
+# DEFAULT - Show available recipes
+# ==================================================================================== #
 
-# Default recipe - show help
+# Display available recipes
 default:
-    @printf "Available commands:\n"
-    @just --list --unsorted | grep -v "default"
+    @printf "\033[1;36m Reusable CI\033[0m\n"
+    @printf "\n"
+    @printf "Quick start: \033[1;32mjust setup-devtools\033[0m | \033[1;34mjust verify\033[0m | \033[1;35mjust lint-all\033[0m\n"
+    @printf "\n"
+    @just --list --unsorted
 
-# Run all quality verifications
-verify: verify-deps lint lint-license lint-commit _summary
+# ==================================================================================== #
+# SETUP - Development environment setup
+# ==================================================================================== #
 
-# Check tool dependencies
-verify-deps:
-    @printf "Checking required tools...\n"
-    @printf "=========================\n"
-    @missing_tools=""; \
-    if command -v mise >/dev/null 2>&1; then \
-        printf "{{green}}{{checkmark}}{{nc}} mise $(mise version 2>/dev/null | cut -d' ' -f1)\n"; \
-    else \
-        printf "{{red}}{{missing}}{{nc}} mise\n"; \
-        missing_tools="$missing_tools mise"; \
-    fi; \
-    if command -v just >/dev/null 2>&1; then \
-        printf "{{green}}{{checkmark}}{{nc}} just $(just --version 2>/dev/null | cut -d' ' -f2)\n"; \
-    else \
-        printf "{{red}}{{missing}}{{nc}} just\n"; \
-        missing_tools="$missing_tools just"; \
-    fi; \
-    if command -v git >/dev/null 2>&1; then \
-        printf "{{green}}{{checkmark}}{{nc}} git $(git --version 2>/dev/null | cut -d' ' -f3)\n"; \
-    else \
-        printf "{{red}}{{missing}}{{nc}} git\n"; \
-        missing_tools="$missing_tools git"; \
-    fi; \
-    if command -v reuse >/dev/null 2>&1; then \
-        printf "{{green}}{{checkmark}}{{nc}} reuse $(reuse --version 2>/dev/null | head -1 | cut -d' ' -f3)\n"; \
-    else \
-        printf "{{red}}{{missing}}{{nc}} reuse\n"; \
-        missing_tools="$missing_tools reuse"; \
-    fi; \
-    if command -v rumdl >/dev/null 2>&1; then \
-        printf "{{green}}{{checkmark}}{{nc}} rumdl $(rumdl --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)\n"; \
-    else \
-        printf "{{red}}{{missing}}{{nc}} rumdl\n"; \
-        missing_tools="$missing_tools rumdl"; \
-    fi; \
-    if command -v yamlfmt >/dev/null 2>&1; then \
-        printf "{{green}}{{checkmark}}{{nc}} yamlfmt $(yamlfmt -version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)\n"; \
-    else \
-        printf "{{red}}{{missing}}{{nc}} yamlfmt\n"; \
-        missing_tools="$missing_tools yamlfmt"; \
-    fi; \
-    if command -v actionlint >/dev/null 2>&1; then \
-        printf "{{green}}{{checkmark}}{{nc}} actionlint $(actionlint -version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)\n"; \
-    else \
-        printf "{{red}}{{missing}}{{nc}} actionlint\n"; \
-        missing_tools="$missing_tools actionlint"; \
-    fi; \
-    if command -v gitleaks >/dev/null 2>&1; then \
-        gitleaks_ver=$(gitleaks version 2>&1 | head -1); \
-        if printf "%s" "$gitleaks_ver" | grep -q "build process"; then \
-            mise_ver=$(grep gitleaks .mise.toml 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
-            printf "{{green}}{{checkmark}}{{nc}} gitleaks ${mise_ver:-installed}\n"; \
-        else \
-            printf "{{green}}{{checkmark}}{{nc}} gitleaks $gitleaks_ver\n"; \
-        fi; \
-    else \
-        printf "{{red}}{{missing}}{{nc}} gitleaks\n"; \
-        missing_tools="$missing_tools gitleaks"; \
-    fi; \
-    if command -v conform >/dev/null 2>&1; then \
-        printf "{{green}}{{checkmark}}{{nc}} conform $(conform version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+' | head -1)\n"; \
-    else \
-        printf "{{red}}{{missing}}{{nc}} conform\n"; \
-        missing_tools="$missing_tools conform"; \
-    fi; \
-    if command -v shfmt >/dev/null 2>&1; then \
-        printf "{{green}}{{checkmark}}{{nc}} shfmt $(shfmt --version 2>/dev/null)\n"; \
-    else \
-        printf "{{red}}{{missing}}{{nc}} shfmt\n"; \
-        missing_tools="$missing_tools shfmt"; \
-    fi; \
-    if command -v shellcheck >/dev/null 2>&1; then \
-        printf "{{green}}{{checkmark}}{{nc}} shellcheck $(shellcheck --version 2>/dev/null | grep version: | cut -d' ' -f2)\n"; \
-    else \
-        printf "{{red}}{{missing}}{{nc}} shellcheck\n"; \
-        missing_tools="$missing_tools shellcheck"; \
-    fi; \
-    printf "\n"; \
-    if [ -n "$missing_tools" ]; then \
-        printf '%b{{missing}} Missing tools detected!%b\n\n' "{{red}}" "{{nc}}"; \
-        printf '%bTo fix:%b\n' "{{yellow}}" "{{nc}}"; \
-        printf '1. Install: %bmise install%b\n' "{{green}}" "{{nc}}"; \
-        printf '2. Activate (bash/zsh): %beval "$(mise activate bash)"%b\n' "{{green}}" "{{nc}}"; \
-        printf '   Activate (fish): %bmise activate fish | source%b\n' "{{green}}" "{{nc}}"; \
-        exit 1; \
-    else \
-        printf '%b{{checkmark}} All required tools installed!%b\n' "{{green}}" "{{nc}}"; \
-    fi
-
-# Run all linters
-lint: lint-markdown lint-yaml lint-actions lint-shell lint-secrets
-    @printf "LINT_PASS" > /tmp/just_lint_status
-
-# Lint markdown files with rumdl (Rust)
-# linter-name: Markdown
-# linter-tools: rumdl
-# Lint markdown files with rumdl (Rust)
-lint-markdown:
-    @printf '%b\n************ MARKDOWN LINTING (RUMDL) ***********%b\n\n' "{{yellow}}" "{{nc}}"
-    @rumdl check . \
-    && printf "{{green}}{{checkmark}} Markdown linting passed{{nc}}\n" \
-    || { printf "{{red}}{{missing}} Markdown linting failed - run 'just lint-markdown-fix' to fix{{nc}}\n"; exit 1; }
-    @printf '\n'
-
-# linter-name: YAML Formatting
-# linter-tools: yamlfmt
-# Lint YAML files with yamlfmt (Go)
-lint-yaml:
-    @printf '%b\n************ YAML LINTING (YAMLFMT) ***********%b\n\n' "{{yellow}}" "{{nc}}"
-    @yamlfmt -conf .yamlfmt -lint . \
-    && printf "{{green}}{{checkmark}} YAML linting passed{{nc}}\n" \
-    || { printf "{{red}}{{missing}} YAML linting failed - run 'just lint-yaml-fix' to fix{{nc}}\n"; exit 1; }
-    @printf '\n'
-
-# linter-name: GitHub Actions
-# linter-tools: actionlint
-# Lint GitHub Actions with actionlint (Go)
-lint-actions:
-    @printf '%b\n************ GITHUB ACTIONS LINTING (ACTIONLINT) ***********%b\n\n' "{{yellow}}" "{{nc}}"
-    @actionlint -shellcheck= -pyflakes= -ignore 'unknown permission scope "attestations"' \
-    && printf "{{green}}{{checkmark}} GitHub Actions linting passed{{nc}}\n" \
-    || { printf "{{red}}{{missing}} GitHub Actions linting failed{{nc}}\n"; exit 1; }
-    @printf '\n'
-
-# linter-name: Shell Scripts
-# linter-tools: shellcheck, shfmt
-# Lint shell scripts with shfmt and shellcheck
-lint-shell:
+# ▪ Setup devtools (clone or update from XDG_DATA_HOME)
+[group('setup')]
+setup-devtools:
     #!/usr/bin/env bash
     set -euo pipefail
-    printf '%b\n************ SHELL SCRIPT LINTING ***********%b\n\n' "{{yellow}}" "{{nc}}"
-    
-    # Check if we have shell scripts to lint
-    if [ -z "$(find scripts -type f -name '*.sh' 2>/dev/null | head -1)" ]; then
-        printf 'No shell scripts found, skipping\n'
-        printf '{{green}}{{checkmark}} Shell linting passed{{nc}}\n\n'
-        exit 0
-    fi
-    
-    printf "Running shellcheck on all shell scripts...\n"
-    if command -v shellcheck >/dev/null 2>&1; then
-        find scripts -type f -name "*.sh" | xargs shellcheck || exit 1
-        printf '{{green}}{{checkmark}} Shellcheck passed{{nc}}\n'
+    if [[ -d "{{devtools_dir}}" ]]; then
+        "{{devtools_dir}}/scripts/setup.sh" "{{devtools_repo}}" "{{devtools_dir}}"
     else
-        printf '{{yellow}}⚠ shellcheck not found, skipping{{nc}}\n'
+        printf "Cloning devbase-justkit to %s...\n" "{{devtools_dir}}"
+        mkdir -p "$(dirname "{{devtools_dir}}")"
+        git clone --depth 1 "{{devtools_repo}}" "{{devtools_dir}}"
+        git -C "{{devtools_dir}}" fetch --tags --quiet
+        latest=$(git -C "{{devtools_dir}}" describe --tags --abbrev=0 origin/main 2>/dev/null || echo "")
+        if [[ -n "$latest" ]]; then
+            git -C "{{devtools_dir}}" fetch --depth 1 origin tag "$latest" --quiet
+            git -C "{{devtools_dir}}" checkout "$latest" --quiet
+        fi
+        printf "Installed devbase-justkit %s\n" "${latest:-main}"
     fi
-    
-    printf "\n"
-    printf "Running shfmt on all shell scripts...\n"
-    if command -v shfmt >/dev/null 2>&1; then
-        shfmt -d -i 2 scripts || { printf '{{red}}{{missing}} Shell formatting failed - run just lint-shell-fix to fix{{nc}}\n'; exit 1; }
-        printf '{{green}}{{checkmark}} Shell formatting passed{{nc}}\n'
-    else
-        printf '{{yellow}}⚠ shfmt not found, skipping{{nc}}\n'
-    fi
-    
-    printf '\n'
 
-# linter-name: Secret Scanning
-# linter-tools: gitleaks
-# Check for secrets with gitleaks (Go) - only scan commits different from main
+# Check required tools are installed
+[group('setup')]
+check-tools: _ensure-devtools
+    @{{devtools_dir}}/scripts/check-tools.sh --check-devtools mise git just rumdl yamlfmt actionlint gitleaks shellcheck shfmt conform reuse
+
+# Install tools via mise
+[group('setup')]
+tools-install: _ensure-devtools
+    #!/usr/bin/env bash
+    source "{{colors}}"
+    just_header "Install development tools" "mise install"
+    just_run "Tools installation" mise install
+
+# Update tools via mise
+[group('setup')]
+tools-update: _ensure-devtools
+    #!/usr/bin/env bash
+    source "{{colors}}"
+    just_header "Update development tools" "mise upgrade && mise install"
+    just_run "Tools update" mise upgrade
+    just_run "Tools update" mise install
+
+# ==================================================================================== #
+# VERIFY - Quality assurance
+# ==================================================================================== #
+
+# ▪ Run all linters with summary
+[group('verify')]
+verify: _ensure-devtools
+    @{{devtools_dir}}/scripts/verify.sh
+
+# ==================================================================================== #
+# LINT - Code quality checks
+# ==================================================================================== #
+
+# ▪ Run all linters (override in project justfile to customize)
+[group('lint')]
+lint-all: _ensure-devtools lint-commits lint-secrets lint-yaml lint-markdown lint-shell lint-shell-fmt lint-actions lint-license
+    #!/usr/bin/env bash
+    source "{{colors}}"
+    just_success "All linting checks completed"
+
+# Validate commit messages (conform)
+[group('lint')]
+lint-commits:
+    @{{lint}}/commits.sh
+
+# Scan for secrets (gitleaks)
+[group('lint')]
 lint-secrets:
-    @printf '%b\n************ SECRET SCANNING (GITLEAKS) ***********%b\n\n' "{{yellow}}" "{{nc}}"
-    @# Get the default branch (usually main or master)
-    @default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || printf "main"); \
-    current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); \
-    if [ "$current_branch" = "$default_branch" ]; then \
-        printf "On default branch, scanning all commits...\n"; \
-        gitleaks detect --no-banner; \
-    else \
-        printf "Scanning commits different from %s...\n" "$default_branch"; \
-        gitleaks detect --no-banner --log-opts="$default_branch..HEAD"; \
-    fi \
-    && printf "{{green}}{{checkmark}} No secrets found{{nc}}\n" \
-    || { printf "{{red}}{{missing}} Secret scanning failed{{nc}}\n"; exit 1; }
-    @printf '\n'
+    @{{lint}}/secrets.sh
 
-# Fix all auto-fixable issues
-lint-fix: lint-markdown-fix lint-yaml-fix lint-shell-fix
-    @printf "{{green}}{{checkmark}} All auto-fixable issues resolved{{nc}}\n"
-    @printf "Note: Some issues may require manual fixes\n"
+# Lint YAML files (yamlfmt)
+[group('lint')]
+lint-yaml:
+    @{{lint}}/yaml.sh check
 
-# Fix markdown issues with rumdl
-lint-markdown-fix:
-    @printf '%b\n************ FIXING MARKDOWN (RUMDL) ***********%b\n\n' "{{yellow}}" "{{nc}}"
-    @rumdl check --fix . \
-    && printf "{{green}}{{checkmark}} Markdown files fixed{{nc}}\n" \
-    || { printf "{{red}}{{missing}} Failed to fix markdown files{{nc}}\n"; exit 1; }
-    @printf '\n'
+# Lint markdown files (rumdl)
+[group('lint')]
+lint-markdown:
+    @{{lint}}/markdown.sh check
 
-# Fix YAML formatting with yamlfmt
-lint-yaml-fix:
-    @printf '%b\n************ FIXING YAML (YAMLFMT) ***********%b\n\n' "{{yellow}}" "{{nc}}"
-    @yamlfmt -conf .yamlfmt . \
-    && printf "{{green}}{{checkmark}} YAML files formatted{{nc}}\n" \
-    || { printf "{{red}}{{missing}} Failed to format YAML files{{nc}}\n"; exit 1; }
-    @printf '\n'
+# Lint shell scripts (shellcheck)
+[group('lint')]
+lint-shell:
+    @{{lint}}/shell.sh
 
-# Fix shell script formatting
-lint-shell-fix:
-    @printf '%b************ FIXING SHELL SCRIPTS ***********%b\n\n' "{{yellow}}" "{{nc}}"
-    @shfmt -w -i 2 scripts \
-    && printf "{{green}}{{checkmark}} Shell scripts formatted{{nc}}\n" \
-    || { printf "{{red}}{{missing}} Failed to format shell scripts{{nc}}\n"; exit 1; }
-    @printf '\n'
+# Check shell formatting (shfmt)
+[group('lint')]
+lint-shell-fmt:
+    @{{lint}}/shell-fmt.sh check
 
-# linter-name: License Headers
-# linter-tools: reuse
-# Check licenses with REUSE
+# Lint GitHub Actions (actionlint)
+[group('lint')]
+lint-actions:
+    @{{lint}}/github-actions.sh
+
+# Check license compliance (reuse)
+[group('lint')]
 lint-license:
-    @printf '%b************ LICENSE HEALTH (REUSE) ***********%b\n\n' "{{yellow}}" "{{nc}}"
-    @command -v reuse >/dev/null 2>&1 || { \
-        printf "Error: reuse not installed.\n"; \
-        printf "Install with: apt install reuse\n"; \
-        exit 1; \
-    }
-    @reuse lint \
-    && printf "LICENSE_PASS" > /tmp/just_license_status \
-    || printf "LICENSE_FAIL" > /tmp/just_license_status
-    @printf '\n\n'
+    @{{lint}}/license.sh
 
-# linter-name: Commit Messages
-# linter-tools: conform
-# Check commits with conform
-lint-commit:
-    @printf '%b************ COMMIT HEALTH (CONFORM) ***********%b\n\n' "{{yellow}}" "{{nc}}"
-    @currentBranch=$(git branch --show-current); \
-    default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); \
-    if [ -z "$default_branch" ]; then default_branch="main"; fi; \
-    if [ "$(git rev-list --count ${default_branch}..)" = "0" ]; then \
-        printf "%s\n" "{{green}} No commits found in current branch: {{yellow}}$currentBranch{{nc}}, compared to: {{yellow}}${default_branch}{{nc}}"; \
-        printf "COMMIT_SKIP" > /tmp/just_commit_status; \
-    else \
-        conform enforce --base-branch=${default_branch} \
-        && printf "COMMIT_PASS" > /tmp/just_commit_status \
-        || printf "COMMIT_FAIL" > /tmp/just_commit_status; \
-    fi
-    @printf '\n\n'
+# ==================================================================================== #
+# LINT-FIX - Auto-fix linting violations
+# ==================================================================================== #
 
-# Print summary (internal)
-_summary:
-    @printf '%b********* CODE QUALITY RUN SUMMARY ******%b\n\n' "{{yellow}}" "{{nc}}"
-    @if [ -f /tmp/just_lint_status ] && grep -q "FAIL" /tmp/just_lint_status; then \
-        printf '{{missing}} {{red}}Lint check failed, see logs above.{{nc}}\n'; \
-    elif [ -f /tmp/just_lint_status ] && grep -q "PASS" /tmp/just_lint_status; then \
-        printf '{{green}}{{checkmark}}{{checkmark}} Lint check passed{{nc}}\n'; \
+# ▪ Fix all auto-fixable issues
+[group('lint-fix')]
+lint-fix: _ensure-devtools lint-yaml-fix lint-markdown-fix lint-shell-fmt-fix
+    #!/usr/bin/env bash
+    source "{{colors}}"
+    just_success "All auto-fixes completed"
+
+# Fix YAML formatting
+[group('lint-fix')]
+lint-yaml-fix:
+    @{{lint}}/yaml.sh fix
+
+# Fix markdown formatting
+[group('lint-fix')]
+lint-markdown-fix:
+    @{{lint}}/markdown.sh fix
+
+# Fix shell formatting
+[group('lint-fix')]
+lint-shell-fmt-fix:
+    @{{lint}}/shell-fmt.sh fix
+
+# ==================================================================================== #
+# INTERNAL
+# ==================================================================================== #
+
+[private]
+_ensure-devtools:
+    #!/usr/bin/env bash
+    if [[ ! -d "{{devtools_dir}}" ]]; then
+        just setup-devtools
     fi
-    @if [ -f /tmp/just_license_status ] && grep -q "FAIL" /tmp/just_license_status; then \
-        printf '{{missing}} {{red}}License check failed, see logs and fix problems.{{nc}}\n'; \
-    elif [ -f /tmp/just_license_status ] && grep -q "PASS" /tmp/just_license_status; then \
-        printf '{{green}}{{checkmark}}{{checkmark}} License check passed{{nc}}\n'; \
-    fi
-    @if [ -f /tmp/just_commit_status ] && grep -q "FAIL" /tmp/just_commit_status; then \
-        printf '{{missing}} {{red}}Commit check failed, see logs (std out) and fix problems.{{nc}}\n'; \
-    elif [ -f /tmp/just_commit_status ] && grep -q "SKIP" /tmp/just_commit_status; then \
-        printf '{{yellow}}{{checkmark}}{{checkmark}} Commit check skipped, no new commits found in current branch{{nc}}\n'; \
-    elif [ -f /tmp/just_commit_status ] && grep -q "PASS" /tmp/just_commit_status; then \
-        printf '{{green}}{{checkmark}}{{checkmark}} Commit check passed{{nc}}\n'; \
-    fi
-    @printf "\n"

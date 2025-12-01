@@ -126,17 +126,21 @@ jobs:
 
           if [ $LINT_EXIT_CODE -ne 0 ]; then
             printf "::error::swift-format found formatting issues\n"
-            printf "## Swift Format Issues 🔴\n" >> $GITHUB_STEP_SUMMARY
-            printf "\n" >> $GITHUB_STEP_SUMMARY
-            printf '```\n' >> $GITHUB_STEP_SUMMARY
-            cat lint-output.txt >> $GITHUB_STEP_SUMMARY
-            printf '```\n' >> $GITHUB_STEP_SUMMARY
+            {
+              printf "## Swift Format Issues 🔴\n"
+              printf "\n"
+              printf '```\n'
+              cat lint-output.txt
+              printf '```\n'
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           else
             printf "✓ swift-format passed\n"
-            printf "## Swift Format ✅\n" >> $GITHUB_STEP_SUMMARY
-            printf "\n" >> $GITHUB_STEP_SUMMARY
-            printf "All Swift files are properly formatted.\n" >> $GITHUB_STEP_SUMMARY
+            {
+              printf "## Swift Format ✅\n"
+              printf "\n"
+              printf "All Swift files are properly formatted.\n"
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
   swiftlint:
@@ -177,25 +181,31 @@ jobs:
           if [ $SWIFTLINT_EXIT_CODE -ne 0 ]; then
             if [ "${{ inputs['fail-on-warning'] }}" = "true" ]; then
               printf "::error::SwiftLint found issues\n"
-              printf "## SwiftLint Issues 🔴\n" >> $GITHUB_STEP_SUMMARY
-              printf "\n" >> $GITHUB_STEP_SUMMARY
-              printf '```\n' >> $GITHUB_STEP_SUMMARY
-              cat swiftlint-output.txt >> $GITHUB_STEP_SUMMARY
-              printf '```\n' >> $GITHUB_STEP_SUMMARY
+              {
+                printf "## SwiftLint Issues 🔴\n"
+                printf "\n"
+                printf '```\n'
+                cat swiftlint-output.txt
+                printf '```\n'
+              } >> "$GITHUB_STEP_SUMMARY"
               exit 1
             else
               printf "::warning::SwiftLint found issues but fail-on-warning is false\n"
-              printf "## SwiftLint Warnings ⚠️\n" >> $GITHUB_STEP_SUMMARY
-              printf "\n" >> $GITHUB_STEP_SUMMARY
-              printf '```\n' >> $GITHUB_STEP_SUMMARY
-              cat swiftlint-output.txt >> $GITHUB_STEP_SUMMARY
-              printf '```\n' >> $GITHUB_STEP_SUMMARY
+              {
+                printf "## SwiftLint Warnings ⚠️\n"
+                printf "\n"
+                printf '```\n'
+                cat swiftlint-output.txt
+                printf '```\n'
+              } >> "$GITHUB_STEP_SUMMARY"
             fi
           else
             printf "✓ SwiftLint passed\n"
-            printf "## SwiftLint ✅\n" >> $GITHUB_STEP_SUMMARY
-            printf "\n" >> $GITHUB_STEP_SUMMARY
-            printf "No SwiftLint violations found.\n" >> $GITHUB_STEP_SUMMARY
+            {
+              printf "## SwiftLint ✅\n"
+              printf "\n"
+              printf "No SwiftLint violations found.\n"
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
   summary:
@@ -206,39 +216,45 @@ jobs:
     steps:
       - name: Check results
         run: |
-          printf "## Swift Linting Summary\n" >> $GITHUB_STEP_SUMMARY
-          printf "\n" >> $GITHUB_STEP_SUMMARY
-          printf "| Linter | Status |\n" >> $GITHUB_STEP_SUMMARY
-          printf "|--------|--------|\n" >> $GITHUB_STEP_SUMMARY
+          {
+            printf "## Swift Linting Summary\n"
+            printf "\n"
+            printf "| Linter | Status |\n"
+            printf "|--------|--------|\n"
 
-          if [ "${{ inputs['enable-swiftformat'] }}" = "true" ]; then
-            if [ "${{ needs.swift-format-lint.result }}" = "success" ]; then
-              printf "| swift-format | ✓ Pass |\n" >> $GITHUB_STEP_SUMMARY
-            elif [ "${{ needs.swift-format-lint.result }}" = "skipped" ]; then
-              printf "| swift-format | − Skipped |\n" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ inputs['enable-swiftformat'] }}" = "true" ]; then
+              if [ "${{ needs.swift-format-lint.result }}" = "success" ]; then
+                printf "| swift-format | ✓ Pass |\n"
+              elif [ "${{ needs.swift-format-lint.result }}" = "skipped" ]; then
+                printf "| swift-format | − Skipped |\n"
+              else
+                printf "| swift-format | ✗ Fail |\n"
+              fi
             else
-              printf "| swift-format | ✗ Fail |\n" >> $GITHUB_STEP_SUMMARY
+              printf "| swift-format | 🔸 Disabled |\n"
             fi
-          else
-            printf "| swift-format | 🔸 Disabled |\n" >> $GITHUB_STEP_SUMMARY
-          fi
 
-          if [ "${{ inputs['enable-swiftlint'] }}" = "true" ]; then
-            if [ "${{ needs.swiftlint.result }}" = "success" ]; then
-              printf "| SwiftLint | ✓ Pass |\n" >> $GITHUB_STEP_SUMMARY
-            elif [ "${{ needs.swiftlint.result }}" = "skipped" ]; then
-              printf "| SwiftLint | − Skipped |\n" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ inputs['enable-swiftlint'] }}" = "true" ]; then
+              if [ "${{ needs.swiftlint.result }}" = "success" ]; then
+                printf "| SwiftLint | ✓ Pass |\n"
+              elif [ "${{ needs.swiftlint.result }}" = "skipped" ]; then
+                printf "| SwiftLint | − Skipped |\n"
+              else
+                printf "| SwiftLint | ✗ Fail |\n"
+              fi
             else
-              printf "| SwiftLint | ✗ Fail |\n" >> $GITHUB_STEP_SUMMARY
+              printf "| SwiftLint | 🔸 Disabled |\n"
             fi
-          else
-            printf "| SwiftLint | 🔸 Disabled |\n" >> $GITHUB_STEP_SUMMARY
-          fi
 
-          if ([ "${{ inputs['enable-swiftformat'] }}" = "true" ] && [ "${{ needs.swift-format-lint.result }}" = "failure" ]) || \
-             ([ "${{ inputs['enable-swiftlint'] }}" = "true" ] && [ "${{ needs.swiftlint.result }}" = "failure" ]); then
-            printf "\n" >> $GITHUB_STEP_SUMMARY
-            printf "### ✗ Linting failed\n" >> $GITHUB_STEP_SUMMARY
-            printf "Please fix the issues above.\n" >> $GITHUB_STEP_SUMMARY
+            if { [ "${{ inputs['enable-swiftformat'] }}" = "true" ] && [ "${{ needs.swift-format-lint.result }}" = "failure" ]; } || \
+               { [ "${{ inputs['enable-swiftlint'] }}" = "true" ] && [ "${{ needs.swiftlint.result }}" = "failure" ]; }; then
+              printf "\n"
+              printf "### ✗ Linting failed\n"
+              printf "Please fix the issues above.\n"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if { [ "${{ inputs['enable-swiftformat'] }}" = "true" ] && [ "${{ needs.swift-format-lint.result }}" = "failure" ]; } || \
+             { [ "${{ inputs['enable-swiftlint'] }}" = "true" ] && [ "${{ needs.swiftlint.result }}" = "failure" ]; }; then
             exit 1
           fi

@@ -481,129 +481,125 @@ jobs:
         run: |
           RELEASE_TIME=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
 
-          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-          # Release Summary
-
-          ## Release Overview
-          | Property | Value |
-          |----------|-------|
-          | **Version** | `${{ github.ref_name }}` |
-          | **Branch** | `${{ inputs.branch }}` |
-          | **Commit** | `${{ github.sha }}` |
-          | **Released By** | @${{ github.actor }} |
-          EOF
-
-          printf "| **Released At** | %s |\n" "$RELEASE_TIME" >> $GITHUB_STEP_SUMMARY
-
-          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-
-          ## Job Status
-          | Job | Status |
-          |-----|--------|
-          EOF
+          {
+            printf "# Release Summary\n\n"
+            printf "## Release Overview\n"
+            printf "| Property | Value |\n"
+            printf "|----------|-------|\n"
+            printf "| **Version** | \`${{ github.ref_name }}\` |\n"
+            printf "| **Branch** | \`${{ inputs.branch }}\` |\n"
+            printf "| **Commit** | \`${{ github.sha }}\` |\n"
+            printf "| **Released By** | @${{ github.actor }} |\n"
+            printf "| **Released At** | %s |\n\n" "$RELEASE_TIME"
+            printf "## Job Status\n"
+            printf "| Job | Status |\n"
+            printf "|-----|--------|\n"
+          } >> "$GITHUB_STEP_SUMMARY"
 
           # Version Bump
           if [ "${{ needs.version-and-changelog.result }}" = "success" ]; then
-            printf "| Version Bump | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+            printf "| Version Bump | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
           elif [ "${{ needs.version-and-changelog.result }}" = "skipped" ]; then
-            printf "| Version Bump | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+            printf "| Version Bump | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
           else
-            printf "| Version Bump | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+            printf "| Version Bump | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
           fi
 
           # Build Maven
           if [ "${{ needs.build-maven.result }}" = "success" ]; then
-            printf "| Build Maven | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+            printf "| Build Maven | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
           elif [ "${{ needs.build-maven.result }}" = "skipped" ]; then
-            printf "| Build Maven | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+            printf "| Build Maven | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
           else
-            printf "| Build Maven | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+            printf "| Build Maven | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
           fi
 
           # Build NPM
           if [ "${{ needs.build-npm.result }}" = "success" ]; then
-            printf "| Build NPM | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+            printf "| Build NPM | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
           elif [ "${{ needs.build-npm.result }}" = "skipped" ]; then
-            printf "| Build NPM | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+            printf "| Build NPM | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
           else
-            printf "| Build NPM | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+            printf "| Build NPM | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
           fi
 
           # Build Gradle
           if [ "${{ needs.build-gradle.result }}" = "success" ]; then
-            printf "| Build Gradle | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+            printf "| Build Gradle | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
           elif [ "${{ needs.build-gradle.result }}" = "skipped" ]; then
-            printf "| Build Gradle | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+            printf "| Build Gradle | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
           else
-            printf "| Build Gradle | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+            printf "| Build Gradle | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
           fi
 
           # Build Gradle Android
           if [ "${{ needs.build-gradle-android.result }}" = "success" ]; then
-            printf "| Build Gradle Android | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+            printf "| Build Gradle Android | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
           elif [ "${{ needs.build-gradle-android.result }}" = "skipped" ]; then
-            printf "| Build Gradle Android | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+            printf "| Build Gradle Android | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
           else
-            printf "| Build Gradle Android | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+            printf "| Build Gradle Android | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
           fi
 
           # Build Xcode
           if [ "${{ needs.build-xcode.result }}" = "success" ]; then
-            printf "| Build Xcode | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+            printf "| Build Xcode | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
           elif [ "${{ needs.build-xcode.result }}" = "skipped" ]; then
-            printf "| Build Xcode | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+            printf "| Build Xcode | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
           else
-            printf "| Build Xcode | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+            printf "| Build Xcode | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
           fi
 
           # Publish GitHub
           if [ "${{ needs.publish-maven-github.result }}" = "success" ]; then
-            printf "| Publish GitHub | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+            printf "| Publish GitHub | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
           elif [ "${{ needs.publish-maven-github.result }}" = "skipped" ]; then
-            printf "| Publish GitHub | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+            printf "| Publish GitHub | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
           else
-            printf "| Publish GitHub | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+            printf "| Publish GitHub | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
           fi
 
           # Publish Maven Central
           if [ "${{ needs.publish-maven-central.result }}" = "success" ]; then
-            printf "| Publish Maven Central | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+            printf "| Publish Maven Central | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
           elif [ "${{ needs.publish-maven-central.result }}" = "skipped" ]; then
-            printf "| Publish Maven Central | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+            printf "| Publish Maven Central | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
           else
-            printf "| Publish Maven Central | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+            printf "| Publish Maven Central | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
           fi
 
           # Publish Apple App Store
           if [ "${{ needs.publish-apple-appstore.result }}" = "success" ]; then
-            printf "| Publish Apple App Store | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+            printf "| Publish Apple App Store | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
           elif [ "${{ needs.publish-apple-appstore.result }}" = "skipped" ]; then
-            printf "| Publish Apple App Store | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+            printf "| Publish Apple App Store | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
           else
-            printf "| Publish Apple App Store | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+            printf "| Publish Apple App Store | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
           fi
 
           # Containers
           if [ "${{ needs.build-containers.result }}" = "success" ]; then
-            printf "| Containers | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+            printf "| Containers | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
           elif [ "${{ needs.build-containers.result }}" = "skipped" ]; then
-            printf "| Containers | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+            printf "| Containers | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
           else
-            printf "| Containers | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+            printf "| Containers | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
           fi
 
           # GitHub Release
           if [ "${{ needs.create-release.result }}" = "success" ]; then
-            printf "| GitHub Release | %s |\n" "✓" >> $GITHUB_STEP_SUMMARY
+            printf "| GitHub Release | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
           elif [ "${{ needs.create-release.result }}" = "skipped" ]; then
-            printf "| GitHub Release | %s |\n" "−" >> $GITHUB_STEP_SUMMARY
+            printf "| GitHub Release | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
           else
-            printf "| GitHub Release | %s |\n" "✗" >> $GITHUB_STEP_SUMMARY
+            printf "| GitHub Release | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          cat >> "$GITHUB_STEP_SUMMARY" << 'EOF'
 
           ## Resources
           - [GitHub Release](https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }})
           - [Packages](https://github.com/${{ github.repository }}/packages)
           - [Workflow Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+          EOF

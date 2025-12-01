@@ -11,7 +11,7 @@ experimental = true  # Enable experimental features (required for ubi backend)
 paranoid = true      # Enable strict security checks and verification
 
 [env]
-# These will be available during tool installation AND runtime
+# Proxy configuration - available during tool installation AND runtime
 HTTP_PROXY = "{{ get_env(name='HTTP_PROXY', default='') }}"
 HTTPS_PROXY = "{{ get_env(name='HTTPS_PROXY', default='') }}"
 NO_PROXY = "{{ get_env(name='NO_PROXY', default='') }}"
@@ -29,6 +29,11 @@ PIP_INDEX_URL = "{{ get_env(name='PIP_INDEX_URL', default='') }}"
 "aqua:rhysd/actionlint" = "v1.7.9"
 "aqua:zricethezav/gitleaks" = "v8.29.1"
 "aqua:siderolabs/conform" = "v0.1.0-alpha.30"
-"aqua:mvdan/sh" = "v3.12.0"
 "aqua:koalaman/shellcheck" = "v0.11.0"
+"aqua:mvdan/sh" = "v3.12.0"  # shfmt - Shell formatter
+"aqua:hadolint/hadolint" = "v2.14.0"
+"aqua:sharkdp/fd" = "v10.3.0"
+"aqua:BurntSushi/ripgrep" = "15.1.0"
+"aqua:tldr-pages/tlrc" = "v1.12.0"
+yq = "4.49.1"
 "pipx:reuse" = "6.2.0"

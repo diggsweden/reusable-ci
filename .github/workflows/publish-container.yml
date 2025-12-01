@@ -221,7 +221,7 @@ jobs:
       - name: Extract NPM tarball
         if: ${{ contains(inputs['artifact-types'], 'npm') }}
         run: |
-          TARBALL=$(ls *.tgz 2>/dev/null || ls *.tar.gz 2>/dev/null | head -1)
+          TARBALL=$(find . -maxdepth 1 \( -name "*.tgz" -o -name "*.tar.gz" \) -type f -print -quit)
           if [ -n "$TARBALL" ]; then
             printf "Extracting %s...\n" "$TARBALL"
             tar -xzf "$TARBALL" --strip-components=1
@@ -229,7 +229,7 @@ jobs:
           fi
       - name: Verify NPM artifacts
         if: ${{ contains(inputs['artifact-types'], 'npm') }}
-        run: bash .github-shared/scripts/container/verify-artifacts.sh npm dist fi
+        run: bash .github-shared/scripts/container/verify-artifacts.sh npm dist "${{ inputs.context }}/${{ inputs['container-file'] }}"
       - name: Download Gradle artifacts
         if: ${{ contains(inputs['artifact-types'], 'gradle') }}
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
@@ -396,12 +396,13 @@ jobs:
         if: ${{ inputs['enable-sbom'] && inputs['push-image'] && inputs['enable-slsa'] }}
         id: find-sbom
         run: |
-          SBOM_FILE=$(ls *-container-sbom.spdx.json 2>/dev/null | head -1)
+          SBOM_FILE=$(find . -maxdepth 1 -name "*-container-sbom.spdx.json" -type f -print -quit)
           if [ -z "$SBOM_FILE" ]; then
             printf "::error::No container SBOM file found matching pattern *-container-sbom.spdx.json\n"
             printf "::error::SBOM generation step may have failed\n"
             exit 1
           fi
+          SBOM_FILE=$(basename "$SBOM_FILE")
           printf "sbom-file=%s\n" "$SBOM_FILE" >> "$GITHUB_OUTPUT"
           printf "Found SBOM file: %s\n" "$SBOM_FILE"
       - name: Attest Container SBOM

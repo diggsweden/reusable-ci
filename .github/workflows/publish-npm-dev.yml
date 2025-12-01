@@ -133,13 +133,12 @@ jobs:
         run: |
           NAME=$(node -p "require('./package.json').name")
           SCOPE="${{ inputs.package-scope }}"
-          if [[ "$NAME" != ${SCOPE}/* ]]; then
+          if [[ "$NAME" != "${SCOPE}"/* ]]; then
             printf "::error::package.json name must be scoped as %s/<pkg>\n" "${SCOPE}"
             printf "Found: %s\n" "$NAME"
             exit 1
           fi
           # Configure scoped registry
-          SCOPE_NAME="${SCOPE#@}"
           npm config set "${SCOPE}:registry" "${{ inputs.registry }}"
       - name: Download NPM build artifacts
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
@@ -149,13 +148,13 @@ jobs:
       - name: Extract tarball contents
         working-directory: ${{ inputs.working-directory }}
         run: |
-          TARBALL=$(ls *.tgz 2>/dev/null || ls *.tar.gz 2>/dev/null | head -1)
+          TARBALL=$(find . -maxdepth 1 \( -name "*.tgz" -o -name "*.tar.gz" \) -type f -print -quit)
           if [ -n "$TARBALL" ]; then
             printf "Extracting %s...\n" "$TARBALL"
             tar -xzf "$TARBALL" --strip-components=1
             rm "$TARBALL"
             printf "Extracted contents:\n"
-            ls -lh dist/ 2>/dev/null || ls -lh build/ 2>/dev/null || true
+            find dist/ -type f -ls 2>/dev/null || find build/ -type f -ls 2>/dev/null || true
             printf "\nVerifying dist/cli.js exists:\n"
             test -f dist/cli.js && printf "✓ dist/cli.js found\n" || printf "✗ dist/cli.js NOT found\n"
           else
