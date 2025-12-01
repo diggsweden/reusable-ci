@@ -96,6 +96,10 @@ on:
         required: false
         default: false
         type: boolean
+      artifact-name:
+        description: "Artifact name for SBOM generation (e.g., 'token-lib-ci' for Maven artifactId). If not provided, uses repository name."
+        required: false
+        type: string
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
@@ -188,7 +192,15 @@ jobs:
           # Extract version and project name from GitHub context
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"  # Remove 'v' prefix
-          PROJECT_NAME=$(basename ${{ github.repository }})
+
+          # Use provided artifact-name input, or fall back to repository name
+          if [ -n "${{ inputs['artifact-name'] }}" ]; then
+            PROJECT_NAME="${{ inputs['artifact-name'] }}"
+            printf "Using artifact name: %s\n" "$PROJECT_NAME"
+          else
+            PROJECT_NAME=$(basename ${{ github.repository }})
+            printf "Using repository name: %s\n" "$PROJECT_NAME"
+          fi
 
           # Use SBOM generation script for source and artifact layers
           # Use generic layer names (source, artifact) that work for all project types
@@ -227,7 +239,12 @@ jobs:
       - name: Create SBOM ZIP
         if: ${{ inputs['generate-sbom'] }}
         run: |
-          PROJECT_NAME=$(basename ${{ github.repository }})
+          # Use provided artifact-name input, or fall back to repository name
+          if [ -n "${{ inputs['artifact-name'] }}" ]; then
+            PROJECT_NAME="${{ inputs['artifact-name'] }}"
+          else
+            PROJECT_NAME=$(basename ${{ github.repository }})
+          fi
           VERSION="${{ github.ref_name }}"
           bash .github-shared/scripts/release/create-sbom-zip.sh "$PROJECT_NAME" "$VERSION"
 
