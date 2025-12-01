@@ -152,6 +152,7 @@ jobs:
       first-project-type: ${{ steps.parse.outputs.first-project-type }}
       first-build-type: ${{ steps.parse.outputs.first-build-type }}
       first-require-authorization: ${{ steps.parse.outputs.first-require-authorization }}
+      first-artifact-name: ${{ steps.parse.outputs.first-artifact-name }}
       # Filtered artifact lists by project type
       maven-artifacts: ${{ steps.parse.outputs.maven-artifacts }}
       npm-artifacts: ${{ steps.parse.outputs.npm-artifacts }}
@@ -461,6 +462,7 @@ jobs:
       sign-artifacts: ${{ inputs['release.signartifacts'] }}
       draft: ${{ inputs['release.draft'] || needs.parse-config.outputs.is-draft-release == 'true' }}
       project-type: ${{ needs.parse-config.outputs.first-project-type }}
+      artifact-name: ${{ needs.parse-config.outputs.first-artifact-name }}
       reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
       changelog-config: ${{ inputs['changelog.config'] }}
       make-latest: ${{ (inputs['release-type'] == 'stable' || (!inputs['release-type'] && !contains(github.ref_name, '-'))) && 'true' || 'false' }}

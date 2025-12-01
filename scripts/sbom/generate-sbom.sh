@@ -201,7 +201,7 @@ get_project_name() {
 find_artifacts() {
   local dir="$1"
   shift
-  [[ -d "$dir" ]] && find "$dir" -maxdepth 1 -type f "$@" -print0 2>/dev/null
+  [[ -d "$dir" ]] && find "$dir" -type f "$@" -print0 2>/dev/null
 }
 
 collect_artifacts() {
@@ -309,9 +309,10 @@ generate_artifact_layer_maven() {
   local name="$1" version="$2"
   local artifacts=()
 
-  collect_artifacts artifacts find_artifacts "./release-artifacts" \( -name "${name}.jar" -o -name "${name}-*.jar" \) ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar"
+  # Search for JAR files matching the artifact name (excluding sources, javadoc, tests, and original artifacts)
+  collect_artifacts artifacts find_artifacts "./release-artifacts" -name "${name}-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" ! -name "original-*.jar"
 
-  [[ ${#artifacts[@]} -eq 0 ]] && collect_artifacts artifacts find_artifacts "target" \( -name "${name}.jar" -o -name "${name}-*.jar" \) ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar"
+  [[ ${#artifacts[@]} -eq 0 ]] && collect_artifacts artifacts find_artifacts "target" -name "${name}-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" ! -name "original-*.jar"
 
   scan_artifacts "$name" "$version" "jar" "jar" "${artifacts[@]}" || log_warning "No JAR files found"
 }

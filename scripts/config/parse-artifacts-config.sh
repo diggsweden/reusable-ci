@@ -167,10 +167,12 @@ output_first_artifact_info() {
   first_project_type=$(printf "%s" "$ARTIFACTS" | jq -r '.[0]["project-type"]')
   first_build_type=$(printf "%s" "$ARTIFACTS" | jq -r '.[0]["build-type"] // "application"')
   first_require_auth=$(printf "%s" "$ARTIFACTS" | jq -r '.[0]["require-authorization"] // false')
+  first_artifact_name=$(printf "%s" "$ARTIFACTS" | jq -r '.[0].name // ""')
 
   output "first-project-type=$first_project_type"
   output "first-build-type=$first_build_type"
   output "first-require-authorization=$first_require_auth"
+  output "first-artifact-name=$first_artifact_name"
 }
 
 compute_sbom_settings() {
