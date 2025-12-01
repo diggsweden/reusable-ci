@@ -367,6 +367,8 @@ jobs:
     with:
       artifact-source: ${{ matrix.artifact['project-type'] }}-build-artifacts
       package-type: ${{ matrix.artifact['project-type'] }}
+      java-version: ${{ matrix.artifact.config['java-version'] }}
+      node-version: ${{ matrix.artifact.config['node-version'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
       attach-pattern: ${{ matrix.artifact.config['attach-pattern'] }}
   # Step 3b: Publish to Maven Central
@@ -386,8 +388,10 @@ jobs:
     uses: ./.github/workflows/publish-maven-central.yml
     with:
       artifact-source: maven-build-artifacts
+      java-version: ${{ matrix.artifact.config['java-version'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
       settings-path: ${{ matrix.artifact.config['settings-path'] }}
+      profile: ${{ matrix.artifact.config['profile'] }}
   # Step 3c: Publish to Apple App Store / TestFlight
   publish-apple-appstore:
     name: Publish Apple App Store - ${{ matrix.artifact.name }}

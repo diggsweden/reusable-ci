@@ -35,6 +35,16 @@ on:
         description: "Package type: maven, npm, or gradle"
         required: true
         type: string
+      java-version:
+        description: "Java version"
+        required: false
+        default: "25"
+        type: string
+      node-version:
+        description: "Node.js version"
+        required: false
+        default: "24"
+        type: string
       working-directory:
         description: "Working directory"
         required: false
@@ -81,7 +91,7 @@ jobs:
         if: ${{ inputs['package-type'] == 'maven' || inputs['package-type'] == 'gradle' }}
         uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
-          java-version: '25'
+          java-version: ${{ inputs['java-version'] }}
           distribution: 'temurin'
           server-id: github
           server-username: GITHUB_ACTOR
@@ -102,7 +112,7 @@ jobs:
         if: ${{ inputs['package-type'] == 'npm' }}
         uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
-          node-version: '24'
+          node-version: ${{ inputs['node-version'] }}
           registry-url: 'https://npm.pkg.github.com'
           scope: '@${{ github.repository_owner }}'
       - name: Publish NPM to GitHub Packages

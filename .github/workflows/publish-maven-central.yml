@@ -31,6 +31,11 @@ on:
         description: "Name of workflow artifact containing built library JARs"
         required: true
         type: string
+      java-version:
+        description: "Java version"
+        required: false
+        default: "25"
+        type: string
       working-directory:
         description: "Working directory"
         required: false
@@ -71,7 +76,7 @@ jobs:
       - name: Set up JDK
         uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
-          java-version: '25'
+          java-version: ${{ inputs['java-version'] }}
           distribution: 'temurin'
           cache: maven
           cache-dependency-path: ${{ inputs['working-directory'] }}/pom.xml
