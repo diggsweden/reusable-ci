@@ -464,6 +464,7 @@ jobs:
       reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
       changelog-config: ${{ inputs['changelog.config'] }}
       make-latest: ${{ (inputs['release-type'] == 'stable' || (!inputs['release-type'] && !contains(github.ref_name, '-'))) && 'true' || 'false' }}
+      has-containers: ${{ needs.parse-config.outputs.containers != '[]' }}
   # Final summary
   release-summary:
     name: Release Summary
