@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# ⚠️ INTERNAL USE ONLY - Release workflow for reusable-ci itself
+# This workflow manages reusable-ci's own releases using release-orchestrator.
+# For templates to use in YOUR project, see examples/ directory.
+name: Self Release
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-alpha*"
+      - "v[0-9]+.[0-9]+.[0-9]+-beta*"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc*"
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  release:
+    uses: ./.github/workflows/release-orchestrator.yml
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      actions: read
+      security-events: write
+      attestations: write
+    secrets: inherit
+    with:
+      artifacts-config: .github/self-artifacts.yml
+      changelog-creator: git-cliff
+      changelog.config: templates/gitcliff/default.toml
+      release-publisher: github-cli

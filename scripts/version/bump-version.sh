@@ -103,6 +103,11 @@ xcode-ios)
   fi
   ;;
 
+meta)
+  log "Meta project type - no version file to update"
+  log_success "Version ${VERSION} recorded for changelog generation only"
+  ;;
+
 *)
   log_error "Unknown project type: ${PROJECT_TYPE}"
   exit 1
