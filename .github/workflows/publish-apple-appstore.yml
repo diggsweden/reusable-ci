@@ -189,7 +189,13 @@ jobs:
           printf "|----------|-------|\n" >> $GITHUB_STEP_SUMMARY
           printf "| **IPA File** | \`%s\` |\n" "$(basename ${{ steps.find-ipa.outputs.ipa-file }})" >> $GITHUB_STEP_SUMMARY
           printf "| **Platform** | %s |\n" "${{ inputs.platform }}" >> $GITHUB_STEP_SUMMARY
-          printf "| **Validation** | %s |\n" "${{ inputs['skip-validation'] && '⊘ Skipped' || '✓ Passed' }}" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ inputs['skip-validation'] }}" = "true" ]; then
+            printf "| **Validation** | %s |\n" "⊘ Skipped" >> $GITHUB_STEP_SUMMARY
+          else
+            printf "| **Validation** | %s |\n" "✓ Passed" >> $GITHUB_STEP_SUMMARY
+          fi
+
           printf "| **Status** | ✓ Uploaded |\n" >> $GITHUB_STEP_SUMMARY
 
           if [ -n "${{ steps.upload-info.outputs.request-id }}" ]; then

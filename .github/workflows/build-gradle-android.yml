@@ -168,7 +168,11 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           printf "Running Gradle tasks: %s\n" "${{ steps.build-tasks.outputs.tasks }}"
-          ./gradlew ${{ steps.build-tasks.outputs.tasks }} ${{ inputs['skip-tests'] && '-x test' || '' }}
+          if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
+            ./gradlew ${{ steps.build-tasks.outputs.tasks }} -x test
+          else
+            ./gradlew ${{ steps.build-tasks.outputs.tasks }}
+          fi
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         run: |

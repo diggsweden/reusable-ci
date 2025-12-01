@@ -160,7 +160,13 @@ jobs:
           printf "## Published to Maven Central 🚀\n" >> $GITHUB_STEP_SUMMARY
           printf "\n" >> $GITHUB_STEP_SUMMARY
           printf "- **Version:** %s\n" "${{ steps.version-info.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
-          printf "- **Type:** %s\n" "${{ steps.version-info.outputs.IS_SNAPSHOT == 'true' && 'SNAPSHOT' || 'Release' }}" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.version-info.outputs.IS_SNAPSHOT }}" = "true" ]; then
+            printf "- **Type:** %s\n" "SNAPSHOT" >> $GITHUB_STEP_SUMMARY
+          else
+            printf "- **Type:** %s\n" "Release" >> $GITHUB_STEP_SUMMARY
+          fi
+
           printf "- **Registry:** [Maven Central](https://central.sonatype.com/)\n" >> $GITHUB_STEP_SUMMARY
           printf "\n" >> $GITHUB_STEP_SUMMARY
 
