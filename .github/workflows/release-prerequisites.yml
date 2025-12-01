@@ -247,6 +247,7 @@ jobs:
           ACTOR: ${{ github.actor }}
           JOB_STATUS: ${{ job.status }}
           OSPO_BOT_GPG_PRIV: ${{ secrets.OSPO_BOT_GPG_PRIV }}
+          OSPO_BOT_GPG_PASS: ${{ secrets.OSPO_BOT_GPG_PASS }}
           RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
           OSPO_BOT_GPG_PUB: ${{ secrets.OSPO_BOT_GPG_PUB }}
           MAVENCENTRAL_USERNAME: ${{ secrets.MAVENCENTRAL_USERNAME }}
