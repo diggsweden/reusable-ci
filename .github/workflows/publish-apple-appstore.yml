@@ -182,39 +182,47 @@ jobs:
 
       - name: Generate upload summary
         run: |
-          printf "## App Store Connect Upload Summary 📱\n" >> $GITHUB_STEP_SUMMARY
-          printf "\n" >> $GITHUB_STEP_SUMMARY
-          printf "### Upload Details\n" >> $GITHUB_STEP_SUMMARY
-          printf "| Property | Value |\n" >> $GITHUB_STEP_SUMMARY
-          printf "|----------|-------|\n" >> $GITHUB_STEP_SUMMARY
-          printf "| **IPA File** | \`%s\` |\n" "$(basename ${{ steps.find-ipa.outputs.ipa-file }})" >> $GITHUB_STEP_SUMMARY
-          printf "| **Platform** | %s |\n" "${{ inputs.platform }}" >> $GITHUB_STEP_SUMMARY
+          IPA_FILE="${{ steps.find-ipa.outputs.ipa-file }}"
+          PLATFORM="${{ inputs.platform }}"
+          SKIP_VALIDATION="${{ inputs['skip-validation'] }}"
+          SUBMIT_REVIEW="${{ inputs['submit-for-review'] }}"
+          REQUEST_ID="${{ steps.upload-info.outputs.request-id }}"
 
-          if [ "${{ inputs['skip-validation'] }}" = "true" ]; then
-            printf "| **Validation** | %s |\n" "⊘ Skipped" >> $GITHUB_STEP_SUMMARY
-          else
-            printf "| **Validation** | %s |\n" "✓ Passed" >> $GITHUB_STEP_SUMMARY
-          fi
+          {
+            printf "## App Store Connect Upload Summary 📱\n"
+            printf "\n"
+            printf "### Upload Details\n"
+            printf "| Property | Value |\n"
+            printf "|----------|-------|\n"
+            printf "| **IPA File** | \`%s\` |\n" "$(basename "${IPA_FILE}")"
+            printf "| **Platform** | %s |\n" "${PLATFORM}"
 
-          printf "| **Status** | ✓ Uploaded |\n" >> $GITHUB_STEP_SUMMARY
+            if [ "${SKIP_VALIDATION}" = "true" ]; then
+              printf "| **Validation** | %s |\n" "⊘ Skipped"
+            else
+              printf "| **Validation** | %s |\n" "✓ Passed"
+            fi
 
-          if [ -n "${{ steps.upload-info.outputs.request-id }}" ]; then
-            printf "| **Request ID** | \`%s\` |\n" "${{ steps.upload-info.outputs.request-id }}" >> $GITHUB_STEP_SUMMARY
-          fi
+            printf "| **Status** | ✓ Uploaded |\n"
 
-          printf "\n" >> $GITHUB_STEP_SUMMARY
-          printf "### Next Steps\n" >> $GITHUB_STEP_SUMMARY
-          printf "1. Check [App Store Connect](https://appstoreconnect.apple.com) for build processing status\n" >> $GITHUB_STEP_SUMMARY
-          printf "2. Build will be available in TestFlight within 10-15 minutes after processing completes\n" >> $GITHUB_STEP_SUMMARY
+            if [ -n "${REQUEST_ID}" ]; then
+              printf "| **Request ID** | \`%s\` |\n" "${REQUEST_ID}"
+            fi
 
-          if [ "${{ inputs['submit-for-review'] }}" = "true" ]; then
-            printf "3. Build will be automatically submitted for App Store review\n" >> $GITHUB_STEP_SUMMARY
-          else
-            printf "3. Manually submit for external testing or App Store review from App Store Connect\n" >> $GITHUB_STEP_SUMMARY
-          fi
+            printf "\n"
+            printf "### Next Steps\n"
+            printf "1. Check [App Store Connect](https://appstoreconnect.apple.com) for build processing status\n"
+            printf "2. Build will be available in TestFlight within 10-15 minutes after processing completes\n"
 
-          printf "\n" >> $GITHUB_STEP_SUMMARY
-          printf "*Upload completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+            if [ "${SUBMIT_REVIEW}" = "true" ]; then
+              printf "3. Build will be automatically submitted for App Store review\n"
+            else
+              printf "3. Manually submit for external testing or App Store review from App Store Connect\n"
+            fi
+
+            printf "\n"
+            printf "*Upload completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload result artifact
         if: always()

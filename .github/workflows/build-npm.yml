@@ -116,16 +116,18 @@ jobs:
           if-no-files-found: error
       - name: Generate build summary
         run: |
-          printf "## NPM Build Summary 🔨\n" >> $GITHUB_STEP_SUMMARY
-          printf "\n" >> $GITHUB_STEP_SUMMARY
-          printf "%s **Package:** \`%s@%s\`\n" "-" "${{ steps.version-info.outputs.NAME }}" "${{ steps.version-info.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
-          printf "%s **Node.js:** %s\n" "-" "${{ inputs['node-version'] }}" >> $GITHUB_STEP_SUMMARY
+          {
+            printf "## NPM Build Summary 🔨\n"
+            printf "\n"
+            printf "%s **Package:** \`%s@%s\`\n" "-" "${{ steps.version-info.outputs.NAME }}" "${{ steps.version-info.outputs.VERSION }}"
+            printf "%s **Node.js:** %s\n" "-" "${{ inputs['node-version'] }}"
 
-          if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
-            printf "%s **Tests:** %s\n" "-" "⊘ Skipped" >> $GITHUB_STEP_SUMMARY
-          else
-            printf "%s **Tests:** %s\n" "-" "✓ Executed" >> $GITHUB_STEP_SUMMARY
-          fi
+            if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
+              printf "%s **Tests:** %s\n" "-" "⊘ Skipped"
+            else
+              printf "%s **Tests:** %s\n" "-" "✓ Executed"
+            fi
 
-          printf "\n" >> $GITHUB_STEP_SUMMARY
-          printf "*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+            printf "\n"
+            printf "*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          } >> "$GITHUB_STEP_SUMMARY"

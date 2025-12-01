@@ -76,6 +76,7 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           printf "Installing project modules to local repository...\n"
+          # shellcheck disable=SC2086
           mvn $MAVEN_CLI_OPTS install -DskipTests
       - name: Get version info
         id: version-info
@@ -101,6 +102,7 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           printf "Building Maven application...\n"
+          # shellcheck disable=SC2086
           if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
             mvn $MAVEN_CLI_OPTS clean package -DskipTests
           else
@@ -119,15 +121,18 @@ jobs:
             printf "Using Maven profile: %s\n" "${{ inputs['profile'] }}"
           fi
 
+          # shellcheck disable=SC2086
           mvn $MAVEN_CLI_OPTS clean compile $PROFILE_ARG
 
           if [ "${{ inputs['skip-tests'] }}" != "true" ]; then
             printf "Running tests...\n"
+            # shellcheck disable=SC2086
             mvn $MAVEN_CLI_OPTS test $PROFILE_ARG
           fi
 
           printf "Creating library package with sources and javadoc...\n"
           # Skip GPG signing during build (will be done during publish)
+          # shellcheck disable=SC2086
           mvn $MAVEN_CLI_OPTS package -DskipTests=${{ inputs['skip-tests'] }} $PROFILE_ARG -Dgpg.skip=true
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
@@ -155,18 +160,20 @@ jobs:
           if-no-files-found: warn
       - name: Generate build summary
         run: |
-          printf "## Maven Build Summary 🔨\n" >> $GITHUB_STEP_SUMMARY
-          printf "\n" >> $GITHUB_STEP_SUMMARY
-          printf "%s **Type:** %s\n" "-" "${{ inputs['build-type'] }}" >> $GITHUB_STEP_SUMMARY
-          printf "%s **Artifact:** \`%s:%s:%s\`\n" "-" "${{ steps.version-info.outputs.GROUP_ID }}" "${{ steps.version-info.outputs.ARTIFACT_ID }}" "${{ steps.version-info.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
-          printf "%s **Java:** %s\n" "-" "${{ inputs['java-version'] }}" >> $GITHUB_STEP_SUMMARY
+          {
+            printf "## Maven Build Summary 🔨\n"
+            printf "\n"
+            printf "%s **Type:** %s\n" "-" "${{ inputs['build-type'] }}"
+            printf "%s **Artifact:** \`%s:%s:%s\`\n" "-" "${{ steps.version-info.outputs.GROUP_ID }}" "${{ steps.version-info.outputs.ARTIFACT_ID }}" "${{ steps.version-info.outputs.VERSION }}"
+            printf "%s **Java:** %s\n" "-" "${{ inputs['java-version'] }}"
 
-          if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
-            printf "%s **Tests:** %s\n" "-" "⊘ Skipped" >> $GITHUB_STEP_SUMMARY
-          else
-            printf "%s **Tests:** %s\n" "-" "✓ Executed" >> $GITHUB_STEP_SUMMARY
-          fi
+            if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
+              printf "%s **Tests:** %s\n" "-" "⊘ Skipped"
+            else
+              printf "%s **Tests:** %s\n" "-" "✓ Executed"
+            fi
 
-          printf "%s **Snapshot:** %s\n" "-" "${{ steps.version-info.outputs.IS_SNAPSHOT }}" >> $GITHUB_STEP_SUMMARY
-          printf "\n" >> $GITHUB_STEP_SUMMARY
-          printf "*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+            printf "%s **Snapshot:** %s\n" "-" "${{ steps.version-info.outputs.IS_SNAPSHOT }}"
+            printf "\n"
+            printf "*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          } >> "$GITHUB_STEP_SUMMARY"

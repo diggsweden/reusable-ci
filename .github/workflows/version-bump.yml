@@ -201,9 +201,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
         run: |
-          # shellcheck disable=SC2086
           echo "Pre-downloading dependencies with updated pom.xml..."
+          # shellcheck disable=SC2086
           mvn $MAVEN_CLI_OPTS dependency:resolve || true
+          # shellcheck disable=SC2086
           mvn $MAVEN_CLI_OPTS dependency:resolve-plugins || true
       - name: Set up Node.js for NPM
         if: ${{ steps.project-type.outputs.type == 'npm' }}
