@@ -145,7 +145,21 @@ jobs:
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: npm-build-artifacts
-          path: ${{ inputs.working-directory }}/dist/
+          path: ${{ inputs.working-directory }}/
+      - name: Extract tarball contents
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          TARBALL=$(ls *.tgz 2>/dev/null || ls *.tar.gz 2>/dev/null | head -1)
+          if [ -n "$TARBALL" ]; then
+            printf "Extracting %s...\n" "$TARBALL"
+            tar -xzf "$TARBALL" --strip-components=1
+            rm "$TARBALL"
+            printf "Extracted contents:\n"
+            ls -lh dist/ 2>/dev/null || ls -lh build/ 2>/dev/null || true
+          else
+            printf "::error::No tarball found in artifacts\n"
+            exit 1
+          fi
       - name: Checkout .github repository for scripts
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
