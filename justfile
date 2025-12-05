@@ -10,15 +10,22 @@ devtools_dir := env("XDG_DATA_HOME", env("HOME") + "/.local/share") + "/devbase-
 lint := devtools_dir + "/linters"
 colors := devtools_dir + "/utils/colors.sh"
 
+# Color variables
+CYAN_BOLD := "\\033[1;36m"
+GREEN := "\\033[1;32m"
+BLUE := "\\033[1;34m"
+MAGENTA := "\\033[1;35m"
+NC := "\\033[0m"
+
 # ==================================================================================== #
 # DEFAULT - Show available recipes
 # ==================================================================================== #
 
 # Display available recipes
 default:
-    @printf "\033[1;36m Reusable CI\033[0m\n"
+    @printf "{{CYAN_BOLD}} Reusable CI{{NC}}\n"
     @printf "\n"
-    @printf "Quick start: \033[1;32mjust setup-devtools\033[0m | \033[1;34mjust verify\033[0m | \033[1;35mjust lint-all\033[0m\n"
+    @printf "Quick start: {{GREEN}}just setup-devtools{{NC}} | {{BLUE}}just verify{{NC}} | {{MAGENTA}}just lint-all{{NC}}\n"
     @printf "\n"
     @just --list --unsorted
 
@@ -87,10 +94,8 @@ verify: _ensure-devtools
 
 # ▪ Run all linters (override in project justfile to customize)
 [group('lint')]
-lint-all: _ensure-devtools lint-commits lint-secrets lint-yaml lint-markdown lint-shell lint-shell-fmt lint-actions lint-license
-    #!/usr/bin/env bash
-    source "{{colors}}"
-    just_success "All linting checks completed"
+lint-all: _ensure-devtools
+    @just --justfile {{devtools_dir}}/justfile lint-base
 
 # Validate commit messages (conform)
 [group('lint')]
@@ -127,10 +132,20 @@ lint-shell-fmt:
 lint-actions:
     @{{lint}}/github-actions.sh
 
-# Check license compliance (reuse)
+# Check license compliance
 [group('lint')]
 lint-license:
     @{{lint}}/license.sh
+
+# Lint containers
+[group('lint')]
+lint-container:
+    @{{lint}}/container.sh
+
+# Lint XML files
+[group('lint')]
+lint-xml:
+    @{{lint}}/xml.sh
 
 # ==================================================================================== #
 # LINT-FIX - Auto-fix linting violations
@@ -164,7 +179,4 @@ lint-shell-fmt-fix:
 
 [private]
 _ensure-devtools:
-    #!/usr/bin/env bash
-    if [[ ! -d "{{devtools_dir}}" ]]; then
-        just setup-devtools
-    fi
+    @just setup-devtools
