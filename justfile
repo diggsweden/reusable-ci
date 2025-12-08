@@ -95,7 +95,7 @@ verify: _ensure-devtools
 # ▪ Run all linters (override in project justfile to customize)
 [group('lint')]
 lint-all: _ensure-devtools
-    @just --justfile {{devtools_dir}}/justfile lint-base
+    @{{devtools_dir}}/scripts/verify.sh
 
 # Validate commit messages (conform)
 [group('lint')]

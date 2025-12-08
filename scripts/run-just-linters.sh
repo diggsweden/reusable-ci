@@ -46,7 +46,7 @@ discover_linters() {
   fi
 
   local linters
-  linters=$(just --summary 2>/dev/null | tr ' ' '\n' | grep '^lint-' | grep -v '\-fix$' || true)
+  linters=$(just --summary 2>/dev/null | tr ' ' '\n' | grep '^lint-' | grep -v '\-fix$' | grep -v '^lint-all$' | grep -v '^lint-base$' || true)
 
   if [[ -z "$linters" ]]; then
     printf "%s%s No lint-* tasks found in justfile%s\n" "${RED}" "$CROSSMARK" "${NC}"
