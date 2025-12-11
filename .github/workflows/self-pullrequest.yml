@@ -29,3 +29,15 @@ jobs:
       linters.commitlint: false
       linters.licenselint: false
       linters.megalint: false
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: jdx/mise-action@146a28175021df8ca24f8ee1828cc2a60f980bd5 # v3.5.1
+      - uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+        with:
+          just-version: 1.43.0
+      - name: Setup test dependencies
+        run: just test-setup
+      - name: Run tests
+        run: just test
