@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016,SC2154,SC2164,SC2268
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 # SPDX-License-Identifier: CC0-1.0
 #
@@ -6,6 +7,12 @@
 # Inspired by devbase-core and devbase-justkit patterns
 #
 # Usage: load "${BATS_TEST_DIRNAME}/test_helper.bash"
+#
+# Shellcheck disabled:
+#   SC2016 - Expressions don't expand in single quotes (intentional in mock scripts)
+#   SC2154 - Variables like $output/$stderr are set by bats, not this script
+#   SC2164 - cd without || exit is fine in test helpers (bats handles failures)
+#   SC2268 - x-prefix in comparisons is a common bats pattern for empty checks
 #
 # Features:
 #   - Git repository helpers (init, commits, remotes)
@@ -45,24 +52,24 @@ safe_temp_del() {
   local path="$1"
   [[ -z "$path" ]] && return 0
   [[ ! -d "$path" ]] && return 0
-  
+
   # Resolve to absolute path
   local abs_path
   abs_path="$(cd "$path" 2>/dev/null && pwd)" || return 0
-  
+
   # SAFETY: Only allow deletion in /tmp or BATS_TMPDIR
   local allowed_base="${BATS_TMPDIR:-/tmp}"
   if [[ "$abs_path" != /tmp/* && "$abs_path" != "$allowed_base"/* ]]; then
     echo "ERROR: safe_temp_del refuses to delete '$abs_path' - not in /tmp or BATS_TMPDIR" >&2
     return 1
   fi
-  
+
   # Extra safety: refuse to delete if path is too short (e.g., /tmp itself)
   if [[ "${#abs_path}" -lt 10 ]]; then
     echo "ERROR: safe_temp_del refuses to delete '$abs_path' - path too short" >&2
     return 1
   fi
-  
+
   # Make all files writable to avoid rm prompting on git objects
   chmod -R u+w "$abs_path" 2>/dev/null || true
   temp_del "$abs_path"
@@ -101,7 +108,7 @@ init_git_repo() {
   git config user.name "Test User"
   # Make git objects writable so temp_del can clean up
   git config core.sharedRepository 0644
-  echo "initial" > file.txt
+  echo "initial" >file.txt
   git add file.txt
   git commit -q -m "Initial commit"
 }
@@ -120,7 +127,7 @@ init_isolated_git_repo() {
 # Usage: add_commit [message]
 add_commit() {
   local msg="${1:-Change}"
-  echo "$msg" >> file.txt
+  echo "$msg" >>file.txt
   git add file.txt
   git commit -q -m "$msg"
 }
@@ -131,13 +138,13 @@ add_commit() {
 init_remote_repo() {
   REMOTE_DIR="$(temp_make)"
   export REMOTE_DIR
-  
+
   local current_dir
   current_dir=$(pwd)
-  
+
   cd "$REMOTE_DIR"
   git init -q --bare --shared=0644
-  
+
   cd "$current_dir"
   git remote add origin "$REMOTE_DIR"
   git push -q -u origin main 2>/dev/null || git push -q -u origin master 2>/dev/null || true
@@ -174,9 +181,9 @@ get_github_output() {
 create_mock_binary() {
   local name="$1"
   local content="$2"
-  
+
   mkdir -p "${TEST_DIR}/bin"
-  cat > "${TEST_DIR}/bin/${name}" << SCRIPT
+  cat >"${TEST_DIR}/bin/${name}" <<SCRIPT
 #!/usr/bin/env bash
 ${content}
 SCRIPT
@@ -207,9 +214,9 @@ create_test_file() {
   local content="$2"
   local dir
   dir=$(dirname "$path")
-  
+
   mkdir -p "$dir"
-  printf '%s\n' "$content" > "$path"
+  printf '%s\n' "$content" >"$path"
 }
 
 # Create a test file with heredoc content
@@ -218,9 +225,9 @@ create_test_file_heredoc() {
   local path="$1"
   local dir
   dir=$(dirname "$path")
-  
+
   mkdir -p "$dir"
-  cat > "$path"
+  cat >"$path"
 }
 
 # =============================================================================
@@ -290,7 +297,7 @@ cleanup_remote() {
 stub_repeated() {
   local cmd="$1"
   local behavior="$2"
-  
+
   create_mock_binary "$cmd" "$behavior"
   use_mock_path
 }
@@ -301,7 +308,7 @@ stub_gh_api() {
   local pattern="$1"
   local response="$2"
   local exit_code="${3:-0}"
-  
+
   create_mock_binary "gh" "
 case \"\$*\" in
   *\"$pattern\"*)
@@ -358,7 +365,7 @@ mock_npm_failure() {
 # Create mock for gradle wrapper
 # Usage: mock_gradlew_success
 mock_gradlew_success() {
-  cat > "${TEST_DIR}/gradlew" << 'SCRIPT'
+  cat >"${TEST_DIR}/gradlew" <<'SCRIPT'
 #!/usr/bin/env bash
 printf "BUILD SUCCESSFUL\n"
 SCRIPT
@@ -369,7 +376,7 @@ SCRIPT
 # Usage: mock_gradlew_failure [message]
 mock_gradlew_failure() {
   local msg="${1:-BUILD FAILED}"
-  cat > "${TEST_DIR}/gradlew" << SCRIPT
+  cat >"${TEST_DIR}/gradlew" <<SCRIPT
 #!/usr/bin/env bash
 printf '%s\n' '$msg'
 exit 1
@@ -387,7 +394,7 @@ assert_github_output() {
   local key="$1"
   local expected="$2"
   local actual
-  
+
   actual=$(get_github_output "$key")
   if [[ "$actual" != "$expected" ]]; then
     printf "Expected GITHUB_OUTPUT[%s] = '%s'\n" "$key" "$expected" >&2
@@ -400,7 +407,7 @@ assert_github_output() {
 # Usage: assert_github_output_exists <key>
 assert_github_output_exists() {
   local key="$1"
-  
+
   if ! grep -q "^${key}=" "$GITHUB_OUTPUT"; then
     printf "Expected GITHUB_OUTPUT to contain key '%s'\n" "$key" >&2
     printf "Actual GITHUB_OUTPUT contents:\n" >&2
@@ -413,7 +420,7 @@ assert_github_output_exists() {
 # Usage: assert_summary_contains <text>
 assert_summary_contains() {
   local text="$1"
-  
+
   if [[ ! -f "$GITHUB_STEP_SUMMARY" ]] || ! grep -q "$text" "$GITHUB_STEP_SUMMARY"; then
     printf "Expected GITHUB_STEP_SUMMARY to contain: %s\n" "$text" >&2
     printf "Actual contents:\n" >&2
@@ -438,9 +445,9 @@ create_jar_artifact() {
   local dir="$1"
   local name="$2"
   local content="${3:-mock jar content}"
-  
+
   mkdir -p "$dir"
-  printf '%s' "$content" > "$dir/$name"
+  printf '%s' "$content" >"$dir/$name"
 }
 
 # Create release artifacts directory with common files
@@ -448,9 +455,9 @@ create_jar_artifact() {
 create_release_artifacts() {
   local project="${1:-myapp}"
   local version="${2:-1.0.0}"
-  
+
   mkdir -p release-artifacts
-  printf 'jar content' > "release-artifacts/${project}-${version}.jar"
+  printf 'jar content' >"release-artifacts/${project}-${version}.jar"
 }
 
 # Create SBOM artifacts
@@ -458,18 +465,18 @@ create_release_artifacts() {
 create_sbom_artifacts() {
   local project="${1:-myapp}"
   local version="${2:-1.0.0}"
-  
+
   mkdir -p sbom-artifacts
-  printf '{"spdx": "content"}' > "sbom-artifacts/${project}-container-sbom.spdx.json"
+  printf '{"spdx": "content"}' >"sbom-artifacts/${project}-container-sbom.spdx.json"
 }
 
 # Create checksum file
 # Usage: create_checksums_file [filename]
 create_checksums_file() {
   local filename="${1:-checksums.sha256}"
-  
-  printf 'abc123def456  file1.jar\n' > "$filename"
-  printf '789xyz000111  file2.jar\n' >> "$filename"
+
+  printf 'abc123def456  file1.jar\n' >"$filename"
+  printf '789xyz000111  file2.jar\n' >>"$filename"
 }
 
 # =============================================================================
@@ -480,7 +487,7 @@ create_checksums_file() {
 # Usage: create_containerfile <content>
 create_containerfile() {
   local content="$1"
-  printf '%s\n' "$content" > Containerfile
+  printf '%s\n' "$content" >Containerfile
 }
 
 # Create a Containerfile that rebuilds from source (for testing warnings)
@@ -488,23 +495,23 @@ create_containerfile() {
 # Types: maven, npm, gradle
 create_rebuild_containerfile() {
   local type="$1"
-  
+
   case "$type" in
-    maven)
-      create_containerfile "FROM maven:3
+  maven)
+    create_containerfile "FROM maven:3
 COPY . .
 RUN mvn clean package"
-      ;;
-    npm)
-      create_containerfile "FROM node:18
+    ;;
+  npm)
+    create_containerfile "FROM node:18
 COPY . .
 RUN npm run build"
-      ;;
-    gradle)
-      create_containerfile "FROM gradle:8
+    ;;
+  gradle)
+    create_containerfile "FROM gradle:8
 COPY . .
 RUN gradle build"
-      ;;
+    ;;
   esac
 }
 
@@ -524,8 +531,8 @@ CMD [\"java\", \"-jar\", \"/app/app.jar\"]"
 # Usage: create_maven_project [with_jar]
 create_maven_project() {
   local with_jar="${1:-false}"
-  
-  cat > pom.xml << 'EOF'
+
+  cat >pom.xml <<'EOF'
 <project>
   <modelVersion>4.0.0</modelVersion>
   <groupId>com.example</groupId>
@@ -533,10 +540,10 @@ create_maven_project() {
   <version>1.0.0</version>
 </project>
 EOF
-  
+
   if [[ "$with_jar" == "true" ]]; then
     mkdir -p target
-    printf 'jar content' > target/myapp-1.0.0.jar
+    printf 'jar content' >target/myapp-1.0.0.jar
   fi
 }
 
@@ -544,8 +551,8 @@ EOF
 # Usage: create_npm_project [with_dist]
 create_npm_project() {
   local with_dist="${1:-false}"
-  
-  cat > package.json << 'EOF'
+
+  cat >package.json <<'EOF'
 {
   "name": "myapp",
   "version": "1.0.0",
@@ -554,10 +561,10 @@ create_npm_project() {
   }
 }
 EOF
-  
+
   if [[ "$with_dist" == "true" ]]; then
     mkdir -p dist
-    printf 'built content' > dist/index.js
+    printf 'built content' >dist/index.js
   fi
 }
 
@@ -565,25 +572,25 @@ EOF
 # Usage: create_gradle_project [with_jar]
 create_gradle_project() {
   local with_jar="${1:-false}"
-  
-  cat > build.gradle << 'EOF'
+
+  cat >build.gradle <<'EOF'
 plugins {
     id 'java'
 }
 group = 'com.example'
 version = '1.0.0'
 EOF
-  
+
   # Create gradle wrapper script
-  cat > gradlew << 'EOF'
+  cat >gradlew <<'EOF'
 #!/usr/bin/env bash
 echo "Gradle wrapper"
 EOF
   chmod +x gradlew
-  
+
   if [[ "$with_jar" == "true" ]]; then
     mkdir -p build/libs
-    printf 'jar content' > build/libs/myapp-1.0.0.jar
+    printf 'jar content' >build/libs/myapp-1.0.0.jar
   fi
 }
 
@@ -645,7 +652,7 @@ esac
 # Create a Go project structure
 # Usage: create_go_project
 create_go_project() {
-  cat > go.mod << 'EOF'
+  cat >go.mod <<'EOF'
 module github.com/example/myapp
 
 go 1.21
@@ -655,7 +662,7 @@ EOF
 # Create a Rust project structure
 # Usage: create_rust_project
 create_rust_project() {
-  cat > Cargo.toml << 'EOF'
+  cat >Cargo.toml <<'EOF'
 [package]
 name = "myapp"
 version = "1.0.0"
@@ -667,23 +674,23 @@ EOF
 # Types: pyproject (default), requirements, setup
 create_python_project() {
   local type="${1:-pyproject}"
-  
+
   case "$type" in
-    pyproject)
-      cat > pyproject.toml << 'EOF'
+  pyproject)
+    cat >pyproject.toml <<'EOF'
 [project]
 name = "myapp"
 version = "1.0.0"
 EOF
-      ;;
-    requirements)
-      echo "requests==2.28.0" > requirements.txt
-      ;;
-    setup)
-      cat > setup.py << 'EOF'
+    ;;
+  requirements)
+    echo "requests==2.28.0" >requirements.txt
+    ;;
+  setup)
+    cat >setup.py <<'EOF'
 from setuptools import setup
 setup(name="myapp", version="1.0.0")
 EOF
-      ;;
+    ;;
   esac
 }
