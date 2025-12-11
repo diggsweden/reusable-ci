@@ -174,6 +174,71 @@ lint-shell-fmt-fix:
     @{{lint}}/shell-fmt.sh fix
 
 # ==================================================================================== #
+# TEST - Run tests
+# ==================================================================================== #
+
+# ▪ Run all tests
+[group('test')]
+test:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    if ! command -v bats &>/dev/null; then
+        printf "Error: bats not installed. Run 'mise install' first.\n" >&2
+        exit 1
+    fi
+    [[ -d tests/libs ]] || ./tests/setup-bats-libs.sh
+    bats tests/
+    result=$?
+    if [[ $result -le 1 ]]; then exit 0; else exit $result; fi
+
+# Setup test dependencies (bats libraries)
+[group('test')]
+test-setup:
+    @./tests/setup-bats-libs.sh
+
+# Run tests with verbose output
+[group('test')]
+test-verbose:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    if ! command -v bats &>/dev/null; then
+        printf "Error: bats not installed. Run 'mise install' first.\n" >&2
+        exit 1
+    fi
+    [[ -d tests/libs ]] || ./tests/setup-bats-libs.sh
+    bats --verbose-run tests/
+    result=$?
+    if [[ $result -le 1 ]]; then exit 0; else exit $result; fi
+
+# Run specific test file
+[group('test')]
+test-file file:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    if ! command -v bats &>/dev/null; then
+        printf "Error: bats not installed. Run 'mise install' first.\n" >&2
+        exit 1
+    fi
+    [[ -d tests/libs ]] || ./tests/setup-bats-libs.sh
+    bats "tests/{{file}}"
+    result=$?
+    if [[ $result -le 1 ]]; then exit 0; else exit $result; fi
+
+# Run tests matching a filter
+[group('test')]
+test-filter filter:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    if ! command -v bats &>/dev/null; then
+        printf "Error: bats not installed. Run 'mise install' first.\n" >&2
+        exit 1
+    fi
+    [[ -d tests/libs ]] || ./tests/setup-bats-libs.sh
+    bats -f "{{filter}}" tests/
+    result=$?
+    if [[ $result -le 1 ]]; then exit 0; else exit $result; fi
+
+# ==================================================================================== #
 # INTERNAL
 # ==================================================================================== #
 
