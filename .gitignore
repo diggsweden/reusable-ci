@@ -1,0 +1,4 @@
+.vscode
+
+# Bats test libraries (installed via setup-bats-libs.sh)
+tests/libs/
