@@ -218,7 +218,7 @@ artifacts:
 - **No selective builds** - All artifacts build on every release
 - **Sequential version bumps** - Version files updated one at a time
 
-See [Artifacts Reference](../../docs/artifacts-reference.md#monorepo-support) for details.
+See [Artifacts Reference](../../docs/artifacts-reference.md#monorepo-configuration) for details.
 
 ## Troubleshooting
 
