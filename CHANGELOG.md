@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.3] - 2025-12-12
+
+### Added
+
+- Add experimental play store support
+- Add bats shellcheck exceptions
+- Add initial bats test suite
+- Add initial bats test suite
+
+### Fixed
+
+- Dont break on printf
+
 ## [2.4.2] - 2025-12-08
 
 ### Added
@@ -16,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Pass lint
 - Improve justfile
+
 
 ## [2.4.1] - 2025-12-01
 
@@ -247,6 +261,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial commit
 
+[2.4.3]: https://github.com/diggsweden/reusable-ci/compare/v2.4.2..v2.4.3
 [2.4.2]: https://github.com/diggsweden/reusable-ci/compare/v2.4.1..v2.4.2
 [2.4.1]: https://github.com/diggsweden/reusable-ci/compare/v2.4.0..v2.4.1
 [2.4.0]: https://github.com/diggsweden/reusable-ci/compare/v2.3.8..v2.4.0
