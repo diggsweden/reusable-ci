@@ -45,7 +45,7 @@ jobs:
       MEGALINTER_CONFIG: ${{ inputs.megalinter-config }} # Use the input value
     steps:
       - name: Harden GitHub runner
-        uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
+        uses: step-security/harden-runner@df199fb7be9f65074067a9eb93f12bb4c5547cf2 # v2.13.3
         with:
           egress-policy: ${{ inputs.egress-policy }}
       - name: Checkout repository
@@ -54,7 +54,7 @@ jobs:
           fetch-depth: 10
       - name: MegaLinter lint
         id: ml
-        uses: oxsecurity/megalinter@62c799d895af9bcbca5eacfebca29d527f125a57 # v9.1.0
+        uses: oxsecurity/megalinter@55a59b24a441e0e1943080d4a512d827710d4a9d # v9.2.0
       - name: Archive MegaLinter artifacts
         if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
@@ -65,6 +65,6 @@ jobs:
           retention-days: 5
       - name: Upload MegaLinter scan results to GitHub Security tab
         if: success() || failure()
-        uses: github/codeql-action/upload-sarif@e12f0178983d466f2f6028f5cc7a6d786fd97f4b # v4.31.4
+        uses: github/codeql-action/upload-sarif@fe4161a26a8629af62121b670040955b330f9af2 # v4.31.6
         with:
           sarif_file: "megalinter-reports/megalinter-report.sarif"

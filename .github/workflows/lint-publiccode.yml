@@ -12,6 +12,6 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-      - uses: italia/publiccode-parser-action@9a920e460277e29353ecdd5534a4d26a2b211bea # v1.4.2
+      - uses: italia/publiccode-parser-action@44a711e642b242be0cfc042b49f870ad2f9464fb # v1.4.3
         with:
           publiccode: "publiccode.yml"
