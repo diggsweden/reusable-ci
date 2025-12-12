@@ -51,15 +51,15 @@ generate_summary() {
   printf "\n### Artifacts Generated\n"
 
   if [[ "$BUILD_TYPES" == *"debug"* ]]; then
-    printf "- ✓ Debug APK: \`%s\`\n" "$DEBUG_NAME"
+    printf "✓ Debug APK: \`%s\`\n" "$DEBUG_NAME"
   fi
 
   if [[ "$BUILD_TYPES" == *"release"* ]]; then
-    printf "- ✓ Release APK: \`%s\`\n" "$RELEASE_NAME"
+    printf "✓ Release APK: \`%s\`\n" "$RELEASE_NAME"
   fi
 
   if [[ "$INCLUDE_AAB" == "true" && "$BUILD_TYPES" == *"release"* ]]; then
-    printf "- ✓ Release AAB: \`%s\`\n" "$AAB_NAME"
+    printf "✓ Release AAB: \`%s\`\n" "$AAB_NAME"
   fi
 
   printf "\n*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"

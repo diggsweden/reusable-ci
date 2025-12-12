@@ -40,9 +40,9 @@ generate_summary() {
   printf "\n### Artifacts Generated\n"
 
   if [[ "$SIGNING" == "true" ]]; then
-    printf "- ✓ IPA: \`%s\`\n" "$IPA_NAME"
+    printf "✓ IPA: \`%s\`\n" "$IPA_NAME"
   else
-    printf "- ✓ Archive: \`%s-archive\`\n" "$IPA_NAME"
+    printf "✓ Archive: \`%s-archive\`\n" "$IPA_NAME"
   fi
 
   printf "\n*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
