@@ -78,7 +78,7 @@ containers:
 - **Type:** `array of strings`
 - **Description:** Publishing targets for built artifacts
 - **Default:** `[github-packages]`
-- **Valid values:** `github-packages`, `maven-central`, `npmjs`
+- **Valid values:** `github-packages`, `maven-central`, `npmjs`, `google-play`
 - **Example:**
 
   ```yaml
@@ -87,7 +87,15 @@ containers:
     - maven-central
   ```
 
+- **Example (Android):**
+
+  ```yaml
+  publish-to:
+    - google-play
+  ```
+
 - **Behavior:** Workflows only run if target is listed
+- **Note:** iOS apps use `publish-to: []` as they publish via App Store Connect automatically
 
 #### `generate-sbom`
 
@@ -254,6 +262,100 @@ containers:
 
 ---
 
+### Configuration Fields (Gradle Android - Google Play)
+
+#### `config.enable-android-signing`
+
+- **Type:** `boolean`
+- **Description:** Enable Android app signing for release builds
+- **Default:** `false`
+- **Example:** `enable-android-signing: true`
+- **Requires secrets:**
+  - `ANDROID_KEYSTORE` - Base64-encoded keystore file
+  - `ANDROID_KEYSTORE_PASSWORD` - Keystore password
+  - `ANDROID_KEY_ALIAS` - Key alias
+  - `ANDROID_KEY_PASSWORD` - Key password
+
+#### `config.package-name`
+
+- **Type:** `string`
+- **Description:** Android package name (application ID)
+- **Required:** Yes (for Google Play publishing)
+- **Example:** `package-name: com.example.myapp`
+
+#### `config.google-play-track`
+
+- **Type:** `string`
+- **Description:** Google Play release track
+- **Default:** `internal`
+- **Valid values:** `internal`, `alpha`, `beta`, `production`
+- **Example:** `google-play-track: internal`
+
+#### `config.google-play-status`
+
+- **Type:** `string`
+- **Description:** Release status on Google Play
+- **Default:** `completed`
+- **Valid values:** `completed`, `inProgress`, `halted`, `draft`
+- **Example:** `google-play-status: completed`
+- **Note:** Use `inProgress` with `user-fraction` for staged rollouts
+
+#### `config.google-play-user-fraction`
+
+- **Type:** `string`
+- **Description:** Staged rollout percentage (0.0-1.0)
+- **Default:** Empty (full rollout)
+- **Example:** `google-play-user-fraction: "0.1"` (10% rollout)
+- **Note:** Only applies when `google-play-status: inProgress`
+
+#### `config.google-play-update-priority`
+
+- **Type:** `string`
+- **Description:** In-app update priority level
+- **Default:** `"0"`
+- **Valid values:** `"0"` to `"5"` (5 is highest)
+- **Example:** `google-play-update-priority: "3"`
+
+#### `config.google-play-release-name`
+
+- **Type:** `string`
+- **Description:** Custom release name (defaults to version from AAB)
+- **Default:** Empty (auto-generated)
+- **Example:** `google-play-release-name: "Summer Update"`
+
+#### `config.google-play-changes-not-sent-for-review`
+
+- **Type:** `boolean`
+- **Description:** Hold changes for manual review in Play Console
+- **Default:** `false`
+- **Example:** `google-play-changes-not-sent-for-review: true`
+
+#### `config.whats-new-directory`
+
+- **Type:** `string`
+- **Description:** Directory containing localized release notes
+- **Default:** Empty (no release notes)
+- **Example:** `whats-new-directory: distribution/whatsnew`
+- **Format:** Files named `whatsnew-<LOCALE>` (e.g., `whatsnew-en-US`, `whatsnew-sv-SE`)
+
+#### `config.mapping-file`
+
+- **Type:** `string`
+- **Description:** Path to ProGuard/R8 mapping.txt file
+- **Default:** Empty
+- **Example:** `mapping-file: app/build/outputs/mapping/release/mapping.txt`
+- **Use case:** De-obfuscate crash reports in Play Console
+
+#### `config.debug-symbols`
+
+- **Type:** `string`
+- **Description:** Path to native debug symbols (zip or folder)
+- **Default:** Empty
+- **Example:** `debug-symbols: app/build/intermediates/merged_native_libs/release/out/lib`
+- **Use case:** Symbolicate native crashes in Play Console
+
+---
+
 ## Containers Section
 
 Containers reference artifacts via the `from:` field and are built after all artifacts complete.
@@ -352,6 +454,17 @@ Containers reference artifacts via the `from:` field and are built after all art
 - **Applies to:** NPM only
 - **Note:** Package must be scoped or publicly available
 
+### `google-play`
+
+- **Description:** Google Play Store
+- **Requirements:**
+  - `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` secret (service account JSON key)
+  - `ANDROID_KEYSTORE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` secrets (for signing)
+  - `config.enable-android-signing: true`
+  - `config.package-name` specified
+- **Applies to:** Gradle Android only
+- **Note:** App must already exist in Google Play Console (upload first AAB manually)
+
 ---
 
 ## Quick Start Examples
@@ -435,9 +548,40 @@ artifacts:
     project-type: gradle-android
     working-directory: .
     config:
-      java-version: 25
+      java-version: 21
       gradle-tasks: build assembleDemoRelease bundleDemoRelease
       gradle-version-file: gradle.properties
+```
+
+### Gradle Android App with Google Play Publishing
+
+```yaml
+artifacts:
+  - name: my-android-app
+    project-type: gradle-android
+    working-directory: .
+    build-type: application
+    publish-to:
+      - google-play
+    config:
+      java-version: 21
+      gradle-tasks: build assembleDemoRelease bundleDemoRelease
+      build-module: app
+      gradle-version-file: gradle.properties
+      enable-android-signing: true
+      # Google Play configuration
+      package-name: com.example.myapp
+      google-play-track: internal
+      google-play-status: completed
+```
+
+**Required Secrets:**
+```text
+ANDROID_KEYSTORE
+ANDROID_KEYSTORE_PASSWORD
+ANDROID_KEY_ALIAS
+ANDROID_KEY_PASSWORD
+GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
 ```
 
 ### iOS/macOS App (Xcode)

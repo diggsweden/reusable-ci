@@ -12,11 +12,13 @@ Complete guide to publishing artifacts to different registries.
 
 The reusable workflows support multiple publishing targets:
 
-| Target | Artifact Types | Authentication |  |
-|--------|---------------|----------------|----------------|
-| **Maven Central** | Maven libraries | Sonatype credentials |  |
-| **npmjs.org** | NPM packages | NPM token |  |
-| **Container Registries** | Container images | Token/credentials |  |
+| Target | Artifact Types | Authentication |
+|--------|---------------|----------------|
+| **Maven Central** | Maven libraries | Sonatype credentials |
+| **npmjs.org** | NPM packages | NPM token |
+| **Container Registries** | Container images | Token/credentials |
+| **Apple App Store** | iOS/macOS apps | App Store Connect API |
+| **Google Play Store** | Android apps | Service Account JSON |
 
 ---
 
@@ -462,6 +464,321 @@ jobs:
       container.use-github-token: false
     secrets: inherit
 ```
+
+---
+
+## Apple App Store (TestFlight)
+
+### Apple App Store Overview
+
+- **TestFlight distribution** - Automated beta testing
+- **App Store submission** - Optional automatic submission for review
+- **API-based uploads** - Uses App Store Connect API v2
+
+### Apple App Store Prerequisites
+
+1. **Apple Developer Account**
+   - Enrolled in Apple Developer Program
+   - App created in App Store Connect
+
+2. **App Store Connect API Key**
+   - Navigate to [App Store Connect > Users and Access > Integrations > App Store Connect API](https://appstoreconnect.apple.com/access/integrations/api)
+   - Create a new API key with "App Manager" role
+   - Download the `.p8` private key file (only available once!)
+   - Note the Key ID and Issuer ID
+
+3. **Code Signing**
+   - Distribution certificate (`.p12` file)
+   - Provisioning profile for App Store distribution
+   - Export options plist configured for App Store
+
+### Enabling/Disabling App Store Publishing
+
+iOS apps with `project-type: xcode-ios` **automatically publish to App Store Connect** when:
+1. `enable-code-signing: true` is set
+2. The required secrets are configured
+
+**To disable App Store publishing**, set `enable-code-signing: false`:
+
+```yaml
+config:
+  enable-code-signing: false  # Build only, no IPA export or upload
+```
+
+**Note:** iOS apps use `publish-to: []` because they don't publish to package registries like Maven Central or npm. The App Store upload happens automatically based on `enable-code-signing`.
+
+### Apple App Store Configuration
+
+```yaml
+# .github/artifacts.yml
+artifacts:
+  - name: my-ios-app
+    project-type: xcode-ios
+    working-directory: .
+    build-type: application
+    publish-to: []  # iOS apps publish via App Store Connect, not package registries
+    config:
+      xcode-version: "16.1"
+      scheme: "MyApp"
+      project: "MyApp.xcodeproj"
+      configuration: Release
+      enable-code-signing: true   # <-- This enables App Store publishing
+      export-options-var: EXPORT_OPTIONS_BASE64
+      macos-version: macos-26
+      # App Store submission options
+      submit-for-review: false  # true = submit to App Store, false = TestFlight only
+      skip-validation: false    # Validate IPA before upload (recommended)
+```
+
+### Required Secrets
+
+```text
+# Code Signing
+CERTIFICATE_BASE64              # Base64-encoded .p12 distribution certificate
+CERTIFICATE_PASSPHRASE          # Certificate password
+PROVISIONING_PROFILE_BASE64     # Base64-encoded provisioning profile
+KEYCHAIN_PASSWORD               # Temporary keychain password (any value)
+
+# App Store Connect API
+APP_STORE_CONNECT_ISSUER_ID           # From App Store Connect API keys page
+APP_STORE_CONNECT_API_KEY_ID          # Key ID from App Store Connect
+APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64  # Base64-encoded .p8 private key
+```
+
+### Required Variables
+
+```text
+EXPORT_OPTIONS_BASE64           # Base64-encoded exportOptions.plist
+```
+
+### Encoding Files to Base64
+
+```bash
+# Certificate (.p12)
+base64 -i Certificates.p12 -o certificate.txt
+
+# Provisioning Profile
+base64 -i MyApp_Distribution.mobileprovision -o profile.txt
+
+# App Store Connect API Key (.p8)
+base64 -i AuthKey_XXXXXXXXXX.p8 -o apikey.txt
+
+# Export Options
+base64 -i exportOptions.plist -o exportOptions.txt
+```
+
+### Export Options Example
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>app-store-connect</string>
+    <key>teamID</key>
+    <string>YOUR_TEAM_ID</string>
+    <key>uploadSymbols</key>
+    <true/>
+    <key>destination</key>
+    <string>upload</string>
+</dict>
+</plist>
+```
+
+### Apple App Store Release Process
+
+1. **Tag your release:**
+
+   ```bash
+   git tag -s v1.0.0 -m "Release v1.0.0"
+   git push origin v1.0.0
+   ```
+
+2. **Workflow automatically:**
+   - Builds iOS app with Xcode
+   - Signs with distribution certificate
+   - Exports IPA file
+   - Validates IPA with Apple
+   - Uploads to App Store Connect
+
+3. **Availability:**
+   - TestFlight: ~10-15 minutes after upload processing
+   - App Store: After manual or automatic review submission
+
+---
+
+## Google Play Store
+
+### Google Play Store Overview
+
+- **Multiple tracks** - internal, alpha, beta, production
+- **Staged rollouts** - Gradual release to percentage of users
+- **API-based uploads** - Uses Google Play Developer API v3
+
+### Google Play Store Prerequisites
+
+1. **Google Play Developer Account**
+   - Enrolled in Google Play Developer Program
+   - App created in Google Play Console (must upload first APK/AAB manually)
+
+2. **Service Account Setup**
+   - Enable Google Play Android Developer API in [Google Cloud Console](https://console.cloud.google.com/apis/library/androidpublisher.googleapis.com)
+   - Create service account in [IAM & Admin > Service accounts](https://console.cloud.google.com/iam-admin/serviceaccounts)
+   - Create and download JSON key for the service account
+   - In [Google Play Console > Users and permissions](https://play.google.com/console), invite the service account email
+   - Grant "Release manager" or appropriate permissions for your app
+
+3. **App Signing**
+   - Keystore file for signing release builds
+   - Key alias and passwords
+
+### Enabling/Disabling Google Play Publishing
+
+**To enable Google Play publishing**, add `google-play` to the `publish-to` array:
+
+```yaml
+publish-to:
+  - google-play    # Enable Google Play publishing
+```
+
+**To disable Google Play publishing**, remove `google-play` from the array or use an empty array:
+
+```yaml
+publish-to: []     # No publishing - only build and attach to GitHub Release
+```
+
+### Google Play Store Configuration
+
+```yaml
+# .github/artifacts.yml
+artifacts:
+  - name: my-android-app
+    project-type: gradle-android
+    working-directory: .
+    build-type: application
+    publish-to:
+      - google-play    # <-- This enables Google Play publishing
+    config:
+      java-version: 21
+      gradle-tasks: build assembleDemoRelease bundleDemoRelease
+      build-module: app
+      gradle-version-file: gradle.properties
+      enable-android-signing: true
+      # Google Play configuration (required when publish-to includes google-play)
+      package-name: com.example.myapp
+      google-play-track: internal          # internal, alpha, beta, production
+      google-play-status: completed        # completed, inProgress, halted, draft
+      # Optional settings
+      google-play-user-fraction: ""        # 0.1 = 10% rollout (only for inProgress)
+      google-play-update-priority: "0"     # 0-5 (5 = highest priority)
+      google-play-release-name: ""         # Custom release name
+      whats-new-directory: ""              # Path to localized release notes
+      mapping-file: ""                     # ProGuard mapping.txt path
+      debug-symbols: ""                    # Native debug symbols path
+```
+
+### Required Secrets
+
+```text
+# App Signing
+ANDROID_KEYSTORE                # Base64-encoded keystore file
+ANDROID_KEYSTORE_PASSWORD       # Keystore password
+ANDROID_KEY_ALIAS               # Key alias name
+ANDROID_KEY_PASSWORD            # Key password
+
+# Google Play API
+GOOGLE_PLAY_SERVICE_ACCOUNT_JSON  # Service account JSON key (plain text, not base64)
+```
+
+### Encoding Keystore to Base64
+
+```bash
+base64 -i release-keystore.jks -o keystore.txt
+```
+
+### Gradle Signing Configuration
+
+Your `app/build.gradle.kts` should read signing config from environment:
+
+```kotlin
+android {
+    signingConfigs {
+        create("release") {
+            storeFile = file(System.getenv("ANDROID_KEYSTORE_PATH") ?: "release.keystore")
+            storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
+            keyAlias = System.getenv("ANDROID_KEY_ALIAS") ?: ""
+            keyPassword = System.getenv("ANDROID_KEY_PASSWORD") ?: ""
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName("release")
+            // ... other config
+        }
+    }
+}
+```
+
+### Google Play Track Options
+
+| Track | Description | Review Required |
+|-------|-------------|-----------------|
+| `internal` | Internal testing (up to 100 testers) | No |
+| `alpha` | Closed testing | No |
+| `beta` | Open testing | No |
+| `production` | Full release | Yes (first time) |
+
+### Staged Rollouts
+
+For gradual releases, use `inProgress` status with `user-fraction`:
+
+```yaml
+config:
+  google-play-track: production
+  google-play-status: inProgress
+  google-play-user-fraction: "0.1"  # 10% of users
+```
+
+### Localized Release Notes
+
+Create a directory with `whatsnew-<LOCALE>` files:
+
+```text
+distribution/
+└─ whatsnew/
+  ├─ whatsnew-en-US
+  ├─ whatsnew-sv-SE
+  └─ whatsnew-de-DE
+```
+
+Reference in config:
+
+```yaml
+config:
+  whats-new-directory: distribution/whatsnew
+```
+
+### Google Play Store Release Process
+
+1. **Tag your release:**
+
+   ```bash
+   git tag -s v1.0.0 -m "Release v1.0.0"
+   git push origin v1.0.0
+   ```
+
+2. **Workflow automatically:**
+   - Builds Android app with Gradle
+   - Signs AAB with release keystore
+   - Uploads to Google Play Console
+   - Assigns to configured track
+
+3. **Availability:**
+   - Internal track: Immediately after upload
+   - Alpha/Beta: After processing (~minutes)
+   - Production: After review (first release) or immediately (updates)
 
 ---
 

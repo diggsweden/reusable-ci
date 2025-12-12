@@ -9,7 +9,7 @@ set -euo pipefail
 
 readonly VALID_PROJECT_TYPES="maven npm gradle gradle-android xcode-ios python go rust meta"
 readonly SBOM_SUPPORTED_TYPES="maven npm gradle python go rust"
-readonly PUBLISH_TARGETS="maven-central github-packages"
+readonly PUBLISH_TARGETS="maven-central github-packages google-play"
 
 die() {
   printf "::error::%s\n" "$1"

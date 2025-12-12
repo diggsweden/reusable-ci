@@ -1,0 +1,231 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# Google Play Store Publisher
+# 
+# Purpose: Publishes Android applications to the Google Play Store using
+# the Google Play Developer API.
+#
+# How it works:
+# 1. Downloads AAB/APK artifact from previous build job
+# 2. Uploads to Google Play Console using service account credentials
+# 3. Targets specified track (internal, alpha, beta, production)
+# 4. Optionally includes release notes from whats-new files
+#
+# Features:
+#   - Multiple track support (internal, alpha, beta, production)
+#   - Staged rollouts with userFraction
+#   - In-app update priority
+#   - ProGuard mapping file upload for crash reporting
+#   - Debug symbols upload
+#   - Localized release notes (what's new)
+#
+# Outputs:
+#   - Upload status and build information
+#   - Play Store availability notifications
+#
+# Required Secrets:
+#   GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: Service account JSON key (plain text)
+#
+# Required Permissions:
+#   contents: read  # Download artifacts
+#
+name: Publish to Google Play
+on:
+  workflow_call:
+    inputs:
+      # === ARTIFACT SOURCE ===
+      aab-artifact-name:
+        description: "Name of artifact containing AAB file"
+        required: true
+        type: string
+      aab-path:
+        description: "Path to AAB file within artifact (supports glob)"
+        required: false
+        default: "**/*.aab"
+        type: string
+      # === GOOGLE PLAY CONFIGURATION ===
+      package-name:
+        description: "Android package name (e.g., com.example.app)"
+        required: true
+        type: string
+      track:
+        description: "Target track (internal, alpha, beta, production)"
+        required: false
+        default: "internal"
+        type: string
+      release-name:
+        description: "Release name (defaults to version from AAB)"
+        required: false
+        default: ""
+        type: string
+      # === RELEASE OPTIONS ===
+      status:
+        description: "Release status (completed, inProgress, halted, draft)"
+        required: false
+        default: "completed"
+        type: string
+      user-fraction:
+        description: "Staged rollout percentage (0.0-1.0, only for inProgress status)"
+        required: false
+        default: ""
+        type: string
+      in-app-update-priority:
+        description: "In-app update priority (0-5, 5 is highest)"
+        required: false
+        default: "0"
+        type: string
+      changes-not-sent-for-review:
+        description: "Hold changes for manual review in Play Console"
+        required: false
+        default: false
+        type: boolean
+      # === OPTIONAL FILES ===
+      whats-new-directory:
+        description: "Directory containing localized what's new files (whatsnew-en-US, etc.)"
+        required: false
+        default: ""
+        type: string
+      mapping-file:
+        description: "Path to ProGuard mapping.txt file"
+        required: false
+        default: ""
+        type: string
+      debug-symbols:
+        description: "Path to native debug symbols (zip file or folder)"
+        required: false
+        default: ""
+        type: string
+      # === SYSTEM ===
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+permissions:
+  contents: read
+jobs:
+  publish:
+    name: Publish to Google Play
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Download AAB artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ inputs['aab-artifact-name'] }}
+          path: artifacts/
+
+      - name: Find AAB file
+        id: find-aab
+        run: |
+          AAB_FILE=$(find artifacts -name "*.aab" -type f | head -1)
+
+          if [ -z "$AAB_FILE" ]; then
+            printf "::error::No AAB file found in artifact\n"
+            exit 1
+          fi
+
+          printf "aab-file=%s\n" "${AAB_FILE}" >> "$GITHUB_OUTPUT"
+          printf "Found AAB: %s\n" "${AAB_FILE}"
+
+          ls -lh "$AAB_FILE"
+
+      - name: Validate service account secret
+        env:
+          SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$SERVICE_ACCOUNT_JSON" ]; then
+            printf "::error::GOOGLE_PLAY_SERVICE_ACCOUNT_JSON secret not found\n"
+            printf "::error::Please add a service account JSON key with Google Play publishing permissions\n"
+            exit 1
+          fi
+
+          printf "Service account secret is configured\n"
+
+      - name: Upload to Google Play
+        uses: r0adkll/upload-google-play@935ef9c68bb393a8e6116b1575626a7f5be3a7fb # v1.1.3
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ${{ inputs['package-name'] }}
+          releaseFiles: ${{ steps.find-aab.outputs.aab-file }}
+          track: ${{ inputs.track }}
+          status: ${{ inputs.status }}
+          releaseName: ${{ inputs['release-name'] }}
+          userFraction: ${{ inputs['user-fraction'] }}
+          inAppUpdatePriority: ${{ inputs['in-app-update-priority'] }}
+          changesNotSentForReview: ${{ inputs['changes-not-sent-for-review'] }}
+          whatsNewDirectory: ${{ inputs['whats-new-directory'] }}
+          mappingFile: ${{ inputs['mapping-file'] }}
+          debugSymbols: ${{ inputs['debug-symbols'] }}
+
+      - name: Generate upload summary
+        run: |
+          AAB_FILE="${{ steps.find-aab.outputs.aab-file }}"
+          PACKAGE_NAME="${{ inputs['package-name'] }}"
+          TRACK="${{ inputs.track }}"
+          STATUS="${{ inputs.status }}"
+          RELEASE_NAME="${{ inputs['release-name'] }}"
+          USER_FRACTION="${{ inputs['user-fraction'] }}"
+          PRIORITY="${{ inputs['in-app-update-priority'] }}"
+
+          {
+            printf "## Google Play Upload Summary\n"
+            printf "\n"
+            printf "### Upload Details\n"
+            printf "| Property | Value |\n"
+            printf "|----------|-------|\n"
+            printf "| **AAB File** | \`%s\` |\n" "$(basename "${AAB_FILE}")"
+            printf "| **Package** | \`%s\` |\n" "${PACKAGE_NAME}"
+            printf "| **Track** | %s |\n" "${TRACK}"
+            printf "| **Status** | %s |\n" "${STATUS}"
+
+            if [ -n "${RELEASE_NAME}" ]; then
+              printf "| **Release Name** | %s |\n" "${RELEASE_NAME}"
+            fi
+
+            if [ -n "${USER_FRACTION}" ]; then
+              PERCENTAGE=$(printf "%.0f%%" "$(echo "${USER_FRACTION} * 100" | bc)")
+              printf "| **Staged Rollout** | %s |\n" "${PERCENTAGE}"
+            fi
+
+            if [ "${PRIORITY}" != "0" ]; then
+              printf "| **Update Priority** | %s |\n" "${PRIORITY}"
+            fi
+
+            printf "| **Upload Status** | Uploaded |\n"
+
+            printf "\n"
+            printf "### Next Steps\n"
+            printf "1. Check [Google Play Console](https://play.google.com/console) for upload status\n"
+
+            case "${TRACK}" in
+              internal)
+                printf "2. Build will be available to internal testers within minutes\n"
+                ;;
+              alpha|beta)
+                printf "2. Build will be available to %s testers after review\n" "${TRACK}"
+                ;;
+              production)
+                if [ -n "${USER_FRACTION}" ]; then
+                  printf "2. Staged rollout to %s of users will begin after review\n" "${PERCENTAGE}"
+                else
+                  printf "2. Full production release will begin after review\n"
+                fi
+                ;;
+            esac
+
+            if [ "${STATUS}" = "draft" ]; then
+              printf "3. Release is saved as draft - manually publish from Play Console when ready\n"
+            fi
+
+            printf "\n"
+            printf "*Upload completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          } >> "$GITHUB_STEP_SUMMARY"

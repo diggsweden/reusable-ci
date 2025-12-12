@@ -174,8 +174,10 @@ jobs:
       # Filtered by publish target
       mavencentral-artifacts: ${{ steps.parse.outputs.mavencentral-artifacts }}
       githubpackages-artifacts: ${{ steps.parse.outputs.githubpackages-artifacts }}
+      googleplay-artifacts: ${{ steps.parse.outputs.googleplay-artifacts }}
       has-mavencentral: ${{ steps.parse.outputs.has-mavencentral }}
       has-githubpackages: ${{ steps.parse.outputs.has-githubpackages }}
+      has-googleplay: ${{ steps.parse.outputs.has-googleplay }}
       is-draft-release: ${{ steps.parse.outputs.is-draft-release }}
       # SBOM generation settings
       needs-sbom: ${{ steps.parse.outputs.needs-sbom }}
@@ -412,6 +414,32 @@ jobs:
       macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
       submit-for-review: ${{ matrix.artifact.config['submit-for-review'] || false }}
       skip-validation: ${{ matrix.artifact.config['skip-validation'] || false }}
+  # Step 3d: Publish to Google Play Store
+  publish-google-play:
+    name: Publish Google Play - ${{ matrix.artifact.name }}
+    needs: [parse-config, build-gradle-android]
+    if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-googleplay == 'true' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(needs.parse-config.outputs.googleplay-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/publish-google-play.yml
+    with:
+      aab-artifact-name: ${{ matrix.artifact.name }}
+      package-name: ${{ matrix.artifact.config['package-name'] }}
+      track: ${{ matrix.artifact.config['google-play-track'] || 'internal' }}
+      status: ${{ matrix.artifact.config['google-play-status'] || 'completed' }}
+      release-name: ${{ matrix.artifact.config['google-play-release-name'] || '' }}
+      user-fraction: ${{ matrix.artifact.config['google-play-user-fraction'] || '' }}
+      in-app-update-priority: ${{ matrix.artifact.config['google-play-update-priority'] || '0' }}
+      changes-not-sent-for-review: ${{ matrix.artifact.config['google-play-changes-not-sent-for-review'] || false }}
+      whats-new-directory: ${{ matrix.artifact.config['whats-new-directory'] || '' }}
+      mapping-file: ${{ matrix.artifact.config['mapping-file'] || '' }}
+      debug-symbols: ${{ matrix.artifact.config['debug-symbols'] || '' }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
   # Step 4: Build and Publish Container Images
   build-containers:
     name: Build Container - ${{ matrix.container.name }}
@@ -445,7 +473,7 @@ jobs:
   # Step 5: Create GitHub Release  
   create-release:
     name: Create GitHub Release
-    needs: [parse-config, await-builds, publish-maven-github, publish-maven-central, publish-apple-appstore, build-containers]
+    needs: [parse-config, await-builds, publish-maven-github, publish-maven-central, publish-apple-appstore, publish-google-play, build-containers]
     # Run even if previous jobs were skipped but at least one succeeded
     if: ${{ !failure() && !cancelled() && inputs['release-publisher'] == 'github-cli' }}
     permissions:
@@ -470,7 +498,7 @@ jobs:
   # Final summary
   release-summary:
     name: Release Summary
-    needs: [parse-config, version-and-changelog, await-builds, build-maven, build-npm, build-gradle, build-gradle-android, build-xcode, publish-maven-github, publish-maven-central, publish-apple-appstore, build-containers, create-release]
+    needs: [parse-config, version-and-changelog, await-builds, build-maven, build-npm, build-gradle, build-gradle-android, build-xcode, publish-maven-github, publish-maven-central, publish-apple-appstore, publish-google-play, build-containers, create-release]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -575,6 +603,15 @@ jobs:
             printf "| Publish Apple App Store | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
           else
             printf "| Publish Apple App Store | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Publish Google Play
+          if [ "${{ needs.publish-google-play.result }}" = "success" ]; then
+            printf "| Publish Google Play | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "${{ needs.publish-google-play.result }}" = "skipped" ]; then
+            printf "| Publish Google Play | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf "| Publish Google Play | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
           fi
 
           # Containers

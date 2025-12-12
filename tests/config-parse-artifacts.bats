@@ -253,6 +253,40 @@ run_parse_artifacts_config() {
   assert_output --partial "first-project-type=gradle-android"
 }
 
+@test "parse-artifacts-config.sh sets has-googleplay for google-play publish" {
+  create_gradle_artifacts_config
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  assert_output --partial "has-googleplay=true"
+}
+
+@test "parse-artifacts-config.sh outputs googleplay-artifacts with correct content" {
+  create_gradle_artifacts_config
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  assert_output --partial "googleplay-artifacts<<"
+  assert_output --partial "android-app"
+}
+
+@test "parse-artifacts-config.sh sets has-googleplay=false when not publishing to google-play" {
+  create_valid_artifacts_config  # Maven config without google-play
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  assert_output --partial "has-googleplay=false"
+}
+
 # =============================================================================
 # Meta Project Tests
 # =============================================================================
