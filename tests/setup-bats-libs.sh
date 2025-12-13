@@ -35,6 +35,8 @@ install_lib() {
 
   if [[ -d "$target_dir" ]]; then
     echo "Updating ${name}..."
+    # Stash any local changes before pulling to avoid conflicts
+    git -C "$target_dir" stash --quiet 2>/dev/null || true
     git -C "$target_dir" pull --quiet
   else
     echo "Installing ${name}..."

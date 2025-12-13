@@ -96,6 +96,29 @@ common_setup_with_isolated_git() {
   init_isolated_git_repo
 }
 
+# Setup with isolated HOME environment (no git)
+# Usage: common_setup_isolated
+common_setup_isolated() {
+  common_setup
+  setup_isolated_home
+}
+
+# =============================================================================
+# Isolated Environment Setup
+# =============================================================================
+
+# Setup isolated HOME and XDG directories in TEST_DIR
+# Usage: setup_isolated_home
+# Sets: HOME, XDG_DATA_HOME, XDG_CONFIG_HOME
+setup_isolated_home() {
+  export HOME="${TEST_DIR}/home"
+  export XDG_DATA_HOME="${HOME}/.local/share"
+  export XDG_CONFIG_HOME="${HOME}/.config"
+  mkdir -p "$HOME"
+  mkdir -p "$XDG_DATA_HOME"
+  mkdir -p "$XDG_CONFIG_HOME"
+}
+
 # =============================================================================
 # Git Repository Setup Helpers
 # =============================================================================
@@ -103,6 +126,7 @@ common_setup_with_isolated_git() {
 # Initialize a minimal git repository for testing
 # Usage: init_git_repo
 init_git_repo() {
+  export GIT_CONFIG_NOSYSTEM=1
   git init -q
   git config user.email "test@example.com"
   git config user.name "Test User"
@@ -116,10 +140,9 @@ init_git_repo() {
 # Initialize git repo with isolated HOME and config
 # Usage: init_isolated_git_repo
 init_isolated_git_repo() {
-  export HOME="$TEST_DIR/home"
+  setup_isolated_home
   export GIT_CONFIG_NOSYSTEM=1
-  export GIT_CONFIG_GLOBAL="$TEST_DIR/home/.gitconfig"
-  mkdir -p "$HOME"
+  export GIT_CONFIG_GLOBAL="${HOME}/.gitconfig"
   init_git_repo
 }
 

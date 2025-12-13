@@ -39,12 +39,17 @@ setup-devtools:
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ -d "{{devtools_dir}}" ]]; then
-        "{{devtools_dir}}/scripts/setup.sh" "{{devtools_repo}}" "{{devtools_dir}}"
+        # Try to check for updates, warn if no network connection
+        if ! git -C "{{devtools_dir}}" fetch --tags --depth 1 --quiet 2>/dev/null; then
+            printf "\033[0;33m! Could not check for updates (no network connection)\033[0m\n"
+        elif [[ -f "{{devtools_dir}}/scripts/setup.sh" ]]; then
+            "{{devtools_dir}}/scripts/setup.sh" "{{devtools_repo}}" "{{devtools_dir}}"
+        fi
     else
         printf "Cloning devbase-justkit to %s...\n" "{{devtools_dir}}"
         mkdir -p "$(dirname "{{devtools_dir}}")"
         git clone --depth 1 "{{devtools_repo}}" "{{devtools_dir}}"
-        git -C "{{devtools_dir}}" fetch --tags --quiet
+        git -C "{{devtools_dir}}" fetch --tags --depth 1 --quiet
         latest=$(git -C "{{devtools_dir}}" describe --tags --abbrev=0 origin/main 2>/dev/null || echo "")
         if [[ -n "$latest" ]]; then
             git -C "{{devtools_dir}}" fetch --depth 1 origin tag "$latest" --quiet

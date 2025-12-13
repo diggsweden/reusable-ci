@@ -17,7 +17,7 @@ load "${BATS_TEST_DIRNAME}/test_helper.bash"
 # =============================================================================
 
 setup() {
-  common_setup_with_git
+  common_setup_with_isolated_git
 }
 
 teardown() {
