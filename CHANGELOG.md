@@ -48,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Use devbase-justkit and fix lints
+- Use devbase-check and fix lints
 - Improve npm ci
 - Set xconfig version
 - Set license header to recommended style

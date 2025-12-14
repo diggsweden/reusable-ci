@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: CC0-1.0
 #
 # Shared test helper functions for BATS tests
-# Inspired by devbase-core and devbase-justkit patterns
+# Inspired by devbase-core and devbase-check patterns
 #
 # Usage: load "${BATS_TEST_DIRNAME}/test_helper.bash"
 #
