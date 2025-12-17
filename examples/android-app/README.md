@@ -26,7 +26,10 @@ Development build workflow that creates Android artifacts on push to main.
 Artifact configuration for release builds (used with release-workflow.yml).
 
 ### `release-workflow.yml`
-Production release workflow triggered by version tags.
+Production release workflow triggered by version tags. Creates GitHub Release with changelog, version bump, and optionally publishes to Google Play.
+
+### `release-dev-workflow.yml`
+Manual dev/testing release workflow that builds and uploads to Google Play internal track. This mirrors the iOS `release-dev-workflow.yml` which uploads to TestFlight.
 
 ## Features
 
@@ -216,8 +219,50 @@ The workflow generates separate artifacts for each variant:
 - Path: `app/build/outputs/bundle/**/*.aab`
 - Name: `{date} - {prefix} - {repo} - {flavor} - AAB release`
 
+## Workflow Comparison: iOS vs Android
+
+| Workflow | iOS | Android |
+|----------|-----|---------|
+| **Release (Production)** | Tag-triggered, version bump, changelog, TestFlight, GitHub Release | Tag-triggered, version bump, changelog, Google Play, GitHub Release |
+| **Release Dev (Testing)** | Manual trigger, build + TestFlight only | Manual trigger, build + Google Play internal track |
+
+### Release Dev Workflow
+
+The `release-dev-workflow.yml` is for testing builds before a formal release:
+
+```yaml
+# Manual trigger - no version bump, no changelog, no GitHub release
+# Just build and upload to Google Play internal track
+name: Release Dev Workflow
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@main
+    with:
+      java-version: "21"
+      build-module: app
+      product-flavor: demo
+      build-types: release
+      include-aab: true
+      enable-signing: true
+
+  upload-play-store:
+    needs: build
+    uses: diggsweden/reusable-ci/.github/workflows/publish-google-play.yml@main
+    with:
+      aab-artifact-name: dev-my-android-app-demo-AAB
+      package-name: com.example.myapp
+      track: internal  # Equivalent to TestFlight
+```
+
+**Required Secrets for Google Play:**
+- `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` - Service account JSON key with Google Play publishing permissions
+
 ## See Also
 
 - [Android Gradle Plugin Documentation](https://developer.android.com/build)
 - [Product Flavors Guide](https://developer.android.com/build/build-variants)
 - [App Signing Documentation](https://developer.android.com/studio/publish/app-signing)
+- [Google Play Developer API](https://developers.google.com/android-publisher)

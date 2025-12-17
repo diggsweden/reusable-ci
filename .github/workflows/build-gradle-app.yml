@@ -13,7 +13,7 @@
 #   4. Upload built artifacts
 #
 # Outputs:
-#   - Artifacts uploaded as 'gradle-build-artifacts' for use by publish-* workflows
+#   - Artifacts uploaded with specified name (or 'gradle-build-artifacts' by default)
 #
 # Required Permissions:
 #   contents: read  # Checkout code
@@ -61,6 +61,11 @@ on:
         required: false
         default: "main"
         type: string
+      artifact-name:
+        description: "Artifact name for uploads (defaults to 'gradle-build-artifacts')"
+        required: false
+        default: ""
+        type: string
 permissions:
   contents: read
 jobs:
@@ -95,6 +100,7 @@ jobs:
         run: |
           if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
             printf "%s" "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.keystore
+            printf "ANDROID_KEYSTORE_PATH=%s/release.keystore\n" "$PWD" >> "$GITHUB_ENV"
             printf "✓ Android keystore decoded successfully\n"
           else
             printf "::error::ANDROID_KEYSTORE secret not found but enableSigning is true\n"
@@ -134,7 +140,7 @@ jobs:
       - name: Upload Gradle artifacts
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: gradle-build-artifacts
+          name: ${{ inputs['artifact-name'] || 'gradle-build-artifacts' }}
           path: |
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/**/*.apk
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/**/*.aab

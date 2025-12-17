@@ -292,9 +292,9 @@ jobs:
 **Build Stage** - Language-specific builders create artifacts:
 - `build-maven` - Builds Maven projects (apps or libs)
 - `build-npm` - Builds NPM projects
-- `build-gradle` - Builds Gradle projects
-- `build-gradle-android` - Builds Android apps (APK/AAB)
-- `build-xcode` - Builds iOS/macOS apps (IPA)
+- `build-gradle-app` - Builds Gradle projects (JVM or Android apps)
+- `build-gradle-android` - Builds Android apps with flavors/variants (APK/AAB)
+- `build-xcode-ios` - Builds iOS/macOS apps (IPA)
 
 **Publish Stage** - Target-specific workflows publish artifacts:
 - `publish-github` - Publishes Maven/NPM/Gradle → GitHub Packages

@@ -1,16 +1,22 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
-# Example: Android Application with Product Flavors
+# Example: Android Application with Product Flavors and Google Play Publishing
 artifacts:
-  - name: my-android-app
-    project-type: gradle
+  - name: my-android-app-demo
+    project-type: gradle-android
     working-directory: .
     build-type: application
+    publish-to:
+      - google-play
     config:
-      java-version: 25
-      # Note: For Android variants, use build-gradle-android workflow
-      # This artifacts.yml is for release orchestrator integration
+      java-version: 21
       gradle-tasks: build assembleDemoRelease bundleDemoRelease
       build-module: app
-      gradle-version-file: app/build.gradle.kts
+      gradle-version-file: gradle.properties
+      # Signing configuration (requires secrets)
+      enable-android-signing: true
+      # Google Play configuration
+      package-name: com.example.myapp.demo
+      google-play-track: internal
+      google-play-status: completed

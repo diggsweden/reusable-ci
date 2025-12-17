@@ -42,7 +42,7 @@ graph TD
 
     E --> F[build-maven.yml - Matrix]
     E --> G[build-npm.yml - Matrix]
-    E --> H[build-gradle.yml - Matrix]
+    E --> H[build-gradle-app.yml - Matrix]
 
     F --> I[publish-github.yml - Matrix]
     G --> I

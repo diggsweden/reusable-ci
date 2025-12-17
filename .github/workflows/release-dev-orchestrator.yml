@@ -147,7 +147,7 @@ jobs:
     if: ${{ inputs['project-type'] == 'gradle' }}
     permissions:
       contents: read
-    uses: ./.github/workflows/build-gradle.yml
+    uses: ./.github/workflows/build-gradle-app.yml
     with:
       java-version: ${{ inputs['java-version'] }}
       gradle-tasks: "build"

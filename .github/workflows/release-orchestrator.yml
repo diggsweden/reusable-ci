@@ -290,7 +290,7 @@ jobs:
     permissions:
       contents: read
     secrets: inherit
-    uses: ./.github/workflows/build-gradle.yml
+    uses: ./.github/workflows/build-gradle-app.yml
     with:
       java-version: ${{ matrix.artifact.config['java-version'] }}
       gradle-tasks: ${{ matrix.artifact.config['gradle-tasks'] }}
@@ -298,6 +298,7 @@ jobs:
       enable-signing: ${{ matrix.artifact.config['enable-android-signing'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
       branch: ${{ inputs.branch }}
+      artifact-name: ${{ matrix.artifact.name }}
   # Step 2d: Build Gradle Android artifacts
   build-gradle-android:
     name: Build Gradle Android - ${{ matrix.artifact.name }}
@@ -310,7 +311,7 @@ jobs:
     permissions:
       contents: read
     secrets: inherit
-    uses: ./.github/workflows/build-gradle.yml
+    uses: ./.github/workflows/build-gradle-app.yml
     with:
       java-version: ${{ matrix.artifact.config['java-version'] }}
       gradle-tasks: ${{ matrix.artifact.config['gradle-tasks'] }}
@@ -318,6 +319,7 @@ jobs:
       enable-signing: ${{ matrix.artifact.config['enable-android-signing'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
       branch: ${{ inputs.branch }}
+      artifact-name: ${{ matrix.artifact.name }}
   # Step 2e: Build Xcode iOS/macOS artifacts
   build-xcode:
     name: Build Xcode - ${{ matrix.artifact.name }}

@@ -67,14 +67,32 @@ with:
   working-directory: "."    # Path to package.json
 ```
 
-#### `build-gradle.yml`
-Builds Gradle projects.
+#### `build-gradle-app.yml`
+Builds Gradle application projects (JVM or Android).
 ```yaml
-uses: ./.github/workflows/build-gradle.yml
+uses: ./.github/workflows/build-gradle-app.yml
 with:
-  java-version: "25"        # JDK version
-  working-directory: "."    # Path to build.gradle
-  gradle-tasks: "build"     # Gradle tasks to run
+  java-version: "21"           # JDK version
+  working-directory: "."       # Path to build.gradle
+  gradle-tasks: "build"        # Gradle tasks to run
+  build-module: "app"          # Gradle module to build
+  enable-signing: false        # Enable Android signing
+  artifact-name: ""            # Custom artifact name (optional)
+```
+
+#### `build-gradle-android.yml`
+Builds Android applications with multiple product flavors and build types.
+```yaml
+uses: ./.github/workflows/build-gradle-android.yml
+with:
+  java-version: "21"              # JDK version
+  build-module: "app"             # Gradle module
+  product-flavor: "demo"          # Product flavor (demo, prod, etc.)
+  build-types: "debug,release"    # Build types to create
+  include-aab: true               # Build AAB for Play Store
+  enable-signing: true            # Enable Android signing
+  artifact-name-prefix: ""        # Artifact name prefix
+  include-date-stamp: true        # Include date in artifact names
 ```
 
 ### Publish Workflows
