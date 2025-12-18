@@ -2,35 +2,28 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 # Description:
-# This workflow runs just-based linting using mise-managed tools.
-# It provides a lightweight alternative to MegaLinter by leveraging individual
-# linting tools defined in the project's justfile and .mise.toml.
+# This workflow runs quality checks using devbase-check, providing a unified
+# linting experience between local development and CI.
 #
 # Features:
-# - Automatically discovers all lint-* tasks from your justfile
-# - Runs each linter individually and captures output
-# - Generates a MegaLinter-style summary in GitHub Actions UI
-# - Shows pass/fail status, duration, and error details per linter
-# - Dynamic: works with any number of linters without configuration
+# - Uses the same verify.sh script locally and in CI
+# - Client justfile overrides (e.g., lint-license: @echo "Skipping") work in CI
+# - Generates GitHub Actions summary with pass/fail per linter
+# - Version-pinned devbase-check with Renovate auto-updates
 #
 # How to use:
 # 1. Ensure your project has:
-#    - .mise.toml with required tools (yamlfmt, actionlint, gitleaks, etc.)
-#    - justfile with lint-* tasks (lint-java, lint-yaml, lint-actions, etc.)
-#    - Note: Tasks ending with -fix are automatically excluded
+#    - .mise.toml with required tools
+#    - justfile with lint-* tasks (using devbase-check)
 #
 # 2. Add to your workflow file:
 #    jobs:
-#      just-mise-lint:
-#        uses: <orgname>/<reponame>/.github/workflows/lint-just-mise.yml@main
-#
-# 3. The workflow will:
-#    - Install just command runner and mise
-#    - Install tools from .mise.toml via 'just install'
-#    - Auto-discover and run all lint-* tasks
-#    - Generate formatted summary with pass/fail status per linter
-name: Quality Checks (Justfile)
+#      devbase-check-lint:
+#        uses: <orgname>/<reponame>/.github/workflows/lint-devbase-check.yml@main
+name: Quality Checks (devbase-check)
 env:
+  # renovate: datasource=github-releases depName=diggsweden/devbase-check
+  DEVBASE_CHECK_VERSION: "v0.4.0"
   # renovate: datasource=github-releases depName=casey/just
   JUST_VERSION: "1.43.0"
   JUST_CHECKSUM: "a1bc93654f31669fd964ea3011a5e5e9676b9b6f8adcd762606e5140632ea72d"
@@ -40,15 +33,15 @@ env:
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
-      reusable-ci-ref:
-        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+      devbase-check-version:
+        description: "Override devbase-check version (default: pinned version)"
         required: false
-        default: "main"
+        default: ""
         type: string
 permissions:
   contents: read
 jobs:
-  just-mise-lint:
+  devbase-check-lint:
     name: Quality Checks
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -95,21 +88,21 @@ jobs:
           key: mise-${{ env.MISE_VERSION }}-${{ runner.os }}-${{ hashFiles('.mise.toml') }}
           restore-keys: |
             mise-${{ env.MISE_VERSION }}-${{ runner.os }}-
+      - name: Install devbase-check
+        env:
+          VERSION: ${{ inputs.devbase-check-version || env.DEVBASE_CHECK_VERSION }}
+        run: |
+          git clone --depth 1 --branch "${VERSION}" \
+            https://github.com/diggsweden/devbase-check \
+            ~/.local/share/devbase-check
+          printf "Installed devbase-check %s\n" "${VERSION}"
       - name: Install development tools
         env:
           MISE_GITHUB_TOKEN: ${{ github.token }}
         run: |
           mise trust
           just install
-      - name: Checkout reusable-ci for scripts
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs.reusable-ci-ref }}
-          path: .github-shared
-          sparse-checkout: scripts
-      - name: Run linting tasks with enhanced output
+      - name: Run linting
         run: |
           eval "$(mise activate bash)"
-          chmod +x .github-shared/scripts/run-just-linters.sh
-          .github-shared/scripts/run-just-linters.sh
+          just verify

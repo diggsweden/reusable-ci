@@ -16,13 +16,13 @@ graph TD
     B --> E[dependency-review]
     B --> F[megalint]
     B --> G[publiccode-lint]
-    B --> J[just-mise-lint]
+    B --> K[devbase-check-lint]
     C --> H[lint-status]
     D --> H
     E --> H
     F --> H
     G --> H
-    J --> H
+    K --> H
     H --> I[Project test.yml]
 
     style A fill:#a7c080,stroke:#5c6a4a,color:#2b3339

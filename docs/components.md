@@ -219,11 +219,19 @@ Validates publiccode.yml file format.
 uses: ./.github/workflows/lint-publiccode.yml
 ```
 
-#### `lint-just-mise.yml`
-Runs just+mise-based linting using mise-managed tools (lightweight alternative to MegaLinter).
+#### `lint-devbase-check.yml`
+Runs quality checks using devbase-check. Client justfile overrides work both locally and in CI.
 ```yaml
-uses: ./.github/workflows/lint-just-mise.yml
+uses: ./.github/workflows/lint-devbase-check.yml
+with:
+  devbase-check-version: ""  # Optional: override pinned version
 ```
+
+**Features:**
+- Same `verify.sh` script runs locally and in CI
+- Client justfile overrides (e.g., `lint-license: @echo "Skipping"`) work in CI
+- Generates GitHub Actions summary with pass/fail per linter
+- Version-pinned devbase-check with Renovate auto-updates
 
 ### Security Workflows
 
