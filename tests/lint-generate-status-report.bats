@@ -237,7 +237,7 @@ run_generate_status_report() {
 
   assert_success
   run get_summary
-  assert_output --partial "justmiselint"
+  assert_output --partial "devbasecheck"
 }
 
 @test "generate-status-report.sh marks deprecated linter in table" {

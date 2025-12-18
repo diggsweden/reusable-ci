@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+name: Pull Request Workflow
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pr-checks:
+    uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@main
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    with:
+      project-type: npm
+      # Recommended: Use devbase-check (lightweight, just+mise-based)
+      linters.devbasecheck: true
+      linters.commitlint: false
+      linters.licenselint: false
+      linters.megalint: false
+
+  # Optional: Add project-specific tests
+  # test:
+  #   needs: [pr-checks]
+  #   if: always()
+  #   permissions:
+  #     contents: read
+  #     packages: read
+  #   uses: ./.github/workflows/test.yml

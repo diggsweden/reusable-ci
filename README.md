@@ -139,17 +139,18 @@ jobs:
          contents: read
          packages: read
          security-events: write
-       secrets: inherit
+        secrets: inherit
         with:
           project-type: maven  # or npm, gradle, gradle-android, xcode-ios
-          # Optional: Configure linters (all enabled by default)
-          # linters.commitlint: true
-          # linters.licenselint: true
-          # linters.dependencyreview: true
-          # linters.megalint: true        # Heavy, comprehensive
-          # linters.publiccodelint: false
-          # linters.justmiselint: false   # Lightweight, just+mise-based (requires justfile)
-          # linters.swiftlint: false      # Swift linting for iOS/macOS projects
+          # Recommended: Use devbase-check (lightweight, just+mise-based)
+          linters.devbasecheck: true
+          linters.commitlint: false
+          linters.licenselint: false
+          linters.megalint: false
+          # Optional linters:
+          # linters.dependencyreview: true  # Dependency vulnerability scan
+          # linters.publiccodelint: false   # publiccode.yml validation
+          # linters.swiftlint: false        # Swift linting for iOS/macOS
    ```
 
 3. **Create release workflow** - Trigger builds on tags:

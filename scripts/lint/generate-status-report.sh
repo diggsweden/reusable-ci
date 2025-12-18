@@ -28,11 +28,11 @@ set -euo pipefail
     IFS='|' read -ra DEPRECATED_ARRAY <<<"$DEPRECATED_LIST"
     for name in "${DEPRECATED_ARRAY[@]}"; do
       [[ -z "$name" ]] && continue
-      printf "> - **%s** - Migrate to \`linters.justmiselint: true\`\n" "$name"
+      printf "> - **%s** - Migrate to \`linters.devbasecheck: true\`\n" "$name"
     done
 
     printf ">\n"
-    printf "> Please update your workflow to use \`linters.justmiselint: true\` and disable deprecated linters.\n\n"
+    printf "> Please update your workflow to use \`linters.devbasecheck: true\` and disable deprecated linters.\n\n"
   fi
 
   # Status table

@@ -14,6 +14,7 @@ Complete working examples for different project types.
 **Use case:** Java/Spring Boot application with container
 
 **Contains:**
+- Pull request workflow with devbase-check linting
 - Maven application configuration
 - Container build with multi-platform support
 - GitHub Packages publishing
@@ -29,6 +30,7 @@ Complete working examples for different project types.
 **Use case:** Node.js/TypeScript application with container
 
 **Contains:**
+- Pull request workflow with devbase-check linting
 - NPM application configuration
 - Container build with multi-platform support
 - GitHub Packages publishing
@@ -45,6 +47,7 @@ Complete working examples for different project types.
 **Use case:** Gradle/Android application
 
 **Contains:**
+- Pull request workflow with devbase-check linting
 - Gradle build configuration
 - Android-specific tasks (APK, AAB)
 - Version code auto-increment
@@ -91,7 +94,8 @@ Complete working examples for different project types.
    # Copy artifacts configuration
    cp artifacts.yml /path/to/your/project/.github/
 
-   # Copy workflow
+   # Copy workflows
+   cp pullrequest-workflow.yml /path/to/your/project/.github/workflows/
    cp release-workflow.yml /path/to/your/project/.github/workflows/
    ```
 
