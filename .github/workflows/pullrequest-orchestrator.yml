@@ -36,7 +36,7 @@
 #   linters.dependencyreview: Dependency vulnerability scan (default: true)
 #   linters.megalint: MegaLinter with 50+ linters (default: true)
 #   linters.publiccodelint: Publiccode.yml validation (default: false)
-#   linters.justmiselint: Just+mise-based linting (default: false)
+#   linters.devbasecheck: devbase-check linting (default: false) - RECOMMENDED
 name: Pull Request Orchestrator
 on:
   workflow_call:
@@ -53,12 +53,12 @@ on:
         type: string
       # Linter toggles (all can be disabled if needed)
       linters.commitlint:
-        description: "⚠️ DEPRECATED v3.0: Enable commit message linting (migrate to justmiselint)"
+        description: "⚠️ DEPRECATED v3.0: Enable commit message linting (migrate to devbasecheck)"
         required: false
         default: true
         type: boolean
       linters.licenselint:
-        description: "⚠️ DEPRECATED v3.0: Enable SPDX license header linting (migrate to justmiselint)"
+        description: "⚠️ DEPRECATED v3.0: Enable SPDX license header linting (migrate to devbasecheck)"
         required: false
         default: true
         type: boolean
@@ -68,17 +68,17 @@ on:
         default: true
         type: boolean
       linters.megalint:
-        description: "⚠️ DEPRECATED v3.0: Enable MegaLinter (migrate to justmiselint)"
+        description: "⚠️ DEPRECATED v3.0: Enable MegaLinter (migrate to devbasecheck)"
         required: false
         default: true
         type: boolean
       linters.publiccodelint:
-        description: "⚠️ DEPRECATED v3.0: Enable publiccode.yml linting (migrate to justmiselint)"
+        description: "Enable publiccode.yml linting"
         required: false
         default: false
         type: boolean
-      linters.justmiselint:
-        description: "✅ RECOMMENDED: Enable just+mise-based linting (replaces megalint, commitlint, licenselint, publiccodelint)"
+      linters.devbasecheck:
+        description: "✅ RECOMMENDED: Enable devbase-check linting (replaces megalint, commitlint, licenselint)"
         required: false
         default: false
         type: boolean
@@ -130,16 +130,14 @@ jobs:
     name: Publiccode Lint
     if: ${{ inputs['linters.publiccodelint'] }}
     uses: ./.github/workflows/lint-publiccode.yml
-  # Just+mise-based linting
-  just-mise-lint:
-    name: Just+Mise Lint
-    if: ${{ inputs['linters.justmiselint'] }}
+  # devbase-check linting (recommended)
+  devbase-check-lint:
+    name: Devbase Check
+    if: ${{ inputs['linters.devbasecheck'] }}
     permissions:
       contents: read
       security-events: write
-    uses: ./.github/workflows/lint-just-mise.yml
-    with:
-      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
+    uses: ./.github/workflows/lint-devbase-check.yml
   # Swift linting
   swift-lint:
     name: Swift Lint
@@ -155,7 +153,7 @@ jobs:
     name: Lint Status Check
     runs-on: ubuntu-latest
     if: always()
-    needs: [commit-lint, license-lint, dependency-review, megalint, publiccode-lint, just-mise-lint, swift-lint]
+    needs: [commit-lint, license-lint, dependency-review, megalint, publiccode-lint, devbase-check-lint, swift-lint]
     steps:
       - name: Checkout reusable-ci scripts
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -172,5 +170,5 @@ jobs:
             "Dependency Review|${{ inputs['linters.dependencyreview'] }}|${{ needs.dependency-review.result }}|false" \
             "MegaLinter|${{ inputs['linters.megalint'] }}|${{ needs.megalint.result }}|true" \
             "Publiccode Lint|${{ inputs['linters.publiccodelint'] }}|${{ needs.publiccode-lint.result }}|true" \
-            "Just+Mise Lint|${{ inputs['linters.justmiselint'] }}|${{ needs.just-mise-lint.result }}|false" \
+            "Devbase Check|${{ inputs['linters.devbasecheck'] }}|${{ needs.devbase-check-lint.result }}|false" \
             "Swift Lint|${{ inputs['linters.swiftformat'] == 'true' || inputs['linters.swiftlint'] == 'true' }}|${{ needs.swift-lint.result }}|false"

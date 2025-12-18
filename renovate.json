@@ -86,6 +86,28 @@
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)[\\s\\n]+just-version:[\\s\\S]*?default:\\s*\"(?<currentValue>[0-9.]+)\""
       ],
       "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/\\.github/workflows/.+\\.ya?ml$/"
+      ],
+      "description": "Update Just version in action with: blocks",
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s*\\n\\s+just-version:\\s*(?<currentValue>[0-9.]+)"
+      ],
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/\\.github/workflows/.+\\.ya?ml$/"
+      ],
+      "description": "Update env versions in workflow files",
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s*\\n\\s+\\w+:\\s*\"(?<currentValue>v?[0-9.]+)\""
+      ],
+      "versioningTemplate": "semver"
     }
   ]
 }
