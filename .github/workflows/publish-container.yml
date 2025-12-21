@@ -203,7 +203,7 @@ jobs:
           sparse-checkout: scripts
       - name: Download Maven artifacts
         if: ${{ contains(inputs['artifact-types'], 'maven') }}
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         continue-on-error: true
         with:
           name: maven-build-artifacts
@@ -213,7 +213,7 @@ jobs:
         run: bash .github-shared/scripts/container/verify-artifacts.sh maven target
       - name: Download NPM artifacts
         if: ${{ contains(inputs['artifact-types'], 'npm') }}
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         continue-on-error: true
         with:
           name: npm-build-artifacts
@@ -232,7 +232,7 @@ jobs:
         run: bash .github-shared/scripts/container/verify-artifacts.sh npm dist "${{ inputs.context }}/${{ inputs['container-file'] }}"
       - name: Download Gradle artifacts
         if: ${{ contains(inputs['artifact-types'], 'gradle') }}
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         continue-on-error: true
         with:
           name: gradle-build-artifacts
@@ -348,7 +348,7 @@ jobs:
           touch "/tmp/digests/${digest#sha256:}"
       - name: Upload digest
         if: ${{ inputs['push-image'] && inputs['enable-slsa'] && inputs.registry == 'ghcr.io' }}
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: digests-${{ github.run_id }}-${{ github.run_attempt }}
           path: /tmp/digests/*
@@ -385,7 +385,7 @@ jobs:
             ".github-shared/scripts/sbom"
       - name: Upload Container SBOMs
         if: ${{ inputs['enable-sbom'] && inputs['push-image'] }}
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: container-sbom-${{ github.run_id }}
           path: |

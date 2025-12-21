@@ -144,7 +144,7 @@ jobs:
           printf "Checking for multi-module artifacts:\n"
           find . -type f -name "*.jar" -path "*/target/*" ! -name "original-*.jar" -exec ls -lh {} \; 2>/dev/null || printf "No JAR files found in sub-modules\n"
       - name: Upload Maven artifacts
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: maven-build-artifacts
           path: |
