@@ -125,7 +125,7 @@ jobs:
           sparse-checkout: scripts
       - name: Download Maven artifacts
         if: ${{ contains(inputs['artifact-types'], 'maven') }}
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: maven-build-artifacts
           path: ${{ inputs['working-directory'] }}
@@ -138,7 +138,7 @@ jobs:
             "${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}"
       - name: Download NPM artifacts
         if: ${{ contains(inputs['artifact-types'], 'npm') }}
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: npm-build-artifacts
           path: ${{ inputs['working-directory'] }}
@@ -161,7 +161,7 @@ jobs:
             "${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}"
       - name: Download Gradle artifacts
         if: ${{ contains(inputs['artifact-types'], 'gradle') }}
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: gradle-build-artifacts
           path: ${{ inputs['working-directory'] }}

@@ -144,7 +144,7 @@ jobs:
           passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
           git_user_signingkey: true
       - name: Download Release Changelog
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         continue-on-error: true
         with:
           name: release-changelog
@@ -163,7 +163,7 @@ jobs:
       - name: Download container SBOM artifacts
         if: ${{ inputs['has-containers'] }}
         continue-on-error: true
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: container-sbom-${{ github.run_id }}
           path: ./sbom-artifacts/
@@ -182,7 +182,7 @@ jobs:
       # Download build artifacts based on project type
       - name: Download build artifacts
         continue-on-error: true
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: ${{ steps.artifact-name.outputs.name }}
           path: ./release-artifacts/
@@ -276,7 +276,7 @@ jobs:
             "${{ inputs['artifact-name'] }}"
       - name: Upload release artifacts summary
         if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: release-artifacts-${{ github.run_id }}
           path: |

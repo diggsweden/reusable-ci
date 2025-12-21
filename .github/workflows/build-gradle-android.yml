@@ -180,7 +180,7 @@ jobs:
           find ${{ inputs['build-module'] }}/build/outputs -type f \( -name "*.apk" -o -name "*.aab" \) -ls || printf "No artifacts found\n"
       - name: Upload Debug APK
         if: contains(inputs['build-types'], 'debug')
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{ steps.artifact-names.outputs.debug-name }}
           path: |
@@ -188,7 +188,7 @@ jobs:
           retention-days: 7
       - name: Upload Release APK
         if: contains(inputs['build-types'], 'release')
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{ steps.artifact-names.outputs.release-name }}
           path: |
@@ -196,7 +196,7 @@ jobs:
           retention-days: 7
       - name: Upload AAB
         if: ${{ inputs['include-aab'] && contains(inputs['build-types'], 'release') }}
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{ steps.artifact-names.outputs.aab-name }}
           path: |
