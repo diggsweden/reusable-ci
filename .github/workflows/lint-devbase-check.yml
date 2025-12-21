@@ -25,7 +25,7 @@ env:
   # renovate: datasource=github-releases depName=diggsweden/devbase-check
   DEVBASE_CHECK_VERSION: "v0.4.0"
   # renovate: datasource=github-releases depName=casey/just
-  JUST_VERSION: "1.43.0"
+  JUST_VERSION: "1.45.0"
   JUST_CHECKSUM: "a1bc93654f31669fd964ea3011a5e5e9676b9b6f8adcd762606e5140632ea72d"
   # renovate: datasource=github-releases depName=jdx/mise
   MISE_VERSION: "2025.10.10"
