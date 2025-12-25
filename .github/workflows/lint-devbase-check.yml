@@ -28,7 +28,7 @@ env:
   JUST_VERSION: "1.43.0"
   JUST_CHECKSUM: "a1bc93654f31669fd964ea3011a5e5e9676b9b6f8adcd762606e5140632ea72d"
   # renovate: datasource=github-releases depName=jdx/mise
-  MISE_VERSION: "2025.10.10"
+  MISE_VERSION: "2025.12.12"
   MISE_CHECKSUM: "d300a395d82092a4793c9d02a4fff15819ace22a027ddc58a83602aea24ee646"
 on:
   workflow_call: # yamllint disable-line rule:truthy
