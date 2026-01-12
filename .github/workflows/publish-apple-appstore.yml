@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 # Apple App Store / TestFlight Publisher
-# 
+#
 # Purpose: Publishes iOS applications to Apple App Store Connect (TestFlight) using
 # the App Store Connect API.
 #
@@ -156,7 +156,7 @@ jobs:
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
-          set -o pipefail
+          set -eo pipefail
 
           printf "Uploading IPA to App Store Connect...\n"
 
