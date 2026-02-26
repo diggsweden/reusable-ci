@@ -108,6 +108,12 @@ on:
         required: false
         default: "main"
         type: string
+      # === BUILD SETTINGS OVERRIDES ===
+      extra-build-settings:
+        description: "Space-separated KEY=VALUE pairs appended to the xcodebuild archive command. Values override any matching xcconfig settings"
+        required: false
+        default: ""
+        type: string
 permissions:
   contents: read
 jobs:
@@ -180,6 +186,8 @@ jobs:
 
       - name: Archive app
         working-directory: ${{ inputs['working-directory'] }}
+        env:
+          EXTRA_BUILD_SETTINGS: ${{ inputs.extra-build-settings }}
         run: |
           set -o pipefail
           mkdir -p build
@@ -197,6 +205,10 @@ jobs:
           BUILD_CMD="$BUILD_CMD -archivePath build/app.xcarchive"
           BUILD_CMD="$BUILD_CMD -destination '${{ inputs.destination }}'"
           BUILD_CMD="$BUILD_CMD -skipPackagePluginValidation"
+
+          if [ -n "$EXTRA_BUILD_SETTINGS" ]; then
+            BUILD_CMD="$BUILD_CMD $EXTRA_BUILD_SETTINGS"
+          fi
 
           printf "Running: %s\n" "$BUILD_CMD"
           eval "$BUILD_CMD" | xcbeautify
