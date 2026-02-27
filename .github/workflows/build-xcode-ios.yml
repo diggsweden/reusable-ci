@@ -109,8 +109,8 @@ on:
         default: "main"
         type: string
       # === BUILD SETTINGS OVERRIDES ===
-      extra-build-settings:
-        description: "Space-separated KEY=VALUE pairs appended to the xcodebuild archive command. Values override any matching xcconfig settings"
+      build-xcconfig-var:
+        description: "Name of the GitHub secret containing a base64-encoded xcconfig file with build settings (e.g. API keys). Decoded at build time and passed as -xcconfig to xcodebuild. Never logged."
         required: false
         default: ""
         type: string
@@ -184,10 +184,22 @@ jobs:
             "${{ inputs.project }}" \
             "${{ inputs.workspace }}" >> "$GITHUB_OUTPUT"
 
-      - name: Archive app
+      - name: Setup xcconfig from secret
+        if: ${{ inputs['build-xcconfig-var'] != '' }}
         working-directory: ${{ inputs['working-directory'] }}
         env:
-          EXTRA_BUILD_SETTINGS: ${{ inputs.extra-build-settings }}
+          XCCONFIG_BASE64: ${{ secrets[inputs.build-xcconfig-var] }}
+        run: |
+          mkdir -p build
+          if [ -z "$XCCONFIG_BASE64" ]; then
+            printf "::warning::Secret '%s' is empty or not found — no xcconfig will be applied\n" "${{ inputs.build-xcconfig-var }}"
+          else
+            printf "%s" "$XCCONFIG_BASE64" | base64 --decode > build/ci-secrets.xcconfig
+            printf "::notice::xcconfig decoded from secret %s\n" "${{ inputs.build-xcconfig-var }}"
+          fi
+
+      - name: Archive app
+        working-directory: ${{ inputs['working-directory'] }}
         run: |
           set -o pipefail
           mkdir -p build
@@ -206,8 +218,8 @@ jobs:
           BUILD_CMD="$BUILD_CMD -destination '${{ inputs.destination }}'"
           BUILD_CMD="$BUILD_CMD -skipPackagePluginValidation"
 
-          if [ -n "$EXTRA_BUILD_SETTINGS" ]; then
-            BUILD_CMD="$BUILD_CMD $EXTRA_BUILD_SETTINGS"
+          if [ -f "build/ci-secrets.xcconfig" ]; then
+            BUILD_CMD="$BUILD_CMD -xcconfig build/ci-secrets.xcconfig"
           fi
 
           printf "Running: %s\n" "$BUILD_CMD"

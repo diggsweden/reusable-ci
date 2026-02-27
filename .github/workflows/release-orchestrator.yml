@@ -345,6 +345,7 @@ jobs:
       include-tag: false
       working-directory: ${{ matrix.artifact['working-directory'] }}
       macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
+      build-xcconfig-var: ${{ matrix.artifact.config['build-xcconfig-var'] || '' }}
       reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   # Sync point: Wait for all builds to complete before publishing/containers
   await-builds:
