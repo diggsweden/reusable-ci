@@ -87,6 +87,11 @@ on:
         required: false
         default: true
         type: boolean
+      build-number:
+        description: "Build number to set as CURRENT_PROJECT_VERSION"
+        required: false
+        default: ""
+        type: string
       # === BUILD CONFIGURATION ===
       working-directory:
         description: "Working directory"
@@ -215,6 +220,10 @@ jobs:
 
           if [ -n "${{ steps.setup-xcconfig.outputs.xcconfig-path }}" ]; then
             BUILD_CMD="$BUILD_CMD -xcconfig ${{ steps.setup-xcconfig.outputs.xcconfig-path }}"
+          fi
+
+          if [ -n "${{ inputs['build-number'] }}" ]; then
+            BUILD_CMD="$BUILD_CMD CURRENT_PROJECT_VERSION=${{ inputs['build-number'] }}"
           fi
 
           printf "Running: %s\n" "$BUILD_CMD"
