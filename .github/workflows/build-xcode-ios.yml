@@ -32,6 +32,7 @@
 #   PROVISIONING_PROFILE_BASE64: Base64-encoded provisioning profile
 #   KEYCHAIN_PASSWORD: Temporary keychain password
 #   EXPORT_OPTIONS_BASE64: Base64-encoded exportOptions.plist (optional, can use vars)
+#   XCCONFIG_BASE64: Base64-encoded xcconfig file with build settings overrides (optional)
 #
 # Required Permissions:
 #   contents: read  # Checkout code
@@ -178,6 +179,20 @@ jobs:
             "${{ inputs.project }}" \
             "${{ inputs.workspace }}" >> "$GITHUB_OUTPUT"
 
+      - name: Setup xcconfig from secret
+        id: setup-xcconfig
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          XCCONFIG_BASE64: ${{ secrets.XCCONFIG_BASE64 }}
+        run: |
+          if [ -z "$XCCONFIG_BASE64" ]; then
+            printf "::notice::XCCONFIG_BASE64 secret not set — no xcconfig will be applied\n"
+          else
+            printf "%s" "$XCCONFIG_BASE64" | base64 --decode > "$RUNNER_TEMP/ci.xcconfig"
+            printf "xcconfig-path=%s/ci.xcconfig\n" "$RUNNER_TEMP" >> "$GITHUB_OUTPUT"
+            printf "::notice::xcconfig decoded from XCCONFIG_BASE64 secret\n"
+          fi
+
       - name: Archive app
         working-directory: ${{ inputs['working-directory'] }}
         run: |
@@ -197,6 +212,10 @@ jobs:
           BUILD_CMD="$BUILD_CMD -archivePath build/app.xcarchive"
           BUILD_CMD="$BUILD_CMD -destination '${{ inputs.destination }}'"
           BUILD_CMD="$BUILD_CMD -skipPackagePluginValidation"
+
+          if [ -n "${{ steps.setup-xcconfig.outputs.xcconfig-path }}" ]; then
+            BUILD_CMD="$BUILD_CMD -xcconfig ${{ steps.setup-xcconfig.outputs.xcconfig-path }}"
+          fi
 
           printf "Running: %s\n" "$BUILD_CMD"
           eval "$BUILD_CMD" | xcbeautify
