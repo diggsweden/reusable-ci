@@ -345,6 +345,7 @@ jobs:
       xcodegen-spec: ${{ matrix.artifact.config['xcodegen-spec'] || 'project.yml' }}
       artifact-name: ${{ matrix.artifact.name }}
       include-tag: false
+      build-number: ${{ matrix.artifact.config['build-number'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
       macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
       reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
