@@ -80,7 +80,7 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           ref: ${{ inputs.branch }}
-          fetch-depth: 1
+          fetch-depth: 0
       - name: Set up JDK
         uses: actions/setup-java@f2beeb24e141e01a676f977032f5a29d81c9e27e # v5.1.0
         with:
@@ -118,6 +118,14 @@ jobs:
             printf "Version: %s (%s)\n" "${VERSION}" "${VERSION_CODE}"
           else
             printf "::warning::gradle.properties not found, version info unavailable\n"
+          fi
+      - name: Decode secrets properties
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          SECRETS_PROPERTIES: ${{ secrets.SECRETS_PROPERTIES_BASE64 }}
+        run: |
+          if [ -n "$SECRETS_PROPERTIES" ]; then
+            printf "%s" "$SECRETS_PROPERTIES" | base64 -d > secrets.properties
           fi
       - name: Run Gradle build
         working-directory: ${{ inputs['working-directory'] }}
