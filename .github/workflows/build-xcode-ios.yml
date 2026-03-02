@@ -86,6 +86,17 @@ on:
         required: false
         default: true
         type: boolean
+      # === XCODEGEN ===
+      use-xcodegen:
+        description: "Run xcodegen to generate Xcode project before building"
+        required: false
+        default: false
+        type: boolean
+      xcodegen-spec:
+        description: "Path to xcodegen spec file, relative to working-directory"
+        required: false
+        default: "project.yml"
+        type: string
       # === BUILD CONFIGURATION ===
       working-directory:
         description: "Working directory"
@@ -160,6 +171,16 @@ jobs:
             brew install xcbeautify
           fi
           printf "✓ xcbeautify installed\n"
+
+      - name: Generate Xcode project with XcodeGen
+        if: ${{ inputs['use-xcodegen'] }}
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          if ! command -v xcodegen &> /dev/null; then
+            brew install xcodegen
+          fi
+          xcodegen generate --spec "${{ inputs['xcodegen-spec'] }}"
+          printf "✓ Xcode project generated from %s\n" "${{ inputs['xcodegen-spec'] }}"
 
       - name: Setup code signing
         if: ${{ inputs['enable-code-signing'] }}
