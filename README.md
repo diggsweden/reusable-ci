@@ -316,6 +316,6 @@ jobs:
 
 ## License
 
-This project is licensed under the [CC0-1.0 License](LICENSE).
+This project is licensed under the [CC0-1.0 License](LICENSES/CC0-1.0.txt).
 
 ---

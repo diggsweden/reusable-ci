@@ -12,7 +12,6 @@ disable = [
   "MD041",  # first-line-h1 - copyright headers come first
   "MD052",  # reference-links-images - template placeholders
   "MD005",  # list-indent - conflicts with existing style
-  "MD006",  # ul-start-left - conflicts with existing style  
   "MD007",  # ul-indent - conflicts with existing style
   "MD032",  # blanks-around-lists - too strict
   "MD022",  # blanks-around-headings - too strict

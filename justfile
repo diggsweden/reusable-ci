@@ -86,16 +86,20 @@ tools-update: _ensure-devtools
 # VERIFY - Quality assurance
 # ==================================================================================== #
 
-# ▪ Run all linters with summary
+# ▪ Run linting and tests
 [group('verify')]
 verify: _ensure-devtools
-    @{{devtools_dir}}/scripts/verify.sh
+    @just lint
+    @just test
 
 # ==================================================================================== #
 # LINT - Code quality checks
 # ==================================================================================== #
 
 # ▪ Run all linters (override in project justfile to customize)
+[group('lint')]
+lint: lint-all
+
 [group('lint')]
 lint-all: _ensure-devtools
     @{{devtools_dir}}/scripts/verify.sh

@@ -22,7 +22,6 @@
    ```
 
    Then restart your terminal.
-
 3. Install pipx (needed for reuse license linting):
 
    ```bash
@@ -64,7 +63,6 @@
    ```
 
    Then restart your terminal.
-
 3. Install newer bash than macOS default:
 
    ```bash

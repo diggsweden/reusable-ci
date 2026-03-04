@@ -138,7 +138,7 @@ The workflow generates a formatted summary showing:
 **Exit code:** 1
 **Duration:** 0.01s
 
-### Output:
+### Output
 ```
 README.md:45 - Line too long (found 120, expected 100)
 ```text
