@@ -1,0 +1,31 @@
+name: Notify Element
+
+on:
+  workflow_dispatch:  # triggers manually
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    env:
+      MATRIX_TOKEN: ${{ secrets.MATRIX_TOKEN }}
+      MATRIX_ROOM_ID: ${{ secrets.MATRIX_ROOM_ID }}
+      MATRIX_SERVER_URL: ${{ secrets.MATRIX_SERVER_URL }}
+    steps:
+      - name: Validate required secrets
+        run: |
+          test -n "$MATRIX_TOKEN" || { echo "Missing MATRIX_TOKEN"; exit 1; }
+          test -n "$MATRIX_ROOM_ID" || { echo "Missing MATRIX_ROOM_ID"; exit 1; }
+          test -n "$MATRIX_SERVER_URL" || { echo "Missing MATRIX_SERVER_URL"; exit 1; }
+
+      - name: Test network access
+        run: |
+          curl -v $MATRIX_SERVER_URL
+
+      - name: Send message to Element
+        run: |
+          response=$(curl --fail --show-error \
+            -X POST "$MATRIX_SERVER_URL/_matrix/client/r0/rooms/$MATRIX_ROOM_ID/send/m.room.message" \
+            -H "Authorization: Bearer $MATRIX_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"msgtype":"m.text","body":"GitHub workflow completed successfully"}')
+          echo "Response: $response"
