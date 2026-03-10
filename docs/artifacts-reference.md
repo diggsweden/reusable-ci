@@ -208,6 +208,21 @@ containers:
 - **Valid values:** `Debug`, `Release`, or custom configurations
 - **Example:** `configuration: Release`
 
+#### `config.use-xcodegen`
+
+- **Type:** `boolean`
+- **Description:** Run XcodeGen before version extraction and archive
+- **Default:** `false`
+- **Example:** `use-xcodegen: true`
+
+#### `config.xcodegen-spec`
+
+- **Type:** `string`
+- **Description:** Path to the XcodeGen spec file, relative to `working-directory`
+- **Default:** `project.yml`
+- **Example:** `xcodegen-spec: project.yml`
+- **Note:** Keep `project` or `workspace` set so later steps use a deterministic build target after generation
+
 #### `config.enable-code-signing`
 
 - **Type:** `boolean`
@@ -596,6 +611,8 @@ artifacts:
     config:
       xcode-version: "16.1"
       scheme: "MyApp"
+      use-xcodegen: true
+      xcodegen-spec: "project.yml"
       project: "MyApp.xcodeproj"
       configuration: Release
       enable-code-signing: true
@@ -630,6 +647,29 @@ base64 -i profile.mobileprovision -o profile.txt
 # Export Options
 base64 -i exportOptions.plist -o exportOptions.txt
 ```
+
+### iOS/macOS App With XcodeGen
+
+```yaml
+artifacts:
+  - name: my-ios-app
+    project-type: xcode-ios
+    working-directory: .
+    build-type: application
+    publish-to: []
+    config:
+      xcode-version: "16.1"
+      scheme: "MyApp"
+      use-xcodegen: true
+      xcodegen-spec: "project.yml"
+      project: "MyApp.xcodeproj"
+      configuration: Release
+      enable-code-signing: true
+      export-options-var: EXPORT_OPTIONS_BASE64
+      macos-version: macos-26
+```
+
+Use `project` or `workspace` alongside XcodeGen so version detection and archive steps target the generated Xcode project explicitly.
 
 ### Multiple iOS Schemes (Demo, Production)
 
