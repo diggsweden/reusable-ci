@@ -520,6 +520,8 @@ artifacts:
     config:
       xcode-version: "16.1"
       scheme: "MyApp"
+      use-xcodegen: true
+      xcodegen-spec: "project.yml"
       project: "MyApp.xcodeproj"
       configuration: Release
       enable-code-signing: true   # <-- This enables App Store publishing
@@ -529,6 +531,8 @@ artifacts:
       submit-for-review: false  # true = submit to App Store, false = TestFlight only
       skip-validation: false    # Validate IPA before upload (recommended)
 ```
+
+If your app uses XcodeGen, keep `project` or `workspace` configured as well so the generated build target is explicit in later steps.
 
 ### Required Secrets
 
