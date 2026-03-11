@@ -17,6 +17,10 @@ log_error() {
   printf "::error::%s\n" "$1"
 }
 
+usage() {
+  printf "Usage: %s <project-type> <version> [working-dir] [version-file]\n" "$(basename "$0")" >&2
+}
+
 update_or_add_property() {
   local file="$1"
   local key="$2"
@@ -47,8 +51,13 @@ increment_version_code() {
   fi
 }
 
-PROJECT_TYPE="${1}"
-VERSION="${2}"
+if [[ $# -lt 2 ]]; then
+  usage
+  exit 1
+fi
+
+PROJECT_TYPE="$1"
+VERSION="$2"
 WORKING_DIR="${3:-.}"
 GRADLE_VERSION_FILE="${4:-gradle.properties}"
 
