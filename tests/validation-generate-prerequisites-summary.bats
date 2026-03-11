@@ -37,7 +37,7 @@ teardown() {
 # =============================================================================
 
 run_generate_summary() {
-  run_script "validation/generate-prerequisites-summary.sh" "$@"
+  run_script "validate/generate-prerequisites-summary.sh" "$@"
 }
 
 # Set standard environment variables

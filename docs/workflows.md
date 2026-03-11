@@ -37,7 +37,7 @@ graph TD
 graph TD
     A[Tag Push: v*.*.* ] --> B[release-orchestrator.yml]
     B --> C[Parse artifacts.yml]
-    C --> D[release-prerequisites.yml]
+    C --> D[validate-release-prerequisites.yml]
     D --> E[version-bump.yml - Matrix]
 
     E --> F[build-maven.yml - Matrix]
@@ -52,7 +52,7 @@ graph TD
 
     I --> K[publish-container.yml - Matrix]
 
-    K --> L[release-github.yml]
+    K --> L[release-create-github.yml]
     J --> L
 
     L --> M[Release Summary]

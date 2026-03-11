@@ -18,7 +18,7 @@ scripts/
 ├── release/
 │   ├── create-sbom-zip.sh                  # Package all SBOM layers into ZIP archive
 │   └── generate-checksums.sh               # Generate SHA256 checksums for all artifacts
-├── validation/
+├── validate/
 │   ├── generate-prerequisites-summary.sh   # Generate release validation report
 │   ├── validate-tag-format.sh              # Verify semantic version format
 │   ├── validate-tag-signature.sh           # Check GPG/SSH tag signature
@@ -299,7 +299,7 @@ bash generate-prerequisites-summary.sh
     REF_TYPE: tag
     PROJECT_TYPE: maven
     SIGN_ARTIFACTS: "true"
-  run: bash .reusable-ci/scripts/validation/generate-prerequisites-summary.sh
+  run: bash .reusable-ci/scripts/validate/generate-prerequisites-summary.sh
 ```
 
 ---
@@ -384,15 +384,15 @@ For advanced users building custom workflows (most projects use the orchestrator
   with:
     repository: diggsweden/reusable-ci
     path: .reusable-ci
-    sparse-checkout: scripts/validation
+    sparse-checkout: scripts/validate
 
-- run: bash .reusable-ci/scripts/validation/validate-tag-format.sh "${{ github.ref_name }}"
+- run: bash .reusable-ci/scripts/validate/validate-tag-format.sh "${{ github.ref_name }}"
 
 - env:
     OSPO_BOT_GPG_PUB: ${{ secrets.OSPO_BOT_GPG_PUB }}
-  run: bash .reusable-ci/scripts/validation/validate-tag-signature.sh "${{ github.ref_name }}" "${{ github.repository }}" "$OSPO_BOT_GPG_PUB"
+  run: bash .reusable-ci/scripts/validate/validate-tag-signature.sh "${{ github.ref_name }}" "${{ github.repository }}" "$OSPO_BOT_GPG_PUB"
 
-- run: bash .reusable-ci/scripts/validation/validate-tag-commit.sh "${{ github.ref_name }}" "main"
+- run: bash .reusable-ci/scripts/validate/validate-tag-commit.sh "${{ github.ref_name }}" "main"
 ```
 
 ---

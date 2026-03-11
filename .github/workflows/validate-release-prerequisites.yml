@@ -152,18 +152,18 @@ jobs:
           git fetch --tags --force
       - name: Validate Tag Format
         if: ${{ github.ref_type == 'tag' }}
-        run: bash .github-shared/scripts/validation/validate-tag-format.sh "${{ github.ref_name }}"
+        run: bash .github-shared/scripts/validate/validate-tag-format.sh "${{ github.ref_name }}"
       - name: Validate Tag Signature
         if: ${{ github.ref_type == 'tag' }}
         env:
           OSPO_BOT_GPG_PUB: ${{ secrets.OSPO_BOT_GPG_PUB }}
-        run: bash .github-shared/scripts/validation/validate-tag-signature.sh "${{ github.ref_name }}" "${{ github.repository }}" "$OSPO_BOT_GPG_PUB"
+        run: bash .github-shared/scripts/validate/validate-tag-signature.sh "${{ github.ref_name }}" "${{ github.repository }}" "$OSPO_BOT_GPG_PUB"
       - name: Validate Tag Uniqueness
         if: ${{ github.ref_type == 'tag' }}
-        run: bash .github-shared/scripts/validation/validate-tag-uniqueness.sh "${{ github.ref_name }}"
+        run: bash .github-shared/scripts/validate/validate-tag-uniqueness.sh "${{ github.ref_name }}"
       - name: Validate Tag Commit Availability
         if: ${{ github.ref_type == 'tag' }}
-        run: bash .github-shared/scripts/validation/validate-tag-commit.sh "${{ github.ref_name }}" "${{ inputs.branch }}"
+        run: bash .github-shared/scripts/validate/validate-tag-commit.sh "${{ github.ref_name }}" "${{ inputs.branch }}"
       # ============================================================================
       # SECTION 2: Authorization Validation
       # Checks if user is authorized for non-SNAPSHOT releases
@@ -171,7 +171,7 @@ jobs:
       - name: Check Release Authorization
         if: ${{ inputs['check-authorization'] }}
         run: |
-          bash .github-shared/scripts/validation/validate-authorization.sh \
+          bash .github-shared/scripts/validate/validate-authorization.sh \
             "${{ github.ref_name }}" \
             "${{ github.actor }}" \
             "${{ secrets.AUTHORIZED_RELEASE_DEVELOPERS }}"
@@ -202,28 +202,30 @@ jobs:
             printf "Create a PAT with 'contents:write' permission and add as RELEASE_BOT_TOKEN secret\n"
             exit 1
           fi
-          bash .github-shared/scripts/validation/validate-github-token.sh \
+          bash .github-shared/scripts/validate/validate-github-token.sh \
             "${{ secrets.RELEASE_BOT_TOKEN }}" \
             "${{ github.repository }}"
       - name: Validate Bot Token Permissions
         env:
           GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
         run: |
-          bash .github-shared/scripts/validation/validate-bot-permissions.sh "${{ github.repository }}"
+          bash .github-shared/scripts/validate/validate-bot-permissions.sh "${{ github.repository }}"
       - name: Validate Maven Central Credentials
         if: ${{ inputs['build-type'] == 'library' }}
         run: |
-          if [ -z "${{ secrets.MAVENCENTRAL_USERNAME }}" ]; then
-            printf "::error::Missing MAVENCENTRAL_USERNAME secret\n"
-            printf "Required for publishing to Maven Central\n"
-            exit 1
-          fi
+          require_secret() {
+            local secret_name="$1"
+            local secret_value="$2"
 
-          if [ -z "${{ secrets.MAVENCENTRAL_PASSWORD }}" ]; then
-            printf "::error::Missing MAVENCENTRAL_PASSWORD secret\n"
-            printf "Required for publishing to Maven Central\n"
-            exit 1
-          fi
+            if [ -z "$secret_value" ]; then
+              printf "::error::Missing %s secret\n" "$secret_name"
+              printf "Required for publishing to Maven Central\n"
+              exit 1
+            fi
+          }
+
+          require_secret "MAVENCENTRAL_USERNAME" "${{ secrets.MAVENCENTRAL_USERNAME }}"
+          require_secret "MAVENCENTRAL_PASSWORD" "${{ secrets.MAVENCENTRAL_PASSWORD }}"
 
           printf "✓ Maven Central credentials configured\n"
       # NOTE: NPM publishing to npmjs.org not yet implemented in v2
@@ -254,4 +256,4 @@ jobs:
           MAVENCENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          bash .github-shared/scripts/validation/generate-prerequisites-summary.sh
+          bash .github-shared/scripts/validate/generate-prerequisites-summary.sh

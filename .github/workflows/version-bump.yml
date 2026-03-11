@@ -106,12 +106,12 @@ jobs:
     uses: ./.github/workflows/generate-changelog.yml
     with:
       branch: ${{ inputs.branch }}
+      upload-as-artifact: true
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
       changelog-config: ".github-templates/templates/gitcliff/keepachangelog.toml"
       git-cliff-args: "" # Empty means full history
       output-file: "CHANGELOG.md"
-      upload-as-artifact: true
       artifact-name: "full-changelog"
-      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   # Generate minimal changelog for commit message
   generate-minimal-changelog:
     name: Generate Minimal Changelog
@@ -120,12 +120,12 @@ jobs:
     uses: ./.github/workflows/generate-changelog.yml
     with:
       branch: ${{ inputs.branch }}
+      upload-as-artifact: true
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
       changelog-config: ".github-templates/templates/gitcliff/minimal.toml"
       git-cliff-args: "--latest --strip header"
       output-file: "minimal-changelog.txt"
-      upload-as-artifact: true
       artifact-name: "minimal-changelog"
-      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   bump-version:
     name: Bump Version and Commit
     needs: [generate-full-changelog, generate-minimal-changelog]
@@ -168,14 +168,14 @@ jobs:
           echo "Project type: ${PROJECT_TYPE}"
           echo "type=${PROJECT_TYPE}" >> "$GITHUB_OUTPUT"
       - name: Set up JDK for Maven
-        if: ${{ steps.project-type.outputs.type == 'maven' }}
+        if: &if_maven_project ${{ steps.project-type.outputs.type == 'maven' }}
         uses: actions/setup-java@f2beeb24e141e01a676f977032f5a29d81c9e27e # v5.1.0
         with:
           java-version: ${{ inputs['java-version'] }}
           distribution: 'temurin'
           # No cache here - we'll cache after version update
       - name: Update Maven version
-        if: ${{ steps.project-type.outputs.type == 'maven' }}
+        if: *if_maven_project
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -186,7 +186,7 @@ jobs:
             "${GITHUB_REF_NAME#v}" \
             "${{ inputs['working-directory'] }}"
       - name: Setup Java again with cache after version update
-        if: ${{ steps.project-type.outputs.type == 'maven' }}
+        if: *if_maven_project
         uses: actions/setup-java@f2beeb24e141e01a676f977032f5a29d81c9e27e # v5.1.0
         with:
           java-version: ${{ inputs['java-version'] }}
@@ -194,7 +194,7 @@ jobs:
           cache: maven
           cache-dependency-path: ${{ inputs['working-directory'] }}/pom.xml
       - name: Pre-download dependencies with new version
-        if: ${{ steps.project-type.outputs.type == 'maven' }}
+        if: *if_maven_project
         working-directory: ${{ inputs['working-directory'] }}
         env:
           GITHUB_ACTOR: ${{ github.actor }}
@@ -207,13 +207,13 @@ jobs:
           # shellcheck disable=SC2086
           mvn $MAVEN_CLI_OPTS dependency:resolve-plugins || true
       - name: Set up Node.js for NPM
-        if: ${{ steps.project-type.outputs.type == 'npm' }}
+        if: &if_npm_project ${{ steps.project-type.outputs.type == 'npm' }}
         uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
         with:
           node-version: ${{ inputs['node-version'] }}
           # No cache here - we'll cache after version update
       - name: Update NPM version
-        if: ${{ steps.project-type.outputs.type == 'npm' }}
+        if: *if_npm_project
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           bash .github-shared/scripts/version/bump-version.sh \
@@ -224,20 +224,20 @@ jobs:
           echo "Pre-installing dependencies..."
           npm ci --ignore-scripts || npm install --ignore-scripts || true
       - name: Save NPM cache
-        if: ${{ steps.project-type.outputs.type == 'npm' }}
+        if: *if_npm_project
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.npm
           key: npm-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', inputs['working-directory'])) }}
       - name: Set up JDK for Gradle
-        if: ${{ steps.project-type.outputs.type == 'gradle' || steps.project-type.outputs.type == 'gradle-android' }}
+        if: &if_gradle_project ${{ steps.project-type.outputs.type == 'gradle' || steps.project-type.outputs.type == 'gradle-android' }}
         uses: actions/setup-java@f2beeb24e141e01a676f977032f5a29d81c9e27e # v5.1.0
         with:
           java-version: ${{ inputs['java-version'] }}
           distribution: 'temurin'
           cache: 'gradle'
       - name: Update Gradle version
-        if: ${{ steps.project-type.outputs.type == 'gradle' || steps.project-type.outputs.type == 'gradle-android' }}
+        if: *if_gradle_project
         run: |
           echo "::group::Update Gradle version"
           bash .github-shared/scripts/version/bump-version.sh \

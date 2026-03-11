@@ -136,7 +136,7 @@ jobs:
           ref: ${{ inputs['checkout-ref'] }}
           fetch-tags: true
       - name: Import GPG key
-        if: ${{ inputs['sign-artifacts'] }}
+        if: &if_sign_artifacts ${{ inputs['sign-artifacts'] }}
         id: import-gpg
         uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
         with:
@@ -162,8 +162,8 @@ jobs:
       # Download container SBOM if it exists (from container build job)
       - name: Download container SBOM artifacts
         if: ${{ inputs['has-containers'] }}
-        continue-on-error: true
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        continue-on-error: true
         with:
           name: container-sbom-${{ github.run_id }}
           path: ./sbom-artifacts/
@@ -181,34 +181,28 @@ jobs:
             "${{ inputs['project-type'] }}" >> "$GITHUB_OUTPUT"
       # Download build artifacts based on project type
       - name: Download build artifacts
-        continue-on-error: true
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        continue-on-error: true
         with:
           name: ${{ steps.artifact-name.outputs.name }}
           path: ./release-artifacts/
-      - name: Generate 3-Layer SBOMs
-        if: ${{ inputs['generate-sbom'] }}
+      - name: Resolve release metadata
+        id: release-metadata
         run: |
-          # Extract version and project name from GitHub context
-          VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"  # Remove 'v' prefix
-
-          # Use provided artifact-name input, or fall back to repository name
-          if [ -n "${{ inputs['artifact-name'] }}" ]; then
-            PROJECT_NAME="${{ inputs['artifact-name'] }}"
-            printf "Using artifact name: %s\n" "$PROJECT_NAME"
-          else
-            PROJECT_NAME=$(basename ${{ github.repository }})
-            printf "Using repository name: %s\n" "$PROJECT_NAME"
-          fi
-
+          bash .github-shared/scripts/release/resolve-release-metadata.sh \
+            "${{ github.ref_name }}" \
+            "${{ inputs['artifact-name'] }}" \
+            "${{ github.repository }}"
+      - name: Generate 3-Layer SBOMs
+        if: &if_generate_sbom ${{ inputs['generate-sbom'] }}
+        run: |
           # Use SBOM generation script for source and artifact layers
           # Use generic layer names (source, artifact) that work for all project types
           bash .github-shared/scripts/sbom/generate-sbom.sh \
             ${{ inputs['project-type'] }} \
             "source,artifact" \
-            "$VERSION" \
-            "$PROJECT_NAME"
+            "${{ steps.release-metadata.outputs.version-no-v }}" \
+            "${{ steps.release-metadata.outputs.project-name }}"
 
           printf "Layer 3: Container SBOMs will be downloaded from container build job\n"
       - name: Generate checksums
@@ -219,7 +213,7 @@ jobs:
             "${{ inputs['attach-artifacts'] }}" \
             "./sbom-artifacts"
       - name: Sign artifacts
-        if: ${{ inputs['sign-artifacts'] }}
+        if: *if_sign_artifacts
         run: |
           # Sign the checksums file
           if [ -s checksums.sha256 ]; then
@@ -237,19 +231,14 @@ jobs:
             done < <(find ./release-artifacts -type f \( -name "*.jar" -o -name "*.tgz" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*.war" \) ! -name "original-*.jar" -print0)
           fi
       - name: Create SBOM ZIP
-        if: ${{ inputs['generate-sbom'] }}
+        if: *if_generate_sbom
         run: |
-          # Use provided artifact-name input, or fall back to repository name
-          if [ -n "${{ inputs['artifact-name'] }}" ]; then
-            PROJECT_NAME="${{ inputs['artifact-name'] }}"
-          else
-            PROJECT_NAME=$(basename ${{ github.repository }})
-          fi
-          VERSION="${{ github.ref_name }}"
+          PROJECT_NAME="${{ steps.release-metadata.outputs.project-name }}"
+          VERSION="${{ steps.release-metadata.outputs.version }}"
           bash .github-shared/scripts/release/create-sbom-zip.sh "$PROJECT_NAME" "$VERSION"
 
           # Sign the SBOM zip if it was created
-          if [ -f "${PROJECT_NAME}-${VERSION#v}-sboms.zip" ] && [ "${{ inputs['sign-artifacts'] }}" = "true" ]; then
+          if [ -f "${PROJECT_NAME}-${{ steps.release-metadata.outputs.version-no-v }}-sboms.zip" ] && [ "${{ inputs['sign-artifacts'] }}" = "true" ]; then
             gpg --armor --detach-sign --default-key ${{ steps.import-gpg.outputs.keyid }} "${PROJECT_NAME}-${VERSION#v}-sboms.zip"
           fi
       - name: Prepare release notes

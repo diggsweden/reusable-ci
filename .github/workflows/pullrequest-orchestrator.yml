@@ -164,6 +164,8 @@ jobs:
           sparse-checkout: scripts
       - name: Check lint results
         run: |
+          SWIFT_LINT_ENABLED="${{ inputs['linters.swiftformat'] || inputs['linters.swiftlint'] }}"
+
           bash .github-shared/scripts/lint/generate-status-report.sh \
             "Commit Lint|${{ inputs['linters.commitlint'] }}|${{ needs.commit-lint.result }}|true" \
             "License Lint|${{ inputs['linters.licenselint'] }}|${{ needs.license-lint.result }}|true" \
@@ -171,4 +173,4 @@ jobs:
             "MegaLinter|${{ inputs['linters.megalint'] }}|${{ needs.megalint.result }}|true" \
             "Publiccode Lint|${{ inputs['linters.publiccodelint'] }}|${{ needs.publiccode-lint.result }}|true" \
             "Devbase Check|${{ inputs['linters.devbasecheck'] }}|${{ needs.devbase-check-lint.result }}|false" \
-            "Swift Lint|${{ inputs['linters.swiftformat'] == 'true' || inputs['linters.swiftlint'] == 'true' }}|${{ needs.swift-lint.result }}|false"
+            "Swift Lint|$SWIFT_LINT_ENABLED|${{ needs.swift-lint.result }}|false"

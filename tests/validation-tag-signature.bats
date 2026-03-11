@@ -29,7 +29,7 @@ teardown() {
 # =============================================================================
 
 run_validate_tag_signature() {
-  run_script "validation/validate-tag-signature.sh" "$@"
+  run_script "validate/validate-tag-signature.sh" "$@"
 }
 
 # =============================================================================

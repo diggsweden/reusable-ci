@@ -207,7 +207,7 @@ jobs:
     name: Validate Prerequisites
     needs: [parse-config]
     secrets: inherit
-    uses: ./.github/workflows/release-prerequisites.yml
+    uses: ./.github/workflows/validate-release-prerequisites.yml
     with:
       project-type: ${{ needs.parse-config.outputs.first-project-type }}
       build-type: ${{ needs.parse-config.outputs.first-build-type }}
@@ -216,8 +216,6 @@ jobs:
       check-authorization: ${{ needs.parse-config.outputs.first-require-authorization == 'true' || inputs['release.checkauthorization'] }}
       branch: ${{ inputs.branch }}
       reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
-  # Step 1: Version Bump (iterates over all artifacts)
-  # File patterns auto-detected in version-bump.yml by scripts/config/get-file-pattern.sh based on project-type
   version-and-changelog:
     needs: [parse-config, validate-prerequisites]
     name: Version Bump - ${{ matrix.artifact.name }}
@@ -233,19 +231,19 @@ jobs:
     uses: ./.github/workflows/version-bump.yml
     with:
       branch: ${{ inputs.branch }}
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
       project-type: ${{ matrix.artifact['project-type'] }}
       file-pattern: ${{ inputs['file-pattern'] }}
       java-version: ${{ matrix.artifact.config['java-version'] }}
       node-version: ${{ matrix.artifact.config['node-version'] }}
       gradle-version-file: ${{ matrix.artifact.config['gradle-version-file'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
-      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   # ===== BUILD PHASE =====
   # NOTE: Build jobs use `if: !failure() && !cancelled() && ...` to run independently.
   # This ensures maven/npm/gradle builds proceed even when other build types are skipped.
   build-maven:
     name: Build Maven - ${{ matrix.artifact.name }}
-    needs: [parse-config, version-and-changelog]
+    needs: &build_phase_needs [parse-config, version-and-changelog]
     if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-maven == 'true' }}
     strategy:
       matrix:
@@ -264,7 +262,7 @@ jobs:
   # Step 2b: Build NPM artifacts
   build-npm:
     name: Build NPM - ${{ matrix.artifact.name }}
-    needs: [parse-config, version-and-changelog]
+    needs: *build_phase_needs
     if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-npm == 'true' }}
     strategy:
       matrix:
@@ -281,7 +279,7 @@ jobs:
   # Step 2c: Build Gradle artifacts
   build-gradle:
     name: Build Gradle - ${{ matrix.artifact.name }}
-    needs: [parse-config, version-and-changelog]
+    needs: *build_phase_needs
     if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-gradle == 'true' }}
     strategy:
       matrix:
@@ -291,7 +289,7 @@ jobs:
       contents: read
     secrets: inherit
     uses: ./.github/workflows/build-gradle-app.yml
-    with:
+    with: &shared_gradle_build_inputs
       java-version: ${{ matrix.artifact.config['java-version'] }}
       gradle-tasks: ${{ matrix.artifact.config['gradle-tasks'] }}
       build-module: ${{ matrix.artifact.config['build-module'] }}
@@ -302,7 +300,7 @@ jobs:
   # Step 2d: Build Gradle Android artifacts
   build-gradle-android:
     name: Build Gradle Android - ${{ matrix.artifact.name }}
-    needs: [parse-config, version-and-changelog]
+    needs: *build_phase_needs
     if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-gradleandroid == 'true' }}
     strategy:
       matrix:
@@ -312,18 +310,11 @@ jobs:
       contents: read
     secrets: inherit
     uses: ./.github/workflows/build-gradle-app.yml
-    with:
-      java-version: ${{ matrix.artifact.config['java-version'] }}
-      gradle-tasks: ${{ matrix.artifact.config['gradle-tasks'] }}
-      build-module: ${{ matrix.artifact.config['build-module'] }}
-      enable-signing: ${{ matrix.artifact.config['enable-android-signing'] }}
-      working-directory: ${{ matrix.artifact['working-directory'] }}
-      branch: ${{ inputs.branch }}
-      artifact-name: ${{ matrix.artifact.name }}
+    with: *shared_gradle_build_inputs
   # Step 2e: Build Xcode iOS/macOS artifacts
   build-xcode:
     name: Build Xcode - ${{ matrix.artifact.name }}
-    needs: [parse-config, version-and-changelog]
+    needs: *build_phase_needs
     if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-xcodeios == 'true' }}
     strategy:
       matrix:
@@ -361,7 +352,7 @@ jobs:
   # Step 3a: Publish to GitHub Packages
   publish-maven-github:
     name: Publish GitHub - ${{ matrix.artifact.name }}
-    needs: [parse-config, await-builds]
+    needs: &post_build_needs [parse-config, await-builds]
     if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.has-githubpackages == 'true' }}
     strategy:
       matrix:
@@ -448,7 +439,7 @@ jobs:
   # Step 4: Build and Publish Container Images
   build-containers:
     name: Build Container - ${{ matrix.container.name }}
-    needs: [parse-config, await-builds]
+    needs: *post_build_needs
     if: ${{ !failure() && !cancelled() && needs.parse-config.outputs.containers != '[]' }}
     strategy:
       matrix:
@@ -486,7 +477,7 @@ jobs:
       packages: read
       id-token: write
     secrets: inherit
-    uses: ./.github/workflows/release-github.yml
+    uses: ./.github/workflows/release-create-github.yml
     with:
       release-name: "${{ github.ref_name }}"
       checkout-ref: ${{ inputs.branch }}
@@ -498,7 +489,12 @@ jobs:
       artifact-name: ${{ needs.parse-config.outputs.first-artifact-name }}
       reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
       changelog-config: ${{ inputs['changelog.config'] }}
-      make-latest: ${{ (inputs['release-type'] == 'stable' || (!inputs['release-type'] && !contains(github.ref_name, '-'))) && 'true' || 'false' }}
+      make-latest: >-
+        ${{ case(
+          inputs['release-type'] == 'stable', 'true',
+          !inputs['release-type'] && !contains(github.ref_name, '-'), 'true',
+          'false'
+        ) }}
       has-containers: ${{ needs.parse-config.outputs.containers != '[]' }}
   # Final summary
   release-summary:
@@ -510,138 +506,26 @@ jobs:
       contents: read
       packages: read
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 1
       - name: Generate Release Summary
-        run: |
-          RELEASE_TIME=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
-
-          {
-            printf "# Release Summary\n\n"
-            printf "## Release Overview\n"
-            printf "| Property | Value |\n"
-            printf "|----------|-------|\n"
-            printf "| **Version** | \`${{ github.ref_name }}\` |\n"
-            printf "| **Branch** | \`${{ inputs.branch }}\` |\n"
-            printf "| **Commit** | \`${{ github.sha }}\` |\n"
-            printf "| **Released By** | @${{ github.actor }} |\n"
-            printf "| **Released At** | %s |\n\n" "$RELEASE_TIME"
-            printf "## Job Status\n"
-            printf "| Job | Status |\n"
-            printf "|-----|--------|\n"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          # Version Bump
-          if [ "${{ needs.version-and-changelog.result }}" = "success" ]; then
-            printf "| Version Bump | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
-          elif [ "${{ needs.version-and-changelog.result }}" = "skipped" ]; then
-            printf "| Version Bump | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
-          else
-            printf "| Version Bump | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          # Build Maven
-          if [ "${{ needs.build-maven.result }}" = "success" ]; then
-            printf "| Build Maven | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
-          elif [ "${{ needs.build-maven.result }}" = "skipped" ]; then
-            printf "| Build Maven | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
-          else
-            printf "| Build Maven | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          # Build NPM
-          if [ "${{ needs.build-npm.result }}" = "success" ]; then
-            printf "| Build NPM | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
-          elif [ "${{ needs.build-npm.result }}" = "skipped" ]; then
-            printf "| Build NPM | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
-          else
-            printf "| Build NPM | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          # Build Gradle
-          if [ "${{ needs.build-gradle.result }}" = "success" ]; then
-            printf "| Build Gradle | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
-          elif [ "${{ needs.build-gradle.result }}" = "skipped" ]; then
-            printf "| Build Gradle | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
-          else
-            printf "| Build Gradle | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          # Build Gradle Android
-          if [ "${{ needs.build-gradle-android.result }}" = "success" ]; then
-            printf "| Build Gradle Android | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
-          elif [ "${{ needs.build-gradle-android.result }}" = "skipped" ]; then
-            printf "| Build Gradle Android | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
-          else
-            printf "| Build Gradle Android | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          # Build Xcode
-          if [ "${{ needs.build-xcode.result }}" = "success" ]; then
-            printf "| Build Xcode | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
-          elif [ "${{ needs.build-xcode.result }}" = "skipped" ]; then
-            printf "| Build Xcode | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
-          else
-            printf "| Build Xcode | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          # Publish GitHub
-          if [ "${{ needs.publish-maven-github.result }}" = "success" ]; then
-            printf "| Publish GitHub | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
-          elif [ "${{ needs.publish-maven-github.result }}" = "skipped" ]; then
-            printf "| Publish GitHub | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
-          else
-            printf "| Publish GitHub | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          # Publish Maven Central
-          if [ "${{ needs.publish-maven-central.result }}" = "success" ]; then
-            printf "| Publish Maven Central | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
-          elif [ "${{ needs.publish-maven-central.result }}" = "skipped" ]; then
-            printf "| Publish Maven Central | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
-          else
-            printf "| Publish Maven Central | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          # Publish Apple App Store
-          if [ "${{ needs.publish-apple-appstore.result }}" = "success" ]; then
-            printf "| Publish Apple App Store | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
-          elif [ "${{ needs.publish-apple-appstore.result }}" = "skipped" ]; then
-            printf "| Publish Apple App Store | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
-          else
-            printf "| Publish Apple App Store | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          # Publish Google Play
-          if [ "${{ needs.publish-google-play.result }}" = "success" ]; then
-            printf "| Publish Google Play | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
-          elif [ "${{ needs.publish-google-play.result }}" = "skipped" ]; then
-            printf "| Publish Google Play | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
-          else
-            printf "| Publish Google Play | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          # Containers
-          if [ "${{ needs.build-containers.result }}" = "success" ]; then
-            printf "| Containers | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
-          elif [ "${{ needs.build-containers.result }}" = "skipped" ]; then
-            printf "| Containers | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
-          else
-            printf "| Containers | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          # GitHub Release
-          if [ "${{ needs.create-release.result }}" = "success" ]; then
-            printf "| GitHub Release | %s |\n" "✓" >> "$GITHUB_STEP_SUMMARY"
-          elif [ "${{ needs.create-release.result }}" = "skipped" ]; then
-            printf "| GitHub Release | %s |\n" "−" >> "$GITHUB_STEP_SUMMARY"
-          else
-            printf "| GitHub Release | %s |\n" "✗" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          cat >> "$GITHUB_STEP_SUMMARY" << 'EOF'
-
-          ## Resources
-          - [GitHub Release](https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }})
-          - [Packages](https://github.com/${{ github.repository }}/packages)
-          - [Workflow Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-
-          EOF
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_BRANCH: ${{ inputs.branch }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_ACTOR: ${{ github.actor }}
+          VERSION_AND_CHANGELOG_RESULT: ${{ needs.version-and-changelog.result }}
+          BUILD_MAVEN_RESULT: ${{ needs.build-maven.result }}
+          BUILD_NPM_RESULT: ${{ needs.build-npm.result }}
+          BUILD_GRADLE_RESULT: ${{ needs.build-gradle.result }}
+          BUILD_GRADLE_ANDROID_RESULT: ${{ needs.build-gradle-android.result }}
+          BUILD_XCODE_RESULT: ${{ needs.build-xcode.result }}
+          PUBLISH_MAVEN_GITHUB_RESULT: ${{ needs.publish-maven-github.result }}
+          PUBLISH_MAVEN_CENTRAL_RESULT: ${{ needs.publish-maven-central.result }}
+          PUBLISH_APPLE_APPSTORE_RESULT: ${{ needs.publish-apple-appstore.result }}
+          PUBLISH_GOOGLE_PLAY_RESULT: ${{ needs.publish-google-play.result }}
+          BUILD_CONTAINERS_RESULT: ${{ needs.build-containers.result }}
+          CREATE_RELEASE_RESULT: ${{ needs.create-release.result }}
+        run: bash scripts/summary/write-release-summary.sh
