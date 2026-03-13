@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.2] - 2026-03-11
+
+### Added
+
+- Add BUILD_NUMBER for xcode-ios build
+- Add missing versions lint
+- Add support for xcodegen in build-xcode-ios
+
+### Changed
+
+- Read XCCONFIG_BASE64 in xcode-ios build
+- Read SECRETS_PROPERTIES_BASE64 from secrets
+- Replace conform with gommitlint
+
+### Fixed
+
+- Failing test
+- Wire xcodegen config through release orchestration
+
 ## [2.6.1] - 2026-03-04
 
 ### Changed
@@ -16,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bump trivy and other deps
 - Exit if uploading IPA to App Store fails
+
 
 ## [2.6.0] - 2025-12-18
 
@@ -296,6 +316,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial commit
 
+[2.6.2]: https://github.com/diggsweden/reusable-ci/compare/v2.6.1..v2.6.2
 [2.6.1]: https://github.com/diggsweden/reusable-ci/compare/v2.6.0..v2.6.1
 [2.6.0]: https://github.com/diggsweden/reusable-ci/compare/v2.5.0..v2.6.0
 [2.5.0]: https://github.com/diggsweden/reusable-ci/compare/v2.4.3..v2.5.0
