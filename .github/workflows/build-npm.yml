@@ -116,18 +116,20 @@ jobs:
           if-no-files-found: error
       - name: Generate build summary
         run: |
-          {
-            printf "## NPM Build Summary 🔨\n"
-            printf "\n"
-            printf "%s **Package:** \`%s@%s\`\n" "-" "${{ steps.version-info.outputs.NAME }}" "${{ steps.version-info.outputs.VERSION }}"
-            printf "%s **Node.js:** %s\n" "-" "${{ inputs['node-version'] }}"
-
+          print_test_status() {
             if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
               printf "%s **Tests:** %s\n" "-" "⊘ Skipped"
             else
               printf "%s **Tests:** %s\n" "-" "✓ Executed"
             fi
+          }
 
+          {
+            printf "## NPM Build Summary 🔨\n"
+            printf "\n"
+            printf "%s **Package:** \`%s@%s\`\n" "-" "${{ steps.version-info.outputs.NAME }}" "${{ steps.version-info.outputs.VERSION }}"
+            printf "%s **Node.js:** %s\n" "-" "${{ inputs['node-version'] }}"
+            print_test_status
             printf "\n"
             printf "*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           } >> "$GITHUB_STEP_SUMMARY"

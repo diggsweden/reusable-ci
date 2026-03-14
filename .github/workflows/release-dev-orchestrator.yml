@@ -127,10 +127,10 @@ jobs:
       contents: read
     uses: ./.github/workflows/build-maven.yml
     with:
-      build-type: app
-      java-version: ${{ inputs['java-version'] }}
       working-directory: ${{ inputs['working-directory'] }}
       branch: ${{ github.ref_name }}
+      build-type: app
+      java-version: ${{ inputs['java-version'] }}
       profile: ""
   build-npm-dev:
     name: Build NPM Dev
@@ -139,9 +139,9 @@ jobs:
       contents: read
     uses: ./.github/workflows/build-npm.yml
     with:
-      node-version: ${{ inputs['node-version'] }}
       working-directory: ${{ inputs['working-directory'] }}
       branch: ${{ github.ref_name }}
+      node-version: ${{ inputs['node-version'] }}
   build-gradle-dev:
     name: Build Gradle Dev
     if: ${{ inputs['project-type'] == 'gradle' }}
@@ -149,25 +149,26 @@ jobs:
       contents: read
     uses: ./.github/workflows/build-gradle-app.yml
     with:
-      java-version: ${{ inputs['java-version'] }}
-      gradle-tasks: "build"
       working-directory: ${{ inputs['working-directory'] }}
       branch: ${{ github.ref_name }}
+      java-version: ${{ inputs['java-version'] }}
+      gradle-tasks: "build"
   build-dev-container:
     name: Build Container Dev
     needs: [build-maven-dev, build-npm-dev, build-gradle-dev]
-    if: "!failure() && !cancelled() &&\n(needs.build-maven-dev.result == 'success' || \n needs.build-npm-dev.result == 'success' || \n needs.build-gradle-dev.result == 'success')\n"
+    if: >-
+      ${{ !failure() && !cancelled() && (needs.build-maven-dev.result == 'success' || needs.build-npm-dev.result == 'success' || needs.build-gradle-dev.result == 'success') }}
     permissions:
       contents: read
       packages: write
     secrets: inherit
     uses: ./.github/workflows/publish-container-dev.yml
     with:
+      working-directory: ${{ inputs['working-directory'] }}
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
       container-file: ${{ inputs['container-file'] }}
       registry: ${{ inputs.registry }}
       artifact-types: ${{ inputs['project-type'] }}
-      working-directory: ${{ inputs['working-directory'] }}
-      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
   publish-npm-dev:
     name: Publish Dev NPM Package
     needs: [build-npm-dev]
@@ -177,13 +178,13 @@ jobs:
       packages: write
     uses: ./.github/workflows/publish-npm-dev.yml
     with:
-      node-version: ${{ inputs['node-version'] }}
       working-directory: ${{ inputs['working-directory'] }}
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
+      node-version: ${{ inputs['node-version'] }}
       registry: ${{ inputs['npm-registry'] }}
       package-scope: ${{ inputs['package-scope'] }}
       registry-username: ${{ inputs['npm-registry-username'] }}
       use-github-token: ${{ inputs['use-github-token'] }}
-      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
     secrets:
       registry-password: ${{ secrets.registry-password }}
   dev-release-summary:

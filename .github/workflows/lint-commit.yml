@@ -45,18 +45,23 @@ jobs:
       - name: Determine base branch
         id: base
         run: |
+          set_base_branch() {
+            local branch="$1"
+            local message="$2"
+
+            printf "branch=%s\n" "$branch" >> "$GITHUB_OUTPUT"
+            printf "%s\n" "$message"
+          }
+
           # If explicitly provided, use it
           if [ -n "${{ inputs.base-branch }}" ]; then
-            printf "branch=%s\n" "${{ inputs.base-branch }}" >> "$GITHUB_OUTPUT"
-            printf "Using explicitly provided base: %s\n" "${{ inputs.base-branch }}"
+            set_base_branch "${{ inputs.base-branch }}" "Using explicitly provided base: ${{ inputs.base-branch }}"
           # For PRs, use the PR target branch
           elif [ "${{ github.event_name }}" = "pull_request" ] && [ -n "${{ github.base_ref }}" ]; then
-            printf "branch=%s\n" "${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
-            printf "Auto-detected PR base: %s\n" "${{ github.base_ref }}"
+            set_base_branch "${{ github.base_ref }}" "Auto-detected PR base: ${{ github.base_ref }}"
           # Fallback to main
           else
-            printf "branch=main\n" >> "$GITHUB_OUTPUT"
-            printf "Using default base: main\n"
+            set_base_branch "main" "Using default base: main"
           fi
       - name: Setup base branch
         run: git fetch origin ${{ steps.base.outputs.branch }}:${{ steps.base.outputs.branch }}

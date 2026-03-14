@@ -202,24 +202,24 @@ jobs:
           path: .github-shared
           sparse-checkout: scripts
       - name: Download Maven artifacts
-        if: ${{ contains(inputs['artifact-types'], 'maven') }}
+        if: &if_has_maven_artifacts ${{ contains(inputs['artifact-types'], 'maven') }}
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         continue-on-error: true
         with:
           name: maven-build-artifacts
           path: ./
       - name: Verify Maven artifacts
-        if: ${{ contains(inputs['artifact-types'], 'maven') }}
+        if: *if_has_maven_artifacts
         run: bash .github-shared/scripts/container/verify-artifacts.sh maven target
       - name: Download NPM artifacts
-        if: ${{ contains(inputs['artifact-types'], 'npm') }}
+        if: &if_has_npm_artifacts ${{ contains(inputs['artifact-types'], 'npm') }}
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         continue-on-error: true
         with:
           name: npm-build-artifacts
           path: ./
       - name: Extract NPM tarball
-        if: ${{ contains(inputs['artifact-types'], 'npm') }}
+        if: *if_has_npm_artifacts
         run: |
           TARBALL=$(find . -maxdepth 1 \( -name "*.tgz" -o -name "*.tar.gz" \) -type f -print -quit)
           if [ -n "$TARBALL" ]; then
@@ -228,17 +228,17 @@ jobs:
             rm "$TARBALL"
           fi
       - name: Verify NPM artifacts
-        if: ${{ contains(inputs['artifact-types'], 'npm') }}
+        if: *if_has_npm_artifacts
         run: bash .github-shared/scripts/container/verify-artifacts.sh npm dist "${{ inputs.context }}/${{ inputs['container-file'] }}"
       - name: Download Gradle artifacts
-        if: ${{ contains(inputs['artifact-types'], 'gradle') }}
+        if: &if_has_gradle_artifacts ${{ contains(inputs['artifact-types'], 'gradle') }}
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         continue-on-error: true
         with:
           name: gradle-build-artifacts
           path: build/libs/
       - name: Verify Gradle artifacts
-        if: ${{ contains(inputs['artifact-types'], 'gradle') }}
+        if: *if_has_gradle_artifacts
         run: bash .github-shared/scripts/container/verify-artifacts.sh gradle build/libs
       - name: Verify Containerfile
         id: containerfile
@@ -260,7 +260,7 @@ jobs:
         id: buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
       - name: Check registry authentication configuration
-        if: ${{ inputs['push-image'] }}
+        if: &if_push_image ${{ inputs['push-image'] }}
         run: |
           HAS_PASSWORD="false"
           if [ -n "${{ secrets['registry-password'] }}" ]; then
@@ -273,7 +273,7 @@ jobs:
             "ghcr.io" \
             "$HAS_PASSWORD"
       - name: Log in to Container Registry
-        if: ${{ inputs['push-image'] }}
+        if: *if_push_image
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
           registry: ${{ inputs.registry }}
@@ -288,7 +288,7 @@ jobs:
             "${{ github.repository }}" \
             "${{ github.repository_owner }}" >> "$GITHUB_OUTPUT"
       - name: Validate Image Namespace
-        if: ${{ inputs['push-image'] }}
+        if: *if_push_image
         run: |
           bash .github-shared/scripts/container/validate-namespace.sh \
             "${{ steps.image-name.outputs.name }}" \
@@ -341,13 +341,13 @@ jobs:
           printf "::notice::SLSA provenance attestation will be skipped\n"
           printf "::notice::To enable SLSA: Use registry: ghcr.io or set enable-slsa: false\n"
       - name: Export digest
-        if: ${{ inputs['push-image'] && inputs['enable-slsa'] && inputs.registry == 'ghcr.io' }}
+        if: &if_push_image_slsa_ghcr ${{ inputs['push-image'] && inputs['enable-slsa'] && inputs.registry == 'ghcr.io' }}
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
       - name: Upload digest
-        if: ${{ inputs['push-image'] && inputs['enable-slsa'] && inputs.registry == 'ghcr.io' }}
+        if: *if_push_image_slsa_ghcr
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: digests-${{ github.run_id }}-${{ github.run_attempt }}
@@ -355,7 +355,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - name: Scan Container Image
-        if: ${{ inputs['enable-scan'] && inputs['push-image'] }}
+        if: &if_scan_enabled ${{ inputs['enable-scan'] && inputs['push-image'] }}
         uses: aquasecurity/trivy-action@97e0b3872f55f89b95b2f65b3dbab56962816478 # v0.34.2
         with:
           image-ref: ${{ steps.image-name.outputs.name }}@${{ steps.build.outputs.digest }}
@@ -364,13 +364,13 @@ jobs:
           severity: 'CRITICAL,HIGH'
           vuln-type: 'os,library'
       - name: Upload Trivy scan results
-        if: ${{ inputs['enable-scan'] && inputs['push-image'] }}
+        if: *if_scan_enabled
         uses: github/codeql-action/upload-sarif@1b168cd39490f61582a9beae412bb7057a6b2c4e # v4.31.8
         with:
           sarif_file: 'trivy-results.sarif'
           category: 'container-scan'
       - name: Generate Container SBOMs (SPDX + CycloneDX)
-        if: ${{ inputs['enable-sbom'] && inputs['push-image'] }}
+        if: &if_sbom_enabled ${{ inputs['enable-sbom'] && inputs['push-image'] }}
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
@@ -384,7 +384,7 @@ jobs:
             "$IMAGE" \
             ".github-shared/scripts/sbom"
       - name: Upload Container SBOMs
-        if: ${{ inputs['enable-sbom'] && inputs['push-image'] }}
+        if: *if_sbom_enabled
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: container-sbom-${{ github.run_id }}
@@ -393,7 +393,7 @@ jobs:
             *-container-sbom.cyclonedx.json
           retention-days: 30
       - name: Find Container SBOM file
-        if: ${{ inputs['enable-sbom'] && inputs['push-image'] && inputs['enable-slsa'] }}
+        if: &if_sbom_and_slsa_enabled ${{ inputs['enable-sbom'] && inputs['push-image'] && inputs['enable-slsa'] }}
         id: find-sbom
         run: |
           SBOM_FILE=$(find . -maxdepth 1 -name "*-container-sbom.spdx.json" -type f -print -quit)
@@ -406,7 +406,7 @@ jobs:
           printf "sbom-file=%s\n" "$SBOM_FILE" >> "$GITHUB_OUTPUT"
           printf "Found SBOM file: %s\n" "$SBOM_FILE"
       - name: Attest Container SBOM
-        if: ${{ inputs['enable-sbom'] && inputs['push-image'] && inputs['enable-slsa'] }}
+        if: *if_sbom_and_slsa_enabled
         uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3.0.0
         with:
           subject-name: ${{ steps.image-name.outputs.name }}

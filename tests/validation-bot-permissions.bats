@@ -30,7 +30,7 @@ teardown() {
 
 # Run validate-bot-permissions with debug output
 run_validate_bot() {
-  run_script "validation/validate-bot-permissions.sh" "$@"
+  run_script "validate/validate-bot-permissions.sh" "$@"
 }
 
 # Create gh mock for successful authentication

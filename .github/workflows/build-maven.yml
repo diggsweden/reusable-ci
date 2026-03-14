@@ -160,19 +160,21 @@ jobs:
           if-no-files-found: warn
       - name: Generate build summary
         run: |
+          print_test_status() {
+            if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
+              printf "%s **Tests:** %s\n" "-" "⊘ Skipped"
+            else
+              printf "%s **Tests:** %s\n" "-" "✓ Executed"
+            fi
+          }
+
           {
             printf "## Maven Build Summary 🔨\n"
             printf "\n"
             printf "%s **Type:** %s\n" "-" "${{ inputs['build-type'] }}"
             printf "%s **Artifact:** \`%s:%s:%s\`\n" "-" "${{ steps.version-info.outputs.GROUP_ID }}" "${{ steps.version-info.outputs.ARTIFACT_ID }}" "${{ steps.version-info.outputs.VERSION }}"
             printf "%s **Java:** %s\n" "-" "${{ inputs['java-version'] }}"
-
-            if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
-              printf "%s **Tests:** %s\n" "-" "⊘ Skipped"
-            else
-              printf "%s **Tests:** %s\n" "-" "✓ Executed"
-            fi
-
+            print_test_status
             printf "%s **Snapshot:** %s\n" "-" "${{ steps.version-info.outputs.IS_SNAPSHOT }}"
             printf "\n"
             printf "*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"

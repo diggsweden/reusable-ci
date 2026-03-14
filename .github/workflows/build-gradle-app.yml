@@ -157,25 +157,30 @@ jobs:
           if-no-files-found: error
       - name: Generate build summary
         run: |
+          print_test_status() {
+            if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
+              printf "%s **Tests:** %s\n" "-" "⊘ Skipped"
+            else
+              printf "%s **Tests:** %s\n" "-" "✓ Executed"
+            fi
+          }
+
+          print_signing_status() {
+            if [ "${{ inputs['enable-signing'] }}" = "true" ]; then
+              printf "%s **Signing:** %s\n" "-" "✓ Enabled"
+            else
+              printf "%s **Signing:** %s\n" "-" "⊘ Disabled"
+            fi
+          }
+
           {
             printf "## Gradle Build Summary 🔨\n"
             printf "\n"
             printf "%s **Java:** %s\n" "-" "${{ inputs['java-version'] }}"
             printf "%s **Module:** %s\n" "-" "${{ inputs['build-module'] }}"
             printf "%s **Tasks:** %s\n" "-" "${{ inputs['gradle-tasks'] }}"
-
-            if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
-              printf "%s **Tests:** %s\n" "-" "⊘ Skipped"
-            else
-              printf "%s **Tests:** %s\n" "-" "✓ Executed"
-            fi
-
-            if [ "${{ inputs['enable-signing'] }}" = "true" ]; then
-              printf "%s **Signing:** %s\n" "-" "✓ Enabled"
-            else
-              printf "%s **Signing:** %s\n" "-" "⊘ Disabled"
-            fi
-
+            print_test_status
+            print_signing_status
             if [ -n "${{ steps.version-info.outputs.VERSION }}" ]; then
               printf "%s **Version:** %s (%s)\n" "-" "${{ steps.version-info.outputs.VERSION }}" "${{ steps.version-info.outputs.VERSION_CODE }}"
             fi

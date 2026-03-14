@@ -167,12 +167,17 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
+          run_gradle_tasks() {
+            if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
+              ./gradlew "$@" -x test
+            else
+              ./gradlew "$@"
+            fi
+          }
+
           printf "Running Gradle tasks: %s\n" "${{ steps.build-tasks.outputs.tasks }}"
-          if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
-            ./gradlew ${{ steps.build-tasks.outputs.tasks }} -x test
-          else
-            ./gradlew ${{ steps.build-tasks.outputs.tasks }}
-          fi
+          # shellcheck disable=SC2086
+          run_gradle_tasks ${{ steps.build-tasks.outputs.tasks }}
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         run: |

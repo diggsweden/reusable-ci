@@ -225,27 +225,29 @@ jobs:
           set -o pipefail
           mkdir -p build
 
-          BUILD_CMD="xcodebuild archive"
-
           if [ -n "${{ inputs.workspace }}" ]; then
-            BUILD_CMD="$BUILD_CMD -workspace ${{ inputs.workspace }}"
+            TARGET_ARG="-workspace ${{ inputs.workspace }}"
           elif [ -n "${{ inputs.project }}" ]; then
-            BUILD_CMD="$BUILD_CMD -project ${{ inputs.project }}"
+            TARGET_ARG="-project ${{ inputs.project }}"
+          else
+            TARGET_ARG=""
           fi
 
-          BUILD_CMD="$BUILD_CMD -scheme '${{ inputs.scheme }}'"
+          XC_CONFIG_ARG=""
+          if [ -n "${{ steps.setup-xcconfig.outputs.xcconfig-path }}" ]; then
+            XC_CONFIG_ARG="-xcconfig ${{ steps.setup-xcconfig.outputs.xcconfig-path }}"
+          fi
+
+          BUILD_NUMBER_ARG=""
+          if [ -n "${{ inputs['build-number'] }}" ]; then
+            BUILD_NUMBER_ARG="CURRENT_PROJECT_VERSION=${{ inputs['build-number'] }}"
+          fi
+
+          BUILD_CMD="xcodebuild archive $TARGET_ARG -scheme '${{ inputs.scheme }}'"
           BUILD_CMD="$BUILD_CMD -configuration ${{ inputs.configuration }}"
           BUILD_CMD="$BUILD_CMD -archivePath build/app.xcarchive"
           BUILD_CMD="$BUILD_CMD -destination '${{ inputs.destination }}'"
-          BUILD_CMD="$BUILD_CMD -skipPackagePluginValidation"
-
-          if [ -n "${{ steps.setup-xcconfig.outputs.xcconfig-path }}" ]; then
-            BUILD_CMD="$BUILD_CMD -xcconfig ${{ steps.setup-xcconfig.outputs.xcconfig-path }}"
-          fi
-
-          if [ -n "${{ inputs['build-number'] }}" ]; then
-            BUILD_CMD="$BUILD_CMD CURRENT_PROJECT_VERSION=${{ inputs['build-number'] }}"
-          fi
+          BUILD_CMD="$BUILD_CMD -skipPackagePluginValidation $XC_CONFIG_ARG $BUILD_NUMBER_ARG"
 
           printf "Running: %s\n" "$BUILD_CMD"
           eval "$BUILD_CMD" | xcbeautify

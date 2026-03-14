@@ -148,7 +148,11 @@ jobs:
       - name: Extract tarball contents
         working-directory: ${{ inputs.working-directory }}
         run: |
-          TARBALL=$(find . -maxdepth 1 \( -name "*.tgz" -o -name "*.tar.gz" \) -type f -print -quit)
+          find_tarball() {
+            find . -maxdepth 1 \( -name "*.tgz" -o -name "*.tar.gz" \) -type f -print -quit
+          }
+
+          TARBALL=$(find_tarball)
           if [ -n "$TARBALL" ]; then
             printf "Extracting %s...\n" "$TARBALL"
             tar -xzf "$TARBALL" --strip-components=1

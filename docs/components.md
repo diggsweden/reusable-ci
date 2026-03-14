@@ -165,20 +165,20 @@ with:
   config-file: ""          # Optional: Custom changelog config
 ```
 
-#### `release-github.yml`
+#### `release-create-github.yml`
 Creates GitHub releases with assets.
 ```yaml
-uses: ./.github/workflows/release-github.yml
+uses: ./.github/workflows/release-create-github.yml
 with:
   attach-artifacts: "target/*.jar"  # Files to upload as release assets
   generate-sbom: true               # Include CycloneDX/SPDX SBOM files
   sign-artifacts: true              # GPG sign all release artifacts
 ```
 
-#### `release-prerequisites.yml`
+#### `validate-release-prerequisites.yml`
 Validates release requirements (called automatically by orchestrator).
 ```yaml
-uses: ./.github/workflows/release-prerequisites.yml
+uses: ./.github/workflows/validate-release-prerequisites.yml
 with:
   project-type: maven
   build-type: application
