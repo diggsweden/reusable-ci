@@ -27,7 +27,7 @@
       ],
       "matchPackageNames": [
         "aqua:zricethezav/gitleaks",
-        "aqua:siderolabs/conform",
+        "forgejo:itiquette/gommitlint",
         "aqua:rhysd/actionlint"
       ],
       "addLabels": [
@@ -106,6 +106,17 @@
       "description": "Update env versions in workflow files",
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s*\\n\\s+\\w+:\\s*\"(?<currentValue>v?[0-9.]+)\""
+      ],
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/\\.github/workflows/.+\\.ya?ml$/"
+      ],
+      "description": "Update env versions with registryUrl (Codeberg/Gitea releases)",
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+) registryUrl=(?<registryUrl>\\S+)\\s*\\n\\s+\\w+:\\s*\"(?<currentValue>v?[0-9.]+)\""
       ],
       "versioningTemplate": "semver"
     }

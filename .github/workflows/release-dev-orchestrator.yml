@@ -107,88 +107,89 @@ on:
     outputs:
       container-image:
         description: "Published container image"
-        value: ${{ jobs.build-dev-container.outputs.image }}
+        value: ${{ fromJson(jobs.execute-dev-publish-stage.outputs['artifacts-json']).container_image }}
       container-digest:
         description: "Container image digest"
-        value: ${{ jobs.build-dev-container.outputs.digest }}
+        value: ${{ fromJson(jobs.execute-dev-publish-stage.outputs['artifacts-json']).container_digest }}
       npm-package-name:
         description: "Published NPM package name (if published)"
-        value: ${{ jobs.publish-npm-dev.outputs.package-name }}
+        value: ${{ fromJson(jobs.execute-dev-publish-stage.outputs['artifacts-json']).npm_package_name }}
       npm-package-version:
         description: "Published NPM package version (if published)"
-        value: ${{ jobs.publish-npm-dev.outputs.package-version }}
+        value: ${{ fromJson(jobs.execute-dev-publish-stage.outputs['artifacts-json']).npm_package_version }}
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
-  build-maven-dev:
-    name: Build Maven Dev
-    if: ${{ inputs['project-type'] == 'maven' }}
+  # ===== Stage 0: Dev Context =====
+  # Compose the small control-plane payloads that later dev stages consume.
+  compose-dev-interface:
+    name: Compose Dev Interface
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-    uses: ./.github/workflows/build-maven.yml
+    outputs:
+      dev-context-json: ${{ steps.interface.outputs.dev-context-json }}
+      dev-policy-json: ${{ steps.interface.outputs.dev-policy-json }}
+    steps:
+      - name: Checkout reusable-ci helper scripts
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs.reusable-ci-ref }}
+          path: .github-shared
+          sparse-checkout: scripts/plan
+      - name: Compose dev control-plane interface
+        id: interface
+        env:
+          PROJECT_TYPE: ${{ inputs['project-type'] }}
+          BRANCH: ${{ github.ref_name }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_ACTOR: ${{ github.actor }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+          JAVA_VERSION: ${{ inputs['java-version'] }}
+          NODE_VERSION: ${{ inputs['node-version'] }}
+          CONTAINER_FILE: ${{ inputs['container-file'] }}
+          REGISTRY: ${{ inputs.registry }}
+          REUSABLE_CI_REF: ${{ inputs.reusable-ci-ref }}
+          NPM_REGISTRY: ${{ inputs['npm-registry'] }}
+          PACKAGE_SCOPE: ${{ inputs['package-scope'] }}
+          NPM_REGISTRY_USERNAME: ${{ inputs['npm-registry-username'] }}
+          PUBLISH_NPM: ${{ inputs['publish-npm'] }}
+          USE_GITHUB_TOKEN: ${{ inputs['use-github-token'] }}
+        run: bash .github-shared/scripts/plan/write-dev-release-interface.sh
+
+  # ===== Stage 1: Build =====
+  execute-dev-build-stage:
+    name: Execute Dev Build Stage
+    needs: [compose-dev-interface]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-dev-build-stage.yml
     with:
-      build-type: app
-      java-version: ${{ inputs['java-version'] }}
-      working-directory: ${{ inputs['working-directory'] }}
-      branch: ${{ github.ref_name }}
-      profile: ""
-  build-npm-dev:
-    name: Build NPM Dev
-    if: ${{ inputs['project-type'] == 'npm' }}
+      dev-context-json: ${{ needs.compose-dev-interface.outputs.dev-context-json }}
+
+  # ===== Stage 2: Publish =====
+  execute-dev-publish-stage:
+    name: Execute Dev Publish Stage
+    needs: [compose-dev-interface, execute-dev-build-stage]
+    if: ${{ !failure() && !cancelled() }}
     permissions:
       contents: read
-    uses: ./.github/workflows/build-npm.yml
-    with:
-      node-version: ${{ inputs['node-version'] }}
-      working-directory: ${{ inputs['working-directory'] }}
-      branch: ${{ github.ref_name }}
-  build-gradle-dev:
-    name: Build Gradle Dev
-    if: ${{ inputs['project-type'] == 'gradle' }}
-    permissions:
-      contents: read
-    uses: ./.github/workflows/build-gradle-app.yml
-    with:
-      java-version: ${{ inputs['java-version'] }}
-      gradle-tasks: "build"
-      working-directory: ${{ inputs['working-directory'] }}
-      branch: ${{ github.ref_name }}
-  build-dev-container:
-    name: Build Container Dev
-    needs: [build-maven-dev, build-npm-dev, build-gradle-dev]
-    if: "!failure() && !cancelled() &&\n(needs.build-maven-dev.result == 'success' || \n needs.build-npm-dev.result == 'success' || \n needs.build-gradle-dev.result == 'success')\n"
-    permissions:
-      contents: read
-      packages: write
     secrets: inherit
-    uses: ./.github/workflows/publish-container-dev.yml
+    uses: ./.github/workflows/release-dev-publish-stage.yml
     with:
-      container-file: ${{ inputs['container-file'] }}
-      registry: ${{ inputs.registry }}
-      artifact-types: ${{ inputs['project-type'] }}
-      working-directory: ${{ inputs['working-directory'] }}
-      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
-  publish-npm-dev:
-    name: Publish Dev NPM Package
-    needs: [build-npm-dev]
-    if: ${{ !failure() && !cancelled() && inputs['project-type'] == 'npm' && inputs['publish-npm'] }}
-    permissions:
-      contents: read
-      packages: write
-    uses: ./.github/workflows/publish-npm-dev.yml
-    with:
-      node-version: ${{ inputs['node-version'] }}
-      working-directory: ${{ inputs['working-directory'] }}
-      registry: ${{ inputs['npm-registry'] }}
-      package-scope: ${{ inputs['package-scope'] }}
-      registry-username: ${{ inputs['npm-registry-username'] }}
-      use-github-token: ${{ inputs['use-github-token'] }}
-      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
-    secrets:
-      registry-password: ${{ secrets.registry-password }}
+      dev-context-json: ${{ needs.compose-dev-interface.outputs.dev-context-json }}
+      dev-policy-json: ${{ needs.compose-dev-interface.outputs.dev-policy-json }}
+      build-result-json: ${{ needs.execute-dev-build-stage.outputs.result-json }}
+
+  # ===== Stage 3: Summary =====
   dev-release-summary:
     name: Dev Release Summary
-    needs: [build-dev-container, publish-npm-dev]
+    needs:
+      - compose-dev-interface
+      - execute-dev-build-stage
+      - execute-dev-publish-stage
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -198,19 +199,20 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ inputs.reusable-ci-ref }}
+          ref: ${{ fromJson(needs.compose-dev-interface.outputs['dev-context-json']).reusable_ci_ref }}
           path: .github-shared
           sparse-checkout: scripts
       - name: Generate Dev Release Summary
-        run: |
-          bash .github-shared/scripts/release/generate-dev-summary.sh \
-            "${{ inputs['project-type'] }}" \
-            "${{ github.ref_name }}" \
-            "${{ github.sha }}" \
-            "${{ github.actor }}" \
-            "${{ github.repository }}" \
-            "${{ needs.build-dev-container.outputs.image }}" \
-            "${{ needs.build-dev-container.result }}" \
-            "${{ needs.publish-npm-dev.outputs.package-name }}" \
-            "${{ needs.publish-npm-dev.outputs.package-version }}" \
-            "${{ needs.publish-npm-dev.result }}"
+        env:
+          # Dev release context.
+          PROJECT_TYPE: ${{ fromJson(needs.compose-dev-interface.outputs['dev-context-json']).project_type }}
+          RELEASE_REF: ${{ fromJson(needs.compose-dev-interface.outputs['dev-context-json']).branch }}
+          RELEASE_SHA: ${{ fromJson(needs.compose-dev-interface.outputs['dev-context-json']).release_sha }}
+          RELEASE_ACTOR: ${{ fromJson(needs.compose-dev-interface.outputs['dev-context-json']).release_actor }}
+          RELEASE_REPOSITORY: ${{ fromJson(needs.compose-dev-interface.outputs['dev-context-json']).release_repository }}
+
+          # Stage results and published artifacts.
+          BUILD_STAGE_RESULT_JSON: ${{ needs.execute-dev-build-stage.outputs.result-json }}
+          PUBLISH_STAGE_RESULT_JSON: ${{ needs.execute-dev-publish-stage.outputs.result-json }}
+          DEV_ARTIFACTS_JSON: ${{ needs.execute-dev-publish-stage.outputs.artifacts-json }}
+        run: bash .github-shared/scripts/summary/write-dev-release-summary.sh

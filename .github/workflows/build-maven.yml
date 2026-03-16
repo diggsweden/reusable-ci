@@ -159,21 +159,12 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
       - name: Generate build summary
-        run: |
-          {
-            printf "## Maven Build Summary 🔨\n"
-            printf "\n"
-            printf "%s **Type:** %s\n" "-" "${{ inputs['build-type'] }}"
-            printf "%s **Artifact:** \`%s:%s:%s\`\n" "-" "${{ steps.version-info.outputs.GROUP_ID }}" "${{ steps.version-info.outputs.ARTIFACT_ID }}" "${{ steps.version-info.outputs.VERSION }}"
-            printf "%s **Java:** %s\n" "-" "${{ inputs['java-version'] }}"
-
-            if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
-              printf "%s **Tests:** %s\n" "-" "⊘ Skipped"
-            else
-              printf "%s **Tests:** %s\n" "-" "✓ Executed"
-            fi
-
-            printf "%s **Snapshot:** %s\n" "-" "${{ steps.version-info.outputs.IS_SNAPSHOT }}"
-            printf "\n"
-            printf "*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          BUILD_TYPE: ${{ inputs['build-type'] }}
+          GROUP_ID: ${{ steps.version-info.outputs.GROUP_ID }}
+          ARTIFACT_ID: ${{ steps.version-info.outputs.ARTIFACT_ID }}
+          VERSION: ${{ steps.version-info.outputs.VERSION }}
+          JAVA_VERSION: ${{ inputs['java-version'] }}
+          SKIP_TESTS: ${{ inputs['skip-tests'] }}
+          IS_SNAPSHOT: ${{ steps.version-info.outputs.IS_SNAPSHOT }}
+        run: bash .github-shared/scripts/summary/write-maven-build-summary.sh

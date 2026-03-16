@@ -6,20 +6,11 @@
 # Supports: maven, npm, gradle, go, rust, python
 # Layers: source (dependency manifests), artifact (built binaries), containerimage
 
-set -uo pipefail
+set -euo pipefail
 
-# renovate: datasource=github-releases depName=anchore/syft
-readonly SYFT_VERSION="v1.37.0"
-
-PROJECT_TYPE="${1:-auto}"
-LAYERS="${2:-source}"
-VERSION="${3:-}"
-PROJECT_NAME="${4:-}"
-WORKING_DIR="${5:-.}"
-CONTAINER_IMAGE="${6:-}"
-CREATE_ZIP="${7:-false}"
-
-cd "$WORKING_DIR" || exit 1
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+source "$SCRIPT_DIR/../ci/install-syft.sh"
 
 #
 # Utility functions
@@ -48,21 +39,6 @@ log_warning() {
 
 log_error() {
   printf "   ❌ %s\n" "$1" >&2
-}
-
-#
-# Syft installation
-#
-install_syft() {
-  if command -v syft &>/dev/null; then
-    printf "✅ Syft already installed: %s\n\n" "$(syft version --output json 2>/dev/null | grep -o '"version":"[^"]*"' | cut -d'"' -f4)"
-    return
-  fi
-
-  printf "Installing Syft SBOM generator (version: %s)...\n" "${SYFT_VERSION}"
-  curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /tmp "${SYFT_VERSION}"
-  export PATH="/tmp:$PATH"
-  printf "✅ Syft installed successfully\n\n"
 }
 
 #
@@ -450,7 +426,8 @@ generate_summary() {
   printf "\n"
 
   if [[ "$CREATE_ZIP" = "true" ]]; then
-    local sbom_zip="${project_name}-${version}-sboms.zip"
+    local sbom_zip
+    sbom_zip=$(ci_sbom_zip_name "$project_name" "$version")
     printf "📦 Creating SBOM ZIP archive...\n"
     find . -maxdepth 1 -name '*-sbom.*.json' -type f -exec zip "$sbom_zip" {} +
 
@@ -468,6 +445,16 @@ generate_summary() {
 # Main
 #
 main() {
+  local PROJECT_TYPE="${1:-auto}"
+  local LAYERS="${2:-source}"
+  local VERSION="${3:-}"
+  local PROJECT_NAME="${4:-}"
+  local WORKING_DIR="${5:-.}"
+  local CONTAINER_IMAGE="${6:-}"
+  local CREATE_ZIP="${7:-false}"
+
+  cd "$WORKING_DIR" || exit 1
+
   log_header "SBOM Generation Script"
   printf "Working directory: %s\n" "$(pwd)"
   printf "Project type: %s\n" "$PROJECT_TYPE"
@@ -485,7 +472,9 @@ main() {
   printf "  Version: %s\n" "$version"
   printf "  Type: %s\n\n" "$PROJECT_TYPE"
 
+  local layer_array
   IFS=',' read -ra layer_array <<<"$LAYERS"
+  local layer
   for layer in "${layer_array[@]}"; do
     layer=$(printf "%s" "$layer" | xargs)
     case "$layer" in
@@ -502,4 +491,4 @@ main() {
   generate_summary "$project_name" "$version"
 }
 
-main
+main "$@"

@@ -10,9 +10,9 @@ Documentation for verifying code quality and the authenticity and integrity of a
 
 ## Code Quality Verification
 
-### Just+Mise Linting Workflow
+### Devbase-Check Linting Workflow
 
-The `lint-just-mise.yml` workflow provides dynamic, MegaLinter-style output for code quality verification.
+The `lint-devbase-check.yml` workflow provides dynamic, MegaLinter-style output for code quality verification.
 
 #### Overview
 
@@ -39,7 +39,7 @@ Add to your pull request workflow:
 ```yaml
 jobs:
   lint:
-    uses: diggsweden/reusable-ci/.github/workflows/lint-just-mise.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/lint-devbase-check.yml@main
     permissions:
       contents: read
       security-events: write

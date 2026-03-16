@@ -29,7 +29,9 @@ jobs:
         env:
           SHELLCHECK_OPTS: --exclude=SC2086
         run: |
-          # Activate mise to get tools in PATH
-          eval "$(mise activate bash)"
-          # Run verification
+          activate_mise() {
+            eval "$(mise activate bash)"
+          }
+
+          activate_mise
           just lint

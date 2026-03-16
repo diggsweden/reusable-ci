@@ -1,6 +1,5 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
-#
 # SPDX-License-Identifier: CC0-1.0
 
 set -euo pipefail
@@ -51,74 +50,78 @@ increment_version_code() {
   fi
 }
 
-if [[ $# -lt 2 ]]; then
-  usage
-  exit 1
-fi
-
-PROJECT_TYPE="$1"
-VERSION="$2"
-WORKING_DIR="${3:-.}"
-GRADLE_VERSION_FILE="${4:-gradle.properties}"
-
-log "Bumping version to ${VERSION} for ${PROJECT_TYPE} project in ${WORKING_DIR}"
-
-case "$PROJECT_TYPE" in
-maven)
-  cd "$WORKING_DIR"
-  log "Updating Maven version to ${VERSION}"
-  # shellcheck disable=SC2086
-  mvn ${MAVEN_CLI_OPTS:-} versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false -DprocessAllModules=true -DskipTests
-  log_success "Maven version updated (including all sub-modules)"
-  ;;
-
-npm)
-  cd "$WORKING_DIR"
-  log "Updating NPM version to ${VERSION}"
-  npm version "$VERSION" --no-git-tag-version --allow-same-version
-  log_success "NPM version updated"
-  ;;
-
-gradle | gradle-android)
-  cd "$WORKING_DIR"
-  log "Version file: ${GRADLE_VERSION_FILE}"
-
-  if [[ ! -f "$GRADLE_VERSION_FILE" ]]; then
-    log_error "Gradle version file not found: ${GRADLE_VERSION_FILE}"
+main() {
+  if [[ $# -lt 2 ]]; then
+    usage
     exit 1
   fi
 
-  update_or_add_property "$GRADLE_VERSION_FILE" "versionName" "$VERSION" "="
-  increment_version_code "$GRADLE_VERSION_FILE"
+  local PROJECT_TYPE="$1"
+  local VERSION="$2"
+  local WORKING_DIR="${3:-.}"
+  local GRADLE_VERSION_FILE="${4:-gradle.properties}"
 
-  log_success "Gradle version updated"
-  cat "$GRADLE_VERSION_FILE"
-  ;;
+  log "Bumping version to ${VERSION} for ${PROJECT_TYPE} project in ${WORKING_DIR}"
 
-xcode-ios)
-  cd "$WORKING_DIR"
-  log "Updating Xcode version to ${VERSION}"
+  case "$PROJECT_TYPE" in
+  maven)
+    cd "$WORKING_DIR"
+    log "Updating Maven version to ${VERSION}"
+    # shellcheck disable=SC2086
+    mvn ${MAVEN_CLI_OPTS:-} versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false -DprocessAllModules=true -DskipTests
+    log_success "Maven version updated (including all sub-modules)"
+    ;;
 
-  XCCONFIG_FILE="${XCODE_VERSION_FILE:-versions.xcconfig}"
+  npm)
+    cd "$WORKING_DIR"
+    log "Updating NPM version to ${VERSION}"
+    npm version "$VERSION" --no-git-tag-version --allow-same-version
+    log_success "NPM version updated"
+    ;;
 
-  if [[ ! -f "$XCCONFIG_FILE" ]]; then
-    log "Creating ${XCCONFIG_FILE}"
-    printf "MARKETING_VERSION = %s\n" "$VERSION" >"$XCCONFIG_FILE"
-    log_success "Created ${XCCONFIG_FILE} with MARKETING_VERSION = ${VERSION}"
-  else
-    update_or_add_property "$XCCONFIG_FILE" "MARKETING_VERSION" "$VERSION" " = "
-    log_success "Xcode version updated"
-    cat "$XCCONFIG_FILE"
-  fi
-  ;;
+  gradle | gradle-android)
+    cd "$WORKING_DIR"
+    log "Version file: ${GRADLE_VERSION_FILE}"
 
-meta)
-  log "Meta project type - no version file to update"
-  log_success "Version ${VERSION} recorded for changelog generation only"
-  ;;
+    if [[ ! -f "$GRADLE_VERSION_FILE" ]]; then
+      log_error "Gradle version file not found: ${GRADLE_VERSION_FILE}"
+      exit 1
+    fi
 
-*)
-  log_error "Unknown project type: ${PROJECT_TYPE}"
-  exit 1
-  ;;
-esac
+    update_or_add_property "$GRADLE_VERSION_FILE" "versionName" "$VERSION" "="
+    increment_version_code "$GRADLE_VERSION_FILE"
+
+    log_success "Gradle version updated"
+    cat "$GRADLE_VERSION_FILE"
+    ;;
+
+  xcode-ios)
+    cd "$WORKING_DIR"
+    log "Updating Xcode version to ${VERSION}"
+
+    local XCCONFIG_FILE="${XCODE_VERSION_FILE:-versions.xcconfig}"
+
+    if [[ ! -f "$XCCONFIG_FILE" ]]; then
+      log "Creating ${XCCONFIG_FILE}"
+      printf "MARKETING_VERSION = %s\n" "$VERSION" >"$XCCONFIG_FILE"
+      log_success "Created ${XCCONFIG_FILE} with MARKETING_VERSION = ${VERSION}"
+    else
+      update_or_add_property "$XCCONFIG_FILE" "MARKETING_VERSION" "$VERSION" " = "
+      log_success "Xcode version updated"
+      cat "$XCCONFIG_FILE"
+    fi
+    ;;
+
+  meta)
+    log "Meta project type - no version file to update"
+    log_success "Version ${VERSION} recorded for changelog generation only"
+    ;;
+
+  *)
+    log_error "Unknown project type: ${PROJECT_TYPE}"
+    exit 1
+    ;;
+  esac
+}
+
+main "$@"

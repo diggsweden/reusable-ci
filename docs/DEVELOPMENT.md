@@ -90,3 +90,14 @@
 ## Available Commands
 
 Run `just` to see all available commands.
+
+## Workflow Refactor Checklist
+
+When changing workflows or workflow helper scripts:
+
+1. Keep public workflow contracts stable unless the change is explicitly versioned.
+2. Follow `docs/workflow-design-policy.md` for workflow structure and script extraction rules.
+3. Run `actionlint .github/workflows/*.yml`.
+4. Parse workflow YAML and check reusable-workflow input compatibility.
+5. Run `bash -n` for touched helper scripts.
+6. Add or update Bats tests when helper scripts are added or changed.

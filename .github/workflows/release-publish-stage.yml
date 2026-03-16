@@ -1,0 +1,186 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+name: Release Publish Stage
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      branch:
+        required: true
+        type: string
+      reusable-ci-ref:
+        required: true
+        type: string
+      xcodeios-artifacts:
+        required: true
+        type: string
+      githubpackages-artifacts:
+        required: true
+        type: string
+      mavencentral-artifacts:
+        required: true
+        type: string
+      googleplay-artifacts:
+        required: true
+        type: string
+      containers:
+        required: true
+        type: string
+      build-result-json:
+        required: true
+        type: string
+    outputs:
+      stage-ran:
+        description: Publish stage ran at least one destination
+        value: ${{ jobs.summarize-publish-stage.outputs.stage-ran }}
+      stage-result:
+        description: Normalized publish stage result
+        value: ${{ jobs.summarize-publish-stage.outputs.stage-result }}
+      result-json:
+        description: Publish stage result payload
+        value: ${{ jobs.summarize-publish-stage.outputs.result-json }}
+permissions:
+  contents: read
+jobs:
+  # Cross-cutting publish jobs depend on the build stage as a whole.
+  # Platform-specific store publishing still checks the relevant build-stage result.
+  publish-maven-github:
+    name: Publish GitHub - ${{ matrix.artifact.name }}
+    if: ${{ inputs.githubpackages-artifacts != '[]' && fromJson(inputs['build-result-json']).result == 'success' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.githubpackages-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: write
+      packages: write
+    secrets: inherit
+    uses: ./.github/workflows/publish-maven-github.yml
+    with:
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      artifact-source: ${{ matrix.artifact['project-type'] }}-build-artifacts
+      package-type: ${{ matrix.artifact['project-type'] }}
+      java-version: ${{ matrix.artifact.config['java-version'] }}
+      node-version: ${{ matrix.artifact.config['node-version'] }}
+      attach-pattern: ${{ matrix.artifact.config['attach-pattern'] }}
+  publish-maven-central:
+    name: Publish Maven Central - ${{ matrix.artifact.name }}
+    if: ${{ inputs.mavencentral-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.maven == 'success' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.mavencentral-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    secrets: inherit
+    uses: ./.github/workflows/publish-maven-central.yml
+    with:
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      artifact-source: maven-build-artifacts
+      java-version: ${{ matrix.artifact.config['java-version'] }}
+      settings-path: ${{ matrix.artifact.config['settings-path'] }}
+      profile: ${{ matrix.artifact.config['profile'] || 'central-release' }}
+  publish-apple-appstore:
+    name: Publish Apple App Store - ${{ matrix.artifact.name }}
+    if: ${{ inputs.xcodeios-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.xcodeios == 'success' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.xcodeios-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/publish-apple-appstore.yml
+    with:
+      ipa-artifact-name: ${{ matrix.artifact.name }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
+      submit-for-review: ${{ matrix.artifact.config['submit-for-review'] || false }}
+      skip-validation: ${{ matrix.artifact.config['skip-validation'] || false }}
+  publish-google-play:
+    name: Publish Google Play - ${{ matrix.artifact.name }}
+    if: ${{ inputs.googleplay-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.gradleandroid == 'success' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.googleplay-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/publish-google-play.yml
+    with:
+      aab-artifact-name: ${{ matrix.artifact.name }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      package-name: ${{ matrix.artifact.config['package-name'] }}
+      track: ${{ matrix.artifact.config['google-play-track'] || 'internal' }}
+      status: ${{ matrix.artifact.config['google-play-status'] || 'completed' }}
+      release-name: ${{ matrix.artifact.config['google-play-release-name'] || '' }}
+      user-fraction: ${{ matrix.artifact.config['google-play-user-fraction'] || '' }}
+      in-app-update-priority: ${{ matrix.artifact.config['google-play-update-priority'] || '0' }}
+      changes-not-sent-for-review: ${{ matrix.artifact.config['google-play-changes-not-sent-for-review'] || false }}
+      whats-new-directory: ${{ matrix.artifact.config['whats-new-directory'] || '' }}
+      mapping-file: ${{ matrix.artifact.config['mapping-file'] || '' }}
+      debug-symbols: ${{ matrix.artifact.config['debug-symbols'] || '' }}
+  build-containers:
+    name: Build Container - ${{ matrix.container.name }}
+    if: ${{ inputs.containers != '[]' && fromJson(inputs['build-result-json']).result == 'success' }}
+    strategy:
+      matrix:
+        container: ${{ fromJson(inputs.containers) }}
+      fail-fast: false
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      security-events: write
+      actions: read
+    secrets: inherit
+    uses: ./.github/workflows/publish-container.yml
+    with:
+      branch: ${{ inputs.branch }}
+      container-file: ${{ matrix.container['container-file'] }}
+      context: ${{ matrix.container.context || '.' }}
+      platforms: ${{ matrix.container.platforms || 'linux/amd64,linux/arm64' }}
+      enable-slsa: ${{ matrix.container['enable-slsa'] == true || matrix.container['enable-slsa'] == null }}
+      enable-sbom: ${{ matrix.container['enable-sbom'] == true || matrix.container['enable-sbom'] == null }}
+      enable-scan: ${{ matrix.container['enable-scan'] == true || matrix.container['enable-scan'] == null }}
+      registry: ghcr.io
+      artifact-types: ${{ join(matrix.container['artifact-types'], ',') }}
+      push-image: true
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
+  summarize-publish-stage:
+    name: Summarize Publish Stage
+    needs: [publish-maven-github, publish-maven-central, publish-apple-appstore, publish-google-play, build-containers]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      stage-ran: ${{ steps.summary.outputs.stage-ran }}
+      stage-result: ${{ steps.summary.outputs.stage-result }}
+      result-json: ${{ steps.summary.outputs.result-json }}
+    steps:
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs.reusable-ci-ref }}
+          path: .github-shared
+          sparse-checkout: scripts/summary
+      - name: Normalize publish stage result
+        id: summary
+        env:
+          GITHUBPACKAGES_ARTIFACTS: ${{ inputs.githubpackages-artifacts }}
+          MAVENCENTRAL_ARTIFACTS: ${{ inputs.mavencentral-artifacts }}
+          XCODEIOS_ARTIFACTS: ${{ inputs.xcodeios-artifacts }}
+          GOOGLEPLAY_ARTIFACTS: ${{ inputs.googleplay-artifacts }}
+          CONTAINERS: ${{ inputs.containers }}
+          PUBLISH_MAVEN_GITHUB_RESULT: ${{ needs.publish-maven-github.result }}
+          PUBLISH_MAVEN_CENTRAL_RESULT: ${{ needs.publish-maven-central.result }}
+          PUBLISH_APPLE_APPSTORE_RESULT: ${{ needs.publish-apple-appstore.result }}
+          PUBLISH_GOOGLE_PLAY_RESULT: ${{ needs.publish-google-play.result }}
+          BUILD_CONTAINERS_RESULT: ${{ needs.build-containers.result }}
+        run: bash .github-shared/scripts/summary/write-publish-stage-result.sh

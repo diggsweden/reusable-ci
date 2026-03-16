@@ -195,13 +195,13 @@ jobs:
           CERTIFICATE_PASSPHRASE: ${{ secrets.CERTIFICATE_PASSPHRASE }}
           PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: bash .github-shared/scripts/xcode/setup-code-signing.sh
+        run: bash .github-shared/scripts/apple/setup-code-signing.sh
 
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs['working-directory'] }}
         run: |
-          bash .github-shared/scripts/xcode/get-version-info.sh \
+          bash .github-shared/scripts/apple/get-version-info.sh \
             "${{ inputs.project }}" \
             "${{ inputs.workspace }}" >> "$GITHUB_OUTPUT"
 
@@ -221,61 +221,27 @@ jobs:
 
       - name: Archive app
         working-directory: ${{ inputs['working-directory'] }}
-        run: |
-          set -o pipefail
-          mkdir -p build
-
-          BUILD_CMD="xcodebuild archive"
-
-          if [ -n "${{ inputs.workspace }}" ]; then
-            BUILD_CMD="$BUILD_CMD -workspace ${{ inputs.workspace }}"
-          elif [ -n "${{ inputs.project }}" ]; then
-            BUILD_CMD="$BUILD_CMD -project ${{ inputs.project }}"
-          fi
-
-          BUILD_CMD="$BUILD_CMD -scheme '${{ inputs.scheme }}'"
-          BUILD_CMD="$BUILD_CMD -configuration ${{ inputs.configuration }}"
-          BUILD_CMD="$BUILD_CMD -archivePath build/app.xcarchive"
-          BUILD_CMD="$BUILD_CMD -destination '${{ inputs.destination }}'"
-          BUILD_CMD="$BUILD_CMD -skipPackagePluginValidation"
-
-          if [ -n "${{ steps.setup-xcconfig.outputs.xcconfig-path }}" ]; then
-            BUILD_CMD="$BUILD_CMD -xcconfig ${{ steps.setup-xcconfig.outputs.xcconfig-path }}"
-          fi
-
-          if [ -n "${{ inputs['build-number'] }}" ]; then
-            BUILD_CMD="$BUILD_CMD CURRENT_PROJECT_VERSION=${{ inputs['build-number'] }}"
-          fi
-
-          printf "Running: %s\n" "$BUILD_CMD"
-          eval "$BUILD_CMD" | xcbeautify
+        env:
+          WORKSPACE: ${{ inputs.workspace }}
+          PROJECT: ${{ inputs.project }}
+          SCHEME: ${{ inputs.scheme }}
+          CONFIGURATION: ${{ inputs.configuration }}
+          DESTINATION: ${{ inputs.destination }}
+          XC_CONFIG_PATH: ${{ steps.setup-xcconfig.outputs.xcconfig-path }}
+          BUILD_NUMBER: ${{ inputs['build-number'] }}
+        run: bash .github-shared/scripts/apple/archive-app.sh
 
       - name: Export IPA
         if: ${{ inputs['enable-code-signing'] }}
         working-directory: ${{ inputs['working-directory'] }}
         env:
           EXPORT_OPTIONS_BASE64: ${{ vars[inputs.export-options-var] }}
-        run: |
-          set -o pipefail
-
-          if [ -z "$EXPORT_OPTIONS_BASE64" ]; then
-            printf "::error::Export options not found in variable %s\n" "${{ inputs.export-options-var }}"
-            exit 1
-          fi
-
-          printf "%s" "$EXPORT_OPTIONS_BASE64" | base64 --decode > export-options.plist
-
-          xcodebuild -exportArchive \
-            -archivePath build/app.xcarchive \
-            -exportPath build/export \
-            -exportOptionsPlist export-options.plist \
-          | xcbeautify
+          EXPORT_OPTIONS_VAR: ${{ inputs.export-options-var }}
+        run: bash .github-shared/scripts/apple/export-ipa.sh
 
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
-        run: |
-          printf "Built artifacts:\n"
-          find build -type f \( -name "*.ipa" -o -name "*.xcarchive" \) -ls || printf "No artifacts found\n"
+        run: bash .github-shared/scripts/apple/list-built-artifacts.sh
 
       - name: Upload IPA artifact
         if: ${{ inputs['enable-code-signing'] }}
@@ -296,13 +262,13 @@ jobs:
           retention-days: 7
 
       - name: Generate build summary
-        run: |
-          bash .github-shared/scripts/summary/xcode-build-summary.sh \
-            "${{ inputs.xcode-version }}" \
-            "${{ inputs.scheme }}" \
-            "${{ inputs.configuration }}" \
-            "${{ inputs.destination }}" \
-            "${{ inputs['enable-code-signing'] }}" \
-            "${{ steps.version-info.outputs.version }}" \
-            "${{ steps.version-info.outputs.build }}" \
-            "${{ steps.artifact-names.outputs.ipa-name }}" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          XCODE_VERSION: ${{ inputs.xcode-version }}
+          SCHEME: ${{ inputs.scheme }}
+          CONFIGURATION: ${{ inputs.configuration }}
+          DESTINATION: ${{ inputs.destination }}
+          SIGNING: ${{ inputs['enable-code-signing'] }}
+          VERSION: ${{ steps.version-info.outputs.version }}
+          BUILD_NUMBER: ${{ steps.version-info.outputs.build }}
+          IPA_NAME: ${{ steps.artifact-names.outputs.ipa-name }}
+        run: bash .github-shared/scripts/summary/write-xcode-build-summary.sh >> "$GITHUB_STEP_SUMMARY"

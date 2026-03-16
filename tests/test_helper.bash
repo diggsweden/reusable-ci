@@ -6,7 +6,7 @@
 # Shared test helper functions for BATS tests
 # Inspired by devbase-core and devbase-check patterns
 #
-# Usage: load "${BATS_TEST_DIRNAME}/test_helper.bash"
+# Usage: load "${BATS_TEST_DIRNAME}/../test_helper.bash"
 #
 # Shellcheck disabled:
 #   SC2016 - Expressions don't expand in single quotes (intentional in mock scripts)
@@ -23,6 +23,9 @@
 #   - Debug output helpers
 #   - Stub helpers for external commands (gh, curl, etc.)
 
+# Resolve TESTS_DIR once at load time (stable regardless of test file location)
+TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # =============================================================================
 # Common Setup/Teardown Helpers
 # =============================================================================
@@ -32,14 +35,14 @@
 common_setup() {
   TEST_DIR="$(temp_make)"
   export TEST_DIR
-  export SCRIPTS_DIR="${BATS_TEST_DIRNAME}/../scripts"
+  export SCRIPTS_DIR="${TESTS_DIR}/../scripts"
   cd "$TEST_DIR"
 }
 
 # Standard test teardown - returns to test dir and cleans up
 # Usage: common_teardown
 common_teardown() {
-  cd "${BATS_TEST_DIRNAME}"
+  cd "${TESTS_DIR}"
   # Use safe_temp_del which handles git's write-protected objects
   safe_temp_del "$TEST_DIR"
 }
@@ -127,7 +130,7 @@ setup_isolated_home() {
 # Usage: init_git_repo
 init_git_repo() {
   export GIT_CONFIG_NOSYSTEM=1
-  git init -q
+  git init -q -b main
   git config user.email "test@example.com"
   git config user.name "Test User"
   # Make git objects writable so temp_del can clean up
@@ -180,6 +183,7 @@ init_remote_repo() {
 # Setup GitHub Actions environment variables
 # Usage: setup_github_env
 setup_github_env() {
+  export GITHUB_ACTIONS="true"
   export GITHUB_OUTPUT="$TEST_DIR/github_output"
   export GITHUB_STEP_SUMMARY="$TEST_DIR/step_summary.md"
   export GITHUB_ENV="$TEST_DIR/github_env"

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
-#
 # SPDX-License-Identifier: CC0-1.0
 
 # Container SBOM Generator Wrapper
@@ -25,36 +24,42 @@
 
 set -euo pipefail
 
-ARTIFACT_TYPES="$1"
-VERSION="$2"
-PROJECT_NAME="$3"
-IMAGE="$4"
-SCRIPT_DIR="$5"
+main() {
+  local ARTIFACT_TYPES="$1"
+  local VERSION="$2"
+  local PROJECT_NAME="$3"
+  local IMAGE="$4"
+  local SCRIPT_DIR="$5"
 
-# Handle empty artifact-types (containers building from source with no dependencies)
-if [[ -z "$ARTIFACT_TYPES" ]]; then
-  printf "No artifact dependencies - generating SBOM from container image only\n"
-  bash "$SCRIPT_DIR/generate-sbom.sh" \
-    "container" \
-    "containerimage" \
-    "$VERSION" \
-    "$PROJECT_NAME" \
-    "." \
-    "$IMAGE"
-else
-  # Generate SBOM for each artifact type in multi-artifact containers
-  IFS=',' read -ra TYPES <<<"$ARTIFACT_TYPES"
-
-  for ARTIFACT_TYPE in "${TYPES[@]}"; do
-    printf "Generating SBOM for artifact type: %s\n" "$ARTIFACT_TYPE"
+  # Handle empty artifact-types (containers building from source with no dependencies)
+  if [[ -z "$ARTIFACT_TYPES" ]]; then
+    printf "No artifact dependencies - generating SBOM from container image only\n"
     bash "$SCRIPT_DIR/generate-sbom.sh" \
-      "$ARTIFACT_TYPE" \
+      "container" \
       "containerimage" \
       "$VERSION" \
       "$PROJECT_NAME" \
       "." \
       "$IMAGE"
-  done
-fi
+  else
+    # Generate SBOM for each artifact type in multi-artifact containers
+    local TYPES
+    IFS=',' read -ra TYPES <<<"$ARTIFACT_TYPES"
 
-printf "✓ Container SBOM generation completed\n"
+    local ARTIFACT_TYPE
+    for ARTIFACT_TYPE in "${TYPES[@]}"; do
+      printf "Generating SBOM for artifact type: %s\n" "$ARTIFACT_TYPE"
+      bash "$SCRIPT_DIR/generate-sbom.sh" \
+        "$ARTIFACT_TYPE" \
+        "containerimage" \
+        "$VERSION" \
+        "$PROJECT_NAME" \
+        "." \
+        "$IMAGE"
+    done
+  fi
+
+  printf "✓ Container SBOM generation completed\n"
+}
+
+main "$@"

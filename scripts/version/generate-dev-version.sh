@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
-#
 # SPDX-License-Identifier: CC0-1.0
 
 # Development Version Generator
@@ -21,26 +20,37 @@
 
 set -euo pipefail
 
-git fetch --tags || true
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/env.sh"
 
-# Find latest semver tag using git describe or fallback to sorted tag list
-LATEST_TAG=$(git describe --tags --match="v[0-9]*.[0-9]*.[0-9]*" --abbrev=0 2>/dev/null ||
-  git tag -l "v[0-9]*.[0-9]*.[0-9]*" | sort -V | tail -n1 || printf "")
+main() {
+  git fetch --tags || true
 
-if [[ -z "$LATEST_TAG" ]]; then
-  BASE_VERSION="0.0.0"
-else
-  BASE_VERSION="${LATEST_TAG#v}"
-fi
+  # Find latest semver tag using git describe or fallback to sorted tag list
+  local LATEST_TAG
+  LATEST_TAG=$(git describe --tags --match="v[0-9]*.[0-9]*.[0-9]*" --abbrev=0 2>/dev/null ||
+    git tag -l "v[0-9]*.[0-9]*.[0-9]*" | sort -V | tail -n1 || printf "")
 
-# Sanitize branch name for version compatibility
-# - Replace non-alphanumeric (except . _ -) with dash
-# - Remove leading/trailing dashes
-BRANCH_NAME="${GITHUB_REF#refs/heads/}"
-SANITIZED_BRANCH=$(printf "%s" "$BRANCH_NAME" | sed 's|[^a-zA-Z0-9._-]|-|g' | sed 's|^-*||; s|-*$||')
+  local BASE_VERSION
+  if [[ -z "$LATEST_TAG" ]]; then
+    BASE_VERSION="0.0.0"
+  else
+    BASE_VERSION="${LATEST_TAG#v}"
+  fi
 
-# Get short SHA (7 characters)
-SHORT_SHA=$(git rev-parse --short=7 HEAD)
+  # Sanitize branch name for version compatibility
+  # - Replace non-alphanumeric (except . _ -) with dash
+  # - Remove leading/trailing dashes
+  local BRANCH_NAME="$CI_REF_NAME"
+  local SANITIZED_BRANCH
+  SANITIZED_BRANCH=$(printf "%s" "$BRANCH_NAME" | sed 's|[^a-zA-Z0-9._-]|-|g' | sed 's|^-*||; s|-*$||')
 
-# Output final dev version
-printf "%s-dev-%s-%s\n" "${BASE_VERSION}" "${SANITIZED_BRANCH}" "${SHORT_SHA}"
+  # Get short SHA (7 characters)
+  local SHORT_SHA
+  SHORT_SHA=$(git rev-parse --short=7 HEAD)
+
+  # Output final dev version
+  printf "%s-dev-%s-%s\n" "${BASE_VERSION}" "${SANITIZED_BRANCH}" "${SHORT_SHA}"
+}
+
+main "$@"

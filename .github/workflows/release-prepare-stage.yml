@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+name: Release Prepare Stage
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      branch:
+        required: true
+        type: string
+      reusable-ci-ref:
+        required: true
+        type: string
+      artifacts:
+        required: true
+        type: string
+      should-run-version-bump:
+        required: true
+        type: string
+      file-pattern:
+        required: true
+        type: string
+    outputs:
+      stage-ran:
+        description: Prepare stage ran at least one version bump path
+        value: ${{ jobs.summarize-prepare-stage.outputs.stage-ran }}
+      stage-result:
+        description: Normalized prepare stage result
+        value: ${{ jobs.summarize-prepare-stage.outputs.stage-result }}
+      result-json:
+        description: Prepare stage result payload
+        value: ${{ jobs.summarize-prepare-stage.outputs.result-json }}
+permissions:
+  contents: read
+jobs:
+  execute-version-bump:
+    name: Prepare Release - ${{ matrix.artifact.name }}
+    if: ${{ inputs['should-run-version-bump'] == 'true' && inputs.artifacts != '[]' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: write
+      packages: read
+    secrets: inherit
+    uses: ./.github/workflows/version-bump.yml
+    with:
+      branch: ${{ inputs.branch }}
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
+      project-type: ${{ matrix.artifact['project-type'] }}
+      file-pattern: ${{ inputs['file-pattern'] }}
+      java-version: ${{ matrix.artifact.config['java-version'] }}
+      node-version: ${{ matrix.artifact.config['node-version'] }}
+      gradle-version-file: ${{ matrix.artifact.config['gradle-version-file'] }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+  summarize-prepare-stage:
+    name: Summarize Prepare Stage
+    needs: [execute-version-bump]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      stage-ran: ${{ steps.summary.outputs.stage-ran }}
+      stage-result: ${{ steps.summary.outputs.stage-result }}
+      result-json: ${{ steps.summary.outputs.result-json }}
+    steps:
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs.reusable-ci-ref }}
+          path: .github-shared
+          sparse-checkout: scripts/summary
+      - name: Normalize prepare stage result
+        id: summary
+        env:
+          ARTIFACTS: ${{ inputs.artifacts }}
+          SHOULD_RUN_VERSION_BUMP: ${{ inputs['should-run-version-bump'] }}
+          PREPARE_RELEASE_RESULT: ${{ needs.execute-version-bump.result }}
+        run: bash .github-shared/scripts/summary/write-prepare-stage-result.sh

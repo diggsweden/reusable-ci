@@ -146,13 +146,18 @@ jobs:
           done
       - name: Generate publish summary
         run: |
+          print_repository_link() {
+            local repo
+            repo="${{ github.repository }}"
+            printf "%s **Repository:** [%s](https://github.com/%s/packages)\n" "-" "$repo" "$repo"
+          }
+
           {
             printf "## Published to GitHub Packages 📦\n"
             printf "\n"
             printf "%s **Package Type:** %s\n" "-" "${{ inputs['package-type'] }}"
             printf "%s **Registry:** GitHub Packages\n" "-"
-            REPO="${{ github.repository }}"
-            printf "%s **Repository:** [%s](https://github.com/%s/packages)\n" "-" "${REPO}" "${REPO}"
+            print_repository_link
             printf "\n"
             printf "*Published at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           } >> "$GITHUB_STEP_SUMMARY"

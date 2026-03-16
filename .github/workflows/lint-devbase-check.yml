@@ -98,12 +98,16 @@ jobs:
           just install
       - name: Run linting
         run: |
+          run_available_lint_recipe() {
+            if just --list --unsorted | grep -qE '^[[:space:]]*lint-all\b'; then
+              just lint-all
+            elif just --list --unsorted | grep -qE '^[[:space:]]*lint\b'; then
+              just lint
+            else
+              printf "::error::No lint recipe found. Expected 'lint-all' or 'lint'.\n"
+              exit 1
+            fi
+          }
+
           eval "$(mise activate bash)"
-          if just --list --unsorted | grep -qE '^[[:space:]]*lint-all\b'; then
-            just lint-all
-          elif just --list --unsorted | grep -qE '^[[:space:]]*lint\b'; then
-            just lint
-          else
-            printf "::error::No lint recipe found. Expected 'lint-all' or 'lint'.\n"
-            exit 1
-          fi
+          run_available_lint_recipe

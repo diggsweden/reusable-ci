@@ -159,26 +159,30 @@ jobs:
           mvn $MAVEN_CLI_OPTS deploy $SETTINGS_ARG -P${{ inputs.profile }} -DskipTests
       - name: Generate publish summary
         run: |
-          {
-            printf "## Published to Maven Central 🚀\n"
-            printf "\n"
-            printf "%s **Version:** %s\n" "-" "${{ steps.version-info.outputs.VERSION }}"
-
+          print_release_type() {
             if [ "${{ steps.version-info.outputs.IS_SNAPSHOT }}" = "true" ]; then
               printf "%s **Type:** %s\n" "-" "SNAPSHOT"
             else
               printf "%s **Type:** %s\n" "-" "Release"
             fi
+          }
 
-            printf "%s **Registry:** [Maven Central](https://central.sonatype.com/)\n" "-"
-            printf "\n"
-
+          print_release_notice() {
             if [ "${{ steps.version-info.outputs.IS_SNAPSHOT }}" = "true" ]; then
               printf "⚠️ **SNAPSHOT** releases are available immediately in the snapshot repository.\n"
             else
               printf "✓ **Release** deployed to staging. Will be published to Central within 30 minutes.\n"
             fi
+          }
 
+          {
+            printf "## Published to Maven Central 🚀\n"
+            printf "\n"
+            printf "%s **Version:** %s\n" "-" "${{ steps.version-info.outputs.VERSION }}"
+            print_release_type
+            printf "%s **Registry:** [Maven Central](https://central.sonatype.com/)\n" "-"
+            printf "\n"
+            print_release_notice
             printf "\n"
             printf "*Published at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           } >> "$GITHUB_STEP_SUMMARY"

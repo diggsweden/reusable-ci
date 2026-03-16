@@ -1,0 +1,127 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+name: Pull Request Quality Stage
+on:
+  workflow_call:
+    inputs:
+      pr-context-json:
+        required: true
+        type: string
+      pr-policy-json:
+        required: true
+        type: string
+    outputs:
+      stage-ran:
+        description: PR quality stage ran
+        value: ${{ jobs.summarize-quality-stage.outputs.stage-ran }}
+      stage-result:
+        description: Normalized PR quality stage result
+        value: ${{ jobs.summarize-quality-stage.outputs.stage-result }}
+      result-json:
+        description: PR quality stage result payload
+        value: ${{ jobs.summarize-quality-stage.outputs.result-json }}
+permissions:
+  contents: read
+jobs:
+  commit-lint:
+    name: Commit Lint
+    if: ${{ fromJson(inputs['pr-policy-json']).commitlint }}
+    uses: ./.github/workflows/lint-commit.yml
+    with:
+      base-branch: ${{ fromJson(inputs['pr-context-json']).base_branch }}
+  license-lint:
+    name: License Lint
+    if: ${{ fromJson(inputs['pr-policy-json']).licenselint }}
+    uses: ./.github/workflows/lint-license.yml
+  dependency-review:
+    name: Dependency Review
+    if: ${{ fromJson(inputs['pr-policy-json']).dependencyreview }}
+    uses: ./.github/workflows/security-dependency-review.yml
+  megalint:
+    name: MegaLinter
+    if: ${{ fromJson(inputs['pr-policy-json']).megalint }}
+    permissions:
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/lint-mega.yml
+  publiccode-lint:
+    name: Publiccode Lint
+    if: ${{ fromJson(inputs['pr-policy-json']).publiccodelint }}
+    uses: ./.github/workflows/lint-publiccode.yml
+  devbase-check-lint:
+    name: Devbase Check
+    if: ${{ fromJson(inputs['pr-policy-json']).devbasecheck }}
+    permissions:
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/lint-devbase-check.yml
+  swift-lint:
+    name: Swift Lint
+    if: ${{ fromJson(inputs['pr-policy-json']).swift }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/lint-swift.yml
+    with:
+      enable-swiftformat: ${{ fromJson(inputs['pr-policy-json']).swiftformat }}
+      enable-swiftlint: ${{ fromJson(inputs['pr-policy-json']).swiftlint }}
+  quality-status:
+    name: Quality Status Check
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [commit-lint, license-lint, dependency-review, megalint, publiccode-lint, devbase-check-lint, swift-lint]
+    steps:
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ fromJson(inputs['pr-context-json']).reusable_ci_ref }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Check quality results
+        run: |
+          bash .github-shared/scripts/summary/write-quality-check-status.sh \
+            "Commit Lint|${{ fromJson(inputs['pr-policy-json']).commitlint }}|${{ needs.commit-lint.result }}|true" \
+            "License Lint|${{ fromJson(inputs['pr-policy-json']).licenselint }}|${{ needs.license-lint.result }}|true" \
+            "Dependency Review|${{ fromJson(inputs['pr-policy-json']).dependencyreview }}|${{ needs.dependency-review.result }}|false" \
+            "MegaLinter|${{ fromJson(inputs['pr-policy-json']).megalint }}|${{ needs.megalint.result }}|true" \
+            "Publiccode Lint|${{ fromJson(inputs['pr-policy-json']).publiccodelint }}|${{ needs.publiccode-lint.result }}|true" \
+            "Devbase Check|${{ fromJson(inputs['pr-policy-json']).devbasecheck }}|${{ needs.devbase-check-lint.result }}|false" \
+            "Swift Lint|${{ fromJson(inputs['pr-policy-json']).swift }}|${{ needs.swift-lint.result }}|false"
+  summarize-quality-stage:
+    name: Summarize Quality Stage
+    needs: [commit-lint, license-lint, dependency-review, megalint, publiccode-lint, devbase-check-lint, swift-lint, quality-status]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      stage-ran: ${{ steps.summary.outputs.stage-ran }}
+      stage-result: ${{ steps.summary.outputs.stage-result }}
+      result-json: ${{ steps.summary.outputs.result-json }}
+    steps:
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ fromJson(inputs['pr-context-json']).reusable_ci_ref }}
+          path: .github-shared
+          sparse-checkout: scripts/summary
+      - name: Normalize PR quality stage result
+        id: summary
+        env:
+          COMMITLINT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).commitlint }}
+          LICENSLINT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).licenselint }}
+          DEPENDENCYREVIEW_ENABLED: ${{ fromJson(inputs['pr-policy-json']).dependencyreview }}
+          MEGALINT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).megalint }}
+          PUBLICCODELINT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).publiccodelint }}
+          DEVBASECHECK_ENABLED: ${{ fromJson(inputs['pr-policy-json']).devbasecheck }}
+          SWIFT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).swift }}
+          COMMITLINT_RESULT: ${{ needs.commit-lint.result }}
+          LICENSLINT_RESULT: ${{ needs.license-lint.result }}
+          DEPENDENCYREVIEW_RESULT: ${{ needs.dependency-review.result }}
+          MEGALINT_RESULT: ${{ needs.megalint.result }}
+          PUBLICCODELINT_RESULT: ${{ needs.publiccode-lint.result }}
+          DEVBASECHECK_RESULT: ${{ needs.devbase-check-lint.result }}
+          SWIFT_RESULT: ${{ needs.swift-lint.result }}
+        run: bash .github-shared/scripts/summary/write-pr-quality-stage-result.sh

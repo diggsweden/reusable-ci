@@ -165,32 +165,45 @@ with:
   config-file: ""          # Optional: Custom changelog config
 ```
 
-#### `release-github.yml`
+#### `release-create-github.yml`
 Creates GitHub releases with assets.
+
+Usually called by `release-orchestrator.yml`, but can also be used directly by advanced consumers that want lower-level release composition.
+
+#### `validate-release-prerequisites.yml`
+Validates release requirements (called automatically by orchestrator).
+
+Usually called by `release-orchestrator.yml`, but can also be used directly by advanced consumers that want explicit prerequisite validation.
+
+### PR Orchestrator
+
+#### `pullrequest-orchestrator.yml`
+Orchestrates all quality checks for pull requests. Composes a control-plane interface, delegates to the quality stage, and produces a top-level summary.
+
 ```yaml
-uses: ./.github/workflows/release-github.yml
+uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@main
 with:
-  attach-artifacts: "target/*.jar"  # Files to upload as release assets
-  generate-sbom: true               # Include CycloneDX/SPDX SBOM files
-  sign-artifacts: true              # GPG sign all release artifacts
+  project-type: maven              # Required: maven, npm, python
+  base-branch: ""                  # Optional: auto-detects PR target
+  linters.commitlint: true         # Deprecated v3.0: migrate to devbasecheck
+  linters.licenselint: true        # Deprecated v3.0: migrate to devbasecheck
+  linters.dependencyreview: true   # Dependency vulnerability review
+  linters.megalint: true           # Deprecated v3.0: migrate to devbasecheck
+  linters.publiccodelint: false    # Publiccode.yml validation
+  linters.devbasecheck: false      # Recommended: replaces deprecated linters
+  linters.swiftformat: false       # Swift format for iOS/macOS
+  linters.swiftlint: false         # SwiftLint for iOS/macOS
+  reusable-ci-ref: main            # Script checkout ref
 ```
 
-#### `release-prerequisites.yml`
-Validates release requirements (called automatically by orchestrator).
-```yaml
-uses: ./.github/workflows/release-prerequisites.yml
-with:
-  project-type: maven
-  build-type: application
-  check-authorization: true  # Verify user has permission to release
-```
+**Outputs:** The quality stage exposes `stage-ran`, `stage-result`, and `result-json` with per-check target results. See [PR Quality Stage Result Contract](workflows.md#pr-quality-stage-result-contract) for the full schema.
 
 ### Lint Workflows
 
 These workflows are automatically called by `pullrequest-orchestrator.yml`.
 
 #### `lint-commit.yml`
-Validates commit messages follow conventional commit format.
+Validates commit messages follow conventional commit format using [gommitlint](https://codeberg.org/itiquette/gommitlint).
 ```yaml
 uses: ./.github/workflows/lint-commit.yml
 ```
@@ -257,9 +270,9 @@ uses: ./.github/workflows/security-openssf-scorecard.yml
 
 | Workflow | Purpose | When to Use |
 |----------|---------|-------------|
-| `pullrequest-orchestrator.yml` | Run CI checks on PRs | Every repository |
-| `release-orchestrator.yml` | Full release process | Production releases |
-| `release-dev-orchestrator.yml` | Dev container builds | Development branches |
+| `pullrequest-orchestrator.yml` | Pull request quality control plane | Every repository |
+| `release-orchestrator.yml` | Production release control plane | Production releases |
+| `release-dev-orchestrator.yml` | Lightweight dev release control plane | Development branches |
 
 ### Dev vs Production Release
 

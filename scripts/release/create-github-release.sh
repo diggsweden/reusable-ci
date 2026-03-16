@@ -3,23 +3,14 @@
 # SPDX-License-Identifier: CC0-1.0
 
 # Create GitHub Release with artifacts
-# Usage: create-github-release.sh <tag-name> <repository> <draft> <make-latest> <attach-artifacts> [release-notes-file] [artifact-name]
+#
+# Required env: TAG_NAME, REPOSITORY
+# Optional env: DRAFT, MAKE_LATEST, ATTACH_ARTIFACTS, RELEASE_NOTES_FILE, ARTIFACT_NAME
 
-set -uo pipefail
+set -euo pipefail
 
-readonly TAG_NAME="${1:?Usage: $0 <tag-name> <repository> <draft> <make-latest> <attach-artifacts> [release-notes-file] [artifact-name]}"
-readonly REPOSITORY="${2:?Usage: $0 <tag-name> <repository> <draft> <make-latest> <attach-artifacts> [release-notes-file] [artifact-name]}"
-readonly DRAFT="${3:-false}"
-readonly MAKE_LATEST="${4:-true}"
-readonly ATTACH_ARTIFACTS="${5:-}"
-readonly RELEASE_NOTES_FILE="${6:-release-notes.md}"
-readonly ARTIFACT_NAME="${7:-$(basename "$REPOSITORY")}"
-
-PROJECT_NAME="$ARTIFACT_NAME"
-readonly PROJECT_NAME
-VERSION="${TAG_NAME#v}"
-readonly VERSION
-readonly PRERELEASE_REGEX='-(alpha|beta|rc|dev|snapshot)'
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
 
 declare -A ADDED_FILES
 ARGS=()
@@ -66,9 +57,9 @@ add_file_with_signature() {
 build_release_args() {
   ARGS+=("$TAG_NAME" "--title" "$TAG_NAME")
 
-  [[ "$DRAFT" == "true" ]] && ARGS+=("--draft")
-  [[ "$TAG_NAME" =~ $PRERELEASE_REGEX ]] && ARGS+=("--prerelease")
-  [[ "$MAKE_LATEST" != "true" ]] && ARGS+=("--latest=false")
+  if [[ "$DRAFT" == "true" ]]; then ARGS+=("--draft"); fi
+  if ci_is_prerelease "$TAG_NAME"; then ARGS+=("--prerelease"); fi
+  if [[ "$MAKE_LATEST" != "true" ]]; then ARGS+=("--latest=false"); fi
 
   if [[ -f "$RELEASE_NOTES_FILE" && -s "$RELEASE_NOTES_FILE" ]]; then
     ARGS+=("--notes-file" "$RELEASE_NOTES_FILE")
@@ -76,9 +67,10 @@ build_release_args() {
 }
 
 collect_pattern_artifacts() {
-  [[ -z "$ATTACH_ARTIFACTS" ]] && return
+  if [[ -z "$ATTACH_ARTIFACTS" ]]; then return; fi
 
   local pattern
+  local PATTERNS
   IFS=',' read -ra PATTERNS <<<"$ATTACH_ARTIFACTS"
   for pattern in "${PATTERNS[@]}"; do
     pattern=$(printf "%s" "$pattern" | xargs)
@@ -89,20 +81,19 @@ collect_pattern_artifacts() {
 }
 
 collect_release_artifacts() {
-  [[ -d "./release-artifacts" ]] || return
+  if [[ ! -d "./release-artifacts" ]]; then return; fi
 
   local file basename
   while IFS= read -r -d '' file; do
     basename=$(basename "$file")
     add_file "$file"
     add_file "${basename}.asc"
-  done < <(find ./release-artifacts -type f \
-    \( -name "*.jar" -o -name "*.tgz" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*.war" \) \
-    ! -name "original-*.jar" -print0)
+  done < <(ci_find_release_artifacts)
 }
 
 collect_sbom_artifacts() {
-  local sbom_zip="${PROJECT_NAME}-${VERSION}-sboms.zip"
+  local sbom_zip
+  sbom_zip=$(ci_sbom_zip_name "$PROJECT_NAME" "$VERSION")
   if [[ -f "$sbom_zip" ]]; then
     printf "Adding SBOM ZIP: %s\n" "$sbom_zip"
     add_file_with_signature "$sbom_zip"
@@ -112,10 +103,10 @@ collect_sbom_artifacts() {
 }
 
 collect_checksum_artifacts() {
-  if [[ -s "checksums.sha256" ]]; then
-    add_file_with_signature "checksums.sha256"
+  if [[ -s "$CI_CHECKSUMS_FILE" ]]; then
+    add_file_with_signature "$CI_CHECKSUMS_FILE"
   else
-    printf "::warning::No checksums.sha256 or file is empty - skipping\n"
+    printf "::warning::No %s or file is empty - skipping\n" "$CI_CHECKSUMS_FILE"
   fi
 }
 
@@ -126,6 +117,17 @@ collect_remaining_signatures() {
 }
 
 main() {
+  readonly TAG_NAME="${TAG_NAME:?TAG_NAME is required}"
+  readonly REPOSITORY="${REPOSITORY:?REPOSITORY is required}"
+  readonly DRAFT="${DRAFT:-false}"
+  readonly MAKE_LATEST="${MAKE_LATEST:-true}"
+  readonly ATTACH_ARTIFACTS="${ATTACH_ARTIFACTS:-}"
+  readonly RELEASE_NOTES_FILE="${RELEASE_NOTES_FILE:-release-notes.md}"
+  readonly ARTIFACT_NAME="${ARTIFACT_NAME:-$(basename "$REPOSITORY")}"
+
+  readonly PROJECT_NAME="$ARTIFACT_NAME"
+  readonly VERSION="${TAG_NAME#v}"
+
   cleanup_existing_release "$TAG_NAME"
 
   build_release_args
@@ -139,4 +141,4 @@ main() {
   gh release create "${ARGS[@]}"
 }
 
-main
+main "$@"

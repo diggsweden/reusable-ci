@@ -6,30 +6,205 @@ SPDX-License-Identifier: CC0-1.0
 
 # Scripts
 
-Shell scripts for SBOM generation and release validation.
+Shell scripts used by reusable CI workflows for building, validating, publishing, and summarizing.
 
 ```text
 scripts/
-├── sbom/
-│   └── generate-sbom.sh                    # Generate SPDX/CycloneDX SBOMs with Syft
+├── android/
+│   ├── build-gradle.sh                       # Run Gradle build tasks with optional test skip
+│   ├── decode-keystore.sh                    # Decode Base64 Android keystore to file
+│   ├── generate-artifact-names.sh            # Generate standardized APK/AAB artifact names
+│   ├── get-version-info.sh                   # Read version from gradle.properties
+│   ├── list-built-artifacts.sh               # List discovered Android build artifacts
+│   └── resolve-build-tasks.sh               # Resolve Gradle build tasks from flavor/type
+├── apple/
+│   ├── archive-app.sh                        # Build Xcode archive (.xcarchive)
+│   ├── export-ipa.sh                         # Export IPA from Xcode archive
+│   ├── get-version-info.sh                   # Read version from Xcode project/workspace
+│   ├── list-built-artifacts.sh               # List discovered Apple build artifacts
+│   └── setup-code-signing.sh                 # Configure Xcode code signing keychain
+├── ci/
+│   ├── env.sh                                # CI platform environment abstraction
+│   ├── install-syft.sh                       # Install Syft SBOM generator
+│   └── output.sh                             # CI output and summary helpers
+├── config/
+│   ├── get-file-pattern.sh                   # Get file pattern by project type
+│   ├── parse-artifacts-config.sh             # Parse artifacts.yml configuration
+│   └── resolve-file-pattern.sh              # Resolve file pattern for version bump commits
 ├── container/
-│   ├── determine-image-name.sh             # Resolve full container image name with registry
-│   └── verify-artifacts.sh                 # Check artifacts exist before container build
+│   ├── build-project.sh                      # Build project before container image creation
+│   ├── extract-npm-tarball.sh                # Extract NPM tarball for container builds
+│   ├── resolve-image-name.sh                # Resolve full container image name with registry
+│   ├── validate-artifacts.sh                 # Validate artifacts exist before container build
+│   ├── validate-containerfile.sh             # Validate Containerfile/Dockerfile exists
+│   ├── validate-namespace.sh                 # Validate container image namespace matches repo
+│   └── write-image-details.sh               # Write container image details to GITHUB_OUTPUT
+├── plan/
+│   ├── resolve-release-plan.sh               # Resolve release plan from policy and context JSON
+│   ├── write-dev-release-interface.sh        # Write dev release orchestrator interface outputs
+│   ├── write-pr-interface.sh                 # Write PR orchestrator interface outputs
+│   └── write-release-interface.sh            # Write release orchestrator interface outputs
+├── registry/
+│   ├── validate-auth-configuration.sh        # Validate registry auth configuration
+│   └── validate-auth.sh                      # Validate registry authentication credentials
 ├── release/
-│   ├── create-sbom-zip.sh                  # Package all SBOM layers into ZIP archive
-│   └── generate-checksums.sh               # Generate SHA256 checksums for all artifacts
-├── validation/
-│   ├── generate-prerequisites-summary.sh   # Generate release validation report
-│   ├── validate-tag-format.sh              # Verify semantic version format
-│   ├── validate-tag-signature.sh           # Check GPG/SSH tag signature
-│   └── validate-tag-commit.sh              # Verify tag commit in branch history
-└── version/
-    └── bump-version.sh                     # Update version in pom.xml/package.json/gradle.properties
+│   ├── create-and-sign-sbom-zip.sh           # Create and GPG-sign SBOM ZIP archive
+│   ├── create-github-release.sh              # Create GitHub Release with artifacts
+│   ├── create-sbom-zip.sh                    # Package SBOM layers into ZIP archive
+│   ├── generate-checksums.sh                 # Generate SHA256 checksums for release artifacts
+│   ├── prepare-release-notes.sh              # Prepare release notes from changelog
+│   ├── resolve-artifact-name.sh             # Resolve artifact name from repo/config
+│   ├── resolve-release-metadata.sh           # Resolve release metadata (version, tag, branch)
+│   └── sign-release-artifacts.sh             # GPG-sign release artifacts
+├── sbom/
+│   ├── find-container-sbom.sh                # Find container SBOM files in artifacts
+│   ├── generate-container-sbom-artifacts.sh  # Generate container SBOM artifact outputs
+│   ├── generate-container-sbom.sh            # Generate container image SBOMs with Syft
+│   └── generate-sbom.sh                      # Generate SPDX/CycloneDX SBOMs for all layers
+├── summary/
+│   ├── write-android-build-summary.sh        # Android build step summary
+│   ├── write-appstore-summary.sh             # Apple App Store publish step summary
+│   ├── write-build-stage-result.sh           # Release build stage result output
+│   ├── write-dev-build-stage-result.sh       # Dev build stage result output
+│   ├── write-dev-publish-stage-result.sh     # Dev publish stage result output
+│   ├── write-dev-release-summary.sh          # Dev release step summary
+│   ├── write-google-play-summary.sh          # Google Play publish step summary
+│   ├── write-gradle-build-summary.sh         # Gradle build step summary
+│   ├── write-maven-build-summary.sh          # Maven build step summary
+│   ├── write-npm-build-summary.sh            # NPM build step summary
+│   ├── write-pr-quality-stage-result.sh      # PR quality stage result output
+│   ├── write-pr-summary.sh                   # PR pipeline step summary
+│   ├── write-prepare-stage-result.sh         # Release prepare stage result output
+│   ├── write-prerequisites-summary.sh        # Release validation report step summary
+│   ├── write-publish-stage-result.sh         # Release publish stage result output
+│   ├── write-quality-check-status.sh         # Quality check status table step summary
+│   ├── write-release-summary.sh              # Release pipeline step summary
+│   └── write-xcode-build-summary.sh          # Xcode build step summary
+├── validate/
+│   ├── validate-authorization.sh             # Validate release actor authorization
+│   ├── validate-bot-permissions.sh           # Validate bot account permissions
+│   ├── validate-github-token.sh              # Validate GitHub token type and permissions
+│   ├── validate-mavencentral-credentials.sh  # Validate Maven Central credentials are set
+│   ├── validate-tag-commit.sh                # Verify tag commit in branch history
+│   ├── validate-tag-format.sh                # Verify semantic version format
+│   ├── validate-tag-signature.sh             # Verify GPG/SSH tag signature
+│   └── validate-tag-uniqueness.sh            # Verify tag is unique across remotes
+├── version/
+│   ├── bump-version.sh                       # Update version in build config files
+│   ├── generate-dev-version.sh               # Generate dev version string from branch/SHA
+│   ├── move-tag.sh                           # Move existing git tag to new commit
+│   ├── read-minimal-changelog.sh             # Read latest changelog entry
+│   └── validate-full-changelog.sh            # Validate CHANGELOG.md exists and has content
 ```
 
 ---
 
-## SBOM Generation
+## Android
+
+Scripts for Android Gradle builds.
+
+| Script | Purpose |
+|--------|---------|
+| `build-gradle.sh` | Runs `./gradlew` with task list, optionally skipping tests |
+| `decode-keystore.sh` | Decodes Base64-encoded `ANDROID_KEYSTORE_BASE64` to a keystore file, outputs path |
+| `generate-artifact-names.sh` | Generates standardized names for APK/AAB files with date stamp |
+| `get-version-info.sh` | Reads `versionName` and `versionCode` from `gradle.properties` |
+| `list-built-artifacts.sh` | Lists APK/AAB files found after build |
+| `resolve-build-tasks.sh` | Resolves Gradle task list from flavor, build types, and AAB settings |
+
+---
+
+## Apple
+
+Scripts for Xcode/iOS builds, code signing, and version info.
+
+| Script | Purpose |
+|--------|---------|
+| `archive-app.sh` | Runs `xcodebuild archive` with workspace/project, scheme, and code signing config |
+| `export-ipa.sh` | Exports IPA from `.xcarchive` using decoded export options plist |
+| `get-version-info.sh` | Reads version and build number from Xcode project/workspace |
+| `list-built-artifacts.sh` | Lists IPA and xcarchive files found after build |
+| `setup-code-signing.sh` | Configures code signing keychain with certificate and provisioning profile |
+
+---
+
+## Config
+
+Scripts for build configuration resolution.
+
+| Script | Purpose |
+|--------|---------|
+| `get-file-pattern.sh` | Returns git file pattern by project type |
+| `resolve-file-pattern.sh` | Resolves file pattern for version bump commits (wraps `get-file-pattern.sh`) |
+| `parse-artifacts-config.sh` | Parses `artifacts.yml` to resolve build targets, container config, and publish targets |
+
+---
+
+## Container
+
+Scripts for container image builds and validation.
+
+| Script | Purpose |
+|--------|---------|
+| `build-project.sh` | Runs project build (Maven/NPM/Gradle) before container image creation |
+| `extract-npm-tarball.sh` | Extracts NPM tarball into context directory for container builds |
+| `resolve-image-name.sh` | Resolves full image name with registry prefix from inputs |
+| `write-image-details.sh` | Writes image name, digest, and tags to `GITHUB_OUTPUT` |
+| `validate-artifacts.sh` | Checks build artifacts exist before container build; warns on Containerfile rebuilds |
+| `validate-containerfile.sh` | Validates that the Containerfile/Dockerfile exists at the given path |
+| `validate-namespace.sh` | Validates container image namespace matches repository owner |
+
+---
+
+## Plan
+
+Scripts that produce orchestrator interface outputs (context JSON, policy JSON).
+
+| Script | Purpose |
+|--------|---------|
+| `resolve-release-plan.sh` | Resolves release execution plan from policy and context JSON |
+| `write-dev-release-interface.sh` | Writes dev release orchestrator context and policy outputs |
+| `write-pr-interface.sh` | Writes PR orchestrator context and policy outputs |
+| `write-release-interface.sh` | Writes release orchestrator context and policy outputs |
+
+---
+
+## Registry
+
+| Script | Purpose |
+|--------|---------|
+| `validate-auth-configuration.sh` | Validates registry auth configuration (token type, registry match) |
+| `validate-auth.sh` | Validates registry credentials are present and functional |
+
+---
+
+## Release
+
+Scripts for release artifact management and GitHub Release creation.
+
+| Script | Purpose |
+|--------|---------|
+| `create-and-sign-sbom-zip.sh` | Creates SBOM ZIP and signs it with GPG |
+| `create-github-release.sh` | Creates GitHub Release with artifacts, signatures, SBOMs, and checksums |
+| `create-sbom-zip.sh` | Packages all 3 SBOM layers (source, artifact, container) into ZIP |
+| `generate-checksums.sh` | Generates SHA256 checksums for all release artifacts |
+| `prepare-release-notes.sh` | Extracts release notes from changelog for the current version |
+| `resolve-artifact-name.sh` | Resolves artifact name from repository name or config |
+| `resolve-release-metadata.sh` | Resolves release metadata (version, tag, branch, actor) |
+| `sign-release-artifacts.sh` | GPG-signs release artifacts (JARs, ZIPs, tarballs, checksums) |
+
+---
+
+## SBOM
+
+Scripts for Software Bill of Materials generation.
+
+| Script | Purpose |
+|--------|---------|
+| `find-container-sbom.sh` | Finds container SBOM files in artifact directories |
+| `generate-container-sbom-artifacts.sh` | Generates container SBOM artifact outputs for download |
+| `generate-container-sbom.sh` | Generates container image SBOMs using Syft |
+| `generate-sbom.sh` | Main SBOM generator — produces SPDX 2.3 and CycloneDX 1.6 for all layers |
 
 ### generate-sbom.sh
 
@@ -60,310 +235,102 @@ bash generate-sbom.sh [PROJECT_TYPE] [LAYERS] [VERSION] [PROJECT_NAME] [WORKING_
 | Artifact | `artifact` | `*-jar-sbom.*` | `*-tararchive-sbom.*` | `*-jar-sbom.*` |
 | Container | `containerimage` | `*-container-sbom.*` | `*-container-sbom.*` | `*-container-sbom.*` |
 
-**Examples:**
+---
 
-```bash
-# Auto-detect from pom.xml
-bash generate-sbom.sh maven source
+## Summary
 
-# Explicit version and name
-bash generate-sbom.sh maven "source,artifact" "1.0.0" "my-app"
+Scripts that write GitHub Actions step summaries and stage result outputs.
 
-# Container SBOM
-bash generate-sbom.sh maven "containerimage" "1.0.0" "my-app" "." "ghcr.io/org/app@sha256:..."
-```
+**Stage result scripts** produce structured JSON outputs consumed by orchestrators:
 
-**Auto-detection:**
+| Script | Used by |
+|--------|---------|
+| `write-build-stage-result.sh` | Release build stage |
+| `write-prepare-stage-result.sh` | Release prepare stage |
+| `write-publish-stage-result.sh` | Release publish stage |
+| `write-dev-build-stage-result.sh` | Dev build stage |
+| `write-dev-publish-stage-result.sh` | Dev publish stage |
+| `write-pr-quality-stage-result.sh` | PR quality stage |
 
-- Project type: pom.xml → maven, package.json → npm, build.gradle → gradle
-- Version: `mvn help:evaluate -Dexpression=project.version` or `jq -r .version package.json`
-- Name: artifactId, package name, or repository name
+**Validation and quality summary scripts**:
 
-**Tool:**
+| Script | Used by |
+|--------|---------|
+| `write-prerequisites-summary.sh` | Release prerequisites validation |
+| `write-quality-check-status.sh` | PR quality check results |
 
-- Uses [Syft](https://github.com/anchore/syft) for SBOM generation
-- Auto-installs if not available
+**Pipeline summary scripts** produce human-readable step summaries:
 
-**Output:**
+| Script | Used by |
+|--------|---------|
+| `write-release-summary.sh` | Release orchestrator |
+| `write-dev-release-summary.sh` | Dev release orchestrator |
+| `write-pr-summary.sh` | PR orchestrator |
 
-- SPDX: `{name}-{version}-{layer}-sbom.spdx.json`
-- CycloneDX: `{name}-{version}-{layer}-sbom.cyclonedx.json`
+**Build summary scripts** produce per-build-type step summaries:
+
+| Script | Used by |
+|--------|---------|
+| `write-maven-build-summary.sh` | Maven build workflow |
+| `write-npm-build-summary.sh` | NPM build workflow |
+| `write-gradle-build-summary.sh` | Gradle build workflow |
+| `write-android-build-summary.sh` | Android build workflow |
+| `write-xcode-build-summary.sh` | Xcode build workflow |
+| `write-appstore-summary.sh` | App Store publish workflow |
+| `write-google-play-summary.sh` | Google Play publish workflow |
 
 ---
 
-## Container Scripts
+## Validate
 
-### determine-image-name.sh
+Scripts for release prerequisite validation.
 
-Determines full container image name with registry prefix.
+| Script | Purpose |
+|--------|---------|
+| `validate-authorization.sh` | Validates release actor is authorized |
+| `validate-bot-permissions.sh` | Validates bot account has required permissions |
+| `validate-github-token.sh` | Validates GitHub token type and permissions |
+| `validate-mavencentral-credentials.sh` | Validates Maven Central credentials are set |
+| `validate-tag-commit.sh` | Verifies tag commit exists in target branch history |
+| `validate-tag-format.sh` | Verifies tag follows semantic versioning (`vX.Y.Z[-prerelease]`) |
+| `validate-tag-signature.sh` | Verifies tag is annotated and GPG/SSH signed |
+| `validate-tag-uniqueness.sh` | Verifies tag is unique across remotes |
+
+---
+
+## Version
+
+Scripts for version management.
+
+| Script | Purpose |
+|--------|---------|
+| `bump-version.sh` | Updates version in pom.xml / package.json / gradle.properties / xcconfig |
+| `generate-dev-version.sh` | Generates dev version string from branch name and short SHA |
+| `move-tag.sh` | Moves existing git tag to current HEAD |
+| `read-minimal-changelog.sh` | Reads the latest entry from CHANGELOG.md |
+| `validate-full-changelog.sh` | Validates CHANGELOG.md exists and has content |
+
+### bump-version.sh
 
 **Syntax:**
 
 ```bash
-bash determine-image-name.sh <registry> <image-name> <repository> <repository-owner>
+bash bump-version.sh <project-type> <version> [working-dir] [gradle-version-file]
 ```
 
-**Parameters:**
-
-| Parameter | Example |
-|-----------|---------|
-| `REGISTRY` | `ghcr.io`, `docker.io` |
-| `IMAGE_NAME` | `my-app` or `org/my-app` |
-| `REPOSITORY` | `reusable-ci` |
-| `REPOSITORY_OWNER` | `diggsweden` |
-
-**Logic:**
-
-- If `IMAGE_NAME` is empty, uses `REPOSITORY` name
-- If `IMAGE_NAME` has no `/` or `.`, adds registry prefix:
-  - Docker Hub: `owner/image-name`
-  - Other registries: `registry/image-name`
-- Otherwise uses `IMAGE_NAME` as-is
-
-**Examples:**
-
-```bash
-# ghcr.io with simple name
-bash determine-image-name.sh ghcr.io my-app reusable-ci diggsweden
-# Output: ghcr.io/my-app
-
-# Docker Hub with simple name
-bash determine-image-name.sh docker.io my-app reusable-ci diggsweden
-# Output: diggsweden/my-app
-
-# Full name (unchanged)
-bash determine-image-name.sh ghcr.io ghcr.io/org/app reusable-ci diggsweden
-# Output: ghcr.io/org/app
-```
-
----
-
-### verify-artifacts.sh
-
-Verifies artifacts exist before container build.
-
-**Syntax:**
-
-```bash
-bash verify-artifacts.sh <project-type> <artifact-dir>
-```
-
-**Parameters:**
-
-| Parameter | Example |
-|-----------|---------|
-| `PROJECT_TYPE` | `maven`, `npm` |
-| `ARTIFACT_DIR` | `./target`, `./dist` |
-
-**Checks:**
-
-- Maven: Verifies `*.jar` files exist
-- NPM: Verifies directory contains files
-- Warnings only (non-blocking) - container may build from source
-
-**Examples:**
-
-```bash
-# Verify Maven artifacts
-bash verify-artifacts.sh maven ./target
-
-# Verify NPM artifacts
-bash verify-artifacts.sh npm ./dist
-```
-
----
-
-## Release Scripts
-
-### create-sbom-zip.sh
-
-Creates ZIP archive containing all 3 SBOM layers.
-
-**Syntax:**
-
-```bash
-bash create-sbom-zip.sh [project-name] [version]
-```
-
-**Parameters:**
-
-| Parameter | Default | Example |
-|-----------|---------|---------|
-| `PROJECT_NAME` | Git repo name | `my-app` |
-| `VERSION` | `unknown` | `1.0.0` or `v1.0.0` |
-
-**Behavior:**
-
-- Skips if no SBOMs found
-- Includes all 3 layers:
-  - Layer 1: Source SBOMs (`*-pom-sbom.*`, `*-package-sbom.*`, `*-gradle-sbom.*`)
-  - Layer 2: Artifact SBOMs (`*-jar-sbom.*`, `*-tararchive-sbom.*`)
-  - Layer 3: Container SBOMs (from `./sbom-artifacts/`)
-- Output: `{project-name}-{version}-sboms.zip`
-
-**Examples:**
-
-```bash
-# Auto-detect from git
-bash create-sbom-zip.sh
-
-# Explicit name and version
-bash create-sbom-zip.sh my-app 1.0.0
-```
-
----
-
-### generate-checksums.sh
-
-Generates SHA256 checksums for all release artifacts.
-
-**Syntax:**
-
-```bash
-bash generate-checksums.sh [output-file] [release-dir] [attach-patterns] [sbom-dir]
-```
-
-**Parameters:**
-
-| Parameter | Default | Example |
-|-----------|---------|---------|
-| `OUTPUT_FILE` | `checksums.sha256` | `SHA256SUMS.txt` |
-| `RELEASE_ARTIFACTS_DIR` | `./release-artifacts` | `./dist` |
-| `ATTACH_PATTERNS` | - | `*.jar,*.zip` |
-| `SBOM_DIR` | `./sbom-artifacts` | `./sboms` |
-
-**Checksums:**
-
-1. Release artifacts directory (`*.jar`, `*.zip`, etc.)
-2. Attached files matching patterns
-3. Container SBOMs from sbom-artifacts
-4. All 3-layer SBOMs (source, artifact, container)
-
-**Examples:**
-
-```bash
-# Default behavior
-bash generate-checksums.sh
-
-# Custom output and patterns
-bash generate-checksums.sh SHA256SUMS.txt ./dist "*.jar,*.tar.gz"
-```
-
----
-
-## Tag Validation
-
-### generate-prerequisites-summary.sh
-
-Generates comprehensive release prerequisites validation report in GitHub Actions summary.
-
-**Syntax:**
-
-```bash
-bash generate-prerequisites-summary.sh
-```
-
-**Environment Variables:**
-
-| Variable | Purpose |
-|----------|---------|
-| `TAG_NAME` | Release tag name |
-| `COMMIT_SHA` | Tagged commit SHA |
-| `REF_TYPE` | `tag` or `branch` |
-| `PROJECT_TYPE` | `maven`, `npm`, `gradle` |
-| `BUILD_TYPE` | `app` or `lib` |
-| `CONTAINER_REGISTRY` | Container registry URL |
-| `SIGN_ARTIFACTS` | `true`/`false` |
-| `CHECK_AUTHORIZATION` | `true`/`false` |
-| `JOB_STATUS` | `success`/`failure` |
-
-**Report Sections:**
-
-1. **Release Tag** - Tag info, signature status, message
-2. **Tagged Commit** - Commit author, date, signature, message
-3. **Configuration** - Project settings, registry, signing
-4. **Required Secrets** - Validation of all required secrets:
-   - GPG keys (if signing enabled)
-   - GitHub tokens
-   - Maven Central credentials (if publishing)
-   - NPM token (if publishing)
-5. **Validation Results** - Summary table with pass/fail status
-
-**Examples:**
-
-```bash
-# In GitHub Actions workflow
-- env:
-    TAG_NAME: ${{ github.ref_name }}
-    COMMIT_SHA: ${{ github.sha }}
-    REF_TYPE: tag
-    PROJECT_TYPE: maven
-    SIGN_ARTIFACTS: "true"
-  run: bash .reusable-ci/scripts/validation/generate-prerequisites-summary.sh
-```
-
----
-
-### validate-tag-format.sh
-
-Checks tag follows semantic versioning.
-
-**Syntax:**
-
-```bash
-./validate-tag-format.sh <tag-name>
-```
-
-**Valid formats:**
-
-- `v1.0.0`
-- `v2.3.4-beta.1`
-- `v1.0.0-rc.2`
-- `v1.0.0-SNAPSHOT`
-
----
-
-### validate-tag-signature.sh
-
-Checks tag is signed with GPG or SSH.
-
-**Syntax:**
-
-```bash
-./validate-tag-signature.sh <tag-name> <github-repository> [gpg-public-key]
-```
-
-**Checks:**
-
-- Tag is annotated (not lightweight)
-- Has GPG or SSH signature
-- Verifies signature if public key provided
-
----
-
-### validate-tag-commit.sh
-
-Checks tag commit exists in branch history.
-
-**Syntax:**
-
-```bash
-./validate-tag-commit.sh <tag-name> <branch-name>
-```
-
-**Checks:**
-
-- Tag commit in branch history
-- Tag not ahead of branch HEAD
-- Valid commit reference
+| Type | Action | Files Updated |
+|------|--------|---------------|
+| Maven | `mvn versions:set` | `pom.xml` (all modules) |
+| NPM | `npm version` | `package.json`, `package-lock.json` |
+| Gradle | Updates properties, increments versionCode | `gradle.properties` |
+| Xcode iOS | Updates MARKETING_VERSION | `versions.xcconfig` |
+| Meta | No file update | Changelog only |
 
 ---
 
 ## Usage in Workflows
 
-For advanced users building custom workflows (most projects use the orchestrators).
-
-**SBOM generation:**
+Most projects use the orchestrators directly. For custom workflows:
 
 ```yaml
 - uses: actions/checkout@v4
@@ -375,103 +342,4 @@ For advanced users building custom workflows (most projects use the orchestrator
 - run: |
     bash .reusable-ci/scripts/sbom/generate-sbom.sh \
       maven "source,artifact" "$VERSION" "$PROJECT_NAME"
-```
-
-**Tag validation:**
-
-```yaml
-- uses: actions/checkout@v4
-  with:
-    repository: diggsweden/reusable-ci
-    path: .reusable-ci
-    sparse-checkout: scripts/validation
-
-- run: bash .reusable-ci/scripts/validation/validate-tag-format.sh "${{ github.ref_name }}"
-
-- env:
-    OSPO_BOT_GPG_PUB: ${{ secrets.OSPO_BOT_GPG_PUB }}
-  run: bash .reusable-ci/scripts/validation/validate-tag-signature.sh "${{ github.ref_name }}" "${{ github.repository }}" "$OSPO_BOT_GPG_PUB"
-
-- run: bash .reusable-ci/scripts/validation/validate-tag-commit.sh "${{ github.ref_name }}" "main"
-```
-
----
-
-## Version Management
-
-### bump-version.sh
-
-Updates project version in build configuration files.
-
-**Syntax:**
-
-```bash
-bash bump-version.sh <project-type> <version> [working-dir] [gradle-version-file]
-```
-
-**Parameters:**
-
-| Parameter | Default | Example |
-|-----------|---------|---------|
-| `PROJECT_TYPE` | - | `maven`, `npm`, `gradle`, `xcode-ios` |
-| `VERSION` | - | `1.0.0` |
-| `WORKING_DIR` | `.` | `/path/to/project` |
-| `GRADLE_VERSION_FILE` | `gradle.properties` | `version.properties` |
-
-**Project-specific behavior:**
-
-| Type | Action | Files Updated |
-|------|--------|---------------|
-| Maven | `mvn versions:set` | `pom.xml` |
-| NPM | `npm version` | `package.json` |
-| Gradle | Updates properties | `gradle.properties` |
-| Xcode iOS | Updates xcconfig | `versions.xcconfig` |
-
-**Xcode iOS specifics:**
-
-- Updates `MARKETING_VERSION` in xcconfig file
-- Creates `versions.xcconfig` if missing
-- Configurable via `XCODE_VERSION_FILE` env var
-
-**Gradle specifics:**
-
-- Updates `versionName=` property
-- Auto-increments `versionCode=` (for Android)
-- Creates properties if missing
-
-**Examples:**
-
-```bash
-# Maven project
-bash bump-version.sh maven 1.0.0
-
-# NPM in subdirectory
-bash bump-version.sh npm 2.3.4 ./packages/app
-
-# Gradle with custom properties file
-bash bump-version.sh gradle 3.0.0 . version.properties
-
-# Xcode iOS project
-bash bump-version.sh xcode-ios 1.2.0 .
-
-# Xcode iOS with custom config file
-XCODE_VERSION_FILE=Config/Version.xcconfig bash bump-version.sh xcode-ios 1.2.0 .
-```
-
----
-
-## Examples
-
-**SBOM:**
-
-```bash
-generate-sbom.sh maven "source,artifact"
-```
-
-**Validation:**
-
-```bash
-validate-tag-format.sh v1.0.0 && \
-validate-tag-signature.sh v1.0.0 diggsweden/repo && \
-validate-tag-commit.sh v1.0.0 main
 ```

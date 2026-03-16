@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
-#
 # SPDX-License-Identifier: CC0-1.0
 
 # Parse artifacts.yml configuration
 # This script is called by release-orchestrator.yml
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+source "$SCRIPT_DIR/../ci/env.sh"
 
 readonly VALID_PROJECT_TYPES="maven npm gradle gradle-android xcode-ios python go rust meta"
 readonly SBOM_SUPPORTED_TYPES="maven npm gradle python go rust"
@@ -20,26 +23,18 @@ warn() {
   printf "::warning::%s\n" "$1"
 }
 
-notice() {
-  printf "::notice::%s\n" "$1"
-}
-
 output() {
-  printf "%s\n" "$1" >>"$GITHUB_OUTPUT"
+  ci_output "${1%%=*}" "${1#*=}"
 }
 
 output_multiline() {
   local name="$1"
   local value="$2"
-  {
-    printf "%s<<EOF\n" "$name"
-    printf "%s\n" "$value"
-    printf "EOF\n"
-  } >>"$GITHUB_OUTPUT"
+  printf "%s\n" "$value" | ci_output_multiline "$name"
 }
 
 summary() {
-  printf "%s\n" "$1" >>"$GITHUB_STEP_SUMMARY"
+  printf "%s\n" "$1" >>"$(ci_summary_file)"
 }
 
 normalize_name() {
@@ -167,6 +162,7 @@ output_first_artifact_info() {
   first_project_type=$(printf "%s" "$ARTIFACTS" | jq -r '.[0]["project-type"]')
   first_build_type=$(printf "%s" "$ARTIFACTS" | jq -r '.[0]["build-type"] // "application"')
   first_require_auth=$(printf "%s" "$ARTIFACTS" | jq -r '.[0]["require-authorization"] // false')
+  local first_artifact_name
   first_artifact_name=$(printf "%s" "$ARTIFACTS" | jq -r '.[0].name // ""')
 
   output "first-project-type=$first_project_type"
@@ -200,28 +196,13 @@ compute_sbom_settings() {
   output_multiline "sbom-artifacts" "$sbom_artifacts"
 }
 
-determine_draft_release() {
-  local tag_name="$GITHUB_REF_NAME"
-  local is_draft="false"
-
-  if [[ "$tag_name" == *"-SNAPSHOT"* ]] || [[ "$tag_name" == *"-snapshot"* ]]; then
-    is_draft="true"
-    notice "Tag contains -SNAPSHOT, creating draft release"
-  elif ! printf "%s" "$tag_name" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$'; then
-    is_draft="true"
-    notice "Tag '$tag_name' is not a release version semver (vX.Y.Z), creating draft release"
-  fi
-
-  output "is-draft-release=$is_draft"
-}
-
 generate_summary() {
   local container_count
 
   summary "## Configuration"
   printf "%s" "$ARTIFACTS" | jq -r '
     .[] | "### \(.name)\n- **Type:** \(.["project-type"])\n- **Publish To:** \(.["publish-to"] // [] | join(", "))\n- **Directory:** \(.["working-directory"])\n"
-  ' >>"$GITHUB_STEP_SUMMARY"
+  ' >>"$(ci_summary_file)"
 
   container_count=$(printf "%s" "$CONTAINERS" | jq 'length')
   if [[ "$container_count" -gt 0 ]]; then
@@ -229,7 +210,7 @@ generate_summary() {
     summary "## Containers"
     printf "%s" "$CONTAINERS_WITH_TYPES" | jq -r '
       .[] | "### \(.name)\n- **From:** \((.from // []) | join(", "))\n- **Artifact Types:** \(.["artifact-types"] | join(", "))\n- **Containerfile:** \(.["container-file"])\n"
-    ' >>"$GITHUB_STEP_SUMMARY"
+    ' >>"$(ci_summary_file)"
   fi
 }
 
@@ -247,8 +228,7 @@ main() {
   output_artifacts_by_publish_target
   output_first_artifact_info
   compute_sbom_settings
-  determine_draft_release
   generate_summary
 }
 
-main
+main "$@"

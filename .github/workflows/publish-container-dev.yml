@@ -132,7 +132,7 @@ jobs:
       - name: Verify Maven artifacts
         if: ${{ contains(inputs['artifact-types'], 'maven') }}
         run: |
-          bash .github-shared/scripts/container/verify-artifacts.sh \
+          bash .github-shared/scripts/container/validate-artifacts.sh \
             maven \
             "${{ inputs['working-directory'] }}/target" \
             "${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}"
@@ -145,17 +145,11 @@ jobs:
       - name: Extract NPM tarball
         if: ${{ contains(inputs['artifact-types'], 'npm') }}
         working-directory: ${{ inputs['working-directory'] }}
-        run: |
-          TARBALL=$(find . -maxdepth 1 \( -name "*.tgz" -o -name "*.tar.gz" \) -type f -print -quit)
-          if [ -n "$TARBALL" ]; then
-            printf "Extracting %s...\n" "$TARBALL"
-            tar -xzf "$TARBALL" --strip-components=1
-            rm "$TARBALL"
-          fi
+        run: bash "$GITHUB_WORKSPACE/.github-shared/scripts/container/extract-npm-tarball.sh"
       - name: Verify NPM artifacts
         if: ${{ contains(inputs['artifact-types'], 'npm') }}
         run: |
-          bash .github-shared/scripts/container/verify-artifacts.sh \
+          bash .github-shared/scripts/container/validate-artifacts.sh \
             npm \
             "${{ inputs['working-directory'] }}/dist" \
             "${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}"
@@ -168,24 +162,18 @@ jobs:
       - name: Verify Gradle artifacts
         if: ${{ contains(inputs['artifact-types'], 'gradle') }}
         run: |
-          bash .github-shared/scripts/container/verify-artifacts.sh \
+          bash .github-shared/scripts/container/validate-artifacts.sh \
             gradle \
             "${{ inputs['working-directory'] }}/build/libs" \
             "${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}"
       - name: Set up Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
       - name: Check registry authentication configuration
-        run: |
-          HAS_PASSWORD="false"
-          if [ -n "${{ secrets['registry-password'] }}" ]; then
-            HAS_PASSWORD="true"
-          fi
-
-          bash .github-shared/scripts/registry/validate-auth.sh \
-            "${{ inputs['use-github-token'] }}" \
-            "${{ inputs.registry }}" \
-            "ghcr.io" \
-            "$HAS_PASSWORD"
+        env:
+          USE_GITHUB_TOKEN: ${{ inputs['use-github-token'] }}
+          TARGET_REGISTRY: ${{ inputs.registry }}
+          REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
+        run: bash .github-shared/scripts/registry/validate-auth-configuration.sh
       - name: Login to Container Registry
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 # Description:
-# This workflow enforces commit message conventions using Conform.
+# This workflow enforces commit message conventions using gommitlint.
 # It checks commit messages against a predefined set of rules to ensure consistency and compliance.
 #
 # Usage:
@@ -14,8 +14,8 @@
 #        # with:
 #        #   base-branch: "custom-branch"  # Only needed for special cases
 #
-# 2. Ensure your repository has a Conform configuration file (e.g., `.conform.yaml`).
-#    If not, Conform will use its default rules.
+# 2. Optionally add a `.gommitlint.yaml` configuration file to your repository.
+#    If not, gommitlint will use its default rules (conventional commits, etc.).
 #
 # 3. The workflow will analyze commits in pull requests and enforce the configured rules.
 #    It automatically compares against the PR's target branch.
@@ -31,8 +31,8 @@ on:
 permissions:
   contents: read
 jobs:
-  conform:
-    name: Commit (Conform) Analysis
+  commit-lint:
+    name: Commit Lint Analysis
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: github.event_name == 'pull_request'
@@ -45,22 +45,33 @@ jobs:
       - name: Determine base branch
         id: base
         run: |
+          set_base_branch() {
+            local branch="$1"
+            local message="$2"
+
+            printf "branch=%s\n" "$branch" >> "$GITHUB_OUTPUT"
+            printf "%s\n" "$message"
+          }
+
           # If explicitly provided, use it
           if [ -n "${{ inputs.base-branch }}" ]; then
-            printf "branch=%s\n" "${{ inputs.base-branch }}" >> "$GITHUB_OUTPUT"
-            printf "Using explicitly provided base: %s\n" "${{ inputs.base-branch }}"
+            set_base_branch "${{ inputs.base-branch }}" "Using explicitly provided base: ${{ inputs.base-branch }}"
           # For PRs, use the PR target branch
           elif [ "${{ github.event_name }}" = "pull_request" ] && [ -n "${{ github.base_ref }}" ]; then
-            printf "branch=%s\n" "${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
-            printf "Auto-detected PR base: %s\n" "${{ github.base_ref }}"
+            set_base_branch "${{ github.base_ref }}" "Auto-detected PR base: ${{ github.base_ref }}"
           # Fallback to main
           else
-            printf "branch=main\n" >> "$GITHUB_OUTPUT"
-            printf "Using default base: main\n"
+            set_base_branch "main" "Using default base: main"
           fi
       - name: Setup base branch
         run: git fetch origin ${{ steps.base.outputs.branch }}:${{ steps.base.outputs.branch }}
-      - name: Commit (conform) analysis
-        uses: docker://ghcr.io/siderolabs/conform@sha256:f7e72122d4296b90285ac51964361295adf1f2018420a8547cb2b069f94a776d
-        with:
-          args: "enforce --base-branch=${{ steps.base.outputs.branch }}"
+      - name: Install gommitlint
+        env:
+          # renovate: datasource=gitea-releases depName=itiquette/gommitlint registryUrl=https://codeberg.org
+          GOMMITLINT_VERSION: "0.9.4"
+        run: |
+          printf "Installing gommitlint v%s\n" "$GOMMITLINT_VERSION"
+          curl -sSfL "https://codeberg.org/itiquette/gommitlint/releases/download/v${GOMMITLINT_VERSION}/gommitlint-${GOMMITLINT_VERSION}-linux-x86_64.tar.gz" \
+            | tar xz -C /usr/local/bin gommitlint
+      - name: Commit lint analysis
+        run: gommitlint validate --base-branch=${{ steps.base.outputs.branch }} --format=github

@@ -1,0 +1,98 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+name: Release Dev Publish Stage
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      dev-context-json:
+        required: true
+        type: string
+      dev-policy-json:
+        required: true
+        type: string
+      build-result-json:
+        required: true
+        type: string
+    secrets:
+      registry-password:
+        required: false
+    outputs:
+      stage-ran:
+        description: Dev publish stage ran
+        value: ${{ jobs.summarize-dev-publish-stage.outputs.stage-ran }}
+      stage-result:
+        description: Normalized dev publish stage result
+        value: ${{ jobs.summarize-dev-publish-stage.outputs.stage-result }}
+      result-json:
+        description: Dev publish stage result payload
+        value: ${{ jobs.summarize-dev-publish-stage.outputs.result-json }}
+      artifacts-json:
+        description: Published dev artifact payload
+        value: ${{ jobs.summarize-dev-publish-stage.outputs.artifacts-json }}
+permissions:
+  contents: read
+jobs:
+  build-dev-container:
+    name: Build Container Dev
+    if: ${{ fromJson(inputs['build-result-json']).result == 'success' }}
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit
+    uses: ./.github/workflows/publish-container-dev.yml
+    with:
+      working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
+      reusable-ci-ref: ${{ fromJson(inputs['dev-context-json']).reusable_ci_ref }}
+      container-file: ${{ fromJson(inputs['dev-context-json']).container_file }}
+      registry: ${{ fromJson(inputs['dev-context-json']).registry }}
+      artifact-types: ${{ fromJson(inputs['dev-context-json']).project_type }}
+  publish-npm-dev:
+    name: Publish Dev NPM Package
+    if: ${{ fromJson(inputs['dev-context-json']).project_type == 'npm' && fromJson(inputs['dev-policy-json']).publish_npm && fromJson(inputs['build-result-json']).targets.npm == 'success' }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-npm-dev.yml
+    with:
+      working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
+      reusable-ci-ref: ${{ fromJson(inputs['dev-context-json']).reusable_ci_ref }}
+      node-version: ${{ fromJson(inputs['dev-context-json']).node_version }}
+      registry: ${{ fromJson(inputs['dev-context-json']).npm_registry }}
+      package-scope: ${{ fromJson(inputs['dev-context-json']).package_scope }}
+      registry-username: ${{ fromJson(inputs['dev-context-json']).npm_registry_username }}
+      use-github-token: ${{ fromJson(inputs['dev-policy-json']).use_github_token }}
+    secrets:
+      registry-password: ${{ secrets.registry-password }}
+  summarize-dev-publish-stage:
+    name: Summarize Dev Publish Stage
+    needs: [build-dev-container, publish-npm-dev]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      stage-ran: ${{ steps.summary.outputs.stage-ran }}
+      stage-result: ${{ steps.summary.outputs.stage-result }}
+      result-json: ${{ steps.summary.outputs.result-json }}
+      artifacts-json: ${{ steps.summary.outputs.artifacts-json }}
+    steps:
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ fromJson(inputs['dev-context-json']).reusable_ci_ref }}
+          path: .github-shared
+          sparse-checkout: scripts/summary
+      - name: Normalize dev publish stage result
+        id: summary
+        env:
+          PROJECT_TYPE: ${{ fromJson(inputs['dev-context-json']).project_type }}
+          PUBLISH_NPM: ${{ fromJson(inputs['dev-policy-json']).publish_npm }}
+          BUILD_DEV_CONTAINER_RESULT: ${{ needs.build-dev-container.result }}
+          PUBLISH_NPM_DEV_RESULT: ${{ needs.publish-npm-dev.result }}
+          CONTAINER_IMAGE: ${{ needs.build-dev-container.outputs.image }}
+          CONTAINER_DIGEST: ${{ needs.build-dev-container.outputs.digest }}
+          NPM_PACKAGE_NAME: ${{ needs.publish-npm-dev.outputs.package-name }}
+          NPM_PACKAGE_VERSION: ${{ needs.publish-npm-dev.outputs.package-version }}
+        run: bash .github-shared/scripts/summary/write-dev-publish-stage-result.sh

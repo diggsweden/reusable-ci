@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
-#
 # SPDX-License-Identifier: CC0-1.0
 
 # Registry Authentication Validator
@@ -26,21 +25,25 @@
 
 set -euo pipefail
 
-USE_GITHUB_TOKEN="$1"
-REGISTRY="$2"
-EXPECTED_REGISTRY="$3"
-HAS_PASSWORD="$4"
+main() {
+  local USE_GITHUB_TOKEN="$1"
+  local REGISTRY="$2"
+  local EXPECTED_REGISTRY="$3"
+  local HAS_PASSWORD="$4"
 
-# Error: Using custom auth but no password provided
-if [[ "$USE_GITHUB_TOKEN" = "false" && "$HAS_PASSWORD" = "false" ]]; then
-  printf "::error::registry-password secret is required when use-github-token=false\n"
-  exit 1
-fi
+  # Error: Using custom auth but no password provided
+  if [[ "$USE_GITHUB_TOKEN" = "false" && "$HAS_PASSWORD" = "false" ]]; then
+    printf "::error::registry-password secret is required when use-github-token=false\n"
+    exit 1
+  fi
 
-# Warning: Using GITHUB_TOKEN with non-default registry
-if [[ "$REGISTRY" != "$EXPECTED_REGISTRY" && "$USE_GITHUB_TOKEN" = "true" ]]; then
-  printf "::warning::Using GITHUB_TOKEN with non-%s registry (%s)\n" "$EXPECTED_REGISTRY" "$REGISTRY"
-  printf "::warning::This will likely fail. Set use-github-token=false and provide registry-password secret\n"
-fi
+  # Warning: Using GITHUB_TOKEN with non-default registry
+  if [[ "$REGISTRY" != "$EXPECTED_REGISTRY" && "$USE_GITHUB_TOKEN" = "true" ]]; then
+    printf "::warning::Using GITHUB_TOKEN with non-%s registry (%s)\n" "$EXPECTED_REGISTRY" "$REGISTRY"
+    printf "::warning::This will likely fail. Set use-github-token=false and provide registry-password secret\n"
+  fi
 
-printf "✓ Registry authentication configuration is valid\n"
+  printf "✓ Registry authentication configuration is valid\n"
+}
+
+main "$@"

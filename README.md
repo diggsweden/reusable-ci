@@ -133,12 +133,12 @@ jobs:
    permissions:
      contents: read
    jobs:
-     pr-checks:
-       uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@main
-       permissions:
-         contents: read
-         packages: read
-         security-events: write
+      pr-checks:
+        uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@main
+        permissions:
+          contents: read
+          packages: read
+          security-events: write
         secrets: inherit
         with:
           project-type: maven  # or npm, gradle, gradle-android, xcode-ios
@@ -186,13 +186,13 @@ jobs:
        branches: ['dev/**', 'feat/**']
    permissions:
      contents: read
-   jobs:
-     dev-release:
-       uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@main
-       permissions:
-         contents: write
-         packages: write
-       secrets: inherit
+    jobs:
+      dev-release:
+        uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@main
+        permissions:
+          contents: write
+          packages: write
+        secrets: inherit
         with:
           project-type: maven  # or npm, gradle, gradle-android, xcode-ios
     ```

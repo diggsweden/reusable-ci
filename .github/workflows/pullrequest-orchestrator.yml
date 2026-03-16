@@ -100,75 +100,68 @@ on:
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
-  # Commit message linting
-  commit-lint:
-    name: Commit Lint
-    if: ${{ inputs['linters.commitlint'] }}
-    uses: ./.github/workflows/lint-commit.yml
-    with:
-      base-branch: ${{ inputs['base-branch'] }}
-  # License header linting
-  license-lint:
-    name: License Lint
-    if: ${{ inputs['linters.licenselint'] }}
-    uses: ./.github/workflows/lint-license.yml
-  # Dependency security review
-  dependency-review:
-    name: Dependency Review
-    if: ${{ inputs['linters.dependencyreview'] }}
-    uses: ./.github/workflows/security-dependency-review.yml
-  #  linting with MegaLinter
-  megalint:
-    name: MegaLinter
-    if: ${{ inputs['linters.megalint'] }}
-    permissions:
-      contents: read
-      security-events: write
-    uses: ./.github/workflows/lint-mega.yml
-  # Public code metadata linting
-  publiccode-lint:
-    name: Publiccode Lint
-    if: ${{ inputs['linters.publiccodelint'] }}
-    uses: ./.github/workflows/lint-publiccode.yml
-  # devbase-check linting (recommended)
-  devbase-check-lint:
-    name: Devbase Check
-    if: ${{ inputs['linters.devbasecheck'] }}
-    permissions:
-      contents: read
-      security-events: write
-    uses: ./.github/workflows/lint-devbase-check.yml
-  # Swift linting
-  swift-lint:
-    name: Swift Lint
-    if: ${{ inputs['linters.swiftformat'] || inputs['linters.swiftlint'] }}
-    permissions:
-      contents: read
-    uses: ./.github/workflows/lint-swift.yml
-    with:
-      enable-swiftformat: ${{ inputs['linters.swiftformat'] }}
-      enable-swiftlint: ${{ inputs['linters.swiftlint'] }}
-  # Gather results from enabled linters (always runs to check status)
-  lint-status:
-    name: Lint Status Check
+  # ===== Stage 0: PR Interface =====
+  compose-pr-interface:
+    name: Compose PR Interface
     runs-on: ubuntu-latest
-    if: always()
-    needs: [commit-lint, license-lint, dependency-review, megalint, publiccode-lint, devbase-check-lint, swift-lint]
+    permissions:
+      contents: read
+    outputs:
+      pr-context-json: ${{ steps.interface.outputs.pr-context-json }}
+      pr-policy-json: ${{ steps.interface.outputs.pr-policy-json }}
     steps:
-      - name: Checkout reusable-ci scripts
+      - name: Checkout reusable-ci helper scripts
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: diggsweden/reusable-ci
           ref: ${{ inputs.reusable-ci-ref }}
           path: .github-shared
-          sparse-checkout: scripts
-      - name: Check lint results
-        run: |
-          bash .github-shared/scripts/lint/generate-status-report.sh \
-            "Commit Lint|${{ inputs['linters.commitlint'] }}|${{ needs.commit-lint.result }}|true" \
-            "License Lint|${{ inputs['linters.licenselint'] }}|${{ needs.license-lint.result }}|true" \
-            "Dependency Review|${{ inputs['linters.dependencyreview'] }}|${{ needs.dependency-review.result }}|false" \
-            "MegaLinter|${{ inputs['linters.megalint'] }}|${{ needs.megalint.result }}|true" \
-            "Publiccode Lint|${{ inputs['linters.publiccodelint'] }}|${{ needs.publiccode-lint.result }}|true" \
-            "Devbase Check|${{ inputs['linters.devbasecheck'] }}|${{ needs.devbase-check-lint.result }}|false" \
-            "Swift Lint|${{ inputs['linters.swiftformat'] == 'true' || inputs['linters.swiftlint'] == 'true' }}|${{ needs.swift-lint.result }}|false"
+          sparse-checkout: scripts/plan
+      - name: Compose PR control-plane interface
+        id: interface
+        env:
+          PROJECT_TYPE: ${{ inputs['project-type'] }}
+          BASE_BRANCH: ${{ inputs['base-branch'] }}
+          REUSABLE_CI_REF: ${{ inputs.reusable-ci-ref }}
+          LINTER_COMMITLINT: ${{ inputs['linters.commitlint'] }}
+          LINTER_LICENSLINT: ${{ inputs['linters.licenselint'] }}
+          LINTER_DEPENDENCYREVIEW: ${{ inputs['linters.dependencyreview'] }}
+          LINTER_MEGALINT: ${{ inputs['linters.megalint'] }}
+          LINTER_PUBLICCODELINT: ${{ inputs['linters.publiccodelint'] }}
+          LINTER_DEVBASECHECK: ${{ inputs['linters.devbasecheck'] }}
+          LINTER_SWIFTFORMAT: ${{ inputs['linters.swiftformat'] }}
+          LINTER_SWIFTLINT: ${{ inputs['linters.swiftlint'] }}
+        run: bash .github-shared/scripts/plan/write-pr-interface.sh
+
+  # ===== Stage 1: Quality =====
+  execute-quality-stage:
+    name: Execute Quality Stage
+    needs: [compose-pr-interface]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/pullrequest-quality-stage.yml
+    with:
+      pr-context-json: ${{ needs.compose-pr-interface.outputs.pr-context-json }}
+      pr-policy-json: ${{ needs.compose-pr-interface.outputs.pr-policy-json }}
+
+  # ===== Summary =====
+  pr-summary:
+    name: PR Summary
+    needs: [compose-pr-interface, execute-quality-stage]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ fromJson(needs.compose-pr-interface.outputs.pr-context-json).reusable_ci_ref }}
+          path: .github-shared
+          sparse-checkout: scripts/summary
+      - name: Generate PR summary
+        env:
+          PROJECT_TYPE: ${{ fromJson(needs.compose-pr-interface.outputs.pr-context-json).project_type }}
+          QUALITY_STAGE_RESULT_JSON: ${{ needs.execute-quality-stage.outputs.result-json }}
+        run: bash .github-shared/scripts/summary/write-pr-summary.sh

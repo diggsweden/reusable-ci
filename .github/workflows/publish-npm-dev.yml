@@ -148,7 +148,11 @@ jobs:
       - name: Extract tarball contents
         working-directory: ${{ inputs.working-directory }}
         run: |
-          TARBALL=$(find . -maxdepth 1 \( -name "*.tgz" -o -name "*.tar.gz" \) -type f -print -quit)
+          find_tarball() {
+            find . -maxdepth 1 \( -name "*.tgz" -o -name "*.tar.gz" \) -type f -print -quit
+          }
+
+          TARBALL=$(find_tarball)
           if [ -n "$TARBALL" ]; then
             printf "Extracting %s...\n" "$TARBALL"
             tar -xzf "$TARBALL" --strip-components=1
@@ -169,17 +173,12 @@ jobs:
           path: .github-shared
           sparse-checkout: scripts
       - name: Check registry authentication configuration
-        run: |
-          HAS_PASSWORD="false"
-          if [ -n "${{ secrets['registry-password'] }}" ]; then
-            HAS_PASSWORD="true"
-          fi
-
-          bash .github-shared/scripts/registry/validate-auth.sh \
-            "${{ inputs['use-github-token'] }}" \
-            "${{ inputs.registry }}" \
-            "https://npm.pkg.github.com" \
-            "$HAS_PASSWORD"
+        env:
+          USE_GITHUB_TOKEN: ${{ inputs['use-github-token'] }}
+          TARGET_REGISTRY: ${{ inputs.registry }}
+          GITHUB_REGISTRY: "https://npm.pkg.github.com"
+          REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
+        run: bash .github-shared/scripts/registry/validate-auth-configuration.sh
       - name: Generate dev version tag
         id: tags
         shell: bash

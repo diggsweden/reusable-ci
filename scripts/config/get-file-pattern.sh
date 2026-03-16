@@ -1,6 +1,5 @@
-#!/bin/bash
-# SPDX-FileCopyrightText: 2025 The Reusable CI Authors
-#
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 # SPDX-License-Identifier: CC0-1.0
 #
 # Get file pattern for version bump based on project type

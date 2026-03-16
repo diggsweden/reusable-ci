@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
-#
 # SPDX-License-Identifier: CC0-1.0
 
 # Project Builder for Containers
@@ -26,34 +25,38 @@
 
 set -euo pipefail
 
-PROJECT_TYPE="$1"
-WORKING_DIR="${2:-.}"
+main() {
+  local PROJECT_TYPE="$1"
+  local WORKING_DIR="${2:-.}"
 
-cd "$WORKING_DIR" || exit 1
+  cd "$WORKING_DIR" || exit 1
 
-case "$PROJECT_TYPE" in
-maven)
-  printf "Building Maven project...\n"
-  mvn clean package -DskipTests -Dstyle.color=always
-  printf "✓ Maven build completed\n"
-  ;;
+  case "$PROJECT_TYPE" in
+  maven)
+    printf "Building Maven project...\n"
+    mvn clean package -DskipTests -Dstyle.color=always
+    printf "✓ Maven build completed\n"
+    ;;
 
-npm)
-  printf "Building NPM project...\n"
-  npm ci --prefer-offline --no-audit
-  npm run build
-  printf "✓ NPM build completed\n"
-  ;;
+  npm)
+    printf "Building NPM project...\n"
+    npm ci --prefer-offline --no-audit
+    npm run build
+    printf "✓ NPM build completed\n"
+    ;;
 
-gradle)
-  printf "Building Gradle project...\n"
-  ./gradlew clean build -x test
-  printf "✓ Gradle build completed\n"
-  ;;
+  gradle)
+    printf "Building Gradle project...\n"
+    ./gradlew clean build -x test
+    printf "✓ Gradle build completed\n"
+    ;;
 
-*)
-  printf "::error::Unsupported project type: %s\n" "$PROJECT_TYPE"
-  printf "Supported types: maven, npm, gradle\n"
-  exit 1
-  ;;
-esac
+  *)
+    printf "::error::Unsupported project type: %s\n" "$PROJECT_TYPE"
+    printf "Supported types: maven, npm, gradle\n"
+    exit 1
+    ;;
+  esac
+}
+
+main "$@"

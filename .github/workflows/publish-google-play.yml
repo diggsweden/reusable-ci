@@ -118,7 +118,7 @@ jobs:
           fetch-depth: 1
 
       - name: Download AAB artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: ${{ inputs['aab-artifact-name'] }}
           path: artifacts/
@@ -167,65 +167,12 @@ jobs:
           debugSymbols: ${{ inputs['debug-symbols'] }}
 
       - name: Generate upload summary
-        run: |
-          AAB_FILE="${{ steps.find-aab.outputs.aab-file }}"
-          PACKAGE_NAME="${{ inputs['package-name'] }}"
-          TRACK="${{ inputs.track }}"
-          STATUS="${{ inputs.status }}"
-          RELEASE_NAME="${{ inputs['release-name'] }}"
-          USER_FRACTION="${{ inputs['user-fraction'] }}"
-          PRIORITY="${{ inputs['in-app-update-priority'] }}"
-
-          {
-            printf "## Google Play Upload Summary\n"
-            printf "\n"
-            printf "### Upload Details\n"
-            printf "| Property | Value |\n"
-            printf "|----------|-------|\n"
-            printf "| **AAB File** | \`%s\` |\n" "$(basename "${AAB_FILE}")"
-            printf "| **Package** | \`%s\` |\n" "${PACKAGE_NAME}"
-            printf "| **Track** | %s |\n" "${TRACK}"
-            printf "| **Status** | %s |\n" "${STATUS}"
-
-            if [ -n "${RELEASE_NAME}" ]; then
-              printf "| **Release Name** | %s |\n" "${RELEASE_NAME}"
-            fi
-
-            if [ -n "${USER_FRACTION}" ]; then
-              PERCENTAGE=$(printf "%.0f%%" "$(echo "${USER_FRACTION} * 100" | bc)")
-              printf "| **Staged Rollout** | %s |\n" "${PERCENTAGE}"
-            fi
-
-            if [ "${PRIORITY}" != "0" ]; then
-              printf "| **Update Priority** | %s |\n" "${PRIORITY}"
-            fi
-
-            printf "| **Upload Status** | Uploaded |\n"
-
-            printf "\n"
-            printf "### Next Steps\n"
-            printf "1. Check [Google Play Console](https://play.google.com/console) for upload status\n"
-
-            case "${TRACK}" in
-              internal)
-                printf "2. Build will be available to internal testers within minutes\n"
-                ;;
-              alpha|beta)
-                printf "2. Build will be available to %s testers after review\n" "${TRACK}"
-                ;;
-              production)
-                if [ -n "${USER_FRACTION}" ]; then
-                  printf "2. Staged rollout to %s of users will begin after review\n" "${PERCENTAGE}"
-                else
-                  printf "2. Full production release will begin after review\n"
-                fi
-                ;;
-            esac
-
-            if [ "${STATUS}" = "draft" ]; then
-              printf "3. Release is saved as draft - manually publish from Play Console when ready\n"
-            fi
-
-            printf "\n"
-            printf "*Upload completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          AAB_FILE: ${{ steps.find-aab.outputs.aab-file }}
+          PACKAGE_NAME: ${{ inputs['package-name'] }}
+          TRACK: ${{ inputs.track }}
+          STATUS: ${{ inputs.status }}
+          RELEASE_NAME: ${{ inputs['release-name'] }}
+          USER_FRACTION: ${{ inputs['user-fraction'] }}
+          PRIORITY: ${{ inputs['in-app-update-priority'] }}
+        run: bash scripts/summary/write-google-play-summary.sh

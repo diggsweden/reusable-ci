@@ -100,15 +100,15 @@ See [Scripts Reference](scripts.md) for detailed documentation on validation scr
 
 ## Validation
 
-The orchestrator validates your configuration at runtime:
+The orchestrator performs core runtime validation and normalization when it parses `artifacts.yml`:
 
-1. **Artifact names unique** - No duplicate names in `artifacts[]`
-2. **Container references valid** - All `from:` entries exist in `artifacts[]`
-3. **Project type valid** - Must be `maven`, `npm`, or `gradle`
-4. **Working directory exists** - Path must exist in repository
-5. **Build type valid** - Must be `application` or `library`
-6. **Publishing targets valid** - Must be known registry
-7. **Maven Central requirements** - Must have `build-type: library`
+1. **Artifacts config exists and is not empty** - The configured file must exist and contain `artifacts[]`
+2. **Container references valid** - All `containers[].from` entries must exist in `artifacts[]`
+3. **Project type valid** - Each artifact `project-type` must be a supported value
+4. **Draft-release detection** - Non-release tags and `-SNAPSHOT` tags are normalized into draft-release behavior
+5. **SBOM defaults resolved** - SBOM generation is derived per artifact when not set explicitly
+
+Additional release-specific validation happens in helper workflows such as `validate-release-prerequisites.yml`.
 
 ---
 

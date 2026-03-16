@@ -156,30 +156,12 @@ jobs:
           retention-days: 7
           if-no-files-found: error
       - name: Generate build summary
-        run: |
-          {
-            printf "## Gradle Build Summary 🔨\n"
-            printf "\n"
-            printf "%s **Java:** %s\n" "-" "${{ inputs['java-version'] }}"
-            printf "%s **Module:** %s\n" "-" "${{ inputs['build-module'] }}"
-            printf "%s **Tasks:** %s\n" "-" "${{ inputs['gradle-tasks'] }}"
-
-            if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
-              printf "%s **Tests:** %s\n" "-" "⊘ Skipped"
-            else
-              printf "%s **Tests:** %s\n" "-" "✓ Executed"
-            fi
-
-            if [ "${{ inputs['enable-signing'] }}" = "true" ]; then
-              printf "%s **Signing:** %s\n" "-" "✓ Enabled"
-            else
-              printf "%s **Signing:** %s\n" "-" "⊘ Disabled"
-            fi
-
-            if [ -n "${{ steps.version-info.outputs.VERSION }}" ]; then
-              printf "%s **Version:** %s (%s)\n" "-" "${{ steps.version-info.outputs.VERSION }}" "${{ steps.version-info.outputs.VERSION_CODE }}"
-            fi
-
-            printf "\n"
-            printf "*Build completed at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          JAVA_VERSION: ${{ inputs['java-version'] }}
+          BUILD_MODULE: ${{ inputs['build-module'] }}
+          GRADLE_TASKS: ${{ inputs['gradle-tasks'] }}
+          SKIP_TESTS: ${{ inputs['skip-tests'] }}
+          ENABLE_SIGNING: ${{ inputs['enable-signing'] }}
+          VERSION: ${{ steps.version-info.outputs.VERSION }}
+          VERSION_CODE: ${{ steps.version-info.outputs.VERSION_CODE }}
+        run: bash .github-shared/scripts/summary/write-gradle-build-summary.sh

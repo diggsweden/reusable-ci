@@ -155,7 +155,7 @@ jobs:
       - name: Determine build tasks
         id: build-tasks
         run: |
-          bash .github-shared/scripts/android/determine-build-tasks.sh \
+          bash .github-shared/scripts/android/resolve-build-tasks.sh \
             "${{ inputs['product-flavor'] }}" \
             "${{ inputs['build-types'] }}" \
             "${{ inputs['include-aab'] }}" \
@@ -166,18 +166,14 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          printf "Running Gradle tasks: %s\n" "${{ steps.build-tasks.outputs.tasks }}"
-          if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
-            ./gradlew ${{ steps.build-tasks.outputs.tasks }} -x test
-          else
-            ./gradlew ${{ steps.build-tasks.outputs.tasks }}
-          fi
+          SKIP_TESTS: ${{ inputs['skip-tests'] }}
+          GRADLE_TASKS: ${{ steps.build-tasks.outputs.tasks }}
+        run: bash .github-shared/scripts/android/build-gradle.sh
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
-        run: |
-          printf "Built artifacts:\n"
-          find ${{ inputs['build-module'] }}/build/outputs -type f \( -name "*.apk" -o -name "*.aab" \) -ls || printf "No artifacts found\n"
+        env:
+          BUILD_MODULE: ${{ inputs['build-module'] }}
+        run: bash .github-shared/scripts/android/list-built-artifacts.sh
       - name: Upload Debug APK
         if: contains(inputs['build-types'], 'debug')
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
@@ -203,18 +199,18 @@ jobs:
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/bundle/**/*.aab
           retention-days: 7
       - name: Generate build summary
-        run: |
-          bash .github-shared/scripts/summary/android-build-summary.sh \
-            "${{ inputs['java-version'] }}" \
-            "${{ inputs['jdk-distribution'] }}" \
-            "${{ inputs['build-module'] }}" \
-            "${{ inputs['product-flavor'] }}" \
-            "${{ inputs['build-types'] }}" \
-            "${{ inputs['include-aab'] }}" \
-            "${{ inputs['enable-signing'] }}" \
-            "${{ inputs['skip-tests'] }}" \
-            "${{ steps.version-info.outputs.version }}" \
-            "${{ steps.version-info.outputs.version-code }}" \
-            "${{ steps.artifact-names.outputs.debug-name }}" \
-            "${{ steps.artifact-names.outputs.release-name }}" \
-            "${{ steps.artifact-names.outputs.aab-name }}" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          JAVA_VERSION: ${{ inputs['java-version'] }}
+          JDK_DIST: ${{ inputs['jdk-distribution'] }}
+          BUILD_MODULE: ${{ inputs['build-module'] }}
+          FLAVOR: ${{ inputs['product-flavor'] }}
+          BUILD_TYPES: ${{ inputs['build-types'] }}
+          INCLUDE_AAB: ${{ inputs['include-aab'] }}
+          SIGNING: ${{ inputs['enable-signing'] }}
+          SKIP_TESTS: ${{ inputs['skip-tests'] }}
+          VERSION: ${{ steps.version-info.outputs.version }}
+          VERSION_CODE: ${{ steps.version-info.outputs.version-code }}
+          DEBUG_NAME: ${{ steps.artifact-names.outputs.debug-name }}
+          RELEASE_NAME: ${{ steps.artifact-names.outputs.release-name }}
+          AAB_NAME: ${{ steps.artifact-names.outputs.aab-name }}
+        run: bash .github-shared/scripts/summary/write-android-build-summary.sh >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,164 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+name: Release Build Stage
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      branch:
+        required: true
+        type: string
+      reusable-ci-ref:
+        required: true
+        type: string
+      maven-artifacts:
+        required: true
+        type: string
+      npm-artifacts:
+        required: true
+        type: string
+      gradle-artifacts:
+        required: true
+        type: string
+      gradleandroid-artifacts:
+        required: true
+        type: string
+      xcodeios-artifacts:
+        required: true
+        type: string
+    outputs:
+      stage-ran:
+        description: Build stage ran at least one ecosystem path
+        value: ${{ jobs.summarize-build-stage.outputs.stage-ran }}
+      stage-result:
+        description: Normalized build stage result
+        value: ${{ jobs.summarize-build-stage.outputs.stage-result }}
+      result-json:
+        description: Build stage result payload
+        value: ${{ jobs.summarize-build-stage.outputs.result-json }}
+permissions:
+  contents: read
+jobs:
+  build-maven:
+    name: Build Maven - ${{ matrix.artifact.name }}
+    if: ${{ inputs.maven-artifacts != '[]' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.maven-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/build-maven.yml
+    with:
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      branch: ${{ inputs.branch }}
+      java-version: ${{ matrix.artifact.config['java-version'] }}
+      build-type: ${{ matrix.artifact['build-type'] == 'library' && 'lib' || 'app' }}
+      profile: ${{ matrix.artifact['build-type'] == 'library' && (matrix.artifact.config['maven-profile'] || 'central-release') || '' }}
+  build-npm:
+    name: Build NPM - ${{ matrix.artifact.name }}
+    if: ${{ inputs.npm-artifacts != '[]' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.npm-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/build-npm.yml
+    with:
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      branch: ${{ inputs.branch }}
+      node-version: ${{ matrix.artifact.config['node-version'] }}
+  build-gradle:
+    name: Build Gradle - ${{ matrix.artifact.name }}
+    if: ${{ inputs.gradle-artifacts != '[]' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.gradle-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/build-gradle-app.yml
+    with: &gradle_build_workflow_inputs
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      branch: ${{ inputs.branch }}
+      artifact-name: ${{ matrix.artifact.name }}
+      java-version: ${{ matrix.artifact.config['java-version'] }}
+      gradle-tasks: ${{ matrix.artifact.config['gradle-tasks'] }}
+      build-module: ${{ matrix.artifact.config['build-module'] }}
+      enable-signing: ${{ matrix.artifact.config['enable-android-signing'] }}
+  build-gradle-android:
+    name: Build Gradle Android - ${{ matrix.artifact.name }}
+    if: ${{ inputs.gradleandroid-artifacts != '[]' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.gradleandroid-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/build-gradle-app.yml
+    with: *gradle_build_workflow_inputs
+  build-xcode:
+    name: Build Xcode - ${{ matrix.artifact.name }}
+    if: ${{ inputs.xcodeios-artifacts != '[]' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.xcodeios-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/build-xcode-ios.yml
+    with:
+      xcode-version: ${{ matrix.artifact.config['xcode-version'] }}
+      scheme: ${{ matrix.artifact.config['scheme'] }}
+      workspace: ${{ matrix.artifact.config['workspace'] }}
+      project: ${{ matrix.artifact.config['project'] }}
+      configuration: ${{ matrix.artifact.config['configuration'] || 'Release' }}
+      enable-code-signing: ${{ matrix.artifact.config['enable-code-signing'] != false }}
+      export-options-var: ${{ matrix.artifact.config['export-options-var'] || 'EXPORT_OPTIONS_BASE64' }}
+      use-xcodegen: ${{ matrix.artifact.config['use-xcodegen'] || false }}
+      xcodegen-spec: ${{ matrix.artifact.config['xcodegen-spec'] || 'project.yml' }}
+      artifact-name: ${{ matrix.artifact.name }}
+      include-tag: false
+      build-number: ${{ matrix.artifact.config['build-number'] }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
+      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
+  summarize-build-stage:
+    name: Summarize Build Stage
+    needs: [build-maven, build-npm, build-gradle, build-gradle-android, build-xcode]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      stage-ran: ${{ steps.summary.outputs.stage-ran }}
+      stage-result: ${{ steps.summary.outputs.stage-result }}
+      result-json: ${{ steps.summary.outputs.result-json }}
+    steps:
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs.reusable-ci-ref }}
+          path: .github-shared
+          sparse-checkout: scripts/summary
+      - name: Normalize build stage result
+        id: summary
+        env:
+          MAVEN_ARTIFACTS: ${{ inputs.maven-artifacts }}
+          NPM_ARTIFACTS: ${{ inputs.npm-artifacts }}
+          GRADLE_ARTIFACTS: ${{ inputs.gradle-artifacts }}
+          GRADLEANDROID_ARTIFACTS: ${{ inputs.gradleandroid-artifacts }}
+          XCODEIOS_ARTIFACTS: ${{ inputs.xcodeios-artifacts }}
+          BUILD_MAVEN_RESULT: ${{ needs.build-maven.result }}
+          BUILD_NPM_RESULT: ${{ needs.build-npm.result }}
+          BUILD_GRADLE_RESULT: ${{ needs.build-gradle.result }}
+          BUILD_GRADLE_ANDROID_RESULT: ${{ needs.build-gradle-android.result }}
+          BUILD_XCODE_RESULT: ${{ needs.build-xcode.result }}
+        run: bash .github-shared/scripts/summary/write-build-stage-result.sh
