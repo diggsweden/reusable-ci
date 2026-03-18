@@ -193,7 +193,7 @@ with:
   linters.devbasecheck: false      # Recommended: replaces deprecated linters
   linters.swiftformat: false       # Swift format for iOS/macOS
   linters.swiftlint: false         # SwiftLint for iOS/macOS
-  reusable-ci-ref: main            # Script checkout ref
+  reusable-ci-ref: ""              # Deprecated; helper scripts use the workflow revision
 ```
 
 **Outputs:** The quality stage exposes `stage-ran`, `stage-result`, and `result-json` with per-check target results. See [PR Quality Stage Result Contract](workflows.md#pr-quality-stage-result-contract) for the full schema.

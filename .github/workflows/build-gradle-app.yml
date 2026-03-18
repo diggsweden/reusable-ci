@@ -18,7 +18,7 @@
 # Required Permissions:
 #   contents: read  # Checkout code
 #
-name: Build Gradle Project
+name: Build Gradle
 on:
   workflow_call:
     inputs:
@@ -66,6 +66,11 @@ on:
         required: false
         default: ""
         type: string
+      reusable-ci-ref:
+        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+        required: false
+        default: "main"
+        type: string
 permissions:
   contents: read
 jobs:
@@ -81,6 +86,13 @@ jobs:
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 0
+      - name: Checkout .github repository for scripts
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
       - name: Set up JDK
         uses: actions/setup-java@f2beeb24e141e01a676f977032f5a29d81c9e27e # v5.1.0
         with:

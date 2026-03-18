@@ -20,14 +20,14 @@
 #    jobs:
 #      devbase-check-lint:
 #        uses: <orgname>/<reponame>/.github/workflows/lint-devbase-check.yml@main
-name: Quality Checks (devbase-check)
+name: Lint Devbase Check
 env:
   # renovate: datasource=github-releases depName=diggsweden/devbase-check
-  DEVBASE_CHECK_VERSION: "v0.4.0"
+  DEVBASE_CHECK_VERSION: "v0.4.1"
   # renovate: datasource=github-releases depName=casey/just
-  JUST_VERSION: "1.43.0"
+  JUST_VERSION: "1.47.0"
   # renovate: datasource=github-releases depName=jdx/mise
-  MISE_VERSION: "2026.3.2"
+  MISE_VERSION: "2026.3.9"
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:

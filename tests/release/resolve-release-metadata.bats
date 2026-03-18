@@ -13,6 +13,9 @@ load "${BATS_TEST_DIRNAME}/../test_helper.bash"
 
 setup() {
   common_setup_with_github_env
+  export VERSION="v1.0.0"
+  export ARTIFACT_NAME=""
+  export REPOSITORY="diggsweden/reusable-ci"
 }
 
 teardown() {
@@ -20,11 +23,15 @@ teardown() {
 }
 
 run_resolve_release_metadata() {
-  run_script "release/resolve-release-metadata.sh" "$@"
+  run_script "release/resolve-release-metadata.sh"
 }
 
 @test "resolve-release-metadata writes expected outputs" {
-  run_resolve_release_metadata "v1.2.3" "artifact-name" "diggsweden/reusable-ci"
+  export VERSION="v1.2.3"
+  export ARTIFACT_NAME="artifact-name"
+  export REPOSITORY="diggsweden/reusable-ci"
+
+  run_resolve_release_metadata
 
   assert_success
   run get_github_output version
@@ -36,7 +43,11 @@ run_resolve_release_metadata() {
 }
 
 @test "resolve-release-metadata falls back to repository basename" {
-  run_resolve_release_metadata "v2.0.0" "" "diggsweden/reusable-ci"
+  export VERSION="v2.0.0"
+  export ARTIFACT_NAME=""
+  export REPOSITORY="diggsweden/reusable-ci"
+
+  run_resolve_release_metadata
 
   assert_success
   run get_github_output project-name
@@ -44,7 +55,11 @@ run_resolve_release_metadata() {
 }
 
 @test "resolve-release-metadata reports fallback choice on stderr" {
-  run_resolve_release_metadata "v2.0.0" "" "diggsweden/reusable-ci"
+  export VERSION="v2.0.0"
+  export ARTIFACT_NAME=""
+  export REPOSITORY="diggsweden/reusable-ci"
+
+  run_resolve_release_metadata
 
   assert_success
   assert_stderr_contains "Using repository name: reusable-ci"

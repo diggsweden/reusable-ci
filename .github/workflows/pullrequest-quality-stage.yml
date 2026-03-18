@@ -11,6 +11,10 @@ on:
       pr-policy-json:
         required: true
         type: string
+      reusable-ci-ref:
+        required: false
+        default: "main"
+        type: string
     outputs:
       stage-ran:
         description: PR quality stage ran
@@ -66,7 +70,7 @@ jobs:
       enable-swiftformat: ${{ fromJson(inputs['pr-policy-json']).swiftformat }}
       enable-swiftlint: ${{ fromJson(inputs['pr-policy-json']).swiftlint }}
   quality-status:
-    name: Quality Status Check
+    name: Status
     runs-on: ubuntu-latest
     if: always()
     needs: [commit-lint, license-lint, dependency-review, megalint, publiccode-lint, devbase-check-lint, swift-lint]
@@ -75,7 +79,7 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ fromJson(inputs['pr-context-json']).reusable_ci_ref }}
+          ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
           sparse-checkout: scripts
       - name: Check quality results
@@ -89,7 +93,7 @@ jobs:
             "Devbase Check|${{ fromJson(inputs['pr-policy-json']).devbasecheck }}|${{ needs.devbase-check-lint.result }}|false" \
             "Swift Lint|${{ fromJson(inputs['pr-policy-json']).swift }}|${{ needs.swift-lint.result }}|false"
   summarize-quality-stage:
-    name: Summarize Quality Stage
+    name: Summary
     needs: [commit-lint, license-lint, dependency-review, megalint, publiccode-lint, devbase-check-lint, swift-lint, quality-status]
     if: always()
     runs-on: ubuntu-latest
@@ -104,9 +108,9 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ fromJson(inputs['pr-context-json']).reusable_ci_ref }}
+          ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
-          sparse-checkout: scripts/summary
+          sparse-checkout: scripts
       - name: Normalize PR quality stage result
         id: summary
         env:

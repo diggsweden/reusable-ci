@@ -2,16 +2,20 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 # SPDX-License-Identifier: CC0-1.0
 
+# Generate SHA256 checksums for release artifacts
+#
+# Optional env: OUTPUT_FILE, RELEASE_ARTIFACTS_DIR, ATTACH_ARTIFACTS, SBOM_DIR
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../ci/output.sh"
 
 main() {
-  local OUTPUT_FILE="${1:-$CI_CHECKSUMS_FILE}"
-  local RELEASE_ARTIFACTS_DIR="${2:-./release-artifacts}"
-  local ATTACH_PATTERNS="${3:-}"
-  local SBOM_DIR="${4:-./sbom-artifacts}"
+  readonly OUTPUT_FILE="${OUTPUT_FILE:-$CI_CHECKSUMS_FILE}"
+  readonly RELEASE_ARTIFACTS_DIR="${RELEASE_ARTIFACTS_DIR:-./release-artifacts}"
+  readonly ATTACH_ARTIFACTS="${ATTACH_ARTIFACTS:-}"
+  readonly SBOM_DIR="${SBOM_DIR:-./sbom-artifacts}"
 
   printf "Generating SHA256 checksums for release artifacts\n"
 
@@ -26,11 +30,11 @@ main() {
     done
   fi
 
-  if [[ -n "$ATTACH_PATTERNS" ]]; then
-    printf "→ Checksumming attached artifacts matching patterns: %s\n" "$ATTACH_PATTERNS"
-    local PATTERNS
-    IFS=',' read -ra PATTERNS <<<"$ATTACH_PATTERNS"
-    for pattern in "${PATTERNS[@]}"; do
+  if [[ -n "$ATTACH_ARTIFACTS" ]]; then
+    printf "→ Checksumming attached artifacts matching patterns: %s\n" "$ATTACH_ARTIFACTS"
+    local patterns
+    IFS=',' read -ra patterns <<<"$ATTACH_ARTIFACTS"
+    for pattern in "${patterns[@]}"; do
       pattern=$(printf "%s" "$pattern" | xargs)
       for file in $pattern; do
         if [[ -f "$file" ]]; then
@@ -63,4 +67,4 @@ main() {
   printf "✓ Generated %s checksums in %s\n" "$CHECKSUM_COUNT" "$OUTPUT_FILE"
 }
 
-main "$@"
+main

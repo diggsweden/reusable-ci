@@ -9,7 +9,8 @@ on:
         required: true
         type: string
       reusable-ci-ref:
-        required: true
+        required: false
+        default: "main"
         type: string
       maven-artifacts:
         required: true
@@ -56,6 +57,7 @@ jobs:
       java-version: ${{ matrix.artifact.config['java-version'] }}
       build-type: ${{ matrix.artifact['build-type'] == 'library' && 'lib' || 'app' }}
       profile: ${{ matrix.artifact['build-type'] == 'library' && (matrix.artifact.config['maven-profile'] || 'central-release') || '' }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   build-npm:
     name: Build NPM - ${{ matrix.artifact.name }}
     if: ${{ inputs.npm-artifacts != '[]' }}
@@ -71,6 +73,7 @@ jobs:
       working-directory: ${{ matrix.artifact['working-directory'] }}
       branch: ${{ inputs.branch }}
       node-version: ${{ matrix.artifact.config['node-version'] }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   build-gradle:
     name: Build Gradle - ${{ matrix.artifact.name }}
     if: ${{ inputs.gradle-artifacts != '[]' }}
@@ -82,7 +85,7 @@ jobs:
       contents: read
     secrets: inherit
     uses: ./.github/workflows/build-gradle-app.yml
-    with: &gradle_build_workflow_inputs
+    with:
       working-directory: ${{ matrix.artifact['working-directory'] }}
       branch: ${{ inputs.branch }}
       artifact-name: ${{ matrix.artifact.name }}
@@ -90,6 +93,7 @@ jobs:
       gradle-tasks: ${{ matrix.artifact.config['gradle-tasks'] }}
       build-module: ${{ matrix.artifact.config['build-module'] }}
       enable-signing: ${{ matrix.artifact.config['enable-android-signing'] }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   build-gradle-android:
     name: Build Gradle Android - ${{ matrix.artifact.name }}
     if: ${{ inputs.gradleandroid-artifacts != '[]' }}
@@ -100,8 +104,17 @@ jobs:
     permissions:
       contents: read
     secrets: inherit
-    uses: ./.github/workflows/build-gradle-app.yml
-    with: *gradle_build_workflow_inputs
+    uses: ./.github/workflows/build-gradle-android.yml
+    with:
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      java-version: ${{ matrix.artifact.config['java-version'] }}
+      build-module: ${{ matrix.artifact.config['build-module'] }}
+      product-flavor: ${{ matrix.artifact.config['product-flavor'] || '' }}
+      build-types: ${{ matrix.artifact.config['build-types'] || 'debug,release' }}
+      include-aab: ${{ matrix.artifact.config['include-aab'] != false }}
+      artifact-name-prefix: ${{ matrix.artifact.config['artifact-name-prefix'] || '' }}
+      enable-signing: ${{ matrix.artifact.config['enable-android-signing'] }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   build-xcode:
     name: Build Xcode - ${{ matrix.artifact.name }}
     if: ${{ inputs.xcodeios-artifacts != '[]' }}
@@ -128,7 +141,7 @@ jobs:
       build-number: ${{ matrix.artifact.config['build-number'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
       macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
-      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   summarize-build-stage:
     name: Summarize Build Stage
     needs: [build-maven, build-npm, build-gradle, build-gradle-android, build-xcode]
@@ -145,9 +158,9 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ inputs.reusable-ci-ref }}
+          ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
-          sparse-checkout: scripts/summary
+          sparse-checkout: scripts
       - name: Normalize build stage result
         id: summary
         env:

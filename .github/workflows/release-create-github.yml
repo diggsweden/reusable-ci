@@ -38,9 +38,9 @@ on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
       release-name:
-        description: "Release name (supports template variables)"
+        description: "Release title shown in GitHub Releases"
         required: false
-        default: "Release ${{ github.ref_name }}"
+        default: ""
         type: string
       checkout-ref:
         description: "Git ref to checkout (branch or tag)"
@@ -87,7 +87,7 @@ on:
         default: "audit"
         type: string
       reusable-ci-ref:
-        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
         required: false
         default: "main"
         type: string
@@ -114,7 +114,7 @@ jobs:
       output-file: "ReleasenotesTmp"
       upload-as-artifact: true
       artifact-name: "release-changelog"
-      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   create-release:
     name: Create GitHub Release
     needs: [generate-changelog]
@@ -160,7 +160,7 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ inputs.reusable-ci-ref }}
+          ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
           sparse-checkout: scripts
       - name: Determine artifact name
@@ -177,11 +177,11 @@ jobs:
           path: ./release-artifacts/
       - name: Resolve release metadata
         id: release-metadata
-        run: |
-          bash .github-shared/scripts/release/resolve-release-metadata.sh \
-            "${{ github.ref_name }}" \
-            "${{ inputs['artifact-name'] }}" \
-            "${{ github.repository }}"
+        env:
+          VERSION: ${{ github.ref_name }}
+          ARTIFACT_NAME: ${{ inputs['artifact-name'] }}
+          REPOSITORY: ${{ github.repository }}
+        run: bash .github-shared/scripts/release/resolve-release-metadata.sh
       - name: Generate 3-Layer SBOMs
         if: &if_generate_sbom ${{ inputs['generate-sbom'] }}
         run: |
@@ -195,15 +195,14 @@ jobs:
 
           printf "Layer 3: Container SBOMs will be downloaded from container build job\n"
       - name: Generate checksums
-        run: |
-          bash .github-shared/scripts/release/generate-checksums.sh \
-            "checksums.sha256" \
-            "./release-artifacts" \
-            "${{ inputs['attach-artifacts'] }}" \
-            "./sbom-artifacts"
+        env:
+          ATTACH_ARTIFACTS: ${{ inputs['attach-artifacts'] }}
+        run: bash .github-shared/scripts/release/generate-checksums.sh
       - name: Sign artifacts
         if: *if_sign_artifacts
-        run: bash .github-shared/scripts/release/sign-release-artifacts.sh "${{ steps.import-gpg.outputs.keyid }}"
+        env:
+          GPG_KEY_ID: ${{ steps.import-gpg.outputs.keyid }}
+        run: bash .github-shared/scripts/release/sign-release-artifacts.sh
       - name: Create SBOM ZIP
         if: *if_generate_sbom
         env:
@@ -215,11 +214,17 @@ jobs:
           RELEASE_SCRIPT_ROOT: .github-shared/scripts/release
         run: bash .github-shared/scripts/release/create-and-sign-sbom-zip.sh
       - name: Prepare release notes
-        run: bash .github-shared/scripts/release/prepare-release-notes.sh ReleasenotesTmp release-notes.md "${{ github.ref_name }}" "${{ github.sha }}"
+        env:
+          SOURCE_FILE: ReleasenotesTmp
+          TARGET_FILE: release-notes.md
+          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: bash .github-shared/scripts/release/prepare-release-notes.sh
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
           TAG_NAME: ${{ github.ref_name }}
+          RELEASE_NAME: ${{ inputs['release-name'] }}
           REPOSITORY: ${{ github.repository }}
           DRAFT: ${{ inputs.draft }}
           MAKE_LATEST: ${{ inputs['make-latest'] }}

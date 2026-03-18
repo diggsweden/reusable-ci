@@ -9,7 +9,8 @@ on:
         required: true
         type: string
       reusable-ci-ref:
-        required: true
+        required: false
+        default: "main"
         type: string
       artifacts:
         required: true
@@ -47,13 +48,13 @@ jobs:
     uses: ./.github/workflows/version-bump.yml
     with:
       branch: ${{ inputs.branch }}
-      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
       project-type: ${{ matrix.artifact['project-type'] }}
       file-pattern: ${{ inputs['file-pattern'] }}
       java-version: ${{ matrix.artifact.config['java-version'] }}
       node-version: ${{ matrix.artifact.config['node-version'] }}
       gradle-version-file: ${{ matrix.artifact.config['gradle-version-file'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   summarize-prepare-stage:
     name: Summarize Prepare Stage
     needs: [execute-version-bump]
@@ -70,9 +71,9 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ inputs.reusable-ci-ref }}
+          ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
-          sparse-checkout: scripts/summary
+          sparse-checkout: scripts
       - name: Normalize prepare stage result
         id: summary
         env:

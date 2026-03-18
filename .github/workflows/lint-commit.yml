@@ -19,7 +19,7 @@
 #
 # 3. The workflow will analyze commits in pull requests and enforce the configured rules.
 #    It automatically compares against the PR's target branch.
-name: Commit Lint
+name: Lint Commit
 on:
   workflow_call:
     inputs:

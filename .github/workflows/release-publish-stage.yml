@@ -9,7 +9,8 @@ on:
         required: true
         type: string
       reusable-ci-ref:
-        required: true
+        required: false
+        default: "main"
         type: string
       xcodeios-artifacts:
         required: true
@@ -99,6 +100,7 @@ jobs:
       macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
       submit-for-review: ${{ matrix.artifact.config['submit-for-review'] || false }}
       skip-validation: ${{ matrix.artifact.config['skip-validation'] || false }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   publish-google-play:
     name: Publish Google Play - ${{ matrix.artifact.name }}
     if: ${{ inputs.googleplay-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.gradleandroid == 'success' }}
@@ -123,6 +125,7 @@ jobs:
       whats-new-directory: ${{ matrix.artifact.config['whats-new-directory'] || '' }}
       mapping-file: ${{ matrix.artifact.config['mapping-file'] || '' }}
       debug-symbols: ${{ matrix.artifact.config['debug-symbols'] || '' }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   build-containers:
     name: Build Container - ${{ matrix.container.name }}
     if: ${{ inputs.containers != '[]' && fromJson(inputs['build-result-json']).result == 'success' }}
@@ -150,7 +153,7 @@ jobs:
       registry: ghcr.io
       artifact-types: ${{ join(matrix.container['artifact-types'], ',') }}
       push-image: true
-      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   summarize-publish-stage:
     name: Summarize Publish Stage
     needs: [publish-maven-github, publish-maven-central, publish-apple-appstore, publish-google-play, build-containers]
@@ -167,9 +170,9 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ inputs.reusable-ci-ref }}
+          ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
-          sparse-checkout: scripts/summary
+          sparse-checkout: scripts
       - name: Normalize publish stage result
         id: summary
         env:

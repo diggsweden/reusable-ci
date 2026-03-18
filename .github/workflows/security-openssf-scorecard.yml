@@ -15,7 +15,7 @@
 #          publish-results: true # Optional, default is true
 #
 # 2. The results will be available as artifacts and in the GitHub Code Scanning dashboard.
-name: OpenSSF Scorecard Analysis
+name: Analyze OpenSSF Scorecard
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:

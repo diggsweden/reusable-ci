@@ -23,7 +23,7 @@
 #   contents: read   # Download artifacts
 #   packages: write  # Backup publish to GitHub Packages
 #
-name: Publish to Maven Central
+name: Publish Maven Central
 on:
   workflow_call:
     inputs:

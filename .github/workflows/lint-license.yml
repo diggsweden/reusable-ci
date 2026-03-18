@@ -16,7 +16,7 @@
 #    to define licensing and copyright information.
 #
 # 3. The workflow will analyze your repository and report any REUSE compliance issues.
-name: REUSE Compliance
+name: Lint License (REUSE)
 on: [workflow_call] # yamllint disable-line rule:truthy
 permissions:
   contents: read

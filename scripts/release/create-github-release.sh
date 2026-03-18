@@ -5,7 +5,7 @@
 # Create GitHub Release with artifacts
 #
 # Required env: TAG_NAME, REPOSITORY
-# Optional env: DRAFT, MAKE_LATEST, ATTACH_ARTIFACTS, RELEASE_NOTES_FILE, ARTIFACT_NAME
+# Optional env: RELEASE_NAME, DRAFT, MAKE_LATEST, ATTACH_ARTIFACTS, RELEASE_NOTES_FILE, ARTIFACT_NAME
 
 set -euo pipefail
 
@@ -55,7 +55,7 @@ add_file_with_signature() {
 }
 
 build_release_args() {
-  ARGS+=("$TAG_NAME" "--title" "$TAG_NAME")
+  ARGS+=("$TAG_NAME" "--title" "$RELEASE_NAME")
 
   if [[ "$DRAFT" == "true" ]]; then ARGS+=("--draft"); fi
   if ci_is_prerelease "$TAG_NAME"; then ARGS+=("--prerelease"); fi
@@ -119,6 +119,7 @@ collect_remaining_signatures() {
 main() {
   readonly TAG_NAME="${TAG_NAME:?TAG_NAME is required}"
   readonly REPOSITORY="${REPOSITORY:?REPOSITORY is required}"
+  readonly RELEASE_NAME="${RELEASE_NAME:-$TAG_NAME}"
   readonly DRAFT="${DRAFT:-false}"
   readonly MAKE_LATEST="${MAKE_LATEST:-true}"
   readonly ATTACH_ARTIFACTS="${ATTACH_ARTIFACTS:-}"

@@ -55,7 +55,7 @@
 #   - branch: Branch-based tags (main, develop)
 #   - sha: SHA-based tags (main-abc1234)
 #   - custom: User-defined tags
-name: Publish Container Image
+name: Publish Container
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
@@ -149,7 +149,7 @@ on:
         required: false
         type: string
       reusable-ci-ref:
-        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
         required: false
         default: "main"
         type: string
@@ -198,7 +198,7 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ inputs.reusable-ci-ref }}
+          ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
           sparse-checkout: scripts
       - name: Download Maven artifacts
