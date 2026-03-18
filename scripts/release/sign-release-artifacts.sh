@@ -2,6 +2,10 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 # SPDX-License-Identifier: CC0-1.0
 
+# Sign release artifacts with GPG
+#
+# Required env: GPG_KEY_ID
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -30,10 +34,10 @@ sign_release_artifacts() {
 }
 
 main() {
-  readonly GPG_KEY_ID="${1:?Usage: $0 <gpg-key-id>}"
+  readonly GPG_KEY_ID="${GPG_KEY_ID:?GPG_KEY_ID is required}"
 
   sign_checksums_file "$GPG_KEY_ID"
   sign_release_artifacts "$GPG_KEY_ID"
 }
 
-main "$@"
+main

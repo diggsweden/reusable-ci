@@ -46,7 +46,7 @@
 # Build Types: application (default), library
 # Publishing: Controlled via build-type, require-authorization, publish-to fields
 # Containers: Separate section with explicit dependencies
-name: Release Orchestrator
+name: Orchestrate Release
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
@@ -130,7 +130,7 @@ on:
         # - Gradle Android: CHANGELOG.md build.gradle settings.gradle gradle.properties
         # - Xcode iOS: CHANGELOG.md project.pbxproj
       reusable-ci-ref:
-        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
         required: false
         default: "main"
         type: string
@@ -142,7 +142,7 @@ permissions:
 jobs:
   # ===== Stage 0: Configuration And Policy =====
   parse-config:
-    name: Parse Configuration
+    name: Setup
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -211,7 +211,7 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ inputs.reusable-ci-ref }}
+          ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
 
       - name: Install yq for config parsing
@@ -274,27 +274,28 @@ jobs:
       sign-artifacts: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).sign_artifacts }}
       check-authorization: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).check_authorization }}
       branch: ${{ inputs.branch }}
-      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   # ===== Stage 2: Release Preparation =====
   # Release preparation now lives below this control-plane stage call.
   execute-prepare-stage:
-    name: Execute Prepare Stage
+    name: Prepare
     needs: [parse-config, validate-prerequisites]
     if: ${{ !failure() && !cancelled() }}
     permissions:
-      contents: read
+      contents: write
+      packages: read
     secrets: inherit
     uses: ./.github/workflows/release-prepare-stage.yml
     with:
       branch: ${{ inputs.branch }}
-      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
       artifacts: ${{ needs.parse-config.outputs.artifacts }}
       should-run-version-bump: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).run_version_bump }}
       file-pattern: ${{ inputs['file-pattern'] }}
   # ===== Stage 3: Build =====
   # Build fanout now lives below this control-plane stage call.
   execute-build-stage:
-    name: Execute Build Stage
+    name: Build
     needs: [parse-config, execute-prepare-stage]
     if: ${{ !failure() && !cancelled() }}
     permissions:
@@ -303,7 +304,7 @@ jobs:
     uses: ./.github/workflows/release-build-stage.yml
     with:
       branch: ${{ inputs.branch }}
-      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
       maven-artifacts: ${{ needs.parse-config.outputs.maven-artifacts }}
       npm-artifacts: ${{ needs.parse-config.outputs.npm-artifacts }}
       gradle-artifacts: ${{ needs.parse-config.outputs.gradle-artifacts }}
@@ -312,16 +313,21 @@ jobs:
   # ===== Stage 4: Publish =====
   # Publish fanout now lives below this control-plane stage call.
   execute-publish-stage:
-    name: Execute Publish Stage
+    name: Publish
     needs: [parse-config, execute-build-stage]
     if: ${{ !failure() && !cancelled() }}
     permissions:
-      contents: read
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+      security-events: write
+      actions: read
     secrets: inherit
     uses: ./.github/workflows/release-publish-stage.yml
     with:
       branch: ${{ inputs.branch }}
-      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
       xcodeios-artifacts: ${{ needs.parse-config.outputs.xcodeios-artifacts }}
       githubpackages-artifacts: ${{ needs.parse-config.outputs.githubpackages-artifacts }}
       mavencentral-artifacts: ${{ needs.parse-config.outputs.mavencentral-artifacts }}
@@ -350,10 +356,10 @@ jobs:
       draft: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).create_draft_release }}
       project-type: ${{ fromJson(needs.parse-config.outputs['release-context-json']).project_type }}
       artifact-name: ${{ fromJson(needs.parse-config.outputs['release-context-json']).artifact_name }}
-      reusable-ci-ref: ${{ inputs.reusable-ci-ref }}
       changelog-config: ${{ inputs['changelog.config'] }}
       make-latest: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).make_latest }}
       has-containers: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).has_containers }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   # ===== Stage 6: Summary =====
   release-summary:
     name: Release Summary
@@ -373,6 +379,13 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           fetch-depth: 1
+      - name: Checkout reusable-ci helper scripts
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
       - name: Generate Release Summary
         env:
           # Release context.
@@ -392,4 +405,4 @@ jobs:
 
           # Release-stage result.
           CREATE_RELEASE_RESULT: ${{ needs.create-release.result }}
-        run: bash scripts/summary/write-release-summary.sh
+        run: bash .github-shared/scripts/summary/write-release-summary.sh

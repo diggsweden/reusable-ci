@@ -21,7 +21,7 @@
 # Required Permissions:
 #   contents: read  # Checkout code
 #
-name: Swift Lint
+name: Lint Swift
 on:
   workflow_call:
     inputs:

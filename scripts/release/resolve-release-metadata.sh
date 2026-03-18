@@ -2,6 +2,11 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 # SPDX-License-Identifier: CC0-1.0
 
+# Resolve release metadata and write to GITHUB_OUTPUT
+#
+# Required env: VERSION, REPOSITORY
+# Optional env: ARTIFACT_NAME
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -35,9 +40,9 @@ write_outputs() {
 }
 
 main() {
-  readonly VERSION="${1:?Usage: $0 <version> <artifact-name> <repository>}"
-  readonly ARTIFACT_NAME="${2:-}"
-  readonly REPOSITORY="${3:?Usage: $0 <version> <artifact-name> <repository>}"
+  readonly VERSION="${VERSION:?VERSION is required}"
+  readonly ARTIFACT_NAME="${ARTIFACT_NAME:-}"
+  readonly REPOSITORY="${REPOSITORY:?REPOSITORY is required}"
   readonly VERSION_NO_V="${VERSION#v}"
   local project_name
 
@@ -45,4 +50,4 @@ main() {
   write_outputs "$VERSION" "$VERSION_NO_V" "$project_name"
 }
 
-main "$@"
+main

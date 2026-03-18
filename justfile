@@ -144,6 +144,11 @@ lint-shell-fmt:
 lint-actions:
     @{{lint}}/github-actions.sh
 
+# Validate reusable workflow contracts
+[group('lint')]
+lint-workflow-contracts:
+    @./scripts/validation/check-workflow-input-defaults.sh
+
 # Check license compliance
 [group('lint')]
 lint-license:
@@ -199,7 +204,7 @@ test:
         exit 1
     fi
     [[ -d tests/libs ]] || ./tests/setup-bats-libs.sh
-    bats tests/
+    bats tests/*/*.bats
     result=$?
     if [[ $result -le 1 ]]; then exit 0; else exit $result; fi
 
@@ -218,7 +223,7 @@ test-verbose:
         exit 1
     fi
     [[ -d tests/libs ]] || ./tests/setup-bats-libs.sh
-    bats --verbose-run tests/
+    bats --verbose-run tests/*/*.bats
     result=$?
     if [[ $result -le 1 ]]; then exit 0; else exit $result; fi
 
@@ -246,7 +251,7 @@ test-filter filter:
         exit 1
     fi
     [[ -d tests/libs ]] || ./tests/setup-bats-libs.sh
-    bats -f "{{filter}}" tests/
+    bats -f "{{filter}}" tests/*/*.bats
     result=$?
     if [[ $result -le 1 ]]; then exit 0; else exit $result; fi
 

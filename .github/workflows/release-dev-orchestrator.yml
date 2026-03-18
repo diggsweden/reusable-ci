@@ -38,7 +38,7 @@
 #   - No artifact signing
 #   - No GitHub release
 #   - ~3-5 min vs ~12-15 min build time
-name: Release Dev Orchestrator
+name: Orchestrate Dev Release
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
@@ -96,7 +96,7 @@ on:
         default: true
         type: boolean
       reusable-ci-ref:
-        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
         required: false
         default: "main"
         type: string
@@ -107,23 +107,23 @@ on:
     outputs:
       container-image:
         description: "Published container image"
-        value: ${{ fromJson(jobs.execute-dev-publish-stage.outputs['artifacts-json']).container_image }}
+        value: ${{ fromJson(jobs.execute-dev-publish-stage.outputs['artifacts-json'] || '{}').container_image }}
       container-digest:
         description: "Container image digest"
-        value: ${{ fromJson(jobs.execute-dev-publish-stage.outputs['artifacts-json']).container_digest }}
+        value: ${{ fromJson(jobs.execute-dev-publish-stage.outputs['artifacts-json'] || '{}').container_digest }}
       npm-package-name:
         description: "Published NPM package name (if published)"
-        value: ${{ fromJson(jobs.execute-dev-publish-stage.outputs['artifacts-json']).npm_package_name }}
+        value: ${{ fromJson(jobs.execute-dev-publish-stage.outputs['artifacts-json'] || '{}').npm_package_name }}
       npm-package-version:
         description: "Published NPM package version (if published)"
-        value: ${{ fromJson(jobs.execute-dev-publish-stage.outputs['artifacts-json']).npm_package_version }}
+        value: ${{ fromJson(jobs.execute-dev-publish-stage.outputs['artifacts-json'] || '{}').npm_package_version }}
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
   # ===== Stage 0: Dev Context =====
   # Compose the small control-plane payloads that later dev stages consume.
   compose-dev-interface:
-    name: Compose Dev Interface
+    name: Setup
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -135,9 +135,9 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ inputs.reusable-ci-ref }}
+          ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
-          sparse-checkout: scripts/plan
+          sparse-checkout: scripts
       - name: Compose dev control-plane interface
         id: interface
         env:
@@ -151,7 +151,7 @@ jobs:
           NODE_VERSION: ${{ inputs['node-version'] }}
           CONTAINER_FILE: ${{ inputs['container-file'] }}
           REGISTRY: ${{ inputs.registry }}
-          REUSABLE_CI_REF: ${{ inputs.reusable-ci-ref }}
+          REUSABLE_CI_REF: ${{ inputs['reusable-ci-ref'] }}
           NPM_REGISTRY: ${{ inputs['npm-registry'] }}
           PACKAGE_SCOPE: ${{ inputs['package-scope'] }}
           NPM_REGISTRY_USERNAME: ${{ inputs['npm-registry-username'] }}
@@ -161,31 +161,34 @@ jobs:
 
   # ===== Stage 1: Build =====
   execute-dev-build-stage:
-    name: Execute Dev Build Stage
+    name: Build
     needs: [compose-dev-interface]
     permissions:
       contents: read
     uses: ./.github/workflows/release-dev-build-stage.yml
     with:
       dev-context-json: ${{ needs.compose-dev-interface.outputs.dev-context-json }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
 
   # ===== Stage 2: Publish =====
   execute-dev-publish-stage:
-    name: Execute Dev Publish Stage
+    name: Publish
     needs: [compose-dev-interface, execute-dev-build-stage]
     if: ${{ !failure() && !cancelled() }}
     permissions:
       contents: read
+      packages: write
     secrets: inherit
     uses: ./.github/workflows/release-dev-publish-stage.yml
     with:
       dev-context-json: ${{ needs.compose-dev-interface.outputs.dev-context-json }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
       dev-policy-json: ${{ needs.compose-dev-interface.outputs.dev-policy-json }}
       build-result-json: ${{ needs.execute-dev-build-stage.outputs.result-json }}
 
   # ===== Stage 3: Summary =====
   dev-release-summary:
-    name: Dev Release Summary
+    name: Summary
     needs:
       - compose-dev-interface
       - execute-dev-build-stage
@@ -199,17 +202,17 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ fromJson(needs.compose-dev-interface.outputs['dev-context-json']).reusable_ci_ref }}
+          ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
           sparse-checkout: scripts
       - name: Generate Dev Release Summary
         env:
           # Dev release context.
-          PROJECT_TYPE: ${{ fromJson(needs.compose-dev-interface.outputs['dev-context-json']).project_type }}
-          RELEASE_REF: ${{ fromJson(needs.compose-dev-interface.outputs['dev-context-json']).branch }}
-          RELEASE_SHA: ${{ fromJson(needs.compose-dev-interface.outputs['dev-context-json']).release_sha }}
-          RELEASE_ACTOR: ${{ fromJson(needs.compose-dev-interface.outputs['dev-context-json']).release_actor }}
-          RELEASE_REPOSITORY: ${{ fromJson(needs.compose-dev-interface.outputs['dev-context-json']).release_repository }}
+          PROJECT_TYPE: ${{ inputs['project-type'] }}
+          RELEASE_REF: ${{ github.ref_name }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_ACTOR: ${{ github.actor }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
 
           # Stage results and published artifacts.
           BUILD_STAGE_RESULT_JSON: ${{ needs.execute-dev-build-stage.outputs.result-json }}

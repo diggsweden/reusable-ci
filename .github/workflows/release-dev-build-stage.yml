@@ -1,12 +1,16 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
-name: Release Dev Build Stage
+name: Dev Release Build Stage
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
       dev-context-json:
         required: true
+        type: string
+      reusable-ci-ref:
+        required: false
+        default: "main"
         type: string
     outputs:
       stage-ran:
@@ -33,6 +37,7 @@ jobs:
       build-type: app
       java-version: ${{ fromJson(inputs['dev-context-json']).java_version }}
       profile: ''
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   build-npm-dev:
     name: Build NPM Dev
     if: ${{ fromJson(inputs['dev-context-json']).project_type == 'npm' }}
@@ -43,6 +48,7 @@ jobs:
       working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
       branch: ${{ fromJson(inputs['dev-context-json']).branch }}
       node-version: ${{ fromJson(inputs['dev-context-json']).node_version }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   build-gradle-dev:
     name: Build Gradle Dev
     if: ${{ fromJson(inputs['dev-context-json']).project_type == 'gradle' }}
@@ -54,6 +60,7 @@ jobs:
       branch: ${{ fromJson(inputs['dev-context-json']).branch }}
       java-version: ${{ fromJson(inputs['dev-context-json']).java_version }}
       gradle-tasks: build
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   summarize-dev-build-stage:
     name: Summarize Dev Build Stage
     needs: [build-maven-dev, build-npm-dev, build-gradle-dev]
@@ -70,9 +77,9 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ fromJson(inputs['dev-context-json']).reusable_ci_ref }}
+          ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
-          sparse-checkout: scripts/summary
+          sparse-checkout: scripts
       - name: Normalize dev build stage result
         id: summary
         env:

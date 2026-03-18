@@ -72,7 +72,7 @@ The PR orchestrator produces two JSON payloads that drive the quality stage:
 |-------|--------|---------|
 | `project_type` | `inputs.project-type` | Project ecosystem (maven, npm, python) |
 | `base_branch` | `inputs.base-branch` or PR target | Base branch for commit linting |
-| `reusable_ci_ref` | `inputs.reusable-ci-ref` | Script checkout ref |
+| `reusable_ci_ref` | `github.workflow_sha` | Reusable workflow revision used for helper script checkout |
 
 **`pr-policy-json`** — quality check toggles:
 

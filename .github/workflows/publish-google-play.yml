@@ -30,7 +30,7 @@
 # Required Permissions:
 #   contents: read  # Download artifacts
 #
-name: Publish to Google Play
+name: Publish Google Play
 on:
   workflow_call:
     inputs:
@@ -102,6 +102,11 @@ on:
         required: false
         default: "."
         type: string
+      reusable-ci-ref:
+        description: "Ref for reusable-ci helper scripts checkout"
+        required: false
+        default: "main"
+        type: string
 permissions:
   contents: read
 jobs:
@@ -116,6 +121,13 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           fetch-depth: 1
+      - name: Checkout reusable-ci helper scripts
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
 
       - name: Download AAB artifact
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
@@ -175,4 +187,4 @@ jobs:
           RELEASE_NAME: ${{ inputs['release-name'] }}
           USER_FRACTION: ${{ inputs['user-fraction'] }}
           PRIORITY: ${{ inputs['in-app-update-priority'] }}
-        run: bash scripts/summary/write-google-play-summary.sh
+        run: bash .github-shared/scripts/summary/write-google-play-summary.sh

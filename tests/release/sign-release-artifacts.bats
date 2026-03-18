@@ -22,6 +22,7 @@ touch "${target}.asc"
 EOF
   chmod +x "${TEST_DIR}/bin/gpg"
   export PATH="${TEST_DIR}/bin:${PATH}"
+  export GPG_KEY_ID="ABC123"
 }
 
 teardown() {
@@ -34,7 +35,7 @@ teardown() {
   touch "${TEST_DIR}/release-artifacts/original-app.jar"
 
   pushd "$TEST_DIR" >/dev/null
-  run_script "release/sign-release-artifacts.sh" "ABC123"
+  run_script "release/sign-release-artifacts.sh"
   popd >/dev/null
 
   assert_success
@@ -45,7 +46,7 @@ teardown() {
 
 @test "sign-release-artifacts skips missing inputs gracefully" {
   pushd "$TEST_DIR" >/dev/null
-  run_script "release/sign-release-artifacts.sh" "ABC123"
+  run_script "release/sign-release-artifacts.sh"
   popd >/dev/null
 
   assert_success

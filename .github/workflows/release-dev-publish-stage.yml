@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
-name: Release Dev Publish Stage
+name: Dev Release Publish Stage
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
@@ -13,6 +13,10 @@ on:
         type: string
       build-result-json:
         required: true
+        type: string
+      reusable-ci-ref:
+        required: false
+        default: "main"
         type: string
     secrets:
       registry-password:
@@ -43,10 +47,10 @@ jobs:
     uses: ./.github/workflows/publish-container-dev.yml
     with:
       working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
-      reusable-ci-ref: ${{ fromJson(inputs['dev-context-json']).reusable_ci_ref }}
       container-file: ${{ fromJson(inputs['dev-context-json']).container_file }}
       registry: ${{ fromJson(inputs['dev-context-json']).registry }}
       artifact-types: ${{ fromJson(inputs['dev-context-json']).project_type }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   publish-npm-dev:
     name: Publish Dev NPM Package
     if: ${{ fromJson(inputs['dev-context-json']).project_type == 'npm' && fromJson(inputs['dev-policy-json']).publish_npm && fromJson(inputs['build-result-json']).targets.npm == 'success' }}
@@ -56,12 +60,12 @@ jobs:
     uses: ./.github/workflows/publish-npm-dev.yml
     with:
       working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
-      reusable-ci-ref: ${{ fromJson(inputs['dev-context-json']).reusable_ci_ref }}
       node-version: ${{ fromJson(inputs['dev-context-json']).node_version }}
       registry: ${{ fromJson(inputs['dev-context-json']).npm_registry }}
       package-scope: ${{ fromJson(inputs['dev-context-json']).package_scope }}
       registry-username: ${{ fromJson(inputs['dev-context-json']).npm_registry_username }}
       use-github-token: ${{ fromJson(inputs['dev-policy-json']).use_github_token }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
     secrets:
       registry-password: ${{ secrets.registry-password }}
   summarize-dev-publish-stage:
@@ -81,9 +85,9 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ fromJson(inputs['dev-context-json']).reusable_ci_ref }}
+          ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
-          sparse-checkout: scripts/summary
+          sparse-checkout: scripts
       - name: Normalize dev publish stage result
         id: summary
         env:

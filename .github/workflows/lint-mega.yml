@@ -17,7 +17,7 @@
 #    If not, MegaLinter will use its default configuration.
 #
 # 3. The results will be available as artifacts and in the GitHub Security tab.
-name: MegaLinter
+name: Lint MegaLinter
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:

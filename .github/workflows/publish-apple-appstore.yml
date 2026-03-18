@@ -32,7 +32,7 @@
 # Required Permissions:
 #   contents: read  # Download artifacts
 #
-name: Publish to Apple App Store
+name: Publish Apple App Store
 on:
   workflow_call:
     inputs:
@@ -78,6 +78,11 @@ on:
         required: false
         default: "macos-26"
         type: string
+      reusable-ci-ref:
+        description: "Ref for reusable-ci helper scripts checkout"
+        required: false
+        default: "main"
+        type: string
 permissions:
   contents: read
 jobs:
@@ -92,6 +97,13 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           fetch-depth: 1
+      - name: Checkout reusable-ci helper scripts
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
 
       - name: Download IPA artifact
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
@@ -187,7 +199,7 @@ jobs:
           SKIP_VALIDATION: ${{ inputs['skip-validation'] }}
           SUBMIT_REVIEW: ${{ inputs['submit-for-review'] }}
           REQUEST_ID: ${{ steps.upload-info.outputs.request-id }}
-        run: bash scripts/summary/write-appstore-summary.sh
+        run: bash .github-shared/scripts/summary/write-appstore-summary.sh
 
       - name: Upload result artifact
         if: always()

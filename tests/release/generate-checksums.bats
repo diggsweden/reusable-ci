@@ -28,9 +28,8 @@ teardown() {
 # Helper Functions
 # =============================================================================
 
-# Run generate-checksums with debug output
 run_generate_checksums() {
-  run_script "release/generate-checksums.sh" "$@"
+  run_script "release/generate-checksums.sh"
 }
 
 # Create a test artifact file
@@ -38,7 +37,7 @@ create_artifact() {
   local dir="$1"
   local filename="$2"
   local content="${3:-test content}"
-  
+
   mkdir -p "$dir"
   echo "$content" > "$dir/$filename"
 }
@@ -52,32 +51,32 @@ get_sha256() {
 # Basic Functionality Tests
 # =============================================================================
 
-@test "generate-checksumscreates checksum file" {
+@test "generate-checksums creates checksum file" {
   mkdir -p release-artifacts
   echo "test" > release-artifacts/test.jar
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts"
 
-  assert_success
-  assert_file_exists "checksums.sha256"
-}
-
-@test "generate-checksumsuses default output filename" {
-  mkdir -p release-artifacts
-  echo "test" > release-artifacts/test.jar
-  
   run_generate_checksums
 
   assert_success
   assert_file_exists "checksums.sha256"
 }
 
-@test "generate-checksumsreports checksum count" {
+@test "generate-checksums uses default output filename" {
+  mkdir -p release-artifacts
+  echo "test" > release-artifacts/test.jar
+
+  run_generate_checksums
+
+  assert_success
+  assert_file_exists "checksums.sha256"
+}
+
+@test "generate-checksums reports checksum count" {
   mkdir -p release-artifacts
   echo "file1" > release-artifacts/file1.jar
   echo "file2" > release-artifacts/file2.jar
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts"
+
+  run_generate_checksums
 
   assert_success
   assert_output --partial "Generated"
@@ -88,36 +87,36 @@ get_sha256() {
 # Release Artifacts Tests
 # =============================================================================
 
-@test "generate-checksumschecksums release artifacts" {
+@test "generate-checksums checksums release artifacts" {
   create_artifact "release-artifacts" "app.jar" "application content"
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts"
+
+  run_generate_checksums
 
   assert_success
-  
+
   # Verify checksum file contains the artifact
   run cat checksums.sha256
   assert_output --partial "app.jar"
 }
 
-@test "generate-checksumsincludes correct SHA256 hash" {
+@test "generate-checksums includes correct SHA256 hash" {
   create_artifact "release-artifacts" "test.txt" "known content"
   local expected_hash
   expected_hash=$(get_sha256 "release-artifacts/test.txt")
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts"
+
+  run_generate_checksums
 
   assert_success
   run cat checksums.sha256
   assert_output --partial "$expected_hash"
 }
 
-@test "generate-checksumshandles multiple release artifacts" {
+@test "generate-checksums handles multiple release artifacts" {
   create_artifact "release-artifacts" "app.jar" "app"
   create_artifact "release-artifacts" "lib.jar" "lib"
   create_artifact "release-artifacts" "docs.zip" "docs"
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts"
+
+  run_generate_checksums
 
   assert_success
   run cat checksums.sha256
@@ -126,10 +125,10 @@ get_sha256() {
   assert_output --partial "docs.zip"
 }
 
-@test "generate-checksumsstrips directory prefix from artifact paths" {
+@test "generate-checksums strips directory prefix from artifact paths" {
   create_artifact "release-artifacts" "myapp.jar" "content"
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts"
+
+  run_generate_checksums
 
   assert_success
   run cat checksums.sha256
@@ -142,21 +141,23 @@ get_sha256() {
 # Attached Patterns Tests
 # =============================================================================
 
-@test "generate-checksumsprocesses attach patterns" {
+@test "generate-checksums processes attach patterns" {
   echo "attachment" > attached-file.txt
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts" "attached-file.txt"
+  export ATTACH_ARTIFACTS="attached-file.txt"
+
+  run_generate_checksums
 
   assert_success
   run cat checksums.sha256
   assert_output --partial "attached-file.txt"
 }
 
-@test "generate-checksumshandles comma-separated patterns" {
+@test "generate-checksums handles comma-separated patterns" {
   echo "file1" > file1.txt
   echo "file2" > file2.md
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts" "file1.txt,file2.md"
+  export ATTACH_ARTIFACTS="file1.txt,file2.md"
+
+  run_generate_checksums
 
   assert_success
   run cat checksums.sha256
@@ -164,11 +165,12 @@ get_sha256() {
   assert_output --partial "file2.md"
 }
 
-@test "generate-checksumshandles glob patterns" {
+@test "generate-checksums handles glob patterns" {
   echo "a" > test-a.txt
   echo "b" > test-b.txt
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts" "test-*.txt"
+  export ATTACH_ARTIFACTS="test-*.txt"
+
+  run_generate_checksums
 
   assert_success
   run cat checksums.sha256
@@ -180,22 +182,22 @@ get_sha256() {
 # SBOM Directory Tests
 # =============================================================================
 
-@test "generate-checksumsprocesses SBOM container files" {
+@test "generate-checksums processes SBOM container files" {
   mkdir -p sbom-artifacts
   echo "sbom" > "sbom-artifacts/myapp-container-sbom.spdx.json"
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts" "" "./sbom-artifacts"
+
+  run_generate_checksums
 
   assert_success
   run cat checksums.sha256
   assert_output --partial "myapp-container-sbom.spdx.json"
 }
 
-@test "generate-checksumshandles cyclonedx container SBOMs" {
+@test "generate-checksums handles cyclonedx container SBOMs" {
   mkdir -p sbom-artifacts
   echo "cdx" > "sbom-artifacts/app-container-sbom.cyclonedx.json"
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts" "" "./sbom-artifacts"
+
+  run_generate_checksums
 
   assert_success
   run cat checksums.sha256
@@ -206,40 +208,40 @@ get_sha256() {
 # SBOM Layer Files Tests
 # =============================================================================
 
-@test "generate-checksumsincludes pom SBOM files" {
+@test "generate-checksums includes pom SBOM files" {
   echo "pom sbom" > "myapp-pom-sbom.spdx.json"
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts" "" "./sbom-artifacts"
+
+  run_generate_checksums
 
   assert_success
   run cat checksums.sha256
   assert_output --partial "myapp-pom-sbom.spdx.json"
 }
 
-@test "generate-checksumsincludes package SBOM files" {
+@test "generate-checksums includes package SBOM files" {
   echo "package sbom" > "myapp-package-sbom.cyclonedx.json"
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts" "" "./sbom-artifacts"
+
+  run_generate_checksums
 
   assert_success
   run cat checksums.sha256
   assert_output --partial "myapp-package-sbom.cyclonedx.json"
 }
 
-@test "generate-checksumsincludes jar SBOM files" {
+@test "generate-checksums includes jar SBOM files" {
   echo "jar sbom" > "mylib-jar-sbom.spdx.json"
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts" "" "./sbom-artifacts"
+
+  run_generate_checksums
 
   assert_success
   run cat checksums.sha256
   assert_output --partial "mylib-jar-sbom.spdx.json"
 }
 
-@test "generate-checksumsincludes gradle SBOM files" {
+@test "generate-checksums includes gradle SBOM files" {
   echo "gradle sbom" > "app-gradle-sbom.cyclonedx.json"
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts" "" "./sbom-artifacts"
+
+  run_generate_checksums
 
   assert_success
   run cat checksums.sha256
@@ -250,27 +252,30 @@ get_sha256() {
 # Empty/Missing Directory Tests
 # =============================================================================
 
-@test "generate-checksumshandles missing release-artifacts directory" {
-  run_generate_checksums "checksums.sha256" "./nonexistent"
+@test "generate-checksums handles missing release-artifacts directory" {
+  export RELEASE_ARTIFACTS_DIR="./nonexistent"
+
+  run_generate_checksums
 
   assert_success
   assert_file_exists "checksums.sha256"
 }
 
-@test "generate-checksumshandles empty release-artifacts directory" {
+@test "generate-checksums handles empty release-artifacts directory" {
   mkdir -p release-artifacts
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts"
+
+  run_generate_checksums
 
   assert_success
   assert_output --partial "Generated 0 checksums"
 }
 
-@test "generate-checksumshandles missing SBOM directory" {
+@test "generate-checksums handles missing SBOM directory" {
   mkdir -p release-artifacts
   echo "app" > release-artifacts/app.jar
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts" "" "./missing-sbom"
+  export SBOM_DIR="./missing-sbom"
+
+  run_generate_checksums
 
   assert_success
 }
@@ -279,25 +284,25 @@ get_sha256() {
 # Output Format Tests
 # =============================================================================
 
-@test "generate-checksumscreates SHA256 format output" {
+@test "generate-checksums creates SHA256 format output" {
   create_artifact "release-artifacts" "test.jar" "content"
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts"
+
+  run_generate_checksums
 
   assert_success
-  
+
   # SHA256 should be 64 hex characters
   run cat checksums.sha256
   assert_output --regexp "^[a-f0-9]{64}[[:space:]]"
 }
 
-@test "generate-checksumsoutput is verifiable with sha256sum" {
+@test "generate-checksums output is verifiable with sha256sum" {
   create_artifact "release-artifacts" "verifiable.txt" "verify this"
-  
-  run_generate_checksums "checksums.sha256" "./release-artifacts"
+
+  run_generate_checksums
 
   assert_success
-  
+
   # Verify the checksums are correct
   cd release-artifacts
   run sha256sum -c ../checksums.sha256
@@ -308,22 +313,24 @@ get_sha256() {
 # Custom Output File Tests
 # =============================================================================
 
-@test "generate-checksumsuses custom output filename" {
+@test "generate-checksums uses custom output filename" {
   mkdir -p release-artifacts
   echo "test" > release-artifacts/test.jar
-  
-  run_generate_checksums "custom-checksums.txt" "./release-artifacts"
+  export OUTPUT_FILE="custom-checksums.txt"
+
+  run_generate_checksums
 
   assert_success
   assert_file_exists "custom-checksums.txt"
   assert_file_not_exists "checksums.sha256"
 }
 
-@test "generate-checksumscreates output in specified path" {
+@test "generate-checksums creates output in specified path" {
   mkdir -p release-artifacts output
   echo "test" > release-artifacts/test.jar
-  
-  run_generate_checksums "output/checksums.sha256" "./release-artifacts"
+  export OUTPUT_FILE="output/checksums.sha256"
+
+  run_generate_checksums
 
   assert_success
   assert_file_exists "output/checksums.sha256"

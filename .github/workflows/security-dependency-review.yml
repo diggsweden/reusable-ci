@@ -16,7 +16,7 @@
 #
 # 2. The workflow will analyze dependencies and fail if vulnerabilities of the specified severity level are found.
 #    Supported severity levels: critical, high, moderate, low.
-name: Dependency Review
+name: Review Dependencies
 on:
   workflow_call:
     inputs:

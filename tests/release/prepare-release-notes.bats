@@ -13,6 +13,10 @@ load "${BATS_TEST_DIRNAME}/../test_helper.bash"
 
 setup() {
   common_setup_with_github_env
+  export SOURCE_FILE="ReleasenotesTmp"
+  export TARGET_FILE="release-notes.md"
+  export RELEASE_VERSION=""
+  export RELEASE_COMMIT=""
 }
 
 teardown() {
@@ -23,7 +27,7 @@ teardown() {
   printf 'hello notes\n' > "${TEST_DIR}/ReleasenotesTmp"
 
   pushd "$TEST_DIR" >/dev/null
-  run_script "release/prepare-release-notes.sh" ReleasenotesTmp release-notes.md
+  run_script "release/prepare-release-notes.sh"
   popd >/dev/null
 
   assert_success
@@ -33,7 +37,7 @@ teardown() {
 
 @test "prepare-release-notes creates empty target when source is missing and no version" {
   pushd "$TEST_DIR" >/dev/null
-  run_script "release/prepare-release-notes.sh" ReleasenotesTmp release-notes.md
+  run_script "release/prepare-release-notes.sh"
   popd >/dev/null
 
   assert_success
@@ -42,8 +46,11 @@ teardown() {
 }
 
 @test "prepare-release-notes creates fallback with version when source is missing" {
+  export RELEASE_VERSION="v1.2.3"
+  export RELEASE_COMMIT="abc123def"
+
   pushd "$TEST_DIR" >/dev/null
-  run_script "release/prepare-release-notes.sh" ReleasenotesTmp release-notes.md "v1.2.3" "abc123def"
+  run_script "release/prepare-release-notes.sh"
   popd >/dev/null
 
   assert_success
@@ -55,9 +62,11 @@ teardown() {
 
 @test "prepare-release-notes reports file size when source exists" {
   printf 'hello notes\n' > "${TEST_DIR}/ReleasenotesTmp"
+  export RELEASE_VERSION="v1.0.0"
+  export RELEASE_COMMIT="sha123"
 
   pushd "$TEST_DIR" >/dev/null
-  run_script "release/prepare-release-notes.sh" ReleasenotesTmp release-notes.md "v1.0.0" "sha123"
+  run_script "release/prepare-release-notes.sh"
   popd >/dev/null
 
   assert_success

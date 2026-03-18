@@ -50,7 +50,7 @@
 # Outputs:
 #   image: Full image name (registry/org/repo:0.5.9-dev-feat-name-abc1234)
 #   digest: Image digest for verification
-name: Publish Dev Container Image
+name: Publish Dev Container
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
@@ -83,7 +83,7 @@ on:
         default: true
         type: boolean
       reusable-ci-ref:
-        description: "Ref for reusable-ci scripts checkout (for testing feature branches)"
+        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
         required: false
         default: "main"
         type: string
@@ -120,7 +120,7 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ inputs.reusable-ci-ref }}
+          ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
           sparse-checkout: scripts
       - name: Download Maven artifacts
