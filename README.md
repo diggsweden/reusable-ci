@@ -78,8 +78,9 @@ Most projects require two or three files:
 
 #### Example 1: Just Use Flows As Is
 ```yaml
-uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@main
+uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
 with:
+  reusable-ci-ref: v2.7.0
   artifacts-config: .github/artifacts.yml
   release-publisher: github-cli
 ```
@@ -88,22 +89,25 @@ with:
 ```yaml
 jobs:
   build-maven:
-    uses: diggsweden/reusable-ci/.github/workflows/build-maven.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/build-maven.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
+      reusable-ci-ref: v2.7.0
       build-type: app
       java-version: "21"
 
   publish-github:
     needs: build-maven
-    uses: diggsweden/reusable-ci/.github/workflows/publish-maven-github.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/publish-maven-github.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
+      reusable-ci-ref: v2.7.0
       package-type: maven
       artifact-source: maven-build-artifacts
 
   build-container:
     needs: build-maven
-    uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
+      reusable-ci-ref: v2.7.0
       container-file: Containerfile
       artifact-source: maven-build-artifacts
 ```
@@ -134,13 +138,14 @@ jobs:
      contents: read
    jobs:
       pr-checks:
-        uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@main
+        uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
         permissions:
           contents: read
           packages: read
           security-events: write
         secrets: inherit
         with:
+          reusable-ci-ref: v2.7.0
           project-type: maven  # or npm, gradle, gradle-android, xcode-ios
           # Recommended: Use devbase-check (lightweight, just+mise-based)
           linters.devbasecheck: true
@@ -164,7 +169,7 @@ jobs:
      contents: read
    jobs:
      release:
-       uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@main
+       uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
        permissions:
          contents: write
          packages: write
@@ -188,12 +193,13 @@ jobs:
      contents: read
     jobs:
       dev-release:
-        uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@main
+        uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
         permissions:
           contents: write
           packages: write
         secrets: inherit
         with:
+          reusable-ci-ref: v2.7.0
           project-type: maven  # or npm, gradle, gradle-android, xcode-ios
     ```
 

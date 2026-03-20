@@ -229,8 +229,9 @@ on:
 
 jobs:
   dev-release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@main
+    uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
+      reusable-ci-ref: v2.7.0
       artifacts-config: .github/artifacts.yml
     permissions:
       contents: write

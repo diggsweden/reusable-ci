@@ -30,7 +30,7 @@ jobs:
     secrets: inherit
     with:
       artifacts-config: .github/self-artifacts.yml
-      reusable-ci-ref: main
+      reusable-ci-ref: ${{ github.ref_name }}
       changelog-creator: git-cliff
       changelog.config: templates/gitcliff/default.toml
       release-publisher: github-cli

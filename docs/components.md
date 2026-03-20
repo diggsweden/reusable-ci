@@ -181,7 +181,7 @@ Usually called by `release-orchestrator.yml`, but can also be used directly by a
 Orchestrates all quality checks for pull requests. Composes a control-plane interface, delegates to the quality stage, and produces a top-level summary.
 
 ```yaml
-uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@main
+uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
 with:
   project-type: maven              # Required: maven, npm, python
   base-branch: ""                  # Optional: auto-detects PR target
@@ -193,7 +193,7 @@ with:
   linters.devbasecheck: false      # Recommended: replaces deprecated linters
   linters.swiftformat: false       # Swift format for iOS/macOS
   linters.swiftlint: false         # SwiftLint for iOS/macOS
-  reusable-ci-ref: ""              # Deprecated; helper scripts use the workflow revision
+  reusable-ci-ref: v2.7.0           # Match the pinned workflow release
 ```
 
 **Outputs:** The quality stage exposes `stage-ran`, `stage-result`, and `result-json` with per-check target results. See [PR Quality Stage Result Contract](workflows.md#pr-quality-stage-result-contract) for the full schema.
