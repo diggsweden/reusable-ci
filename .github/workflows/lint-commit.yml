@@ -72,6 +72,6 @@ jobs:
         run: |
           printf "Installing gommitlint v%s\n" "$GOMMITLINT_VERSION"
           curl -sSfL "https://codeberg.org/itiquette/gommitlint/releases/download/v${GOMMITLINT_VERSION}/gommitlint-${GOMMITLINT_VERSION}-linux-x86_64.tar.gz" \
-            | tar xz -C /usr/local/bin gommitlint
+            | tar xz --strip-components=1 -C /usr/local/bin "gommitlint-${GOMMITLINT_VERSION}-linux-x86_64/gommitlint"
       - name: Commit lint analysis
         run: gommitlint validate --base-branch=${{ steps.base.outputs.branch }} --format=github
