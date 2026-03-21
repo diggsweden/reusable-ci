@@ -17,8 +17,15 @@ install_syft() {
     return
   fi
 
+  local install_dir="${CI_TEMP_DIR:-/tmp}/syft-bin"
+  mkdir -p "$install_dir"
+
   printf "Installing Syft SBOM generator (version: %s)...\n" "${SYFT_VERSION}"
-  curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /tmp "${SYFT_VERSION}"
-  export PATH="/tmp:$PATH"
+  if ! curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b "$install_dir" "${SYFT_VERSION}"; then
+    printf "ERROR: Failed to install Syft %s\n" "${SYFT_VERSION}" >&2
+    return 1
+  fi
+
+  export PATH="${install_dir}:$PATH"
   printf "✅ Syft installed successfully\n\n"
 }

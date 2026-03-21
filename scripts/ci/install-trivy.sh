@@ -17,8 +17,21 @@ install_trivy() {
     return
   fi
 
+  local install_dir="${CI_TEMP_DIR:-/tmp}/trivy-bin"
+  mkdir -p "$install_dir"
+
   printf "Installing Trivy vulnerability scanner (version: %s)...\n" "${TRIVY_VERSION}"
-  curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /tmp "${TRIVY_VERSION}"
-  export PATH="/tmp:$PATH"
+  if ! curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$install_dir" "${TRIVY_VERSION}"; then
+    printf "ERROR: Failed to install Trivy %s\n" "${TRIVY_VERSION}" >&2
+    return 1
+  fi
+
+  export PATH="${install_dir}:$PATH"
+
+  if ! command -v trivy &>/dev/null; then
+    printf "ERROR: Trivy binary not found after install\n" >&2
+    return 1
+  fi
+
   printf "✅ Trivy installed successfully\n\n"
 }

@@ -22,6 +22,7 @@
 #   CI_REF         Full git ref (e.g. refs/heads/main)
 #   CI_SERVER_URL  Base URL of the CI server
 #   CI_RUN_URL     Direct URL to the current run/pipeline
+#   CI_TEMP_DIR    Writable temp directory for tool installs
 
 [[ -n "${_CI_ENV_LOADED:-}" ]] && return 0
 _CI_ENV_LOADED=1
@@ -38,10 +39,15 @@ if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
   CI_REF="${GITHUB_REF:-}"
   CI_SERVER_URL="https://github.com"
   CI_RUN_URL="https://github.com/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}"
+  CI_TEMP_DIR="${RUNNER_TEMP:-/tmp}"
 
 elif [[ "${GITLAB_CI:-}" == "true" ]]; then
   # GitLab CI mappings — future task
   CI_PR_BASE_REF="${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}"
+  CI_TEMP_DIR="${CI_BUILDS_DIR:-/tmp}"
+
+else
+  CI_TEMP_DIR="${TMPDIR:-/tmp}"
 fi
 
-export CI_PLATFORM CI_COMMIT CI_REPO CI_RUN_ID CI_ACTOR CI_BRANCH CI_PR_BASE_REF CI_REF_NAME CI_REF CI_SERVER_URL CI_RUN_URL
+export CI_PLATFORM CI_COMMIT CI_REPO CI_RUN_ID CI_ACTOR CI_BRANCH CI_PR_BASE_REF CI_REF_NAME CI_REF CI_SERVER_URL CI_RUN_URL CI_TEMP_DIR
