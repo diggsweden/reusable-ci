@@ -22,7 +22,7 @@ teardown() {
 }
 
 run_validate_ref_type() {
-  run_script "validate/validate-ref-type.sh" "$@"
+  run_script "validate/ref-type.sh" "$@"
 }
 
 @test "validate-ref-type fails when no arguments provided" {

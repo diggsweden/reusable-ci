@@ -147,7 +147,7 @@ lint-actions:
 # Validate reusable workflow contracts
 [group('lint')]
 lint-workflow-contracts:
-    @./scripts/validation/check-workflow-input-defaults.sh
+    @./scripts/validate/workflow-input-defaults.sh
 
 # Check license compliance
 [group('lint')]

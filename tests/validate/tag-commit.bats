@@ -33,7 +33,7 @@ teardown() {
 
 # Run validate-tag-commit with debug output
 run_validate_tag_commit() {
-  run_script "validate/validate-tag-commit.sh" "$@"
+  run_script "validate/tag-commit.sh" "$@"
 }
 
 # Push changes to remote

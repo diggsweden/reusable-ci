@@ -22,7 +22,7 @@ teardown() {
 }
 
 run_validate_gpg_public_key() {
-  run_script "validate/validate-gpg-public-key.sh" "$@"
+  run_script "validate/gpg-public-key.sh" "$@"
 }
 
 @test "validate-gpg-public-key fails when secret is not set" {

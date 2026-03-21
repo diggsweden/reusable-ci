@@ -208,8 +208,8 @@ graph TD
     D --> H[build-npm.yml]
     D --> I[build-gradle-app.yml]
 
-    E --> J[publish-container-dev.yml]
-    E --> K[publish-npm-dev.yml]
+    E --> J[publish-dev-container.yml]
+    E --> K[publish-dev-npm.yml]
 
     style A fill:#a7c080,stroke:#5c6a4a,color:#2b3339
     style B fill:#e69875,stroke:#9d5c41,color:#2b3339

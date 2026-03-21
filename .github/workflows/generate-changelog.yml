@@ -90,7 +90,7 @@ jobs:
       - name: Verify Changelog Generation
         env:
           CHANGELOG_FILE: ${{ inputs['output-file'] }}
-        run: bash "${{ github.workspace }}/.github-shared/scripts/release/verify-changelog.sh"
+        run: bash "${{ github.workspace }}/.github-shared/scripts/release/validate-changelog.sh"
       - name: Upload Changelog Artifact
         if: ${{ inputs['upload-as-artifact'] }}
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0

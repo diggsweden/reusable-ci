@@ -32,7 +32,7 @@ teardown() {
 
 # Run validate-github-token with debug output
 run_validate_github_token() {
-  run_script "validate/validate-github-token.sh" "$@"
+  run_script "validate/github-token.sh" "$@"
 }
 
 # =============================================================================

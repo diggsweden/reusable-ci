@@ -31,7 +31,7 @@ teardown() {
 
 # Run validate-tag-format with debug output
 run_validate_tag_format() {
-  run_script "validate/validate-tag-format.sh" "$@"
+  run_script "validate/tag-format.sh" "$@"
 }
 
 # =============================================================================

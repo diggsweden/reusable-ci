@@ -30,7 +30,7 @@ teardown() {
 # =============================================================================
 
 run_validate_tag_uniqueness() {
-  run_script "validate/validate-tag-uniqueness.sh" "$@"
+  run_script "validate/tag-uniqueness.sh" "$@"
 }
 
 # =============================================================================

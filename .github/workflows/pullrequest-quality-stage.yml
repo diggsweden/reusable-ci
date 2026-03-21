@@ -64,7 +64,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
-    uses: ./.github/workflows/lint-devbase-check.yml
+    uses: ./.github/workflows/lint-devbase.yml
   swift-lint:
     name: Swift Lint
     if: ${{ fromJson(inputs['pr-policy-json']).swift }}

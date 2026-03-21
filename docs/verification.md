@@ -12,7 +12,7 @@ Documentation for verifying code quality and the authenticity and integrity of a
 
 ### Devbase-Check Linting Workflow
 
-The `lint-devbase-check.yml` workflow provides dynamic, MegaLinter-style output for code quality verification.
+The `lint-devbase.yml` workflow provides dynamic, MegaLinter-style output for code quality verification.
 
 #### Overview
 
@@ -39,7 +39,7 @@ Add to your pull request workflow:
 ```yaml
 jobs:
   lint:
-    uses: diggsweden/reusable-ci/.github/workflows/lint-devbase-check.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+    uses: diggsweden/reusable-ci/.github/workflows/lint-devbase.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     permissions:
       contents: read
       security-events: write

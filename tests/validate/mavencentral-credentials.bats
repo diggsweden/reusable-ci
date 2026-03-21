@@ -23,7 +23,7 @@ teardown() {
   export MAVENCENTRAL_USERNAME="user"
   export MAVENCENTRAL_PASSWORD="pass"
 
-  run_script "validate/validate-mavencentral-credentials.sh"
+  run_script "validate/mavencentral-credentials.sh"
 
   assert_success
   assert_output --partial "Maven Central credentials configured"
@@ -33,7 +33,7 @@ teardown() {
   export MAVENCENTRAL_USERNAME=""
   export MAVENCENTRAL_PASSWORD="pass"
 
-  run_script "validate/validate-mavencentral-credentials.sh"
+  run_script "validate/mavencentral-credentials.sh"
 
   assert_failure
   assert_output --partial "Missing MAVENCENTRAL_USERNAME secret"
@@ -43,7 +43,7 @@ teardown() {
   export MAVENCENTRAL_USERNAME="user"
   export MAVENCENTRAL_PASSWORD=""
 
-  run_script "validate/validate-mavencentral-credentials.sh"
+  run_script "validate/mavencentral-credentials.sh"
 
   assert_failure
   assert_output --partial "Missing MAVENCENTRAL_PASSWORD secret"

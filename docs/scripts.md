@@ -82,14 +82,15 @@ scripts/
 │   ├── write-release-summary.sh              # Release pipeline step summary
 │   └── write-xcode-build-summary.sh          # Xcode build step summary
 ├── validate/
-│   ├── validate-authorization.sh             # Validate release actor authorization
-│   ├── validate-bot-permissions.sh           # Validate bot account permissions
-│   ├── validate-github-token.sh              # Validate GitHub token type and permissions
-│   ├── validate-mavencentral-credentials.sh  # Validate Maven Central credentials are set
-│   ├── validate-tag-commit.sh                # Verify tag commit in branch history
-│   ├── validate-tag-format.sh                # Verify semantic version format
-│   ├── validate-tag-signature.sh             # Verify GPG/SSH tag signature
-│   └── validate-tag-uniqueness.sh            # Verify tag is unique across remotes
+│   ├── authorization.sh                     # Validate release actor authorization
+│   ├── bot-permissions.sh                   # Validate bot account permissions
+│   ├── workflow-input-defaults.sh            # Validate workflow input defaults
+│   ├── github-token.sh                      # Validate GitHub token type and permissions
+│   ├── mavencentral-credentials.sh          # Validate Maven Central credentials are set
+│   ├── tag-commit.sh                        # Verify tag commit in branch history
+│   ├── tag-format.sh                        # Verify semantic version format
+│   ├── tag-signature.sh                     # Verify GPG/SSH tag signature
+│   └── tag-uniqueness.sh                    # Verify tag is unique across remotes
 ├── version/
 │   ├── bump-version.sh                       # Update version in build config files
 │   ├── generate-dev-version.sh               # Generate dev version string from branch/SHA
@@ -295,14 +296,15 @@ Scripts for release prerequisite validation.
 
 | Script | Purpose |
 |--------|---------|
-| `validate-authorization.sh` | Validates release actor is authorized |
-| `validate-bot-permissions.sh` | Validates bot account has required permissions |
-| `validate-github-token.sh` | Validates GitHub token type and permissions |
-| `validate-mavencentral-credentials.sh` | Validates Maven Central credentials are set |
-| `validate-tag-commit.sh` | Verifies tag commit exists in target branch history |
-| `validate-tag-format.sh` | Verifies tag follows semantic versioning (`vX.Y.Z[-prerelease]`) |
-| `validate-tag-signature.sh` | Verifies tag is annotated and GPG/SSH signed |
-| `validate-tag-uniqueness.sh` | Verifies tag is unique across remotes |
+| `authorization.sh` | Validates release actor is authorized |
+| `bot-permissions.sh` | Validates bot account has required permissions |
+| `workflow-input-defaults.sh` | Validates workflow input defaults match documentation |
+| `github-token.sh` | Validates GitHub token type and permissions |
+| `mavencentral-credentials.sh` | Validates Maven Central credentials are set |
+| `tag-commit.sh` | Verifies tag commit exists in target branch history |
+| `tag-format.sh` | Verifies tag follows semantic versioning (`vX.Y.Z[-prerelease]`) |
+| `tag-signature.sh` | Verifies tag is annotated and GPG/SSH signed |
+| `tag-uniqueness.sh` | Verifies tag is unique across remotes |
 
 ---
 

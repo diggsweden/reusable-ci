@@ -30,7 +30,7 @@ teardown() {
 # =============================================================================
 
 run_validate_authorization() {
-  run_script "validate/validate-authorization.sh" "$@"
+  run_script "validate/authorization.sh" "$@"
 }
 
 # =============================================================================

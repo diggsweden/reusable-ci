@@ -28,7 +28,7 @@ See [Workflow Guide](workflows.md) for orchestrator documentation and [Artifacts
 | Component | Purpose | Features | Build Time | Use When |
 |-----------|---------|----------|------------|----------|
 | **publish-container** | Production multi-platform container builds | SLSA attestation, SBOM, vulnerability scanning, multi-arch | ~10-15 min | Production releases |
-| **publish-container-dev** | Fast single-platform dev builds | Basic image only, SHA-based tags | ~2-3 min | Development/testing |
+| **publish-dev-container** | Fast single-platform dev builds | Basic image only, SHA-based tags | ~2-3 min | Development/testing |
 
 #### Release Tools
 
@@ -133,10 +133,10 @@ with:
   registry: "ghcr.io"
 ```
 
-#### `publish-container-dev.yml`
+#### `publish-dev-container.yml`
 Fast development container builds. Supports multiple registries.
 ```yaml
-uses: ./.github/workflows/publish-container-dev.yml
+uses: ./.github/workflows/publish-dev-container.yml
 with:
   container-file: "Containerfile"  # or "Dockerfile"
   registry: "ghcr.io"
@@ -232,10 +232,10 @@ Validates publiccode.yml file format.
 uses: ./.github/workflows/lint-publiccode.yml
 ```
 
-#### `lint-devbase-check.yml`
+#### `lint-devbase.yml`
 Runs quality checks using devbase-check. Client justfile overrides work both locally and in CI.
 ```yaml
-uses: ./.github/workflows/lint-devbase-check.yml
+uses: ./.github/workflows/lint-devbase.yml
 with:
   devbase-check-version: ""  # Optional: override pinned version
 ```

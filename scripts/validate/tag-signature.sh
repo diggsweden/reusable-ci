@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: CC0-1.0
 
 # Validates that a git tag is annotated and cryptographically signed
-# Usage: validate-tag-signature.sh <tag-name> <github-repository> [ospo-bot-gpg-pub]
+# Usage: tag-signature.sh <tag-name> <github-repository> [ospo-bot-gpg-pub]
 
 set -euo pipefail
 
@@ -17,7 +17,7 @@ main() {
   local OSPO_BOT_GPG_PUB="${3:-}"
 
   if [[ -z "$TAG_NAME" ]]; then
-    ci_log_error "Usage: validate-tag-signature.sh <tag-name> <github-repository>"
+    ci_log_error "Usage: tag-signature.sh <tag-name> <github-repository>"
     exit 1
   fi
 

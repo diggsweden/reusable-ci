@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: CC0-1.0
 
 # Validates that the workflow was triggered by a tag push
-# Usage: validate-ref-type.sh <ref-type> <ref-name> [ref]
+# Usage: ref-type.sh <ref-type> <ref-name> [ref]
 
 set -euo pipefail
 

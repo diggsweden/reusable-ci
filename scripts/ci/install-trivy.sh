@@ -9,7 +9,7 @@
 #   install_trivy
 
 # renovate: datasource=github-releases depName=aquasecurity/trivy
-readonly TRIVY_VERSION="v0.62.1"
+readonly TRIVY_VERSION="v0.69.3"
 
 install_trivy() {
   if command -v trivy &>/dev/null; then

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: CC0-1.0
 
 # Validates that a git tag follows semantic versioning format
-# Usage: validate-tag-format.sh <tag-name>
+# Usage: tag-format.sh <tag-name>
 
 set -euo pipefail
 
@@ -18,7 +18,7 @@ die() {
 main() {
   local TAG_NAME="${1:-}"
 
-  [[ -n "$TAG_NAME" ]] || die "Usage: validate-tag-format.sh <tag-name>"
+  [[ -n "$TAG_NAME" ]] || die "Usage: tag-format.sh <tag-name>"
 
   printf "## Validating Tag Format\n"
 

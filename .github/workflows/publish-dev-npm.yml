@@ -154,7 +154,7 @@ jobs:
           sparse-checkout: scripts
       - name: Extract tarball contents
         working-directory: ${{ inputs.working-directory }}
-        run: bash "${{ github.workspace }}/.github-shared/scripts/publish/npm-verify-tarball.sh"
+        run: bash "${{ github.workspace }}/.github-shared/scripts/publish/npm-validate-tarball.sh"
       - name: Check registry authentication configuration
         env:
           USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}

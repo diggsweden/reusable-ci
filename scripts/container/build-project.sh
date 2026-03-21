@@ -5,7 +5,7 @@
 # Project Builder for Containers
 #
 # Purpose: Handles project builds for container workflows (Maven/NPM/Gradle).
-# Extracts duplicated build logic from publish-container-dev.yml.
+# Extracts duplicated build logic from publish-dev-container.yml.
 #
 # Usage: build-project.sh PROJECT_TYPE WORKING_DIR
 #

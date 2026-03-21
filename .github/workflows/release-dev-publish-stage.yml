@@ -44,7 +44,7 @@ jobs:
       contents: read
       packages: write
     secrets: inherit
-    uses: ./.github/workflows/publish-container-dev.yml
+    uses: ./.github/workflows/publish-dev-container.yml
     with:
       working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
       container-file: ${{ fromJson(inputs['dev-context-json']).container_file }}
@@ -57,7 +57,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: ./.github/workflows/publish-npm-dev.yml
+    uses: ./.github/workflows/publish-dev-npm.yml
     with:
       working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
       node-version: ${{ fromJson(inputs['dev-context-json']).node_version }}

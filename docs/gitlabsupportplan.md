@@ -33,8 +33,8 @@ Consolidated from proposals 1-3, with all claims verified against the codebase.
 **GitHub CLI (`gh`) usage** (Phase 1e — provider dispatch):
 
 - `scripts/release/create-github-release.sh:22,31,141-142` — `gh release view/delete/create`
-- `scripts/validate/validate-bot-permissions.sh:14,19,25` — `gh api`
-- `scripts/validate/validate-github-token.sh:20,37,48` — `github.com/settings`, `api.github.com`
+- `scripts/validate/bot-permissions.sh:14,19,25` — `gh api`
+- `scripts/validate/github-token.sh:20,37,48` — `github.com/settings`, `api.github.com`
 
 ### `artifacts.yml` — Almost Platform-Agnostic
 
@@ -132,8 +132,8 @@ create_release "$@"
 ```
 
 Apply same pattern to:
-- `scripts/validate/validate-github-token.sh` → `providers/github.sh` (100% GitHub-specific)
-- `scripts/validate/validate-bot-permissions.sh` → `providers/github.sh` (uses `gh api`)
+- `scripts/validate/github-token.sh` → `providers/github.sh` (100% GitHub-specific)
+- `scripts/validate/bot-permissions.sh` → `providers/github.sh` (uses `gh api`)
 
 #### 1g. Introduce file-based stage manifest contract
 
@@ -202,7 +202,7 @@ Extend `docs/workflow-design-policy.md` to codify:
       .build-npm.yml
       .build-gradle.yml
       .publish-container.yml
-      .lint-devbase-check.yml
+      .lint-devbase.yml
       .validate-prerequisites.yml
 ```
 
@@ -295,27 +295,26 @@ reusable-ci/
 │   │   ├── stage-result.sh     # Stage result aggregation helpers
 │   │   └── manifest.sh         # Stage result file I/O (Phase 1g)
 │   ├── build/
-│   │   ├── maven-extract-metadata.sh
-│   │   └── maven-build-library.sh
+│   │   ├── extract-maven-metadata.sh
+│   │   └── maven-library.sh
 │   ├── config/                 # artifacts.yml parsing (portable)
 │   ├── plan/                   # Policy decisions (portable)
 │   ├── publish/
 │   │   ├── maven-validate-artifacts.sh
-│   │   └── npm-verify-tarball.sh
+│   │   └── npm-validate-tarball.sh
 │   ├── release/
 │   │   ├── create-release.sh            # Generic dispatch (Phase 1e)
 │   │   ├── providers/
 │   │   │   ├── github.sh               # From current create-github-release.sh (Phase 1e)
 │   │   │   └── gitlab.sh               # Phase 3
-│   │   ├── verify-changelog.sh
+│   │   ├── validate-changelog.sh
 │   │   ├── generate-checksums.sh
 │   │   └── sign-release-artifacts.sh
 │   ├── validate/
-│   │   ├── validate-tag-format.sh
-│   │   ├── validate-tag-signature.sh
-│   │   ├── debug-workspace.sh
+│   │   ├── tag-format.sh
+│   │   ├── tag-signature.sh
 │   │   ├── providers/
-│   │   │   ├── github.sh               # From validate-github-token.sh + validate-bot-permissions.sh (Phase 1e)
+│   │   │   ├── github.sh               # From github-token.sh + bot-permissions.sh (Phase 1e)
 │   │   │   └── gitlab.sh               # Phase 3
 │   │   └── ...
 │   ├── summary/                # Platform-aware URL helpers

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: CC0-1.0
 
 # Validates that the GPG public key secret is configured
-# Usage: validate-gpg-public-key.sh
+# Usage: gpg-public-key.sh
 # Expects: OSPO_BOT_GPG_PUB environment variable
 
 set -euo pipefail

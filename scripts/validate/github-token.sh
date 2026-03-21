@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: CC0-1.0
 
 # Validates GitHub token type and permissions
-# Usage: validate-github-token.sh <token> <repository>
+# Usage: github-token.sh <token> <repository>
 
 set -euo pipefail
 

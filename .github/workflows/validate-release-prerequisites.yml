@@ -117,9 +117,9 @@ jobs:
         env:
           ACTION_REPOSITORY: ${{ github.action_repository }}
           ACTION_REF: ${{ github.action_ref }}
-        run: bash .github-shared/scripts/validate/debug-workspace.sh
+        run: bash .github-shared/scripts/ci/debug-workspace.sh
       - name: Verify Triggered by Tag
-        run: bash .github-shared/scripts/validate/validate-ref-type.sh "${{ github.ref_type }}" "${{ github.ref_name }}" "${{ github.ref }}"
+        run: bash .github-shared/scripts/validate/ref-type.sh "${{ github.ref_type }}" "${{ github.ref_name }}" "${{ github.ref }}"
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
         with:
@@ -134,18 +134,18 @@ jobs:
           git fetch --tags --force
       - name: Validate Tag Format
         if: ${{ github.ref_type == 'tag' }}
-        run: bash .github-shared/scripts/validate/validate-tag-format.sh "${{ github.ref_name }}"
+        run: bash .github-shared/scripts/validate/tag-format.sh "${{ github.ref_name }}"
       - name: Validate Tag Signature
         if: ${{ github.ref_type == 'tag' }}
         env:
           OSPO_BOT_GPG_PUB: ${{ secrets.OSPO_BOT_GPG_PUB }}
-        run: bash .github-shared/scripts/validate/validate-tag-signature.sh "${{ github.ref_name }}" "${{ github.repository }}" "$OSPO_BOT_GPG_PUB"
+        run: bash .github-shared/scripts/validate/tag-signature.sh "${{ github.ref_name }}" "${{ github.repository }}" "$OSPO_BOT_GPG_PUB"
       - name: Validate Tag Uniqueness
         if: ${{ github.ref_type == 'tag' }}
-        run: bash .github-shared/scripts/validate/validate-tag-uniqueness.sh "${{ github.ref_name }}"
+        run: bash .github-shared/scripts/validate/tag-uniqueness.sh "${{ github.ref_name }}"
       - name: Validate Tag Commit Availability
         if: ${{ github.ref_type == 'tag' }}
-        run: bash .github-shared/scripts/validate/validate-tag-commit.sh "${{ github.ref_name }}" "${{ inputs.branch }}"
+        run: bash .github-shared/scripts/validate/tag-commit.sh "${{ github.ref_name }}" "${{ inputs.branch }}"
       # ============================================================================
       # SECTION 2: Authorization Validation
       # Checks if user is authorized for non-SNAPSHOT releases
@@ -153,7 +153,7 @@ jobs:
       - name: Check Release Authorization
         if: ${{ inputs['check-authorization'] }}
         run: |
-          bash .github-shared/scripts/validate/validate-authorization.sh \
+          bash .github-shared/scripts/validate/authorization.sh \
             "${{ github.ref_name }}" \
             "${{ github.actor }}" \
             "${{ secrets.AUTHORIZED_RELEASE_DEVELOPERS }}"
@@ -166,20 +166,20 @@ jobs:
         if: ${{ inputs['sign-artifacts'] }}
         env:
           OSPO_BOT_GPG_PUB: ${{ secrets.OSPO_BOT_GPG_PUB }}
-        run: bash .github-shared/scripts/validate/validate-gpg-public-key.sh
+        run: bash .github-shared/scripts/validate/gpg-public-key.sh
       - name: Validate Release Bot Token
-        run: bash .github-shared/scripts/validate/validate-github-token.sh "${{ secrets.RELEASE_BOT_TOKEN }}" "${{ github.repository }}"
+        run: bash .github-shared/scripts/validate/github-token.sh "${{ secrets.RELEASE_BOT_TOKEN }}" "${{ github.repository }}"
       - name: Validate Bot Token Permissions
         env:
           GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
         run: |
-          bash .github-shared/scripts/validate/validate-bot-permissions.sh "${{ github.repository }}"
+          bash .github-shared/scripts/validate/bot-permissions.sh "${{ github.repository }}"
       - name: Validate Maven Central Credentials
         if: ${{ inputs['build-type'] == 'library' }}
         env:
           MAVENCENTRAL_USERNAME: ${{ secrets.MAVENCENTRAL_USERNAME }}
           MAVENCENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD }}
-        run: bash .github-shared/scripts/validate/validate-mavencentral-credentials.sh
+        run: bash .github-shared/scripts/validate/mavencentral-credentials.sh
       # NOTE: NPM publishing to npmjs.org not yet implemented in v2
       # NPM packages are attached to GitHub Release as tarballs
       # This validation will be re-enabled when NPM publishing is added

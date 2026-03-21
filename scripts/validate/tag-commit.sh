@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: CC0-1.0
 
 # Validates that the commit a tag points to exists in the target branch history
-# Usage: validate-tag-commit.sh <tag-name> <branch-name>
+# Usage: tag-commit.sh <tag-name> <branch-name>
 
 set -euo pipefail
 
@@ -15,7 +15,7 @@ main() {
   local BRANCH="${2:-main}"
 
   if [[ -z "$TAG_NAME" ]]; then
-    ci_log_error "Usage: validate-tag-commit.sh <tag-name> <branch-name>"
+    ci_log_error "Usage: tag-commit.sh <tag-name> <branch-name>"
     exit 1
   fi
 
