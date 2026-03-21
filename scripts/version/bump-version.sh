@@ -4,6 +4,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 log() {
   printf "%s\n" "$1"
 }
@@ -13,7 +16,7 @@ log_success() {
 }
 
 log_error() {
-  printf "::error::%s\n" "$1"
+  ci_log_error "$1"
 }
 
 usage() {

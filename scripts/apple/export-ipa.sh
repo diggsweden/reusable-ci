@@ -4,12 +4,15 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 decode_export_options() {
   local export_options_base64="$1"
   local export_options_var="$2"
 
   if [[ -z "$export_options_base64" ]]; then
-    printf "::error::Export options not found in variable %s\n" "$export_options_var"
+    ci_log_error "Export options not found in variable $export_options_var"
     exit 1
   fi
 

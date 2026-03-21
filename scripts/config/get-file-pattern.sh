@@ -4,11 +4,18 @@
 #
 # Get file pattern for version bump based on project type
 #
-# Usage: get-file-pattern.sh <project-type> [custom-pattern]
+# Usage (positional args): get-file-pattern.sh <project-type> [custom-pattern]
+# Usage (env vars):        EXPLICIT_FILE_PATTERN=... PROJECT_TYPE=... get-file-pattern.sh
+#
+# When called with no args, reads PROJECT_TYPE and EXPLICIT_FILE_PATTERN from env
+# and writes the result to CI output as "pattern=<value>".
 #
 # Returns the appropriate file pattern for git commit during version bump
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
 
 get_pattern() {
   local project_type="$1"
@@ -26,8 +33,8 @@ get_pattern() {
 }
 
 main() {
-  local project_type="${1:-}"
-  local custom_pattern="${2:-}"
+  local project_type="${1:-${PROJECT_TYPE:-}}"
+  local custom_pattern="${2:-${EXPLICIT_FILE_PATTERN:-}}"
 
   if [[ -z "$project_type" ]]; then
     printf "Error: PROJECT_TYPE is required\n" >&2
@@ -36,11 +43,21 @@ main() {
 
   if [[ -n "$custom_pattern" ]]; then
     printf "%s\n" "$custom_pattern"
+    # Write to CI output when called via env vars (no positional args)
+    if [[ $# -eq 0 ]]; then
+      ci_output "pattern" "$custom_pattern"
+    fi
     exit 0
   fi
 
-  get_pattern "$project_type"
-  printf "\n"
+  local pattern
+  pattern=$(get_pattern "$project_type")
+
+  if [[ $# -eq 0 ]]; then
+    ci_output "pattern" "$pattern"
+  fi
+
+  printf "%s\n" "$pattern"
 }
 
 main "$@"

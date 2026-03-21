@@ -50,7 +50,7 @@ should_sign_artifacts() {
   fi
 }
 
-should_create_github_release() {
+should_create_release() {
   local release_publisher="$1"
 
   if [[ "$release_publisher" = "github-cli" ]]; then
@@ -110,7 +110,7 @@ write_outputs() {
   local containers_present="$2"
   local generate_sbom="$3"
   local sign_artifacts="$4"
-  local create_github_release="$5"
+  local create_release="$5"
   local check_authorization="$6"
   local run_version_bump="$7"
   local create_draft_release="$8"
@@ -119,7 +119,7 @@ write_outputs() {
   ci_output "has-containers" "$containers_present"
   ci_output "should-generate-sbom" "$generate_sbom"
   ci_output "should-sign-artifacts" "$sign_artifacts"
-  ci_output "should-create-github-release" "$create_github_release"
+  ci_output "should-create-release" "$create_release"
   ci_output "should-check-authorization" "$check_authorization"
   ci_output "should-run-version-bump" "$run_version_bump"
   ci_output "should-create-draft-release" "$create_draft_release"
@@ -143,7 +143,7 @@ main() {
   local containers_present
   local generate_sbom
   local sign_artifacts
-  local create_github_release
+  local create_release
   local check_authorization
   local run_version_bump
   local draft_release
@@ -153,7 +153,7 @@ main() {
   containers_present=$(has_containers "$CONTAINERS")
   generate_sbom=$(should_generate_sbom "$RELEASE_GENERATE_SBOM" "$NEEDS_SBOM")
   sign_artifacts=$(should_sign_artifacts "$RELEASE_SIGN_ARTIFACTS")
-  create_github_release=$(should_create_github_release "$RELEASE_PUBLISHER")
+  create_release=$(should_create_release "$RELEASE_PUBLISHER")
   check_authorization=$(should_check_authorization "$FIRST_REQUIRE_AUTHORIZATION" "$RELEASE_CHECK_AUTHORIZATION")
   run_version_bump=$(should_run_version_bump "$CHANGELOG_SKIP_VERSION_BUMP" "$CHANGELOG_CREATOR")
   draft_release=$(is_draft_release "$CI_REF_NAME")
@@ -164,7 +164,7 @@ main() {
     "$containers_present" \
     "$generate_sbom" \
     "$sign_artifacts" \
-    "$create_github_release" \
+    "$create_release" \
     "$check_authorization" \
     "$run_version_bump" \
     "$create_draft_release"

@@ -26,7 +26,7 @@ set_all_flags_true() {
   export SHOULD_SIGN_ARTIFACTS="true"
   export SHOULD_CHECK_AUTHORIZATION="true"
   export SHOULD_RUN_VERSION_BUMP="true"
-  export SHOULD_CREATE_GITHUB_RELEASE="true"
+  export SHOULD_CREATE_RELEASE="true"
   export SHOULD_CREATE_DRAFT_RELEASE="true"
   export SHOULD_GENERATE_SBOM="true"
   export SHOULD_MAKE_LATEST="true"
@@ -40,7 +40,7 @@ set_all_flags_false() {
   export SHOULD_SIGN_ARTIFACTS="false"
   export SHOULD_CHECK_AUTHORIZATION="false"
   export SHOULD_RUN_VERSION_BUMP="false"
-  export SHOULD_CREATE_GITHUB_RELEASE="false"
+  export SHOULD_CREATE_RELEASE="false"
   export SHOULD_CREATE_DRAFT_RELEASE="false"
   export SHOULD_GENERATE_SBOM="false"
   export SHOULD_MAKE_LATEST="false"
@@ -80,7 +80,7 @@ set_all_flags_false() {
   assert_output --partial '"sign_artifacts":true'
   assert_output --partial '"check_authorization":true'
   assert_output --partial '"run_version_bump":true'
-  assert_output --partial '"create_github_release":true'
+  assert_output --partial '"create_release":true'
   assert_output --partial '"create_draft_release":true'
   assert_output --partial '"generate_sbom":true'
   assert_output --partial '"make_latest":true'
@@ -94,7 +94,7 @@ set_all_flags_false() {
   assert_success
 
   run get_github_output "release-policy-json"
-  assert_output '{"sign_artifacts":false,"check_authorization":false,"run_version_bump":false,"create_github_release":false,"create_draft_release":false,"generate_sbom":false,"make_latest":false,"has_containers":false}'
+  assert_output '{"sign_artifacts":false,"check_authorization":false,"run_version_bump":false,"create_release":false,"create_draft_release":false,"generate_sbom":false,"make_latest":false,"has_containers":false}'
 }
 
 @test "mixed true/false flags are correctly converted" {
@@ -110,7 +110,7 @@ set_all_flags_false() {
   assert_output --partial '"sign_artifacts":true'
   assert_output --partial '"check_authorization":false'
   assert_output --partial '"run_version_bump":false'
-  assert_output --partial '"create_github_release":false'
+  assert_output --partial '"create_release":false'
   assert_output --partial '"create_draft_release":false'
   assert_output --partial '"generate_sbom":true'
   assert_output --partial '"make_latest":false'

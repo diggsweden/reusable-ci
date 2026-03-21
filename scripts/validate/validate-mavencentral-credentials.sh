@@ -4,12 +4,15 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 require_secret() {
   local secret_name="$1"
   local secret_value="$2"
 
   if [[ -z "$secret_value" ]]; then
-    printf "::error::Missing %s secret\n" "$secret_name"
+    ci_log_error "Missing $secret_name secret"
     printf "Required for publishing to Maven Central\n"
     exit 1
   fi

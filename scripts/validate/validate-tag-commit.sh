@@ -7,12 +7,15 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 main() {
   local TAG_NAME="${1:-}"
   local BRANCH="${2:-main}"
 
   if [[ -z "$TAG_NAME" ]]; then
-    printf "::error::Usage: validate-tag-commit.sh <tag-name> <branch-name>\n"
+    ci_log_error "Usage: validate-tag-commit.sh <tag-name> <branch-name>"
     exit 1
   fi
 
@@ -32,7 +35,7 @@ main() {
   if ! git merge-base --is-ancestor "$TAG_COMMIT" "origin/$BRANCH" 2>/dev/null; then
     # Check if tag is ahead of branch
     if git merge-base --is-ancestor "$BRANCH_HEAD" "$TAG_COMMIT" 2>/dev/null; then
-      printf "::error::✗ Tag commit is AHEAD of branch HEAD\n"
+      ci_log_error "✗ Tag commit is AHEAD of branch HEAD"
       printf "\n"
       printf "Tag '%s' points to: %s\n" "$TAG_NAME" "$TAG_COMMIT"
       printf "Branch '%s' is at: %s\n" "$BRANCH" "$BRANCH_HEAD"
@@ -50,7 +53,7 @@ main() {
       printf "\n"
       exit 1
     else
-      printf "::error::✗ Tag commit is not in the history of branch '%s'\n" "$BRANCH"
+      ci_log_error "✗ Tag commit is not in the history of branch '$BRANCH'"
       printf "\n"
       printf "Tag '%s' points to commit %s\n" "$TAG_NAME" "$TAG_COMMIT"
       printf "This commit is NOT an ancestor of origin/%s\n" "$BRANCH"

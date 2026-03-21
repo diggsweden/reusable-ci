@@ -3,9 +3,12 @@
 # SPDX-License-Identifier: CC0-1.0
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 main() {
   if [[ -z "${ANDROID_KEYSTORE_BASE64:-}" ]]; then
-    printf "::error::ANDROID_KEYSTORE secret not found but enable-signing is true\n"
+    ci_log_error "ANDROID_KEYSTORE secret not found but enable-signing is true"
     exit 1
   fi
 

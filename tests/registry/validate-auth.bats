@@ -18,6 +18,7 @@ load "${BATS_TEST_DIRNAME}/../test_helper.bash"
 
 setup() {
   common_setup
+  setup_github_env
 }
 
 teardown() {
@@ -92,11 +93,11 @@ run_validate_auth() {
   assert_output --partial "registry-password"
 }
 
-@test "validate-auth error message mentions use-github-token=false" {
+@test "validate-auth error message mentions use-ci-token=false" {
   run_validate_auth "false" "docker.io" "ghcr.io" "false"
 
   assert_failure
-  assert_output --partial "use-github-token=false"
+  assert_output --partial "use-ci-token=false"
 }
 
 # =============================================================================
@@ -129,7 +130,7 @@ run_validate_auth() {
   run_validate_auth "true" "docker.io" "ghcr.io" "false"
 
   assert_success
-  assert_output --partial "use-github-token=false"
+  assert_output --partial "use-ci-token=false"
   assert_output --partial "registry-password"
 }
 
@@ -203,13 +204,13 @@ run_validate_auth() {
 # Boolean Input Tests
 # =============================================================================
 
-@test "validate-auth handles 'true' string for use-github-token" {
+@test "validate-auth handles 'true' string for use-ci-token" {
   run_validate_auth "true" "ghcr.io" "ghcr.io" "false"
 
   assert_success
 }
 
-@test "validate-auth handles 'false' string for use-github-token" {
+@test "validate-auth handles 'false' string for use-ci-token" {
   run_validate_auth "false" "docker.io" "ghcr.io" "true"
 
   assert_success

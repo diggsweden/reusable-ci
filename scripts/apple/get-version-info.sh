@@ -3,6 +3,9 @@
 # SPDX-License-Identifier: CC0-1.0
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 main() {
   readonly PROJECT="${1:-}"
   readonly WORKSPACE="${2:-}"
@@ -26,7 +29,7 @@ main() {
     printf "build=%s\n" "${BUILD}"
     printf "Version: %s (%s)\n" "${VERSION}" "${BUILD}" >&2
   else
-    printf "::warning::Could not determine version from project file\n" >&2
+    ci_log_warning "Could not determine version from project file"
     printf "version=unknown\n"
     printf "build=unknown\n"
   fi

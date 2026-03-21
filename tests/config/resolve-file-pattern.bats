@@ -19,24 +19,22 @@ teardown() {
   common_teardown
 }
 
-@test "resolve-file-pattern uses explicit pattern when provided" {
+@test "get-file-pattern env mode uses explicit pattern when provided" {
   export EXPLICIT_FILE_PATTERN="pom.xml package.json"
   export PROJECT_TYPE="maven"
-  export SCRIPT_ROOT="${SCRIPTS_DIR}/config"
 
-  run_script "config/resolve-file-pattern.sh"
+  run_script "config/get-file-pattern.sh"
 
   assert_success
   run get_github_output pattern
   assert_output "pom.xml package.json"
 }
 
-@test "resolve-file-pattern falls back to project type helper" {
+@test "get-file-pattern env mode falls back to project type" {
   export EXPLICIT_FILE_PATTERN=""
   export PROJECT_TYPE="npm"
-  export SCRIPT_ROOT="${SCRIPTS_DIR}/config"
 
-  run_script "config/resolve-file-pattern.sh"
+  run_script "config/get-file-pattern.sh"
 
   assert_success
   run get_github_output pattern

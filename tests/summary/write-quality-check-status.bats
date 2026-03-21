@@ -221,7 +221,7 @@ run_write_quality_check_status() {
 
   assert_success
   run get_summary
-  assert_output --partial "WARNING"
+  assert_output --partial "**Warning:**"
 }
 
 @test "write-quality-check-status mentions 3.0.0 removal" {

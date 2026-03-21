@@ -104,14 +104,12 @@ EOF
     fi
   fi
 
-  cat >>"$(ci_summary_file)" <<EOF
-
-## Resources
-- [Packages]($CI_SERVER_URL/$RELEASE_REPOSITORY/packages)
-- [Workflow Run]($CI_SERVER_URL/$RELEASE_REPOSITORY/actions/runs/$CI_RUN_ID)
-
-These are development artifacts tagged with \`dev\` and are not intended for production use.
-EOF
+  {
+    printf "\n## Resources\n"
+    printf -- "- [Packages](%s)\n" "$(ci_packages_url "$RELEASE_REPOSITORY")"
+    printf -- "- [Workflow Run](%s)\n\n" "$CI_RUN_URL"
+    printf "These are development artifacts tagged with \`dev\` and are not intended for production use.\n"
+  } >>"$(ci_summary_file)"
 
   printf '✓ Dev release summary generated successfully\n'
 }

@@ -4,6 +4,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 check_containerfile_rebuilds() {
   if [[ ! -f "$CONTAINERFILE_PATH" ]]; then
     return
@@ -29,7 +32,7 @@ check_containerfile_rebuilds() {
   done
 
   if [[ "$found_rebuild" = true ]]; then
-    printf "::warning::Containerfile rebuilds from source - downloaded artifacts may be ignored\n"
+    ci_log_warning "Containerfile rebuilds from source - downloaded artifacts may be ignored"
     printf "This means the container build will NOT use pre-built artifacts, defeating the purpose of separate build steps.\n"
     printf "Consider updating Containerfile to COPY pre-built artifacts instead of rebuilding.\n"
     printf "See: %s\n" "$CONTAINERFILE_PATH"
@@ -43,7 +46,7 @@ validate_type_artifacts() {
 
   # shellcheck disable=SC2086 # Intentional globbing
   if [[ ! -d "$ARTIFACT_DIR" || -z "$(ls -A "$ARTIFACT_DIR"/$artifact_glob 2>/dev/null)" ]]; then
-    printf "::warning::No %s artifacts found in %s/\n" "$type_label" "$ARTIFACT_DIR"
+    ci_log_warning "No $type_label artifacts found in $ARTIFACT_DIR/"
     printf "Container build may fail if Containerfile expects %s\n" "$expect_label"
     printf "This is acceptable if container builds from source instead\n"
   else
@@ -60,7 +63,7 @@ main() {
   local CONTAINERFILE_PATH="${3:-Containerfile}"
 
   if [[ -z "$PROJECT_TYPE" || -z "$ARTIFACT_DIR" ]]; then
-    printf "::error::Usage: validate-artifacts.sh <project-type> <artifact-dir> [containerfile-path]\n"
+    ci_log_error "Usage: validate-artifacts.sh <project-type> <artifact-dir> [containerfile-path]"
     exit 1
   fi
 

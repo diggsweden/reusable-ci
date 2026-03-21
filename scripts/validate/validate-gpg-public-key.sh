@@ -8,9 +8,12 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 main() {
   if [[ -z "${OSPO_BOT_GPG_PUB:-}" ]]; then
-    printf "::error::Missing OSPO_BOT_GPG_PUB secret\n"
+    ci_log_error "Missing OSPO_BOT_GPG_PUB secret"
     printf "This secret is needed for GPG operations and signing\n"
     printf "Add it in Settings → Secrets → Actions\n"
     exit 1

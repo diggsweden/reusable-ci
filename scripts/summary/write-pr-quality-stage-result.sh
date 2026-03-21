@@ -6,10 +6,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../ci/output.sh"
+source "$SCRIPT_DIR/../ci/stage-result.sh"
 
 main() {
   local commitlint_result licenselint_result dependencyreview_result megalint_result publiccodelint_result devbasecheck_result swift_result
-  local stage_result
 
   commitlint_result="$(ci_normalize_result "${COMMITLINT_RESULT:-skipped}")"
   licenselint_result="$(ci_normalize_result "${LICENSLINT_RESULT:-skipped}")"
@@ -19,28 +19,23 @@ main() {
   devbasecheck_result="$(ci_normalize_result "${DEVBASECHECK_RESULT:-skipped}")"
   swift_result="$(ci_normalize_result "${SWIFT_RESULT:-skipped}")"
 
-  if [[ "$commitlint_result" == 'failure' || "$licenselint_result" == 'failure' || "$dependencyreview_result" == 'failure' || "$megalint_result" == 'failure' || "$publiccodelint_result" == 'failure' || "$devbasecheck_result" == 'failure' || "$swift_result" == 'failure' ]]; then
-    stage_result='failure'
-  elif [[ "$commitlint_result" == 'cancelled' || "$licenselint_result" == 'cancelled' || "$dependencyreview_result" == 'cancelled' || "$megalint_result" == 'cancelled' || "$publiccodelint_result" == 'cancelled' || "$devbasecheck_result" == 'cancelled' || "$swift_result" == 'cancelled' ]]; then
-    stage_result='cancelled'
-  else
-    stage_result='success'
-  fi
+  local stage_result
+  stage_result="$(ci_aggregate_results "$commitlint_result" "$licenselint_result" "$dependencyreview_result" "$megalint_result" "$publiccodelint_result" "$devbasecheck_result" "$swift_result")"
 
   effective_result() {
     if [[ "$1" == "true" ]]; then printf '%s' "$2"; else printf 'skipped'; fi
   }
 
-  local result_json
-  result_json=$(printf '{"stage":"pr-quality","result":"%s","ran":true,"targets":{"commitlint":"%s","licenselint":"%s","dependencyreview":"%s","megalint":"%s","publiccodelint":"%s","devbasecheck":"%s","swift":"%s"}}' \
-    "$stage_result" \
-    "$(effective_result "${COMMITLINT_ENABLED:-false}" "$commitlint_result")" \
-    "$(effective_result "${LICENSLINT_ENABLED:-false}" "$licenselint_result")" \
-    "$(effective_result "${DEPENDENCYREVIEW_ENABLED:-false}" "$dependencyreview_result")" \
-    "$(effective_result "${MEGALINT_ENABLED:-false}" "$megalint_result")" \
-    "$(effective_result "${PUBLICCODELINT_ENABLED:-false}" "$publiccodelint_result")" \
-    "$(effective_result "${DEVBASECHECK_ENABLED:-false}" "$devbasecheck_result")" \
-    "$(effective_result "${SWIFT_ENABLED:-false}" "$swift_result")")
+  local targets_json result_json
+  targets_json="$(ci_build_targets_json \
+    "commitlint:$(effective_result "${COMMITLINT_ENABLED:-false}" "$commitlint_result")" \
+    "licenselint:$(effective_result "${LICENSLINT_ENABLED:-false}" "$licenselint_result")" \
+    "dependencyreview:$(effective_result "${DEPENDENCYREVIEW_ENABLED:-false}" "$dependencyreview_result")" \
+    "megalint:$(effective_result "${MEGALINT_ENABLED:-false}" "$megalint_result")" \
+    "publiccodelint:$(effective_result "${PUBLICCODELINT_ENABLED:-false}" "$publiccodelint_result")" \
+    "devbasecheck:$(effective_result "${DEVBASECHECK_ENABLED:-false}" "$devbasecheck_result")" \
+    "swift:$(effective_result "${SWIFT_ENABLED:-false}" "$swift_result")")"
+  result_json="$(ci_stage_result_json "pr-quality" "$stage_result" "true" "$targets_json")"
 
   ci_output "stage-ran" "true"
   ci_output "stage-result" "$stage_result"

@@ -198,7 +198,7 @@ jobs:
       has-containers: ${{ steps.plan.outputs.has-containers }}
       should-generate-sbom: ${{ steps.plan.outputs.should-generate-sbom }}
       should-sign-artifacts: ${{ steps.plan.outputs.should-sign-artifacts }}
-      should-create-github-release: ${{ steps.plan.outputs.should-create-github-release }}
+      should-create-release: ${{ steps.plan.outputs.should-create-release }}
       should-check-authorization: ${{ steps.plan.outputs.should-check-authorization }}
       should-run-version-bump: ${{ steps.plan.outputs.should-run-version-bump }}
       should-create-draft-release: ${{ steps.plan.outputs.should-create-draft-release }}
@@ -255,7 +255,7 @@ jobs:
           SHOULD_SIGN_ARTIFACTS: ${{ steps.plan.outputs.should-sign-artifacts }}
           SHOULD_CHECK_AUTHORIZATION: ${{ steps.plan.outputs.should-check-authorization }}
           SHOULD_RUN_VERSION_BUMP: ${{ steps.plan.outputs.should-run-version-bump }}
-          SHOULD_CREATE_GITHUB_RELEASE: ${{ steps.plan.outputs.should-create-github-release }}
+          SHOULD_CREATE_RELEASE: ${{ steps.plan.outputs.should-create-release }}
           SHOULD_CREATE_DRAFT_RELEASE: ${{ steps.plan.outputs.should-create-draft-release }}
           SHOULD_GENERATE_SBOM: ${{ steps.plan.outputs.should-generate-sbom }}
           SHOULD_MAKE_LATEST: ${{ steps.plan.outputs.should-make-latest }}
@@ -340,7 +340,7 @@ jobs:
     name: Create GitHub Release
     needs: [parse-config, execute-publish-stage]
     # Run even if previous jobs were skipped but at least one succeeded
-    if: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).create_github_release }}
+    if: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).create_release }}
     permissions:
       contents: write
       packages: read

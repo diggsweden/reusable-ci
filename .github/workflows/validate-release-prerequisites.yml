@@ -114,19 +114,10 @@ jobs:
           path: .github-shared
           sparse-checkout: scripts
       - name: Debug - List checked out files
-        run: |
-          printf "=== Workspace structure ===\n"
-          ls -la
-          printf "\n"
-          printf "=== .github-shared structure ===\n"
-          ls -la .github-shared/ || printf ".github-shared not found\n"
-          printf "\n"
-          printf "=== Looking for scripts ===\n"
-          find .github-shared -name "validate-*.sh" 2>/dev/null || printf "No scripts found\n"
-          printf "\n"
-          printf "=== GitHub context ===\n"
-          printf "action_repository: %s\n" "${{ github.action_repository }}"
-          printf "action_ref: %s\n" "${{ github.action_ref }}"
+        env:
+          ACTION_REPOSITORY: ${{ github.action_repository }}
+          ACTION_REF: ${{ github.action_ref }}
+        run: bash .github-shared/scripts/validate/debug-workspace.sh
       - name: Verify Triggered by Tag
         run: bash .github-shared/scripts/validate/validate-ref-type.sh "${{ github.ref_type }}" "${{ github.ref_name }}" "${{ github.ref }}"
       - name: Import GPG key

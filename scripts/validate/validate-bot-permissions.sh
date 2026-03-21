@@ -3,24 +3,27 @@
 # SPDX-License-Identifier: CC0-1.0
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 main() {
   readonly REPOSITORY="${1:?Usage: $0 <repository>}"
 
   printf "Validating bot token permissions...\n"
 
   if ! gh api user --silent 2>/dev/null; then
-    printf "::error::RELEASE_BOT_TOKEN is invalid or expired\n"
+    ci_log_error "RELEASE_BOT_TOKEN is invalid or expired"
     exit 1
   fi
 
   if ! gh api "repos/${REPOSITORY}" --silent 2>/dev/null; then
-    printf "::error::Bot token cannot access this repository\n"
+    ci_log_error "Bot token cannot access this repository"
     printf "Please ensure the bot has appropriate repository access\n"
     exit 1
   fi
 
   if ! gh api "repos/${REPOSITORY}/branches" --silent 2>/dev/null; then
-    printf "::warning::Bot token may have limited permissions\n"
+    ci_log_warning "Bot token may have limited permissions"
     printf "Ensure the bot has sufficient permissions to:\n"
     printf "  - Push commits to branches\n"
     printf "  - Create and move tags\n"

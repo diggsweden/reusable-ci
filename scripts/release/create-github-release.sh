@@ -30,7 +30,7 @@ cleanup_existing_release() {
     printf "Removing existing draft/prerelease for tag: %s\n" "$tag"
     gh release delete "$tag" --yes
   else
-    printf "::error::Release %s already exists and is not a draft/prerelease. Cannot overwrite.\n" "$tag"
+    ci_log_error "Release $tag already exists and is not a draft/prerelease. Cannot overwrite."
     exit 1
   fi
 }
@@ -98,7 +98,7 @@ collect_sbom_artifacts() {
     printf "Adding SBOM ZIP: %s\n" "$sbom_zip"
     add_file_with_signature "$sbom_zip"
   else
-    printf "::warning::SBOM ZIP not found: %s\n" "$sbom_zip"
+    ci_log_warning "SBOM ZIP not found: $sbom_zip"
   fi
 }
 
@@ -106,7 +106,7 @@ collect_checksum_artifacts() {
   if [[ -s "$CI_CHECKSUMS_FILE" ]]; then
     add_file_with_signature "$CI_CHECKSUMS_FILE"
   else
-    printf "::warning::No %s or file is empty - skipping\n" "$CI_CHECKSUMS_FILE"
+    ci_log_warning "No $CI_CHECKSUMS_FILE or file is empty - skipping"
   fi
 }
 

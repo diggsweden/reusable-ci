@@ -20,7 +20,7 @@ teardown() {
 }
 
 @test "all publish targets succeed with artifacts present" {
-  export PUBLISH_MAVEN_GITHUB_RESULT="success"
+  export PUBLISH_MAVEN_REGISTRY_RESULT="success"
   export PUBLISH_MAVEN_CENTRAL_RESULT="success"
   export PUBLISH_APPLE_APPSTORE_RESULT="success"
   export PUBLISH_GOOGLE_PLAY_RESULT="success"
@@ -53,7 +53,7 @@ teardown() {
 }
 
 @test "single failure propagates to stage result" {
-  export PUBLISH_MAVEN_GITHUB_RESULT="success"
+  export PUBLISH_MAVEN_REGISTRY_RESULT="success"
   export PUBLISH_APPLE_APPSTORE_RESULT="failure"
   export GITHUBPACKAGES_ARTIFACTS='[{"name":"app.jar"}]'
   export XCODEIOS_ARTIFACTS='[{"name":"app.ipa"}]'
@@ -83,7 +83,7 @@ teardown() {
 }
 
 @test "failure takes precedence over cancelled" {
-  export PUBLISH_MAVEN_GITHUB_RESULT="failure"
+  export PUBLISH_MAVEN_REGISTRY_RESULT="failure"
   export PUBLISH_GOOGLE_PLAY_RESULT="cancelled"
   export GITHUBPACKAGES_ARTIFACTS='[{"name":"app.jar"}]'
   export GOOGLEPLAY_ARTIFACTS='[{"name":"app.aab"}]'
@@ -96,7 +96,7 @@ teardown() {
 }
 
 @test "unknown result values normalize to skipped" {
-  export PUBLISH_MAVEN_GITHUB_RESULT="bogus"
+  export PUBLISH_MAVEN_REGISTRY_RESULT="bogus"
   export BUILD_CONTAINERS_RESULT="in_progress"
   export GITHUBPACKAGES_ARTIFACTS='[{"name":"app.jar"}]'
   export CONTAINERS='[{"name":"app"}]'
@@ -126,7 +126,7 @@ teardown() {
 }
 
 @test "stage-ran is false when all artifacts are empty arrays" {
-  export PUBLISH_MAVEN_GITHUB_RESULT="success"
+  export PUBLISH_MAVEN_REGISTRY_RESULT="success"
   export GITHUBPACKAGES_ARTIFACTS='[]'
   export MAVENCENTRAL_ARTIFACTS='[]'
   export XCODEIOS_ARTIFACTS='[]'
@@ -144,7 +144,7 @@ teardown() {
 }
 
 @test "result-json contains expected structure with all targets" {
-  export PUBLISH_MAVEN_GITHUB_RESULT="success"
+  export PUBLISH_MAVEN_REGISTRY_RESULT="success"
   export PUBLISH_MAVEN_CENTRAL_RESULT="failure"
   export PUBLISH_APPLE_APPSTORE_RESULT="skipped"
   export PUBLISH_GOOGLE_PLAY_RESULT="cancelled"
@@ -176,7 +176,7 @@ teardown() {
 }
 
 @test "result values without artifacts still report skipped stage" {
-  export PUBLISH_MAVEN_GITHUB_RESULT="success"
+  export PUBLISH_MAVEN_REGISTRY_RESULT="success"
   export BUILD_CONTAINERS_RESULT="success"
 
   run_script "summary/write-publish-stage-result.sh"

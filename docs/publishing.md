@@ -441,7 +441,7 @@ jobs:
       artifacts-config: .github/artifacts.yml
       container.registry: docker.io
       container.registry-username: ${{ secrets.DOCKERHUB_USERNAME }}
-      container.use-github-token: false
+      container.use-ci-token: false
     secrets: inherit
 ```
 
@@ -463,7 +463,7 @@ jobs:
       artifacts-config: .github/artifacts.yml
       container.registry: registry.example.com
       container.registry-username: ${{ secrets.REGISTRY_USERNAME }}
-      container.use-github-token: false
+      container.use-ci-token: false
     secrets: inherit
 ```
 

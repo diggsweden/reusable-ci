@@ -17,6 +17,7 @@ load "${BATS_TEST_DIRNAME}/../test_helper.bash"
 
 setup() {
   common_setup
+  setup_github_env
   export RUNNER_TEMP="${TEST_DIR}/runner-temp"
   mkdir -p "$RUNNER_TEMP"
 

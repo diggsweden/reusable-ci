@@ -277,8 +277,7 @@ jobs:
         env:
           EXPLICIT_FILE_PATTERN: ${{ inputs['file-pattern'] }}
           PROJECT_TYPE: ${{ inputs['project-type'] }}
-          SCRIPT_ROOT: .github-shared/scripts/config
-        run: bash .github-shared/scripts/config/resolve-file-pattern.sh
+        run: bash .github-shared/scripts/config/get-file-pattern.sh
       - name: Commit and Push Changes
         uses: stefanzweifel/git-auto-commit-action@28e16e81777b558cc906c8750092100bbb34c5e3 # v7.0.0
         with:

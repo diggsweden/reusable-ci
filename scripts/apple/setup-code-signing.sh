@@ -3,17 +3,20 @@
 # SPDX-License-Identifier: CC0-1.0
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 main() {
   if [[ -z "${CERTIFICATE_BASE64:-}" ]]; then
-    printf "::error::CERTIFICATE_BASE64 secret not found but enable-code-signing is true\n"
+    ci_log_error "CERTIFICATE_BASE64 secret not found but enable-code-signing is true"
     exit 1
   fi
   if [[ -z "${PROVISIONING_PROFILE_BASE64:-}" ]]; then
-    printf "::error::PROVISIONING_PROFILE_BASE64 secret not found but enable-code-signing is true\n"
+    ci_log_error "PROVISIONING_PROFILE_BASE64 secret not found but enable-code-signing is true"
     exit 1
   fi
   if [[ -z "${KEYCHAIN_PASSWORD:-}" ]]; then
-    printf "::error::KEYCHAIN_PASSWORD secret not found but enable-code-signing is true\n"
+    ci_log_error "KEYCHAIN_PASSWORD secret not found but enable-code-signing is true"
     exit 1
   fi
 

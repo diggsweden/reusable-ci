@@ -3,6 +3,9 @@
 # SPDX-License-Identifier: CC0-1.0
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 main() {
   readonly IMAGE_NAME="${1:?Usage: $0 <image-name> <repository> <registry> <enforce-namespace>}"
   readonly REPOSITORY="${2:?Usage: $0 <image-name> <repository> <registry> <enforce-namespace>}"
@@ -21,9 +24,9 @@ main() {
     local EXPECTED_PREFIX="ghcr.io/${ENFORCE_NAMESPACE}/${REPO_SHORT}"
 
     if [[ ! "$IMAGE_NAME" =~ ^${EXPECTED_PREFIX}(-.*)?$ ]]; then
-      printf "::error::Security: Image name must start with '%s'\n" "${EXPECTED_PREFIX}"
-      printf "::error::Got: %s\n" "$IMAGE_NAME"
-      printf "::error::This prevents pushing to unauthorized namespaces\n"
+      ci_log_error "Security: Image name must start with '${EXPECTED_PREFIX}'"
+      ci_log_error "Got: $IMAGE_NAME"
+      ci_log_error "This prevents pushing to unauthorized namespaces"
       exit 1
     fi
 

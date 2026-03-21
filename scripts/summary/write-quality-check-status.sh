@@ -26,7 +26,7 @@ main() {
 
     # Show deprecation warning if any deprecated linters are enabled
     if [[ -n "$DEPRECATED_LIST" ]]; then
-      printf "> [!WARNING]\n"
+      printf "> **Warning:**\n"
       printf "> **DEPRECATED:** The following linters will be removed in version 3.0.0:\n"
       printf ">\n"
 

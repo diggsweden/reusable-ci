@@ -7,17 +7,17 @@
 # Purpose: Validates registry authentication configuration before publishing.
 # Ensures proper credentials are provided and warns about misconfigurations.
 #
-# Usage: validate-auth.sh USE_GITHUB_TOKEN REGISTRY EXPECTED_REGISTRY HAS_PASSWORD
+# Usage (positional args): validate-auth.sh USE_CI_TOKEN REGISTRY EXPECTED_REGISTRY HAS_PASSWORD
+# Usage (env vars):        USE_CI_TOKEN=... TARGET_REGISTRY=... validate-auth.sh
 #
-# Arguments:
-#   USE_GITHUB_TOKEN  - "true" or "false" - Whether to use GITHUB_TOKEN
-#   REGISTRY          - Registry URL being used (e.g., "ghcr.io")
-#   EXPECTED_REGISTRY - Expected registry for GITHUB_TOKEN (e.g., "ghcr.io")
-#   HAS_PASSWORD      - "true" or "false" - Whether registry-password secret is set
+# When called with no args, reads from env vars:
+#   USE_CI_TOKEN      - "true" or "false" - Whether to use the CI platform token
+#   TARGET_REGISTRY   - Registry URL being used (e.g., "ghcr.io")
+#   CI_REGISTRY       - Expected registry for the CI token (defaults to "ghcr.io")
+#   REGISTRY_PASSWORD - Registry password (presence checked, not value)
 #
-# Examples:
-#   validate-auth.sh true "ghcr.io" "ghcr.io" false
-#   validate-auth.sh false "docker.io" "ghcr.io" true
+# When called with positional args:
+#   $1 USE_CI_TOKEN, $2 REGISTRY, $3 EXPECTED_REGISTRY, $4 HAS_PASSWORD ("true"/"false")
 #
 # Exit codes:
 #   0 - Configuration is valid
@@ -25,22 +25,38 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 main() {
-  local USE_GITHUB_TOKEN="$1"
-  local REGISTRY="$2"
-  local EXPECTED_REGISTRY="$3"
-  local HAS_PASSWORD="$4"
+  local use_ci_token registry expected_registry has_password
+
+  if [[ $# -ge 4 ]]; then
+    use_ci_token="$1"
+    registry="$2"
+    expected_registry="$3"
+    has_password="$4"
+  else
+    use_ci_token="${USE_CI_TOKEN:?USE_CI_TOKEN is required}"
+    registry="${TARGET_REGISTRY:?TARGET_REGISTRY is required}"
+    expected_registry="${CI_REGISTRY:-ghcr.io}"
+    if [[ -n "${REGISTRY_PASSWORD:-}" ]]; then
+      has_password="true"
+    else
+      has_password="false"
+    fi
+  fi
 
   # Error: Using custom auth but no password provided
-  if [[ "$USE_GITHUB_TOKEN" = "false" && "$HAS_PASSWORD" = "false" ]]; then
-    printf "::error::registry-password secret is required when use-github-token=false\n"
+  if [[ "$use_ci_token" = "false" && "$has_password" = "false" ]]; then
+    ci_log_error "registry-password secret is required when use-ci-token=false"
     exit 1
   fi
 
-  # Warning: Using GITHUB_TOKEN with non-default registry
-  if [[ "$REGISTRY" != "$EXPECTED_REGISTRY" && "$USE_GITHUB_TOKEN" = "true" ]]; then
-    printf "::warning::Using GITHUB_TOKEN with non-%s registry (%s)\n" "$EXPECTED_REGISTRY" "$REGISTRY"
-    printf "::warning::This will likely fail. Set use-github-token=false and provide registry-password secret\n"
+  # Warning: Using CI token with non-default registry
+  if [[ "$registry" != "$expected_registry" && "$use_ci_token" = "true" ]]; then
+    ci_log_warning "Using CI token with non-$expected_registry registry ($registry)"
+    ci_log_warning "This will likely fail. Set use-ci-token=false and provide registry-password secret"
   fi
 
   printf "✓ Registry authentication configuration is valid\n"

@@ -7,7 +7,7 @@
 #
 # Supported Registries:
 # - GitHub Packages (npm.pkg.github.com) - Default, uses GITHUB_TOKEN
-# - npmjs.org - Set use-github-token=false, provide registry-password
+# - npmjs.org - Set use-ci-token=false, provide registry-password
 # - Any custom npm registry
 #
 # How it works:
@@ -29,10 +29,10 @@
 #
 # Registry Authentication:
 #   GitHub Packages (default): Uses GITHUB_TOKEN (no secrets needed)
-#   Other registries: Set use-github-token=false and provide registry-password secret
+#   Other registries: Set use-ci-token=false and provide registry-password secret
 #
 # Required Secrets:
-#   registry-password: Required when use-github-token=false (for npmjs.org, etc)
+#   registry-password: Required when use-ci-token=false (for npmjs.org, etc)
 #
 # Required Permissions:
 #   contents: read
@@ -70,7 +70,7 @@ on:
         description: "NPM registry username (defaults to github.actor for GitHub Packages)"
         required: false
         type: string
-      use-github-token:
+      use-ci-token:
         description: "Use GITHUB_TOKEN for authentication (GitHub Packages only)"
         required: false
         default: true
@@ -82,7 +82,7 @@ on:
         type: string
     secrets:
       registry-password:
-        description: "NPM registry auth token (required when use-github-token=false)"
+        description: "NPM registry auth token (required when use-ci-token=false)"
         required: false
     outputs:
       package-name:
@@ -145,26 +145,6 @@ jobs:
         with:
           name: npm-build-artifacts
           path: ${{ inputs.working-directory }}/
-      - name: Extract tarball contents
-        working-directory: ${{ inputs.working-directory }}
-        run: |
-          find_tarball() {
-            find . -maxdepth 1 \( -name "*.tgz" -o -name "*.tar.gz" \) -type f -print -quit
-          }
-
-          TARBALL=$(find_tarball)
-          if [ -n "$TARBALL" ]; then
-            printf "Extracting %s...\n" "$TARBALL"
-            tar -xzf "$TARBALL" --strip-components=1
-            rm "$TARBALL"
-            printf "Extracted contents:\n"
-            find dist/ -type f -ls 2>/dev/null || find build/ -type f -ls 2>/dev/null || true
-            printf "\nVerifying dist/cli.js exists:\n"
-            test -f dist/cli.js && printf "✓ dist/cli.js found\n" || printf "✗ dist/cli.js NOT found\n"
-          else
-            printf "::error::No tarball found in artifacts\n"
-            exit 1
-          fi
       - name: Checkout .github repository for scripts
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
@@ -172,13 +152,16 @@ jobs:
           ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
           sparse-checkout: scripts
+      - name: Extract tarball contents
+        working-directory: ${{ inputs.working-directory }}
+        run: bash "${{ github.workspace }}/.github-shared/scripts/publish/npm-verify-tarball.sh"
       - name: Check registry authentication configuration
         env:
-          USE_GITHUB_TOKEN: ${{ inputs['use-github-token'] }}
+          USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
           TARGET_REGISTRY: ${{ inputs.registry }}
-          GITHUB_REGISTRY: "https://npm.pkg.github.com"
+          CI_REGISTRY: "https://npm.pkg.github.com"
           REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
-        run: bash .github-shared/scripts/registry/validate-auth-configuration.sh
+        run: bash .github-shared/scripts/registry/validate-auth.sh
       - name: Generate dev version tag
         id: tags
         shell: bash
@@ -210,7 +193,7 @@ jobs:
       - name: Publish to NPM registry
         working-directory: ${{ inputs.working-directory }}
         env:
-          NODE_AUTH_TOKEN: ${{ inputs['use-github-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+          NODE_AUTH_TOKEN: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
         run: |
           PKG_NAME=$(node -p "require('./package.json').name")
           PKG_VERSION=$(node -p "require('./package.json').version")

@@ -18,6 +18,7 @@ load "${BATS_TEST_DIRNAME}/../test_helper.bash"
 
 setup() {
   common_setup
+  setup_github_env
 }
 
 teardown() {

@@ -14,9 +14,9 @@ main() {
     "$WORKING_DIRECTORY" "$JAVA_VERSION" "$NODE_VERSION" "$CONTAINER_FILE" "$REGISTRY" \
     "$REUSABLE_CI_REF" "$NPM_REGISTRY" "$PACKAGE_SCOPE" "${NPM_REGISTRY_USERNAME:-}")
 
-  dev_policy=$(printf '{"publish_npm":%s,"use_github_token":%s}' \
+  dev_policy=$(printf '{"publish_npm":%s,"use_ci_token":%s}' \
     "$(ci_json_bool "$PUBLISH_NPM")" \
-    "$(ci_json_bool "$USE_GITHUB_TOKEN")")
+    "$(ci_json_bool "$USE_CI_TOKEN")")
 
   ci_output "dev-context-json" "$dev_context"
   ci_output "dev-policy-json" "$dev_policy"

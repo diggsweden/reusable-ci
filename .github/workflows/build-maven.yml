@@ -93,22 +93,7 @@ jobs:
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs['working-directory'] }}
-        run: |
-          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
-          printf "VERSION=%s\n" "${VERSION}" >> "$GITHUB_OUTPUT"
-
-          if [[ "${VERSION}" == *-SNAPSHOT ]]; then
-            printf "IS_SNAPSHOT=true\n" >> "$GITHUB_OUTPUT"
-          else
-            printf "IS_SNAPSHOT=false\n" >> "$GITHUB_OUTPUT"
-          fi
-
-          GROUP_ID=$(mvn help:evaluate -Dexpression=project.groupId -q -DforceStdout)
-          ARTIFACT_ID=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout)
-          printf "GROUP_ID=%s\n" "${GROUP_ID}" >> "$GITHUB_OUTPUT"
-          printf "ARTIFACT_ID=%s\n" "${ARTIFACT_ID}" >> "$GITHUB_OUTPUT"
-
-          printf "Project: %s:%s:%s\n" "${GROUP_ID}" "${ARTIFACT_ID}" "${VERSION}"
+        run: bash "${{ github.workspace }}/.github-shared/scripts/build/maven-extract-metadata.sh"
       - name: Build application
         if: ${{ inputs['build-type'] == 'app' }}
         working-directory: ${{ inputs['working-directory'] }}
@@ -123,29 +108,10 @@ jobs:
       - name: Build library with sources and javadoc
         if: ${{ inputs['build-type'] == 'lib' }}
         working-directory: ${{ inputs['working-directory'] }}
-        run: |
-          printf "Building Maven library with sources and javadoc...\n"
-
-          # Determine profile argument
-          PROFILE_ARG=""
-          if [ -n "${{ inputs['profile'] }}" ]; then
-            PROFILE_ARG="-P${{ inputs['profile'] }}"
-            printf "Using Maven profile: %s\n" "${{ inputs['profile'] }}"
-          fi
-
-          # shellcheck disable=SC2086
-          mvn $MAVEN_CLI_OPTS clean compile $PROFILE_ARG
-
-          if [ "${{ inputs['skip-tests'] }}" != "true" ]; then
-            printf "Running tests...\n"
-            # shellcheck disable=SC2086
-            mvn $MAVEN_CLI_OPTS test $PROFILE_ARG
-          fi
-
-          printf "Creating library package with sources and javadoc...\n"
-          # Skip GPG signing during build (will be done during publish)
-          # shellcheck disable=SC2086
-          mvn $MAVEN_CLI_OPTS package -DskipTests=${{ inputs['skip-tests'] }} $PROFILE_ARG -Dgpg.skip=true
+        env:
+          MAVEN_PROFILE: ${{ inputs['profile'] }}
+          SKIP_TESTS: ${{ inputs['skip-tests'] }}
+        run: bash "${{ github.workspace }}/.github-shared/scripts/build/maven-build-library.sh"
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         run: |

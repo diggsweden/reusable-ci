@@ -32,14 +32,12 @@ write_overview() {
 }
 
 write_resources() {
-  cat >>"$(ci_summary_file)" <<EOF
-
-## Resources
-- [GitHub Release]($CI_SERVER_URL/$CI_REPO/releases/tag/$RELEASE_VERSION)
-- [Packages]($CI_SERVER_URL/$CI_REPO/packages)
-- [Workflow Run]($CI_RUN_URL)
-
-EOF
+  {
+    printf "\n## Resources\n"
+    printf -- "- [Release](%s)\n" "$(ci_release_url "$RELEASE_VERSION")"
+    printf -- "- [Packages](%s)\n" "$(ci_packages_url)"
+    printf -- "- [Workflow Run](%s)\n\n" "$CI_RUN_URL"
+  } >>"$(ci_summary_file)"
 }
 
 main() {

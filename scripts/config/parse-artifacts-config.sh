@@ -15,12 +15,12 @@ readonly SBOM_SUPPORTED_TYPES="maven npm gradle python go rust"
 readonly PUBLISH_TARGETS="maven-central github-packages google-play"
 
 die() {
-  printf "::error::%s\n" "$1"
+  ci_log_error "$1"
   exit 1
 }
 
 warn() {
-  printf "::warning::%s\n" "$1"
+  ci_log_warning "$1"
 }
 
 output() {

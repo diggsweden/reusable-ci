@@ -6,6 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../ci/output.sh"
+source "$SCRIPT_DIR/../ci/stage-result.sh"
 
 main() {
   local prepare_result stage_ran stage_result
@@ -17,15 +18,15 @@ main() {
     stage_ran=true
   fi
 
-  if [[ "$stage_ran" != 'true' ]]; then
-    stage_result='skipped'
+  if [[ "$stage_ran" != "true" ]]; then
+    stage_result="skipped"
   else
     stage_result="$prepare_result"
   fi
 
-  local result_json
-  result_json=$(printf '{"stage":"prepare","result":"%s","ran":%s,"targets":{"version-bump":"%s"}}' \
-    "$stage_result" "$(ci_json_bool "$stage_ran")" "$prepare_result")
+  local targets_json result_json
+  targets_json="$(ci_build_targets_json "version-bump:$prepare_result")"
+  result_json="$(ci_stage_result_json "prepare" "$stage_result" "$stage_ran" "$targets_json")"
 
   ci_output "stage-ran" "$stage_ran"
   ci_output "stage-result" "$stage_result"

@@ -17,6 +17,7 @@ load "${BATS_TEST_DIRNAME}/../test_helper.bash"
 
 setup() {
   common_setup
+  setup_github_env
   # Create mock .xcodeproj with project.pbxproj
   mkdir -p "${TEST_DIR}/MyApp.xcodeproj"
   cat > "${TEST_DIR}/MyApp.xcodeproj/project.pbxproj" <<'EOF'
@@ -104,7 +105,7 @@ teardown() {
   popd >/dev/null
 
   assert_success
-  assert_stderr_contains "::warning::Could not determine version from project file"
+  assert_output --partial "::warning::Could not determine version from project file"
 }
 
 # =============================================================================

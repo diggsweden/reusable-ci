@@ -2,8 +2,9 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 # SPDX-License-Identifier: CC0-1.0
 
-# Create SBOM ZIP archive containing all 3 layers
+# Create SBOM ZIP archive containing all 3 layers, optionally sign with GPG
 # Usage: create-sbom-zip.sh <project-name> <version>
+# Optional env vars: SIGN_ARTIFACTS=true GPG_KEY_ID=<key-id>
 
 set -euo pipefail
 
@@ -52,6 +53,11 @@ main() {
 
   printf "SBOM ZIP contents:\n"
   unzip -l "$SBOM_ZIP"
+
+  if [[ "${SIGN_ARTIFACTS:-false}" == "true" ]] && [[ -n "${GPG_KEY_ID:-}" ]]; then
+    ci_gpg_sign "$GPG_KEY_ID" "$SBOM_ZIP"
+    printf "Signed SBOM ZIP: %s.asc\n" "$SBOM_ZIP"
+  fi
 
   printf "Created SBOM ZIP: %s\n" "$SBOM_ZIP"
 }

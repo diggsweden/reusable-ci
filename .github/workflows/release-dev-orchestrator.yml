@@ -21,10 +21,10 @@
 #
 # Registry Authentication:
 #   GitHub Packages (default): Uses GITHUB_TOKEN (no secrets needed)
-#   Other registries: Set use-github-token=false and provide registry-password secret
+#   Other registries: Set use-ci-token=false and provide registry-password secret
 #
 # Required Secrets:
-#   registry-password: Required when use-github-token=false (for npmjs.org, etc)
+#   registry-password: Required when use-ci-token=false (for npmjs.org, etc)
 #
 # Required Permissions:
 #   contents: read   # Read source code
@@ -90,7 +90,7 @@ on:
         description: "NPM registry username (defaults to github.actor for GitHub Packages)"
         required: false
         type: string
-      use-github-token:
+      use-ci-token:
         description: "Use GITHUB_TOKEN for NPM authentication (GitHub Packages only)"
         required: false
         default: true
@@ -102,7 +102,7 @@ on:
         type: string
     secrets:
       registry-password:
-        description: "NPM registry auth token (required when use-github-token=false)"
+        description: "NPM registry auth token (required when use-ci-token=false)"
         required: false
     outputs:
       container-image:
@@ -156,7 +156,7 @@ jobs:
           PACKAGE_SCOPE: ${{ inputs['package-scope'] }}
           NPM_REGISTRY_USERNAME: ${{ inputs['npm-registry-username'] }}
           PUBLISH_NPM: ${{ inputs['publish-npm'] }}
-          USE_GITHUB_TOKEN: ${{ inputs['use-github-token'] }}
+          USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
         run: bash .github-shared/scripts/plan/write-dev-release-interface.sh
 
   # ===== Stage 1: Build =====

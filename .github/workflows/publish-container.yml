@@ -139,7 +139,7 @@ on:
         description: "Registry username (defaults to github.actor for GHCR)"
         required: false
         type: string
-      use-github-token:
+      use-ci-token:
         description: "Use GITHUB_TOKEN for authentication (GHCR only)"
         required: false
         default: true
@@ -155,7 +155,7 @@ on:
         type: string
     secrets:
       registry-password:
-        description: "Registry password/token (required when use-github-token=false)"
+        description: "Registry password/token (required when use-ci-token=false)"
         required: false
     outputs:
       image:
@@ -246,19 +246,18 @@ jobs:
       - name: Check registry authentication configuration
         if: &if_push_image ${{ inputs['push-image'] }}
         env:
-          USE_GITHUB_TOKEN: ${{ inputs['use-github-token'] }}
+          USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
           TARGET_REGISTRY: ${{ inputs.registry }}
-          GITHUB_REGISTRY: ghcr.io
+          CI_REGISTRY: ghcr.io
           REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
-          VALIDATE_AUTH_SCRIPT: .github-shared/scripts/registry/validate-auth.sh
-        run: bash .github-shared/scripts/registry/validate-auth-configuration.sh
+        run: bash .github-shared/scripts/registry/validate-auth.sh
       - name: Log in to Container Registry
         if: *if_push_image
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
           registry: ${{ inputs.registry }}
           username: ${{ inputs['registry-username'] || github.actor }}
-          password: ${{ inputs['use-github-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+          password: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
       - name: Determine Image Name
         id: image-name
         run: |

@@ -4,11 +4,14 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 main() {
   readonly CHANGELOG_FILE="${1:-CHANGELOG.md}"
 
   if [ ! -f "$CHANGELOG_FILE" ]; then
-    printf "::error::Full changelog (%s) not found\n" "$CHANGELOG_FILE"
+    ci_log_error "Full changelog ($CHANGELOG_FILE) not found"
     printf "This file is required for the version bump commit\n"
     exit 1
   fi

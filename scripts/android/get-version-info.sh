@@ -3,6 +3,9 @@
 # SPDX-License-Identifier: CC0-1.0
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 main() {
   if [[ -f "gradle.properties" ]]; then
     local VERSION
@@ -13,7 +16,7 @@ main() {
     printf "version-code=%s\n" "${VERSION_CODE}"
     printf "Version: %s (%s)\n" "${VERSION}" "${VERSION_CODE}" >&2
   else
-    printf "::warning::gradle.properties not found, version info unavailable\n" >&2
+    ci_log_warning "gradle.properties not found, version info unavailable"
     printf "version=unknown\n"
     printf "version-code=unknown\n"
   fi

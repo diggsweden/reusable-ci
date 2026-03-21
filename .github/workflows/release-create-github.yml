@@ -206,13 +206,12 @@ jobs:
       - name: Create SBOM ZIP
         if: *if_generate_sbom
         env:
-          PROJECT_NAME: ${{ steps.release-metadata.outputs.project-name }}
-          VERSION: ${{ steps.release-metadata.outputs.version }}
-          VERSION_NO_V: ${{ steps.release-metadata.outputs.version-no-v }}
           SIGN_ARTIFACTS: ${{ inputs['sign-artifacts'] }}
           GPG_KEY_ID: ${{ steps.import-gpg.outputs.keyid }}
-          RELEASE_SCRIPT_ROOT: .github-shared/scripts/release
-        run: bash .github-shared/scripts/release/create-and-sign-sbom-zip.sh
+        run: >-
+          bash .github-shared/scripts/release/create-sbom-zip.sh
+          "${{ steps.release-metadata.outputs.project-name }}"
+          "${{ steps.release-metadata.outputs.version }}"
       - name: Prepare release notes
         env:
           SOURCE_FILE: ReleasenotesTmp

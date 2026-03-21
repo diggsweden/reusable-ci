@@ -181,7 +181,7 @@ jobs:
           XCODEIOS_ARTIFACTS: ${{ inputs.xcodeios-artifacts }}
           GOOGLEPLAY_ARTIFACTS: ${{ inputs.googleplay-artifacts }}
           CONTAINERS: ${{ inputs.containers }}
-          PUBLISH_MAVEN_GITHUB_RESULT: ${{ needs.publish-maven-github.result }}
+          PUBLISH_MAVEN_REGISTRY_RESULT: ${{ needs.publish-maven-github.result }}
           PUBLISH_MAVEN_CENTRAL_RESULT: ${{ needs.publish-maven-central.result }}
           PUBLISH_APPLE_APPSTORE_RESULT: ${{ needs.publish-apple-appstore.result }}
           PUBLISH_GOOGLE_PLAY_RESULT: ${{ needs.publish-google-play.result }}

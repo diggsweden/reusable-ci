@@ -77,7 +77,7 @@ on:
         description: "Registry username (defaults to github.actor for GHCR)"
         required: false
         type: string
-      use-github-token:
+      use-ci-token:
         description: "Use GITHUB_TOKEN for authentication (GHCR only)"
         required: false
         default: true
@@ -89,7 +89,7 @@ on:
         type: string
     secrets:
       registry-password:
-        description: "Registry password/token (required when use-github-token=false)"
+        description: "Registry password/token (required when use-ci-token=false)"
         required: false
     outputs:
       image:
@@ -170,16 +170,16 @@ jobs:
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
       - name: Check registry authentication configuration
         env:
-          USE_GITHUB_TOKEN: ${{ inputs['use-github-token'] }}
+          USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
           TARGET_REGISTRY: ${{ inputs.registry }}
           REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
-        run: bash .github-shared/scripts/registry/validate-auth-configuration.sh
+        run: bash .github-shared/scripts/registry/validate-auth.sh
       - name: Login to Container Registry
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
           registry: ${{ inputs.registry }}
           username: ${{ inputs['registry-username'] || github.actor }}
-          password: ${{ inputs['use-github-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+          password: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
       - name: Generate dev tags
         id: tags
         run: |

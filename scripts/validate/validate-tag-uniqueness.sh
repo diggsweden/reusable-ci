@@ -3,6 +3,9 @@
 # SPDX-License-Identifier: CC0-1.0
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 main() {
   readonly TAG_NAME="${1:?Usage: $0 <tag-name>}"
 
@@ -16,7 +19,7 @@ main() {
   OTHER_TAGS=$(git tag --points-at "$TAG_COMMIT" | grep -v "^${TAG_NAME}$" || true)
 
   if [[ -n "$OTHER_TAGS" ]]; then
-    printf "::error::Tag '%s' points to the same commit as other tag(s)\n" "$TAG_NAME"
+    ci_log_error "Tag '$TAG_NAME' points to the same commit as other tag(s)"
     printf "\n"
     printf "The following tags also point to commit %s:\n" "$TAG_COMMIT"
     printf "%s\n" "$OTHER_TAGS" | sed 's/^/  - /'

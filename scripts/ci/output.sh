@@ -14,6 +14,8 @@
 #   ci_summary                    Append stdin to step summary
 #   ci_summary_file               Return the summary file path
 #   ci_json_bool <value>          Print "true" or "false" for JSON booleans
+#   ci_log_error <message>        Log an error (platform-aware)
+#   ci_log_warning <message>      Log a warning (platform-aware)
 #   ci_status_icon <result>       Print status icon (✓/−/✗) for CI results
 #   ci_normalize_result <value>   Normalize result to known status (success/failure/cancelled/skipped)
 #   ci_bool_status <value>        Print "✓ Enabled" or "⊘ Disabled"
@@ -25,6 +27,9 @@
 #   ci_sbom_zip_name <name> <ver>  Generate canonical SBOM ZIP filename
 #   ci_gpg_sign <key-id> <file>    GPG detach-sign a file (produces .asc)
 #   ci_json_value <json> <key>    Extract a string value from compact JSON
+#   ci_release_url <version>      Build platform-aware release URL
+#   ci_packages_url [repo]        Build platform-aware packages URL
+#   ci_docs_url <repo> <path>     Build platform-aware docs/blob URL
 #
 # Constants:
 #   CI_SEMVER_TAG_REGEX            Canonical semver tag regex (with capture groups)
@@ -75,6 +80,24 @@ ci_summary_file() {
 # Print JSON boolean: "true" or "false"
 ci_json_bool() {
   if [[ "$1" == "true" ]]; then printf 'true'; else printf 'false'; fi
+}
+
+# Log an error message (platform-aware annotation)
+ci_log_error() {
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    printf '::error::%s\n' "$1"
+  else
+    printf 'ERROR: %s\n' "$1" >&2
+  fi
+}
+
+# Log a warning message (platform-aware annotation)
+ci_log_warning() {
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    printf '::warning::%s\n' "$1"
+  else
+    printf 'WARNING: %s\n' "$1" >&2
+  fi
 }
 
 # Print a status icon for CI result values
@@ -184,4 +207,38 @@ ci_json_value() {
     return
   fi
   printf '%s' "${rest%%\"*}"
+}
+
+# Build a platform-aware URL to a release page
+# Requires CI_PLATFORM, CI_SERVER_URL, CI_REPO from env.sh
+ci_release_url() {
+  local version="$1"
+  case "${CI_PLATFORM:-}" in
+  github) printf '%s/%s/releases/tag/%s' "$CI_SERVER_URL" "$CI_REPO" "$version" ;;
+  gitlab) printf '%s/%s/-/releases/%s' "$CI_SERVER_URL" "$CI_REPO" "$version" ;;
+  *) printf '(release: %s)' "$version" ;;
+  esac
+}
+
+# Build a platform-aware URL to the packages page
+# Requires CI_PLATFORM, CI_SERVER_URL from env.sh
+ci_packages_url() {
+  local repo="${1:-$CI_REPO}"
+  case "${CI_PLATFORM:-}" in
+  github) printf '%s/%s/packages' "$CI_SERVER_URL" "$repo" ;;
+  gitlab) printf '%s/%s/-/packages' "$CI_SERVER_URL" "$repo" ;;
+  *) printf '(packages)' ;;
+  esac
+}
+
+# Build a platform-aware URL to a file in the default branch
+# Requires CI_PLATFORM, CI_SERVER_URL from env.sh
+ci_docs_url() {
+  local repo="$1"
+  local path="$2"
+  case "${CI_PLATFORM:-}" in
+  github) printf '%s/%s/blob/main/%s' "$CI_SERVER_URL" "$repo" "$path" ;;
+  gitlab) printf '%s/%s/-/blob/main/%s' "$CI_SERVER_URL" "$repo" "$path" ;;
+  *) printf '(docs: %s)' "$path" ;;
+  esac
 }

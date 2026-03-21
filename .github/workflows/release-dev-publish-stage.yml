@@ -64,7 +64,7 @@ jobs:
       registry: ${{ fromJson(inputs['dev-context-json']).npm_registry }}
       package-scope: ${{ fromJson(inputs['dev-context-json']).package_scope }}
       registry-username: ${{ fromJson(inputs['dev-context-json']).npm_registry_username }}
-      use-github-token: ${{ fromJson(inputs['dev-policy-json']).use_github_token }}
+      use-ci-token: ${{ fromJson(inputs['dev-policy-json']).use_ci_token }}
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
     secrets:
       registry-password: ${{ secrets.registry-password }}

@@ -80,22 +80,17 @@ jobs:
         env:
           OUTPUT: ${{ inputs['output-file'] }}
           GITHUB_REPO: ${{ github.repository }}
+      - name: Checkout .github repository for scripts
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
       - name: Verify Changelog Generation
-        run: |
-          if [ -f "${{ inputs['output-file'] }}" ]; then
-            printf "✓ Changelog generated successfully: %s\n" "${{ inputs['output-file'] }}"
-            printf "  • File size: %s bytes\n" "$(stat -c%s "${{ inputs['output-file'] }}")"
-            printf "  • Line count: %s\n" "$(wc -l < "${{ inputs['output-file'] }}")"
-
-            # Show first few lines for debugging
-            printf "\n"
-            printf "Preview (first 10 lines):\n"
-            printf "========================\n"
-            head -10 "${{ inputs['output-file'] }}"
-          else
-            printf "✗ ERROR: No changelog generated\n"
-            exit 1
-          fi
+        env:
+          CHANGELOG_FILE: ${{ inputs['output-file'] }}
+        run: bash "${{ github.workspace }}/.github-shared/scripts/release/verify-changelog.sh"
       - name: Upload Changelog Artifact
         if: ${{ inputs['upload-as-artifact'] }}
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0

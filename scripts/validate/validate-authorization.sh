@@ -17,7 +17,7 @@ main() {
   fi
 
   if [[ -z "$AUTHORIZED_DEVS" ]]; then
-    printf "::warning::AUTHORIZED_RELEASE_DEVELOPERS secret not configured\n"
+    ci_log_warning "AUTHORIZED_RELEASE_DEVELOPERS secret not configured"
     printf "All users with tag push access can create releases\n"
     printf "✓ Authorization check passed (no restrictions configured)\n"
     exit 0
@@ -26,7 +26,7 @@ main() {
   if printf ",%s," "$AUTHORIZED_DEVS" | grep -q ",$ACTOR,"; then
     printf "✓ User '%s' is authorized to create production releases\n" "$ACTOR"
   else
-    printf "::error::User '%s' is not authorized to create non-SNAPSHOT releases\n" "$ACTOR"
+    ci_log_error "User '$ACTOR' is not authorized to create non-SNAPSHOT releases"
     printf "Only the following users can create production releases:\n"
     printf "%s\n" "$AUTHORIZED_DEVS" | tr ',' '\n' | sed 's/^/  - /'
     printf "\n"

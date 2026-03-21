@@ -7,22 +7,25 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 main() {
   local REF_TYPE="${1:-}"
   local REF_NAME="${2:-}"
   local REF="${3:-}"
 
   if [[ -z "$REF_TYPE" ]]; then
-    printf "::error::Usage: %s <ref-type> <ref-name> [ref]\n" "$0"
+    ci_log_error "Usage: $0 <ref-type> <ref-name> [ref]"
     exit 1
   fi
 
   if [[ "$REF_TYPE" != "tag" ]]; then
-    printf "::error::Release workflow must be triggered by pushing a tag\n"
-    printf "::error::Current trigger: %s (%s)\n" "$REF_TYPE" "$REF"
-    printf "::error::To create a release, push a signed tag:\n"
-    printf "::error::  git tag -s v1.0.0 -m 'Release v1.0.0'\n"
-    printf "::error::  git push origin v1.0.0\n"
+    ci_log_error "Release workflow must be triggered by pushing a tag"
+    ci_log_error "Current trigger: $REF_TYPE ($REF)"
+    ci_log_error "To create a release, push a signed tag:"
+    ci_log_error "  git tag -s v1.0.0 -m 'Release v1.0.0'"
+    ci_log_error "  git push origin v1.0.0"
     exit 1
   fi
 

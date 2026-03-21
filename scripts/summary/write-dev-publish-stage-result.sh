@@ -6,6 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../ci/output.sh"
+source "$SCRIPT_DIR/../ci/stage-result.sh"
 
 main() {
   local container_result npm_result
@@ -15,28 +16,20 @@ main() {
 
   local stage_ran="false"
   case "${PROJECT_TYPE:-}" in
-  maven | npm | gradle) stage_ran="true" ;;
+    maven | npm | gradle) stage_ran="true" ;;
   esac
 
   local stage_result
-  if [[ "$stage_ran" != "true" ]]; then
-    stage_result="skipped"
-  elif [[ "$container_result" == "failure" || "$npm_result" == "failure" ]]; then
-    stage_result="failure"
-  elif [[ "$container_result" == "cancelled" || "$npm_result" == "cancelled" ]]; then
-    stage_result="cancelled"
-  else
-    stage_result="success"
-  fi
+  stage_result="$(ci_stage_result "$stage_ran" "$container_result" "$npm_result")"
 
   local npm_target="skipped"
   if [[ "${PROJECT_TYPE:-}" == "npm" && "${PUBLISH_NPM:-false}" == "true" ]]; then
     npm_target="$npm_result"
   fi
 
-  local result_json
-  result_json=$(printf '{"stage":"dev-publish","result":"%s","ran":%s,"project_type":"%s","targets":{"container":"%s","npm":"%s"}}' \
-    "$stage_result" "$(ci_json_bool "$stage_ran")" "${PROJECT_TYPE:-unknown}" "$container_result" "$npm_target")
+  local targets_json result_json
+  targets_json="$(ci_build_targets_json "container:$container_result" "npm:$npm_target")"
+  result_json="$(ci_stage_result_json "dev-publish" "$stage_result" "$stage_ran" "$targets_json" "project_type:${PROJECT_TYPE:-unknown}")"
 
   local artifacts_json
   artifacts_json=$(printf '{"container_image":"%s","container_digest":"%s","npm_package_name":"%s","npm_package_version":"%s"}' \

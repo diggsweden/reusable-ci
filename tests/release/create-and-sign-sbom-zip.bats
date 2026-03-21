@@ -13,13 +13,7 @@ load "${BATS_TEST_DIRNAME}/../test_helper.bash"
 
 setup() {
   common_setup_with_github_env
-  mkdir -p "${TEST_DIR}/release-bin" "${TEST_DIR}/release-scripts"
-  cat > "${TEST_DIR}/release-scripts/create-sbom-zip.sh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-touch "$1-${2#v}-sboms.zip"
-EOF
-  chmod +x "${TEST_DIR}/release-scripts/create-sbom-zip.sh"
+  mkdir -p "${TEST_DIR}/release-bin"
   cat > "${TEST_DIR}/release-bin/gpg" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -28,42 +22,59 @@ touch "${target}.asc"
 EOF
   chmod +x "${TEST_DIR}/release-bin/gpg"
   export PATH="${TEST_DIR}/release-bin:${PATH}"
+  # Create an SBOM so the ZIP gets created
+  printf '{"spdx": "test"}' > "${TEST_DIR}/myapp-pom-sbom.spdx.json"
 }
 
 teardown() {
   common_teardown
 }
 
-@test "create-and-sign-sbom-zip creates and signs the zip when enabled" {
-  export PROJECT_NAME="demo"
-  export VERSION="v1.2.3"
-  export VERSION_NO_V="1.2.3"
+@test "create-sbom-zip signs the zip when SIGN_ARTIFACTS=true" {
   export SIGN_ARTIFACTS="true"
   export GPG_KEY_ID="ABC123"
-  export RELEASE_SCRIPT_ROOT="${TEST_DIR}/release-scripts"
 
   pushd "$TEST_DIR" >/dev/null
-  run_script "release/create-and-sign-sbom-zip.sh"
+  run_script "release/create-sbom-zip.sh" "myapp" "v1.2.3"
   popd >/dev/null
 
   assert_success
-  assert_file_exist "${TEST_DIR}/demo-1.2.3-sboms.zip"
-  assert_file_exist "${TEST_DIR}/demo-1.2.3-sboms.zip.asc"
+  assert_file_exist "${TEST_DIR}/myapp-1.2.3-sboms.zip"
+  assert_file_exist "${TEST_DIR}/myapp-1.2.3-sboms.zip.asc"
 }
 
-@test "create-and-sign-sbom-zip skips signing when disabled" {
-  export PROJECT_NAME="demo"
-  export VERSION="v1.2.3"
-  export VERSION_NO_V="1.2.3"
+@test "create-sbom-zip skips signing when SIGN_ARTIFACTS=false" {
   export SIGN_ARTIFACTS="false"
   export GPG_KEY_ID="ABC123"
-  export RELEASE_SCRIPT_ROOT="${TEST_DIR}/release-scripts"
 
   pushd "$TEST_DIR" >/dev/null
-  run_script "release/create-and-sign-sbom-zip.sh"
+  run_script "release/create-sbom-zip.sh" "myapp" "v1.2.3"
   popd >/dev/null
 
   assert_success
-  assert_file_exist "${TEST_DIR}/demo-1.2.3-sboms.zip"
-  assert_file_not_exist "${TEST_DIR}/demo-1.2.3-sboms.zip.asc"
+  assert_file_exist "${TEST_DIR}/myapp-1.2.3-sboms.zip"
+  assert_file_not_exist "${TEST_DIR}/myapp-1.2.3-sboms.zip.asc"
+}
+
+@test "create-sbom-zip skips signing when GPG_KEY_ID is empty" {
+  export SIGN_ARTIFACTS="true"
+  export GPG_KEY_ID=""
+
+  pushd "$TEST_DIR" >/dev/null
+  run_script "release/create-sbom-zip.sh" "myapp" "v1.2.3"
+  popd >/dev/null
+
+  assert_success
+  assert_file_exist "${TEST_DIR}/myapp-1.2.3-sboms.zip"
+  assert_file_not_exist "${TEST_DIR}/myapp-1.2.3-sboms.zip.asc"
+}
+
+@test "create-sbom-zip skips signing when env vars not set" {
+  pushd "$TEST_DIR" >/dev/null
+  run_script "release/create-sbom-zip.sh" "myapp" "v1.2.3"
+  popd >/dev/null
+
+  assert_success
+  assert_file_exist "${TEST_DIR}/myapp-1.2.3-sboms.zip"
+  assert_file_not_exist "${TEST_DIR}/myapp-1.2.3-sboms.zip.asc"
 }

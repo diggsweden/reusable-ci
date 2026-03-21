@@ -13,40 +13,55 @@ load "${BATS_TEST_DIRNAME}/../test_helper.bash"
 
 setup() {
   common_setup_with_github_env
-  cat > "${TEST_DIR}/validate-auth-stub.sh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'use=%s\nregistry=%s\ngithub=%s\nhas_password=%s\n' "$1" "$2" "$3" "$4"
-EOF
-  chmod +x "${TEST_DIR}/validate-auth-stub.sh"
 }
 
 teardown() {
   common_teardown
 }
 
-@test "validate-auth-configuration reports password presence" {
-  export USE_GITHUB_TOKEN="false"
+@test "validate-auth env mode detects password presence" {
+  export USE_CI_TOKEN="false"
   export TARGET_REGISTRY="registry.example.com"
-  export GITHUB_REGISTRY="ghcr.io"
+  export CI_REGISTRY="ghcr.io"
   export REGISTRY_PASSWORD="secret"
-  export VALIDATE_AUTH_SCRIPT="${TEST_DIR}/validate-auth-stub.sh"
 
-  run_script "registry/validate-auth-configuration.sh"
+  run_script "registry/validate-auth.sh"
 
   assert_success
-  assert_output --partial "has_password=true"
+  assert_output --partial "Registry authentication configuration is valid"
 }
 
-@test "validate-auth-configuration reports missing password" {
-  export USE_GITHUB_TOKEN="true"
+@test "validate-auth env mode detects missing password" {
+  export USE_CI_TOKEN="true"
   export TARGET_REGISTRY="ghcr.io"
-  export GITHUB_REGISTRY="ghcr.io"
+  export CI_REGISTRY="ghcr.io"
   export REGISTRY_PASSWORD=""
-  export VALIDATE_AUTH_SCRIPT="${TEST_DIR}/validate-auth-stub.sh"
 
-  run_script "registry/validate-auth-configuration.sh"
+  run_script "registry/validate-auth.sh"
 
   assert_success
-  assert_output --partial "has_password=false"
+  assert_output --partial "Registry authentication configuration is valid"
+}
+
+@test "validate-auth env mode fails when no password and use-ci-token=false" {
+  export USE_CI_TOKEN="false"
+  export TARGET_REGISTRY="registry.example.com"
+  export CI_REGISTRY="ghcr.io"
+  export REGISTRY_PASSWORD=""
+
+  run_script "registry/validate-auth.sh"
+
+  assert_failure
+  assert_output --partial "registry-password secret is required"
+}
+
+@test "validate-auth env mode defaults CI_REGISTRY to ghcr.io" {
+  export USE_CI_TOKEN="true"
+  export TARGET_REGISTRY="docker.io"
+  unset CI_REGISTRY
+
+  run_script "registry/validate-auth.sh"
+
+  assert_success
+  assert_output --partial "non-ghcr.io"
 }

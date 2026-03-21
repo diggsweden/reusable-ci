@@ -7,19 +7,22 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 main() {
   local TOKEN="${1:-}"
   local REPOSITORY="${2:-}"
 
   if [[ -z "$TOKEN" ]]; then
-    printf "::error::No GitHub token provided\n"
+    ci_log_error "No GitHub token provided"
     printf "A fine-grained PAT (github_pat_*) with 'contents: write' permission is required.\n"
     printf "Create one at: https://github.com/settings/personal-access-tokens/new\n"
     exit 1
   fi
 
   if [[ -z "$REPOSITORY" ]]; then
-    printf "::error::No repository provided\n"
+    ci_log_error "No repository provided"
     printf "Usage: %s <token> <repository>\n" "$0"
     exit 1
   fi
@@ -28,7 +31,7 @@ main() {
   readonly REPOSITORY
 
   if [[ "$TOKEN" == ghp_* ]]; then
-    printf "::error::Classic PAT detected (ghp_*)\n"
+    ci_log_error "Classic PAT detected (ghp_*)"
     printf "Classic PATs have broad access and are not recommended.\n"
     printf "Please use a fine-grained PAT (github_pat_*) with 'contents: write' permission.\n"
     printf "See: https://github.com/settings/personal-access-tokens/new\n"
@@ -36,7 +39,7 @@ main() {
   fi
 
   if [[ "$TOKEN" != github_pat_* && "$TOKEN" != ghs_* ]]; then
-    printf "::warning::Unknown token type. Expected fine-grained PAT (github_pat_*) or GitHub App token (ghs_*).\n"
+    ci_log_warning "Unknown token type. Expected fine-grained PAT (github_pat_*) or GitHub App token (ghs_*)."
   fi
 
   local RESPONSE
@@ -45,7 +48,7 @@ main() {
     "https://api.github.com/repos/${REPOSITORY}")
 
   if [[ "$RESPONSE" != "200" ]]; then
-    printf "::error::Token is invalid or lacks permissions\n"
+    ci_log_error "Token is invalid or lacks permissions"
     printf "HTTP Response: %s\n" "$RESPONSE"
     printf "Ensure the token has 'contents: write' permission for this repository\n"
     exit 1

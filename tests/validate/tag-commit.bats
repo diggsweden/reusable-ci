@@ -18,6 +18,7 @@ load "${BATS_TEST_DIRNAME}/../test_helper.bash"
 
 setup() {
   common_setup_with_isolated_git
+  setup_github_env
   init_remote_repo
 }
 

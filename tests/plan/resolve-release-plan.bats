@@ -60,7 +60,7 @@ set_standard_plan_env() {
   assert_output "true"
   run get_github_output should-sign-artifacts
   assert_output "true"
-  run get_github_output should-create-github-release
+  run get_github_output should-create-release
   assert_output "true"
   run get_github_output should-check-authorization
   assert_output "true"
@@ -95,7 +95,7 @@ set_standard_plan_env() {
   assert_output "false"
   run get_github_output should-sign-artifacts
   assert_output "false"
-  run get_github_output should-create-github-release
+  run get_github_output should-create-release
   assert_output "false"
   run get_github_output should-check-authorization
   assert_output "false"

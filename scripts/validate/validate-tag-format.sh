@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../ci/output.sh"
 
 die() {
-  printf "::error::%s\n" "$1"
+  ci_log_error "$1"
   exit 1
 }
 
@@ -23,7 +23,7 @@ main() {
   printf "## Validating Tag Format\n"
 
   if [[ ! "$TAG_NAME" =~ $CI_SEMVER_TAG_REGEX ]]; then
-    printf "::error::✗ Invalid tag format: '%s'\n" "$TAG_NAME"
+    ci_log_error "✗ Invalid tag format: '$TAG_NAME'"
     printf "\nTags must follow semantic versioning: vMAJOR.MINOR.PATCH[-PRERELEASE]\n"
     printf "Valid: v1.0.0, v2.3.4-beta.1, v1.0.0-rc.2, v3.0.0-alpha, v1.0.0-dev\n"
     printf "Learn more: https://semver.org\n"

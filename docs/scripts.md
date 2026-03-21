@@ -26,11 +26,12 @@ scripts/
 ├── ci/
 │   ├── env.sh                                # CI platform environment abstraction
 │   ├── install-syft.sh                       # Install Syft SBOM generator
-│   └── output.sh                             # CI output and summary helpers
+│   ├── install-trivy.sh                      # Install Trivy vulnerability scanner
+│   ├── output.sh                             # CI output and summary helpers
+│   └── stage-result.sh                       # Stage result aggregation helpers
 ├── config/
-│   ├── get-file-pattern.sh                   # Get file pattern by project type
-│   ├── parse-artifacts-config.sh             # Parse artifacts.yml configuration
-│   └── resolve-file-pattern.sh              # Resolve file pattern for version bump commits
+│   ├── get-file-pattern.sh                   # Get file pattern by project type (supports env vars or positional args)
+│   └── parse-artifacts-config.sh             # Parse artifacts.yml configuration
 ├── container/
 │   ├── build-project.sh                      # Build project before container image creation
 │   ├── extract-npm-tarball.sh                # Extract NPM tarball for container builds
@@ -45,12 +46,12 @@ scripts/
 │   ├── write-pr-interface.sh                 # Write PR orchestrator interface outputs
 │   └── write-release-interface.sh            # Write release orchestrator interface outputs
 ├── registry/
-│   ├── validate-auth-configuration.sh        # Validate registry auth configuration
-│   └── validate-auth.sh                      # Validate registry authentication credentials
+│   └── validate-auth.sh                      # Validate registry authentication (supports env vars or positional args)
+├── security/
+│   └── scan-dependencies.sh                  # Scan dependencies for vulnerabilities (Trivy)
 ├── release/
-│   ├── create-and-sign-sbom-zip.sh           # Create and GPG-sign SBOM ZIP archive
 │   ├── create-github-release.sh              # Create GitHub Release with artifacts
-│   ├── create-sbom-zip.sh                    # Package SBOM layers into ZIP archive
+│   ├── create-sbom-zip.sh                    # Package SBOM layers into ZIP archive (optional GPG signing)
 │   ├── generate-checksums.sh                 # Generate SHA256 checksums for release artifacts
 │   ├── prepare-release-notes.sh              # Prepare release notes from changelog
 │   ├── resolve-artifact-name.sh             # Resolve artifact name from repo/config
@@ -134,8 +135,7 @@ Scripts for build configuration resolution.
 
 | Script | Purpose |
 |--------|---------|
-| `get-file-pattern.sh` | Returns git file pattern by project type |
-| `resolve-file-pattern.sh` | Resolves file pattern for version bump commits (wraps `get-file-pattern.sh`) |
+| `get-file-pattern.sh` | Returns git file pattern by project type (supports env vars or positional args) |
 | `parse-artifacts-config.sh` | Parses `artifacts.yml` to resolve build targets, container config, and publish targets |
 
 ---
@@ -173,8 +173,17 @@ Scripts that produce orchestrator interface outputs (context JSON, policy JSON).
 
 | Script | Purpose |
 |--------|---------|
-| `validate-auth-configuration.sh` | Validates registry auth configuration (token type, registry match) |
-| `validate-auth.sh` | Validates registry credentials are present and functional |
+| `validate-auth.sh` | Validates registry authentication configuration (supports env vars or positional args) |
+
+---
+
+## Security
+
+Scripts for dependency and vulnerability scanning.
+
+| Script | Purpose |
+|--------|---------|
+| `scan-dependencies.sh` | Scans project dependencies for known vulnerabilities using Trivy. Supports diff mode (only new vulnerabilities fail) and full scan mode. Produces SARIF for GitHub Code Scanning annotations. |
 
 ---
 
@@ -184,9 +193,8 @@ Scripts for release artifact management and GitHub Release creation.
 
 | Script | Purpose |
 |--------|---------|
-| `create-and-sign-sbom-zip.sh` | Creates SBOM ZIP and signs it with GPG |
 | `create-github-release.sh` | Creates GitHub Release with artifacts, signatures, SBOMs, and checksums |
-| `create-sbom-zip.sh` | Packages all 3 SBOM layers (source, artifact, container) into ZIP |
+| `create-sbom-zip.sh` | Packages all 3 SBOM layers (source, artifact, container) into ZIP; optionally GPG-signs |
 | `generate-checksums.sh` | Generates SHA256 checksums for all release artifacts |
 | `prepare-release-notes.sh` | Extracts release notes from changelog for the current version |
 | `resolve-artifact-name.sh` | Resolves artifact name from repository name or config |

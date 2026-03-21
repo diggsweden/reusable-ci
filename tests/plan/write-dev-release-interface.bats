@@ -35,7 +35,7 @@ set_all_dev_vars() {
   export PACKAGE_SCOPE="@myorg"
   export NPM_REGISTRY_USERNAME="deploy-bot"
   export PUBLISH_NPM="true"
-  export USE_GITHUB_TOKEN="true"
+  export USE_CI_TOKEN="true"
 }
 
 @test "write-dev-release-interface succeeds with all vars set" {
@@ -76,7 +76,7 @@ set_all_dev_vars() {
   assert_success
 
   run get_github_output "dev-policy-json"
-  assert_output '{"publish_npm":true,"use_github_token":true}'
+  assert_output '{"publish_npm":true,"use_ci_token":true}'
 }
 
 @test "NPM_REGISTRY_USERNAME defaults to empty when not set" {
@@ -99,29 +99,29 @@ set_all_dev_vars() {
 
   run get_github_output "dev-policy-json"
   assert_output --partial '"publish_npm":false'
-  assert_output --partial '"use_github_token":true'
+  assert_output --partial '"use_ci_token":true'
 }
 
-@test "use_github_token false is correctly converted to JSON boolean" {
+@test "use_ci_token false is correctly converted to JSON boolean" {
   set_all_dev_vars
-  export USE_GITHUB_TOKEN="false"
+  export USE_CI_TOKEN="false"
 
   run_script "plan/write-dev-release-interface.sh"
   assert_success
 
   run get_github_output "dev-policy-json"
   assert_output --partial '"publish_npm":true'
-  assert_output --partial '"use_github_token":false'
+  assert_output --partial '"use_ci_token":false'
 }
 
 @test "both policy flags false produces all false in policy" {
   set_all_dev_vars
   export PUBLISH_NPM="false"
-  export USE_GITHUB_TOKEN="false"
+  export USE_CI_TOKEN="false"
 
   run_script "plan/write-dev-release-interface.sh"
   assert_success
 
   run get_github_output "dev-policy-json"
-  assert_output '{"publish_npm":false,"use_github_token":false}'
+  assert_output '{"publish_npm":false,"use_ci_token":false}'
 }

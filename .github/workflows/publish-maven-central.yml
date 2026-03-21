@@ -88,6 +88,13 @@ jobs:
         with:
           gpg_private_key: ${{ secrets.OSPO_BOT_GPG_PRIV }}
           passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
+      - name: Checkout .github repository for scripts
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: main
+          path: .github-shared
+          sparse-checkout: scripts
       - name: Download build artifacts
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
@@ -95,30 +102,7 @@ jobs:
           path: ${{ inputs['working-directory'] }}/
       - name: Verify artifacts for Maven Central
         working-directory: ${{ inputs['working-directory'] }}
-        run: |
-          printf "Checking for required artifacts...\n"
-
-          # Maven Central requires: main JAR, sources JAR, javadoc JAR, POM
-          # Check in all target directories (supports multi-module projects)
-          SOURCES_COUNT=$(find . -type f -name "*-sources.jar" -path "*/target/*" | wc -l)
-          JAVADOC_COUNT=$(find . -type f -name "*-javadoc.jar" -path "*/target/*" | wc -l)
-
-          if [ "$SOURCES_COUNT" -eq 0 ]; then
-            printf "::error::Missing sources JAR. Maven Central requires sources.\n"
-            printf "::error::Build with build-type: lib to generate sources and javadoc JARs\n"
-            exit 1
-          fi
-
-          if [ "$JAVADOC_COUNT" -eq 0 ]; then
-            printf "::error::Missing javadoc JAR. Maven Central requires javadoc.\n"
-            printf "::error::Build with build-type: lib to generate sources and javadoc JARs\n"
-            exit 1
-          fi
-
-          printf "✓ All required artifacts present:\n"
-          printf "  - Sources JARs: %s\n" "$SOURCES_COUNT"
-          printf "  - Javadoc JARs: %s\n" "$JAVADOC_COUNT"
-          find . -type f -name "*.jar" -path "*/target/*" ! -name "original-*.jar" -exec ls -lh {} \;
+        run: bash "${{ github.workspace }}/.github-shared/scripts/publish/maven-validate-artifacts.sh"
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs['working-directory'] }}

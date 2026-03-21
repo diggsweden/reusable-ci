@@ -18,6 +18,7 @@ load "${BATS_TEST_DIRNAME}/../test_helper.bash"
 
 setup() {
   common_setup
+  setup_github_env
   export TAG_NAME="v1.0.0"
   export REPOSITORY="owner/repo"
   export DRAFT="false"

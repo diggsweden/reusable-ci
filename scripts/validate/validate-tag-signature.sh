@@ -9,6 +9,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../ci/env.sh"
+source "$SCRIPT_DIR/../ci/output.sh"
 
 main() {
   local TAG_NAME="${1:-}"
@@ -16,7 +17,7 @@ main() {
   local OSPO_BOT_GPG_PUB="${3:-}"
 
   if [[ -z "$TAG_NAME" ]]; then
-    printf "::error::Usage: validate-tag-signature.sh <tag-name> <github-repository>\n"
+    ci_log_error "Usage: validate-tag-signature.sh <tag-name> <github-repository>"
     exit 1
   fi
 
@@ -35,7 +36,7 @@ main() {
     printf "📝 Requirement: Use annotated tags for releases\n"
     printf "💡 Example: git tag -a v1.0.0 -m 'Release v1.0.0'\n"
     if [[ -n "$repository" ]]; then
-      printf "📚 %s/%s/blob/main/.github/WORKFLOWS.md#tag-requirements\n" "$CI_SERVER_URL" "$repository"
+      printf "📚 %s\n" "$(ci_docs_url "$repository" ".github/WORKFLOWS.md#tag-requirements")"
     fi
     exit 1
   fi
@@ -61,7 +62,7 @@ main() {
   fi
 
   if [[ "$HAS_GPG_SIG" == "false" ]] && [[ "$HAS_SSH_SIG" == "false" ]]; then
-    printf "::error::✗ Tag '%s' is not signed\n" "$TAG_NAME"
+    ci_log_error "✗ Tag '$TAG_NAME' is not signed"
     printf "\n"
     printf "Release tags must be cryptographically signed.\n"
     printf "Create with: git tag -s v1.0.0 -m \"Release v1.0.0\"\n"

@@ -18,6 +18,7 @@ load "${BATS_TEST_DIRNAME}/../test_helper.bash"
 
 setup() {
   common_setup
+  setup_github_env
 }
 
 teardown() {
@@ -53,7 +54,7 @@ EOF
   assert_success
   assert_output --partial "version=unknown"
   assert_output --partial "version-code=unknown"
-  assert_equal "$stderr" "::warning::gradle.properties not found, version info unavailable"
+  assert_output --partial "::warning::gradle.properties not found, version info unavailable"
 }
 
 @test "get-version-info parses version from gradle.properties" {

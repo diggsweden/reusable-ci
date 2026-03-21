@@ -25,6 +25,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
 main() {
   local PROJECT_TYPE="$1"
   local WORKING_DIR="${2:-.}"
@@ -52,7 +55,7 @@ main() {
     ;;
 
   *)
-    printf "::error::Unsupported project type: %s\n" "$PROJECT_TYPE"
+    ci_log_error "Unsupported project type: $PROJECT_TYPE"
     printf "Supported types: maven, npm, gradle\n"
     exit 1
     ;;
