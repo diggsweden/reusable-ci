@@ -209,9 +209,7 @@ jobs:
           SIGN_ARTIFACTS: ${{ inputs['sign-artifacts'] }}
           GPG_KEY_ID: ${{ steps.import-gpg.outputs.keyid }}
         run: >-
-          bash .github-shared/scripts/release/create-sbom-zip.sh
-          "${{ steps.release-metadata.outputs.project-name }}"
-          "${{ steps.release-metadata.outputs.version }}"
+          bash .github-shared/scripts/release/create-sbom-zip.sh "${{ steps.release-metadata.outputs.project-name }}" "${{ steps.release-metadata.outputs.version }}"
       - name: Prepare release notes
         env:
           SOURCE_FILE: ReleasenotesTmp

@@ -50,7 +50,7 @@ These don't break the format — a GitLab adapter can map `github-packages` → 
 
 All three proposals agree. Verified as sound:
 
-```
+```text
                     ┌─────────────────────┐
                     │   artifacts.yml     │  Platform-agnostic product intent
                     └─────────┬───────────┘
@@ -111,7 +111,7 @@ fi
 #### 1e. Introduce provider dispatch for release creation
 
 Restructure:
-```
+```text
 scripts/release/
   create-github-release.sh    →  providers/github.sh  (move, don't delete)
   create-release.sh           →  new generic entrypoint
@@ -139,7 +139,7 @@ Apply same pattern to:
 
 Define a convention for inter-stage results:
 
-```
+```text
 .ci-results/
   build-result.json
   publish-result.json
@@ -191,7 +191,7 @@ Extend `docs/workflow-design-policy.md` to codify:
 
 ### Phase 3: Build the GitLab CI adapter
 
-```
+```text
 .gitlab/
   ci/
     pullrequest.yml              # MR pipeline orchestrator
@@ -230,7 +230,7 @@ variables:
 ```
 
 **Add GitLab examples** alongside existing GitHub examples:
-```
+```text
 examples/maven-app/
   .github/workflows/release-workflow.yml     # existing
   .gitlab-ci.yml                              # new
@@ -268,7 +268,7 @@ Features that don't have cross-platform equivalents — handle with graceful deg
 
 ## End-State Directory Structure
 
-```
+```text
 reusable-ci/
 ├── .github/workflows/           # GitHub Actions adapter (existing, stable public API)
 │   ├── pullrequest-orchestrator.yml
@@ -340,7 +340,7 @@ reusable-ci/
 
 ## Ordering and Dependencies
 
-```
+```text
 Phase 1e (provider dispatch)      ── Depends on CI_PLATFORM (done)
 Phase 1g (stage manifests)        ── Independent, can overlap with 1e
          │

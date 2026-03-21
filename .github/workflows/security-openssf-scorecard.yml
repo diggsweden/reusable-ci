@@ -15,6 +15,9 @@
 #          publish-results: true # Optional, default is true
 #
 # 2. The results will be available as artifacts and in the GitHub Code Scanning dashboard.
+#
+# Note: This workflow is repository-general and does not use reusable-ci scripts.
+#       Do NOT pass reusable-ci-ref — it is not a valid input for this workflow.
 name: Analyze OpenSSF Scorecard
 on:
   workflow_call: # yamllint disable-line rule:truthy

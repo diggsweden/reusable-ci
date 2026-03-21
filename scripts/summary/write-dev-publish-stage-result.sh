@@ -16,7 +16,7 @@ main() {
 
   local stage_ran="false"
   case "${PROJECT_TYPE:-}" in
-    maven | npm | gradle) stage_ran="true" ;;
+  maven | npm | gradle) stage_ran="true" ;;
   esac
 
   local stage_result

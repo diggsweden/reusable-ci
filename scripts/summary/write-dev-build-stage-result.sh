@@ -16,22 +16,22 @@ main() {
   gradle_result="$(ci_normalize_result "${BUILD_GRADLE_DEV_RESULT:-skipped}")"
 
   case "${PROJECT_TYPE:-}" in
-    maven)
-      target_key='maven'
-      target_result="$maven_result"
-      ;;
-    npm)
-      target_key='npm'
-      target_result="$npm_result"
-      ;;
-    gradle)
-      target_key='gradle'
-      target_result="$gradle_result"
-      ;;
-    *)
-      target_key='unknown'
-      target_result='skipped'
-      ;;
+  maven)
+    target_key='maven'
+    target_result="$maven_result"
+    ;;
+  npm)
+    target_key='npm'
+    target_result="$npm_result"
+    ;;
+  gradle)
+    target_key='gradle'
+    target_result="$gradle_result"
+    ;;
+  *)
+    target_key='unknown'
+    target_result='skipped'
+    ;;
   esac
 
   local stage_ran="false"

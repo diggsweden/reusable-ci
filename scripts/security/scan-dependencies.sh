@@ -43,14 +43,14 @@ SCAN_PATH="${SCAN_PATH:-.}"
 map_severity() {
   local level="$1"
   case "${level,,}" in
-    critical) printf 'CRITICAL' ;;
-    high) printf 'CRITICAL,HIGH' ;;
-    moderate) printf 'CRITICAL,HIGH,MEDIUM' ;;
-    low) printf 'CRITICAL,HIGH,MEDIUM,LOW' ;;
-    *)
-      ci_log_warning "Unknown severity '${level}', defaulting to CRITICAL" >&2
-      printf 'CRITICAL'
-      ;;
+  critical) printf 'CRITICAL' ;;
+  high) printf 'CRITICAL,HIGH' ;;
+  moderate) printf 'CRITICAL,HIGH,MEDIUM' ;;
+  low) printf 'CRITICAL,HIGH,MEDIUM,LOW' ;;
+  *)
+    ci_log_warning "Unknown severity '${level}', defaulting to CRITICAL" >&2
+    printf 'CRITICAL'
+    ;;
   esac
 }
 
