@@ -41,7 +41,12 @@ jobs:
   dependency-review:
     name: Dependency Review
     if: ${{ fromJson(inputs['pr-policy-json']).dependencyreview }}
+    permissions:
+      contents: read
+      security-events: write
     uses: ./.github/workflows/security-dependency-review.yml
+    with:
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   megalint:
     name: MegaLinter
     if: ${{ fromJson(inputs['pr-policy-json']).megalint }}

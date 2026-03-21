@@ -2,9 +2,9 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 # Description:
-# This workflow performs a dependency review to identify vulnerable or outdated dependencies in your repository.
-# It uses GitHub's Dependency Review Action to analyze dependencies and fail the workflow if vulnerabilities
-# of a specified severity level are found.
+# This workflow scans project dependencies for known vulnerabilities using Trivy.
+# In diff mode (default for PRs), only newly introduced vulnerabilities cause failure.
+# Results are uploaded as SARIF for inline PR annotations via GitHub Code Scanning.
 #
 # Usage:
 # 1. Add the following to your workflow file:
@@ -14,7 +14,8 @@
 #        with:
 #          fail-on-severity: "critical" # Optional, default is "critical"
 #
-# 2. The workflow will analyze dependencies and fail if vulnerabilities of the specified severity level are found.
+# 2. The workflow will scan dependencies and fail if new vulnerabilities of the
+#    specified severity level are found.
 #    Supported severity levels: critical, high, moderate, low.
 name: Review Dependencies
 on:
@@ -25,8 +26,14 @@ on:
         required: false
         default: "critical"
         type: string
+      reusable-ci-ref:
+        description: "Git ref for reusable-ci scripts checkout"
+        required: false
+        default: "main"
+        type: string
 permissions:
   contents: read
+  security-events: write
 jobs:
   dependency-review:
     name: Dependency Review Analysis
@@ -36,7 +43,23 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - name: Dependency Review
-        uses: actions/dependency-review-action@3c4e3dcb1aa7874d2c16be7d79418e9b7efd6261 # v4.8.2
         with:
-          fail-on-severity: ${{ inputs.fail-on-severity }}
+          fetch-depth: 0
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Scan dependencies
+        env:
+          FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
+          SCAN_MODE: diff
+        run: bash .github-shared/scripts/security/scan-dependencies.sh
+      - name: Upload SARIF to GitHub Security
+        if: always() && hashFiles('trivy-dependency-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@1b168cd39490f61582a9beae412bb7057a6b2c4e # v4.31.8
+        with:
+          sarif_file: trivy-dependency-results.sarif
+          category: dependency-review
