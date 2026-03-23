@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.2] - 2026-03-23
+
+### Changed
+
+- Update github actions
+- Clearify we dont need ref ci for scorecard
+- Replace dependency-review-action with Trivy-based scanner
+- Extract shared CI helpers and consolidate inline workflow logic
+- Update mise tools (#85)
+
+### Fixed
+
+- Use available trivy
+- Dont use hardcoded tmp in ci
+
 ## [2.7.1] - 2026-03-20
 
 ### Added
@@ -14,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Correct path for extra commitlint
+
 
 ## [2.7.0] - 2026-03-18
 
@@ -338,6 +354,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial commit
 
+[2.7.2]: https://github.com/diggsweden/reusable-ci/compare/v2.7.1..v2.7.2
 [2.7.1]: https://github.com/diggsweden/reusable-ci/compare/v2.7.0..v2.7.1
 [2.7.0]: https://github.com/diggsweden/reusable-ci/compare/v2.6.2..v2.7.0
 [2.6.2]: https://github.com/diggsweden/reusable-ci/compare/v2.6.1..v2.6.2
