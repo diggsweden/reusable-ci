@@ -113,11 +113,11 @@ jobs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
       - name: Checkout .github repository for scripts
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: diggsweden/reusable-ci
           ref: ${{ inputs['reusable-ci-ref'] }}
@@ -167,7 +167,7 @@ jobs:
             "${{ inputs['working-directory'] }}/build/libs" \
             "${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}"
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - name: Check registry authentication configuration
         env:
           USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
@@ -175,7 +175,7 @@ jobs:
           REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
         run: bash .github-shared/scripts/registry/validate-auth.sh
       - name: Login to Container Registry
-        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ inputs.registry }}
           username: ${{ inputs['registry-username'] || github.actor }}
@@ -191,7 +191,7 @@ jobs:
           printf "→ Dev tag: %s\n" "${DEV_VERSION}"
       - name: Build and push
         id: build
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: ${{ inputs['working-directory'] }}
           file: ${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}
