@@ -40,6 +40,10 @@
 name: Bump Version
 on:
   workflow_call: # yamllint disable-line rule:truthy
+    outputs:
+      release-sha:
+        description: "Commit SHA the release tag was moved to (the release commit)"
+        value: ${{ jobs.bump-version.outputs.release-sha }}
     inputs:
       branch:
         description: "Branch to checkout and work on (default: main)"
@@ -132,6 +136,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      release-sha: ${{ steps.move-tag.outputs.release-sha }}
     steps:
       - name: Harden GitHub runner
         uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
@@ -293,4 +299,5 @@ jobs:
           commit_user_email: ${{ steps.import-gpg.outputs.email }}
           commit_options: " --signoff"
       - name: Move tag to current commit
+        id: move-tag
         run: bash .github-shared/scripts/version/move-tag.sh

@@ -31,6 +31,9 @@ on:
       result-json:
         description: Prepare stage result payload
         value: ${{ jobs.summarize-prepare-stage.outputs.result-json }}
+      release-sha:
+        description: Commit SHA the release tag was moved to
+        value: ${{ jobs.execute-version-bump.outputs.release-sha }}
 permissions:
   contents: read
 jobs:

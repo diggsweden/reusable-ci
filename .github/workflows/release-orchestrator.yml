@@ -202,12 +202,18 @@ jobs:
       should-check-authorization: ${{ steps.plan.outputs.should-check-authorization }}
       should-run-version-bump: ${{ steps.plan.outputs.should-run-version-bump }}
       should-create-draft-release: ${{ steps.plan.outputs.should-create-draft-release }}
+
+      # Commit SHA for reusable-ci-ref, resolved before any tag movement.
+      # Downstream stages use this instead of the original ref to avoid
+      # actions/checkout v6 validation failures when version-bump moves the tag.
+      reusable-ci-ref: ${{ steps.checkout-ci.outputs.commit }}
     steps:
       - name: Checkout caller repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.branch }}
       - name: Checkout reusable-ci helper scripts
+        id: checkout-ci
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: diggsweden/reusable-ci
@@ -274,7 +280,7 @@ jobs:
       sign-artifacts: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).sign_artifacts }}
       check-authorization: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).check_authorization }}
       branch: ${{ inputs.branch }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+      reusable-ci-ref: ${{ needs.parse-config.outputs.reusable-ci-ref }}
   # ===== Stage 2: Release Preparation =====
   # Release preparation now lives below this control-plane stage call.
   execute-prepare-stage:
@@ -288,7 +294,7 @@ jobs:
     uses: ./.github/workflows/release-prepare-stage.yml
     with:
       branch: ${{ inputs.branch }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+      reusable-ci-ref: ${{ needs.parse-config.outputs.reusable-ci-ref }}
       artifacts: ${{ needs.parse-config.outputs.artifacts }}
       should-run-version-bump: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).run_version_bump }}
       file-pattern: ${{ inputs['file-pattern'] }}
@@ -303,8 +309,8 @@ jobs:
     secrets: inherit
     uses: ./.github/workflows/release-build-stage.yml
     with:
-      branch: ${{ inputs.branch }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+      branch: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
+      reusable-ci-ref: ${{ needs.parse-config.outputs.reusable-ci-ref }}
       maven-artifacts: ${{ needs.parse-config.outputs.maven-artifacts }}
       npm-artifacts: ${{ needs.parse-config.outputs.npm-artifacts }}
       gradle-artifacts: ${{ needs.parse-config.outputs.gradle-artifacts }}
@@ -314,7 +320,7 @@ jobs:
   # Publish fanout now lives below this control-plane stage call.
   execute-publish-stage:
     name: Publish
-    needs: [parse-config, execute-build-stage]
+    needs: [parse-config, execute-prepare-stage, execute-build-stage]
     if: ${{ !failure() && !cancelled() }}
     permissions:
       contents: write
@@ -326,8 +332,8 @@ jobs:
     secrets: inherit
     uses: ./.github/workflows/release-publish-stage.yml
     with:
-      branch: ${{ inputs.branch }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+      branch: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
+      reusable-ci-ref: ${{ needs.parse-config.outputs.reusable-ci-ref }}
       xcodeios-artifacts: ${{ needs.parse-config.outputs.xcodeios-artifacts }}
       githubpackages-artifacts: ${{ needs.parse-config.outputs.githubpackages-artifacts }}
       mavencentral-artifacts: ${{ needs.parse-config.outputs.mavencentral-artifacts }}
@@ -338,7 +344,7 @@ jobs:
   # Release creation stays top-level because it is the public end of the pipeline.
   create-release:
     name: Create GitHub Release
-    needs: [parse-config, execute-publish-stage]
+    needs: [parse-config, execute-prepare-stage, execute-publish-stage]
     # Run even if previous jobs were skipped but at least one succeeded
     if: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).create_release }}
     permissions:
@@ -349,7 +355,7 @@ jobs:
     uses: ./.github/workflows/release-create-github.yml
     with:
       release-name: "${{ github.ref_name }}"
-      checkout-ref: ${{ inputs.branch }}
+      checkout-ref: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
       attach-artifacts: ${{ inputs['release.attachartifacts'] }}
       generate-sbom: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).generate_sbom }}
       sign-artifacts: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).sign_artifacts }}
@@ -359,7 +365,7 @@ jobs:
       changelog-config: ${{ inputs['changelog.config'] }}
       make-latest: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).make_latest }}
       has-containers: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).has_containers }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+      reusable-ci-ref: ${{ needs.parse-config.outputs.reusable-ci-ref }}
   # ===== Stage 6: Summary =====
   release-summary:
     name: Release Summary
@@ -378,12 +384,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
           fetch-depth: 1
       - name: Checkout reusable-ci helper scripts
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
+          ref: ${{ needs.parse-config.outputs.reusable-ci-ref }}
           path: .github-shared
           sparse-checkout: scripts
       - name: Generate Release Summary
@@ -391,7 +398,7 @@ jobs:
           # Release context.
           RELEASE_VERSION: ${{ github.ref_name }}
           RELEASE_BRANCH: ${{ inputs.branch }}
-          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_COMMIT: ${{ needs.execute-prepare-stage.outputs.release-sha || github.sha }}
           RELEASE_ACTOR: ${{ github.actor }}
 
           # Release preparation result.

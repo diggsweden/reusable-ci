@@ -15,6 +15,10 @@ main() {
     printf "Moving tag %s from previous commit to current\n" "$LATEST_TAG"
     git tag -f -s "$LATEST_TAG" -m "$LATEST_TAG"
     git push --force origin "$LATEST_TAG"
+
+    local RELEASE_SHA
+    RELEASE_SHA=$(git rev-parse HEAD)
+    printf "release-sha=%s\n" "$RELEASE_SHA" >>"${GITHUB_OUTPUT:-/dev/null}"
   else
     printf "✗ Tag %s points to unexpected commit\n" "$LATEST_TAG"
     printf "Expected: %s (HEAD~1)\n" "$PREV_SHA"
