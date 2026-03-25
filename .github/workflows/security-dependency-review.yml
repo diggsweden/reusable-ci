@@ -33,13 +33,14 @@ on:
         type: string
 permissions:
   contents: read
-  security-events: write
 jobs:
   dependency-review:
     name: Dependency Review Analysis
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: github.event_name == 'pull_request'
+    env:
+      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -57,9 +58,17 @@ jobs:
           FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
           SCAN_MODE: diff
         run: bash .github-shared/scripts/security/scan-dependencies.sh
-      - name: Upload SARIF to GitHub Security
+      - name: Save dependency review SARIF artifact
         if: always() && hashFiles('trivy-dependency-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@b1bff81932f5cdfc8695c7752dcee935dcd061c8 # v4.33.0
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          sarif_file: trivy-dependency-results.sarif
-          category: dependency-review
+          name: sarif-dependency-review
+          path: trivy-dependency-results.sarif
+          retention-days: 5
+          if-no-files-found: ignore
+      - name: Upload dependency review results to Code Scanning
+        if: always() && hashFiles('trivy-dependency-results.sarif') != ''
+        env:
+          SARIF_FILE: trivy-dependency-results.sarif
+          SARIF_CATEGORY: dependency-review
+        run: bash .github-shared/scripts/security/upload-sarif.sh

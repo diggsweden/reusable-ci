@@ -21,7 +21,6 @@ jobs:
     permissions:
       contents: read
       packages: read
-      security-events: write
     with:
       project-type: npm
       reusable-ci-ref: ${{ github.head_ref }}

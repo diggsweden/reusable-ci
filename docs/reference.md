@@ -33,7 +33,7 @@
 |----------|------------|------------|------------|
 | **PR Workflow** | `contents: read` | Read code | Cannot checkout |
 | | `packages: read` | Read private packages | Cannot fetch dependencies |
-| | `security-events: write` | Upload scan results | Security tab won't show results |
+| | `secrets: inherit` | Pass `SARIF_UPLOAD_TOKEN` | Code Scanning won't show results |
 | **Release Workflow** | `contents: write` | Create tags/releases | Cannot create release |
 | | `packages: write` | Push packages | Cannot publish artifacts |
 | | `id-token: write` | OIDC for SLSA | No attestation |
@@ -56,6 +56,7 @@
    - GPG signing → Request `OSPO_BOT_GPG_PRIV`, `OSPO_BOT_GPG_PASS`, and `OSPO_BOT_GPG_PUB`
    - Maven Central → Request `MAVENCENTRAL_USERNAME` and `MAVENCENTRAL_PASSWORD`
    - NPM public registry → Request `NPM_TOKEN` (only if publishing to npmjs.org)
+   - Code Scanning upload → Request `SARIF_UPLOAD_TOKEN`
 4. **Get enabled** - DiggSweden admin grants your repository access to the secrets
 
 - **No manual configuration** - Developers never touch secret values
@@ -67,6 +68,35 @@ Used for pushing commits, moving tags, and creating GitHub releases.
 **Requires a fine-grained PAT** with `contents: write` permission, scoped to specific repositories. Classic PATs are rejected.
 
 Note: GitHub Packages uploads use `GITHUB_TOKEN` (automatic, no configuration needed).
+
+### SARIF_UPLOAD_TOKEN
+
+Used for uploading security scan results (SARIF) to GitHub Code Scanning. Without this token, scans still run and SARIF files are saved as workflow artifacts, but results won't appear in the Code Scanning tab.
+
+**Option A — GitHub App (recommended):**
+- Create a GitHub App with `code_scanning_alerts: write` repository permission
+- Install on target repositories
+- Generate installation token and store as org secret `SARIF_UPLOAD_TOKEN`
+
+**Option B — Fine-grained PAT:**
+- Create a fine-grained PAT with "Code scanning alerts" set to **Write**
+- Scope to the target repositories
+- Store as org secret `SARIF_UPLOAD_TOKEN`
+
+The token is passed to reusable workflows via `secrets: inherit`.
+
+**Code Scanning categories:**
+
+Results appear in the Code Scanning tab grouped by category:
+
+| Category | Scanner | When |
+|----------|---------|------|
+| `megalinter` | MegaLinter | PR quality checks |
+| `dependency-review` | Trivy | PR dependency scan |
+| `scorecard` | OpenSSF Scorecard | Scheduled analysis |
+| `container-scan` | Trivy | Release container build |
+
+SARIF files are also saved as workflow artifacts (`sarif-megalinter`, `sarif-dependency-review`, `sarif-scorecard`, `sarif-container-scan`) regardless of whether the token is configured.
 
 ---
 

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: CC0-1.0
 # Description:
 # This workflow runs MegaLinter to analyze your codebase for linting, security, and formatting issues.
-# It uploads the results as artifacts and integrates with the GitHub Security tab.
+# It uploads the results as artifacts and integrates with GitHub Code Scanning.
 #
 # How to use:
 # 1. Add the following to your workflow file:
@@ -16,7 +16,7 @@
 # 2. Ensure your repository has a MegaLinter configuration file (e.g., `.mega-linter.yml`).
 #    If not, MegaLinter will use its default configuration.
 #
-# 3. The results will be available as artifacts and in the GitHub Security tab.
+# 3. The results will be available as artifacts and in GitHub Code Scanning.
 name: Lint MegaLinter
 on:
   workflow_call: # yamllint disable-line rule:truthy
@@ -31,6 +31,11 @@ on:
         required: false
         default: "audit"
         type: string
+      reusable-ci-ref:
+        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+        required: false
+        default: "main"
+        type: string
 permissions:
   contents: read
 jobs:
@@ -40,9 +45,9 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      security-events: write
     env:
       MEGALINTER_CONFIG: ${{ inputs.megalinter-config }} # Use the input value
+      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
     steps:
       - name: Harden GitHub runner
         uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
@@ -63,8 +68,25 @@ jobs:
           path: |
             megalinter-reports
           retention-days: 5
-      - name: Upload MegaLinter scan results to GitHub Security tab
+      - name: Save MegaLinter SARIF artifact
         if: success() || failure()
-        uses: github/codeql-action/upload-sarif@b1bff81932f5cdfc8695c7752dcee935dcd061c8 # v4.33.0
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          sarif_file: "megalinter-reports/megalinter-report.sarif"
+          name: sarif-megalinter
+          path: megalinter-reports/megalinter-report.sarif
+          retention-days: 5
+          if-no-files-found: ignore
+      - name: Checkout reusable-ci scripts
+        if: success() || failure()
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Upload MegaLinter results to Code Scanning
+        if: success() || failure()
+        env:
+          SARIF_FILE: megalinter-reports/megalinter-report.sarif
+          SARIF_CATEGORY: megalinter
+        run: bash .github-shared/scripts/security/upload-sarif.sh

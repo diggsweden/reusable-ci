@@ -27,7 +27,7 @@
 # - Vulnerability scanning with severity thresholds
 # - SBOM generation for dependency transparency
 # - Signed attestations attached to image
-# - Security scan results uploaded to GitHub
+# - Security scan results uploaded to Code Scanning (when SARIF_UPLOAD_TOKEN is configured)
 # - Namespace validation (enforces ghcr.io/OWNER/REPO pattern)
 #
 # Registry Authentication:
@@ -36,12 +36,13 @@
 #
 # Required Secrets:
 #   registryPassword: Required when useGithubToken=false (for Docker Hub, Quay, etc)
+#   SARIF_UPLOAD_TOKEN: Optional — uploads Trivy scan results to Code Scanning
 #
 # Required Permissions:
 #   contents: read         # Read Containerfile and context
 #   packages: write        # Push images to registry
 #   id-token: write       # Generate OIDC token for SLSA (GHCR only)
-#   security-events: write # Upload vulnerability scan results
+#   secrets: inherit       # Pass SARIF_UPLOAD_TOKEN for Code Scanning upload
 #   attestations: write   # Attach SBOM attestation
 #   actions: read         # Read workflow for provenance
 #
@@ -157,6 +158,9 @@ on:
       registry-password:
         description: "Registry password/token (required when use-ci-token=false)"
         required: false
+      SARIF_UPLOAD_TOKEN:
+        description: "Token with code_scanning_alerts:write for uploading SARIF to Code Scanning"
+        required: false
     outputs:
       image:
         description: "Full image name with registry"
@@ -179,8 +183,9 @@ jobs:
       packages: write
       id-token: write # Required for SLSA provenance
       attestations: write # Required for SBOM attestation
-      security-events: write # Required for security scanning
       actions: read # Required for SLSA provenance v2
+    env:
+      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
     outputs:
       image: ${{ steps.image.outputs.image }}
       digest: ${{ steps.build.outputs.digest }}
@@ -342,12 +347,20 @@ jobs:
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
           vuln-type: 'os,library'
-      - name: Upload Trivy scan results
+      - name: Save container scan SARIF artifact
         if: *if_scan_enabled
-        uses: github/codeql-action/upload-sarif@b1bff81932f5cdfc8695c7752dcee935dcd061c8 # v4.33.0
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          sarif_file: 'trivy-results.sarif'
-          category: 'container-scan'
+          name: sarif-container-scan
+          path: trivy-results.sarif
+          retention-days: 5
+          if-no-files-found: ignore
+      - name: Upload container scan results to Code Scanning
+        if: ${{ inputs['enable-scan'] && inputs['push-image'] }}
+        env:
+          SARIF_FILE: trivy-results.sarif
+          SARIF_CATEGORY: container-scan
+        run: bash .github-shared/scripts/security/upload-sarif.sh
       - name: Generate Container SBOMs (SPDX + CycloneDX)
         if: &if_sbom_enabled ${{ inputs['enable-sbom'] && inputs['push-image'] }}
         env:

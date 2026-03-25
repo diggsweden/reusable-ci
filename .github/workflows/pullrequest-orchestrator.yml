@@ -12,23 +12,25 @@
 # 2. Executes enabled linters in parallel for faster feedback
 # 3. Performs security scanning (SAST, dependency checks, secret detection)
 # 4. Validates licenses for compliance
-# 5. Uploads results to GitHub Security tab for visibility
+# 5. Uploads results to GitHub Code Scanning for visibility
 #
 # Security controls:
 # - Secret detection to prevent credential leaks
 # - Dependency vulnerability scanning
 # - License compliance validation
 # - SAST (Static Application Security Testing)
-# - Results uploaded to GitHub Security dashboard
+# - Results uploaded to GitHub Code Scanning (requires SARIF_UPLOAD_TOKEN secret)
 #
 # Required Secrets:
 #   None required - uses GITHUB_TOKEN for operations
+#   Optional: SARIF_UPLOAD_TOKEN for uploading scan results to Code Scanning
+#             (requires code_scanning_alerts:write — GitHub App or fine-grained PAT)
 #   Optional: Organization secrets for private package access
 #
 # Required Permissions:
 #   contents: read         # Read source code
 #   packages: read         # Access private packages
-#   security-events: write # Upload security findings
+#   secrets: inherit       # Pass SARIF_UPLOAD_TOKEN for Code Scanning upload
 #
 # Configurable Linters:
 #   linters.commitlint: Commit message linting (default: true)
@@ -139,7 +141,7 @@ jobs:
     needs: [compose-pr-interface]
     permissions:
       contents: read
-      security-events: write
+    secrets: inherit
     uses: ./.github/workflows/pullrequest-quality-stage.yml
     with:
       pr-context-json: ${{ needs.compose-pr-interface.outputs.pr-context-json }}
@@ -166,4 +168,5 @@ jobs:
         env:
           PROJECT_TYPE: ${{ inputs['project-type'] }}
           QUALITY_STAGE_RESULT_JSON: ${{ needs.execute-quality-stage.outputs.result-json }}
+          HAS_SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN != '' }}
         run: bash .github-shared/scripts/summary/write-pr-summary.sh

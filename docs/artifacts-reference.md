@@ -438,7 +438,7 @@ Containers reference artifacts via the `from:` field and are built after all art
 - **Type:** `boolean`
 - **Description:** Run Trivy vulnerability scan
 - **Default:** `true`
-- **Requires:** `security-events: write` permission
+- **Requires:** `SARIF_UPLOAD_TOKEN` org secret for results to appear in Code Scanning
 - **Example:** `enable-scan: true`
 
 ---
@@ -800,7 +800,6 @@ jobs:
       packages: write
       id-token: write
       actions: read
-      security-events: write
       attestations: write
     secrets: inherit
     with:

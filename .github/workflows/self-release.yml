@@ -25,7 +25,6 @@ jobs:
       packages: write
       id-token: write
       actions: read
-      security-events: write
       attestations: write
     secrets: inherit
     with:

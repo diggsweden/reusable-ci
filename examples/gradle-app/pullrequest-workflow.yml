@@ -24,7 +24,6 @@ jobs:
     permissions:
       contents: read
       packages: read
-      security-events: write
     with:
       reusable-ci-ref: v2.7.0
       project-type: gradle

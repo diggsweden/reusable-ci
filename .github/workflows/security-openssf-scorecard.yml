@@ -16,8 +16,8 @@
 #
 # 2. The results will be available as artifacts and in the GitHub Code Scanning dashboard.
 #
-# Note: This workflow is repository-general and does not use reusable-ci scripts.
-#       Do NOT pass reusable-ci-ref — it is not a valid input for this workflow.
+# Note: This workflow is repository-general. The reusable-ci-ref input is only
+#       used for the SARIF upload script checkout.
 name: Analyze OpenSSF Scorecard
 on:
   workflow_call: # yamllint disable-line rule:truthy
@@ -37,6 +37,11 @@ on:
         required: false
         default: "audit"
         type: string
+      reusable-ci-ref:
+        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+        required: false
+        default: "main"
+        type: string
 permissions:
   contents: read
 jobs:
@@ -46,10 +51,10 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      # Needed for Code scanning upload
-      security-events: write
       # Needed for GitHub OIDC token if publish_results is true
       id-token: write
+    env:
+      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
     steps:
       - name: Harden GitHub runner
         uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
@@ -65,17 +70,28 @@ jobs:
           results_file: results.sarif
           results_format: sarif
           publish_results: ${{ inputs.publish-results }}
-      # Upload the results as artifacts (optional). Commenting out will disable
-      # uploads of run results in SARIF format to the repository Actions tab.
       - name: Upload artifact
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: SARIF file
           path: results.sarif
           retention-days: 5
-      # Upload the results to GitHub's code scanning dashboard (optional).
-      # Commenting out will disable upload of results to your repo's Code Scanning dashboard
-      - name: Upload to code-scanning
-        uses: github/codeql-action/upload-sarif@b1bff81932f5cdfc8695c7752dcee935dcd061c8 # v4.33.0
+      - name: Save scorecard SARIF artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          sarif_file: results.sarif
+          name: sarif-scorecard
+          path: results.sarif
+          retention-days: 5
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Upload scorecard results to Code Scanning
+        if: success() || failure()
+        env:
+          SARIF_FILE: results.sarif
+          SARIF_CATEGORY: scorecard
+        run: bash .github-shared/scripts/security/upload-sarif.sh

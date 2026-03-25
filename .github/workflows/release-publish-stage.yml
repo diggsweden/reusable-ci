@@ -138,7 +138,6 @@ jobs:
       packages: write
       id-token: write
       attestations: write
-      security-events: write
       actions: read
     secrets: inherit
     uses: ./.github/workflows/publish-container.yml

@@ -42,7 +42,6 @@ jobs:
     uses: diggsweden/reusable-ci/.github/workflows/lint-devbase.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     permissions:
       contents: read
-      security-events: write
 ```
 
 #### Example Justfile Structure

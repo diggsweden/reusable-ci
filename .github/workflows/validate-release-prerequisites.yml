@@ -207,5 +207,6 @@ jobs:
           HAS_MAVENCENTRAL_USERNAME: ${{ secrets.MAVENCENTRAL_USERNAME != '' }}
           HAS_MAVENCENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD != '' }}
           HAS_NPM_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
+          HAS_SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN != '' }}
         run: |
           bash .github-shared/scripts/summary/write-prerequisites-summary.sh

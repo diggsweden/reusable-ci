@@ -142,7 +142,6 @@ jobs:
         permissions:
           contents: read
           packages: read
-          security-events: write
         secrets: inherit
         with:
           reusable-ci-ref: v2.7.0
@@ -175,7 +174,6 @@ jobs:
          packages: write
          id-token: write
          actions: read
-         security-events: write
          attestations: write
        secrets: inherit
        with:

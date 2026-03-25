@@ -28,13 +28,15 @@
 #   MAVEN_CENTRAL_USERNAME: For Maven Central publishing (when publish-to includes maven-central)
 #   MAVEN_CENTRAL_PASSWORD: For Maven Central publishing (when publish-to includes maven-central)
 #   NPM_TOKEN: For NPM registry publishing (npm packages)
+#   SARIF_UPLOAD_TOKEN: Optional — uploads scan results to Code Scanning
+#                      (requires code_scanning_alerts:write — GitHub App or fine-grained PAT)
 #
 # Required Permissions:
 #   contents: write       # Create releases and tags
 #   packages: write       # Publish packages and containers
 #   id-token: write      # OIDC for attestations
 #   attestations: write  # Attach SBOMs
-#   security-events: write # Upload scan results
+#   secrets: inherit       # Pass SARIF_UPLOAD_TOKEN for Code Scanning upload
 #   actions: read        # Read workflow for SLSA
 #
 # v3 Design
@@ -327,7 +329,6 @@ jobs:
       packages: write
       id-token: write
       attestations: write
-      security-events: write
       actions: read
     secrets: inherit
     uses: ./.github/workflows/release-publish-stage.yml
