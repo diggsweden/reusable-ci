@@ -5,12 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.4] - 2026-03-26
+
+### Changed
+
+- Change sarif upload flow
+
 ## [2.7.3] - 2026-03-23
 
 ### Fixed
 
 - Fix lintproblem
 - Workaround the stricter gh 6 action
+
 
 ## [2.7.2] - 2026-03-23
 
@@ -362,6 +369,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial commit
 
+[2.7.4]: https://github.com/diggsweden/reusable-ci/compare/v2.7.3..v2.7.4
 [2.7.3]: https://github.com/diggsweden/reusable-ci/compare/v2.7.2..v2.7.3
 [2.7.2]: https://github.com/diggsweden/reusable-ci/compare/v2.7.1..v2.7.2
 [2.7.1]: https://github.com/diggsweden/reusable-ci/compare/v2.7.0..v2.7.1
