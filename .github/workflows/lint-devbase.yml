@@ -23,7 +23,7 @@
 name: Lint Devbase
 env:
   # renovate: datasource=github-releases depName=diggsweden/devbase-check
-  DEVBASE_CHECK_VERSION: "v0.4.1"
+  DEVBASE_CHECK_VERSION: "v0.4.2"
   # renovate: datasource=github-releases depName=casey/just
   JUST_VERSION: "1.47.0"
   # renovate: datasource=github-releases depName=jdx/mise
