@@ -68,7 +68,7 @@ jobs:
       - name: Install gommitlint
         env:
           # renovate: datasource=gitea-releases depName=itiquette/gommitlint registryUrl=https://codeberg.org
-          GOMMITLINT_VERSION: "0.9.4"
+          GOMMITLINT_VERSION: "0.9.5"
         run: |
           printf "Installing gommitlint v%s\n" "$GOMMITLINT_VERSION"
           curl -sSfL "https://codeberg.org/itiquette/gommitlint/releases/download/v${GOMMITLINT_VERSION}/gommitlint-${GOMMITLINT_VERSION}-linux-x86_64.tar.gz" \
