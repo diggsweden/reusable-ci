@@ -29,9 +29,39 @@ teardown() {
   assert_output "${TEST_DIR}/Containerfile"
 }
 
-@test "validate-containerfile fails when file is missing" {
+@test "validate-containerfile fails when file is missing and no pattern match" {
   run_script "container/validate-containerfile.sh" "${TEST_DIR}/Missingfile"
 
   assert_failure
   assert_output --partial "Containerfile '${TEST_DIR}/Missingfile' not found"
+}
+
+@test "validate-containerfile falls back to Dockerfile* pattern match" {
+  touch "${TEST_DIR}/Dockerfile.build"
+
+  run_script "container/validate-containerfile.sh" "${TEST_DIR}/Containerfile"
+
+  assert_success
+  run get_github_output containerfile
+  assert_output "${TEST_DIR}/Dockerfile.build"
+}
+
+@test "validate-containerfile falls back to Containerfile* pattern match" {
+  touch "${TEST_DIR}/Containerfile.prod"
+
+  run_script "container/validate-containerfile.sh" "${TEST_DIR}/Containerfile"
+
+  assert_success
+  run get_github_output containerfile
+  assert_output "${TEST_DIR}/Containerfile.prod"
+}
+
+@test "validate-containerfile fails when multiple pattern matches are found" {
+  touch "${TEST_DIR}/Dockerfile.build"
+  touch "${TEST_DIR}/Containerfile.prod"
+
+  run_script "container/validate-containerfile.sh" "${TEST_DIR}/Containerfile"
+
+  assert_failure
+  assert_output --partial "Multiple containerfiles found"
 }
