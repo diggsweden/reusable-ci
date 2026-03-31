@@ -36,7 +36,7 @@ main() {
     printf "No artifact dependencies - generating SBOM from container image only\n"
     bash "$SCRIPT_DIR/generate-sbom.sh" \
       "container" \
-      "containerimage" \
+      "analyzed-container" \
       "$VERSION" \
       "$PROJECT_NAME" \
       "." \
@@ -51,7 +51,7 @@ main() {
       printf "Generating SBOM for artifact type: %s\n" "$ARTIFACT_TYPE"
       bash "$SCRIPT_DIR/generate-sbom.sh" \
         "$ARTIFACT_TYPE" \
-        "containerimage" \
+        "analyzed-container" \
         "$VERSION" \
         "$PROJECT_NAME" \
         "." \

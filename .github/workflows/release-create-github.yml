@@ -189,7 +189,7 @@ jobs:
           # Use generic layer names (source, artifact) that work for all project types
           bash .github-shared/scripts/sbom/generate-sbom.sh \
             ${{ inputs['project-type'] }} \
-            "source,artifact" \
+            "source,build,analyzed-artifact" \
             "${{ steps.release-metadata.outputs.version-no-v }}" \
             "${{ steps.release-metadata.outputs.project-name }}"
 

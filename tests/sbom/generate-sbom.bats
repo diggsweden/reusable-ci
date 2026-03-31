@@ -169,6 +169,43 @@ EOF
 }
 
 # =============================================================================
+# Build Layer Tests
+# =============================================================================
+
+@test "generate-sbomgenerates build layer for maven when bom.json exists" {
+  create_maven_project false
+  mkdir -p target
+  echo '{"bomFormat":"CycloneDX"}' > target/bom.json
+
+  run_generate_sbom "maven" "build" "1.0.0" "myapp" "."
+
+  assert_success
+  assert_output --partial "Generating Build layer"
+}
+
+@test "generate-sbomwarns when no bom.json found for maven build layer" {
+  create_maven_project false
+
+  run_generate_sbom "maven" "build" "1.0.0" "myapp" "."
+
+  assert_failure
+  assert_output --partial "No Maven Build SBOM"
+}
+
+@test "generate-sbombuild layer included in multi-layer run does not break packaging" {
+  create_maven_project true
+  mkdir -p target
+  echo '{"bomFormat":"CycloneDX"}' > target/bom.json
+
+  run_generate_sbom "maven" "source,build,analyzed-artifact" "1.0.0" "myapp" "."
+
+  assert_success
+  assert_output --partial "Generating Source layer"
+  assert_output --partial "Generating Build layer"
+  assert_output --partial "Generating Artifact layer"
+}
+
+# =============================================================================
 # Artifact Layer Tests
 # =============================================================================
 
@@ -177,7 +214,18 @@ EOF
   mkdir -p release-artifacts
   cp target/myapp-1.0.0.jar release-artifacts/
 
-  run_generate_sbom "maven" "artifact" "1.0.0" "myapp" "."
+  run_generate_sbom "maven" "analyzed-artifact" "1.0.0" "myapp" "."
+
+  assert_success
+  assert_output --partial "Generating Artifact layer"
+}
+
+@test "generate-sbomgenerates artifact layer for maven JAR without version suffix (finalName)" {
+  create_maven_project false
+  mkdir -p target
+  echo "mock jar" > target/myapp.jar
+
+  run_generate_sbom "maven" "analyzed-artifact" "1.0.0" "myapp" "."
 
   assert_success
   assert_output --partial "Generating Artifact layer"
@@ -186,7 +234,7 @@ EOF
 @test "generate-sbomwarns when no JARs found for maven" {
   create_maven_project false  # No JAR - script fails when no SBOMs generated
 
-  run_generate_sbom "maven" "artifact" "1.0.0" "myapp" "."
+  run_generate_sbom "maven" "analyzed-artifact" "1.0.0" "myapp" "."
 
   assert_failure  # Exits 1 when no SBOMs generated
   assert_output --partial "No JAR files found"
@@ -197,7 +245,7 @@ EOF
   create_npm_project
   echo "mock tarball" > myapp-1.0.0.tgz
 
-  run_generate_sbom "npm" "artifact" "1.0.0" "myapp" "."
+  run_generate_sbom "npm" "analyzed-artifact" "1.0.0" "myapp" "."
 
   assert_success
   assert_output --partial "Generating Artifact layer"
@@ -206,7 +254,7 @@ EOF
 @test "generate-sbomgenerates artifact layer for gradle" {
   create_gradle_project true
 
-  run_generate_sbom "gradle" "artifact" "1.0.0" "myapp" "."
+  run_generate_sbom "gradle" "analyzed-artifact" "1.0.0" "myapp" "."
 
   assert_success
   assert_output --partial "Generating Artifact layer"
@@ -217,7 +265,7 @@ EOF
 # =============================================================================
 
 @test "generate-sbomgenerates container layer when image provided" {
-  run_generate_sbom "maven" "containerimage" "1.0.0" "myapp" "." "ghcr.io/org/myapp:1.0.0"
+  run_generate_sbom "maven" "analyzed-container" "1.0.0" "myapp" "." "ghcr.io/org/myapp:1.0.0"
 
   assert_success
   assert_output --partial "Generating Container layer"
@@ -225,7 +273,7 @@ EOF
 }
 
 @test "generate-sbomskips container layer when no image provided" {
-  run_generate_sbom "maven" "containerimage" "1.0.0" "myapp" "." ""
+  run_generate_sbom "maven" "analyzed-container" "1.0.0" "myapp" "." ""
 
   assert_failure  # Exits 1 when no SBOMs generated
   assert_output --partial "No container image specified"
@@ -239,7 +287,7 @@ EOF
 @test "generate-sbomhandles comma-separated layers" {
   create_maven_project
 
-  run_generate_sbom "maven" "source,artifact" "1.0.0" "myapp" "."
+  run_generate_sbom "maven" "source,analyzed-artifact" "1.0.0" "myapp" "."
 
   assert_success
   assert_output --partial "Generating Source layer"
@@ -251,7 +299,7 @@ EOF
   mkdir -p release-artifacts
   cp target/myapp-1.0.0.jar release-artifacts/
 
-  run_generate_sbom "maven" "source,artifact,containerimage" "1.0.0" "myapp" "." "ghcr.io/org/myapp:1.0.0"
+  run_generate_sbom "maven" "source,analyzed-artifact,analyzed-container" "1.0.0" "myapp" "." "ghcr.io/org/myapp:1.0.0"
 
   assert_success
   assert_output --partial "Generating Source layer"

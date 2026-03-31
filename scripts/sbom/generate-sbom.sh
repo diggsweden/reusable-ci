@@ -4,7 +4,7 @@
 
 # Generate Software Bill of Materials (SBOMs) for different project types and layers
 # Supports: maven, npm, gradle, go, rust, python
-# Layers: source (dependency manifests), artifact (built binaries), containerimage
+# Layers: source (dependency manifests), artifact (built binaries), analyzed-container
 
 set -euo pipefail
 
@@ -284,13 +284,15 @@ generate_source_layer() {
 generate_artifact_layer_maven() {
   local name="$1" version="$2"
   local artifacts=()
+  local jar_patterns=(-name "${name}-*.jar" -o -name "${name}.jar")
+  local jar_excludes=(! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" ! -name "original-*.jar")
 
   # Search for JAR files matching the artifact name (excluding sources, javadoc, tests, and original artifacts)
-  collect_artifacts artifacts find_artifacts "./release-artifacts" -name "${name}-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" ! -name "original-*.jar"
+  collect_artifacts artifacts find_artifacts "./release-artifacts" \( "${jar_patterns[@]}" \) "${jar_excludes[@]}"
 
-  [[ ${#artifacts[@]} -eq 0 ]] && collect_artifacts artifacts find_artifacts "./release-artifacts/target" -name "${name}-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" ! -name "original-*.jar"
+  [[ ${#artifacts[@]} -eq 0 ]] && collect_artifacts artifacts find_artifacts "./release-artifacts/target" \( "${jar_patterns[@]}" \) "${jar_excludes[@]}"
 
-  [[ ${#artifacts[@]} -eq 0 ]] && collect_artifacts artifacts find_artifacts "target" -name "${name}-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" ! -name "original-*.jar"
+  [[ ${#artifacts[@]} -eq 0 ]] && collect_artifacts artifacts find_artifacts "target" \( "${jar_patterns[@]}" \) "${jar_excludes[@]}"
 
   scan_artifacts "$name" "$version" "jar" "jar" "${artifacts[@]}" || log_warning "No JAR files found"
 }
@@ -365,6 +367,40 @@ generate_artifact_layer_python() {
     log_warning "No Python wheel/sdist found"
     log_info "Note: Source layer SBOM is usually sufficient"
   fi
+}
+
+generate_build_layer() {
+  local name="$1" version="$2"
+
+  log_section "Generating Build layer SBOMs..."
+  log_info "Project type: $PROJECT_TYPE"
+
+  case "$PROJECT_TYPE" in
+  maven) generate_build_layer_maven "$name" "$version" ;;
+  *) log_warning "Build SBOM not supported for project type: $PROJECT_TYPE" ;;
+  esac
+  printf "\n"
+}
+
+generate_build_layer_maven() {
+  local name="$1" version="$2"
+  local bom_file=""
+
+  for path in "./release-artifacts/target/bom.json" "./release-artifacts/bom.json" "target/bom.json"; do
+    if [[ -f "$path" ]]; then
+      bom_file="$path"
+      break
+    fi
+  done
+
+  if [[ -z "$bom_file" ]]; then
+    log_warning "No Maven Build SBOM (bom.json) found - run cyclonedx-maven-plugin during build"
+    return 1
+  fi
+
+  local output_file="${name}-${version}-build-sbom.cyclonedx.json"
+  cp "$bom_file" "$output_file"
+  log_success "$output_file"
 }
 
 generate_artifact_layer() {
@@ -479,10 +515,11 @@ main() {
     layer=$(printf "%s" "$layer" | xargs)
     case "$layer" in
     source) generate_source_layer "$project_name" "$version" ;;
-    artifact) generate_artifact_layer "$project_name" "$version" ;;
-    containerimage) generate_container_layer "$project_name" "$version" ;;
+    build) generate_build_layer "$project_name" "$version" ;;
+    analyzed-artifact) generate_artifact_layer "$project_name" "$version" ;;
+    analyzed-container) generate_container_layer "$project_name" "$version" ;;
     *)
-      log_warning "Unknown layer: $layer (valid: source, artifact, containerimage)"
+      log_warning "Unknown layer: $layer (valid: source, build, analyzed-artifact, analyzed-container)"
       return 1
       ;;
     esac

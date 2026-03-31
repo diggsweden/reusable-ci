@@ -112,6 +112,9 @@ jobs:
           MAVEN_PROFILE: ${{ inputs['profile'] }}
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
         run: bash "${{ github.workspace }}/.github-shared/scripts/build/maven-library.sh"
+      - name: Generate Build SBOM
+        working-directory: ${{ inputs['working-directory'] }}
+        run: mvn org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         run: |
@@ -129,9 +132,11 @@ jobs:
             ${{ inputs['working-directory'] }}/target/*.jar
             ${{ inputs['working-directory'] }}/target/*.war
             ${{ inputs['working-directory'] }}/target/*.pom
+            ${{ inputs['working-directory'] }}/target/bom.json
             ${{ inputs['working-directory'] }}/**/target/*.jar
             ${{ inputs['working-directory'] }}/**/target/*.war
             ${{ inputs['working-directory'] }}/**/target/*.pom
+            ${{ inputs['working-directory'] }}/**/target/bom.json
             !${{ inputs['working-directory'] }}/target/original-*.jar
             !${{ inputs['working-directory'] }}/**/target/original-*.jar
           retention-days: 7
