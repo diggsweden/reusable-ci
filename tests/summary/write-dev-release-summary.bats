@@ -22,7 +22,7 @@ setup() {
   export RELEASE_ACTOR="dev-user"
   export RELEASE_REPOSITORY="org/repo"
   export PUBLISH_STAGE_RESULT_JSON='{"targets":{"container":"success","npm":"success"}}'
-  export DEV_ARTIFACTS_JSON='{"container_image":"ghcr.io/org/app:dev","container_digest":"sha256:abc","npm_package_name":"@org/pkg","npm_package_version":"1.0.0-dev"}'
+  export DEV_ARTIFACTS_JSON='{"container_image":"ghcr.io/org/app:dev","container_digest":"sha256:abc","npm_package_name":"@org/pkg","npm_package_version":"1.0.0-dev","npm_publish_status":"published"}'
 }
 
 teardown() {
@@ -100,6 +100,27 @@ teardown() {
   run get_summary
   assert_output --partial "### NPM Package"
   assert_output --partial "Not published"
+}
+
+@test "write-dev-release-summary shows already-exists note when npm version was already published" {
+  export DEV_ARTIFACTS_JSON='{"container_image":"ghcr.io/org/app:dev","container_digest":"sha256:abc","npm_package_name":"@org/pkg","npm_package_version":"1.0.0-dev","npm_publish_status":"already-exists"}'
+
+  run_script "summary/write-dev-release-summary.sh"
+
+  assert_success
+  run get_summary
+  assert_output --partial "already existed in registry"
+  assert_output --partial "already published"
+  assert_output --partial "@org/pkg@1.0.0-dev"
+}
+
+@test "write-dev-release-summary does not show already-exists note on fresh publish" {
+  run_script "summary/write-dev-release-summary.sh"
+
+  assert_success
+  run get_summary
+  refute_output --partial "already existed"
+  assert_output --partial "@org/pkg@1.0.0-dev"
 }
 
 @test "write-dev-release-summary contains resources section with links" {

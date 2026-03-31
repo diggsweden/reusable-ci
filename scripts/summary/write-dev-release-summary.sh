@@ -10,7 +10,7 @@ source "$SCRIPT_DIR/../ci/env.sh"
 
 main() {
   local build_time short_sha container_status npm_status container_icon npm_icon
-  local container_image npm_package_name npm_package_version
+  local container_image npm_package_name npm_package_version npm_publish_status
 
   build_time=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
   short_sha="${RELEASE_SHA:0:7}"
@@ -19,6 +19,7 @@ main() {
   container_image="$(ci_json_value "$DEV_ARTIFACTS_JSON" container_image)"
   npm_package_name="$(ci_json_value "$DEV_ARTIFACTS_JSON" npm_package_name)"
   npm_package_version="$(ci_json_value "$DEV_ARTIFACTS_JSON" npm_package_version)"
+  npm_publish_status="$(ci_json_value "$DEV_ARTIFACTS_JSON" npm_publish_status)"
   container_icon="$(ci_status_icon "$container_status")"
   npm_icon="$(ci_status_icon "$npm_status")"
 
@@ -50,9 +51,15 @@ main() {
 EOF
 
   if [[ "$PROJECT_TYPE" == 'npm' ]]; then
-    cat >>"$(ci_summary_file)" <<EOF
+    if [[ "$npm_publish_status" == "already-exists" ]]; then
+      cat >>"$(ci_summary_file)" <<EOF
+| Publish NPM Package | $npm_icon (already published — skipped) |
+EOF
+    else
+      cat >>"$(ci_summary_file)" <<EOF
 | Publish NPM Package | $npm_icon |
 EOF
+    fi
   fi
 
   cat >>"$(ci_summary_file)" <<EOF
@@ -83,7 +90,23 @@ EOF
 
   if [[ "$PROJECT_TYPE" == 'npm' ]]; then
     if [[ -n "$npm_package_name" && -n "$npm_package_version" && "$npm_status" == 'success' ]]; then
-      cat >>"$(ci_summary_file)" <<EOF
+      if [[ "$npm_publish_status" == "already-exists" ]]; then
+        cat >>"$(ci_summary_file)" <<EOF
+
+### NPM Package
+> **Note:** Version already existed in registry — publish was skipped (same commit SHA).
+
+\`\`\`
+$npm_package_name@$npm_package_version
+\`\`\`
+
+\`\`\`bash
+npm install $npm_package_name@$npm_package_version
+npm install $npm_package_name@dev
+\`\`\`
+EOF
+      else
+        cat >>"$(ci_summary_file)" <<EOF
 
 ### NPM Package
 \`\`\`
@@ -95,6 +118,7 @@ npm install $npm_package_name@$npm_package_version
 npm install $npm_package_name@dev
 \`\`\`
 EOF
+      fi
     else
       cat >>"$(ci_summary_file)" <<EOF
 

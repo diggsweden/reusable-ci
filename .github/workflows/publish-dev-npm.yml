@@ -13,10 +13,12 @@
 # How it works:
 # 1. Downloads pre-built artifacts from build-npm.yml
 # 2. Generates dev version: ${BASE_VERSION}-dev-${BRANCH}-${SHORT_SHA}
-# 3. Applies version to package.json (no git commit)
-# 4. Creates npm pack tarball
-# 5. Publishes to registry with 'dev' tag
-# 6. Uploads tarball as workflow artifact
+# 3. Checks if version already exists in registry (idempotent — same SHA = same content)
+# 4. If already published: logs warning, skips remaining steps, exits successfully
+# 5. Applies version to package.json (no git commit)
+# 6. Creates npm pack tarball
+# 7. Publishes to registry with 'dev' tag
+# 8. Uploads tarball as workflow artifact
 #
 # Security controls:
 # - Minimal - optimized for speed
@@ -94,6 +96,9 @@ on:
       tarball:
         description: "Tarball filename"
         value: ${{ jobs.build-and-publish.outputs.tarball }}
+      publish-status:
+        description: "Publish outcome: published or already-exists"
+        value: ${{ jobs.build-and-publish.outputs.publish-status }}
 permissions:
   contents: read
 jobs:
@@ -108,6 +113,7 @@ jobs:
       package-name: ${{ steps.meta.outputs.name }}
       package-version: ${{ steps.tags.outputs.dev_version }}
       tarball: ${{ steps.pack.outputs.tarball }}
+      publish-status: ${{ steps.check-registry.outputs.already_published == 'true' && 'already-exists' || 'published' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -169,7 +175,24 @@ jobs:
           DEV_VERSION=$(bash .github-shared/scripts/version/generate-dev-version.sh)
           printf "dev_version=%s\n" "${DEV_VERSION}" >> "$GITHUB_OUTPUT"
           printf "📦 Dev version: %s\n" "${DEV_VERSION}"
+      - name: Check if version already published
+        id: check-registry
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          NODE_AUTH_TOKEN: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+        run: |
+          PKG_NAME=$(node -p "require('./package.json').name")
+          DEV_VERSION="${{ steps.tags.outputs.dev_version }}"
+          if npm view "${PKG_NAME}@${DEV_VERSION}" version --registry "${{ inputs.registry }}" 2>/dev/null; then
+            printf "::warning::Package %s@%s already exists in registry — skipping publish (same commit SHA)\n" \
+              "${PKG_NAME}" "${DEV_VERSION}"
+            printf "already_published=true\n" >> "$GITHUB_OUTPUT"
+          else
+            printf "Version %s not found in registry — will publish\n" "${DEV_VERSION}"
+            printf "already_published=false\n" >> "$GITHUB_OUTPUT"
+          fi
       - name: Apply dev version to package.json
+        if: steps.check-registry.outputs.already_published != 'true'
         working-directory: ${{ inputs.working-directory }}
         env:
           DEV_VERSION: ${{ steps.tags.outputs.dev_version }}
@@ -177,6 +200,7 @@ jobs:
           npm version "$DEV_VERSION" --no-git-tag-version --allow-same-version
           printf "Applied version: %s\n" "$(node -p "require('./package.json').version")"
       - name: Pack tarball
+        if: steps.check-registry.outputs.already_published != 'true'
         id: pack
         working-directory: ${{ inputs.working-directory }}
         run: |
@@ -185,12 +209,14 @@ jobs:
           printf "tarball=%s\n" "$FILE" >> "$GITHUB_OUTPUT"
           printf "Created: %s\n" "$FILE"
       - name: Upload tarball as artifact
+        if: steps.check-registry.outputs.already_published != 'true'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: npm-dev-package-${{ github.run_id }}
           path: ${{ inputs.working-directory }}/${{ steps.pack.outputs.tarball }}
           retention-days: 7
       - name: Publish to NPM registry
+        if: steps.check-registry.outputs.already_published != 'true'
         working-directory: ${{ inputs.working-directory }}
         env:
           NODE_AUTH_TOKEN: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}

@@ -199,4 +199,32 @@ teardown() {
   assert_output --partial '"container_digest":"sha256:abc123"'
   assert_output --partial '"npm_package_name":"@org/app"'
   assert_output --partial '"npm_package_version":"1.0.0-dev.1"'
+  assert_output --partial '"npm_publish_status":"published"'
+}
+
+@test "artifacts-json contains already-exists status when set" {
+  export PROJECT_TYPE="npm"
+  export BUILD_DEV_CONTAINER_RESULT="success"
+  export NPM_PACKAGE_NAME="@org/app"
+  export NPM_PACKAGE_VERSION="1.0.0-dev.1"
+  export NPM_PUBLISH_STATUS="already-exists"
+
+  run_script "summary/write-dev-publish-stage-result.sh"
+  assert_success
+
+  run get_github_output "artifacts-json"
+  assert_output --partial '"npm_publish_status":"already-exists"'
+}
+
+@test "artifacts-json defaults publish status to published when not set" {
+  export PROJECT_TYPE="npm"
+  export BUILD_DEV_CONTAINER_RESULT="success"
+  export NPM_PACKAGE_NAME="@org/app"
+  export NPM_PACKAGE_VERSION="1.0.0-dev.1"
+
+  run_script "summary/write-dev-publish-stage-result.sh"
+  assert_success
+
+  run get_github_output "artifacts-json"
+  assert_output --partial '"npm_publish_status":"published"'
 }

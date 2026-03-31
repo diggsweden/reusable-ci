@@ -40,7 +40,7 @@ run_generate_sbom() {
 @test "generate-sbomdetects maven project from pom.xml" {
   create_maven_project
 
-  run_generate_sbom "auto" "source" "" "" "."
+  run_generate_sbom "auto" "source" "1.0.0" "myapp" "."
 
   assert_success
   assert_output --partial "Auto-detected project type: maven"

@@ -196,6 +196,8 @@ Unlike the production flow, the dev path intentionally skips release creation, s
 It still benefits from one small control-plane interface job so later stage calls depend on compact dev context, runtime metadata, and policy payloads.
 The dev publish stage also exposes a compact artifact payload so the top-level workflow does not need to wire separate container and NPM leaf outputs directly.
 
+**Idempotent NPM publishing:** Dev versions are content-addressed (`{base}-dev-{branch}-{sha}`), so the same commit always produces the same version string. The `publish-dev-npm.yml` workflow checks the registry before publishing and skips with a warning if the version already exists. This makes re-runs safe — the pipeline succeeds without attempting to overwrite an immutable package.
+
 ```mermaid
 graph TD
     A[Push: develop or feature/*] --> B[release-dev-orchestrator.yml]

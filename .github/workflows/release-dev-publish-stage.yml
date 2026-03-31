@@ -99,4 +99,5 @@ jobs:
           CONTAINER_DIGEST: ${{ needs.build-dev-container.outputs.digest }}
           NPM_PACKAGE_NAME: ${{ needs.publish-npm-dev.outputs.package-name }}
           NPM_PACKAGE_VERSION: ${{ needs.publish-npm-dev.outputs.package-version }}
+          NPM_PUBLISH_STATUS: ${{ needs.publish-npm-dev.outputs.publish-status }}
         run: bash .github-shared/scripts/summary/write-dev-publish-stage-result.sh

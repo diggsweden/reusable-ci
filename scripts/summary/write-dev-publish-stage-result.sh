@@ -32,8 +32,8 @@ main() {
   result_json="$(ci_stage_result_json "dev-publish" "$stage_result" "$stage_ran" "$targets_json" "project_type:${PROJECT_TYPE:-unknown}")"
 
   local artifacts_json
-  artifacts_json=$(printf '{"container_image":"%s","container_digest":"%s","npm_package_name":"%s","npm_package_version":"%s"}' \
-    "${CONTAINER_IMAGE:-}" "${CONTAINER_DIGEST:-}" "${NPM_PACKAGE_NAME:-}" "${NPM_PACKAGE_VERSION:-}")
+  artifacts_json=$(printf '{"container_image":"%s","container_digest":"%s","npm_package_name":"%s","npm_package_version":"%s","npm_publish_status":"%s"}' \
+    "${CONTAINER_IMAGE:-}" "${CONTAINER_DIGEST:-}" "${NPM_PACKAGE_NAME:-}" "${NPM_PACKAGE_VERSION:-}" "${NPM_PUBLISH_STATUS:-published}")
 
   ci_output "stage-ran" "$stage_ran"
   ci_output "stage-result" "$stage_result"
