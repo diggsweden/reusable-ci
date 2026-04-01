@@ -10,8 +10,10 @@ useDefault = true
 
 # Allowlist for documentation containing example curl commands with placeholder tokens
 [allowlist]
-description = "Ignore documentation files with example GITHUB_TOKEN placeholders"
+description = "Ignore files with placeholder tokens in documentation and tests"
 paths = [
   # Documentation with example curl commands using GITHUB_TOKEN as a placeholder (not a real token)
-  '''docs/verification\.md'''
+  '''docs/verification\.md''',
+  # Test file for CI scrub function using fake tokens to verify scrubbing works
+  '''tests/ci/scrub\.bats'''
 ]
