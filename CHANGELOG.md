@@ -5,11 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Fix failing gitleaks lint
+
+## [2.7.5] - 2026-04-01
+
+### Changed
+
+- Update mise tools (#93)
+- Update dependency itiquette/gommitlint to v0.9.5 (#92)
+- Update italia/publiccode-parser-action action to v1.5.0 (#91)
+- Update dependency jdx/mise to v2026.3.10 (#90)
+- Update dependency diggsweden/devbase-check to v0.4.2 (#89)
+
+### Fixed
+
+- Fix: allow containerfiles starting with Containerfile and Dockerfile
+- Improve feedback in npm release dev flow
+
 ## [2.7.4] - 2026-03-26
 
 ### Changed
 
 - Change sarif upload flow
+
 
 ## [2.7.3] - 2026-03-23
 
@@ -369,6 +391,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial commit
 
+[unreleased]: https://github.com/diggsweden/reusable-ci/compare/v2.7.5..HEAD
+[2.7.5]: https://github.com/diggsweden/reusable-ci/compare/v2.7.4..v2.7.5
 [2.7.4]: https://github.com/diggsweden/reusable-ci/compare/v2.7.3..v2.7.4
 [2.7.3]: https://github.com/diggsweden/reusable-ci/compare/v2.7.2..v2.7.3
 [2.7.2]: https://github.com/diggsweden/reusable-ci/compare/v2.7.1..v2.7.2
