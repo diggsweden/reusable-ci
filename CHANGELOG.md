@@ -5,11 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.7.6] - 2026-04-02
 
-### Fixed
+### Changed
 
-- Fix failing gitleaks lint
+- Improve readme
 
 ## [2.7.5] - 2026-04-01
 
@@ -23,8 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fix failing gitleaks lint
 - Fix: allow containerfiles starting with Containerfile and Dockerfile
 - Improve feedback in npm release dev flow
+
 
 ## [2.7.4] - 2026-03-26
 
@@ -391,7 +393,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial commit
 
-[unreleased]: https://github.com/diggsweden/reusable-ci/compare/v2.7.5..HEAD
+[2.7.6]: https://github.com/diggsweden/reusable-ci/compare/v2.7.5..v2.7.6
 [2.7.5]: https://github.com/diggsweden/reusable-ci/compare/v2.7.4..v2.7.5
 [2.7.4]: https://github.com/diggsweden/reusable-ci/compare/v2.7.3..v2.7.4
 [2.7.3]: https://github.com/diggsweden/reusable-ci/compare/v2.7.2..v2.7.3
