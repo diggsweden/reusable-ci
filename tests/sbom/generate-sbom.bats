@@ -169,6 +169,57 @@ EOF
 }
 
 # =============================================================================
+# Build Layer Tests
+# =============================================================================
+
+@test "generate-sbomgenerates build layer for maven when bom.json exists" {
+  create_maven_project false
+  mkdir -p target
+  echo '{"bomFormat":"CycloneDX"}' > target/bom.json
+
+  run_generate_sbom "maven" "build" "1.0.0" "myapp" "."
+
+  assert_success
+  assert_output --partial "Generating Build layer"
+}
+
+@test "generate-sbomwarns when no bom.json found for maven build layer" {
+  create_maven_project false
+
+  run_generate_sbom "maven" "build" "1.0.0" "myapp" "."
+
+  assert_failure  # Exits 1 when no SBOMs generated (summary check)
+  assert_output --partial "No Maven Build SBOM"
+  assert_output --partial "No SBOM files generated"
+}
+
+@test "generate-sbombuild layer included in multi-layer run does not break packaging" {
+  create_maven_project true
+  mkdir -p target
+  echo '{"bomFormat":"CycloneDX"}' > target/bom.json
+
+  run_generate_sbom "maven" "source,build,analyzed-artifact" "1.0.0" "myapp" "."
+
+  assert_success
+  assert_output --partial "Generating Source layer"
+  assert_output --partial "Generating Build layer"
+  assert_output --partial "Generating Artifact layer"
+}
+
+@test "generate-sbommissing build bom.json does not block other layers" {
+  create_maven_project true
+  mkdir -p release-artifacts
+  cp target/myapp-1.0.0.jar release-artifacts/
+
+  run_generate_sbom "maven" "source,build,analyzed-artifact" "1.0.0" "myapp" "."
+
+  assert_success
+  assert_output --partial "No Maven Build SBOM"
+  assert_output --partial "Generating Source layer"
+  assert_output --partial "Generating Artifact layer"
+}
+
+# =============================================================================
 # Artifact Layer Tests
 # =============================================================================
 

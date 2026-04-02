@@ -230,7 +230,7 @@ bash generate-sbom.sh [PROJECT_TYPE] [LAYERS] [VERSION] [PROJECT_NAME] [WORKING_
 | Parameter | Default | Example |
 |-----------|---------|---------|
 | `PROJECT_TYPE` | `auto` | `maven`, `npm`, `gradle` |
-| `LAYERS` | `source` | `source,analyzed-artifact,analyzed-container` |
+| `LAYERS` | `source` | `source,build,analyzed-artifact,analyzed-container` |
 | `VERSION` | auto-detect | `1.0.0` |
 | `PROJECT_NAME` | auto-detect | `my-app` |
 | `WORKING_DIR` | `.` | `/path/to/project` |
@@ -241,6 +241,7 @@ bash generate-sbom.sh [PROJECT_TYPE] [LAYERS] [VERSION] [PROJECT_NAME] [WORKING_
 | Layer | Parameter | Maven | NPM | Gradle |
 |-------|-----------|-------|-----|--------|
 | Source | `source` | `*-pom-sbom.*` | `*-package-sbom.*` | `*-gradle-sbom.*` |
+| Build | `build` | `*-build-sbom.cyclonedx.json` | - | - |
 | Analyzed Artifact | `analyzed-artifact` | `*-jar-sbom.*` | `*-tararchive-sbom.*` | `*-jar-sbom.*` |
 | Analyzed Container | `analyzed-container` | `*-container-sbom.*` | `*-container-sbom.*` | `*-container-sbom.*` |
 

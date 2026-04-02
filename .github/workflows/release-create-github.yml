@@ -185,11 +185,11 @@ jobs:
       - name: Generate 3-Layer SBOMs
         if: &if_generate_sbom ${{ inputs['generate-sbom'] }}
         run: |
-          # Use SBOM generation script for source and analyzed-artifact layers
+          # Use SBOM generation script for source, build and analyzed-artifact layers
           # Use CISA taxonomy layer names that work for all project types
           bash .github-shared/scripts/sbom/generate-sbom.sh \
             ${{ inputs['project-type'] }} \
-            "source,analyzed-artifact" \
+            "source,build,analyzed-artifact" \
             "${{ steps.release-metadata.outputs.version-no-v }}" \
             "${{ steps.release-metadata.outputs.project-name }}"
 

@@ -199,22 +199,24 @@ Layer names align with [CISA SBOM Types](https://www.cisa.gov/resources-tools/re
 | CISA Type | Layer name | Tool | Maven | NPM | Gradle | Go / Rust / Python |
 |-----------|-----------|------|-------|-----|--------|--------------------|
 | **Source** | `source` | Syft | `pom.xml` | `package.json` | `build.gradle` | `go.mod` / `Cargo.toml` / `pyproject.toml` |
+| **Build** | `build` | CycloneDX plugin | cyclonedx-maven-plugin | - | - | - |
 | **Analyzed** | `analyzed-artifact` | Syft | JAR files | `.tgz` tarball | JAR files | binaries / wheels |
 | **Analyzed** | `analyzed-container` | Syft | container image | container image | container image | container image |
 
 **Not implemented:** Design, Deployed, and Runtime SBOM types are outside CI/CD scope.
 
-### 3-Layer SBOM Architecture
+### 4-Layer SBOM Architecture
 
-Every release includes **three layers** of SBOMs, each in **two formats** (SPDX + CycloneDX):
+Every release includes up to **four layers** of SBOMs, each in **two formats** (SPDX + CycloneDX):
 
 | Layer | Source | Captures | Use Case | Formats |
 |-------|--------|----------|----------|---------|
 | **Source** | `pom.xml`, `build.gradle`, `package.json` | Declared dependencies + transitive dependencies | License compliance, dependency analysis, build-time security | SPDX 2.3, CycloneDX 1.6 |
+| **Build** | CycloneDX Maven plugin (`bom.json`) | Precise build-time dependency resolution | Build reproducibility, dependency verification | CycloneDX 1.6 |
 | **Analyzed Artifact** | JAR binaries (may be multiple) | Actual packaged libraries (including shaded deps) | Runtime dependency verification, binary analysis | SPDX 2.3, CycloneDX 1.6 |
 | **Analyzed Container** | Container image | OS packages, JRE, runtime environment | Deployment security, runtime vulnerability scanning | SPDX 2.3, CycloneDX 1.6 |
 
-**Total SBOMs per release:** 6-10+ files (3+ layers × 2 formats, more if multiple JARs)
+**Total SBOMs per release:** 7-11+ files (4 layers × 2 formats, more if multiple JARs)
 
 ### SBOM Naming Convention
 
@@ -367,8 +369,8 @@ syft packages PROJECT-VERSION-pom-sbom.cyclonedx.json -o json | \
 
 SBOMs are generated automatically during the release process:
 
-1. **Container Build** → Generates container SBOM (2 formats)
-2. **Maven/NPM Build** → Generates POM + JAR SBOMs (4 formats)
+1. **Container Build** → Generates analyzed-container SBOM (2 formats)
+2. **Maven/NPM Build** → Generates source + build + analyzed-artifact SBOMs
 3. **Release Step** → Downloads container SBOM, packages all SBOMs into ZIP
 4. **Signing** → GPG signs SBOM archive and checksums
 5. **Upload** → ZIP archive to GitHub Release
