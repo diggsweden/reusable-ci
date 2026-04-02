@@ -166,6 +166,8 @@ jobs:
             gradle \
             "${{ inputs['working-directory'] }}/build/libs" \
             "${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}"
+      - name: Verify Containerfile
+        run: bash .github-shared/scripts/container/validate-containerfile.sh "${{ inputs['container-file'] }}"
       - name: Set up Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - name: Check registry authentication configuration
