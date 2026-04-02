@@ -284,13 +284,15 @@ generate_source_layer() {
 generate_artifact_layer_maven() {
   local name="$1" version="$2"
   local artifacts=()
+  local jar_patterns=(-name "${name}-*.jar" -o -name "${name}.jar")
+  local jar_excludes=(! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" ! -name "original-*.jar")
 
   # Search for JAR files matching the artifact name (excluding sources, javadoc, tests, and original artifacts)
-  collect_artifacts artifacts find_artifacts "./release-artifacts" -name "${name}-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" ! -name "original-*.jar"
+  collect_artifacts artifacts find_artifacts "./release-artifacts" \( "${jar_patterns[@]}" \) "${jar_excludes[@]}"
 
-  [[ ${#artifacts[@]} -eq 0 ]] && collect_artifacts artifacts find_artifacts "./release-artifacts/target" -name "${name}-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" ! -name "original-*.jar"
+  [[ ${#artifacts[@]} -eq 0 ]] && collect_artifacts artifacts find_artifacts "./release-artifacts/target" \( "${jar_patterns[@]}" \) "${jar_excludes[@]}"
 
-  [[ ${#artifacts[@]} -eq 0 ]] && collect_artifacts artifacts find_artifacts "target" -name "${name}-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*-tests.jar" ! -name "original-*.jar"
+  [[ ${#artifacts[@]} -eq 0 ]] && collect_artifacts artifacts find_artifacts "target" \( "${jar_patterns[@]}" \) "${jar_excludes[@]}"
 
   scan_artifacts "$name" "$version" "jar" "jar" "${artifacts[@]}" || log_warning "No JAR files found"
 }

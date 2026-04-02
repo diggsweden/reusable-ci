@@ -183,6 +183,17 @@ EOF
   assert_output --partial "Generating Artifact layer"
 }
 
+@test "generate-sbomgenerates artifact layer for maven JAR without version suffix (finalName)" {
+  create_maven_project false
+  mkdir -p target
+  echo "mock jar" > target/myapp.jar
+
+  run_generate_sbom "maven" "artifact" "1.0.0" "myapp" "."
+
+  assert_success
+  assert_output --partial "Generating Artifact layer"
+}
+
 @test "generate-sbomwarns when no JARs found for maven" {
   create_maven_project false  # No JAR - script fails when no SBOMs generated
 
