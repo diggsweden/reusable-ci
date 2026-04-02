@@ -95,6 +95,11 @@ jobs:
         run: |
           mise trust
           just install
+      - name: Reset install-time working tree changes
+        # Install hooks (e.g. npm prepare) can modify tracked files like
+        # package-lock.json, causing false positives in lint-version-control.
+        # Reset so linters only see actual committed source state.
+        run: git checkout -- .
       - name: Run linting
         run: |
           run_available_lint_recipe() {
