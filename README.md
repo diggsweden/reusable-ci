@@ -35,7 +35,7 @@ Implements best Open Source workflows, compliance, security best practices, auto
 
 ## Introduction
 
-There are two main workflow chains (and a dev-release flow):
+There are two main workflow (and a dev-release flow):
 
 1. **The Pull Request Chain** - Run on PR and push
    - Linting and code quality checks
