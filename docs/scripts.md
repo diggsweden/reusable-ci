@@ -195,7 +195,7 @@ Scripts for release artifact management and GitHub Release creation.
 | Script | Purpose |
 |--------|---------|
 | `create-github-release.sh` | Creates GitHub Release with artifacts, signatures, SBOMs, and checksums |
-| `create-sbom-zip.sh` | Packages all 3 SBOM layers (source, artifact, container) into ZIP; optionally GPG-signs |
+| `create-sbom-zip.sh` | Packages all SBOM layers (source, analyzed-artifact, analyzed-container) into ZIP; optionally GPG-signs |
 | `generate-checksums.sh` | Generates SHA256 checksums for all release artifacts |
 | `prepare-release-notes.sh` | Extracts release notes from changelog for the current version |
 | `resolve-artifact-name.sh` | Resolves artifact name from repository name or config |
@@ -230,7 +230,7 @@ bash generate-sbom.sh [PROJECT_TYPE] [LAYERS] [VERSION] [PROJECT_NAME] [WORKING_
 | Parameter | Default | Example |
 |-----------|---------|---------|
 | `PROJECT_TYPE` | `auto` | `maven`, `npm`, `gradle` |
-| `LAYERS` | `source` | `source,artifact,containerimage` |
+| `LAYERS` | `source` | `source,analyzed-artifact,analyzed-container` |
 | `VERSION` | auto-detect | `1.0.0` |
 | `PROJECT_NAME` | auto-detect | `my-app` |
 | `WORKING_DIR` | `.` | `/path/to/project` |
@@ -241,8 +241,8 @@ bash generate-sbom.sh [PROJECT_TYPE] [LAYERS] [VERSION] [PROJECT_NAME] [WORKING_
 | Layer | Parameter | Maven | NPM | Gradle |
 |-------|-----------|-------|-----|--------|
 | Source | `source` | `*-pom-sbom.*` | `*-package-sbom.*` | `*-gradle-sbom.*` |
-| Artifact | `artifact` | `*-jar-sbom.*` | `*-tararchive-sbom.*` | `*-jar-sbom.*` |
-| Container | `containerimage` | `*-container-sbom.*` | `*-container-sbom.*` | `*-container-sbom.*` |
+| Analyzed Artifact | `analyzed-artifact` | `*-jar-sbom.*` | `*-tararchive-sbom.*` | `*-jar-sbom.*` |
+| Analyzed Container | `analyzed-container` | `*-container-sbom.*` | `*-container-sbom.*` | `*-container-sbom.*` |
 
 ---
 
@@ -351,5 +351,5 @@ Most projects use the orchestrators directly. For custom workflows:
 
 - run: |
     bash .reusable-ci/scripts/sbom/generate-sbom.sh \
-      maven "source,artifact" "$VERSION" "$PROJECT_NAME"
+      maven "source,analyzed-artifact" "$VERSION" "$PROJECT_NAME"
 ```

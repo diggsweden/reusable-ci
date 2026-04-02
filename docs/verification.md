@@ -192,15 +192,27 @@ Artifact verification prevents tampering and validates authenticity in CI/CD pip
 
 DiggSweden workflows generate comprehensive multi-layer SBOMs for complete supply chain transparency and compliance with international standards.
 
+### CISA SBOM Type Mapping
+
+Layer names align with [CISA SBOM Types](https://www.cisa.gov/resources-tools/resources/types-software-bill-materials-sbom) (April 2023).
+
+| CISA Type | Layer name | Tool | Maven | NPM | Gradle | Go / Rust / Python |
+|-----------|-----------|------|-------|-----|--------|--------------------|
+| **Source** | `source` | Syft | `pom.xml` | `package.json` | `build.gradle` | `go.mod` / `Cargo.toml` / `pyproject.toml` |
+| **Analyzed** | `analyzed-artifact` | Syft | JAR files | `.tgz` tarball | JAR files | binaries / wheels |
+| **Analyzed** | `analyzed-container` | Syft | container image | container image | container image | container image |
+
+**Not implemented:** Design, Deployed, and Runtime SBOM types are outside CI/CD scope.
+
 ### 3-Layer SBOM Architecture
 
 Every release includes **three layers** of SBOMs, each in **two formats** (SPDX + CycloneDX):
 
 | Layer | Source | Captures | Use Case | Formats |
 |-------|--------|----------|----------|---------|
-| **POM** | `pom.xml`, `build.gradle`, `package.json` | Declared dependencies + transitive dependencies | License compliance, dependency analysis, build-time security | SPDX 2.3, CycloneDX 1.6 |
-| **JAR** | JAR binaries (may be multiple) | Actual packaged libraries (including shaded deps) | Runtime dependency verification, binary analysis | SPDX 2.3, CycloneDX 1.6 |
-| **Container** | Container image | OS packages, JRE, runtime environment | Deployment security, runtime vulnerability scanning | SPDX 2.3, CycloneDX 1.6 |
+| **Source** | `pom.xml`, `build.gradle`, `package.json` | Declared dependencies + transitive dependencies | License compliance, dependency analysis, build-time security | SPDX 2.3, CycloneDX 1.6 |
+| **Analyzed Artifact** | JAR binaries (may be multiple) | Actual packaged libraries (including shaded deps) | Runtime dependency verification, binary analysis | SPDX 2.3, CycloneDX 1.6 |
+| **Analyzed Container** | Container image | OS packages, JRE, runtime environment | Deployment security, runtime vulnerability scanning | SPDX 2.3, CycloneDX 1.6 |
 
 **Total SBOMs per release:** 6-10+ files (3+ layers × 2 formats, more if multiple JARs)
 
@@ -379,6 +391,7 @@ SBOMs are generated automatically during the release process:
 
 - [NTIA SBOM Minimum Elements](https://www.ntia.gov/sites/default/files/publications/sbom_minimum_elements_report_0.pdf)
 - [CISA SBOM Guidance](https://www.cisa.gov/sbom)
+- [CISA SBOM Types](https://www.cisa.gov/resources-tools/resources/types-software-bill-materials-sbom)
 - [EU Cyber Resilience Act](https://digital-strategy.ec.europa.eu/en/policies/cyber-resilience-act)
 - [SPDX Specification 2.3](https://spdx.github.io/spdx-spec/v2.3/)
 - [CycloneDX Specification 1.6](https://cyclonedx.org/specification/overview/)

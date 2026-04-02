@@ -4,7 +4,7 @@
 
 # Generate Software Bill of Materials (SBOMs) for different project types and layers
 # Supports: maven, npm, gradle, go, rust, python
-# Layers: source (dependency manifests), artifact (built binaries), containerimage
+# Layers: source (dependency manifests), analyzed-artifact (built binaries), analyzed-container
 
 set -euo pipefail
 
@@ -481,10 +481,10 @@ main() {
     layer=$(printf "%s" "$layer" | xargs)
     case "$layer" in
     source) generate_source_layer "$project_name" "$version" ;;
-    artifact) generate_artifact_layer "$project_name" "$version" ;;
-    containerimage) generate_container_layer "$project_name" "$version" ;;
+    analyzed-artifact) generate_artifact_layer "$project_name" "$version" ;;
+    analyzed-container) generate_container_layer "$project_name" "$version" ;;
     *)
-      log_warning "Unknown layer: $layer (valid: source, artifact, containerimage)"
+      log_warning "Unknown layer: $layer (valid: source, analyzed-artifact, analyzed-container)"
       return 1
       ;;
     esac
