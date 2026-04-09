@@ -142,10 +142,15 @@ jobs:
         run: bash .github-shared/scripts/validate/tag-signature.sh "${{ github.ref_name }}" "${{ github.repository }}" "$OSPO_BOT_GPG_PUB"
       - name: Validate Tag Uniqueness
         if: ${{ github.ref_type == 'tag' }}
-        run: bash .github-shared/scripts/validate/tag-uniqueness.sh "${{ github.ref_name }}"
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: bash .github-shared/scripts/validate/tag-uniqueness.sh "$TAG_NAME"
       - name: Validate Tag Commit Availability
         if: ${{ github.ref_type == 'tag' }}
-        run: bash .github-shared/scripts/validate/tag-commit.sh "${{ github.ref_name }}" "${{ inputs.branch }}"
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          TARGET_BRANCH: ${{ inputs.branch }}
+        run: bash .github-shared/scripts/validate/tag-commit.sh "$TAG_NAME" "$TARGET_BRANCH"
       # ============================================================================
       # SECTION 2: Authorization Validation
       # Checks if user is authorized for non-SNAPSHOT releases

@@ -136,16 +136,19 @@ jobs:
       - name: Validate package scope
         if: ${{ inputs.package-scope != '' }}
         working-directory: ${{ inputs.working-directory }}
+        env:
+          PACKAGE_SCOPE: ${{ inputs.package-scope }}
+          TARGET_REGISTRY: ${{ inputs.registry }}
         run: |
           NAME=$(node -p "require('./package.json').name")
-          SCOPE="${{ inputs.package-scope }}"
+          SCOPE="$PACKAGE_SCOPE"
           if [[ "$NAME" != "${SCOPE}"/* ]]; then
             printf "::error::package.json name must be scoped as %s/<pkg>\n" "${SCOPE}"
             printf "Found: %s\n" "$NAME"
             exit 1
           fi
           # Configure scoped registry
-          npm config set "${SCOPE}:registry" "${{ inputs.registry }}"
+          npm config set "${SCOPE}:registry" "$TARGET_REGISTRY"
       - name: Download NPM build artifacts
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
@@ -160,7 +163,9 @@ jobs:
           sparse-checkout: scripts
       - name: Extract tarball contents
         working-directory: ${{ inputs.working-directory }}
-        run: bash "${{ github.workspace }}/.github-shared/scripts/publish/npm-validate-tarball.sh"
+        env:
+          GITHUB_WORKSPACE_PATH: ${{ github.workspace }}
+        run: bash "$GITHUB_WORKSPACE_PATH/.github-shared/scripts/publish/npm-validate-tarball.sh"
       - name: Check registry authentication configuration
         env:
           USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
@@ -180,10 +185,11 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         env:
           NODE_AUTH_TOKEN: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+          DEV_VERSION: ${{ steps.tags.outputs.dev_version }}
+          TARGET_REGISTRY: ${{ inputs.registry }}
         run: |
           PKG_NAME=$(node -p "require('./package.json').name")
-          DEV_VERSION="${{ steps.tags.outputs.dev_version }}"
-          if npm view "${PKG_NAME}@${DEV_VERSION}" version --registry "${{ inputs.registry }}" 2>/dev/null; then
+          if npm view "${PKG_NAME}@${DEV_VERSION}" version --registry "$TARGET_REGISTRY" 2>/dev/null; then
             printf "::warning::Package %s@%s already exists in registry — skipping publish (same commit SHA)\n" \
               "${PKG_NAME}" "${DEV_VERSION}"
             printf "already_published=true\n" >> "$GITHUB_OUTPUT"
@@ -220,9 +226,10 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         env:
           NODE_AUTH_TOKEN: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+          TARGET_REGISTRY: ${{ inputs.registry }}
         run: |
           PKG_NAME=$(node -p "require('./package.json').name")
           PKG_VERSION=$(node -p "require('./package.json').version")
-          printf "Publishing %s@%s to %s with tag 'dev'\n" "${PKG_NAME}" "${PKG_VERSION}" "${{ inputs.registry }}"
+          printf "Publishing %s@%s to %s with tag 'dev'\n" "${PKG_NAME}" "${PKG_VERSION}" "$TARGET_REGISTRY"
           npm publish --tag dev
           printf "✅ Published successfully\n"

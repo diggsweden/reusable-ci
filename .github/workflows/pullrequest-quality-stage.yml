@@ -89,15 +89,23 @@ jobs:
           path: .github-shared
           sparse-checkout: scripts
       - name: Check quality results
+        env:
+          CHECK_COMMITLINT: Commit Lint|${{ fromJson(inputs['pr-policy-json']).commitlint }}|${{ needs.commit-lint.result }}|true
+          CHECK_LICENSLINT: License Lint|${{ fromJson(inputs['pr-policy-json']).licenselint }}|${{ needs.license-lint.result }}|true
+          CHECK_DEPENDENCYREVIEW: Dependency Review|${{ fromJson(inputs['pr-policy-json']).dependencyreview }}|${{ needs.dependency-review.result }}|false
+          CHECK_MEGALINT: MegaLinter|${{ fromJson(inputs['pr-policy-json']).megalint }}|${{ needs.megalint.result }}|true
+          CHECK_PUBLICCODELINT: Publiccode Lint|${{ fromJson(inputs['pr-policy-json']).publiccodelint }}|${{ needs.publiccode-lint.result }}|true
+          CHECK_DEVBASECHECK: Devbase Check|${{ fromJson(inputs['pr-policy-json']).devbasecheck }}|${{ needs.devbase-check-lint.result }}|false
+          CHECK_SWIFT: Swift Lint|${{ fromJson(inputs['pr-policy-json']).swift }}|${{ needs.swift-lint.result }}|false
         run: |
           bash .github-shared/scripts/summary/write-quality-check-status.sh \
-            "Commit Lint|${{ fromJson(inputs['pr-policy-json']).commitlint }}|${{ needs.commit-lint.result }}|true" \
-            "License Lint|${{ fromJson(inputs['pr-policy-json']).licenselint }}|${{ needs.license-lint.result }}|true" \
-            "Dependency Review|${{ fromJson(inputs['pr-policy-json']).dependencyreview }}|${{ needs.dependency-review.result }}|false" \
-            "MegaLinter|${{ fromJson(inputs['pr-policy-json']).megalint }}|${{ needs.megalint.result }}|true" \
-            "Publiccode Lint|${{ fromJson(inputs['pr-policy-json']).publiccodelint }}|${{ needs.publiccode-lint.result }}|true" \
-            "Devbase Check|${{ fromJson(inputs['pr-policy-json']).devbasecheck }}|${{ needs.devbase-check-lint.result }}|false" \
-            "Swift Lint|${{ fromJson(inputs['pr-policy-json']).swift }}|${{ needs.swift-lint.result }}|false"
+            "$CHECK_COMMITLINT" \
+            "$CHECK_LICENSLINT" \
+            "$CHECK_DEPENDENCYREVIEW" \
+            "$CHECK_MEGALINT" \
+            "$CHECK_PUBLICCODELINT" \
+            "$CHECK_DEVBASECHECK" \
+            "$CHECK_SWIFT"
   summarize-quality-stage:
     name: Summary
     needs: [commit-lint, license-lint, dependency-review, megalint, publiccode-lint, devbase-check-lint, swift-lint, quality-status]

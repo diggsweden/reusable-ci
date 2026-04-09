@@ -145,18 +145,24 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          GRADLE_TASKS: ${{ inputs['gradle-tasks'] }}
+          SKIP_TESTS: ${{ inputs['skip-tests'] }}
         run: |
-          printf "Running Gradle tasks: %s\n" "${{ inputs['gradle-tasks'] }}"
-          if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
-            ./gradlew ${{ inputs['gradle-tasks'] }} -x test
+          printf "Running Gradle tasks: %s\n" "$GRADLE_TASKS"
+          # shellcheck disable=SC2086
+          if [ "$SKIP_TESTS" = "true" ]; then
+            ./gradlew $GRADLE_TASKS -x test
           else
-            ./gradlew ${{ inputs['gradle-tasks'] }}
+            # shellcheck disable=SC2086
+            ./gradlew $GRADLE_TASKS
           fi
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
+        env:
+          BUILD_MODULE: ${{ inputs['build-module'] }}
         run: |
           printf "Built artifacts:\n"
-          find ${{ inputs['build-module'] }}/build/outputs -type f \( -name "*.apk" -o -name "*.aab" -o -name "*.jar" \) -ls || printf "No artifacts found\n"
+          find "$BUILD_MODULE"/build/outputs -type f \( -name "*.apk" -o -name "*.aab" -o -name "*.jar" \) -ls || printf "No artifacts found\n"
       - name: Upload Gradle artifacts
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:

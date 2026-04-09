@@ -122,12 +122,13 @@ jobs:
         env:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVENCENTRAL_USERNAME }}
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD }}
+          SETTINGS_PATH: ${{ inputs['settings-path'] }}
+          MAVEN_PROFILE: ${{ inputs.profile }}
         run: |
           printf "Deploying to Maven Central...\n"
 
           # Use settings file if provided
           SETTINGS_ARG=""
-          SETTINGS_PATH="${{ inputs['settings-path'] }}"
           if [ -n "${SETTINGS_PATH}" ]; then
             if [ -f "${SETTINGS_PATH}" ]; then
               SETTINGS_ARG="--settings ${SETTINGS_PATH}"
@@ -140,11 +141,14 @@ jobs:
 
           # Deploy with profile (includes GPG signing via maven-gpg-plugin)
           # shellcheck disable=SC2086
-          mvn $MAVEN_CLI_OPTS deploy $SETTINGS_ARG -P${{ inputs.profile }} -DskipTests
+          mvn $MAVEN_CLI_OPTS deploy $SETTINGS_ARG -P"$MAVEN_PROFILE" -DskipTests
       - name: Generate publish summary
+        env:
+          IS_SNAPSHOT: ${{ steps.version-info.outputs.IS_SNAPSHOT }}
+          VERSION: ${{ steps.version-info.outputs.VERSION }}
         run: |
           print_release_type() {
-            if [ "${{ steps.version-info.outputs.IS_SNAPSHOT }}" = "true" ]; then
+            if [ "$IS_SNAPSHOT" = "true" ]; then
               printf "%s **Type:** %s\n" "-" "SNAPSHOT"
             else
               printf "%s **Type:** %s\n" "-" "Release"
@@ -152,7 +156,7 @@ jobs:
           }
 
           print_release_notice() {
-            if [ "${{ steps.version-info.outputs.IS_SNAPSHOT }}" = "true" ]; then
+            if [ "$IS_SNAPSHOT" = "true" ]; then
               printf "⚠️ **SNAPSHOT** releases are available immediately in the snapshot repository.\n"
             else
               printf "✓ **Release** deployed to staging. Will be published to Central within 30 minutes.\n"
@@ -162,7 +166,7 @@ jobs:
           {
             printf "## Published to Maven Central 🚀\n"
             printf "\n"
-            printf "%s **Version:** %s\n" "-" "${{ steps.version-info.outputs.VERSION }}"
+            printf "%s **Version:** %s\n" "-" "$VERSION"
             print_release_type
             printf "%s **Registry:** [Maven Central](https://central.sonatype.com/)\n" "-"
             printf "\n"

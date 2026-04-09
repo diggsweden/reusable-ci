@@ -44,6 +44,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }} # https://github.com/actions/checkout/issues/426
       - name: Determine base branch
         id: base
+        env:
+          INPUT_BASE_BRANCH: ${{ inputs.base-branch }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_REF: ${{ github.base_ref }}
         run: |
           set_base_branch() {
             local branch="$1"
@@ -54,17 +58,19 @@ jobs:
           }
 
           # If explicitly provided, use it
-          if [ -n "${{ inputs.base-branch }}" ]; then
-            set_base_branch "${{ inputs.base-branch }}" "Using explicitly provided base: ${{ inputs.base-branch }}"
+          if [ -n "$INPUT_BASE_BRANCH" ]; then
+            set_base_branch "$INPUT_BASE_BRANCH" "Using explicitly provided base: $INPUT_BASE_BRANCH"
           # For PRs, use the PR target branch
-          elif [ "${{ github.event_name }}" = "pull_request" ] && [ -n "${{ github.base_ref }}" ]; then
-            set_base_branch "${{ github.base_ref }}" "Auto-detected PR base: ${{ github.base_ref }}"
+          elif [ "$EVENT_NAME" = "pull_request" ] && [ -n "$PR_BASE_REF" ]; then
+            set_base_branch "$PR_BASE_REF" "Auto-detected PR base: $PR_BASE_REF"
           # Fallback to main
           else
             set_base_branch "main" "Using default base: main"
           fi
       - name: Setup base branch
-        run: git fetch origin ${{ steps.base.outputs.branch }}:${{ steps.base.outputs.branch }}
+        env:
+          BASE_BRANCH: ${{ steps.base.outputs.branch }}
+        run: git fetch origin "$BASE_BRANCH:$BASE_BRANCH"
       - name: Install gommitlint
         env:
           # renovate: datasource=gitea-releases depName=itiquette/gommitlint registryUrl=https://codeberg.org

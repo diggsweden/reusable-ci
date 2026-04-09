@@ -82,9 +82,11 @@ jobs:
           fetch-depth: 1
 
       - name: Install swift-format
+        env:
+          SWIFT_FORMAT_VERSION: ${{ inputs['swift-format-version'] }}
         run: |
-          if [ -n "${{ inputs['swift-format-version'] }}" ]; then
-            brew install swift-format@${{ inputs['swift-format-version'] }}
+          if [ -n "$SWIFT_FORMAT_VERSION" ]; then
+            brew install "swift-format@$SWIFT_FORMAT_VERSION"
           else
             brew install swift-format
           fi
@@ -93,12 +95,14 @@ jobs:
       - name: Find Swift files
         id: find-files
         working-directory: ${{ inputs['working-directory'] }}
+        env:
+          FILE_PATTERN: ${{ inputs['file-pattern'] }}
         run: |
-          FILE_COUNT=$(git ls-files '${{ inputs['file-pattern'] }}' | wc -l | tr -d ' ')
+          FILE_COUNT=$(git ls-files -- "$FILE_PATTERN" | wc -l | tr -d ' ')
 
           if [ "$FILE_COUNT" -eq 0 ]; then
             printf "found=false\n" >> "$GITHUB_OUTPUT"
-            printf "No Swift files found matching pattern: %s\n" "${{ inputs['file-pattern'] }}"
+            printf "No Swift files found matching pattern: %s\n" "$FILE_PATTERN"
             exit 0
           fi
 
@@ -109,11 +113,13 @@ jobs:
       - name: Run swift-format lint
         if: steps.find-files.outputs.found == 'true'
         working-directory: ${{ inputs['working-directory'] }}
+        env:
+          FILE_PATTERN: ${{ inputs['file-pattern'] }}
         run: |
           set +e
 
           # Get list of Swift files
-          SWIFT_FILES=$(git ls-files '${{ inputs['file-pattern'] }}')
+          SWIFT_FILES=$(git ls-files -- "$FILE_PATTERN")
           FILE_COUNT=$(printf "%s" "$SWIFT_FILES" | wc -l | tr -d ' ')
 
           printf "Running swift-format on %s files...\n" "${FILE_COUNT}"
@@ -163,12 +169,15 @@ jobs:
 
       - name: Run SwiftLint
         working-directory: ${{ inputs['working-directory'] }}
+        env:
+          SWIFTLINT_CONFIG_PATH: ${{ inputs['swiftlint-config'] }}
+          FAIL_ON_WARNING: ${{ inputs['fail-on-warning'] }}
         run: |
           set +e
 
-          if [ -f "${{ inputs['swiftlint-config'] }}" ]; then
-            printf "Using SwiftLint configuration: %s\n" "${{ inputs['swiftlint-config'] }}"
-            swiftlint lint --config "${{ inputs['swiftlint-config'] }}" --reporter github-actions-logging > swiftlint-output.txt 2>&1
+          if [ -f "$SWIFTLINT_CONFIG_PATH" ]; then
+            printf "Using SwiftLint configuration: %s\n" "$SWIFTLINT_CONFIG_PATH"
+            swiftlint lint --config "$SWIFTLINT_CONFIG_PATH" --reporter github-actions-logging > swiftlint-output.txt 2>&1
           else
             printf "No SwiftLint configuration found, using defaults\n"
             swiftlint lint --reporter github-actions-logging > swiftlint-output.txt 2>&1
@@ -179,7 +188,7 @@ jobs:
           cat swiftlint-output.txt
 
           if [ $SWIFTLINT_EXIT_CODE -ne 0 ]; then
-            if [ "${{ inputs['fail-on-warning'] }}" = "true" ]; then
+            if [ "$FAIL_ON_WARNING" = "true" ]; then
               printf "::error::SwiftLint found issues\n"
               {
                 printf "## SwiftLint Issues 🔴\n"
@@ -215,6 +224,11 @@ jobs:
     if: always()
     steps:
       - name: Check results
+        env:
+          ENABLE_SWIFTFORMAT: ${{ inputs['enable-swiftformat'] }}
+          SWIFTFORMAT_RESULT: ${{ needs.swift-format-lint.result }}
+          ENABLE_SWIFTLINT: ${{ inputs['enable-swiftlint'] }}
+          SWIFTLINT_RESULT: ${{ needs.swiftlint.result }}
         run: |
           {
             printf "## Swift Linting Summary\n"
@@ -222,10 +236,10 @@ jobs:
             printf "| Linter | Status |\n"
             printf "|--------|--------|\n"
 
-            if [ "${{ inputs['enable-swiftformat'] }}" = "true" ]; then
-              if [ "${{ needs.swift-format-lint.result }}" = "success" ]; then
+            if [ "$ENABLE_SWIFTFORMAT" = "true" ]; then
+              if [ "$SWIFTFORMAT_RESULT" = "success" ]; then
                 printf "| swift-format | ✓ Pass |\n"
-              elif [ "${{ needs.swift-format-lint.result }}" = "skipped" ]; then
+              elif [ "$SWIFTFORMAT_RESULT" = "skipped" ]; then
                 printf "| swift-format | − Skipped |\n"
               else
                 printf "| swift-format | ✗ Fail |\n"
@@ -234,10 +248,10 @@ jobs:
               printf "| swift-format | 🔸 Disabled |\n"
             fi
 
-            if [ "${{ inputs['enable-swiftlint'] }}" = "true" ]; then
-              if [ "${{ needs.swiftlint.result }}" = "success" ]; then
+            if [ "$ENABLE_SWIFTLINT" = "true" ]; then
+              if [ "$SWIFTLINT_RESULT" = "success" ]; then
                 printf "| SwiftLint | ✓ Pass |\n"
-              elif [ "${{ needs.swiftlint.result }}" = "skipped" ]; then
+              elif [ "$SWIFTLINT_RESULT" = "skipped" ]; then
                 printf "| SwiftLint | − Skipped |\n"
               else
                 printf "| SwiftLint | ✗ Fail |\n"
@@ -246,15 +260,15 @@ jobs:
               printf "| SwiftLint | 🔸 Disabled |\n"
             fi
 
-            if { [ "${{ inputs['enable-swiftformat'] }}" = "true" ] && [ "${{ needs.swift-format-lint.result }}" = "failure" ]; } || \
-               { [ "${{ inputs['enable-swiftlint'] }}" = "true" ] && [ "${{ needs.swiftlint.result }}" = "failure" ]; }; then
+            if { [ "$ENABLE_SWIFTFORMAT" = "true" ] && [ "$SWIFTFORMAT_RESULT" = "failure" ]; } || \
+               { [ "$ENABLE_SWIFTLINT" = "true" ] && [ "$SWIFTLINT_RESULT" = "failure" ]; }; then
               printf "\n"
               printf "### ✗ Linting failed\n"
               printf "Please fix the issues above.\n"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if { [ "${{ inputs['enable-swiftformat'] }}" = "true" ] && [ "${{ needs.swift-format-lint.result }}" = "failure" ]; } || \
-             { [ "${{ inputs['enable-swiftlint'] }}" = "true" ] && [ "${{ needs.swiftlint.result }}" = "failure" ]; }; then
+          if { [ "$ENABLE_SWIFTFORMAT" = "true" ] && [ "$SWIFTFORMAT_RESULT" = "failure" ]; } || \
+             { [ "$ENABLE_SWIFTLINT" = "true" ] && [ "$SWIFTLINT_RESULT" = "failure" ]; }; then
             exit 1
           fi

@@ -165,9 +165,11 @@ jobs:
           sparse-checkout: scripts
       - name: Determine artifact name
         id: artifact-name
+        env:
+          PROJECT_TYPE: ${{ inputs['project-type'] }}
         run: |
           bash .github-shared/scripts/release/resolve-artifact-name.sh \
-            "${{ inputs['project-type'] }}" >> "$GITHUB_OUTPUT"
+            "$PROJECT_TYPE" >> "$GITHUB_OUTPUT"
       # Download build artifacts based on project type
       - name: Download build artifacts
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
@@ -184,14 +186,18 @@ jobs:
         run: bash .github-shared/scripts/release/resolve-release-metadata.sh
       - name: Generate 3-Layer SBOMs
         if: &if_generate_sbom ${{ inputs['generate-sbom'] }}
+        env:
+          PROJECT_TYPE: ${{ inputs['project-type'] }}
+          RELEASE_VERSION_NO_V: ${{ steps.release-metadata.outputs.version-no-v }}
+          PROJECT_NAME: ${{ steps.release-metadata.outputs.project-name }}
         run: |
           # Use SBOM generation script for source, build and analyzed-artifact layers
           # Use CISA taxonomy layer names that work for all project types
           bash .github-shared/scripts/sbom/generate-sbom.sh \
-            ${{ inputs['project-type'] }} \
+            "$PROJECT_TYPE" \
             "source,build,analyzed-artifact" \
-            "${{ steps.release-metadata.outputs.version-no-v }}" \
-            "${{ steps.release-metadata.outputs.project-name }}"
+            "$RELEASE_VERSION_NO_V" \
+            "$PROJECT_NAME"
 
           printf "Layer 3: Container SBOMs will be downloaded from container build job\n"
       - name: Generate checksums

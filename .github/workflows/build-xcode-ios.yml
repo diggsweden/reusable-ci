@@ -150,15 +150,20 @@ jobs:
 
       - name: Generate artifact names
         id: artifact-names
+        env:
+          ARTIFACT_NAME: ${{ inputs['artifact-name'] }}
+          REPOSITORY_NAME: ${{ github.event.repository.name }}
+          INCLUDE_TAG: ${{ inputs['include-tag'] }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ -n "${{ inputs['artifact-name'] }}" ]; then
-            BASE_NAME="${{ inputs['artifact-name'] }}"
+          if [ -n "$ARTIFACT_NAME" ]; then
+            BASE_NAME="$ARTIFACT_NAME"
           else
-            BASE_NAME="${{ github.event.repository.name }}"
+            BASE_NAME="$REPOSITORY_NAME"
           fi
 
-          if [ "${{ inputs['include-tag'] }}" = "true" ]; then
-            IPA_NAME="${BASE_NAME}-${{ github.ref_name }}"
+          if [ "$INCLUDE_TAG" = "true" ]; then
+            IPA_NAME="${BASE_NAME}-$REF_NAME"
           else
             IPA_NAME="${BASE_NAME}"
           fi
@@ -167,8 +172,10 @@ jobs:
           printf "IPA artifact: %s\n" "${IPA_NAME}"
 
       - name: Select Xcode version
+        env:
+          XCODE_VERSION: ${{ inputs.xcode-version }}
         run: |
-          sudo xcode-select -s /Applications/Xcode_${{ inputs.xcode-version }}.app
+          sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app"
           xcodebuild -version
 
       - name: Install build dependencies
@@ -181,12 +188,14 @@ jobs:
       - name: Generate Xcode project with XcodeGen
         if: ${{ inputs['use-xcodegen'] }}
         working-directory: ${{ inputs['working-directory'] }}
+        env:
+          XCODEGEN_SPEC: ${{ inputs['xcodegen-spec'] }}
         run: |
           if ! command -v xcodegen &> /dev/null; then
             brew install xcodegen
           fi
-          xcodegen generate --spec "${{ inputs['xcodegen-spec'] }}"
-          printf "✓ Xcode project generated from %s\n" "${{ inputs['xcodegen-spec'] }}"
+          xcodegen generate --spec "$XCODEGEN_SPEC"
+          printf "✓ Xcode project generated from %s\n" "$XCODEGEN_SPEC"
 
       - name: Setup code signing
         if: ${{ inputs['enable-code-signing'] }}
@@ -200,10 +209,13 @@ jobs:
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs['working-directory'] }}
+        env:
+          PROJECT_PATH_INPUT: ${{ inputs.project }}
+          WORKSPACE_PATH_INPUT: ${{ inputs.workspace }}
         run: |
           bash .github-shared/scripts/apple/get-version-info.sh \
-            "${{ inputs.project }}" \
-            "${{ inputs.workspace }}" >> "$GITHUB_OUTPUT"
+            "$PROJECT_PATH_INPUT" \
+            "$WORKSPACE_PATH_INPUT" >> "$GITHUB_OUTPUT"
 
       - name: Setup xcconfig from secret
         id: setup-xcconfig

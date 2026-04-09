@@ -97,10 +97,12 @@ jobs:
       - name: Build application
         if: ${{ inputs['build-type'] == 'app' }}
         working-directory: ${{ inputs['working-directory'] }}
+        env:
+          SKIP_TESTS: ${{ inputs['skip-tests'] }}
         run: |
           printf "Building Maven application...\n"
           # shellcheck disable=SC2086
-          if [ "${{ inputs['skip-tests'] }}" = "true" ]; then
+          if [ "$SKIP_TESTS" = "true" ]; then
             mvn $MAVEN_CLI_OPTS clean package -DskipTests
           else
             mvn $MAVEN_CLI_OPTS clean package

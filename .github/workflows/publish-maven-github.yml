@@ -136,26 +136,31 @@ jobs:
         if: ${{ inputs['attach-pattern'] != '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ATTACH_PATTERN: ${{ inputs['attach-pattern'] }}
+          REF_NAME: ${{ github.ref_name }}
         working-directory: ${{ inputs['working-directory'] }}
         run: |
-          for file in ${{ inputs['attach-pattern'] }}; do
+          for file in $ATTACH_PATTERN; do
             if [ -f "$file" ]; then
               printf "Uploading %s to release...\n" "$file"
-              gh release upload "${{ github.ref_name }}" "$file" --clobber || printf "::warning::Failed to upload %s\n" "$file"
+              gh release upload "$REF_NAME" "$file" --clobber || printf "::warning::Failed to upload %s\n" "$file"
             fi
           done
       - name: Generate publish summary
+        env:
+          REPOSITORY: ${{ github.repository }}
+          PACKAGE_TYPE: ${{ inputs['package-type'] }}
         run: |
           print_repository_link() {
             local repo
-            repo="${{ github.repository }}"
+            repo="$REPOSITORY"
             printf "%s **Repository:** [%s](https://github.com/%s/packages)\n" "-" "$repo" "$repo"
           }
 
           {
             printf "## Published to GitHub Packages 📦\n"
             printf "\n"
-            printf "%s **Package Type:** %s\n" "-" "${{ inputs['package-type'] }}"
+            printf "%s **Package Type:** %s\n" "-" "$PACKAGE_TYPE"
             printf "%s **Registry:** GitHub Packages\n" "-"
             print_repository_link
             printf "\n"

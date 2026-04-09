@@ -228,7 +228,10 @@ jobs:
         run: bash .github-shared/scripts/container/extract-npm-tarball.sh
       - name: Verify NPM artifacts
         if: *if_has_npm_artifacts
-        run: bash .github-shared/scripts/container/validate-artifacts.sh npm dist "${{ inputs.context }}/${{ inputs['container-file'] }}"
+        env:
+          CONTAINER_CONTEXT: ${{ inputs.context }}
+          CONTAINER_FILE: ${{ inputs['container-file'] }}
+        run: bash .github-shared/scripts/container/validate-artifacts.sh npm dist "$CONTAINER_CONTEXT/$CONTAINER_FILE"
       - name: Download Gradle artifacts
         if: &if_has_gradle_artifacts ${{ contains(inputs['artifact-types'], 'gradle') }}
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
@@ -241,7 +244,9 @@ jobs:
         run: bash .github-shared/scripts/container/validate-artifacts.sh gradle build/libs
       - name: Verify Containerfile
         id: containerfile
-        run: bash .github-shared/scripts/container/validate-containerfile.sh "${{ inputs['container-file'] }}"
+        env:
+          CONTAINER_FILE: ${{ inputs['container-file'] }}
+        run: bash .github-shared/scripts/container/validate-containerfile.sh "$CONTAINER_FILE"
       - name: Set up QEMU
         if: contains(inputs.platforms, ',') || contains(inputs.platforms, 'arm')
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
@@ -265,20 +270,30 @@ jobs:
           password: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
       - name: Determine Image Name
         id: image-name
+        env:
+          TARGET_REGISTRY: ${{ inputs.registry }}
+          IMAGE_NAME_INPUT: ${{ inputs['image-name'] }}
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
           bash .github-shared/scripts/container/resolve-image-name.sh \
-            "${{ inputs.registry }}" \
-            "${{ inputs['image-name'] }}" \
-            "${{ github.repository }}" \
-            "${{ github.repository_owner }}" >> "$GITHUB_OUTPUT"
+            "$TARGET_REGISTRY" \
+            "$IMAGE_NAME_INPUT" \
+            "$REPOSITORY" \
+            "$REPOSITORY_OWNER" >> "$GITHUB_OUTPUT"
       - name: Validate Image Namespace
         if: *if_push_image
+        env:
+          IMAGE_NAME: ${{ steps.image-name.outputs.name }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_REGISTRY: ${{ inputs.registry }}
+          ENFORCE_NAMESPACE: ${{ inputs['enforce-namespace'] || github.repository_owner }}
         run: |
           bash .github-shared/scripts/container/validate-namespace.sh \
-            "${{ steps.image-name.outputs.name }}" \
-            "${{ github.repository }}" \
-            "${{ inputs.registry }}" \
-            "${{ inputs['enforce-namespace'] || github.repository_owner }}"
+            "$IMAGE_NAME" \
+            "$REPOSITORY" \
+            "$TARGET_REGISTRY" \
+            "$ENFORCE_NAMESPACE"
       - name: Extract Image Metadata
         id: metadata
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
@@ -319,9 +334,11 @@ jobs:
           sbom: ${{ inputs['enable-sbom'] }}
       - name: Check SLSA compatibility
         if: ${{ inputs['push-image'] && inputs['enable-slsa'] && inputs.registry != 'ghcr.io' }}
+        env:
+          TARGET_REGISTRY: ${{ inputs.registry }}
         run: |
           printf "::notice::SLSA provenance generation only supports ghcr.io registry\n"
-          printf "::notice::Current registry: %s\n" "${{ inputs.registry }}"
+          printf "::notice::Current registry: %s\n" "$TARGET_REGISTRY"
           printf "::notice::SLSA provenance attestation will be skipped\n"
           printf "::notice::To enable SLSA: Use registry: ghcr.io or set enable-slsa: false\n"
       - name: Export digest

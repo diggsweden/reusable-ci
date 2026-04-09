@@ -131,11 +131,14 @@ jobs:
           path: ${{ inputs['working-directory'] }}
       - name: Verify Maven artifacts
         if: ${{ contains(inputs['artifact-types'], 'maven') }}
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+          CONTAINER_FILE: ${{ inputs['container-file'] }}
         run: |
           bash .github-shared/scripts/container/validate-artifacts.sh \
             maven \
-            "${{ inputs['working-directory'] }}/target" \
-            "${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}"
+            "$WORKING_DIRECTORY/target" \
+            "$WORKING_DIRECTORY/$CONTAINER_FILE"
       - name: Download NPM artifacts
         if: ${{ contains(inputs['artifact-types'], 'npm') }}
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
@@ -148,11 +151,14 @@ jobs:
         run: bash "$GITHUB_WORKSPACE/.github-shared/scripts/container/extract-npm-tarball.sh"
       - name: Verify NPM artifacts
         if: ${{ contains(inputs['artifact-types'], 'npm') }}
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+          CONTAINER_FILE: ${{ inputs['container-file'] }}
         run: |
           bash .github-shared/scripts/container/validate-artifacts.sh \
             npm \
-            "${{ inputs['working-directory'] }}/dist" \
-            "${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}"
+            "$WORKING_DIRECTORY/dist" \
+            "$WORKING_DIRECTORY/$CONTAINER_FILE"
       - name: Download Gradle artifacts
         if: ${{ contains(inputs['artifact-types'], 'gradle') }}
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
@@ -161,11 +167,14 @@ jobs:
           path: ${{ inputs['working-directory'] }}
       - name: Verify Gradle artifacts
         if: ${{ contains(inputs['artifact-types'], 'gradle') }}
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+          CONTAINER_FILE: ${{ inputs['container-file'] }}
         run: |
           bash .github-shared/scripts/container/validate-artifacts.sh \
             gradle \
-            "${{ inputs['working-directory'] }}/build/libs" \
-            "${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}"
+            "$WORKING_DIRECTORY/build/libs" \
+            "$WORKING_DIRECTORY/$CONTAINER_FILE"
       - name: Set up Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - name: Check registry authentication configuration
@@ -182,9 +191,12 @@ jobs:
           password: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
       - name: Generate dev tags
         id: tags
+        env:
+          TARGET_REGISTRY: ${{ inputs.registry }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           DEV_VERSION=$(bash .github-shared/scripts/version/generate-dev-version.sh)
-          IMAGE_NAME="${{ inputs.registry }}/${{ github.repository }}"
+          IMAGE_NAME="$TARGET_REGISTRY/$REPOSITORY"
 
           printf "tags=%s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}" >> "$GITHUB_OUTPUT"
           printf "image=%s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}" >> "$GITHUB_OUTPUT"

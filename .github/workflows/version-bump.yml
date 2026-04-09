@@ -167,8 +167,10 @@ jobs:
           git_config_global: true
       - name: Set project type
         id: project-type
+        env:
+          PROJECT_TYPE_INPUT: ${{ inputs['project-type'] }}
         run: |
-          PROJECT_TYPE="${{ inputs['project-type'] }}"
+          PROJECT_TYPE="$PROJECT_TYPE_INPUT"
           echo "Project type: ${PROJECT_TYPE}"
           echo "type=${PROJECT_TYPE}" >> "$GITHUB_OUTPUT"
       - name: Set up JDK for Maven
@@ -184,11 +186,12 @@ jobs:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
+          WORKING_DIRECTORY_INPUT: ${{ inputs['working-directory'] }}
         run: |
           bash .github-shared/scripts/version/bump-version.sh \
             maven \
             "${GITHUB_REF_NAME#v}" \
-            "${{ inputs['working-directory'] }}"
+            "$WORKING_DIRECTORY_INPUT"
       - name: Setup Java again with cache after version update
         if: *if_maven_project
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
@@ -219,11 +222,13 @@ jobs:
       - name: Update NPM version
         if: *if_npm_project
         working-directory: ${{ inputs['working-directory'] }}
+        env:
+          WORKING_DIRECTORY_INPUT: ${{ inputs['working-directory'] }}
         run: |
           bash .github-shared/scripts/version/bump-version.sh \
             npm \
             "${GITHUB_REF_NAME#v}" \
-            "${{ inputs['working-directory'] }}"
+            "$WORKING_DIRECTORY_INPUT"
 
           echo "Pre-installing dependencies..."
           npm ci --ignore-scripts || npm install --ignore-scripts || true
@@ -242,24 +247,29 @@ jobs:
           cache: 'gradle'
       - name: Update Gradle version
         if: *if_gradle_project
+        env:
+          PROJECT_TYPE_OUTPUT: ${{ steps.project-type.outputs.type }}
+          WORKING_DIRECTORY_INPUT: ${{ inputs['working-directory'] }}
+          GRADLE_VERSION_FILE_INPUT: ${{ inputs['gradle-version-file'] }}
         run: |
           echo "::group::Update Gradle version"
           bash .github-shared/scripts/version/bump-version.sh \
-            ${{ steps.project-type.outputs.type }} \
+            "$PROJECT_TYPE_OUTPUT" \
             "${GITHUB_REF_NAME#v}" \
-            "${{ inputs['working-directory'] }}" \
-            "${{ inputs['gradle-version-file'] }}"
+            "$WORKING_DIRECTORY_INPUT" \
+            "$GRADLE_VERSION_FILE_INPUT"
           echo "::endgroup::"
       - name: Update Xcode version
         if: ${{ steps.project-type.outputs.type == 'xcode-ios' }}
         env:
           XCODE_VERSION_FILE: ${{ inputs['xcode-version-file'] }}
+          WORKING_DIRECTORY_INPUT: ${{ inputs['working-directory'] }}
         run: |
           echo "::group::Update Xcode version"
           bash .github-shared/scripts/version/bump-version.sh \
             xcode-ios \
             "${GITHUB_REF_NAME#v}" \
-            "${{ inputs['working-directory'] }}"
+            "$WORKING_DIRECTORY_INPUT"
           echo "::endgroup::"
       - name: Download Full Changelog
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0

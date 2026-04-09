@@ -114,7 +114,7 @@ Both metadata lines optional. Defaults to task name if missing.
 
 The workflow generates a formatted summary showing:
 
-```markdown
+````markdown
 # 🔍 Just+Mise Linting Results
 
 **Linters Run:** 8
@@ -131,17 +131,15 @@ The workflow generates a formatted summary showing:
 
 ## ❌ Failed Linters
 
-<details>
-<summary>❌ markdown - Click to expand error details</summary>
+### markdown
 
-**Exit code:** 1
+**Exit code:** 1  
 **Duration:** 0.01s
 
-### Output
-```
-README.md:45 - Line too long (found 120, expected 100)
+#### Output
 ```text
-</details>
+README.md:45 - Line too long (found 120, expected 100)
+```
 
 ---
 
@@ -149,7 +147,7 @@ README.md:45 - Line too long (found 120, expected 100)
 
 **Total Duration:** 11.89s
 **Pass:** ✅ 6 | **Fail:** ❌ 2
-```
+````
 
 #### How It Works
 

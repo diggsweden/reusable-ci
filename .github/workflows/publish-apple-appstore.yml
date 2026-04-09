@@ -150,13 +150,15 @@ jobs:
         env:
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          IPA_FILE: ${{ steps.find-ipa.outputs.ipa-file }}
+          PLATFORM: ${{ inputs.platform }}
         run: |
           printf "Validating IPA...\n"
 
           xcrun altool \
             --validate-app \
-            --file "${{ steps.find-ipa.outputs.ipa-file }}" \
-            --type ${{ inputs.platform }} \
+            --file "$IPA_FILE" \
+            --type "$PLATFORM" \
             --apiKey "$APP_STORE_CONNECT_API_KEY_ID" \
             --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID" \
             --output-format json
@@ -167,6 +169,8 @@ jobs:
         env:
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          IPA_FILE: ${{ steps.find-ipa.outputs.ipa-file }}
+          PLATFORM: ${{ inputs.platform }}
         run: |
           set -eo pipefail
 
@@ -175,8 +179,8 @@ jobs:
           xcrun altool \
             --output-format json \
             --upload-app \
-            --file "${{ steps.find-ipa.outputs.ipa-file }}" \
-            --type ${{ inputs.platform }} \
+            --file "$IPA_FILE" \
+            --type "$PLATFORM" \
             --apiKey "$APP_STORE_CONNECT_API_KEY_ID" \
             --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID" \
           | tee upload-result.json
