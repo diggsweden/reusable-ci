@@ -32,6 +32,10 @@ jobs:
       linters.commitlint: false
       linters.licenselint: false
       linters.megalint: false
+      # OpenGrep SAST is enabled by default. Opt out if needed:
+      # security.sast-opengrep: false
+      # security.sast-opengrep-rules: p/default
+      # security.sast-opengrep-fail-on-severity: high
 
   # Optional: Add project-specific tests
   # test:

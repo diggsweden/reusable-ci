@@ -37,29 +37,34 @@
 #   CI_PRERELEASE_SUFFIX_REGEX     Prerelease suffix validation regex
 #   CI_CHECKSUMS_FILE              Canonical checksums filename
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/env.sh"
+
 # Write a key=value pair to workflow outputs
 ci_output() {
   local key="$1"
   local value="$2"
-  local output_file="${GITHUB_OUTPUT:-${CI_OUTPUT:-}}"
+  local output_file
+  output_file="$(ci_output_file)"
 
-  if [[ -n "$output_file" ]]; then
+  if [[ "$output_file" != "/dev/null" ]]; then
     printf '%s=%s\n' "$key" "$value" >>"$output_file"
   fi
 }
 
 # Return the output file path (for scripts that redirect stdout in bulk)
 ci_output_file() {
-  printf '%s' "${GITHUB_OUTPUT:-${CI_OUTPUT:-/dev/null}}"
+  printf '%s' "${CI_OUTPUT:-/dev/null}"
 }
 
 # Write a multiline value to workflow outputs (reads from stdin)
 ci_output_multiline() {
   local key="$1"
-  local output_file="${GITHUB_OUTPUT:-${CI_OUTPUT:-}}"
+  local output_file
+  output_file="$(ci_output_file)"
   local delimiter="EOF_${RANDOM}_${RANDOM}"
 
-  if [[ -n "$output_file" ]]; then
+  if [[ "$output_file" != "/dev/null" ]]; then
     printf '%s<<%s\n' "$key" "$delimiter" >>"$output_file"
     cat >>"$output_file"
     printf '%s\n' "$delimiter" >>"$output_file"
@@ -68,13 +73,14 @@ ci_output_multiline() {
 
 # Append content to step summary (reads from stdin)
 ci_summary() {
-  local summary_file="${GITHUB_STEP_SUMMARY:-${CI_SUMMARY:-/dev/null}}"
+  local summary_file
+  summary_file="$(ci_summary_file)"
   cat >>"$summary_file"
 }
 
 # Return the summary file path (for scripts that use >> directly)
 ci_summary_file() {
-  printf '%s' "${GITHUB_STEP_SUMMARY:-${CI_SUMMARY:-/dev/null}}"
+  printf '%s' "${CI_SUMMARY:-/dev/null}"
 }
 
 # Print JSON boolean: "true" or "false"
@@ -84,7 +90,7 @@ ci_json_bool() {
 
 # Log an error message (platform-aware annotation)
 ci_log_error() {
-  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  if [[ "${CI_PLATFORM:-local}" == "github" ]]; then
     printf '::error::%s\n' "$1"
   else
     printf 'ERROR: %s\n' "$1" >&2
@@ -93,7 +99,7 @@ ci_log_error() {
 
 # Log a warning message (platform-aware annotation)
 ci_log_warning() {
-  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  if [[ "${CI_PLATFORM:-local}" == "github" ]]; then
     printf '::warning::%s\n' "$1"
   else
     printf 'WARNING: %s\n' "$1" >&2

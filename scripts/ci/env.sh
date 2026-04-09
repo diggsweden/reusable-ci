@@ -11,7 +11,7 @@
 #   source "$(dirname "$0")/../ci/env.sh"
 #
 # Exported variables:
-#   CI_PLATFORM    CI platform identifier (github, gitlab, etc.)
+#   CI_PLATFORM    CI platform identifier (github, etc.)
 #   CI_COMMIT      Commit SHA being built
 #   CI_REPO        Repository identifier (org/repo)
 #   CI_RUN_ID      Unique run/pipeline identifier
@@ -23,6 +23,9 @@
 #   CI_SERVER_URL  Base URL of the CI server
 #   CI_RUN_URL     Direct URL to the current run/pipeline
 #   CI_TEMP_DIR    Writable temp directory for tool installs
+#   CI_OUTPUT      Generic output file path for scalar job outputs
+#   CI_SUMMARY     Generic markdown summary file path
+#   CI_RESULTS_DIR Directory for structured JSON result manifests
 
 [[ -n "${_CI_ENV_LOADED:-}" ]] && return 0
 _CI_ENV_LOADED=1
@@ -37,17 +40,29 @@ if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
   CI_PR_BASE_REF="${GITHUB_BASE_REF:-}"
   CI_REF_NAME="${GITHUB_REF_NAME:-}"
   CI_REF="${GITHUB_REF:-}"
-  CI_SERVER_URL="https://github.com"
-  CI_RUN_URL="https://github.com/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}"
+  CI_SERVER_URL="${GITHUB_SERVER_URL:-https://github.com}"
+  CI_RUN_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}"
   CI_TEMP_DIR="${RUNNER_TEMP:-/tmp}"
-
-elif [[ "${GITLAB_CI:-}" == "true" ]]; then
-  # GitLab CI mappings — future task
-  CI_PR_BASE_REF="${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}"
-  CI_TEMP_DIR="${CI_BUILDS_DIR:-/tmp}"
+  CI_OUTPUT="${CI_OUTPUT:-${GITHUB_OUTPUT:-}}"
+  CI_SUMMARY="${CI_SUMMARY:-${GITHUB_STEP_SUMMARY:-}}"
+  CI_RESULTS_DIR="${CI_RESULTS_DIR:-.ci-results}"
 
 else
-  CI_TEMP_DIR="${TMPDIR:-/tmp}"
+  CI_PLATFORM="${CI_PLATFORM:-local}"
+  CI_COMMIT="${CI_COMMIT:-}"
+  CI_REPO="${CI_REPO:-}"
+  CI_RUN_ID="${CI_RUN_ID:-}"
+  CI_ACTOR="${CI_ACTOR:-}"
+  CI_BRANCH="${CI_BRANCH:-}"
+  CI_PR_BASE_REF="${CI_PR_BASE_REF:-}"
+  CI_REF_NAME="${CI_REF_NAME:-}"
+  CI_REF="${CI_REF:-}"
+  CI_SERVER_URL="${CI_SERVER_URL:-}"
+  CI_RUN_URL="${CI_RUN_URL:-}"
+  CI_TEMP_DIR="${CI_TEMP_DIR:-${TMPDIR:-/tmp}}"
+  CI_OUTPUT="${CI_OUTPUT:-}"
+  CI_SUMMARY="${CI_SUMMARY:-}"
+  CI_RESULTS_DIR="${CI_RESULTS_DIR:-.ci-results}"
 fi
 
-export CI_PLATFORM CI_COMMIT CI_REPO CI_RUN_ID CI_ACTOR CI_BRANCH CI_PR_BASE_REF CI_REF_NAME CI_REF CI_SERVER_URL CI_RUN_URL CI_TEMP_DIR
+export CI_PLATFORM CI_COMMIT CI_REPO CI_RUN_ID CI_ACTOR CI_BRANCH CI_PR_BASE_REF CI_REF_NAME CI_REF CI_SERVER_URL CI_RUN_URL CI_TEMP_DIR CI_OUTPUT CI_SUMMARY CI_RESULTS_DIR

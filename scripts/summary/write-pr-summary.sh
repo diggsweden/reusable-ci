@@ -7,22 +7,26 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../ci/output.sh"
 source "$SCRIPT_DIR/../ci/env.sh"
+source "$SCRIPT_DIR/../ci/manifest.sh"
 
 main() {
   local run_time short_sha
   local commitlint_result licenselint_result dependencyreview_result
-  local megalint_result publiccodelint_result devbasecheck_result swift_result
+  local sastopengrep_result megalint_result publiccodelint_result devbasecheck_result swift_result
+  local quality_stage_result_json
 
   run_time=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
   short_sha="${CI_COMMIT:0:7}"
+  quality_stage_result_json="$(ci_json_input "${QUALITY_STAGE_RESULT_JSON:-}" "${QUALITY_STAGE_RESULT_PATH:-}")"
 
-  commitlint_result="$(ci_json_value "$QUALITY_STAGE_RESULT_JSON" commitlint)"
-  licenselint_result="$(ci_json_value "$QUALITY_STAGE_RESULT_JSON" licenselint)"
-  dependencyreview_result="$(ci_json_value "$QUALITY_STAGE_RESULT_JSON" dependencyreview)"
-  megalint_result="$(ci_json_value "$QUALITY_STAGE_RESULT_JSON" megalint)"
-  publiccodelint_result="$(ci_json_value "$QUALITY_STAGE_RESULT_JSON" publiccodelint)"
-  devbasecheck_result="$(ci_json_value "$QUALITY_STAGE_RESULT_JSON" devbasecheck)"
-  swift_result="$(ci_json_value "$QUALITY_STAGE_RESULT_JSON" swift)"
+  commitlint_result="$(ci_json_value "$quality_stage_result_json" commitlint)"
+  licenselint_result="$(ci_json_value "$quality_stage_result_json" licenselint)"
+  dependencyreview_result="$(ci_json_value "$quality_stage_result_json" dependencyreview)"
+  sastopengrep_result="$(ci_json_value "$quality_stage_result_json" sastopengrep)"
+  megalint_result="$(ci_json_value "$quality_stage_result_json" megalint)"
+  publiccodelint_result="$(ci_json_value "$quality_stage_result_json" publiccodelint)"
+  devbasecheck_result="$(ci_json_value "$quality_stage_result_json" devbasecheck)"
+  swift_result="$(ci_json_value "$quality_stage_result_json" swift)"
 
   cat >>"$(ci_summary_file)" <<EOF
 # Pull Request Summary
@@ -42,6 +46,7 @@ main() {
 | Commit Lint | $(ci_status_icon "$commitlint_result") |
 | License Lint | $(ci_status_icon "$licenselint_result") |
 | Dependency Review | $(ci_status_icon "$dependencyreview_result") |
+| OpenGrep SAST | $(ci_status_icon "$sastopengrep_result") |
 | MegaLinter | $(ci_status_icon "$megalint_result") |
 | Publiccode Lint | $(ci_status_icon "$publiccodelint_result") |
 | Devbase Check | $(ci_status_icon "$devbasecheck_result") |

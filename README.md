@@ -142,20 +142,23 @@ jobs:
         permissions:
           contents: read
           packages: read
-        secrets: inherit
+        secrets: inherit  # Pass SARIF_UPLOAD_TOKEN if you want Security / Code Scanning upload
         with:
           reusable-ci-ref: v2.7.0
           project-type: maven  # or npm, gradle, gradle-android, xcode-ios
           # Recommended: Use devbase-check (lightweight, just+mise-based)
-          linters.devbasecheck: true
-          linters.commitlint: false
-          linters.licenselint: false
-          linters.megalint: false
-          # Optional linters:
-          # linters.dependencyreview: true  # Dependency vulnerability scan
-          # linters.publiccodelint: false   # publiccode.yml validation
-          # linters.swiftlint: false        # Swift linting for iOS/macOS
-   ```
+           linters.devbasecheck: true
+           linters.commitlint: false
+           linters.licenselint: false
+           linters.megalint: false
+           # Optional linters:
+           # linters.dependencyreview: true  # Dependency vulnerability scan
+           # security.sast-opengrep: false   # Opt out of OpenGrep SAST
+           # security.sast-opengrep-rules: p/default
+           # security.sast-opengrep-fail-on-severity: high
+           # linters.publiccodelint: false   # publiccode.yml validation
+           # linters.swiftlint: false        # Swift linting for iOS/macOS
+    ```
 
 3. **Create release workflow** - Trigger builds on tags:
    ```yaml

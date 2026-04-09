@@ -1,0 +1,84 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# Description:
+# Runs OpenGrep SAST, emits portable JSON/SARIF/GitLab SAST outputs, and
+# uploads SARIF to GitHub Code Scanning when SARIF_UPLOAD_TOKEN is configured.
+name: Analyze OpenGrep SAST
+on:
+  workflow_call:
+    inputs:
+      opengrep-rules:
+        description: "OpenGrep rules path, registry pack, or comma-separated list"
+        required: false
+        default: "p/default"
+        type: string
+      fail-on-severity:
+        description: "Fail on none, low, medium, or high findings"
+        required: false
+        default: "high"
+        type: string
+      reusable-ci-ref:
+        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+        required: false
+        default: "main"
+        type: string
+permissions:
+  contents: read
+jobs:
+  analysis:
+    name: OpenGrep SAST
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Run OpenGrep SAST
+        env:
+          OPENGREP_CONFIG: ${{ inputs['opengrep-rules'] }}
+          OPENGREP_FAIL_ON_SEVERITY: ${{ inputs['fail-on-severity'] }}
+          HAS_SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN != '' }}
+        run: bash .github-shared/scripts/security/run-opengrep.sh
+      - name: Enrich OpenGrep SARIF for GitHub
+        if: always() && hashFiles('opengrep-results.sarif') != ''
+        env:
+          SARIF_FILE: opengrep-results.sarif
+        run: bash .github-shared/scripts/security/enrich-github-sarif.sh
+      - name: Archive OpenGrep outputs
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: opengrep-results
+          path: |
+            opengrep-results.json
+            opengrep-results.txt
+            opengrep-results.sarif
+            opengrep-results.gitlab-sast.json
+          retention-days: 5
+          if-no-files-found: ignore
+      - name: Save OpenGrep SARIF artifact
+        if: always() && hashFiles('opengrep-results.sarif') != ''
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: sarif-opengrep
+          path: opengrep-results.sarif
+          retention-days: 5
+          if-no-files-found: ignore
+      - name: Upload OpenGrep results to Code Scanning
+        if: always() && hashFiles('opengrep-results.sarif') != ''
+        env:
+          SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
+          SARIF_FILE: opengrep-results.sarif
+          SARIF_CATEGORY: opengrep-sast
+        run: bash .github-shared/scripts/security/upload-sarif.sh

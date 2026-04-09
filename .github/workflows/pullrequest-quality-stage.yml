@@ -15,16 +15,6 @@ on:
         required: false
         default: "main"
         type: string
-    outputs:
-      stage-ran:
-        description: PR quality stage ran
-        value: ${{ jobs.summarize-quality-stage.outputs.stage-ran }}
-      stage-result:
-        description: Normalized PR quality stage result
-        value: ${{ jobs.summarize-quality-stage.outputs.stage-result }}
-      result-json:
-        description: PR quality stage result payload
-        value: ${{ jobs.summarize-quality-stage.outputs.result-json }}
 permissions:
   contents: read
 jobs:
@@ -46,6 +36,17 @@ jobs:
     secrets: inherit
     uses: ./.github/workflows/security-dependency-review.yml
     with:
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+  sast-opengrep:
+    name: OpenGrep SAST
+    if: ${{ fromJson(inputs['pr-policy-json']).sastopengrep }}
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/security-opengrep.yml
+    with:
+      opengrep-rules: ${{ fromJson(inputs['pr-context-json']).sast_opengrep_rules }}
+      fail-on-severity: ${{ fromJson(inputs['pr-context-json']).sast_opengrep_fail_on_severity }}
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   megalint:
     name: MegaLinter
@@ -79,7 +80,7 @@ jobs:
     name: Status
     runs-on: ubuntu-latest
     if: always()
-    needs: [commit-lint, license-lint, dependency-review, megalint, publiccode-lint, devbase-check-lint, swift-lint]
+    needs: [commit-lint, license-lint, dependency-review, sast-opengrep, megalint, publiccode-lint, devbase-check-lint, swift-lint]
     steps:
       - name: Checkout reusable-ci scripts
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -93,6 +94,7 @@ jobs:
           CHECK_COMMITLINT: Commit Lint|${{ fromJson(inputs['pr-policy-json']).commitlint }}|${{ needs.commit-lint.result }}|true
           CHECK_LICENSLINT: License Lint|${{ fromJson(inputs['pr-policy-json']).licenselint }}|${{ needs.license-lint.result }}|true
           CHECK_DEPENDENCYREVIEW: Dependency Review|${{ fromJson(inputs['pr-policy-json']).dependencyreview }}|${{ needs.dependency-review.result }}|false
+          CHECK_SASTOPENGREP: OpenGrep SAST|${{ fromJson(inputs['pr-policy-json']).sastopengrep }}|${{ needs.sast-opengrep.result }}|false
           CHECK_MEGALINT: MegaLinter|${{ fromJson(inputs['pr-policy-json']).megalint }}|${{ needs.megalint.result }}|true
           CHECK_PUBLICCODELINT: Publiccode Lint|${{ fromJson(inputs['pr-policy-json']).publiccodelint }}|${{ needs.publiccode-lint.result }}|true
           CHECK_DEVBASECHECK: Devbase Check|${{ fromJson(inputs['pr-policy-json']).devbasecheck }}|${{ needs.devbase-check-lint.result }}|false
@@ -102,21 +104,18 @@ jobs:
             "$CHECK_COMMITLINT" \
             "$CHECK_LICENSLINT" \
             "$CHECK_DEPENDENCYREVIEW" \
+            "$CHECK_SASTOPENGREP" \
             "$CHECK_MEGALINT" \
             "$CHECK_PUBLICCODELINT" \
             "$CHECK_DEVBASECHECK" \
             "$CHECK_SWIFT"
   summarize-quality-stage:
     name: Summary
-    needs: [commit-lint, license-lint, dependency-review, megalint, publiccode-lint, devbase-check-lint, swift-lint, quality-status]
+    needs: [commit-lint, license-lint, dependency-review, sast-opengrep, megalint, publiccode-lint, devbase-check-lint, swift-lint, quality-status]
     if: always()
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    outputs:
-      stage-ran: ${{ steps.summary.outputs.stage-ran }}
-      stage-result: ${{ steps.summary.outputs.stage-result }}
-      result-json: ${{ steps.summary.outputs.result-json }}
     steps:
       - name: Checkout reusable-ci scripts
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -131,6 +130,7 @@ jobs:
           COMMITLINT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).commitlint }}
           LICENSLINT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).licenselint }}
           DEPENDENCYREVIEW_ENABLED: ${{ fromJson(inputs['pr-policy-json']).dependencyreview }}
+          SASTOPENGREP_ENABLED: ${{ fromJson(inputs['pr-policy-json']).sastopengrep }}
           MEGALINT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).megalint }}
           PUBLICCODELINT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).publiccodelint }}
           DEVBASECHECK_ENABLED: ${{ fromJson(inputs['pr-policy-json']).devbasecheck }}
@@ -138,8 +138,18 @@ jobs:
           COMMITLINT_RESULT: ${{ needs.commit-lint.result }}
           LICENSLINT_RESULT: ${{ needs.license-lint.result }}
           DEPENDENCYREVIEW_RESULT: ${{ needs.dependency-review.result }}
+          SASTOPENGREP_RESULT: ${{ needs.sast-opengrep.result }}
           MEGALINT_RESULT: ${{ needs.megalint.result }}
           PUBLICCODELINT_RESULT: ${{ needs.publiccode-lint.result }}
           DEVBASECHECK_RESULT: ${{ needs.devbase-check-lint.result }}
           SWIFT_RESULT: ${{ needs.swift-lint.result }}
         run: bash .github-shared/scripts/summary/write-pr-quality-stage-result.sh
+      - name: Upload quality stage manifests
+        if: always() && hashFiles('.ci-results/*.json') != ''
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: ci-results-pr-quality
+          path: .ci-results/*.json
+          include-hidden-files: true
+          retention-days: 5
+          if-no-files-found: ignore
