@@ -65,7 +65,7 @@ teardown() {
   assert_summary_contains 'Passed with `0` findings.'
   assert_summary_contains "| Security / Code Scanning | SARIF generated, upload not configured |"
   assert_summary_contains "test-owner/test-repo/actions/runs/12345"
-  assert_summary_contains 'Configure `SARIF_UPLOAD_TOKEN` to publish results in Security / Code Scanning.'
+  assert_summary_contains 'Configure SARIF_UPLOAD_TOKEN to publish results in Security / Code Scanning.'
   run get_github_output "opengrep-result"
   assert_output "success"
 }

@@ -96,18 +96,23 @@ fi
 
 sarif_b64="$(gzip -c "$SARIF_FILE" | base64 | tr -d '\n')"
 
-# Build JSON payload
-json_payload="{\"commit_sha\":\"${GITHUB_SHA}\",\"ref\":\"${GITHUB_REF}\",\"sarif\":\"${sarif_b64}\""
-if [[ -n "$SARIF_CATEGORY" ]]; then
-  json_payload="${json_payload},\"tool_name\":\"${SARIF_CATEGORY}\""
-fi
-json_payload="${json_payload}}"
+# Build JSON payload with jq (proper escaping) and pipe via stdin to
+# avoid ARG_MAX limits — large SARIF base64 strings exceed shell limits.
+jq_args=(--arg sha "$GITHUB_SHA" --arg ref "$GITHUB_REF" --arg sarif "$sarif_b64")
+# shellcheck disable=SC2016 # $sha, $ref, $sarif are jq variables, not shell
+jq_filter='{commit_sha: $sha, ref: $ref, sarif: $sarif}'
 
-response="$(curl -s -w "\n%{http_code}" -X POST \
+if [[ -n "$SARIF_CATEGORY" ]]; then
+  jq_args+=(--arg tool "$SARIF_CATEGORY")
+  # shellcheck disable=SC2016
+  jq_filter='{commit_sha: $sha, ref: $ref, sarif: $sarif, tool_name: $tool}'
+fi
+
+response="$(jq -n "${jq_args[@]}" "$jq_filter" | curl -s -w "\n%{http_code}" -X POST \
   -H "Authorization: token ${SARIF_UPLOAD_TOKEN}" \
   -H "Accept: application/vnd.github+json" \
   "${API_URL}/repos/${GITHUB_REPOSITORY}/code-scanning/sarifs" \
-  -d "$json_payload")"
+  -d @-)"
 
 http_code="$(echo "$response" | tail -1)"
 body="$(echo "$response" | sed '$d')"

@@ -132,14 +132,72 @@ run_upload_sarif() {
   export SARIF_UPLOAD_TOKEN="test-token"
   export GITHUB_API_URL="http://localhost:9999"
 
-  # Stub curl to simulate 202 Accepted
-  create_mock_binary "curl" 'printf "ok\n202"'
+  # Stub curl to capture stdin payload and simulate 202 Accepted
+  create_mock_binary "curl" '
+    payload="$(cat)"
+    printf "%s" "$payload" > '"$TEST_DIR"'/captured-payload.json
+    printf "ok\n202"
+  '
   use_mock_path
 
   run_upload_sarif
 
   assert_success
   assert_output --partial "Uploading"
+  assert_output --partial "SARIF uploaded successfully (HTTP 202)"
+
+  # Verify the payload is valid JSON with expected fields
+  assert_file_exist "$TEST_DIR/captured-payload.json"
+  run jq -e '.commit_sha' "$TEST_DIR/captured-payload.json"
+  assert_success
+  assert_output '"abc1234567890"'
+  run jq -e '.ref' "$TEST_DIR/captured-payload.json"
+  assert_success
+  assert_output '"refs/heads/main"'
+  run jq -e '.sarif' "$TEST_DIR/captured-payload.json"
+  assert_success
+}
+
+@test "includes tool_name when SARIF_CATEGORY is set" {
+  export SARIF_UPLOAD_TOKEN="test-token"
+  export SARIF_CATEGORY="opengrep-sast"
+  export GITHUB_API_URL="http://localhost:9999"
+
+  create_mock_binary "curl" '
+    payload="$(cat)"
+    printf "%s" "$payload" > '"$TEST_DIR"'/captured-payload.json
+    printf "ok\n202"
+  '
+  use_mock_path
+
+  run_upload_sarif
+
+  assert_success
+  assert_output --partial "[opengrep-sast]"
+
+  run jq -e '.tool_name' "$TEST_DIR/captured-payload.json"
+  assert_success
+  assert_output '"opengrep-sast"'
+}
+
+@test "handles large SARIF files without ARG_MAX errors" {
+  export SARIF_UPLOAD_TOKEN="test-token"
+  export GITHUB_API_URL="http://localhost:9999"
+
+  # Generate a SARIF file large enough to exceed typical ARG_MAX (~128KB)
+  python3 -c "
+import json
+runs = [{'results': [{'message': {'text': 'x' * 200}} for _ in range(500)]}]
+print(json.dumps({'version': '2.1.0', 'runs': runs}))
+" > "$TEST_DIR/results.sarif"
+  export SARIF_FILE="$TEST_DIR/results.sarif"
+
+  create_mock_binary "curl" 'cat > /dev/null; printf "ok\n202"'
+  use_mock_path
+
+  run_upload_sarif
+
+  assert_success
   assert_output --partial "SARIF uploaded successfully (HTTP 202)"
 }
 
@@ -148,7 +206,7 @@ run_upload_sarif() {
   export GITHUB_API_URL="http://localhost:9999"
 
   # Stub curl to simulate 401 Unauthorized
-  create_mock_binary "curl" 'printf "{\"message\":\"Bad credentials\"}\n401"'
+  create_mock_binary "curl" 'cat > /dev/null; printf "{\"message\":\"Bad credentials\"}\n401"'
   use_mock_path
 
   run_upload_sarif
