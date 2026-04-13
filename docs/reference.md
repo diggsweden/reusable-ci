@@ -71,7 +71,7 @@ Note: GitHub Packages uploads use `GITHUB_TOKEN` (automatic, no configuration ne
 
 ### SARIF_UPLOAD_TOKEN
 
-Used for uploading security scan results (SARIF) to GitHub Code Scanning. Without this token, scans still run and SARIF files are saved as workflow artifacts, but results won't appear in the Code Scanning tab.
+Used for uploading security scan results (SARIF) to GitHub Security / Code Scanning. Without this token, scans still run, SARIF is still generated, and SARIF files are still saved as workflow artifacts, but results won't appear in Security / Code Scanning.
 
 **Option A — GitHub App (recommended):**
 - Create a GitHub App with `code_scanning_alerts: write` repository permission
@@ -93,10 +93,11 @@ Results appear in the Code Scanning tab grouped by category:
 |----------|---------|------|
 | `megalinter` | MegaLinter | PR quality checks |
 | `dependency-review` | Trivy | PR dependency scan |
+| `opengrep-sast` | OpenGrep | PR SAST scan |
 | `scorecard` | OpenSSF Scorecard | Scheduled analysis |
 | `container-scan` | Trivy | Release container build |
 
-SARIF files are also saved as workflow artifacts (`sarif-megalinter`, `sarif-dependency-review`, `sarif-scorecard`, `sarif-container-scan`) regardless of whether the token is configured.
+SARIF files are also saved as workflow artifacts (`sarif-megalinter`, `sarif-dependency-review`, `sarif-opengrep`, `sarif-scorecard`, `sarif-container-scan`) regardless of whether the token is configured.
 
 ---
 

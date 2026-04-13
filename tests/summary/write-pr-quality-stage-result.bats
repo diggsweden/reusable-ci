@@ -23,6 +23,7 @@ teardown() {
   export COMMITLINT_RESULT="success"
   export LICENSLINT_RESULT="success"
   export DEPENDENCYREVIEW_RESULT="success"
+  export SASTOPENGREP_RESULT="success"
   export MEGALINT_RESULT="success"
   export PUBLICCODELINT_RESULT="success"
   export DEVBASECHECK_RESULT="success"
@@ -30,6 +31,7 @@ teardown() {
   export COMMITLINT_ENABLED="true"
   export LICENSLINT_ENABLED="true"
   export DEPENDENCYREVIEW_ENABLED="true"
+  export SASTOPENGREP_ENABLED="true"
   export MEGALINT_ENABLED="true"
   export PUBLICCODELINT_ENABLED="true"
   export DEVBASECHECK_ENABLED="true"
@@ -43,6 +45,8 @@ teardown() {
 
   run get_github_output "stage-result"
   assert_output "success"
+
+  assert_stage_result_manifest_matches_output "pr-quality"
 }
 
 @test "all default to success when no env vars set" {
@@ -124,6 +128,7 @@ teardown() {
   export COMMITLINT_ENABLED="true"
   export LICENSLINT_ENABLED="false"
   export DEPENDENCYREVIEW_ENABLED="false"
+  export SASTOPENGREP_ENABLED="false"
   export MEGALINT_ENABLED="false"
   export PUBLICCODELINT_ENABLED="false"
   export DEVBASECHECK_ENABLED="false"
@@ -136,6 +141,7 @@ teardown() {
   assert_output --partial '"commitlint":"success"'
   assert_output --partial '"licenselint":"skipped"'
   assert_output --partial '"dependencyreview":"skipped"'
+  assert_output --partial '"sastopengrep":"skipped"'
   assert_output --partial '"megalint":"skipped"'
 }
 
@@ -143,10 +149,12 @@ teardown() {
   export COMMITLINT_RESULT="success"
   export LICENSLINT_RESULT="failure"
   export DEPENDENCYREVIEW_RESULT="cancelled"
+  export SASTOPENGREP_RESULT="failure"
   export MEGALINT_RESULT="success"
   export COMMITLINT_ENABLED="true"
   export LICENSLINT_ENABLED="true"
   export DEPENDENCYREVIEW_ENABLED="true"
+  export SASTOPENGREP_ENABLED="true"
   export MEGALINT_ENABLED="true"
   export PUBLICCODELINT_ENABLED="false"
   export DEVBASECHECK_ENABLED="false"
@@ -159,6 +167,7 @@ teardown() {
   assert_output --partial '"commitlint":"success"'
   assert_output --partial '"licenselint":"failure"'
   assert_output --partial '"dependencyreview":"cancelled"'
+  assert_output --partial '"sastopengrep":"failure"'
   assert_output --partial '"megalint":"success"'
 }
 
@@ -167,6 +176,7 @@ teardown() {
   export COMMITLINT_ENABLED="true"
   export LICENSLINT_ENABLED="false"
   export DEPENDENCYREVIEW_ENABLED="false"
+  export SASTOPENGREP_ENABLED="false"
   export MEGALINT_ENABLED="false"
   export PUBLICCODELINT_ENABLED="false"
   export DEVBASECHECK_ENABLED="false"
@@ -182,6 +192,7 @@ teardown() {
   assert_output --partial '"commitlint":"success"'
   assert_output --partial '"licenselint":"skipped"'
   assert_output --partial '"dependencyreview":"skipped"'
+  assert_output --partial '"sastopengrep":"skipped"'
   assert_output --partial '"megalint":"skipped"'
   assert_output --partial '"publiccodelint":"skipped"'
   assert_output --partial '"devbasecheck":"skipped"'

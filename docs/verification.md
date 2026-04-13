@@ -168,7 +168,6 @@ lint-rust:
 
 # Remove by deleting the task - automatically excluded
 ```
-
 ## Artifact Verification Methods
 
 | Artifact Type | Verification Methods | Security Level | What It Proves |

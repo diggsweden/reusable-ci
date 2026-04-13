@@ -1,10 +1,19 @@
 ## Available Components
 
-This document describes individual workflow components that can be used standalone or combined with orchestrators.
+This document describes reusable workflow components and how they relate to the supported orchestrator entrypoints.
+
+**Recommended stable GitHub entrypoints:**
+- `pullrequest-orchestrator.yml`
+- `release-orchestrator.yml`
+- `release-dev-orchestrator.yml`
+
+Leaf helper workflows such as `build-*`, `publish-*`, `lint-*`, `security-*`, `validate-*`, and selected release helpers can still be used directly by advanced consumers and are suitable for repo-local custom orchestration.
+
+Stage workflows such as `pullrequest-quality-stage.yml`, `release-prepare-stage.yml`, `release-build-stage.yml`, `release-publish-stage.yml`, `release-dev-build-stage.yml`, and `release-dev-publish-stage.yml` are internal composition helpers. Advanced consumers may still use them, but they should be treated as less stable direct-use contracts than the orchestrators and leaf helpers.
 
 **When to use components:**
-- You need fine-grained control over the release process
-- You want to create custom workflows
+- You need fine-grained control over builds, publishing, validation, or security checks
+- You want to compose custom workflows around leaf helpers
 - You're integrating with existing CI/CD pipelines
 
 **When to use orchestrators:**
@@ -188,6 +197,9 @@ with:
   linters.commitlint: true         # Deprecated v3.0: migrate to devbasecheck
   linters.licenselint: true        # Deprecated v3.0: migrate to devbasecheck
   linters.dependencyreview: true   # Dependency vulnerability review
+  security.sast-opengrep: true     # OpenGrep SAST (default; set false to opt out)
+  security.sast-opengrep-rules: p/default
+  security.sast-opengrep-fail-on-severity: high
   linters.megalint: true           # Deprecated v3.0: migrate to devbasecheck
   linters.publiccodelint: false    # Publiccode.yml validation
   linters.devbasecheck: false      # Recommended: replaces deprecated linters
@@ -196,7 +208,7 @@ with:
   reusable-ci-ref: v2.7.0           # Match the pinned workflow release
 ```
 
-**Outputs:** The quality stage exposes `stage-ran`, `stage-result`, and `result-json` with per-check target results. See [PR Quality Stage Result Contract](workflows.md#pr-quality-stage-result-contract) for the full schema.
+**Behavior:** The orchestrator remains the supported entrypoint. Internally it delegates to the quality stage, which writes a normalized manifest consumed by the top-level PR summary. See [PR Quality Stage Result Contract](workflows.md#pr-quality-stage-result-contract) for the internal schema.
 
 ### Lint Workflows
 
@@ -255,6 +267,19 @@ Reviews dependencies for known vulnerabilities.
 ```yaml
 uses: ./.github/workflows/security-dependency-review.yml
 ```
+
+#### `security-opengrep.yml`
+Runs OpenGrep SAST and emits portable outputs for GitHub and GitLab-style integrations.
+```yaml
+uses: ./.github/workflows/security-opengrep.yml
+with:
+  opengrep-rules: p/default
+  fail-on-severity: high
+```
+
+The workflow runs directly on the GitHub runner in this branch. The runtime container path is introduced later on the GitLab prep branch.
+
+SARIF is always generated and saved as a workflow artifact. To publish results into GitHub Security / Code Scanning, configure the org or repo secret `SARIF_UPLOAD_TOKEN` and pass secrets with `secrets: inherit`.
 
 #### `security-openssf-scorecard.yml`
 Generates OpenSSF security scorecard for the repository.

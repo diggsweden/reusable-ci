@@ -184,6 +184,9 @@ init_remote_repo() {
 # Usage: setup_github_env
 setup_github_env() {
   export GITHUB_ACTIONS="true"
+  export GITHUB_SERVER_URL="https://github.com"
+  export GITHUB_REPOSITORY="test-owner/test-repo"
+  export GITHUB_RUN_ID="12345"
   export GITHUB_OUTPUT="$TEST_DIR/github_output"
   export GITHUB_STEP_SUMMARY="$TEST_DIR/step_summary.md"
   export GITHUB_ENV="$TEST_DIR/github_env"
@@ -460,6 +463,47 @@ assert_summary_contains() {
 # Usage: get_summary
 get_summary() {
   cat "$GITHUB_STEP_SUMMARY"
+}
+
+# Get manifest file path under the default CI results directory
+# Usage: get_manifest_path <name>
+get_manifest_path() {
+  local name="$1"
+  printf '%s/.ci-results/%s.json' "$TEST_DIR" "$name"
+}
+
+# Get stage result manifest file path
+# Usage: get_stage_result_manifest_path <stage>
+get_stage_result_manifest_path() {
+  local stage="$1"
+  get_manifest_path "${stage}-result"
+}
+
+# Assert that a manifest file matches a workflow output value
+# Usage: assert_manifest_equals_output <manifest_name> <output_key>
+assert_manifest_equals_output() {
+  local manifest_name="$1"
+  local output_key="$2"
+  local path expected actual
+
+  path="$(get_manifest_path "$manifest_name")"
+  assert_file_exist "$path"
+  expected="$(get_github_output "$output_key" 2>/dev/null || true)"
+  actual="$(tr -d '\n' <"$path")"
+
+  if [[ "$actual" != "$expected" ]]; then
+    printf "Expected manifest %s to equal output %s\n" "$manifest_name" "$output_key" >&2
+    printf "Expected: %s\n" "$expected" >&2
+    printf "Actual: %s\n" "$actual" >&2
+    return 1
+  fi
+}
+
+# Assert that a stage result manifest matches result-json output
+# Usage: assert_stage_result_manifest_matches_output <stage>
+assert_stage_result_manifest_matches_output() {
+  local stage="$1"
+  assert_manifest_equals_output "${stage}-result" "result-json"
 }
 
 # =============================================================================

@@ -20,11 +20,24 @@ setup() {
   export GITHUB_REPOSITORY="org/repo"
   export GITHUB_RUN_ID="12345"
   export PROJECT_TYPE="maven"
-  export QUALITY_STAGE_RESULT_JSON='{"targets":{"commitlint":"success","licenselint":"success","dependencyreview":"skipped","megalint":"success","publiccodelint":"success","devbasecheck":"skipped","swift":"skipped"}}'
+  export QUALITY_STAGE_RESULT_JSON='{"targets":{"commitlint":"success","licenselint":"success","dependencyreview":"skipped","sastopengrep":"success","megalint":"success","publiccodelint":"success","devbasecheck":"skipped","swift":"skipped"}}'
 }
 
 teardown() {
   common_teardown
+}
+
+@test "write-pr-summary reads quality result from manifest path when provided" {
+  create_test_file "${TEST_DIR}/quality.json" '{"targets":{"commitlint":"failure","licenselint":"success","dependencyreview":"skipped","sastopengrep":"failure","megalint":"success","publiccodelint":"success","devbasecheck":"skipped","swift":"skipped"}}'
+  export QUALITY_STAGE_RESULT_PATH="${TEST_DIR}/quality.json"
+  export QUALITY_STAGE_RESULT_JSON='{"targets":{"commitlint":"success","licenselint":"success","dependencyreview":"success","sastopengrep":"success","megalint":"failure","publiccodelint":"success","devbasecheck":"success","swift":"success"}}'
+
+  run_script "summary/write-pr-summary.sh"
+
+  assert_success
+  run get_summary
+  assert_output --partial "| Commit Lint | ✗ |"
+  assert_output --partial "| OpenGrep SAST | ✗ |"
 }
 
 @test "write-pr-summary creates step summary file" {
@@ -69,6 +82,7 @@ teardown() {
   assert_summary_contains "Quality Check Status"
   assert_summary_contains "Commit Lint"
   assert_summary_contains "License Lint"
+  assert_summary_contains "OpenGrep SAST"
   assert_summary_contains "MegaLinter"
 }
 
@@ -79,17 +93,19 @@ teardown() {
   run get_summary
   assert_output --partial "| Commit Lint | ✓ |"
   assert_output --partial "| License Lint | ✓ |"
+  assert_output --partial "| OpenGrep SAST | ✓ |"
   assert_output --partial "| MegaLinter | ✓ |"
 }
 
 @test "write-pr-summary shows failure icon for failed targets" {
-  export QUALITY_STAGE_RESULT_JSON='{"targets":{"commitlint":"failure","licenselint":"success","dependencyreview":"skipped","megalint":"failure","publiccodelint":"success","devbasecheck":"skipped","swift":"skipped"}}'
+  export QUALITY_STAGE_RESULT_JSON='{"targets":{"commitlint":"failure","licenselint":"success","dependencyreview":"skipped","sastopengrep":"failure","megalint":"failure","publiccodelint":"success","devbasecheck":"skipped","swift":"skipped"}}'
 
   run_script "summary/write-pr-summary.sh"
 
   assert_success
   run get_summary
   assert_output --partial "| Commit Lint | ✗ |"
+  assert_output --partial "| OpenGrep SAST | ✗ |"
   assert_output --partial "| MegaLinter | ✗ |"
   assert_output --partial "| Dependency Review | − |"
 }

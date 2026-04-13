@@ -31,6 +31,9 @@ set_all_linters_enabled() {
   export LINTER_DEVBASECHECK="true"
   export LINTER_SWIFTFORMAT="true"
   export LINTER_SWIFTLINT="true"
+  export SAST_OPENGREP="true"
+  export SAST_OPENGREP_RULES="p/default"
+  export SAST_OPENGREP_FAIL_ON_SEVERITY="high"
 }
 
 set_all_linters_disabled() {
@@ -45,6 +48,9 @@ set_all_linters_disabled() {
   export LINTER_DEVBASECHECK="false"
   export LINTER_SWIFTFORMAT="false"
   export LINTER_SWIFTLINT="false"
+  export SAST_OPENGREP="false"
+  export SAST_OPENGREP_RULES="p/default"
+  export SAST_OPENGREP_FAIL_ON_SEVERITY="high"
 }
 
 @test "write-pr-interface succeeds with all linters enabled" {
@@ -60,6 +66,8 @@ set_all_linters_disabled() {
   export PROJECT_TYPE="npm"
   export BASE_BRANCH="develop"
   export REUSABLE_CI_REF="v2.5.0"
+  export SAST_OPENGREP_RULES="rules/opengrep.yml"
+  export SAST_OPENGREP_FAIL_ON_SEVERITY="medium"
 
   run_script "plan/write-pr-interface.sh"
   assert_success
@@ -68,6 +76,8 @@ set_all_linters_disabled() {
   assert_output --partial '"project_type":"npm"'
   assert_output --partial '"base_branch":"develop"'
   assert_output --partial '"reusable_ci_ref":"v2.5.0"'
+  assert_output --partial '"sast_opengrep_rules":"rules/opengrep.yml"'
+  assert_output --partial '"sast_opengrep_fail_on_severity":"medium"'
 }
 
 @test "pr-policy-json has correct boolean values when all linters enabled" {
@@ -80,6 +90,7 @@ set_all_linters_disabled() {
   assert_output --partial '"commitlint":true'
   assert_output --partial '"licenselint":true'
   assert_output --partial '"dependencyreview":true'
+  assert_output --partial '"sastopengrep":true'
   assert_output --partial '"megalint":true'
   assert_output --partial '"publiccodelint":true'
   assert_output --partial '"devbasecheck":true'
@@ -128,5 +139,5 @@ set_all_linters_disabled() {
   assert_success
 
   run get_github_output "pr-policy-json"
-  assert_output '{"commitlint":false,"licenselint":false,"dependencyreview":false,"megalint":false,"publiccodelint":false,"devbasecheck":false,"swiftformat":false,"swiftlint":false,"swift":false}'
+  assert_output '{"commitlint":false,"licenselint":false,"dependencyreview":false,"sastopengrep":false,"megalint":false,"publiccodelint":false,"devbasecheck":false,"swiftformat":false,"swiftlint":false,"swift":false}'
 }

@@ -39,6 +39,8 @@
 #   linters.megalint: MegaLinter with 50+ linters (default: true)
 #   linters.publiccodelint: Publiccode.yml validation (default: false)
 #   linters.devbasecheck: devbase-check linting (default: false) - RECOMMENDED
+# Configurable Security:
+#   security.sast-opengrep: OpenGrep SAST with SARIF/GitLab SAST outputs (default: true, opt out with false)
 name: Orchestrate Pull Request
 on:
   workflow_call:
@@ -94,6 +96,21 @@ on:
         required: false
         default: false
         type: boolean
+      security.sast-opengrep:
+        description: "Enable OpenGrep SAST scanning"
+        required: false
+        default: true
+        type: boolean
+      security.sast-opengrep-rules:
+        description: "OpenGrep rules path, registry pack, or comma-separated list"
+        required: false
+        default: "p/default"
+        type: string
+      security.sast-opengrep-fail-on-severity:
+        description: "Fail OpenGrep on none, low, medium, or high findings"
+        required: false
+        default: "high"
+        type: string
       reusable-ci-ref:
         description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
         required: false
@@ -133,6 +150,9 @@ jobs:
           LINTER_DEVBASECHECK: ${{ inputs['linters.devbasecheck'] }}
           LINTER_SWIFTFORMAT: ${{ inputs['linters.swiftformat'] }}
           LINTER_SWIFTLINT: ${{ inputs['linters.swiftlint'] }}
+          SAST_OPENGREP: ${{ inputs['security.sast-opengrep'] }}
+          SAST_OPENGREP_RULES: ${{ inputs['security.sast-opengrep-rules'] }}
+          SAST_OPENGREP_FAIL_ON_SEVERITY: ${{ inputs['security.sast-opengrep-fail-on-severity'] }}
         run: bash .github-shared/scripts/plan/write-pr-interface.sh
 
   # ===== Stage 1: Quality =====
@@ -164,9 +184,15 @@ jobs:
           ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
           sparse-checkout: scripts
+      - name: Download quality stage manifests
+        if: always()
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: ci-results-pr-quality
+          path: .ci-results
       - name: Generate PR summary
         env:
           PROJECT_TYPE: ${{ inputs['project-type'] }}
-          QUALITY_STAGE_RESULT_JSON: ${{ needs.execute-quality-stage.outputs.result-json }}
+          QUALITY_STAGE_RESULT_PATH: .ci-results/pr-quality-result.json
           HAS_SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN != '' }}
         run: bash .github-shared/scripts/summary/write-pr-summary.sh
