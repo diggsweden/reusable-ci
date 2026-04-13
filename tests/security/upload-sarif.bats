@@ -184,7 +184,8 @@ run_upload_sarif() {
   export SARIF_UPLOAD_TOKEN="test-token"
   export GITHUB_API_URL="http://localhost:9999"
 
-  # Generate a SARIF file large enough to exceed typical ARG_MAX (~128KB)
+  # Generate a non-trivial SARIF to verify the stdin-piping approach works.
+  # Real OpenGrep output with p/default rules can exceed ARG_MAX (~2MB).
   python3 -c "
 import json
 runs = [{'results': [{'message': {'text': 'x' * 200}} for _ in range(500)]}]
