@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.8] - 2026-04-14
+
+### Fixed
+
+- Move scorecard SARIF token to step env and guard script checkouts
+
 ## [2.7.7] - 2026-04-13
 
 ### Added
@@ -23,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dont use expressions in run steps
 - Reset working tree after install to prevent false lint failures
 - Jar SBOM missing for artefacts without version suffix
+
 
 ## [2.7.6] - 2026-04-02
 
@@ -413,6 +420,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial commit
 
+[2.7.8]: https://github.com/diggsweden/reusable-ci/compare/v2.7.7..v2.7.8
 [2.7.7]: https://github.com/diggsweden/reusable-ci/compare/v2.7.6..v2.7.7
 [2.7.6]: https://github.com/diggsweden/reusable-ci/compare/v2.7.5..v2.7.6
 [2.7.5]: https://github.com/diggsweden/reusable-ci/compare/v2.7.4..v2.7.5
