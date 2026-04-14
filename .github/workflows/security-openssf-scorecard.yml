@@ -45,6 +45,10 @@ on:
 permissions:
   contents: read
 jobs:
+  # The scorecard publish webapp rejects any job whose steps aren't all `uses:`.
+  # We keep this job strictly pure-actions and hand off SARIF to a separate
+  # `publish-sarif` job via an artifact.
+  # See https://github.com/ossf/scorecard-action#workflow-restrictions
   analysis:
     name: Scorecard Analysis
     runs-on: ubuntu-latest
@@ -53,9 +57,6 @@ jobs:
       contents: read
       # Needed for GitHub OIDC token if publish_results is true
       id-token: write
-    # Note: scorecard-action's publish webapp forbids job-level env vars
-    # (see https://github.com/ossf/scorecard-action#workflow-restrictions).
-    # SARIF_UPLOAD_TOKEN is declared at step level on the upload step below.
     steps:
       - name: Harden GitHub runner
         uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
@@ -71,20 +72,38 @@ jobs:
           results_file: results.sarif
           results_format: sarif
           publish_results: ${{ inputs.publish-results }}
-      - name: Upload artifact
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
-        with:
-          name: SARIF file
-          path: results.sarif
-          retention-days: 5
       - name: Save scorecard SARIF artifact
+        if: always() && hashFiles('results.sarif') != ''
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: sarif-scorecard
           path: results.sarif
           retention-days: 5
+          if-no-files-found: ignore
+
+  # Runs in a separate job so the `analysis` job stays pure-actions (required
+  # by the scorecard publish webapp). Downloads the SARIF artifact produced
+  # above and uploads it to Code Scanning via the shared helper script.
+  publish-sarif:
+    name: Upload SARIF to Code Scanning
+    needs: [analysis]
+    if: always() && needs.analysis.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions:
+      contents: read
+    steps:
+      - name: Harden GitHub runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        with:
+          egress-policy: ${{ inputs.egress-policy }}
+      - name: Download scorecard SARIF artifact
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: sarif-scorecard
+        continue-on-error: true
       - name: Checkout reusable-ci scripts
-        if: success() || failure()
+        if: hashFiles('results.sarif') != ''
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: diggsweden/reusable-ci
@@ -92,7 +111,8 @@ jobs:
           path: .github-shared
           sparse-checkout: scripts
       - name: Upload scorecard results to Code Scanning
-        if: success() || failure()
+        if: hashFiles('results.sarif') != ''
+        continue-on-error: true
         env:
           SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
           SARIF_FILE: results.sarif

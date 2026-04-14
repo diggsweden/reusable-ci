@@ -76,8 +76,35 @@ jobs:
           path: opengrep-results.sarif
           retention-days: 5
           if-no-files-found: ignore
+
+  # Publishes SARIF to Code Scanning in a separate job. Marked
+  # continue-on-error so a transient Code Scanning API failure doesn't
+  # turn the workflow red — the SAST result itself is the primary signal.
+  publish-sarif:
+    name: Upload SARIF to Code Scanning
+    needs: [analysis]
+    if: always() && needs.analysis.result != 'cancelled' && needs.analysis.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions:
+      contents: read
+    steps:
+      - name: Download OpenGrep SARIF artifact
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: sarif-opengrep
+        continue-on-error: true
+      - name: Checkout reusable-ci scripts
+        if: hashFiles('opengrep-results.sarif') != ''
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
       - name: Upload OpenGrep results to Code Scanning
-        if: always() && hashFiles('opengrep-results.sarif') != ''
+        if: hashFiles('opengrep-results.sarif') != ''
+        continue-on-error: true
         env:
           SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
           SARIF_FILE: opengrep-results.sarif

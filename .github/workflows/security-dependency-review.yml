@@ -34,13 +34,15 @@ on:
 permissions:
   contents: read
 jobs:
+  # Analysis job: runs the dependency scan and uploads SARIF as an artifact.
+  # Consistent shape with security-openssf-scorecard.yml: SARIF upload to
+  # Code Scanning is decoupled into its own job to keep each analysis job
+  # focused on one concern.
   dependency-review:
     name: Dependency Review Analysis
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: github.event_name == 'pull_request'
-    env:
-      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -67,9 +69,37 @@ jobs:
           path: trivy-dependency-results.sarif
           retention-days: 5
           if-no-files-found: ignore
+
+  # Publishes SARIF to Code Scanning in a separate job. Marked
+  # continue-on-error so a transient Code Scanning API failure doesn't
+  # turn the workflow red — the scan result itself is the primary signal.
+  publish-sarif:
+    name: Upload SARIF to Code Scanning
+    needs: [dependency-review]
+    if: always() && needs.dependency-review.result != 'cancelled' && needs.dependency-review.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions:
+      contents: read
+    steps:
+      - name: Download dependency review SARIF artifact
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: sarif-dependency-review
+        continue-on-error: true
+      - name: Checkout reusable-ci scripts
+        if: hashFiles('trivy-dependency-results.sarif') != ''
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
       - name: Upload dependency review results to Code Scanning
-        if: always() && hashFiles('trivy-dependency-results.sarif') != ''
+        if: hashFiles('trivy-dependency-results.sarif') != ''
+        continue-on-error: true
         env:
+          SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
           SARIF_FILE: trivy-dependency-results.sarif
           SARIF_CATEGORY: dependency-review
         run: bash .github-shared/scripts/security/upload-sarif.sh
