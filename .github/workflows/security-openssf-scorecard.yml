@@ -53,8 +53,9 @@ jobs:
       contents: read
       # Needed for GitHub OIDC token if publish_results is true
       id-token: write
-    env:
-      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
+    # Note: scorecard-action's publish webapp forbids job-level env vars
+    # (see https://github.com/ossf/scorecard-action#workflow-restrictions).
+    # SARIF_UPLOAD_TOKEN is declared at step level on the upload step below.
     steps:
       - name: Harden GitHub runner
         uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
@@ -83,6 +84,7 @@ jobs:
           path: results.sarif
           retention-days: 5
       - name: Checkout reusable-ci scripts
+        if: success() || failure()
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: diggsweden/reusable-ci
@@ -92,6 +94,7 @@ jobs:
       - name: Upload scorecard results to Code Scanning
         if: success() || failure()
         env:
+          SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
           SARIF_FILE: results.sarif
           SARIF_CATEGORY: scorecard
         run: bash .github-shared/scripts/security/upload-sarif.sh
