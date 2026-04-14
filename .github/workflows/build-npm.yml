@@ -99,6 +99,15 @@ jobs:
           else
             printf "No build script found, skipping build step\n"
           fi
+      - name: Generate Build SBOM
+        continue-on-error: true
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          # renovate: datasource=npm depName=@cyclonedx/cyclonedx-npm
+          CYCLONEDX_VERSION: "4.2.1"
+        run: |
+          npm install --global "@cyclonedx/cyclonedx-npm@${CYCLONEDX_VERSION}"
+          cyclonedx-npm --output-format json --output-file bom.json
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         run: |
@@ -123,7 +132,9 @@ jobs:
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: npm-build-artifacts
-          path: ${{ inputs['working-directory'] }}/${{ steps.pack.outputs.tarball }}
+          path: |
+            ${{ inputs['working-directory'] }}/${{ steps.pack.outputs.tarball }}
+            ${{ inputs['working-directory'] }}/bom.json
           retention-days: 7
           if-no-files-found: error
       - name: Generate build summary

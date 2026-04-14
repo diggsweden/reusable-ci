@@ -369,6 +369,17 @@ generate_artifact_layer_python() {
   fi
 }
 
+# Build the Build-layer SBOM output filename. Appends a short commit SHA for traceability
+build_sbom_filename() {
+  local name="$1" version="$2"
+  local sha
+  if sha=$(git rev-parse --short HEAD 2>/dev/null); then
+    printf "%s-%s-%s-build-sbom.cyclonedx.json" "$name" "$version" "$sha"
+  else
+    printf "%s-%s-build-sbom.cyclonedx.json" "$name" "$version"
+  fi
+}
+
 generate_build_layer() {
   local name="$1" version="$2"
 
@@ -377,6 +388,11 @@ generate_build_layer() {
 
   case "$PROJECT_TYPE" in
   maven) generate_build_layer_maven "$name" "$version" ;;
+  npm) generate_build_layer_npm "$name" "$version" ;;
+  gradle) generate_build_layer_gradle "$name" "$version" ;;
+  rust) generate_build_layer_cargo "$name" "$version" ;;
+  go) log_warning "Build SBOM not implemented for project type: go" ;;
+  python) log_warning "Build SBOM not implemented for project type: python" ;;
   *) log_warning "Build SBOM not supported for project type: $PROJECT_TYPE" ;;
   esac
   printf "\n"
@@ -398,7 +414,85 @@ generate_build_layer_maven() {
     return
   fi
 
-  local output_file="${name}-${version}-build-sbom.cyclonedx.json"
+  local output_file
+  output_file=$(build_sbom_filename "$name" "$version")
+  cp "$bom_file" "$output_file"
+  log_success "$output_file"
+}
+
+generate_build_layer_npm() {
+  local name="$1" version="$2"
+  local bom_file=""
+
+  for path in "./release-artifacts/bom.json" "./bom.json"; do
+    if [[ -f "$path" ]]; then
+      bom_file="$path"
+      break
+    fi
+  done
+
+  if [[ -z "$bom_file" ]]; then
+    log_warning "No npm Build SBOM (bom.json) found - run @cyclonedx/cyclonedx-npm during build"
+    return 0
+  fi
+
+  local output_file
+  output_file=$(build_sbom_filename "$name" "$version")
+  cp "$bom_file" "$output_file"
+  log_success "$output_file"
+}
+
+generate_build_layer_gradle() {
+  local name="$1" version="$2"
+  local bom_file=""
+
+  for path in \
+    "./release-artifacts/build/reports/cyclonedx/bom.json" \
+    "./release-artifacts/reports/cyclonedx/bom.json" \
+    "./release-artifacts/reports/bom.json" \
+    "./release-artifacts/bom.json" \
+    "build/reports/cyclonedx/bom.json" \
+    "build/reports/bom.json" \
+    "build/bom.json"; do
+    if [[ -f "$path" ]]; then
+      bom_file="$path"
+      break
+    fi
+  done
+
+  if [[ -z "$bom_file" ]]; then
+    log_warning "No Gradle Build SBOM (bom.json) found - run cyclonedx-gradle-plugin during build"
+    return 0
+  fi
+
+  local output_file
+  output_file=$(build_sbom_filename "$name" "$version")
+  cp "$bom_file" "$output_file"
+  log_success "$output_file"
+}
+
+generate_build_layer_cargo() {
+  local name="$1" version="$2"
+  local bom_file=""
+
+  for path in \
+    "./release-artifacts/bom.json" \
+    "./release-artifacts/${name}.cdx.json" \
+    "./bom.json" \
+    "./${name}.cdx.json"; do
+    if [[ -f "$path" ]]; then
+      bom_file="$path"
+      break
+    fi
+  done
+
+  if [[ -z "$bom_file" ]]; then
+    log_warning "No Cargo Build SBOM found - run cargo-cyclonedx during build"
+    return 0
+  fi
+
+  local output_file
+  output_file=$(build_sbom_filename "$name" "$version")
   cp "$bom_file" "$output_file"
   log_success "$output_file"
 }

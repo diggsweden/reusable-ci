@@ -156,6 +156,15 @@ jobs:
             # shellcheck disable=SC2086
             ./gradlew $GRADLE_TASKS
           fi
+      # Separate Gradle invocation keeps SBOM failures advisory (continue-on-error).
+      # Could be injected during build but would cause build to fail if sbom fails 
+      - name: Generate Build SBOM
+        continue-on-error: true
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          # renovate: datasource=maven depName=org.cyclonedx:cyclonedx-gradle-plugin
+          CYCLONEDX_GRADLE_VERSION: "3.2.1"
+        run: bash "${{ github.workspace }}/.github-shared/scripts/sbom/build/gradle/generate-gradle-sbom.sh"
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         env:
@@ -171,6 +180,8 @@ jobs:
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/**/*.apk
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/**/*.aab
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/libs/*.jar
+            ${{ inputs['working-directory'] }}/build/reports/cyclonedx/bom.json
+            ${{ inputs['working-directory'] }}/**/build/reports/cyclonedx/bom.json
           retention-days: 7
           if-no-files-found: error
       - name: Generate build summary

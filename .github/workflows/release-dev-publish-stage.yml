@@ -18,6 +18,14 @@ on:
         required: false
         default: "main"
         type: string
+      generate-sbom:
+        required: false
+        default: false
+        type: boolean
+      publish-container:
+        required: false
+        default: true
+        type: boolean
     secrets:
       registry-password:
         required: false
@@ -39,7 +47,7 @@ permissions:
 jobs:
   build-dev-container:
     name: Build Container Dev
-    if: ${{ fromJson(inputs['build-result-json']).result == 'success' }}
+    if: ${{ inputs['publish-container'] && fromJson(inputs['build-result-json']).result == 'success' }}
     permissions:
       contents: read
       packages: write
@@ -68,6 +76,49 @@ jobs:
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
     secrets:
       registry-password: ${{ secrets.registry-password }}
+  generate-dev-sbom:
+    name: Generate Dev SBOM
+    if: ${{ inputs['generate-sbom'] && fromJson(inputs['build-result-json']).result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Download build artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          path: ./release-artifacts
+          merge-multiple: true
+      - name: Generate 3-Layer SBOMs (dev)
+        env:
+          PROJECT_TYPE: ${{ fromJson(inputs['dev-context-json']).project_type }}
+          PROJECT_NAME: ${{ github.event.repository.name }}
+          DEV_VERSION: dev-${{ github.sha }}
+        run: |
+          bash .github-shared/scripts/sbom/generate-sbom.sh \
+            "$PROJECT_TYPE" \
+            "source,build,analyzed-artifact" \
+            "$DEV_VERSION" \
+            "$PROJECT_NAME"
+      - name: Upload Dev SBOMs
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: dev-sboms-${{ github.run_id }}
+          path: |
+            *-sbom.cyclonedx.json
+            *-sbom.spdx.json
+          retention-days: 7
+          if-no-files-found: warn
   summarize-dev-publish-stage:
     name: Summarize Dev Publish Stage
     needs: [build-dev-container, publish-npm-dev]

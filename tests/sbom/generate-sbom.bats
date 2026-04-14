@@ -193,6 +193,67 @@ EOF
   assert_output --partial "No SBOM files generated"
 }
 
+@test "generate-sbomgenerates build layer for npm when bom.json exists" {
+  create_npm_project
+  echo '{"bomFormat":"CycloneDX"}' >bom.json
+
+  run_generate_sbom "npm" "build" "1.0.0" "myapp" "."
+
+  assert_success
+  assert_output --partial "Generating Build layer"
+  assert_file_exists "myapp-1.0.0-build-sbom.cyclonedx.json"
+}
+
+@test "generate-sbomwarns when no bom.json found for npm build layer" {
+  create_npm_project
+
+  run_generate_sbom "npm" "build" "1.0.0" "myapp" "."
+
+  assert_failure
+  assert_output --partial "No npm Build SBOM"
+}
+
+@test "generate-sbomgenerates build layer for gradle when bom.json exists" {
+  create_gradle_project
+  mkdir -p build/reports
+  echo '{"bomFormat":"CycloneDX"}' >build/reports/bom.json
+
+  run_generate_sbom "gradle" "build" "1.0.0" "myapp" "."
+
+  assert_success
+  assert_output --partial "Generating Build layer"
+  assert_file_exists "myapp-1.0.0-build-sbom.cyclonedx.json"
+}
+
+@test "generate-sbomwarns when no bom.json found for gradle build layer" {
+  create_gradle_project
+
+  run_generate_sbom "gradle" "build" "1.0.0" "myapp" "."
+
+  assert_failure
+  assert_output --partial "No Gradle Build SBOM"
+}
+
+@test "generate-sbomgenerates build layer for cargo when bom.json exists" {
+  create_rust_project
+  echo '{"bomFormat":"CycloneDX"}' >bom.json
+
+  run_generate_sbom "rust" "build" "1.0.0" "myapp" "."
+
+  assert_success
+  assert_output --partial "Generating Build layer"
+  assert_file_exists "myapp-1.0.0-build-sbom.cyclonedx.json"
+}
+
+@test "generate-sbomwarns when no bom.json found for cargo build layer" {
+  create_rust_project
+
+  run_generate_sbom "rust" "build" "1.0.0" "myapp" "."
+
+  assert_failure
+  assert_output --partial "No Cargo Build SBOM"
+}
+
 @test "generate-sbombuild layer included in multi-layer run does not break packaging" {
   create_maven_project true
   mkdir -p target

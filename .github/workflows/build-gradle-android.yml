@@ -179,6 +179,23 @@ jobs:
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
           GRADLE_TASKS: ${{ steps.build-tasks.outputs.tasks }}
         run: bash .github-shared/scripts/android/build-gradle.sh
+      - name: Generate Build SBOM
+        continue-on-error: true
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          # renovate: datasource=maven depName=org.cyclonedx:cyclonedx-gradle-plugin
+          CYCLONEDX_GRADLE_VERSION: "3.2.1"
+        run: bash "${{ github.workspace }}/.github-shared/scripts/sbom/build/gradle/generate-gradle-sbom.sh"
+      - name: Upload Build SBOM
+        if: ${{ hashFiles(format('{0}/**/build/reports/bom.json', inputs['working-directory'])) != '' }}
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: gradle-build-artifacts
+          path: |
+            ${{ inputs['working-directory'] }}/build/reports/bom.json
+            ${{ inputs['working-directory'] }}/**/build/reports/bom.json
+          retention-days: 7
+          if-no-files-found: warn
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         env:
