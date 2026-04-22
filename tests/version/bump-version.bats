@@ -37,8 +37,8 @@ run_bump_version() {
   run_script "version/bump-version.sh" "$@"
 }
 
-# Create a gradle.properties file with default or custom content
-create_gradle_properties() {
+# Create a gradle.properties file with Android-style keys (versionName + versionCode)
+create_gradle_properties_android() {
   local version="${1:-0.0.1}"
   local version_code="${2:-1}"
   cat > "$TEST_DIR/gradle.properties" << EOF
@@ -47,11 +47,19 @@ versionCode=$version_code
 EOF
 }
 
-# Create a gradle.properties file without versionCode
-create_gradle_properties_no_code() {
+# Create a gradle.properties file without versionCode (Android-style)
+create_gradle_properties_android_no_code() {
   local version="${1:-0.0.1}"
   cat > "$TEST_DIR/gradle.properties" << EOF
 versionName=$version
+EOF
+}
+
+# Create a gradle.properties file with JVM-style single `version=` key
+create_gradle_properties_jvm() {
+  local version="${1:-0.0.1}"
+  cat > "$TEST_DIR/gradle.properties" << EOF
+version=$version
 EOF
 }
 
@@ -91,37 +99,47 @@ EOF
 }
 
 # =============================================================================
-# Gradle Project Tests
+# Gradle JVM Project Tests
 # =============================================================================
 
-@test "bump-version updates gradle.properties versionName" {
-  create_gradle_properties
+@test "bump-version updates JVM gradle.properties version" {
+  create_gradle_properties_jvm
 
   run_bump_version "gradle" "2.0.0" "$TEST_DIR" "gradle.properties"
 
   assert_success
   run cat "$TEST_DIR/gradle.properties"
-  assert_output --partial "versionName=2.0.0"
+  assert_output --partial "version=2.0.0"
 }
 
-@test "bump-version increments gradle versionCode" {
-  create_gradle_properties "0.0.1" "5"
+@test "bump-version adds version= when absent from gradle.properties" {
+  : >"$TEST_DIR/gradle.properties"
 
   run_bump_version "gradle" "2.0.0" "$TEST_DIR" "gradle.properties"
 
   assert_success
   run cat "$TEST_DIR/gradle.properties"
-  assert_output --partial "versionCode=6"
+  assert_output --partial "version=2.0.0"
 }
 
-@test "bump-version adds versionCode if missing" {
-  create_gradle_properties_no_code
+@test "bump-version JVM does not touch versionName or versionCode" {
+  # Safety rail: a consumer migrating from gradle-android to gradle may
+  # still carry Android-style keys. The JVM path must rewrite only
+  # `version=`, leaving versionName/versionCode untouched — otherwise
+  # the bump would silently mutate Android keys on a JVM release.
+  cat > "$TEST_DIR/gradle.properties" << 'EOF'
+version=0.0.1
+versionName=legacy-1.0
+versionCode=42
+EOF
 
   run_bump_version "gradle" "2.0.0" "$TEST_DIR" "gradle.properties"
 
   assert_success
   run cat "$TEST_DIR/gradle.properties"
-  assert_output --partial "versionCode=1"
+  assert_output --partial "version=2.0.0"
+  assert_output --partial "versionName=legacy-1.0"
+  assert_output --partial "versionCode=42"
 }
 
 @test "bump-version fails when gradle.properties missing" {
@@ -131,10 +149,9 @@ EOF
   assert_output --partial "not found"
 }
 
-@test "bump-version preserves other gradle properties" {
+@test "bump-version preserves other JVM gradle properties" {
   cat > "$TEST_DIR/gradle.properties" << 'EOF'
-versionName=0.0.1
-versionCode=1
+version=0.0.1
 customProperty=value
 anotherProperty=123
 EOF
@@ -143,6 +160,7 @@ EOF
 
   assert_success
   run cat "$TEST_DIR/gradle.properties"
+  assert_output --partial "version=2.0.0"
   assert_output --partial "customProperty=value"
   assert_output --partial "anotherProperty=123"
 }
@@ -151,19 +169,54 @@ EOF
 # Gradle Android Tests
 # =============================================================================
 
-@test "bump-version handles gradle-android type" {
-  create_gradle_properties "1.0.0" "10"
+@test "bump-version updates Android gradle.properties versionName" {
+  create_gradle_properties_android
 
-  run_bump_version "gradle-android" "1.1.0" "$TEST_DIR" "gradle.properties"
+  run_bump_version "gradle-android" "2.0.0" "$TEST_DIR" "gradle.properties"
 
   assert_success
   run cat "$TEST_DIR/gradle.properties"
-  assert_output --partial "versionName=1.1.0"
-  assert_output --partial "versionCode=11"
+  assert_output --partial "versionName=2.0.0"
+}
+
+@test "bump-version increments Android versionCode" {
+  create_gradle_properties_android "0.0.1" "5"
+
+  run_bump_version "gradle-android" "2.0.0" "$TEST_DIR" "gradle.properties"
+
+  assert_success
+  run cat "$TEST_DIR/gradle.properties"
+  assert_output --partial "versionCode=6"
+}
+
+@test "bump-version adds Android versionCode if missing" {
+  create_gradle_properties_android_no_code
+
+  run_bump_version "gradle-android" "2.0.0" "$TEST_DIR" "gradle.properties"
+
+  assert_success
+  run cat "$TEST_DIR/gradle.properties"
+  assert_output --partial "versionCode=1"
+}
+
+@test "bump-version preserves other Android gradle properties" {
+  cat > "$TEST_DIR/gradle.properties" << 'EOF'
+versionName=0.0.1
+versionCode=1
+customProperty=value
+anotherProperty=123
+EOF
+
+  run_bump_version "gradle-android" "2.0.0" "$TEST_DIR" "gradle.properties"
+
+  assert_success
+  run cat "$TEST_DIR/gradle.properties"
+  assert_output --partial "customProperty=value"
+  assert_output --partial "anotherProperty=123"
 }
 
 @test "bump-version handles large versionCode for gradle-android" {
-  create_gradle_properties "1.0.0" "999"
+  create_gradle_properties_android "1.0.0" "999"
 
   run_bump_version "gradle-android" "2.0.0" "$TEST_DIR" "gradle.properties"
 
@@ -284,7 +337,7 @@ EOF
 # =============================================================================
 
 @test "bump-version shows version being set" {
-  create_gradle_properties
+  create_gradle_properties_jvm
 
   run_bump_version "gradle" "3.0.0" "$TEST_DIR" "gradle.properties"
 
@@ -293,7 +346,7 @@ EOF
 }
 
 @test "bump-version shows project type in output" {
-  create_gradle_properties
+  create_gradle_properties_jvm
 
   run_bump_version "gradle" "1.0.0" "$TEST_DIR" "gradle.properties"
 

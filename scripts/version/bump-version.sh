@@ -82,7 +82,7 @@ main() {
     log_success "NPM version updated"
     ;;
 
-  gradle | gradle-android)
+  gradle)
     cd "$WORKING_DIR"
     log "Version file: ${GRADLE_VERSION_FILE}"
 
@@ -91,10 +91,38 @@ main() {
       exit 1
     fi
 
+    # JVM Gradle: a single `version=` key, matching what build-gradle-app.yml
+    # reads in its version-info step. Separator-anchored grep (`^version=`)
+    # ensures we don't accidentally match or rewrite `versionName=` /
+    # `versionCode=` if a consumer is mid-migration from gradle-android and
+    # still has the Android-style keys lying around.
+    if grep -q '^version=' "$GRADLE_VERSION_FILE"; then
+      sed -i "s/^version=.*/version=${VERSION}/" "$GRADLE_VERSION_FILE"
+      log "Updated version to ${VERSION}"
+    else
+      printf "version=%s\n" "$VERSION" >>"$GRADLE_VERSION_FILE"
+      log "Added version=${VERSION}"
+    fi
+
+    log_success "Gradle JVM version updated"
+    cat "$GRADLE_VERSION_FILE"
+    ;;
+
+  gradle-android)
+    cd "$WORKING_DIR"
+    log "Version file: ${GRADLE_VERSION_FILE}"
+
+    if [[ ! -f "$GRADLE_VERSION_FILE" ]]; then
+      log_error "Gradle version file not found: ${GRADLE_VERSION_FILE}"
+      exit 1
+    fi
+
+    # Android: versionName (human-readable) + versionCode (monotonic integer
+    # required by Google Play). Matches get-version-info.sh's reads.
     update_or_add_property "$GRADLE_VERSION_FILE" "versionName" "$VERSION" "="
     increment_version_code "$GRADLE_VERSION_FILE"
 
-    log_success "Gradle version updated"
+    log_success "Gradle Android version updated"
     cat "$GRADLE_VERSION_FILE"
     ;;
 

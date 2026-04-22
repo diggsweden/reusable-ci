@@ -14,12 +14,9 @@ load "${BATS_TEST_DIRNAME}/../test_helper.bash"
 setup() {
   common_setup_with_github_env
   export JAVA_VERSION="21"
-  export BUILD_MODULE="app"
   export GRADLE_TASKS="build publish"
   export SKIP_TESTS="false"
-  export ENABLE_SIGNING="true"
   export VERSION="1.2.3"
-  export VERSION_CODE="123"
 }
 
 teardown() {
@@ -33,18 +30,37 @@ teardown() {
   run get_summary
   assert_output --partial "Gradle Build Summary"
   assert_output --partial "Java:** 21"
-  assert_output --partial "Module:** app"
-  assert_output --partial "Version:** 1.2.3 (123)"
+  assert_output --partial "Tasks:** build publish"
+  assert_output --partial "Version:** 1.2.3"
 }
 
-@test "write-gradle-build-summary reflects skipped tests and disabled signing" {
+@test "write-gradle-build-summary reflects skipped tests" {
   export SKIP_TESTS="true"
-  export ENABLE_SIGNING="false"
 
   run_script "summary/write-gradle-build-summary.sh"
 
   assert_success
   run get_summary
   assert_output --partial "⊘ Skipped"
-  assert_output --partial "⊘ Disabled"
+}
+
+@test "write-gradle-build-summary omits version line when VERSION is empty" {
+  # JVM projects may carry version outside gradle.properties; absence
+  # is a warning in the workflow, not a hard failure, and the summary
+  # should simply skip the version line.
+  unset VERSION
+
+  run_script "summary/write-gradle-build-summary.sh"
+
+  assert_success
+  run get_summary
+  refute_output --partial "Version:"
+}
+
+@test "write-gradle-build-summary errors without JAVA_VERSION" {
+  unset JAVA_VERSION
+
+  run_script "summary/write-gradle-build-summary.sh"
+
+  assert_failure
 }

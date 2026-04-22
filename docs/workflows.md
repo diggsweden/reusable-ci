@@ -145,6 +145,7 @@ graph TD
     F --> J[build-maven.yml - Matrix]
     F --> K[build-npm.yml - Matrix]
     F --> L[build-gradle-app.yml - Matrix]
+    F --> L2[build-gradle-android.yml - Matrix]
     F --> M[build-xcode-ios.yml - Matrix]
 
     G --> N[publish-maven-github.yml - Matrix]
@@ -165,6 +166,7 @@ graph TD
     style J fill:#a7c080,stroke:#5c6a4a,color:#2b3339
     style K fill:#a7c080,stroke:#5c6a4a,color:#2b3339
     style L fill:#a7c080,stroke:#5c6a4a,color:#2b3339
+    style L2 fill:#a7c080,stroke:#5c6a4a,color:#2b3339
     style M fill:#a7c080,stroke:#5c6a4a,color:#2b3339
     style N fill:#83c092,stroke:#5c856a,color:#2b3339
     style O fill:#83c092,stroke:#5c856a,color:#2b3339

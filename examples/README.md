@@ -43,20 +43,20 @@ Complete working examples for different project types.
 
 ---
 
-### 3. [Gradle Application](gradle-app/)
-**Use case:** Gradle/Android application
+### 3. [Gradle JVM Library](gradle-app/)
+**Use case:** Gradle JVM library (publishes to Maven Central)
 
 **Contains:**
 - Pull request workflow with devbase-check linting
-- Gradle build configuration
-- Android-specific tasks (APK, AAB)
-- Version code auto-increment
-- GitHub Packages publishing
+- Gradle build configuration (JVM-only; no Android SDK)
+- Library publishing to Maven Central
 
 **Good for:**
-- Android applications
-- Gradle-based Java projects
-- Multi-module Gradle builds
+- Gradle-based Java libraries
+- Multi-module JVM Gradle builds
+- Gradle plugins
+
+> For Android applications (APKs, AABs, product flavors, Google Play), see the [Android Application example](android-app/) instead.
 
 ---
 

@@ -77,24 +77,23 @@ with:
 ```
 
 #### `build-gradle-app.yml`
-Builds Gradle application projects (JVM or Android).
+Builds Gradle JVM projects — libraries, applications, plugins — and uploads their JARs. Android is out of scope; use `build-gradle-android.yml` for APKs/AABs with flavors and Google Play publishing.
 ```yaml
 uses: ./.github/workflows/build-gradle-app.yml
 with:
-  java-version: "21"           # JDK version
+  java-version: "25"           # JDK version
   working-directory: "."       # Path to build.gradle
   gradle-tasks: "build"        # Gradle tasks to run
-  build-module: "app"          # Gradle module to build
-  enable-signing: false        # Enable Android signing
+  skip-tests: false            # Skip `test` task
   artifact-name: ""            # Custom artifact name (optional)
 ```
 
 #### `build-gradle-android.yml`
-Builds Android applications with multiple product flavors and build types.
+Builds Android applications with multiple product flavors and build types. Sole Android path: sets up the Android SDK, handles keystore decoding for signing, and produces split APK/AAB artifacts with Google Play-friendly naming.
 ```yaml
 uses: ./.github/workflows/build-gradle-android.yml
 with:
-  java-version: "21"              # JDK version
+  java-version: "25"              # JDK version
   build-module: "app"             # Gradle module
   product-flavor: "demo"          # Product flavor (demo, prod, etc.)
   build-types: "debug,release"    # Build types to create

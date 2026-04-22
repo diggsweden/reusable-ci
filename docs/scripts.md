@@ -333,7 +333,8 @@ bash bump-version.sh <project-type> <version> [working-dir] [gradle-version-file
 |------|--------|---------------|
 | Maven | `mvn versions:set` | `pom.xml` (all modules) |
 | NPM | `npm version` | `package.json`, `package-lock.json` |
-| Gradle | Updates properties, increments versionCode | `gradle.properties` |
+| Gradle (JVM) | Updates `version=` | `gradle.properties` |
+| Gradle Android | Updates `versionName=` and increments `versionCode=` | `gradle.properties` |
 | Xcode iOS | Updates MARKETING_VERSION | `versions.xcconfig` |
 | Meta | No file update | Changelog only |
 

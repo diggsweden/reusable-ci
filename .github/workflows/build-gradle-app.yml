@@ -1,19 +1,24 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
-# Gradle Builder
-# 
-# Purpose: Builds Gradle projects (Android/JVM) and uploads artifacts for subsequent
-# publishing steps. Separates build logic from registry-specific publishing.
+#
+# Gradle JVM Builder
+#
+# Purpose: Builds Gradle JVM projects — libraries, applications, plugins —
+# and uploads their JAR artifacts for subsequent publishing steps (Maven
+# Central, container images, etc.).
+#
+# Android builds are handled by build-gradle-android.yml, which supports
+# product flavors, AABs, Google Play artifact naming, and signing. This
+# workflow is intentionally Android-free: no Android SDK setup, no APK/AAB
+# globbing, no keystore decoding. Routing from artifacts.yml is by
+# `project-type: gradle` (here) vs `project-type: gradle-android` (there).
 #
 # Build Process:
-#   1. Set up JDK and Android SDK (if needed)
-#   2. Run Gradle build tasks
-#   3. Optional: Sign Android APK/AAB
-#   4. Upload built artifacts
-#
-# Outputs:
-#   - Artifacts uploaded with specified name (or 'gradle-build-artifacts' by default)
+#   1. Set up JDK
+#   2. Run the requested Gradle tasks
+#   3. Generate a CycloneDX Build SBOM
+#   4. Upload JAR artifacts and the build SBOM
 #
 # Required Permissions:
 #   contents: read  # Checkout code
@@ -22,11 +27,6 @@ name: Build Gradle
 on:
   workflow_call:
     inputs:
-      build-type:
-        description: "Build type: app (application) or plugin (Gradle plugin)"
-        required: false
-        default: "app"
-        type: string
       java-version:
         description: "Java version"
         required: true
@@ -41,16 +41,6 @@ on:
         required: false
         default: "assemble"
         type: string
-      build-module:
-        description: "Gradle module to build"
-        required: false
-        default: "app"
-        type: string
-      enable-signing:
-        description: "Enable Android app signing"
-        required: false
-        default: false
-        type: boolean
       skip-tests:
         description: "Skip tests during build"
         required: false
@@ -77,7 +67,7 @@ jobs:
   build-gradle:
     name: Build Gradle Project
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -99,52 +89,26 @@ jobs:
           distribution: 'temurin'
           java-version: ${{ inputs['java-version'] }}
           cache: 'gradle'
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
       - name: Make gradlew executable
         working-directory: ${{ inputs['working-directory'] }}
         run: chmod +x ./gradlew
-      - name: Decode Android keystore
-        if: ${{ inputs['enable-signing'] }}
-        working-directory: ${{ inputs['working-directory'] }}
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE }}
-        run: |
-          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
-            printf "%s" "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.keystore
-            printf "ANDROID_KEYSTORE_PATH=%s/release.keystore\n" "$PWD" >> "$GITHUB_ENV"
-            printf "✓ Android keystore decoded successfully\n"
-          else
-            printf "::error::ANDROID_KEYSTORE secret not found but enableSigning is true\n"
-            exit 1
-          fi
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs['working-directory'] }}
         run: |
-          if [ -f "gradle.properties" ]; then
-            VERSION=$(grep "versionName=" gradle.properties | cut -d'=' -f2)
-            VERSION_CODE=$(grep "versionCode=" gradle.properties | cut -d'=' -f2)
+          # JVM Gradle convention: `version=` in gradle.properties. Best-effort:
+          # absence is a warning, not a failure — the consumer may carry version
+          # in build.gradle(.kts) or an external source.
+          if [ -f "gradle.properties" ] && grep -q '^version=' gradle.properties; then
+            VERSION=$(grep '^version=' gradle.properties | head -1 | cut -d'=' -f2-)
             printf "VERSION=%s\n" "${VERSION}" >> "$GITHUB_OUTPUT"
-            printf "VERSION_CODE=%s\n" "${VERSION_CODE}" >> "$GITHUB_OUTPUT"
-            printf "Version: %s (%s)\n" "${VERSION}" "${VERSION_CODE}"
+            printf "Version: %s\n" "${VERSION}"
           else
-            printf "::warning::gradle.properties not found, version info unavailable\n"
-          fi
-      - name: Decode secrets properties
-        working-directory: ${{ inputs['working-directory'] }}
-        env:
-          SECRETS_PROPERTIES: ${{ secrets.SECRETS_PROPERTIES_BASE64 }}
-        run: |
-          if [ -n "$SECRETS_PROPERTIES" ]; then
-            printf "%s" "$SECRETS_PROPERTIES" | base64 -d > secrets.properties
+            printf "::warning::version not found in gradle.properties\n"
           fi
       - name: Run Gradle build
         working-directory: ${{ inputs['working-directory'] }}
         env:
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           GRADLE_TASKS: ${{ inputs['gradle-tasks'] }}
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
         run: |
@@ -157,7 +121,7 @@ jobs:
             ./gradlew $GRADLE_TASKS
           fi
       # Separate Gradle invocation keeps SBOM failures advisory (continue-on-error).
-      # Injecting the plugin into the real build would make a signing/build regression
+      # Injecting the plugin into the real build would make a build regression
       # cascade from an SBOM-tool problem, which is the wrong failure domain.
       - name: Generate Build SBOM
         id: sbom
@@ -169,19 +133,19 @@ jobs:
         run: bash "${{ github.workspace }}/.github-shared/scripts/sbom/build/gradle/generate-gradle-sbom.sh"
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
-        env:
-          BUILD_MODULE: ${{ inputs['build-module'] }}
         run: |
           printf "Built artifacts:\n"
-          find "$BUILD_MODULE"/build/outputs -type f \( -name "*.apk" -o -name "*.aab" -o -name "*.jar" \) -ls || printf "No artifacts found\n"
+          find . -type f -path '*/build/libs/*.jar' -ls 2>/dev/null || printf "No JAR files found\n"
       - name: Upload Gradle artifacts
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: ${{ inputs['artifact-name'] || 'gradle-build-artifacts' }}
+          # Root and subproject JARs. Single-module projects put jars under
+          # `build/libs/`; multi-module projects put them under
+          # `<subproject>/build/libs/`. Both globs cover the common layouts.
           path: |
-            ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/**/*.apk
-            ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/**/*.aab
-            ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/libs/*.jar
+            ${{ inputs['working-directory'] }}/build/libs/*.jar
+            ${{ inputs['working-directory'] }}/**/build/libs/*.jar
           retention-days: 7
           if-no-files-found: error
       # SBOM artifact is paired with the build artifact name so parallel
@@ -226,10 +190,7 @@ jobs:
       - name: Generate build summary
         env:
           JAVA_VERSION: ${{ inputs['java-version'] }}
-          BUILD_MODULE: ${{ inputs['build-module'] }}
           GRADLE_TASKS: ${{ inputs['gradle-tasks'] }}
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
-          ENABLE_SIGNING: ${{ inputs['enable-signing'] }}
           VERSION: ${{ steps.version-info.outputs.VERSION }}
-          VERSION_CODE: ${{ steps.version-info.outputs.VERSION_CODE }}
         run: bash .github-shared/scripts/summary/write-gradle-build-summary.sh

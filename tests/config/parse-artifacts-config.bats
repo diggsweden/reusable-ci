@@ -357,6 +357,20 @@ run_parse_artifacts_config() {
   assert_output --partial "sbom-artifacts<<"
 }
 
+@test "parse-artifacts-configdefaults SBOM on for gradle-android" {
+  # gradle-android builders produce a build-SBOM via the cyclonedx-gradle
+  # plugin init-script; the default `generate-sbom` should follow, so
+  # Android projects get SBOM coverage without explicit opt-in.
+  create_gradle_artifacts_config
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  assert_output --partial "needs-sbom=true"
+}
+
 # =============================================================================
 # Summary Tests
 # =============================================================================

@@ -822,7 +822,8 @@ For complete working examples, see the [`examples/`](../examples/) directory:
 
 - **Maven Application**: [`examples/maven-app/`](../examples/maven-app/)
 - **NPM Application**: [`examples/npm-app/`](../examples/npm-app/)
-- **Gradle Application**: [`examples/gradle-app/`](../examples/gradle-app/)
+- **Gradle JVM Library**: [`examples/gradle-app/`](../examples/gradle-app/)
+- **Android Application**: [`examples/android-app/`](../examples/android-app/)
 - **Monorepo**: [`examples/monorepo/`](../examples/monorepo/)
 
 ---

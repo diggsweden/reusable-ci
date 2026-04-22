@@ -11,7 +11,7 @@ source "$SCRIPT_DIR/../ci/output.sh"
 source "$SCRIPT_DIR/../ci/env.sh"
 
 readonly VALID_PROJECT_TYPES="maven npm gradle gradle-android xcode-ios python go rust meta"
-readonly SBOM_SUPPORTED_TYPES="maven npm gradle python go rust"
+readonly SBOM_SUPPORTED_TYPES="maven npm gradle gradle-android python go rust"
 readonly PUBLISH_TARGETS="maven-central github-packages google-play"
 
 die() {
