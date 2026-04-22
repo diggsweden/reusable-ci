@@ -121,7 +121,7 @@ jobs:
           if-no-files-found: warn
   summarize-dev-publish-stage:
     name: Summarize Dev Publish Stage
-    needs: [build-dev-container, publish-npm-dev]
+    needs: [build-dev-container, publish-npm-dev, generate-dev-sbom]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -146,6 +146,7 @@ jobs:
           PUBLISH_NPM: ${{ fromJson(inputs['dev-policy-json']).publish_npm }}
           BUILD_DEV_CONTAINER_RESULT: ${{ needs.build-dev-container.result }}
           PUBLISH_NPM_DEV_RESULT: ${{ needs.publish-npm-dev.result }}
+          GENERATE_DEV_SBOM_RESULT: ${{ needs.generate-dev-sbom.result }}
           CONTAINER_IMAGE: ${{ needs.build-dev-container.outputs.image }}
           CONTAINER_DIGEST: ${{ needs.build-dev-container.outputs.digest }}
           NPM_PACKAGE_NAME: ${{ needs.publish-npm-dev.outputs.package-name }}

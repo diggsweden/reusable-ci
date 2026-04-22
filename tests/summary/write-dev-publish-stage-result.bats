@@ -181,6 +181,38 @@ teardown() {
   assert_output --partial '"project_type":"npm"'
   assert_output --partial '"container":"success"'
   assert_output --partial '"npm":"success"'
+  assert_output --partial '"sbom":"skipped"'
+}
+
+@test "sbom target surfaces success when opt-in SBOM job ran" {
+  export PROJECT_TYPE="maven"
+  export BUILD_DEV_CONTAINER_RESULT="success"
+  export GENERATE_DEV_SBOM_RESULT="success"
+
+  run_script "summary/write-dev-publish-stage-result.sh"
+  assert_success
+
+  run get_github_output "result-json"
+  assert_output --partial '"sbom":"success"'
+
+  run get_github_output "stage-result"
+  assert_output "success"
+}
+
+@test "sbom failure propagates to stage result" {
+  # An opted-in SBOM job that crashes must not silently pass — surface it.
+  export PROJECT_TYPE="maven"
+  export BUILD_DEV_CONTAINER_RESULT="success"
+  export GENERATE_DEV_SBOM_RESULT="failure"
+
+  run_script "summary/write-dev-publish-stage-result.sh"
+  assert_success
+
+  run get_github_output "stage-result"
+  assert_output "failure"
+
+  run get_github_output "result-json"
+  assert_output --partial '"sbom":"failure"'
 }
 
 @test "artifacts-json contains container and npm details" {
