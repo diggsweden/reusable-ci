@@ -29,32 +29,6 @@ teardown() {
 # Helper Functions
 # =============================================================================
 
-run_generate_sboms() {
-  # Historical positional-arg signature kept for test readability; translate
-  # to the script's flag-based CLI here so every test doesn't have to.
-  # Positional order: project-type, layers, version, name, working-dir,
-  #                   container-image, create-zip
-  local project_type="${1:-auto}"
-  local layers="${2:-build}"
-  local version="${3:-}"
-  local name="${4:-}"
-  local working_dir="${5:-.}"
-  local container_image="${6:-}"
-  local create_zip="${7:-false}"
-
-  local -a args=(
-    --project-type "$project_type"
-    --layers "$layers"
-    --working-dir "$working_dir"
-  )
-  [[ -n "$version" ]] && args+=(--version "$version")
-  [[ -n "$name" ]] && args+=(--name "$name")
-  [[ -n "$container_image" ]] && args+=(--container-image "$container_image")
-  [[ "$create_zip" == "true" ]] && args+=(--create-zip)
-
-  run_script "sbom/generate-sboms.sh" "${args[@]}"
-}
-
 # =============================================================================
 # Project Detection Tests
 # =============================================================================
@@ -65,24 +39,32 @@ run_generate_sboms() {
   # Detection runs before layer generation; exit status isn't relevant here
   # (build layer with no bom.json will fail the summary — we only assert the
   # detection log line).
-  run_generate_sboms "auto" "build" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "auto" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_output --partial "Auto-detected project type: maven"
 }
 
 @test "generate-sbomsdetects npm project from package.json" {
   create_npm_project
 
-  run_generate_sboms "auto" "build" "" "" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "auto" \
+      --layers "build" \
+      --working-dir "."
   assert_output --partial "Auto-detected project type: npm"
 }
 
 @test "generate-sbomsdetects gradle project from build.gradle" {
   create_gradle_project
 
-  run_generate_sboms "auto" "build" "" "" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "auto" \
+      --layers "build" \
+      --working-dir "."
   assert_output --partial "Auto-detected project type: gradle"
 }
 
@@ -93,8 +75,10 @@ module github.com/example/myapp
 go 1.21
 EOF
 
-  run_generate_sboms "auto" "build" "" "" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "auto" \
+      --layers "build" \
+      --working-dir "."
   assert_output --partial "Auto-detected project type: go"
 }
 
@@ -105,8 +89,10 @@ name = "myapp"
 version = "1.0.0"
 EOF
 
-  run_generate_sboms "auto" "build" "" "" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "auto" \
+      --layers "build" \
+      --working-dir "."
   assert_output --partial "Auto-detected project type: rust"
 }
 
@@ -117,16 +103,20 @@ name = "myapp"
 version = "1.0.0"
 EOF
 
-  run_generate_sboms "auto" "build" "" "" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "auto" \
+      --layers "build" \
+      --working-dir "."
   assert_output --partial "Auto-detected project type: python"
 }
 
 @test "generate-sbomsdetects python project from requirements.txt" {
   echo "requests==2.28.0" > requirements.txt
 
-  run_generate_sboms "auto" "build" "" "" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "auto" \
+      --layers "build" \
+      --working-dir "."
   assert_output --partial "Auto-detected project type: python"
 }
 
@@ -135,8 +125,10 @@ EOF
   create_maven_project
   create_npm_project
 
-  run_generate_sboms "npm" "build" "" "" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "npm" \
+      --layers "build" \
+      --working-dir "."
   assert_output --partial "Project type: npm"
   refute_output --partial "Auto-detected"
 }
@@ -151,8 +143,12 @@ EOF
   mkdir -p target
   echo '{"bomFormat":"CycloneDX"}' > target/bom.json
 
-  run_generate_sboms "maven" "build" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_output --partial "Generating Build layer"
 }
@@ -160,8 +156,12 @@ EOF
 @test "generate-sbomswarns when no bom.json found for maven build layer" {
   create_maven_project false
 
-  run_generate_sboms "maven" "build" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_failure  # Exits 1 when no SBOMs generated (summary check)
   assert_output --partial "No Maven Build SBOM"
   assert_output --partial "No SBOM files generated"
@@ -171,8 +171,12 @@ EOF
   create_npm_project
   echo '{"bomFormat":"CycloneDX"}' >bom.json
 
-  run_generate_sboms "npm" "build" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "npm" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_output --partial "Generating Build layer"
   assert_file_exists "myapp-1.0.0-build-sbom.cyclonedx.json"
@@ -181,8 +185,12 @@ EOF
 @test "generate-sbomswarns when no bom.json found for npm build layer" {
   create_npm_project
 
-  run_generate_sboms "npm" "build" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "npm" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_failure
   assert_output --partial "No npm Build SBOM"
 }
@@ -192,8 +200,12 @@ EOF
   mkdir -p build/reports
   echo '{"bomFormat":"CycloneDX"}' >build/reports/bom.json
 
-  run_generate_sboms "gradle" "build" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "gradle" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_output --partial "Generating Build layer"
   assert_file_exists "myapp-1.0.0-build-sbom.cyclonedx.json"
@@ -202,8 +214,12 @@ EOF
 @test "generate-sbomswarns when no bom.json found for gradle build layer" {
   create_gradle_project
 
-  run_generate_sboms "gradle" "build" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "gradle" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_failure
   assert_output --partial "No Gradle Build SBOM"
 }
@@ -212,8 +228,12 @@ EOF
   create_rust_project
   echo '{"bomFormat":"CycloneDX"}' >bom.json
 
-  run_generate_sboms "rust" "build" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "rust" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_output --partial "Generating Build layer"
   assert_file_exists "myapp-1.0.0-build-sbom.cyclonedx.json"
@@ -222,8 +242,12 @@ EOF
 @test "generate-sbomswarns when no bom.json found for cargo build layer" {
   create_rust_project
 
-  run_generate_sboms "rust" "build" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "rust" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_failure
   assert_output --partial "No Cargo Build SBOM"
 }
@@ -236,8 +260,12 @@ EOF
   mkdir -p release-artifacts/server/target
   echo '{"bomFormat":"CycloneDX"}' >release-artifacts/server/target/bom.json
 
-  run_generate_sboms "maven" "build" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_output --partial "Generating Build layer"
   assert_file_exists "myapp-1.0.0-build-sbom.cyclonedx.json"
@@ -253,8 +281,12 @@ EOF
   echo '{"bomFormat":"CycloneDX","module":"a"}' >release-artifacts/module-a/target/bom.json
   echo '{"bomFormat":"CycloneDX","module":"b"}' >release-artifacts/module-b/target/bom.json
 
-  run_generate_sboms "maven" "build" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_file_exists "myapp-1.0.0-build-sbom.cyclonedx.json"
   grep -q '"aggregate":true' "myapp-1.0.0-build-sbom.cyclonedx.json"
@@ -267,8 +299,12 @@ EOF
   echo '{"bomFormat":"CycloneDX","vendored":true}' >release-artifacts/node_modules/some-dep/bom.json
   echo '{"bomFormat":"CycloneDX","project":true}' >release-artifacts/bom.json
 
-  run_generate_sboms "npm" "build" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "npm" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   grep -q '"project":true' "myapp-1.0.0-build-sbom.cyclonedx.json"
 }
@@ -280,8 +316,12 @@ EOF
   echo '{"bomFormat":"CycloneDX","root":true}' >release-artifacts/bom.json
   echo '{"bomFormat":"CycloneDX","deep":true}' >release-artifacts/packages/a/bom.json
 
-  run_generate_sboms "npm" "build" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "npm" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   grep -q '"root":true' "myapp-1.0.0-build-sbom.cyclonedx.json"
 }
@@ -294,8 +334,12 @@ EOF
   echo '{"bomFormat":"CycloneDX","aggregate":true}' >release-artifacts/build/reports/bom.json
   echo '{"bomFormat":"CycloneDX","module":"a"}' >release-artifacts/module-a/build/reports/bom.json
 
-  run_generate_sboms "gradle" "build" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "gradle" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   grep -q '"aggregate":true' "myapp-1.0.0-build-sbom.cyclonedx.json"
 }
@@ -308,8 +352,12 @@ EOF
   echo '{"bomFormat":"CycloneDX","root":true}' >release-artifacts/bom.json
   echo '{"bomFormat":"CycloneDX","inner":true}' >release-artifacts/crates/inner/bom.json
 
-  run_generate_sboms "rust" "build" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "rust" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   grep -q '"root":true' "myapp-1.0.0-build-sbom.cyclonedx.json"
 }
@@ -322,8 +370,12 @@ EOF
   echo '{"bomFormat":"CycloneDX","cached":true}' >release-artifacts/target/debug/bom.json
   echo '{"bomFormat":"CycloneDX","real":true}' >release-artifacts/bom.json
 
-  run_generate_sboms "rust" "build" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "rust" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   grep -q '"real":true' "myapp-1.0.0-build-sbom.cyclonedx.json"
 }
@@ -333,8 +385,12 @@ EOF
   mkdir -p target
   echo '{"bomFormat":"CycloneDX"}' > target/bom.json
 
-  run_generate_sboms "maven" "build,analyzed-artifact" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "build,analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_output --partial "Generating Build layer"
   assert_output --partial "Generating Artifact layer"
@@ -345,8 +401,12 @@ EOF
   mkdir -p release-artifacts
   cp target/myapp-1.0.0.jar release-artifacts/
 
-  run_generate_sboms "maven" "build,analyzed-artifact" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "build,analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_output --partial "No Maven Build SBOM"
   assert_output --partial "Generating Artifact layer"
@@ -361,8 +421,12 @@ EOF
   mkdir -p release-artifacts
   cp target/myapp-1.0.0.jar release-artifacts/
 
-  run_generate_sboms "maven" "analyzed-artifact" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_output --partial "Generating Artifact layer"
 }
@@ -372,8 +436,12 @@ EOF
   mkdir -p target
   echo "mock jar" > target/myapp.jar
 
-  run_generate_sboms "maven" "analyzed-artifact" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_output --partial "Generating Artifact layer"
 }
@@ -381,8 +449,12 @@ EOF
 @test "generate-sbomswarns when no JARs found for maven" {
   create_maven_project false  # No JAR - script fails when no SBOMs generated
 
-  run_generate_sboms "maven" "analyzed-artifact" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_failure  # Exits 1 when no SBOMs generated
   assert_output --partial "No JAR files found"
   assert_output --partial "No SBOM files generated"
@@ -392,8 +464,12 @@ EOF
   create_npm_project
   echo "mock tarball" > myapp-1.0.0.tgz
 
-  run_generate_sboms "npm" "analyzed-artifact" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "npm" \
+      --layers "analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_output --partial "Generating Artifact layer"
 }
@@ -401,8 +477,12 @@ EOF
 @test "generate-sbomsgenerates artifact layer for gradle" {
   create_gradle_project true
 
-  run_generate_sboms "gradle" "analyzed-artifact" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "gradle" \
+      --layers "analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_output --partial "Generating Artifact layer"
 }
@@ -412,16 +492,25 @@ EOF
 # =============================================================================
 
 @test "generate-sbomsgenerates container layer when image provided" {
-  run_generate_sboms "maven" "analyzed-container" "1.0.0" "myapp" "." "ghcr.io/org/myapp:1.0.0"
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-container" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "." \
+      --container-image "ghcr.io/org/myapp:1.0.0"
   assert_success
   assert_output --partial "Generating Container layer"
   assert_output --partial "ghcr.io/org/myapp:1.0.0"
 }
 
 @test "generate-sbomsskips container layer when no image provided" {
-  run_generate_sboms "maven" "analyzed-container" "1.0.0" "myapp" "." ""
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-container" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_failure  # Exits 1 when no SBOMs generated
   assert_output --partial "No container image specified"
   assert_output --partial "No SBOM files generated"
@@ -438,8 +527,12 @@ EOF
   mkdir -p release-artifacts
   cp target/myapp-1.0.0.jar release-artifacts/
 
-  run_generate_sboms "maven" "build,analyzed-artifact" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "build,analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_output --partial "Generating Build layer"
   assert_output --partial "Generating Artifact layer"
@@ -452,8 +545,13 @@ EOF
   mkdir -p release-artifacts
   cp target/myapp-1.0.0.jar release-artifacts/
 
-  run_generate_sboms "maven" "build,analyzed-artifact,analyzed-container" "1.0.0" "myapp" "." "ghcr.io/org/myapp:1.0.0"
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "build,analyzed-artifact,analyzed-container" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "." \
+      --container-image "ghcr.io/org/myapp:1.0.0"
   assert_success
   assert_output --partial "Generating Build layer"
   assert_output --partial "Generating Artifact layer"
@@ -463,8 +561,12 @@ EOF
 @test "generate-sbomsfails on unknown layer" {
   create_maven_project
 
-  run_generate_sboms "maven" "invalid-layer" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "invalid-layer" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_failure
   assert_output --partial "Unknown layer"
 }
@@ -478,8 +580,12 @@ EOF
   mkdir -p release-artifacts
   cp target/myapp-1.0.0.jar release-artifacts/
 
-  run_generate_sboms "maven" "analyzed-artifact" "2.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-artifact" \
+      --version "2.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_output --partial "Version: 2.0.0"
 }
@@ -489,8 +595,12 @@ EOF
   mkdir -p release-artifacts
   cp target/myapp-1.0.0.jar release-artifacts/custom-name-1.0.0.jar
 
-  run_generate_sboms "maven" "analyzed-artifact" "1.0.0" "custom-name" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-artifact" \
+      --version "1.0.0" \
+      --name "custom-name" \
+      --working-dir "."
   assert_success
   assert_output --partial "Name: custom-name"
 }
@@ -507,14 +617,22 @@ EOF
   cp target/myapp-1.0.0.jar release-artifacts/
   cd ..
 
-  run_generate_sboms "maven" "analyzed-artifact" "1.0.0" "myapp" "subproject"
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "subproject"
   assert_success
 }
 
 @test "generate-sbomsfails on invalid working directory" {
-  run_generate_sboms "maven" "build" "1.0.0" "myapp" "nonexistent"
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "nonexistent"
   assert_failure
 }
 
@@ -527,8 +645,12 @@ EOF
   mkdir -p release-artifacts
   cp target/myapp-1.0.0.jar release-artifacts/
 
-  run_generate_sboms "maven" "analyzed-artifact" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_file_exists "myapp-1.0.0-jar-sbom.spdx.json"
 }
@@ -538,8 +660,12 @@ EOF
   mkdir -p release-artifacts
   cp target/myapp-1.0.0.jar release-artifacts/
 
-  run_generate_sboms "maven" "analyzed-artifact" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_file_exists "myapp-1.0.0-jar-sbom.cyclonedx.json"
 }
@@ -549,8 +675,12 @@ EOF
   mkdir -p release-artifacts
   cp target/myapp-1.0.0.jar release-artifacts/
 
-  run_generate_sboms "maven" "analyzed-artifact" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_file_exists "myapp-1.0.0-jar-sbom.spdx.json"
   assert_file_exists "myapp-1.0.0-jar-sbom.cyclonedx.json"
@@ -565,8 +695,13 @@ EOF
   mkdir -p release-artifacts
   cp target/myapp-1.0.0.jar release-artifacts/
 
-  run_generate_sboms "maven" "analyzed-artifact" "1.0.0" "myapp" "." "" "true"
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "." \
+      --create-zip
   assert_success
   assert_file_exists "myapp-1.0.0-sboms.zip"
 }
@@ -576,8 +711,12 @@ EOF
   mkdir -p release-artifacts
   cp target/myapp-1.0.0.jar release-artifacts/
 
-  run_generate_sboms "maven" "analyzed-artifact" "1.0.0" "myapp" "." "" "false"
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_file_not_exists "myapp-1.0.0-sboms.zip"
 }
@@ -591,8 +730,12 @@ EOF
   mkdir -p release-artifacts
   cp target/myapp-1.0.0.jar release-artifacts/
 
-  run_generate_sboms "maven" "analyzed-artifact" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_output --partial "SBOM Generation Script"
 }
@@ -602,8 +745,12 @@ EOF
   mkdir -p release-artifacts
   cp target/myapp-1.0.0.jar release-artifacts/
 
-  run_generate_sboms "maven" "analyzed-artifact" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_output --partial "Project Information"
   assert_output --partial "Name: myapp"
@@ -615,8 +762,12 @@ EOF
   mkdir -p release-artifacts
   cp target/myapp-1.0.0.jar release-artifacts/
 
-  run_generate_sboms "maven" "analyzed-artifact" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_output --partial "SBOM Generation Complete"
   assert_output --partial "Successfully generated"
@@ -633,8 +784,12 @@ EOF
 
   # syft mock already in PATH from setup
 
-  run_generate_sboms "maven" "analyzed-artifact" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-artifact" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_success
   assert_output --partial "Syft already installed"
 }
@@ -646,8 +801,12 @@ EOF
 @test "generate-sbomsrejects unknown project type at flag parse" {
   # --project-type is validated against the allow-list; unknown values fail
   # fast with a clear error rather than silently producing zero SBOMs.
-  run_generate_sboms "unknown" "build" "1.0.0" "myapp" "."
-
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "unknown" \
+      --layers "build" \
+      --version "1.0.0" \
+      --name "myapp" \
+      --working-dir "."
   assert_failure
   assert_stderr_contains "invalid --project-type 'unknown'"
   assert_stderr_contains "valid:"
@@ -727,25 +886,4 @@ EOF
   assert_success
   assert_output --partial "Project type: maven"
   assert_output --partial "Version: 1.0.0"
-}
-
-# =============================================================================
-# Bats wrapper drift sentinel
-# =============================================================================
-# Guards against silent regressions in the run_generate_sboms helper that
-# translates positional args to flags. If a flag in generate-sboms.sh is
-# renamed (e.g. --working-dir → --workdir), this test fails loudly because
-# the helper still passes the old name and the script rejects it.
-
-@test "run_generate_sboms wrapper emits known-good flag names" {
-  create_maven_project true
-  mkdir -p release-artifacts
-  cp target/myapp-1.0.0.jar release-artifacts/
-
-  # Container image arg exercises --container-image; create-zip exercises --create-zip
-  run_generate_sboms "maven" "analyzed-artifact" "1.0.0" "myapp" "." "ghcr.io/org/app:1.0.0" "true"
-
-  assert_success  # If any flag name drifted, the script would reject and exit 1
-  assert_output --partial "Project type: maven"
-  assert_file_exists "myapp-1.0.0-sboms.zip"
 }
