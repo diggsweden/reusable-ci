@@ -115,12 +115,35 @@ jobs:
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
         run: bash "${{ github.workspace }}/.github-shared/scripts/build/maven-library.sh"
       - name: Generate Build SBOM
+        id: sbom
         continue-on-error: true
         working-directory: ${{ inputs['working-directory'] }}
-        # renovate: datasource=maven depName=org.cyclonedx:cyclonedx-maven-plugin
+        env:
+          # renovate: datasource=maven depName=org.cyclonedx:cyclonedx-maven-plugin
+          CYCLONEDX_MAVEN_VERSION: "2.9.1"
         run: |
           # shellcheck disable=SC2086
-          mvn $MAVEN_CLI_OPTS org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom
+          mvn $MAVEN_CLI_OPTS "org.cyclonedx:cyclonedx-maven-plugin:${CYCLONEDX_MAVEN_VERSION}:makeAggregateBom"
+      - name: Write SBOM status to step summary
+        if: always()
+        env:
+          SBOM_OUTCOME: ${{ steps.sbom.outcome }}
+          WORKDIR: ${{ inputs['working-directory'] }}
+        run: |
+          # shellcheck disable=SC2016  # backticks inside single quotes are intentional markdown
+          {
+            printf '### Build SBOM\n'
+            if [[ "$SBOM_OUTCOME" == "success" ]]; then
+              bom=$(find "$WORKDIR" -path '*/target/bom.json' 2>/dev/null | sort | head -1)
+              if [[ -n "$bom" ]]; then
+                printf -- '- ✅ CycloneDX (aggregate): `%s`\n' "$bom"
+              else
+                printf -- '- ⚠️ Plugin ran but no bom.json was written\n'
+              fi
+            else
+              printf -- '- ⚠️ Generation step did not succeed (continued as advisory)\n'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         run: |

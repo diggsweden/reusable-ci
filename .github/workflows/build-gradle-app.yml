@@ -156,6 +156,17 @@ jobs:
             # shellcheck disable=SC2086
             ./gradlew $GRADLE_TASKS
           fi
+      # Separate Gradle invocation keeps SBOM failures advisory (continue-on-error).
+      # Injecting the plugin into the real build would make a signing/build regression
+      # cascade from an SBOM-tool problem, which is the wrong failure domain.
+      - name: Generate Build SBOM
+        id: sbom
+        continue-on-error: true
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          # renovate: datasource=maven depName=org.cyclonedx:cyclonedx-gradle-plugin
+          CYCLONEDX_GRADLE_VERSION: "3.2.1"
+        run: bash "${{ github.workspace }}/.github-shared/scripts/sbom/build/gradle/generate-gradle-sbom.sh"
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         env:
@@ -167,12 +178,39 @@ jobs:
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: ${{ inputs['artifact-name'] || 'gradle-build-artifacts' }}
+          # cyclonedx-gradle-plugin 3.x writes to build/reports/bom.json.
+          # build/reports/cyclonedx/bom.json is retained to tolerate older plugin versions.
           path: |
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/**/*.apk
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/**/*.aab
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/libs/*.jar
+            ${{ inputs['working-directory'] }}/build/reports/bom.json
+            ${{ inputs['working-directory'] }}/**/build/reports/bom.json
+            ${{ inputs['working-directory'] }}/build/reports/cyclonedx/bom.json
+            ${{ inputs['working-directory'] }}/**/build/reports/cyclonedx/bom.json
           retention-days: 7
           if-no-files-found: error
+      - name: Write SBOM status to step summary
+        if: always()
+        env:
+          SBOM_OUTCOME: ${{ steps.sbom.outcome }}
+          WORKDIR: ${{ inputs['working-directory'] }}
+        run: |
+          # shellcheck disable=SC2016  # backticks inside single quotes are intentional markdown
+          {
+            printf '### Build SBOM\n'
+            if [[ "$SBOM_OUTCOME" == "success" ]]; then
+              # Report the shallowest bom.json relative to the working dir.
+              bom=$(find "$WORKDIR" -path '*/build/reports/bom.json' -o -path '*/build/reports/cyclonedx/bom.json' 2>/dev/null | sort | head -1)
+              if [[ -n "$bom" ]]; then
+                printf -- '- ✅ CycloneDX: `%s`\n' "$bom"
+              else
+                printf -- '- ⚠️ Generated but file not located — check plugin output path\n'
+              fi
+            else
+              printf -- '- ⚠️ Generation step did not succeed (continued as advisory)\n'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Generate build summary
         env:
           JAVA_VERSION: ${{ inputs['java-version'] }}

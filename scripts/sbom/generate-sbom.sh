@@ -369,6 +369,17 @@ generate_artifact_layer_python() {
   fi
 }
 
+# Build the Build-layer SBOM output filename. Appends a short commit SHA for traceability
+build_sbom_filename() {
+  local name="$1" version="$2"
+  local sha
+  if sha=$(git rev-parse --short HEAD 2>/dev/null); then
+    printf "%s-%s-%s-build-sbom.cyclonedx.json" "$name" "$version" "$sha"
+  else
+    printf "%s-%s-build-sbom.cyclonedx.json" "$name" "$version"
+  fi
+}
+
 generate_build_layer() {
   local name="$1" version="$2"
 
@@ -377,30 +388,116 @@ generate_build_layer() {
 
   case "$PROJECT_TYPE" in
   maven) generate_build_layer_maven "$name" "$version" ;;
+  npm) generate_build_layer_npm "$name" "$version" ;;
+  gradle) generate_build_layer_gradle "$name" "$version" ;;
+  rust) generate_build_layer_cargo "$name" "$version" ;;
+  go) log_warning "Build SBOM not implemented for project type: go" ;;
+  python) log_warning "Build SBOM not implemented for project type: python" ;;
   *) log_warning "Build SBOM not supported for project type: $PROJECT_TYPE" ;;
   esac
   printf "\n"
 }
 
-generate_build_layer_maven() {
-  local name="$1" version="$2"
-  local bom_file=""
+# Find the shallowest bom.json matching the given -path pattern(s) inside the
+# download-artifact tree. `shallowest` means: prefer the aggregate BOM at the
+# project root over per-module BOMs deeper in the tree, and work whether the
+# consumer's `working-directory` was `.` or a subdir — the artifact upload
+# preserves the working-directory prefix, so fixed-path lookups fail on subdir
+# projects.
+#
+# Usage: _find_shallowest_bom <include-pattern>... [-- <exclude-pattern>...]
+# All patterns are find-style -path globs. Patterns containing whitespace are
+# supported because arguments are passed positionally (no word-splitting).
+_find_shallowest_bom() {
+  local root="./release-artifacts"
+  [[ -d "$root" ]] || root="."
 
-  for path in "./release-artifacts/target/bom.json" "./release-artifacts/bom.json" "target/bom.json"; do
-    if [[ -f "$path" ]]; then
-      bom_file="$path"
-      break
+  local includes=() excludes=()
+  local in_excludes=0
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == "--" ]]; then
+      in_excludes=1
+      continue
+    fi
+    if (( in_excludes )); then
+      excludes+=("$arg")
+    else
+      includes+=("$arg")
     fi
   done
 
-  if [[ -z "$bom_file" ]]; then
-    log_warning "No Maven Build SBOM (bom.json) found - run cyclonedx-maven-plugin during build"
-    return
-  fi
+  # Sentinel -false lets every include be prepended with -o uniformly.
+  local find_args=(-type f \( -false)
+  local pattern
+  for pattern in "${includes[@]}"; do
+    find_args+=(-o -path "$pattern")
+  done
+  find_args+=(\))
+  for pattern in "${excludes[@]}"; do
+    find_args+=(! -path "$pattern")
+  done
 
-  local output_file="${name}-${version}-build-sbom.cyclonedx.json"
+  # Print depth + path, sort numerically, take the shallowest entry.
+  find "$root" "${find_args[@]}" -printf '%d\t%p\n' 2>/dev/null |
+    sort -n |
+    head -1 |
+    cut -f2-
+}
+
+_emit_build_sbom() {
+  local bom_file="$1" name="$2" version="$3" stack="$4" hint="$5"
+  if [[ -z "$bom_file" ]]; then
+    log_warning "No ${stack} Build SBOM found${hint:+ - ${hint}}"
+    return 0
+  fi
+  local output_file
+  output_file=$(build_sbom_filename "$name" "$version")
   cp "$bom_file" "$output_file"
   log_success "$output_file"
+}
+
+generate_build_layer_maven() {
+  local name="$1" version="$2"
+  local bom_file
+  bom_file=$(_find_shallowest_bom '*/target/bom.json')
+  _emit_build_sbom "$bom_file" "$name" "$version" "Maven" \
+    "run cyclonedx-maven-plugin during build"
+}
+
+generate_build_layer_npm() {
+  local name="$1" version="$2"
+  local bom_file
+  # Exclude node_modules — vendored packages may ship their own bom.json and
+  # would otherwise hijack pickup when sorted by depth.
+  bom_file=$(_find_shallowest_bom '*/bom.json' -- '*/node_modules/*')
+  _emit_build_sbom "$bom_file" "$name" "$version" "npm" \
+    "run @cyclonedx/cyclonedx-npm during build"
+}
+
+generate_build_layer_gradle() {
+  local name="$1" version="$2"
+  local bom_file
+  # Plugin 3.x writes to build/reports/bom.json; older versions used
+  # build/reports/cyclonedx/bom.json. Match both for forward/back compat.
+  bom_file=$(
+    _find_shallowest_bom \
+      '*/build/reports/bom.json' \
+      '*/build/reports/cyclonedx/bom.json'
+  )
+  _emit_build_sbom "$bom_file" "$name" "$version" "Gradle" \
+    "run cyclonedx-gradle-plugin during build"
+}
+
+generate_build_layer_cargo() {
+  local name="$1" version="$2"
+  local bom_file
+  # cargo-cyclonedx writes bom.json at each crate root (workspace-aware);
+  # pick the shallowest so root-crate BOMs win over deeper ones. Exclude
+  # compile artifacts under target/.
+  bom_file=$(_find_shallowest_bom '*/bom.json' -- '*/target/*')
+  _emit_build_sbom "$bom_file" "$name" "$version" "Cargo" \
+    "run cargo-cyclonedx during build"
 }
 
 generate_artifact_layer() {

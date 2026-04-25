@@ -100,6 +100,16 @@ on:
         required: false
         default: "main"
         type: string
+      generate-sbom:
+        description: "Generate SBOMs in the dev flow (off by default; useful for testing SBOM wiring without a release)"
+        required: false
+        default: false
+        type: boolean
+      publish-container:
+        description: "Publish container image to registry (set false for repos without a Containerfile)"
+        required: false
+        default: true
+        type: boolean
     secrets:
       registry-password:
         description: "NPM registry auth token (required when use-ci-token=false)"
@@ -165,6 +175,7 @@ jobs:
     needs: [compose-dev-interface]
     permissions:
       contents: read
+    secrets: inherit
     uses: ./.github/workflows/release-dev-build-stage.yml
     with:
       dev-context-json: ${{ needs.compose-dev-interface.outputs.dev-context-json }}
@@ -185,6 +196,8 @@ jobs:
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
       dev-policy-json: ${{ needs.compose-dev-interface.outputs.dev-policy-json }}
       build-result-json: ${{ needs.execute-dev-build-stage.outputs.result-json }}
+      generate-sbom: ${{ inputs['generate-sbom'] }}
+      publish-container: ${{ inputs['publish-container'] }}
 
   # ===== Stage 3: Summary =====
   dev-release-summary:

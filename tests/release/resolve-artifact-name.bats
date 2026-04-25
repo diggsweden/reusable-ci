@@ -102,11 +102,11 @@ run_resolve_artifact_name() {
 # Rust Project Tests
 # =============================================================================
 
-@test "resolve-artifact-name returns rust-build-artifacts for rust" {
+@test "resolve-artifact-name returns rust-build-sbom for rust" {
   run_resolve_artifact_name "rust"
 
   assert_success
-  assert_output "name=rust-build-artifacts"
+  assert_output "name=rust-build-sbom"
 }
 
 # =============================================================================

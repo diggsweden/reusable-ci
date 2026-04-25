@@ -54,6 +54,7 @@ jobs:
     if: ${{ fromJson(inputs['dev-context-json']).project_type == 'gradle' }}
     permissions:
       contents: read
+    secrets: inherit
     uses: ./.github/workflows/build-gradle-app.yml
     with:
       working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}

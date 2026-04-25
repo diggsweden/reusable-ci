@@ -23,7 +23,10 @@ main() {
     printf "name=go-build-artifacts\n"
     ;;
   rust)
-    printf "name=rust-build-artifacts\n"
+    # Rust workflow is SBOM-only and not wired into release-orchestrator;
+    # this name stays in sync with build-rust.yml for consumers that
+    # call it directly.
+    printf "name=rust-build-sbom\n"
     ;;
   *)
     printf "name=build-artifacts\n"

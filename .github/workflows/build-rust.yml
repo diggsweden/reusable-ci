@@ -1,0 +1,113 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+#
+# Rust Build SBOM (beta)
+#
+# Generates a CycloneDX Build SBOM for a Rust project or workspace using
+# cargo-cyclonedx, and uploads it as `rust-build-sbom` by default.
+# Workspaces get one bom.json per crate; the aggregator in
+# scripts/sbom/generate-sbom.sh picks the shallowest (root crate) when
+# consolidating.
+#
+# Intentionally SBOM-only — this workflow does not invoke `cargo build` or
+# `cargo test`, so it is not (yet) a drop-in Rust builder. Do not wire into
+# release-orchestrator; call directly via `uses:` until a full Rust builder
+# lands. cargo-cyclonedx resolves the dependency graph from Cargo.lock, so
+# the SBOM is accurate whether or not a build has been performed.
+#
+# `cargo install --locked --version` pins cargo-cyclonedx to a reproducible
+# version so the SBOM tool itself can't drift under us.
+#
+name: Build Rust
+on:
+  workflow_call:
+    inputs:
+      rust-toolchain:
+        description: "Rust toolchain version (e.g., 1.90, stable)"
+        required: true
+        type: string
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      branch:
+        description: "Branch to checkout"
+        required: false
+        default: "main"
+        type: string
+      artifact-name:
+        description: "Artifact name for uploads (defaults to 'rust-build-sbom')"
+        required: false
+        default: ""
+        type: string
+permissions:
+  contents: read
+jobs:
+  build-rust:
+    name: Build Rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.branch }}
+      - name: Install Rust toolchain
+        env:
+          TOOLCHAIN: ${{ inputs['rust-toolchain'] }}
+        run: |
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
+          rustup default "$TOOLCHAIN"
+      # Caches ~/.cargo (registry, git, installed bins) + target/. Keyed by
+      # Cargo.lock so cache invalidates when dependencies change.
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
+        with:
+          workspaces: ${{ inputs['working-directory'] }}
+      - name: Generate Build SBOM
+        id: sbom
+        continue-on-error: true
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          # renovate: datasource=crate depName=cargo-cyclonedx
+          CARGO_CYCLONEDX_VERSION: "0.5.9"
+        run: |
+          cargo install --locked cargo-cyclonedx --version "${CARGO_CYCLONEDX_VERSION}"
+          # --all covers every workspace member; single-crate projects get one
+          # bom.json at the crate root. --override-filename normalises the name.
+          cargo cyclonedx --all --format json --override-filename bom
+      - name: Upload Rust SBOM
+        if: steps.sbom.outcome == 'success'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: ${{ inputs['artifact-name'] || 'rust-build-sbom' }}
+          path: |
+            ${{ inputs['working-directory'] }}/bom.json
+            ${{ inputs['working-directory'] }}/**/bom.json
+          retention-days: 7
+          # SBOM generation is advisory (beta); a missing bom.json should not
+          # fail the workflow.
+          if-no-files-found: warn
+      - name: Write SBOM status to step summary
+        if: always()
+        env:
+          SBOM_OUTCOME: ${{ steps.sbom.outcome }}
+          WORKDIR: ${{ inputs['working-directory'] }}
+        run: |
+          {
+            printf '### Build SBOM\n'
+            if [[ "$SBOM_OUTCOME" == "success" ]]; then
+              count=$(find "$WORKDIR" -name bom.json -not -path '*/target/*' 2>/dev/null | wc -l)
+              if (( count > 0 )); then
+                printf -- '- ✅ CycloneDX: %s bom.json file(s)\n' "$count"
+              else
+                printf -- '- ⚠️ cargo-cyclonedx reported success but produced no bom.json\n'
+              fi
+            else
+              printf -- '- ⚠️ Generation step did not succeed (continued as advisory)\n'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

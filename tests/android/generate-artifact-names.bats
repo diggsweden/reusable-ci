@@ -19,13 +19,14 @@ teardown() {
   common_teardown
 }
 
-@test "generate-artifact-names generates debug-name, release-name, aab-name outputs" {
+@test "generate-artifact-names generates debug-name, release-name, aab-name, sbom-name outputs" {
   run_script "android/generate-artifact-names.sh" "false" "prefix" "myapp" "prod"
 
   assert_success
   assert_output --partial "debug-name="
   assert_output --partial "release-name="
   assert_output --partial "aab-name="
+  assert_output --partial "sbom-name="
 }
 
 @test "generate-artifact-names includes repo name in all artifact names" {
@@ -35,6 +36,15 @@ teardown() {
   assert_line --partial "debug-name=myapp - APK debug"
   assert_line --partial "release-name=myapp - APK release"
   assert_line --partial "aab-name=myapp - AAB release"
+  assert_line --partial "sbom-name=myapp - build SBOM"
+}
+
+@test "generate-artifact-names sbom-name includes flavor for matrix disambiguation" {
+  # Matrix dispatch in release-build-stage.yml runs gradle-android per flavor;
+  # without a flavor-scoped sbom-name, parallel uploads collide on a fixed name.
+  run_script "android/generate-artifact-names.sh" "false" "" "myapp" "prod"
+  assert_success
+  assert_line --partial "sbom-name=myapp - prod - build SBOM"
 }
 
 @test "generate-artifact-names includes prefix when provided" {

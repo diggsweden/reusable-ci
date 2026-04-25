@@ -99,6 +99,35 @@ jobs:
           else
             printf "No build script found, skipping build step\n"
           fi
+      - name: Generate Build SBOM
+        id: sbom
+        continue-on-error: true
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          # renovate: datasource=npm depName=@cyclonedx/cyclonedx-npm
+          CYCLONEDX_VERSION: "4.2.1"
+        # One-shot npx runs the pinned version without mutating global state,
+        # so a follow-up step can't inadvertently shadow the binary with a
+        # different version.
+        run: npx --yes "@cyclonedx/cyclonedx-npm@${CYCLONEDX_VERSION}" --output-format json --output-file bom.json
+      - name: Write SBOM status to step summary
+        if: always()
+        env:
+          SBOM_OUTCOME: ${{ steps.sbom.outcome }}
+          WORKDIR: ${{ inputs['working-directory'] }}
+        run: |
+          # shellcheck disable=SC2016  # backticks inside single quotes are intentional markdown
+          {
+            printf '### Build SBOM\n'
+            bom="${WORKDIR%/}/bom.json"
+            if [[ "$SBOM_OUTCOME" == "success" && -s "$bom" ]]; then
+              printf -- '- ✅ CycloneDX: `%s`\n' "$bom"
+            elif [[ "$SBOM_OUTCOME" == "success" ]]; then
+              printf -- '- ⚠️ cyclonedx-npm reported success but produced no bom.json\n'
+            else
+              printf -- '- ⚠️ Generation step did not succeed (continued as advisory)\n'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         run: |
@@ -123,7 +152,9 @@ jobs:
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: npm-build-artifacts
-          path: ${{ inputs['working-directory'] }}/${{ steps.pack.outputs.tarball }}
+          path: |
+            ${{ inputs['working-directory'] }}/${{ steps.pack.outputs.tarball }}
+            ${{ inputs['working-directory'] }}/bom.json
           retention-days: 7
           if-no-files-found: error
       - name: Generate build summary

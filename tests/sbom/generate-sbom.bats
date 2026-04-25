@@ -193,6 +193,167 @@ EOF
   assert_output --partial "No SBOM files generated"
 }
 
+@test "generate-sbomgenerates build layer for npm when bom.json exists" {
+  create_npm_project
+  echo '{"bomFormat":"CycloneDX"}' >bom.json
+
+  run_generate_sbom "npm" "build" "1.0.0" "myapp" "."
+
+  assert_success
+  assert_output --partial "Generating Build layer"
+  assert_file_exists "myapp-1.0.0-build-sbom.cyclonedx.json"
+}
+
+@test "generate-sbomwarns when no bom.json found for npm build layer" {
+  create_npm_project
+
+  run_generate_sbom "npm" "build" "1.0.0" "myapp" "."
+
+  assert_failure
+  assert_output --partial "No npm Build SBOM"
+}
+
+@test "generate-sbomgenerates build layer for gradle when bom.json exists" {
+  create_gradle_project
+  mkdir -p build/reports
+  echo '{"bomFormat":"CycloneDX"}' >build/reports/bom.json
+
+  run_generate_sbom "gradle" "build" "1.0.0" "myapp" "."
+
+  assert_success
+  assert_output --partial "Generating Build layer"
+  assert_file_exists "myapp-1.0.0-build-sbom.cyclonedx.json"
+}
+
+@test "generate-sbomwarns when no bom.json found for gradle build layer" {
+  create_gradle_project
+
+  run_generate_sbom "gradle" "build" "1.0.0" "myapp" "."
+
+  assert_failure
+  assert_output --partial "No Gradle Build SBOM"
+}
+
+@test "generate-sbomgenerates build layer for cargo when bom.json exists" {
+  create_rust_project
+  echo '{"bomFormat":"CycloneDX"}' >bom.json
+
+  run_generate_sbom "rust" "build" "1.0.0" "myapp" "."
+
+  assert_success
+  assert_output --partial "Generating Build layer"
+  assert_file_exists "myapp-1.0.0-build-sbom.cyclonedx.json"
+}
+
+@test "generate-sbomwarns when no bom.json found for cargo build layer" {
+  create_rust_project
+
+  run_generate_sbom "rust" "build" "1.0.0" "myapp" "."
+
+  assert_failure
+  assert_output --partial "No Cargo Build SBOM"
+}
+
+@test "generate-sbombuild layer finds bom.json when working directory is a subdir" {
+  # Simulates the post-download-artifact tree when a consumer set
+  # working-directory=server/ — upload-artifact preserves the prefix, so the
+  # pickup must not assume bom.json lives at the repo root.
+  create_maven_project false
+  mkdir -p release-artifacts/server/target
+  echo '{"bomFormat":"CycloneDX"}' >release-artifacts/server/target/bom.json
+
+  run_generate_sbom "maven" "build" "1.0.0" "myapp" "."
+
+  assert_success
+  assert_output --partial "Generating Build layer"
+  assert_file_exists "myapp-1.0.0-build-sbom.cyclonedx.json"
+}
+
+@test "generate-sbombuild layer prefers aggregate bom over module boms (maven)" {
+  # Multi-module Maven: the aggregate BOM lives at target/bom.json (root),
+  # per-module BOMs live deeper. Pickup should return the shallowest.
+  create_maven_project false
+  mkdir -p release-artifacts/target
+  echo '{"bomFormat":"CycloneDX","aggregate":true}' >release-artifacts/target/bom.json
+  mkdir -p release-artifacts/module-a/target release-artifacts/module-b/target
+  echo '{"bomFormat":"CycloneDX","module":"a"}' >release-artifacts/module-a/target/bom.json
+  echo '{"bomFormat":"CycloneDX","module":"b"}' >release-artifacts/module-b/target/bom.json
+
+  run_generate_sbom "maven" "build" "1.0.0" "myapp" "."
+
+  assert_success
+  assert_file_exists "myapp-1.0.0-build-sbom.cyclonedx.json"
+  grep -q '"aggregate":true' "myapp-1.0.0-build-sbom.cyclonedx.json"
+}
+
+@test "generate-sbombuild layer ignores npm bom inside node_modules" {
+  # Vendored packages can ship their own bom.json — must not hijack pickup.
+  create_npm_project
+  mkdir -p release-artifacts/node_modules/some-dep
+  echo '{"bomFormat":"CycloneDX","vendored":true}' >release-artifacts/node_modules/some-dep/bom.json
+  echo '{"bomFormat":"CycloneDX","project":true}' >release-artifacts/bom.json
+
+  run_generate_sbom "npm" "build" "1.0.0" "myapp" "."
+
+  assert_success
+  grep -q '"project":true' "myapp-1.0.0-build-sbom.cyclonedx.json"
+}
+
+@test "generate-sbombuild layer picks shallowest npm bom across depths" {
+  # Monorepo / workspaces: root-package bom should beat per-package boms.
+  create_npm_project
+  mkdir -p release-artifacts/packages/a
+  echo '{"bomFormat":"CycloneDX","root":true}' >release-artifacts/bom.json
+  echo '{"bomFormat":"CycloneDX","deep":true}' >release-artifacts/packages/a/bom.json
+
+  run_generate_sbom "npm" "build" "1.0.0" "myapp" "."
+
+  assert_success
+  grep -q '"root":true' "myapp-1.0.0-build-sbom.cyclonedx.json"
+}
+
+@test "generate-sbombuild layer prefers root aggregate over module boms (gradle)" {
+  # Multi-project Gradle: aggregate bom at the root build/reports/ wins
+  # over per-subproject boms.
+  create_gradle_project
+  mkdir -p release-artifacts/build/reports release-artifacts/module-a/build/reports
+  echo '{"bomFormat":"CycloneDX","aggregate":true}' >release-artifacts/build/reports/bom.json
+  echo '{"bomFormat":"CycloneDX","module":"a"}' >release-artifacts/module-a/build/reports/bom.json
+
+  run_generate_sbom "gradle" "build" "1.0.0" "myapp" "."
+
+  assert_success
+  grep -q '"aggregate":true' "myapp-1.0.0-build-sbom.cyclonedx.json"
+}
+
+@test "generate-sbombuild layer prefers root-crate bom over sub-crate (rust workspace)" {
+  # Rust workspaces: cargo-cyclonedx emits one bom.json per crate root.
+  # Root crate should win when aggregating.
+  create_rust_project
+  mkdir -p release-artifacts/crates/inner
+  echo '{"bomFormat":"CycloneDX","root":true}' >release-artifacts/bom.json
+  echo '{"bomFormat":"CycloneDX","inner":true}' >release-artifacts/crates/inner/bom.json
+
+  run_generate_sbom "rust" "build" "1.0.0" "myapp" "."
+
+  assert_success
+  grep -q '"root":true' "myapp-1.0.0-build-sbom.cyclonedx.json"
+}
+
+@test "generate-sbombuild layer ignores cargo target cache (rust)" {
+  # cargo may leave stale bom.json fragments under target/; exclude them
+  # so compile-cache BOMs can't hijack pickup.
+  create_rust_project
+  mkdir -p release-artifacts/target/debug
+  echo '{"bomFormat":"CycloneDX","cached":true}' >release-artifacts/target/debug/bom.json
+  echo '{"bomFormat":"CycloneDX","real":true}' >release-artifacts/bom.json
+
+  run_generate_sbom "rust" "build" "1.0.0" "myapp" "."
+
+  assert_success
+  grep -q '"real":true' "myapp-1.0.0-build-sbom.cyclonedx.json"
+}
+
 @test "generate-sbombuild layer included in multi-layer run does not break packaging" {
   create_maven_project true
   mkdir -p target
