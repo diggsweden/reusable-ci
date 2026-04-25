@@ -136,7 +136,7 @@ with:
   context: "."
   platforms: "linux/amd64,linux/arm64"
   enable-slsa: true
-  enable-sbom: true
+  enable-analyzed-container-sbom: true   # was `enable-sbom: true` in v2; rename
   enable-scan: true
   registry: "ghcr.io"
 ```

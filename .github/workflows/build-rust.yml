@@ -7,8 +7,8 @@
 # Generates a CycloneDX Build SBOM for a Rust project or workspace using
 # cargo-cyclonedx, and uploads it as `rust-build-sbom` by default.
 # Workspaces get one bom.json per crate; the aggregator in
-# scripts/sbom/generate-sbom.sh picks the shallowest (root crate) when
-# consolidating.
+# scripts/sbom/generate-sboms.sh picks the aggregate (root crate) BOM — the
+# one with the smallest path depth — when consolidating.
 #
 # Intentionally SBOM-only — this workflow does not invoke `cargo build` or
 # `cargo test`, so it is not (yet) a drop-in Rust builder. Do not wire into

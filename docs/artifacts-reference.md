@@ -97,17 +97,35 @@ containers:
 - **Behavior:** Workflows only run if target is listed
 - **Note:** iOS apps use `publish-to: []` as they publish via App Store Connect automatically
 
-#### `generate-sbom`
+#### `sboms`
 
-- **Type:** `boolean`
-- **Description:** Generate SBOM (Software Bill of Materials) for this artifact during release
+- **Type:** `string` (enum / comma-list)
+- **Description:** Which CISA SBOM types to generate for this artifact. See [docs/sbom.md](sbom.md) for the full taxonomy.
+- **Accepted values:**
+  - `all` — Build + Analyzed-artifact + Analyzed-container (default)
+  - `none` — skip SBOM generation entirely
+  - `build` — CISA Build SBOM only (cyclonedx plugin during build)
+  - `analyzed-artifact` — Syft scan of the built binary only
+  - `analyzed-container` — Syft scan of the published container only
+  - Any comma-list of the three layer names, e.g. `build,analyzed-artifact`
 - **Default:** Automatic based on project type:
-  - `true` for: `maven`, `npm`, `gradle`, `python`, `go`, `rust`
-  - `false` for: `xcode-ios`, `gradle-android`
-- **Example:** `generate-sbom: false`
-- **Use case:** Override default behavior for specific artifacts
-- **Formats generated:** SPDX and CycloneDX (JSON)
-- **Note:** SBOM generation uses [Syft](https://github.com/anchore/syft) which has varying support for different ecosystems
+  - `all` for: `maven`, `npm`, `gradle`, `gradle-android`, `python`, `go`, `rust`
+  - `none` for: `xcode-ios`, `meta`
+- **Examples:**
+  ```yaml
+  # (default — same as omitting the field for a supported project type)
+  sboms: all
+
+  # Compliance minimum
+  sboms: build
+
+  # Turn off SBOMs for this artefact
+  sboms: none
+  ```
+- **Formats produced:** SPDX 2.3 and CycloneDX 1.6 (JSON)
+- **Pipeline cap:** The orchestrator `sboms` input (default `all` on release, `none` on release-dev) intersects with this field; the effective set per artefact is the intersection.
+- **What it controls:** Release-bundle inclusion, **not** build-time plugin execution. The language's cyclonedx plugin always runs in the per-stack build workflow with `continue-on-error: true`; this field decides whether the resulting BOMs (and syft scans) are included in the release artefact bundle. See [docs/sbom.md](sbom.md) for the full semantics.
+- **Note:** `analyzed-*` scans use [Syft](https://github.com/anchore/syft); ecosystem coverage varies. The `build` layer uses the language-native cyclonedx plugin and is the highest-fidelity type.
 
 ---
 
@@ -425,13 +443,9 @@ Containers reference artifacts via the `from:` field and are built after all art
 - **Requires:** `id-token: write`, `actions: read` permissions
 - **Example:** `enable-slsa: true`
 
-#### `enable-sbom`
+#### Container `enable-sbom` (removed in v3)
 
-- **Type:** `boolean`
-- **Description:** Generate SPDX and CycloneDX SBOMs
-- **Default:** `true`
-- **Requires:** `attestations: write` permission
-- **Example:** `enable-sbom: true`
+The v2.x `enable-sbom: bool` field on the container block is removed in v3. Container scanning is now derived from each source artefact's `sboms` field — the container is scanned if any source artefact has `analyzed-container` in its effective sboms (the default for buildable types). To skip the scan, exclude `analyzed-container` from the source artefact's `sboms` (e.g. `sboms: build,analyzed-artifact`). Hard cutover — the old field is silently ignored.
 
 #### `enable-scan`
 

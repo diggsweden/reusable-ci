@@ -5,3 +5,23 @@
 gommitlint:
   crypto_signature:
     required: true
+  spell:
+    # Prose in commit bodies follows UK English (spell.locale = UK by
+    # default). These words are allowed because they appear as fixed
+    # identifier tokens in the code or in upstream tool contracts, where
+    # we can't change the spelling:
+    #   - `artifact`/`artifacts`: GitHub Actions' upload-artifact /
+    #     download-artifact action names, workflow artifact names like
+    #     maven-build-artifacts, input keys like `artifact-name` and
+    #     `artifact-types`, the ARTIFACT_NAME env var.
+    #   - `analyzed`: CISA layer identifiers `analyzed-artifact` and
+    #     `analyzed-container` as encoded in generate-sbom.sh.
+    #   - `summarize`: job names like `summarize-dev-publish-stage`.
+    #   - `flavor`/`flavors`: Android Gradle Plugin's productFlavors.
+    ignore_words:
+      - artifact
+      - artifacts
+      - analyzed
+      - summarize
+      - flavor
+      - flavors

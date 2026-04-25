@@ -30,6 +30,7 @@ scripts/
 │   ├── output.sh                             # CI output and summary helpers
 │   └── stage-result.sh                       # Stage result aggregation helpers
 ├── config/
+│   ├── expand-sboms.sh                       # Expand the sboms enum to a JSON array of CISA layer names
 │   ├── get-file-pattern.sh                   # Get file pattern by project type (supports env vars or positional args)
 │   └── parse-artifacts-config.sh             # Parse artifacts.yml configuration
 ├── container/
@@ -61,7 +62,7 @@ scripts/
 │   ├── find-container-sbom.sh                # Find container SBOM files in artifacts
 │   ├── generate-container-sbom-artifacts.sh  # Generate container SBOM artifact outputs
 │   ├── generate-container-sbom.sh            # Generate container image SBOMs with Syft
-│   └── generate-sbom.sh                      # Generate SPDX/CycloneDX SBOMs for all layers
+│   └── generate-sboms.sh                     # Generate SPDX/CycloneDX SBOMs for all layers
 ├── summary/
 │   ├── write-android-build-summary.sh        # Android build step summary
 │   ├── write-appstore-summary.sh             # Apple App Store publish step summary
@@ -213,16 +214,16 @@ Scripts for Software Bill of Materials generation.
 | `find-container-sbom.sh` | Finds container SBOM files in artifact directories |
 | `generate-container-sbom-artifacts.sh` | Generates container SBOM artifact outputs for download |
 | `generate-container-sbom.sh` | Generates container image SBOMs using Syft |
-| `generate-sbom.sh` | Main SBOM generator — produces SPDX 2.3 and CycloneDX 1.6 for all layers |
+| `generate-sboms.sh` | Main SBOM generator — produces SPDX 2.3 and CycloneDX 1.6 for all layers |
 
-### generate-sbom.sh
+### generate-sboms.sh
 
 Generates SBOM files in SPDX 2.3 and CycloneDX 1.6 JSON formats using Syft.
 
 **Syntax:**
 
 ```bash
-bash generate-sbom.sh [PROJECT_TYPE] [LAYERS] [VERSION] [PROJECT_NAME] [WORKING_DIR] [CONTAINER_IMAGE]
+bash generate-sboms.sh [PROJECT_TYPE] [LAYERS] [VERSION] [PROJECT_NAME] [WORKING_DIR] [CONTAINER_IMAGE]
 ```
 
 **Parameters:**
@@ -352,6 +353,6 @@ Most projects use the orchestrators directly. For custom workflows:
     sparse-checkout: scripts/sbom
 
 - run: |
-    bash .reusable-ci/scripts/sbom/generate-sbom.sh \
+    bash .reusable-ci/scripts/sbom/generate-sboms.sh \
       maven "source,analyzed-artifact" "$VERSION" "$PROJECT_NAME"
 ```
