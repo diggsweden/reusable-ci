@@ -31,16 +31,17 @@ main() {
   local IMAGE="$4"
   local SCRIPT_DIR="$5"
 
+  # analyzed-container scans the image directly via syft, so project-type is
+  # not consulted by the inner script for this layer — omit the flag here.
+
   # Handle empty artifact-types (containers building from source with no dependencies)
   if [[ -z "$ARTIFACT_TYPES" ]]; then
     printf "No artifact dependencies - generating SBOM from container image only\n"
-    bash "$SCRIPT_DIR/generate-sbom.sh" \
-      "container" \
-      "analyzed-container" \
-      "$VERSION" \
-      "$PROJECT_NAME" \
-      "." \
-      "$IMAGE"
+    bash "$SCRIPT_DIR/generate-sboms.sh" \
+      --layers analyzed-container \
+      --version "$VERSION" \
+      --name "$PROJECT_NAME" \
+      --container-image "$IMAGE"
   else
     # Generate SBOM for each artifact type in multi-artifact containers
     local TYPES
@@ -49,13 +50,11 @@ main() {
     local ARTIFACT_TYPE
     for ARTIFACT_TYPE in "${TYPES[@]}"; do
       printf "Generating SBOM for artifact type: %s\n" "$ARTIFACT_TYPE"
-      bash "$SCRIPT_DIR/generate-sbom.sh" \
-        "$ARTIFACT_TYPE" \
-        "analyzed-container" \
-        "$VERSION" \
-        "$PROJECT_NAME" \
-        "." \
-        "$IMAGE"
+      bash "$SCRIPT_DIR/generate-sboms.sh" \
+        --layers analyzed-container \
+        --version "$VERSION" \
+        --name "$PROJECT_NAME" \
+        --container-image "$IMAGE"
     done
   fi
 

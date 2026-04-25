@@ -88,11 +88,11 @@ on:
         description: "Release publisher type (github-cli). Leave empty to skip GitHub release"
         required: false
         type: string
-      release.generatesbom:
-        description: "Generate SBOM for release (default: true)"
+      release.sboms:
+        description: "SBOMs to generate for the release: all | none | comma-list of build,analyzed-artifact,analyzed-container (default: all). Intersected with per-artefact `sboms` to compute the effective set."
         required: false
-        default: true
-        type: boolean
+        default: "all"
+        type: string
       release.attachartifacts:
         description: "Glob patterns for artifacts to attach to GitHub release (comma/newline separated)"
         required: false
@@ -188,8 +188,7 @@ jobs:
       has-googleplay: ${{ steps.parse.outputs.has-googleplay }}
 
       # Parsed SBOM settings.
-      needs-sbom: ${{ steps.parse.outputs.needs-sbom }}
-      sbom-artifacts: ${{ steps.parse.outputs.sbom-artifacts }}
+      pipeline-sboms: ${{ steps.parse.outputs.pipeline-sboms }}
 
       # Preferred control-plane interface payloads for top-level stage wiring.
       release-context-json: ${{ steps.interface.outputs.release-context-json }}
@@ -198,7 +197,7 @@ jobs:
       # Normalized release-policy decisions retained for stage-internal routing.
       should-make-latest: ${{ steps.plan.outputs.should-make-latest }}
       has-containers: ${{ steps.plan.outputs.has-containers }}
-      should-generate-sbom: ${{ steps.plan.outputs.should-generate-sbom }}
+      effective-sboms: ${{ steps.plan.outputs.effective-sboms }}
       should-sign-artifacts: ${{ steps.plan.outputs.should-sign-artifacts }}
       should-create-release: ${{ steps.plan.outputs.should-create-release }}
       should-check-authorization: ${{ steps.plan.outputs.should-check-authorization }}
@@ -242,14 +241,14 @@ jobs:
           RELEASE_PUBLISHER: ${{ inputs['release-publisher'] }}
           RELEASE_CHECK_AUTHORIZATION: ${{ inputs['release.checkauthorization'] }}
           RELEASE_DRAFT: ${{ inputs['release.draft'] }}
-          RELEASE_GENERATE_SBOM: ${{ inputs['release.generatesbom'] }}
+          RELEASE_SBOMS: ${{ inputs['release.sboms'] }}
           RELEASE_SIGN_ARTIFACTS: ${{ inputs['release.signartifacts'] }}
           CHANGELOG_CREATOR: ${{ inputs['changelog-creator'] }}
           CHANGELOG_SKIP_VERSION_BUMP: ${{ inputs['changelog.skipversionbump'] }}
 
           # Parsed config inputs needed for policy normalization.
           GITHUB_REF_NAME: ${{ github.ref_name }}
-          NEEDS_SBOM: ${{ steps.parse.outputs.needs-sbom }}
+          PIPELINE_SBOMS: ${{ steps.parse.outputs.pipeline-sboms }}
           FIRST_REQUIRE_AUTHORIZATION: ${{ steps.parse.outputs.first-require-authorization }}
           CONTAINERS: ${{ steps.parse.outputs.containers }}
         run: bash .github-shared/scripts/plan/resolve-release-plan.sh
@@ -265,7 +264,7 @@ jobs:
           SHOULD_RUN_VERSION_BUMP: ${{ steps.plan.outputs.should-run-version-bump }}
           SHOULD_CREATE_RELEASE: ${{ steps.plan.outputs.should-create-release }}
           SHOULD_CREATE_DRAFT_RELEASE: ${{ steps.plan.outputs.should-create-draft-release }}
-          SHOULD_GENERATE_SBOM: ${{ steps.plan.outputs.should-generate-sbom }}
+          EFFECTIVE_SBOMS: ${{ steps.plan.outputs.effective-sboms }}
           SHOULD_MAKE_LATEST: ${{ steps.plan.outputs.should-make-latest }}
           HAS_CONTAINERS: ${{ steps.plan.outputs.has-containers }}
         run: bash .github-shared/scripts/plan/write-release-interface.sh
@@ -358,7 +357,7 @@ jobs:
       release-name: "${{ github.ref_name }}"
       checkout-ref: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
       attach-artifacts: ${{ inputs['release.attachartifacts'] }}
-      generate-sbom: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).generate_sbom }}
+      sboms: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).sboms }}
       sign-artifacts: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).sign_artifacts }}
       draft: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).create_draft_release }}
       project-type: ${{ fromJson(needs.parse-config.outputs['release-context-json']).project_type }}

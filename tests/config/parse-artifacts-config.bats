@@ -353,14 +353,13 @@ run_parse_artifacts_config() {
 
   assert_success
   run cat "$GITHUB_OUTPUT"
-  assert_output --partial "needs-sbom="
-  assert_output --partial "sbom-artifacts<<"
+  assert_output --partial "pipeline-sboms="
 }
 
 @test "parse-artifacts-configdefaults SBOM on for gradle-android" {
   # gradle-android builders produce a build-SBOM via the cyclonedx-gradle
-  # plugin init-script; the default `generate-sbom` should follow, so
-  # Android projects get SBOM coverage without explicit opt-in.
+  # plugin init-script; the default `sboms` should follow, so Android
+  # projects get full SBOM coverage (all CISA layers) without explicit opt-in.
   create_gradle_artifacts_config
   export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
 
@@ -368,7 +367,131 @@ run_parse_artifacts_config() {
 
   assert_success
   run cat "$GITHUB_OUTPUT"
-  assert_output --partial "needs-sbom=true"
+  assert_output --partial "pipeline-sboms=build,analyzed-artifact,analyzed-container"
+}
+
+@test "parse-artifacts-configemits effective-sboms array per-artefact" {
+  # release-build-stage.yml gates each builder's cyclonedx step on
+  # `contains(matrix.artifact.effective-sboms, 'build')` — pin the field shape
+  # so that path keeps working.
+  create_valid_artifacts_config
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  assert_output --partial '"sboms": "all"'
+  assert_output --partial '"effective-sboms"'
+  assert_output --partial '"build"'
+}
+
+@test "parse-artifacts-configemits empty effective-sboms when artefact opts out" {
+  # `sboms: none` per-artefact must produce an empty effective-sboms array so
+  # release-build-stage.yml's contains() check evaluates to false and the
+  # cyclonedx step is skipped at build time.
+  cat >"$TEST_DIR/artifacts.yml" <<'EOF'
+artifacts:
+  - name: my-toy
+    project-type: maven
+    working-directory: .
+    sboms: none
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  assert_output --partial '"sboms": "none"'
+  assert_output --partial '"effective-sboms": []'
+}
+
+@test "parse-artifacts-configderives enable-analyzed-container-sbom from source artefact" {
+  # Container scanning is derived from each source artefact's effective-sboms;
+  # the container is scanned IFF any source has 'analyzed-container'.
+  cat >"$TEST_DIR/artifacts.yml" <<'EOF'
+artifacts:
+  - name: my-app
+    project-type: maven
+    working-directory: .
+    sboms: all
+containers:
+  - name: my-app
+    from: [my-app]
+    container-file: Containerfile
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  assert_output --partial '"enable-analyzed-container-sbom":true'
+}
+
+@test "parse-artifacts-configderives enable-analyzed-container-sbom=false when source excludes the layer" {
+  cat >"$TEST_DIR/artifacts.yml" <<'EOF'
+artifacts:
+  - name: my-app
+    project-type: maven
+    working-directory: .
+    sboms: build,analyzed-artifact
+containers:
+  - name: my-app
+    from: [my-app]
+    container-file: Containerfile
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  assert_output --partial '"enable-analyzed-container-sbom":false'
+}
+
+@test "parse-artifacts-configderives enable-analyzed-container-sbom=false for empty from list" {
+  # Container with no source artefacts has nothing to drive the SBOM signal —
+  # the derivation evaluates over an empty set and lands on false. Pin this
+  # behavior; v2 (with default-true `enable-sbom`) would have scanned anyway.
+  cat >"$TEST_DIR/artifacts.yml" <<'EOF'
+artifacts:
+  - name: my-app
+    project-type: maven
+    working-directory: .
+containers:
+  - name: standalone-image
+    from: []
+    container-file: Containerfile
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  assert_output --partial '"enable-analyzed-container-sbom":false'
+}
+
+@test "parse-artifacts-configeffective-sboms reflects build-only opt-in" {
+  cat >"$TEST_DIR/artifacts.yml" <<'EOF'
+artifacts:
+  - name: compliance-lib
+    project-type: maven
+    working-directory: .
+    sboms: build
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  assert_output --partial '"effective-sboms"'
+  assert_output --partial '"build"'
+  refute_output --partial '"analyzed-artifact"'
+  refute_output --partial '"analyzed-container"'
 }
 
 # =============================================================================

@@ -100,11 +100,11 @@ on:
         required: false
         default: "main"
         type: string
-      generate-sbom:
-        description: "Generate SBOMs in the dev flow (off by default; useful for testing SBOM wiring without a release)"
+      sboms:
+        description: "SBOMs to generate: all | none | comma-list of build,analyzed-artifact,analyzed-container (default: none for dev speed; set to 'all' to test SBOM wiring)"
         required: false
-        default: false
-        type: boolean
+        default: "none"
+        type: string
       publish-container:
         description: "Publish container image to registry (set false for repos without a Containerfile)"
         required: false
@@ -196,7 +196,7 @@ jobs:
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
       dev-policy-json: ${{ needs.compose-dev-interface.outputs.dev-policy-json }}
       build-result-json: ${{ needs.execute-dev-build-stage.outputs.result-json }}
-      generate-sbom: ${{ inputs['generate-sbom'] }}
+      sboms: ${{ inputs.sboms }}
       publish-container: ${{ inputs['publish-container'] }}
 
   # ===== Stage 3: Summary =====

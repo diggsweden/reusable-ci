@@ -81,13 +81,32 @@ validate_containers() {
 }
 
 resolve_container_types() {
+  # Enrich each container with two derived fields:
+  #   artifact-types                  - unique project-types of the source artefacts
+  #   enable-analyzed-container-sbom  - true if any source artefact wants
+  #                                     'analyzed-container' in its
+  #                                     effective-sboms (matches the
+  #                                     publish-container.yml input that
+  #                                     consumes it).
+  #
+  # The SBOM derivation replaces the v2.x user-facing `enable-sbom: bool` field
+  # on the container block: container scanning is now driven by the per-artefact
+  # `sboms` declaration so there's a single source of truth.
+  #
+  # IMPORTANT: this assumes ARTIFACTS already has effective-sboms enriched, so
+  # main() must call compute_sbom_settings before resolve_container_types.
   CONTAINERS_WITH_TYPES=$(printf "%s" "$CONTAINERS" | jq -c --argjson artifacts "$ARTIFACTS" '
     map(
       . + {
         "artifact-types": [
           (.from // [])[] as $dep |
           ($artifacts[] | select(.name == $dep) | .["project-type"])
-        ] | unique
+        ] | unique,
+        "enable-analyzed-container-sbom": (
+          [(.from // [])[] as $dep |
+            ($artifacts[] | select(.name == $dep) | (.["effective-sboms"] // []) | index("analyzed-container"))]
+          | any(. != null)
+        )
       }
     )
   ')
@@ -172,28 +191,69 @@ output_first_artifact_info() {
 }
 
 compute_sbom_settings() {
-  local artifacts_with_sbom needs_sbom sbom_artifacts
+  local expander artifacts_with_sboms pipeline_sboms
 
-  artifacts_with_sbom=$(printf "%s" "$ARTIFACTS" | jq -c --arg supported "$SBOM_SUPPORTED_TYPES" '
+  expander="$SCRIPT_DIR/expand-sboms.sh"
+
+  # Fill in per-artefact `sboms` default when unset:
+  #   - supported project types default to `all`
+  #   - everything else defaults to `none`
+  # Then validate every sboms value and annotate each artefact with its
+  # effective CISA layer list (via expand-sboms.sh).
+  artifacts_with_sboms=$(printf "%s" "$ARTIFACTS" | jq -c --arg supported "$SBOM_SUPPORTED_TYPES" '
     map(
       . as $item |
       . + {
-        "generate-sbom": (
-          if $item["generate-sbom"] != null then
-            $item["generate-sbom"]
+        "sboms": (
+          if $item.sboms != null then
+            $item.sboms
+          elif ($supported | split(" ") | index($item["project-type"]) != null) then
+            "all"
           else
-            ($supported | split(" ") | index($item["project-type"]) != null)
+            "none"
           end
         )
       }
     )
   ')
 
-  needs_sbom=$(printf "%s" "$artifacts_with_sbom" | jq 'any(.["generate-sbom"] == true)')
-  sbom_artifacts=$(printf "%s" "$artifacts_with_sbom" | jq -c '[.[] | select(.["generate-sbom"] == true)]')
+  local count
+  count=$(printf "%s" "$artifacts_with_sboms" | jq 'length')
+  local i item name sboms_value effective
+  for ((i = 0; i < count; i++)); do
+    item=$(printf "%s" "$artifacts_with_sboms" | jq -c ".[$i]")
+    name=$(printf "%s" "$item" | jq -r '.name')
+    sboms_value=$(printf "%s" "$item" | jq -r '.sboms')
 
-  output "needs-sbom=$needs_sbom"
-  output_multiline "sbom-artifacts" "$sbom_artifacts"
+    if ! effective=$(bash "$expander" "$sboms_value" 2>&1); then
+      die "artefact '$name': $effective"
+    fi
+
+    artifacts_with_sboms=$(
+      printf "%s" "$artifacts_with_sboms" |
+        jq --argjson i "$i" --argjson eff "$effective" '.[$i] += {"effective-sboms": $eff}'
+    )
+  done
+
+  # Pipeline union: which CISA layers does any artefact want produced?
+  # Emitted as a comma-list string (or "none" when empty) so the string form
+  # mirrors the user-facing `sboms` enum shape end-to-end. Emits layers in a
+  # stable canonical order (build, analyzed-artifact, analyzed-container)
+  # regardless of artefact iteration order.
+  pipeline_sboms=$(
+    printf "%s" "$artifacts_with_sboms" |
+      jq -r '
+        [.[]["effective-sboms"][]] as $union |
+        ["build","analyzed-artifact","analyzed-container"]
+        | map(select(. as $l | $union | index($l)))
+        | if length == 0 then "none" else join(",") end
+      '
+  )
+
+  # Update the top-level ARTIFACTS so downstream outputs carry the sboms/effective-sboms fields.
+  ARTIFACTS="$artifacts_with_sboms"
+
+  output "pipeline-sboms=$pipeline_sboms"
 }
 
 generate_summary() {
@@ -218,6 +278,12 @@ main() {
   load_config
   validate_project_types
   validate_containers
+
+  # Enrich ARTIFACTS with sboms/effective-sboms fields BEFORE downstream
+  # output or filtering so consumers see the full per-artefact shape.
+  # Containers depend on this (enable-analyzed-container-sbom is derived from
+  # each source artefact's effective-sboms), so order matters.
+  compute_sbom_settings
   resolve_container_types
 
   output_multiline "artifacts" "$ARTIFACTS"
@@ -227,7 +293,6 @@ main() {
   validate_maven_publish
   output_artifacts_by_publish_target
   output_first_artifact_info
-  compute_sbom_settings
   generate_summary
 }
 

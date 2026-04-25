@@ -28,7 +28,7 @@ set_all_flags_true() {
   export SHOULD_RUN_VERSION_BUMP="true"
   export SHOULD_CREATE_RELEASE="true"
   export SHOULD_CREATE_DRAFT_RELEASE="true"
-  export SHOULD_GENERATE_SBOM="true"
+  export EFFECTIVE_SBOMS="all"
   export SHOULD_MAKE_LATEST="true"
   export HAS_CONTAINERS="true"
 }
@@ -42,7 +42,7 @@ set_all_flags_false() {
   export SHOULD_RUN_VERSION_BUMP="false"
   export SHOULD_CREATE_RELEASE="false"
   export SHOULD_CREATE_DRAFT_RELEASE="false"
-  export SHOULD_GENERATE_SBOM="false"
+  export EFFECTIVE_SBOMS="none"
   export SHOULD_MAKE_LATEST="false"
   export HAS_CONTAINERS="false"
 }
@@ -82,7 +82,7 @@ set_all_flags_false() {
   assert_output --partial '"run_version_bump":true'
   assert_output --partial '"create_release":true'
   assert_output --partial '"create_draft_release":true'
-  assert_output --partial '"generate_sbom":true'
+  assert_output --partial '"sboms":"all"'
   assert_output --partial '"make_latest":true'
   assert_output --partial '"has_containers":true'
 }
@@ -94,13 +94,13 @@ set_all_flags_false() {
   assert_success
 
   run get_github_output "release-policy-json"
-  assert_output '{"sign_artifacts":false,"check_authorization":false,"run_version_bump":false,"create_release":false,"create_draft_release":false,"generate_sbom":false,"make_latest":false,"has_containers":false}'
+  assert_output '{"sign_artifacts":false,"check_authorization":false,"run_version_bump":false,"create_release":false,"create_draft_release":false,"sboms":"none","make_latest":false,"has_containers":false}'
 }
 
 @test "mixed true/false flags are correctly converted" {
   set_all_flags_false
   export SHOULD_SIGN_ARTIFACTS="true"
-  export SHOULD_GENERATE_SBOM="true"
+  export EFFECTIVE_SBOMS="all"
   export HAS_CONTAINERS="true"
 
   run_script "plan/write-release-interface.sh"
@@ -112,7 +112,7 @@ set_all_flags_false() {
   assert_output --partial '"run_version_bump":false'
   assert_output --partial '"create_release":false'
   assert_output --partial '"create_draft_release":false'
-  assert_output --partial '"generate_sbom":true'
+  assert_output --partial '"sboms":"all"'
   assert_output --partial '"make_latest":false'
   assert_output --partial '"has_containers":true'
 }

@@ -17,14 +17,14 @@ load "${BATS_TEST_DIRNAME}/../test_helper.bash"
 
 setup() {
   common_setup
-  # Create mock generate-sbom.sh
+  # Create mock generate-sboms.sh
   MOCK_SBOM_DIR="${TEST_DIR}/mock-sbom"
   mkdir -p "$MOCK_SBOM_DIR"
-  cat > "${MOCK_SBOM_DIR}/generate-sbom.sh" <<'SCRIPT'
+  cat > "${MOCK_SBOM_DIR}/generate-sboms.sh" <<'SCRIPT'
 #!/usr/bin/env bash
 printf "called: %s\n" "$*"
 SCRIPT
-  chmod +x "${MOCK_SBOM_DIR}/generate-sbom.sh"
+  chmod +x "${MOCK_SBOM_DIR}/generate-sboms.sh"
 }
 
 teardown() {
@@ -39,7 +39,7 @@ teardown() {
   run_script "sbom/generate-container-sbom.sh" "" "1.0.0" "myapp" "ghcr.io/org/app@sha256:abc" "$MOCK_SBOM_DIR"
 
   assert_success
-  assert_output --partial "called: container analyzed-container 1.0.0 myapp . ghcr.io/org/app@sha256:abc"
+  assert_output --partial "called: --layers analyzed-container --version 1.0.0 --name myapp --container-image ghcr.io/org/app@sha256:abc"
 }
 
 @test "generate-container-sbom mentions no artifact dependencies for empty types" {
@@ -57,7 +57,7 @@ teardown() {
   run_script "sbom/generate-container-sbom.sh" "maven" "1.0.0" "myapp" "ghcr.io/org/app@sha256:abc" "$MOCK_SBOM_DIR"
 
   assert_success
-  assert_output --partial "called: maven analyzed-container 1.0.0 myapp . ghcr.io/org/app@sha256:abc"
+  assert_output --partial "called: --layers analyzed-container --version 1.0.0 --name myapp --container-image ghcr.io/org/app@sha256:abc"
 }
 
 @test "generate-container-sbom mentions artifact type name" {
@@ -75,8 +75,8 @@ teardown() {
   run_script "sbom/generate-container-sbom.sh" "maven,npm" "2.0.0" "myapp" "ghcr.io/org/app@sha256:def" "$MOCK_SBOM_DIR"
 
   assert_success
-  assert_output --partial "called: maven analyzed-container 2.0.0 myapp . ghcr.io/org/app@sha256:def"
-  assert_output --partial "called: npm analyzed-container 2.0.0 myapp . ghcr.io/org/app@sha256:def"
+  assert_output --partial "called: --layers analyzed-container --version 2.0.0 --name myapp --container-image ghcr.io/org/app@sha256:def"
+  assert_output --partial "called: --layers analyzed-container --version 2.0.0 --name myapp --container-image ghcr.io/org/app@sha256:def"
 }
 
 @test "generate-container-sbom prints each artifact type name" {
@@ -96,7 +96,7 @@ teardown() {
   run_script "sbom/generate-container-sbom.sh" "npm" "3.5.1" "my-service" "ghcr.io/org/svc@sha256:xyz" "$MOCK_SBOM_DIR"
 
   assert_success
-  assert_output --partial "called: npm analyzed-container 3.5.1 my-service . ghcr.io/org/svc@sha256:xyz"
+  assert_output --partial "called: --layers analyzed-container --version 3.5.1 --name my-service --container-image ghcr.io/org/svc@sha256:xyz"
 }
 
 @test "generate-container-sbom passes correct image reference" {

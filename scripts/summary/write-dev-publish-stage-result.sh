@@ -13,16 +13,16 @@ main() {
 
   container_result="$(ci_normalize_result "${BUILD_DEV_CONTAINER_RESULT:-skipped}")"
   npm_result="$(ci_normalize_result "${PUBLISH_NPM_DEV_RESULT:-skipped}")"
-  sbom_result="$(ci_normalize_result "${GENERATE_DEV_SBOM_RESULT:-skipped}")"
+  sbom_result="$(ci_normalize_result "${GENERATE_DEV_SBOMS_RESULT:-skipped}")"
 
   local stage_ran="false"
   case "${PROJECT_TYPE:-}" in
   maven | npm | gradle) stage_ran="true" ;;
   esac
 
-  # SBOM is opted-in via generate-sbom input; include in the aggregate so an
-  # explicit opt-in that crashes surfaces as stage failure rather than a
-  # silent pass.
+  # SBOM aggregation is opted-in via the sboms input (non-'none'); include in
+  # the aggregate so an explicit opt-in that crashes surfaces as stage failure
+  # rather than a silent pass.
   local stage_result
   stage_result="$(ci_stage_result "$stage_ran" "$container_result" "$npm_result" "$sbom_result")"
 

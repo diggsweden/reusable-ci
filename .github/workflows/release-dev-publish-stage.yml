@@ -18,10 +18,10 @@ on:
         required: false
         default: "main"
         type: string
-      generate-sbom:
+      sboms:
         required: false
-        default: false
-        type: boolean
+        default: "none"
+        type: string
       publish-container:
         required: false
         default: true
@@ -76,9 +76,9 @@ jobs:
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
     secrets:
       registry-password: ${{ secrets.registry-password }}
-  generate-dev-sbom:
-    name: Generate Dev SBOM
-    if: ${{ inputs['generate-sbom'] && fromJson(inputs['build-result-json']).result == 'success' }}
+  generate-dev-sboms:
+    name: Generate Dev SBOMs
+    if: ${{ inputs.sboms != 'none' && fromJson(inputs['build-result-json']).result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -99,17 +99,26 @@ jobs:
         with:
           path: ./release-artifacts
           merge-multiple: true
-      - name: Generate 3-Layer SBOMs (dev)
+      - name: Generate CISA-layer SBOMs (dev)
         env:
           PROJECT_TYPE: ${{ fromJson(inputs['dev-context-json']).project_type }}
           PROJECT_NAME: ${{ github.event.repository.name }}
           DEV_VERSION: dev-${{ github.sha }}
+          SBOMS: ${{ inputs.sboms }}
         run: |
-          bash .github-shared/scripts/sbom/generate-sbom.sh \
-            "$PROJECT_TYPE" \
-            "source,build,analyzed-artifact" \
-            "$DEV_VERSION" \
-            "$PROJECT_NAME"
+          # analyzed-container is scanned at container-publish time, not here —
+          # feed generate-sboms.sh only the artifact-level layers.
+          layers=$(bash .github-shared/scripts/config/expand-sboms.sh \
+            --format comma --exclude analyzed-container "$SBOMS")
+          if [[ -n "$layers" ]]; then
+            bash .github-shared/scripts/sbom/generate-sboms.sh \
+              --project-type "$PROJECT_TYPE" \
+              --layers "$layers" \
+              --version "$DEV_VERSION" \
+              --name "$PROJECT_NAME"
+          else
+            printf "No artifact-level SBOM layers requested (sboms=%s).\n" "$SBOMS"
+          fi
       - name: Upload Dev SBOMs
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
@@ -121,7 +130,7 @@ jobs:
           if-no-files-found: warn
   summarize-dev-publish-stage:
     name: Summarize Dev Publish Stage
-    needs: [build-dev-container, publish-npm-dev, generate-dev-sbom]
+    needs: [build-dev-container, publish-npm-dev, generate-dev-sboms]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -146,7 +155,7 @@ jobs:
           PUBLISH_NPM: ${{ fromJson(inputs['dev-policy-json']).publish_npm }}
           BUILD_DEV_CONTAINER_RESULT: ${{ needs.build-dev-container.result }}
           PUBLISH_NPM_DEV_RESULT: ${{ needs.publish-npm-dev.result }}
-          GENERATE_DEV_SBOM_RESULT: ${{ needs.generate-dev-sbom.result }}
+          GENERATE_DEV_SBOMS_RESULT: ${{ needs.generate-dev-sboms.result }}
           CONTAINER_IMAGE: ${{ needs.build-dev-container.outputs.image }}
           CONTAINER_DIGEST: ${{ needs.build-dev-container.outputs.digest }}
           NPM_PACKAGE_NAME: ${{ needs.publish-npm-dev.outputs.package-name }}

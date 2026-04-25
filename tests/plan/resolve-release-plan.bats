@@ -32,12 +32,12 @@ set_standard_plan_env() {
   export RELEASE_PUBLISHER="github-cli"
   export RELEASE_CHECK_AUTHORIZATION="false"
   export RELEASE_DRAFT="false"
-  export RELEASE_GENERATE_SBOM="true"
+  export RELEASE_SBOMS="all"
   export RELEASE_SIGN_ARTIFACTS="true"
   export CHANGELOG_CREATOR="git-cliff"
   export CHANGELOG_SKIP_VERSION_BUMP="false"
   export GITHUB_REF_NAME="v1.2.3"
-  export NEEDS_SBOM="true"
+  export PIPELINE_SBOMS="build,analyzed-artifact,analyzed-container"
   export FIRST_REQUIRE_AUTHORIZATION="true"
   export CONTAINERS='[{"name":"app"}]'
 }
@@ -56,8 +56,8 @@ set_standard_plan_env() {
   assert_output "true"
   run get_github_output has-containers
   assert_output "true"
-  run get_github_output should-generate-sbom
-  assert_output "true"
+  run get_github_output effective-sboms
+  assert_output "build,analyzed-artifact,analyzed-container"
   run get_github_output should-sign-artifacts
   assert_output "true"
   run get_github_output should-create-release
@@ -75,12 +75,12 @@ set_standard_plan_env() {
   export RELEASE_PUBLISHER=""
   export RELEASE_CHECK_AUTHORIZATION="false"
   export RELEASE_DRAFT="false"
-  export RELEASE_GENERATE_SBOM="false"
+  export RELEASE_SBOMS="none"
   export RELEASE_SIGN_ARTIFACTS="false"
   export CHANGELOG_CREATOR=""
   export CHANGELOG_SKIP_VERSION_BUMP="true"
   export GITHUB_REF_NAME="v1.2.3-beta.1"
-  export NEEDS_SBOM="false"
+  export PIPELINE_SBOMS="none"
   export FIRST_REQUIRE_AUTHORIZATION="false"
   export CONTAINERS='[]'
 
@@ -91,8 +91,8 @@ set_standard_plan_env() {
   assert_output "false"
   run get_github_output has-containers
   assert_output "false"
-  run get_github_output should-generate-sbom
-  assert_output "false"
+  run get_github_output effective-sboms
+  assert_output "none"
   run get_github_output should-sign-artifacts
   assert_output "false"
   run get_github_output should-create-release
@@ -103,6 +103,64 @@ set_standard_plan_env() {
   assert_output "false"
   run get_github_output should-create-draft-release
   assert_output "false"
+}
+
+# =============================================================================
+# sboms intersection tests
+# =============================================================================
+
+@test "resolve-release-plan intersects release-cap and pipeline sboms" {
+  # Release caps at 'build' while artefacts want 'all' → effective becomes 'build'
+  set_standard_plan_env
+  export RELEASE_SBOMS="build"
+  export PIPELINE_SBOMS="build,analyzed-artifact,analyzed-container"
+
+  run_resolve_release_plan
+
+  assert_success
+  run get_github_output effective-sboms
+  assert_output "build"
+}
+
+@test "resolve-release-plan preserves canonical order across intersection" {
+  # Comma-lists in either input don't matter for output ordering.
+  set_standard_plan_env
+  export RELEASE_SBOMS="analyzed-container,build"
+  export PIPELINE_SBOMS="analyzed-artifact,analyzed-container,build"
+
+  run_resolve_release_plan
+
+  assert_success
+  run get_github_output effective-sboms
+  assert_output "build,analyzed-container"
+}
+
+@test "resolve-release-plan empty intersection emits none and warns" {
+  # Release cap and pipeline have no layer in common → effective=none, warning surfaces.
+  set_standard_plan_env
+  export RELEASE_SBOMS="build"
+  export PIPELINE_SBOMS="analyzed-container"
+
+  run_resolve_release_plan
+
+  assert_success
+  run get_github_output effective-sboms
+  assert_output "none"
+  assert_summary_contains "SBOM misconfiguration"
+}
+
+@test "resolve-release-plan no warning when pipeline is 'none'" {
+  # If the artefacts legitimately opted out, the empty intersection is not a
+  # misconfig — no warning, no summary entry.
+  set_standard_plan_env
+  export RELEASE_SBOMS="all"
+  export PIPELINE_SBOMS="none"
+
+  run_resolve_release_plan
+
+  assert_success
+  run get_github_output effective-sboms
+  assert_output "none"
 }
 
 # =============================================================================

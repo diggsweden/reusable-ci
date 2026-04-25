@@ -96,6 +96,11 @@ on:
         required: false
         default: false
         type: boolean
+      enable-build-sbom:
+        description: "Run the cyclonedx plugin step (false skips Build SBOM generation entirely; derived from per-artefact 'sboms' when called from release-build-stage)"
+        required: false
+        default: true
+        type: boolean
       reusable-ci-ref:
         description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
         required: false
@@ -181,6 +186,7 @@ jobs:
         run: bash .github-shared/scripts/android/build-gradle.sh
       - name: Generate Build SBOM
         id: sbom
+        if: ${{ inputs['enable-build-sbom'] }}
         continue-on-error: true
         working-directory: ${{ inputs['working-directory'] }}
         env:

@@ -56,6 +56,11 @@ on:
         required: false
         default: ""
         type: string
+      enable-build-sbom:
+        description: "Run the cyclonedx plugin step (false skips Build SBOM generation entirely; derived from per-artefact 'sboms' when called from release-build-stage)"
+        required: false
+        default: true
+        type: boolean
       reusable-ci-ref:
         description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
         required: false
@@ -125,6 +130,7 @@ jobs:
       # cascade from an SBOM-tool problem, which is the wrong failure domain.
       - name: Generate Build SBOM
         id: sbom
+        if: ${{ inputs['enable-build-sbom'] }}
         continue-on-error: true
         working-directory: ${{ inputs['working-directory'] }}
         env:
@@ -176,7 +182,7 @@ jobs:
           {
             printf '### Build SBOM\n'
             if [[ "$SBOM_OUTCOME" == "success" ]]; then
-              # Report the shallowest bom.json relative to the working dir.
+              # Report the aggregate bom.json (smallest path depth) relative to the working dir.
               bom=$(find "$WORKDIR" -path '*/build/reports/bom.json' -o -path '*/build/reports/cyclonedx/bom.json' 2>/dev/null | sort | head -1)
               if [[ -n "$bom" ]]; then
                 printf -- '- ✅ CycloneDX: `%s`\n' "$bom"

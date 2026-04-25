@@ -187,7 +187,7 @@ teardown() {
 @test "sbom target surfaces success when opt-in SBOM job ran" {
   export PROJECT_TYPE="maven"
   export BUILD_DEV_CONTAINER_RESULT="success"
-  export GENERATE_DEV_SBOM_RESULT="success"
+  export GENERATE_DEV_SBOMS_RESULT="success"
 
   run_script "summary/write-dev-publish-stage-result.sh"
   assert_success
@@ -203,7 +203,7 @@ teardown() {
   # An opted-in SBOM job that crashes must not silently pass — surface it.
   export PROJECT_TYPE="maven"
   export BUILD_DEV_CONTAINER_RESULT="success"
-  export GENERATE_DEV_SBOM_RESULT="failure"
+  export GENERATE_DEV_SBOMS_RESULT="failure"
 
   run_script "summary/write-dev-publish-stage-result.sh"
   assert_success

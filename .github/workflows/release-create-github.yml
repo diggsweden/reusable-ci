@@ -51,11 +51,11 @@ on:
         description: "Glob patterns for artifacts to attach (newline or comma separated)"
         required: false
         type: string
-      generate-sbom:
-        description: "Generate and attach SBOM for the repository"
+      sboms:
+        description: "SBOMs to generate and attach: all | none | comma-list of build,analyzed-artifact,analyzed-container (default: all)"
         required: false
-        default: true
-        type: boolean
+        default: "all"
+        type: string
       sign-artifacts:
         description: "GPG sign all artifacts"
         required: false
@@ -148,13 +148,13 @@ jobs:
         continue-on-error: true
         with:
           name: release-changelog
-      # Download container SBOM if it exists (from container build job)
-      - name: Download container SBOM artifacts
-        if: ${{ inputs['has-containers'] }}
+      # Download analyzed-container SBOM if it exists (from publish-container job)
+      - name: Download Analyzed-Container SBOM artifacts
+        if: ${{ inputs['has-containers'] && (contains(inputs.sboms, 'analyzed-container') || inputs.sboms == 'all') }}
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         continue-on-error: true
         with:
-          name: container-sbom-${{ github.run_id }}
+          name: analyzed-container-sbom-${{ github.run_id }}
           path: ./sbom-artifacts/
       - name: Checkout .github repo for release scripts
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -182,11 +182,11 @@ jobs:
           name: ${{ steps.artifact-name.outputs.name }}
           path: ./release-artifacts/
       # Build SBOM lives in its own artifact so a broken SBOM plugin can't
-      # fail the code upload. Only needed when generate-sbom is on —
-      # generate-sbom.sh aggregates the bom.json it finds under
+      # fail the code upload. Only needed when the `build` layer is in the
+      # effective sboms — generate-sboms.sh reads the aggregate bom.json from
       # ./release-artifacts/.
       - name: Download Build SBOM
-        if: &if_generate_sbom ${{ inputs['generate-sbom'] }}
+        if: ${{ contains(inputs.sboms, 'build') || inputs.sboms == 'all' }}
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         continue-on-error: true
         with:
@@ -199,22 +199,28 @@ jobs:
           ARTIFACT_NAME: ${{ inputs['artifact-name'] }}
           REPOSITORY: ${{ github.repository }}
         run: bash .github-shared/scripts/release/resolve-release-metadata.sh
-      - name: Generate 3-Layer SBOMs
-        if: *if_generate_sbom
+      - name: Generate CISA-layer SBOMs
+        if: &if_has_sboms ${{ inputs.sboms != 'none' }}
         env:
           PROJECT_TYPE: ${{ inputs['project-type'] }}
           RELEASE_VERSION_NO_V: ${{ steps.release-metadata.outputs.version-no-v }}
           PROJECT_NAME: ${{ steps.release-metadata.outputs.project-name }}
+          SBOMS: ${{ inputs.sboms }}
         run: |
-          # Use SBOM generation script for source, build and analyzed-artifact layers
-          # Use CISA taxonomy layer names that work for all project types
-          bash .github-shared/scripts/sbom/generate-sbom.sh \
-            "$PROJECT_TYPE" \
-            "source,build,analyzed-artifact" \
-            "$RELEASE_VERSION_NO_V" \
-            "$PROJECT_NAME"
-
-          printf "Layer 3: Container SBOMs will be downloaded from container build job\n"
+          # analyzed-container is scanned separately at container-publish time
+          # and the resulting BOM is already landed under ./sbom-artifacts/ —
+          # pass only the artifact-level layers to generate-sboms.sh.
+          layers=$(bash .github-shared/scripts/config/expand-sboms.sh \
+            --format comma --exclude analyzed-container "$SBOMS")
+          if [[ -n "$layers" ]]; then
+            bash .github-shared/scripts/sbom/generate-sboms.sh \
+              --project-type "$PROJECT_TYPE" \
+              --layers "$layers" \
+              --version "$RELEASE_VERSION_NO_V" \
+              --name "$PROJECT_NAME"
+          else
+            printf "No artifact-level SBOM layers requested; analyzed-container (if any) is already downloaded.\n"
+          fi
       - name: Generate checksums
         env:
           ATTACH_ARTIFACTS: ${{ inputs['attach-artifacts'] }}
@@ -225,7 +231,7 @@ jobs:
           GPG_KEY_ID: ${{ steps.import-gpg.outputs.keyid }}
         run: bash .github-shared/scripts/release/sign-release-artifacts.sh
       - name: Create SBOM ZIP
-        if: *if_generate_sbom
+        if: *if_has_sboms
         env:
           SIGN_ARTIFACTS: ${{ inputs['sign-artifacts'] }}
           GPG_KEY_ID: ${{ steps.import-gpg.outputs.keyid }}

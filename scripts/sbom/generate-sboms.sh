@@ -12,6 +12,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../ci/output.sh"
 source "$SCRIPT_DIR/../ci/install-syft.sh"
 
+readonly VALID_PROJECT_TYPES="auto maven npm gradle gradle-android xcode-ios python go rust"
+
 #
 # Utility functions
 #
@@ -209,76 +211,6 @@ scan_artifacts() {
 }
 
 #
-# Source layer generation
-#
-generate_source_layer() {
-  local name="$1" version="$2"
-
-  log_section "Generating Source layer SBOMs..."
-
-  case "$PROJECT_TYPE" in
-  maven)
-    if [[ -f "pom.xml" ]]; then
-      log_info "Scanning pom.xml..."
-      generate_dual_sboms "pom.xml" "$name" "$version" "pom" "${name}-${version}-pom"
-    else
-      log_warning "No pom.xml found"
-    fi
-    ;;
-  npm)
-    if [[ -f "package.json" ]]; then
-      log_info "Scanning package.json..."
-      generate_dual_sboms "." "$name" "$version" "package" "${name}-${version}-package"
-    else
-      log_warning "No package.json found"
-    fi
-    ;;
-  gradle)
-    if [[ -f "build.gradle" || -f "build.gradle.kts" ]]; then
-      log_info "Scanning build.gradle..."
-      generate_dual_sboms "." "$name" "$version" "gradle" "${name}-${version}-gradle"
-    else
-      log_warning "No build.gradle found"
-    fi
-    ;;
-  go)
-    if [[ -f "go.mod" ]]; then
-      log_info "Scanning go.mod..."
-      generate_dual_sboms "." "$name" "$version" "gomod" "${name}-${version}-gomod"
-    else
-      log_warning "No go.mod found"
-    fi
-    ;;
-  rust)
-    if [[ -f "Cargo.toml" ]]; then
-      log_info "Scanning Cargo.toml..."
-      generate_dual_sboms "." "$name" "$version" "cargo" "${name}-${version}-cargo"
-    else
-      log_warning "No Cargo.toml found"
-    fi
-    ;;
-  python)
-    if [[ -f "pyproject.toml" ]]; then
-      log_info "Scanning pyproject.toml..."
-      generate_dual_sboms "." "$name" "$version" "pyproject" "${name}-${version}-pyproject"
-    elif [[ -f "requirements.txt" ]]; then
-      log_info "Scanning requirements.txt..."
-      generate_dual_sboms "." "$name" "$version" "requirements" "${name}-${version}-requirements"
-    elif [[ -f "setup.py" ]]; then
-      log_info "Scanning setup.py..."
-      generate_dual_sboms "." "$name" "$version" "setup" "${name}-${version}-setup"
-    else
-      log_warning "No Python dependency file found"
-    fi
-    ;;
-  *)
-    log_warning "Unsupported project type: $PROJECT_TYPE"
-    ;;
-  esac
-  printf "\n"
-}
-
-#
 # Artifact layer generation
 #
 generate_artifact_layer_maven() {
@@ -370,7 +302,7 @@ generate_artifact_layer_python() {
 }
 
 # Build the Build-layer SBOM output filename. Appends a short commit SHA for traceability
-build_sbom_filename() {
+build_layer_filename() {
   local name="$1" version="$2"
   local sha
   if sha=$(git rev-parse --short HEAD 2>/dev/null); then
@@ -398,17 +330,20 @@ generate_build_layer() {
   printf "\n"
 }
 
-# Find the shallowest bom.json matching the given -path pattern(s) inside the
-# download-artifact tree. `shallowest` means: prefer the aggregate BOM at the
-# project root over per-module BOMs deeper in the tree, and work whether the
-# consumer's `working-directory` was `.` or a subdir — the artifact upload
-# preserves the working-directory prefix, so fixed-path lookups fail on subdir
-# projects.
+# Locate the aggregate CISA Build SBOM (bom.json) produced by the stack's
+# cyclonedx plugin inside the download-artifact tree. Picks the path with the
+# fewest directory separators on the assumption that monorepo/per-module BOMs
+# live deeper than the project-root aggregate. Works whether the consumer's
+# working-directory was `.` or a subdir — the artifact upload preserves the
+# working-directory prefix, so fixed-path lookups fail on subdir projects.
 #
-# Usage: _find_shallowest_bom <include-pattern>... [-- <exclude-pattern>...]
+# TODO(option B): once builders upload only the aggregate bom.json per
+# artefact, this whole depth-sort becomes `find ... -name bom.json | head -1`.
+#
+# Usage: _find_build_bom <include-pattern>... [-- <exclude-pattern>...]
 # All patterns are find-style -path globs. Patterns containing whitespace are
 # supported because arguments are passed positionally (no word-splitting).
-_find_shallowest_bom() {
+_find_build_bom() {
   local root="./release-artifacts"
   [[ -d "$root" ]] || root="."
 
@@ -420,7 +355,7 @@ _find_shallowest_bom() {
       in_excludes=1
       continue
     fi
-    if (( in_excludes )); then
+    if ((in_excludes)); then
       excludes+=("$arg")
     else
       includes+=("$arg")
@@ -438,9 +373,10 @@ _find_shallowest_bom() {
     find_args+=(! -path "$pattern")
   done
 
-  # Print depth + path, sort numerically, take the shallowest entry.
+  # Print depth + path, sort numerically (depth first, then path for a stable
+  # tie-break across filesystems), take the smallest-depth entry.
   find "$root" "${find_args[@]}" -printf '%d\t%p\n' 2>/dev/null |
-    sort -n |
+    sort -k1,1n -k2,2 |
     head -1 |
     cut -f2-
 }
@@ -452,7 +388,7 @@ _emit_build_sbom() {
     return 0
   fi
   local output_file
-  output_file=$(build_sbom_filename "$name" "$version")
+  output_file=$(build_layer_filename "$name" "$version")
   cp "$bom_file" "$output_file"
   log_success "$output_file"
 }
@@ -460,7 +396,7 @@ _emit_build_sbom() {
 generate_build_layer_maven() {
   local name="$1" version="$2"
   local bom_file
-  bom_file=$(_find_shallowest_bom '*/target/bom.json')
+  bom_file=$(_find_build_bom '*/target/bom.json')
   _emit_build_sbom "$bom_file" "$name" "$version" "Maven" \
     "run cyclonedx-maven-plugin during build"
 }
@@ -470,7 +406,7 @@ generate_build_layer_npm() {
   local bom_file
   # Exclude node_modules — vendored packages may ship their own bom.json and
   # would otherwise hijack pickup when sorted by depth.
-  bom_file=$(_find_shallowest_bom '*/bom.json' -- '*/node_modules/*')
+  bom_file=$(_find_build_bom '*/bom.json' -- '*/node_modules/*')
   _emit_build_sbom "$bom_file" "$name" "$version" "npm" \
     "run @cyclonedx/cyclonedx-npm during build"
 }
@@ -481,7 +417,7 @@ generate_build_layer_gradle() {
   # Plugin 3.x writes to build/reports/bom.json; older versions used
   # build/reports/cyclonedx/bom.json. Match both for forward/back compat.
   bom_file=$(
-    _find_shallowest_bom \
+    _find_build_bom \
       '*/build/reports/bom.json' \
       '*/build/reports/cyclonedx/bom.json'
   )
@@ -493,9 +429,9 @@ generate_build_layer_cargo() {
   local name="$1" version="$2"
   local bom_file
   # cargo-cyclonedx writes bom.json at each crate root (workspace-aware);
-  # pick the shallowest so root-crate BOMs win over deeper ones. Exclude
+  # pick the aggregate (root-crate) BOM over deeper per-crate ones. Exclude
   # compile artifacts under target/.
-  bom_file=$(_find_shallowest_bom '*/bom.json' -- '*/target/*')
+  bom_file=$(_find_build_bom '*/bom.json' -- '*/target/*')
   _emit_build_sbom "$bom_file" "$name" "$version" "Cargo" \
     "run cargo-cyclonedx during build"
 }
@@ -577,14 +513,102 @@ generate_summary() {
 #
 # Main
 #
+usage() {
+  cat <<USAGE
+Usage: $(basename "$0") [flags]
+
+Generate CISA-layered SBOMs (SPDX + CycloneDX) for a project.
+
+Flags:
+  --project-type <type>     Project type (maven|npm|gradle|gradle-android|go|rust|python|auto). Default: auto
+  --layers <csv>            Comma-list of layers (build|analyzed-artifact|analyzed-container). Default: build
+  --version <ver>           Project version (overrides auto-detect)
+  --name <name>             Project name (overrides auto-detect)
+  --working-dir <dir>       cd to this dir before running. Default: .
+  --container-image <ref>   Container image ref for analyzed-container layer
+  --create-zip              Bundle the generated SBOMs into a release-ready ZIP
+  -h, --help                Show this help
+USAGE
+}
+
 main() {
-  local PROJECT_TYPE="${1:-auto}"
-  local LAYERS="${2:-source}"
-  local VERSION="${3:-}"
-  local PROJECT_NAME="${4:-}"
-  local WORKING_DIR="${5:-.}"
-  local CONTAINER_IMAGE="${6:-}"
-  local CREATE_ZIP="${7:-false}"
+  local PROJECT_TYPE="auto"
+  local LAYERS="build"
+  local VERSION=""
+  local PROJECT_NAME=""
+  local WORKING_DIR="."
+  local CONTAINER_IMAGE=""
+  local CREATE_ZIP="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --project-type)
+      [[ $# -ge 2 ]] || {
+        printf "Error: --project-type requires an argument\n" >&2
+        exit 1
+      }
+      PROJECT_TYPE="$2"
+      printf "%s" "$VALID_PROJECT_TYPES" | grep -qw "$PROJECT_TYPE" || {
+        printf "Error: invalid --project-type '%s' (valid: %s)\n" "$PROJECT_TYPE" "$VALID_PROJECT_TYPES" >&2
+        exit 1
+      }
+      shift 2
+      ;;
+    --layers)
+      [[ $# -ge 2 ]] || {
+        printf "Error: --layers requires an argument\n" >&2
+        exit 1
+      }
+      LAYERS="$2"
+      shift 2
+      ;;
+    --version)
+      [[ $# -ge 2 ]] || {
+        printf "Error: --version requires an argument\n" >&2
+        exit 1
+      }
+      VERSION="$2"
+      shift 2
+      ;;
+    --name)
+      [[ $# -ge 2 ]] || {
+        printf "Error: --name requires an argument\n" >&2
+        exit 1
+      }
+      PROJECT_NAME="$2"
+      shift 2
+      ;;
+    --working-dir)
+      [[ $# -ge 2 ]] || {
+        printf "Error: --working-dir requires an argument\n" >&2
+        exit 1
+      }
+      WORKING_DIR="$2"
+      shift 2
+      ;;
+    --container-image)
+      [[ $# -ge 2 ]] || {
+        printf "Error: --container-image requires an argument\n" >&2
+        exit 1
+      }
+      CONTAINER_IMAGE="$2"
+      shift 2
+      ;;
+    --create-zip)
+      CREATE_ZIP="true"
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf "Error: unknown flag: %s\n\n" "$1" >&2
+      usage >&2
+      exit 1
+      ;;
+    esac
+  done
 
   cd "$WORKING_DIR" || exit 1
 
@@ -611,12 +635,11 @@ main() {
   for layer in "${layer_array[@]}"; do
     layer=$(printf "%s" "$layer" | xargs)
     case "$layer" in
-    source) generate_source_layer "$project_name" "$version" ;;
     build) generate_build_layer "$project_name" "$version" ;;
     analyzed-artifact) generate_artifact_layer "$project_name" "$version" ;;
     analyzed-container) generate_container_layer "$project_name" "$version" ;;
     *)
-      log_warning "Unknown layer: $layer (valid: source, build, analyzed-artifact, analyzed-container)"
+      log_warning "Unknown layer: $layer (valid: build, analyzed-artifact, analyzed-container)"
       return 1
       ;;
     esac

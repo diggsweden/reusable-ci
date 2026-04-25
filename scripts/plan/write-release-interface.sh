@@ -12,13 +12,13 @@ main() {
   release_context=$(printf '{"project_type":"%s","build_type":"%s","artifact_name":"%s"}' \
     "$FIRST_PROJECT_TYPE" "$FIRST_BUILD_TYPE" "$FIRST_ARTIFACT_NAME")
 
-  release_policy=$(printf '{"sign_artifacts":%s,"check_authorization":%s,"run_version_bump":%s,"create_release":%s,"create_draft_release":%s,"generate_sbom":%s,"make_latest":%s,"has_containers":%s}' \
+  release_policy=$(printf '{"sign_artifacts":%s,"check_authorization":%s,"run_version_bump":%s,"create_release":%s,"create_draft_release":%s,"sboms":"%s","make_latest":%s,"has_containers":%s}' \
     "$(ci_json_bool "$SHOULD_SIGN_ARTIFACTS")" \
     "$(ci_json_bool "$SHOULD_CHECK_AUTHORIZATION")" \
     "$(ci_json_bool "$SHOULD_RUN_VERSION_BUMP")" \
     "$(ci_json_bool "$SHOULD_CREATE_RELEASE")" \
     "$(ci_json_bool "$SHOULD_CREATE_DRAFT_RELEASE")" \
-    "$(ci_json_bool "$SHOULD_GENERATE_SBOM")" \
+    "$EFFECTIVE_SBOMS" \
     "$(ci_json_bool "$SHOULD_MAKE_LATEST")" \
     "$(ci_json_bool "$HAS_CONTAINERS")")
 

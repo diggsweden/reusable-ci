@@ -37,8 +37,9 @@
 #   CI_PRERELEASE_SUFFIX_REGEX     Prerelease suffix validation regex
 #   CI_CHECKSUMS_FILE              Canonical checksums filename
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/env.sh"
+# Inline to avoid defining a top-level SCRIPT_DIR that would clobber the
+# caller's same-named variable when this file is sourced.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env.sh"
 
 # Write a key=value pair to workflow outputs
 ci_output() {
