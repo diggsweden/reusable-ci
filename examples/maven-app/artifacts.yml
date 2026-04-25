@@ -7,6 +7,8 @@ artifacts:
     project-type: maven
     working-directory: .
     build-type: application
+    # sboms: all          # default; valid values: all | none | build | analyzed-artifact | analyzed-container | comma-list
+    # sboms: build        # uncomment for compliance-minimum (CISA Build SBOM only, no syft scans)
     config:
       java-version: 25
 containers:
@@ -16,5 +18,7 @@ containers:
     context: .
     platforms: linux/amd64,linux/arm64
     enable-slsa: true
-    enable-sbom: true
     enable-scan: true
+    # Container SBOM (analyzed-container) scan is derived from each source
+    # artefact's `sboms`. With `sboms: all` (default) on the source, the
+    # container is scanned. To skip: set source `sboms: build,analyzed-artifact`.

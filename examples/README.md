@@ -199,8 +199,10 @@ containers:
 ```yaml
 containers:
   - enable-slsa: false  # Disable SLSA provenance
-  - enable-sbom: false  # Disable SBOM generation
   - enable-scan: false  # Disable Trivy scanning
+# Container SBOM (analyzed-container) scan is now derived from each source
+# artefact's `sboms`. To skip the scan, set the source artefact's sboms to
+# exclude `analyzed-container`, e.g. `sboms: build,analyzed-artifact`.
 ```
 
 **Note:** Not recommended for production.

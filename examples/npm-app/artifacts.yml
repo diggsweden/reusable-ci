@@ -15,5 +15,5 @@ containers:
     context: .
     platforms: linux/amd64,linux/arm64
     enable-slsa: true
-    enable-sbom: true
     enable-scan: true
+    # analyzed-container SBOM scan is derived from each source artefact's `sboms`.

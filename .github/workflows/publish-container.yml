@@ -94,8 +94,8 @@ on:
         required: false
         default: true
         type: boolean
-      enable-sbom:
-        description: "Generate and attach SBOM"
+      enable-analyzed-container-sbom:
+        description: "Run syft on the pushed image and produce the analyzed-container SBOM. Sibling of enable-slsa/enable-scan. When called from release-publish-stage this is derived from source artefacts' sboms; direct callers default to true."
         required: false
         default: true
         type: boolean
@@ -336,7 +336,7 @@ jobs:
           build-args: ${{ inputs['build-args'] }}
           secrets: ${{ inputs['build-secrets'] }}
           provenance: ${{ inputs['enable-slsa'] && 'mode=max' || 'false' }}
-          sbom: ${{ inputs['enable-sbom'] }}
+          sbom: ${{ inputs['enable-analyzed-container-sbom'] }}
       - name: Check SLSA compatibility
         if: ${{ inputs['push-image'] && inputs['enable-slsa'] && inputs.registry != 'ghcr.io' }}
         env:
@@ -384,7 +384,7 @@ jobs:
           SARIF_CATEGORY: container-scan
         run: bash .github-shared/scripts/security/upload-sarif.sh
       - name: Generate Container SBOMs (SPDX + CycloneDX)
-        if: &if_sbom_enabled ${{ inputs['enable-sbom'] && inputs['push-image'] }}
+        if: &if_sbom_enabled ${{ inputs['enable-analyzed-container-sbom'] && inputs['push-image'] }}
         env:
           ARTIFACT_TYPES: ${{ inputs['artifact-types'] }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
@@ -393,17 +393,17 @@ jobs:
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
           SBOM_SCRIPT_ROOT: .github-shared/scripts/sbom
         run: bash .github-shared/scripts/sbom/generate-container-sbom-artifacts.sh
-      - name: Upload Container SBOMs
+      - name: Upload Analyzed-Container SBOMs
         if: *if_sbom_enabled
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: container-sbom-${{ github.run_id }}
+          name: analyzed-container-sbom-${{ github.run_id }}
           path: |
             *-container-sbom.spdx.json
             *-container-sbom.cyclonedx.json
           retention-days: 30
       - name: Find Container SBOM file
-        if: &if_sbom_and_slsa_enabled ${{ inputs['enable-sbom'] && inputs['push-image'] && inputs['enable-slsa'] }}
+        if: &if_sbom_and_slsa_enabled ${{ inputs['enable-analyzed-container-sbom'] && inputs['push-image'] && inputs['enable-slsa'] }}
         id: find-sbom
         run: bash .github-shared/scripts/sbom/find-container-sbom.sh
       - name: Attest Container SBOM
