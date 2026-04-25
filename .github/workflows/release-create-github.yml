@@ -167,6 +167,10 @@ jobs:
         id: artifact-name
         env:
           PROJECT_TYPE: ${{ inputs['project-type'] }}
+          # Gradle pairs its SBOM with the user-selected artifact-name from
+          # artifacts.yml; pass it through so resolve-artifact-name.sh can
+          # compute a matching sbom-name.
+          ARTIFACT_NAME: ${{ inputs['artifact-name'] }}
         run: |
           bash .github-shared/scripts/release/resolve-artifact-name.sh \
             "$PROJECT_TYPE" >> "$GITHUB_OUTPUT"
@@ -177,6 +181,17 @@ jobs:
         with:
           name: ${{ steps.artifact-name.outputs.name }}
           path: ./release-artifacts/
+      # Build SBOM lives in its own artifact so a broken SBOM plugin can't
+      # fail the code upload. Only needed when generate-sbom is on —
+      # generate-sbom.sh aggregates the bom.json it finds under
+      # ./release-artifacts/.
+      - name: Download Build SBOM
+        if: &if_generate_sbom ${{ inputs['generate-sbom'] }}
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        continue-on-error: true
+        with:
+          name: ${{ steps.artifact-name.outputs.sbom-name }}
+          path: ./release-artifacts/
       - name: Resolve release metadata
         id: release-metadata
         env:
@@ -185,7 +200,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: bash .github-shared/scripts/release/resolve-release-metadata.sh
       - name: Generate 3-Layer SBOMs
-        if: &if_generate_sbom ${{ inputs['generate-sbom'] }}
+        if: *if_generate_sbom
         env:
           PROJECT_TYPE: ${{ inputs['project-type'] }}
           RELEASE_VERSION_NO_V: ${{ steps.release-metadata.outputs.version-no-v }}

@@ -178,18 +178,30 @@ jobs:
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: ${{ inputs['artifact-name'] || 'gradle-build-artifacts' }}
-          # cyclonedx-gradle-plugin 3.x writes to build/reports/bom.json.
-          # build/reports/cyclonedx/bom.json is retained to tolerate older plugin versions.
           path: |
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/**/*.apk
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/**/*.aab
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/libs/*.jar
+          retention-days: 7
+          if-no-files-found: error
+      # SBOM artifact is paired with the build artifact name so parallel
+      # matrix uploads (release-build-stage dispatches build-gradle per
+      # artifact) don't collide on a single fixed SBOM name. Default falls
+      # back to `gradle-build-sbom` when `artifact-name` is not overridden.
+      # cyclonedx-gradle-plugin 3.x writes to build/reports/bom.json;
+      # build/reports/cyclonedx/bom.json is retained for older plugin versions.
+      - name: Upload Gradle Build SBOM
+        if: steps.sbom.outcome == 'success'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: ${{ inputs['artifact-name'] && format('{0}-sbom', inputs['artifact-name']) || 'gradle-build-sbom' }}
+          path: |
             ${{ inputs['working-directory'] }}/build/reports/bom.json
             ${{ inputs['working-directory'] }}/**/build/reports/bom.json
             ${{ inputs['working-directory'] }}/build/reports/cyclonedx/bom.json
             ${{ inputs['working-directory'] }}/**/build/reports/cyclonedx/bom.json
           retention-days: 7
-          if-no-files-found: error
+          if-no-files-found: warn
       - name: Write SBOM status to step summary
         if: always()
         env:

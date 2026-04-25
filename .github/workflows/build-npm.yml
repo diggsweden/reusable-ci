@@ -152,11 +152,19 @@ jobs:
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: npm-build-artifacts
-          path: |
-            ${{ inputs['working-directory'] }}/${{ steps.pack.outputs.tarball }}
-            ${{ inputs['working-directory'] }}/bom.json
+          path: ${{ inputs['working-directory'] }}/${{ steps.pack.outputs.tarball }}
           retention-days: 7
           if-no-files-found: error
+      # Build SBOM is a separate compliance deliverable; see build-maven.yml
+      # for rationale.
+      - name: Upload NPM Build SBOM
+        if: steps.sbom.outcome == 'success'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: npm-build-sbom
+          path: ${{ inputs['working-directory'] }}/bom.json
+          retention-days: 7
+          if-no-files-found: warn
       - name: Generate build summary
         env:
           PACKAGE_NAME: ${{ steps.version-info.outputs.NAME }}

@@ -47,55 +47,70 @@ run_resolve_artifact_name() {
 # Maven Project Tests
 # =============================================================================
 
-@test "resolve-artifact-name returns maven-build-artifacts for maven" {
+@test "resolve-artifact-name returns maven-build-artifacts and maven-build-sbom for maven" {
   run_resolve_artifact_name "maven"
 
   assert_success
-  assert_output "name=maven-build-artifacts"
+  assert_line "name=maven-build-artifacts"
+  assert_line "sbom-name=maven-build-sbom"
 }
 
 # =============================================================================
 # NPM Project Tests
 # =============================================================================
 
-@test "resolve-artifact-name returns npm-build-artifacts for npm" {
+@test "resolve-artifact-name returns npm-build-artifacts and npm-build-sbom for npm" {
   run_resolve_artifact_name "npm"
 
   assert_success
-  assert_output "name=npm-build-artifacts"
+  assert_line "name=npm-build-artifacts"
+  assert_line "sbom-name=npm-build-sbom"
 }
 
 # =============================================================================
 # Gradle Project Tests
 # =============================================================================
 
-@test "resolve-artifact-name returns gradle-build-artifacts for gradle" {
+@test "resolve-artifact-name returns default gradle names without ARTIFACT_NAME" {
   run_resolve_artifact_name "gradle"
 
   assert_success
-  assert_output "name=gradle-build-artifacts"
+  assert_line "name=gradle-build-artifacts"
+  assert_line "sbom-name=gradle-build-sbom"
+}
+
+@test "resolve-artifact-name pairs gradle sbom with artifact-name override" {
+  # Mirrors build-gradle-app.yml's pairing so release-create-github.yml can
+  # locate the SBOM artifact uploaded by a matrix-named gradle build.
+  ARTIFACT_NAME="my-service" run_resolve_artifact_name "gradle"
+
+  assert_success
+  assert_line "name=my-service"
+  assert_line "sbom-name=my-service-sbom"
 }
 
 # =============================================================================
 # Python Project Tests
 # =============================================================================
 
-@test "resolve-artifact-name returns python-build-artifacts for python" {
+@test "resolve-artifact-name returns python-build-artifacts and python-build-sbom for python" {
   run_resolve_artifact_name "python"
 
   assert_success
-  assert_output "name=python-build-artifacts"
+  assert_line "name=python-build-artifacts"
+  assert_line "sbom-name=python-build-sbom"
 }
 
 # =============================================================================
 # Go Project Tests
 # =============================================================================
 
-@test "resolve-artifact-name returns go-build-artifacts for go" {
+@test "resolve-artifact-name returns go-build-artifacts and go-build-sbom for go" {
   run_resolve_artifact_name "go"
 
   assert_success
-  assert_output "name=go-build-artifacts"
+  assert_line "name=go-build-artifacts"
+  assert_line "sbom-name=go-build-sbom"
 }
 
 # =============================================================================
@@ -106,25 +121,29 @@ run_resolve_artifact_name() {
   run_resolve_artifact_name "rust"
 
   assert_success
-  assert_output "name=rust-build-sbom"
+  # Rust builder is SBOM-only, so build artifact and SBOM name coincide.
+  assert_line "name=rust-build-sbom"
+  assert_line "sbom-name=rust-build-sbom"
 }
 
 # =============================================================================
 # Unknown Project Type Tests
 # =============================================================================
 
-@test "resolve-artifact-name returns generic name for unknown type" {
+@test "resolve-artifact-name returns generic names for unknown type" {
   run_resolve_artifact_name "unknown"
 
   assert_success
-  assert_output "name=build-artifacts"
+  assert_line "name=build-artifacts"
+  assert_line "sbom-name=build-sbom"
 }
 
 @test "resolve-artifact-name handles empty-ish types as unknown" {
   run_resolve_artifact_name "other"
 
   assert_success
-  assert_output "name=build-artifacts"
+  assert_line "name=build-artifacts"
+  assert_line "sbom-name=build-sbom"
 }
 
 # =============================================================================
@@ -135,16 +154,17 @@ run_resolve_artifact_name() {
   run_resolve_artifact_name "maven"
 
   assert_success
-  assert_output --regexp "^name=.+$"
+  assert_line --regexp "^name=.+$"
+  assert_line --regexp "^sbom-name=.+$"
 }
 
-@test "resolve-artifact-name outputs single line" {
+@test "resolve-artifact-name outputs exactly two lines" {
   run_resolve_artifact_name "maven"
 
   assert_success
   local line_count
-  line_count=$(echo "$output" | wc -l)
-  [[ "$line_count" -eq 1 ]]
+  line_count=$(printf '%s\n' "$output" | wc -l)
+  [[ "$line_count" -eq 2 ]]
 }
 
 # =============================================================================
@@ -155,12 +175,14 @@ run_resolve_artifact_name() {
   run_resolve_artifact_name "Maven"
 
   assert_success
-  assert_output "name=build-artifacts"
+  assert_line "name=build-artifacts"
+  assert_line "sbom-name=build-sbom"
 }
 
 @test "resolve-artifact-name is case sensitive - NPM not recognized" {
   run_resolve_artifact_name "NPM"
 
   assert_success
-  assert_output "name=build-artifacts"
+  assert_line "name=build-artifacts"
+  assert_line "sbom-name=build-sbom"
 }

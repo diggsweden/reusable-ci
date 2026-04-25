@@ -151,6 +151,14 @@ jobs:
       enable-scan: ${{ matrix.container['enable-scan'] == true || matrix.container['enable-scan'] == null }}
       registry: ghcr.io
       artifact-types: ${{ join(matrix.container['artifact-types'], ',') }}
+      # Only gradle builds honour `artifact-name` today, so the thread-through
+      # is gated on the container declaring a gradle source. matrix.container.from[0]
+      # is the artifact's user-chosen name from artifacts.yml, matching the
+      # build-gradle-app upload. Maven/npm builders do not accept artifact-name
+      # yet — they keep the hardcoded default — so passing a name here for
+      # those types would mismatch the upload. Uniform thread-through across
+      # all builders is tracked for a follow-up PR.
+      gradle-artifact-name: ${{ contains(matrix.container['artifact-types'], 'gradle') && matrix.container.from[0] || '' }}
       push-image: true
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   summarize-publish-stage:

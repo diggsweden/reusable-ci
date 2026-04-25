@@ -26,13 +26,15 @@ Source-layer Syft scans see declared dependencies but not the resolved version g
 
 ## Per-language build tools
 
-| Ecosystem | Tool | Where in pipeline | Artifact name | Path |
+| Ecosystem | Tool | Where in pipeline | SBOM artifact | SBOM path inside artifact |
 |---|---|---|---|---|
-| Maven | `cyclonedx-maven-plugin` (via `makeAggregateBom`) | `.github/workflows/build-maven.yml` | `maven-build-artifacts` | `target/bom.json` + `**/target/bom.json` |
-| Gradle (JVM) | `cyclonedx-gradle-plugin` (via init-script) | `.github/workflows/build-gradle-app.yml` | `gradle-build-artifacts` (configurable via `artifact-name`) | `build/reports/bom.json` + `**/build/reports/bom.json` |
-| Gradle (Android) | same as above | `.github/workflows/build-gradle-android.yml` | `gradle-android-build-sbom` | same as above |
-| npm | `@cyclonedx/cyclonedx-npm` (via `npx`) | `.github/workflows/build-npm.yml` | `npm-build-artifacts` | `bom.json` |
+| Maven | `cyclonedx-maven-plugin` (via `makeAggregateBom`) | `.github/workflows/build-maven.yml` | `maven-build-sbom` | `target/bom.json` + `**/target/bom.json` |
+| Gradle (JVM) | `cyclonedx-gradle-plugin` (via init-script) | `.github/workflows/build-gradle-app.yml` | `gradle-build-sbom` (or `<artifact-name>-sbom` when overridden) | `build/reports/bom.json` + `**/build/reports/bom.json` |
+| Gradle (Android) | same as above | `.github/workflows/build-gradle-android.yml` | `<date> - <prefix> - <repo> - <flavor> - build SBOM` (per matrix variant) | same as above |
+| npm | `@cyclonedx/cyclonedx-npm` (via `npx`) | `.github/workflows/build-npm.yml` | `npm-build-sbom` | `bom.json` |
 | Cargo (beta) | `cargo-cyclonedx` (`--all` for workspaces) | `.github/workflows/build-rust.yml` | `rust-build-sbom` (configurable) | `bom.json` + `**/bom.json` |
+
+The build SBOM lives in its own upload artifact — separate from the code artifact (`maven-build-artifacts`, `npm-build-artifacts`, `gradle-build-artifacts`). This keeps the SBOM as a first-class compliance deliverable and means a broken SBOM plugin can't take down the code upload.
 
 Tool versions are pinned and tracked by Renovate via `# renovate: datasource=...` comments in the workflow files.
 

@@ -161,13 +161,24 @@ jobs:
             ${{ inputs['working-directory'] }}/target/*.jar
             ${{ inputs['working-directory'] }}/target/*.war
             ${{ inputs['working-directory'] }}/target/*.pom
-            ${{ inputs['working-directory'] }}/target/bom.json
             ${{ inputs['working-directory'] }}/**/target/*.jar
             ${{ inputs['working-directory'] }}/**/target/*.war
             ${{ inputs['working-directory'] }}/**/target/*.pom
-            ${{ inputs['working-directory'] }}/**/target/bom.json
             !${{ inputs['working-directory'] }}/target/original-*.jar
             !${{ inputs['working-directory'] }}/**/target/original-*.jar
+          retention-days: 7
+          if-no-files-found: warn
+      # Build SBOM is a separate compliance deliverable; keeping it in its
+      # own artifact means a broken SBOM plugin can't take down the code
+      # artifact and downstream consumers can fetch just what they need.
+      - name: Upload Maven Build SBOM
+        if: steps.sbom.outcome == 'success'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: maven-build-sbom
+          path: |
+            ${{ inputs['working-directory'] }}/target/bom.json
+            ${{ inputs['working-directory'] }}/**/target/bom.json
           retention-days: 7
           if-no-files-found: warn
       - name: Generate build summary

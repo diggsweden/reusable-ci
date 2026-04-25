@@ -68,6 +68,11 @@ on:
         description: "Comma-separated artifact types (maven,npm,gradle)"
         required: true
         type: string
+      gradle-artifact-name:
+        description: "Name of the uploaded gradle build artifact to download. Default `gradle-build-artifacts`. Override to match a matrix-named gradle artifact (build-gradle-app.yml's `artifact-name` input). Maven and npm builders currently have no such override; thread-through for those stacks is tracked for a follow-up PR."
+        required: false
+        default: ""
+        type: string
       working-directory:
         description: "Working directory"
         required: false
@@ -163,7 +168,7 @@ jobs:
         if: ${{ contains(inputs['artifact-types'], 'gradle') }}
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
-          name: gradle-build-artifacts
+          name: ${{ inputs['gradle-artifact-name'] || 'gradle-build-artifacts' }}
           path: ${{ inputs['working-directory'] }}
       - name: Verify Gradle artifacts
         if: ${{ contains(inputs['artifact-types'], 'gradle') }}
