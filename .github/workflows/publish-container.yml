@@ -399,8 +399,8 @@ jobs:
         with:
           name: analyzed-container-sbom-${{ github.run_id }}
           path: |
-            *-container-sbom.spdx.json
-            *-container-sbom.cyclonedx.json
+            *-analyzed-container-sbom.spdx.json
+            *-analyzed-container-sbom.cyclonedx.json
           retention-days: 30
       - name: Find Container SBOM file
         if: &if_sbom_and_slsa_enabled ${{ inputs['enable-analyzed-container-sbom'] && inputs['push-image'] && inputs['enable-slsa'] }}

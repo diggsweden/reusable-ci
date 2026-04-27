@@ -65,6 +65,15 @@ contract end-to-end).
 - Job: `generate-dev-sbom` → `generate-dev-sboms`.
 - Container SBOM artefact: `container-sbom-<run-id>` →
   `analyzed-container-sbom-<run-id>`.
+- SBOM filenames inside the release zip — unified to
+  `<artefact>-<version>-<sha>-<cisa-type>-sbom.<fmt>.json`. Specifically:
+  `*-jar-sbom.*` → `*-analyzed-jar-sbom.*`,
+  `*-tararchive-sbom.*` → `*-analyzed-tararchive-sbom.*`,
+  `*-container-sbom.*` → `*-analyzed-container-sbom.*`,
+  `*-binary-sbom.*` (Rust/Go) → `*-analyzed-binary-sbom.*`,
+  `*-wheel-sbom.*` (Python) → `*-analyzed-wheel-sbom.*`. Short commit SHA
+  is now injected for traceability across all SBOM filenames (was only on
+  build SBOM previously). Build SBOM filename is unchanged.
 - `publish-container.yml` input: `enable-sbom` → `enable-analyzed-container-sbom`
   (matches the CISA layer name and the existing `enable-X` family).
 - Helper function: `_find_shallowest_bom` → `_find_build_bom`.

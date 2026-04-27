@@ -20,13 +20,13 @@ teardown() {
 }
 
 @test "find-container-sbom writes the found file to GITHUB_OUTPUT" {
-  touch "${TEST_DIR}/demo-container-sbom.spdx.json"
+  touch "${TEST_DIR}/demo-analyzed-container-sbom.spdx.json"
 
   run_script "sbom/find-container-sbom.sh"
 
   assert_success
   run get_github_output sbom-file
-  assert_output "demo-container-sbom.spdx.json"
+  assert_output "demo-analyzed-container-sbom.spdx.json"
 }
 
 @test "find-container-sbom fails when no SBOM file exists" {

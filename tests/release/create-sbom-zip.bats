@@ -45,7 +45,7 @@ create_package_sbom() {
 
 create_jar_sbom() {
   local project="${1:-myapp}"
-  printf '{"spdx": "jar sbom"}' > "${project}-jar-sbom.spdx.json"
+  printf '{"spdx": "jar sbom"}' > "${project}-analyzed-jar-sbom.spdx.json"
 }
 
 create_gradle_sbom() {
@@ -56,7 +56,7 @@ create_gradle_sbom() {
 create_container_sbom() {
   local project="${1:-myapp}"
   mkdir -p sbom-artifacts
-  printf '{"spdx": "container sbom"}' > "sbom-artifacts/${project}-container-sbom.spdx.json"
+  printf '{"spdx": "container sbom"}' > "sbom-artifacts/${project}-analyzed-container-sbom.spdx.json"
 }
 
 # =============================================================================
@@ -129,7 +129,7 @@ create_container_sbom() {
 
   assert_success
   assert_file_exists "myapp-1.0.0-sboms.zip"
-  assert_output --partial "container-sbom"
+  assert_output --partial "analyzed-container-sbom"
 }
 
 @test "create-sbom-zip handles container SBOMs with -j flag" {
@@ -140,7 +140,7 @@ create_container_sbom() {
   assert_success
   # Verify file is in zip without directory path
   run unzip -l myapp-1.0.0-sboms.zip
-  assert_output --partial "myapp-container-sbom.spdx.json"
+  assert_output --partial "myapp-analyzed-container-sbom.spdx.json"
   refute_output --partial "sbom-artifacts/"
 }
 
@@ -159,8 +159,8 @@ create_container_sbom() {
 
   run unzip -l myapp-1.0.0-sboms.zip
   assert_output --partial "pom-sbom"
-  assert_output --partial "jar-sbom"
-  assert_output --partial "container-sbom"
+  assert_output --partial "analyzed-jar-sbom"
+  assert_output --partial "analyzed-container-sbom"
 }
 
 @test "create-sbom-zip shows added files" {
@@ -172,7 +172,7 @@ create_container_sbom() {
   assert_success
   assert_output --partial "Added:"
   assert_output --partial "pom-sbom"
-  assert_output --partial "jar-sbom"
+  assert_output --partial "analyzed-jar-sbom"
 }
 
 # =============================================================================
@@ -277,7 +277,7 @@ create_container_sbom() {
 
 @test "create-sbom-zip handles mixed SBOM formats" {
   printf '{"spdxVersion": "2.3"}' > "myapp-pom-sbom.spdx.json"
-  printf '{"bomFormat": "CycloneDX"}' > "myapp-jar-sbom.cyclonedx.json"
+  printf '{"bomFormat": "CycloneDX"}' > "myapp-analyzed-jar-sbom.cyclonedx.json"
 
   run_create_sbom_zip "myapp" "1.0.0"
 
@@ -318,11 +318,11 @@ create_container_sbom() {
 # =============================================================================
 
 @test "create-sbom-zip includes tararchive SBOMs" {
-  printf '{"spdx": "tararchive"}' > "myapp-tararchive-sbom.spdx.json"
+  printf '{"spdx": "tararchive"}' > "myapp-analyzed-tararchive-sbom.spdx.json"
 
   run_create_sbom_zip "myapp" "1.0.0"
 
   assert_success
   run unzip -l myapp-1.0.0-sboms.zip
-  assert_output --partial "tararchive-sbom"
+  assert_output --partial "analyzed-tararchive-sbom"
 }

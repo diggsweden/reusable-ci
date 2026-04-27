@@ -538,7 +538,7 @@ create_sbom_artifacts() {
   local version="${2:-1.0.0}"
 
   mkdir -p sbom-artifacts
-  printf '{"spdx": "content"}' >"sbom-artifacts/${project}-container-sbom.spdx.json"
+  printf '{"spdx": "content"}' >"sbom-artifacts/${project}-analyzed-container-sbom.spdx.json"
 }
 
 # Create checksum file

@@ -10,9 +10,9 @@ source "$SCRIPT_DIR/../ci/output.sh"
 main() {
   local sbom_file
 
-  sbom_file=$(find . -maxdepth 1 -name "*-container-sbom.spdx.json" -type f -print -quit)
+  sbom_file=$(find . -maxdepth 1 -name "*-analyzed-container-sbom.spdx.json" -type f -print -quit)
   if [[ -z "$sbom_file" ]]; then
-    ci_log_error "No container SBOM file found matching pattern *-container-sbom.spdx.json"
+    ci_log_error "No container SBOM file found matching pattern *-analyzed-container-sbom.spdx.json"
     ci_log_error "SBOM generation step may have failed"
     exit 1
   fi

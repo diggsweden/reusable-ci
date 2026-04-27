@@ -652,7 +652,7 @@ EOF
       --name "myapp" \
       --working-dir "."
   assert_success
-  assert_file_exists "myapp-1.0.0-jar-sbom.spdx.json"
+  assert_file_exists "myapp-1.0.0-analyzed-jar-sbom.spdx.json"
 }
 
 @test "generate-sbomscreates CycloneDX format SBOM" {
@@ -667,7 +667,7 @@ EOF
       --name "myapp" \
       --working-dir "."
   assert_success
-  assert_file_exists "myapp-1.0.0-jar-sbom.cyclonedx.json"
+  assert_file_exists "myapp-1.0.0-analyzed-jar-sbom.cyclonedx.json"
 }
 
 @test "generate-sbomscreates dual format SBOMs" {
@@ -682,8 +682,8 @@ EOF
       --name "myapp" \
       --working-dir "."
   assert_success
-  assert_file_exists "myapp-1.0.0-jar-sbom.spdx.json"
-  assert_file_exists "myapp-1.0.0-jar-sbom.cyclonedx.json"
+  assert_file_exists "myapp-1.0.0-analyzed-jar-sbom.spdx.json"
+  assert_file_exists "myapp-1.0.0-analyzed-jar-sbom.cyclonedx.json"
 }
 
 # =============================================================================

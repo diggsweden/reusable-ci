@@ -153,11 +153,18 @@ Internally, `generate-sboms.sh` still accepts `source` if invoked directly, but 
 
 ### Aggregation in release flows
 
-`scripts/sbom/generate-sboms.sh` consolidates per-stack SBOMs into a single set of release files named:
+`scripts/sbom/generate-sboms.sh` consolidates per-stack SBOMs into release files using a single CISA-aligned naming pattern. The short commit SHA is injected for traceability when run inside a git repo:
 
 ```text
 <project>-<version>-<short-sha>-build-sbom.cyclonedx.json
+<artefact-basename>-<short-sha>-analyzed-jar-sbom.{cyclonedx,spdx}.json          # Maven / Gradle (JVM)
+<artefact-basename>-<short-sha>-analyzed-tararchive-sbom.{cyclonedx,spdx}.json   # npm
+<artefact-basename>-<short-sha>-analyzed-binary-sbom.{cyclonedx,spdx}.json       # Go / Rust
+<artefact-basename>-<short-sha>-analyzed-wheel-sbom.{cyclonedx,spdx}.json        # Python
+<project>-<version>-<short-sha>-analyzed-container-sbom.{cyclonedx,spdx}.json
 ```
+
+`<artefact-basename>` is derived from the actual scanned file (so multi-jar projects get unique names per jar). `build` SBOMs use `<project>-<version>` instead — there is one Build SBOM per project, not per output file. Container scans have a single artefact-type so the analyzed-container layer omits the further modifier.
 
 The aggregator looks for `bom.json` under `./release-artifacts/` (the destination of `actions/download-artifact` with `merge-multiple: true`) and picks the aggregate match — the one with the smallest path depth — so the root project BOM wins over per-module ones. It ignores vendored BOMs under `node_modules/` and compile caches under `target/`. Consumers using a non-root `working-directory` are handled automatically because the lookup uses a path pattern, not fixed locations.
 

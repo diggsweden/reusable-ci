@@ -46,7 +46,7 @@ main() {
 
   if [[ -d "$SBOM_DIR" ]]; then
     printf "→ Checksumming container SBOMs from %s\n" "$SBOM_DIR"
-    for file in "$SBOM_DIR"/*-container-sbom.*.json; do
+    for file in "$SBOM_DIR"/*-analyzed-container-sbom.*.json; do
       if [[ -f "$file" ]]; then
         local filename
         filename=$(basename "$file")

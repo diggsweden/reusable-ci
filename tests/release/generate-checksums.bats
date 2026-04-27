@@ -184,24 +184,24 @@ get_sha256() {
 
 @test "generate-checksums processes SBOM container files" {
   mkdir -p sbom-artifacts
-  echo "sbom" > "sbom-artifacts/myapp-container-sbom.spdx.json"
+  echo "sbom" > "sbom-artifacts/myapp-analyzed-container-sbom.spdx.json"
 
   run_generate_checksums
 
   assert_success
   run cat checksums.sha256
-  assert_output --partial "myapp-container-sbom.spdx.json"
+  assert_output --partial "myapp-analyzed-container-sbom.spdx.json"
 }
 
 @test "generate-checksums handles cyclonedx container SBOMs" {
   mkdir -p sbom-artifacts
-  echo "cdx" > "sbom-artifacts/app-container-sbom.cyclonedx.json"
+  echo "cdx" > "sbom-artifacts/app-analyzed-container-sbom.cyclonedx.json"
 
   run_generate_checksums
 
   assert_success
   run cat checksums.sha256
-  assert_output --partial "app-container-sbom.cyclonedx.json"
+  assert_output --partial "app-analyzed-container-sbom.cyclonedx.json"
 }
 
 # =============================================================================
@@ -229,13 +229,13 @@ get_sha256() {
 }
 
 @test "generate-checksums includes jar SBOM files" {
-  echo "jar sbom" > "mylib-jar-sbom.spdx.json"
+  echo "jar sbom" > "mylib-analyzed-jar-sbom.spdx.json"
 
   run_generate_checksums
 
   assert_success
   run cat checksums.sha256
-  assert_output --partial "mylib-jar-sbom.spdx.json"
+  assert_output --partial "mylib-analyzed-jar-sbom.spdx.json"
 }
 
 @test "generate-checksums includes gradle SBOM files" {

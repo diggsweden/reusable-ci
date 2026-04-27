@@ -242,9 +242,11 @@ bash generate-sboms.sh [PROJECT_TYPE] [LAYERS] [VERSION] [PROJECT_NAME] [WORKING
 | Layer | Parameter | Maven | NPM | Gradle |
 |-------|-----------|-------|-----|--------|
 | Source | `source` | `*-pom-sbom.*` | `*-package-sbom.*` | `*-gradle-sbom.*` |
-| Build | `build` | `*-build-sbom.cyclonedx.json` | - | - |
-| Analyzed Artifact | `analyzed-artifact` | `*-jar-sbom.*` | `*-tararchive-sbom.*` | `*-jar-sbom.*` |
-| Analyzed Container | `analyzed-container` | `*-container-sbom.*` | `*-container-sbom.*` | `*-container-sbom.*` |
+| Build | `build` | `*-<sha>-build-sbom.cyclonedx.json` | - | - |
+| Analyzed Artifact | `analyzed-artifact` | `*-<sha>-analyzed-jar-sbom.*` | `*-<sha>-analyzed-tararchive-sbom.*` | `*-<sha>-analyzed-jar-sbom.*` |
+| Analyzed Container | `analyzed-container` | `*-<sha>-analyzed-container-sbom.*` | `*-<sha>-analyzed-container-sbom.*` | `*-<sha>-analyzed-container-sbom.*` |
+
+The `<sha>` is the short commit SHA injected for traceability when running inside a git repo. For Rust/Go the analyzed type is `analyzed-binary`; for Python it is `analyzed-wheel`.
 
 ---
 

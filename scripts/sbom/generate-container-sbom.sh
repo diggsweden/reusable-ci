@@ -20,7 +20,7 @@
 #   generate-container-sbom.sh "maven" "1.0.0" "my-app" "ghcr.io/org/app@sha256:..." "./scripts/sbom"
 #   generate-container-sbom.sh "" "1.0.0" "my-app" "ghcr.io/org/app@sha256:..." "./scripts/sbom"
 #
-# Output: SBOM files in current directory matching pattern: *-container-sbom.{spdx,cyclonedx}.json
+# Output: SBOM files in current directory matching pattern: *-analyzed-container-sbom.{spdx,cyclonedx}.json
 
 set -euo pipefail
 

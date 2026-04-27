@@ -217,19 +217,24 @@ Every release includes up to **four layers** of SBOMs, each in **two formats** (
 
 ### SBOM Naming Convention
 
-SBOMs follow a consistent, versioned naming scheme with explicit `-sbom` suffix:
+SBOMs follow a consistent, CISA-aligned naming scheme. The short commit SHA is injected for traceability when run inside a git repo:
 
 ```text
-{jar-filename}-jar-sbom.{format}.json
+<project>-<version>-<short-sha>-build-sbom.cyclonedx.json
+<artefact-basename>-<short-sha>-analyzed-<artifact-type>-sbom.{spdx,cyclonedx}.json
+<project>-<version>-<short-sha>-analyzed-container-sbom.{spdx,cyclonedx}.json
 
 Examples:
-- PROJECT-VERSION-pom-sbom.spdx.json
-- PROJECT-VERSION-pom-sbom.cyclonedx.json
-- PROJECT-VERSION-jar-sbom.spdx.json        (library JAR)
-- PROJECT-jar-sbom.spdx.json              (fat/executable JAR)
-- PROJECT-VERSION-container-sbom.spdx.json
-- PROJECT-VERSION-container-sbom.cyclonedx.json
+- PROJECT-VERSION-abc1234-build-sbom.cyclonedx.json
+- PROJECT-VERSION-abc1234-analyzed-jar-sbom.spdx.json        (library/fat JAR)
+- PROJECT-VERSION-abc1234-analyzed-tararchive-sbom.spdx.json (npm tarball)
+- PROJECT-VERSION-abc1234-analyzed-binary-sbom.spdx.json     (Rust/Go binary)
+- PROJECT-VERSION-abc1234-analyzed-wheel-sbom.spdx.json      (Python wheel)
+- PROJECT-VERSION-abc1234-analyzed-container-sbom.spdx.json
+- PROJECT-VERSION-abc1234-analyzed-container-sbom.cyclonedx.json
 ```
+
+`<artefact-basename>` is the basename of the scanned file (so multi-JAR projects get unique SBOMs per jar). The `build` layer uses `<project>-<version>` since one Build SBOM is produced per project, not per output file. The `analyzed-container` layer omits the artifact-type modifier (container is its own type).
 
 **Multiple JAR Artifacts:**
 
@@ -319,23 +324,20 @@ SBOMs are generated with **Syft** and scanned with **Trivy** (the same tools use
 Trivy scans SBOMs for vulnerabilities and is used by the CI/CD workflows.
 
 ```bash
-# Scan POM layer (declared dependencies)
-trivy sbom PROJECT-VERSION-pom-sbom.spdx.json
+# Scan Build layer (declared dependencies)
+trivy sbom PROJECT-VERSION-abc1234-build-sbom.cyclonedx.json
 
-# Scan JAR layer - library JAR (application code only)
-trivy sbom PROJECT-VERSION-jar-sbom.spdx.json
+# Scan analyzed-artifact layer - JAR (library or fat)
+trivy sbom PROJECT-VERSION-abc1234-analyzed-jar-sbom.spdx.json
 
-# Scan JAR layer - fat JAR (all embedded dependencies)
-trivy sbom PROJECT-jar-sbom.cyclonedx.json
-
-# Scan container layer (runtime environment)
-trivy sbom PROJECT-VERSION-container-sbom.spdx.json
+# Scan analyzed-container layer (runtime environment)
+trivy sbom PROJECT-VERSION-abc1234-analyzed-container-sbom.spdx.json
 
 # Scan with severity filtering
-trivy sbom --severity HIGH,CRITICAL PROJECT-VERSION-container-sbom.spdx.json
+trivy sbom --severity HIGH,CRITICAL PROJECT-VERSION-abc1234-analyzed-container-sbom.spdx.json
 
 # Output as JSON for processing
-trivy sbom -f json -o vulnerabilities.json PROJECT-VERSION-jar-sbom.spdx.json
+trivy sbom -f json -o vulnerabilities.json PROJECT-VERSION-abc1234-analyzed-jar-sbom.spdx.json
 ```
 
 #### License Compliance Analysis
@@ -355,7 +357,7 @@ Syft generates SBOMs and can display dependency information.
 
 ```bash
 # Generate dependency tree from SBOM
-syft packages PROJECT-VERSION-jar-sbom.spdx.json -o table
+syft packages PROJECT-VERSION-abc1234-analyzed-jar-sbom.spdx.json -o table
 
 # Export to dependency graph format
 syft packages PROJECT-VERSION-pom-sbom.cyclonedx.json -o json | \

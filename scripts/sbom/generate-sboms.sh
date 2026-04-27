@@ -43,6 +43,19 @@ log_error() {
   printf "   ❌ %s\n" "$1" >&2
 }
 
+# Construct the basename used by analyzed-* SBOM filenames. Injects a short
+# commit SHA for traceability when run inside a git repo; otherwise falls
+# back to a SHA-less form so test fixtures without git work the same.
+_analyzed_basename() {
+  local file_basename="$1" layer_type="$2"
+  local sha
+  if sha=$(git rev-parse --short HEAD 2>/dev/null); then
+    printf "%s-%s-%s" "$file_basename" "$sha" "$layer_type"
+  else
+    printf "%s-%s" "$file_basename" "$layer_type"
+  fi
+}
+
 #
 # SBOM generation core
 #
@@ -203,7 +216,7 @@ scan_artifacts() {
       log_info "Scanning: $artifact"
       local basename
       basename=$(basename "$artifact" ".$ext")
-      generate_dual_sboms "$artifact" "$name" "$version" "$layer_type" "${basename}-${layer_type}"
+      generate_dual_sboms "$artifact" "$name" "$version" "$layer_type" "$(_analyzed_basename "$basename" "$layer_type")"
     done
     return 0
   fi
@@ -226,7 +239,7 @@ generate_artifact_layer_maven() {
 
   [[ ${#artifacts[@]} -eq 0 ]] && collect_artifacts artifacts find_artifacts "target" \( "${jar_patterns[@]}" \) "${jar_excludes[@]}"
 
-  scan_artifacts "$name" "$version" "jar" "jar" "${artifacts[@]}" || log_warning "No JAR files found"
+  scan_artifacts "$name" "$version" "analyzed-jar" "jar" "${artifacts[@]}" || log_warning "No JAR files found"
 }
 
 generate_artifact_layer_npm() {
@@ -236,7 +249,7 @@ generate_artifact_layer_npm() {
   collect_artifacts artifacts find_artifacts "./release-artifacts" -name "*.tgz"
   [[ ${#artifacts[@]} -eq 0 ]] && collect_artifacts artifacts find_artifacts "." -name "*.tgz"
 
-  scan_artifacts "$name" "$version" "tararchive" "tgz" "${artifacts[@]}" || log_warning "No NPM tarball found"
+  scan_artifacts "$name" "$version" "analyzed-tararchive" "tgz" "${artifacts[@]}" || log_warning "No NPM tarball found"
 }
 
 generate_artifact_layer_gradle() {
@@ -250,7 +263,7 @@ generate_artifact_layer_gradle() {
 
   collect_artifacts artifacts find_artifacts "build/libs" -name "${name}-*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar"
 
-  scan_artifacts "$name" "$version" "jar" "jar" "${artifacts[@]}" || log_warning "No JAR files found"
+  scan_artifacts "$name" "$version" "analyzed-jar" "jar" "${artifacts[@]}" || log_warning "No JAR files found"
 }
 
 generate_artifact_layer_go() {
@@ -260,7 +273,7 @@ generate_artifact_layer_go() {
   collect_artifacts artifacts find_artifacts "./release-artifacts" -executable
   [[ ${#artifacts[@]} -eq 0 ]] && collect_artifacts artifacts find_artifacts "." -name "$name"
 
-  if ! scan_artifacts "$name" "$version" "binary" "" "${artifacts[@]}"; then
+  if ! scan_artifacts "$name" "$version" "analyzed-binary" "" "${artifacts[@]}"; then
     log_warning "No Go binary found"
     log_info "Note: Source layer SBOM from go.mod is usually sufficient"
   fi
@@ -273,7 +286,7 @@ generate_artifact_layer_rust() {
   collect_artifacts artifacts find_artifacts "./release-artifacts" -executable
   [[ ${#artifacts[@]} -eq 0 ]] && collect_artifacts artifacts find_artifacts "target/release" -executable ! -name "*.d"
 
-  if ! scan_artifacts "$name" "$version" "binary" "" "${artifacts[@]}"; then
+  if ! scan_artifacts "$name" "$version" "analyzed-binary" "" "${artifacts[@]}"; then
     log_warning "No Rust binary found"
     log_info "Note: Source layer SBOM from Cargo.toml is usually sufficient"
   fi
@@ -293,7 +306,7 @@ generate_artifact_layer_python() {
       pkg_basename=$(basename "$artifact")
       pkg_basename="${pkg_basename%.whl}"
       pkg_basename="${pkg_basename%.tar.gz}"
-      generate_dual_sboms "$artifact" "$name" "$version" "wheel" "${pkg_basename}-wheel"
+      generate_dual_sboms "$artifact" "$name" "$version" "analyzed-wheel" "$(_analyzed_basename "$pkg_basename" "analyzed-wheel")"
     done
   else
     log_warning "No Python wheel/sdist found"
@@ -469,7 +482,7 @@ generate_container_layer() {
   fi
 
   log_info "Scanning container: $CONTAINER_IMAGE"
-  generate_dual_sboms "$CONTAINER_IMAGE" "$name" "$version" "container" "${name}-${version}-container"
+  generate_dual_sboms "$CONTAINER_IMAGE" "$name" "$version" "analyzed-container" "$(_analyzed_basename "${name}-${version}" "analyzed-container")"
   printf "\n"
 }
 
