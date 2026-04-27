@@ -5,105 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — v2.8.0 (SBOM surface enhancements)
-
-Default orchestrator-only consumers see no behaviour change. The SBOM surface
-gains a CISA-aligned per-artefact enum, container scanning is now derived from
-source-artefact configuration, and the SBOM generator script picks up a
-flag-based CLI. Removed/renamed fields below only matter for consumers that set
-SBOM options explicitly (none have, in practice — defaults preserve the prior
-contract end-to-end).
+## [2.8.0] - 2026-04-27
 
 ### Added
 
-- `artifacts.yml` per-artefact `sboms: enum` field — `all` (default for
-  buildable types), `none`, `build`, `analyzed-artifact`, `analyzed-container`,
-  or a comma-list. CISA-aligned naming.
-- `release-orchestrator.yml` input `release.sboms` — pipeline-level cap on
-  which SBOM types are produced. Defaults to `all`. The release-dev and
-  release-create-github orchestrators expose the flat `sboms` form to match
-  their own input conventions.
-- `scripts/config/expand-sboms.sh` helper. Validates and expands the `sboms`
-  enum to a JSON array (`--format json`, default) or comma-list
-  (`--format comma`). Supports `--exclude <layer>`.
-- Flag-based CLI on `generate-sboms.sh` — `--project-type`, `--layers`,
-  `--version`, `--name`, `--working-dir`, `--container-image`, `--create-zip`,
-  `--help`. Replaces the previous 7 positional args.
-- Per-stack build-time SBOM enforcement: setting `sboms: none` (or any value
-  excluding `build`) really skips the cyclonedx plugin step in that artefact's
-  builder. Useful for monorepos with toy/internal artefacts.
-- Empty-intersection misconfiguration is now surfaced in the GitHub step
-  summary (in addition to the `::warning::` annotation). Catches "release cap
-  excludes everything the artefacts wanted."
+- Add sboms enum, per-stack build-time
+- Add Build SBOM per-stack and document CISA taxonomy
 
 ### Changed
 
-- Container SBOM scanning is now **derived** from each source artefact's
-  `sboms` — the container is scanned if any source includes
-  `analyzed-container` in its effective sboms. Single source of truth.
-- Per-stack builders skip the cyclonedx plugin step entirely when `build` is
-  not in the artefact's effective sboms (was: always ran with
-  `continue-on-error: true`). Saves CI time on monorepos with `sboms: none`
-  artefacts.
-- Source layer dropped from the user-facing surface: `sboms` no longer accepts
-  `source`. Build SBOM is strictly richer for ecosystems that support it;
-  analyzed-artifact covers the rest. The layer code remains internal but no
-  orchestrator passes it.
-
-### Removed
-
-- `artifacts.yml` per-artefact `generate-sbom: bool` field. Silently ignored
-  if still present.
-- `artifacts.yml` per-container `enable-sbom: bool` field. Silently ignored
-  if still present.
-- `release-orchestrator.yml` input `release.generatesbom`. Replaced by
-  `release.sboms`.
-
-### Renamed
-
-- SBOM generator script: `generate-sbom.sh` → `generate-sboms.sh`.
-- Job: `generate-dev-sbom` → `generate-dev-sboms`.
-- Container SBOM artefact: `container-sbom-<run-id>` →
-  `analyzed-container-sbom-<run-id>`.
-- SBOM filenames inside the release zip — unified to
-  `<artefact>-<version>-<sha>-<cisa-type>-sbom.<fmt>.json`. Specifically:
-  `*-jar-sbom.*` → `*-analyzed-jar-sbom.*`,
-  `*-tararchive-sbom.*` → `*-analyzed-tararchive-sbom.*`,
-  `*-container-sbom.*` → `*-analyzed-container-sbom.*`,
-  `*-binary-sbom.*` (Rust/Go) → `*-analyzed-binary-sbom.*`,
-  `*-wheel-sbom.*` (Python) → `*-analyzed-wheel-sbom.*`. Short commit SHA
-  is now injected for traceability across all SBOM filenames (was only on
-  build SBOM previously). Build SBOM filename is unchanged.
-- `publish-container.yml` input: `enable-sbom` → `enable-analyzed-container-sbom`
-  (matches the CISA layer name and the existing `enable-X` family).
-- Helper function: `_find_shallowest_bom` → `_find_build_bom`.
-- Plan output: `should-generate-sbom` → `effective-sboms` (string carrying
-  the layer list, not a bool).
-- Parse output: `needs-sbom` → `pipeline-sboms` (string, the union across
-  artefacts).
+- Correct cisa naming for all artefacts
+- Minor  polish docs rewrite, tooling
+- Derive container scan from artefact sboms
+- Separate JVM and Android build paths
+- Make Build SBOM a first-class compliance artefact
 
 ### Fixed
 
-- `ci/output.sh` no longer reassigns `SCRIPT_DIR` at source-time, removing
-  a footgun for any script that sources it and uses its own `SCRIPT_DIR`.
-- `_find_build_bom` (formerly `_find_shallowest_bom`) now uses deterministic
-  tie-break (`sort -k1,1n -k2,2`) when multiple BOMs share a depth.
-- `release-dev` publish-stage summary now surfaces `generate-dev-sboms` job
-  status.
-
-### Migration (only if you set SBOM options explicitly)
-
-| If you had…                                                | Change to                                                         |
-|------------------------------------------------------------|-------------------------------------------------------------------|
-| `artifacts.yml` artefact `generate-sbom: true`             | `sboms: all` (or omit — `all` is the default for buildable types) |
-| `artifacts.yml` artefact `generate-sbom: false`            | `sboms: none`                                                     |
-| `artifacts.yml` container `enable-sbom: true`              | Delete the line (default behaviour unchanged)                     |
-| `release-orchestrator.yml` caller using `release.generatesbom: true`  | `release.sboms: all` (or omit)                          |
-| `release-orchestrator.yml` caller using `release.generatesbom: false` | `release.sboms: none`                                   |
-| Direct caller of `publish-container.yml` with `enable-sbom: true`     | `enable-analyzed-container-sbom: true`                  |
-| Workflow downloading `container-sbom-<run-id>`             | Download `analyzed-container-sbom-<run-id>`                       |
-| Workflow depending on plan output `should-generate-sbom` (bool)       | Use `effective-sboms` (string) — non-empty means generate         |
-| Workflow depending on parse output `needs-sbom` (bool)     | Use `pipeline-sboms` (string) — non-empty means generate          |
+- Restore default android releasedev params
+- Migrate generate-sboms.bats to direct flag CLI
+- Surface generate-dev-sbom in publish-stage summary
 
 ## [2.7.9] - 2026-04-14
 
@@ -111,6 +32,7 @@ contract end-to-end).
 
 - Bump gommitlint
 - Split SARIF upload into its own job
+
 
 ## [2.7.8] - 2026-04-14
 
@@ -528,6 +450,7 @@ contract end-to-end).
 
 - Initial commit
 
+[2.8.0]: https://github.com/diggsweden/reusable-ci/compare/v2.7.9..v2.8.0
 [2.7.9]: https://github.com/diggsweden/reusable-ci/compare/v2.7.8..v2.7.9
 [2.7.8]: https://github.com/diggsweden/reusable-ci/compare/v2.7.7..v2.7.8
 [2.7.7]: https://github.com/diggsweden/reusable-ci/compare/v2.7.6..v2.7.7
