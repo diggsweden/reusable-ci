@@ -15,10 +15,16 @@ on:
       xcodeios-artifacts:
         required: true
         type: string
-      githubpackages-artifacts:
+      githubpackages-maven-artifacts:
         required: true
         type: string
-      mavencentral-artifacts:
+      githubpackages-gradle-artifacts:
+        required: true
+        type: string
+      mavencentral-maven-artifacts:
+        required: true
+        type: string
+      mavencentral-gradle-artifacts:
         required: true
         type: string
       googleplay-artifacts:
@@ -46,11 +52,11 @@ jobs:
   # Cross-cutting publish jobs depend on the build stage as a whole.
   # Platform-specific store publishing still checks the relevant build-stage result.
   publish-maven-github:
-    name: Publish GitHub - ${{ matrix.artifact.name }}
-    if: ${{ inputs.githubpackages-artifacts != '[]' && fromJson(inputs['build-result-json']).result == 'success' }}
+    name: Publish GitHub (Maven/NPM) - ${{ matrix.artifact.name }}
+    if: ${{ inputs.githubpackages-maven-artifacts != '[]' && fromJson(inputs['build-result-json']).result == 'success' }}
     strategy:
       matrix:
-        artifact: ${{ fromJson(inputs.githubpackages-artifacts) }}
+        artifact: ${{ fromJson(inputs.githubpackages-maven-artifacts) }}
       fail-fast: false
     permissions:
       contents: write
@@ -64,12 +70,31 @@ jobs:
       java-version: ${{ matrix.artifact.config['java-version'] }}
       node-version: ${{ matrix.artifact.config['node-version'] }}
       attach-pattern: ${{ matrix.artifact.config['attach-pattern'] }}
-  publish-maven-central:
-    name: Publish Maven Central - ${{ matrix.artifact.name }}
-    if: ${{ inputs.mavencentral-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.maven == 'success' }}
+  publish-gradle-github:
+    name: Publish GitHub (Gradle) - ${{ matrix.artifact.name }}
+    if: ${{ inputs.githubpackages-gradle-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.gradle == 'success' }}
     strategy:
       matrix:
-        artifact: ${{ fromJson(inputs.mavencentral-artifacts) }}
+        artifact: ${{ fromJson(inputs.githubpackages-gradle-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit
+    uses: ./.github/workflows/publish-gradle.yml
+    with:
+      target: github-packages
+      branch: ${{ inputs.branch }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      java-version: ${{ matrix.artifact.config['java-version'] }}
+      setup-android: ${{ matrix.artifact.config['setup-android'] || false }}
+      publish-tasks: ${{ matrix.artifact.config['publish-tasks'] || 'publish' }}
+  publish-maven-central:
+    name: Publish Maven Central - ${{ matrix.artifact.name }}
+    if: ${{ inputs.mavencentral-maven-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.maven == 'success' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.mavencentral-maven-artifacts) }}
       fail-fast: false
     permissions:
       contents: write
@@ -83,6 +108,25 @@ jobs:
       java-version: ${{ matrix.artifact.config['java-version'] }}
       settings-path: ${{ matrix.artifact.config['settings-path'] }}
       profile: ${{ matrix.artifact.config['profile'] || 'central-release' }}
+  publish-gradle-mavencentral:
+    name: Publish Maven Central (Gradle) - ${{ matrix.artifact.name }}
+    if: ${{ inputs.mavencentral-gradle-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.gradle == 'success' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.mavencentral-gradle-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit
+    uses: ./.github/workflows/publish-gradle.yml
+    with:
+      target: maven-central
+      branch: ${{ inputs.branch }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      java-version: ${{ matrix.artifact.config['java-version'] }}
+      setup-android: ${{ matrix.artifact.config['setup-android'] || false }}
+      publish-tasks: ${{ matrix.artifact.config['publish-tasks'] || 'publish' }}
   publish-apple-appstore:
     name: Publish Apple App Store - ${{ matrix.artifact.name }}
     if: ${{ inputs.xcodeios-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.xcodeios == 'success' }}
@@ -166,7 +210,7 @@ jobs:
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   summarize-publish-stage:
     name: Summarize Publish Stage
-    needs: [publish-maven-github, publish-maven-central, publish-apple-appstore, publish-google-play, build-containers]
+    needs: [publish-maven-github, publish-gradle-github, publish-maven-central, publish-gradle-mavencentral, publish-apple-appstore, publish-google-play, build-containers]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -186,13 +230,17 @@ jobs:
       - name: Normalize publish stage result
         id: summary
         env:
-          GITHUBPACKAGES_ARTIFACTS: ${{ inputs.githubpackages-artifacts }}
-          MAVENCENTRAL_ARTIFACTS: ${{ inputs.mavencentral-artifacts }}
+          GITHUBPACKAGES_MAVEN_ARTIFACTS: ${{ inputs.githubpackages-maven-artifacts }}
+          GITHUBPACKAGES_GRADLE_ARTIFACTS: ${{ inputs.githubpackages-gradle-artifacts }}
+          MAVENCENTRAL_MAVEN_ARTIFACTS: ${{ inputs.mavencentral-maven-artifacts }}
+          MAVENCENTRAL_GRADLE_ARTIFACTS: ${{ inputs.mavencentral-gradle-artifacts }}
           XCODEIOS_ARTIFACTS: ${{ inputs.xcodeios-artifacts }}
           GOOGLEPLAY_ARTIFACTS: ${{ inputs.googleplay-artifacts }}
           CONTAINERS: ${{ inputs.containers }}
           PUBLISH_MAVEN_REGISTRY_RESULT: ${{ needs.publish-maven-github.result }}
+          PUBLISH_GRADLE_GITHUB_RESULT: ${{ needs.publish-gradle-github.result }}
           PUBLISH_MAVEN_CENTRAL_RESULT: ${{ needs.publish-maven-central.result }}
+          PUBLISH_GRADLE_CENTRAL_RESULT: ${{ needs.publish-gradle-mavencentral.result }}
           PUBLISH_APPLE_APPSTORE_RESULT: ${{ needs.publish-apple-appstore.result }}
           PUBLISH_GOOGLE_PLAY_RESULT: ${{ needs.publish-google-play.result }}
           BUILD_CONTAINERS_RESULT: ${{ needs.build-containers.result }}

@@ -144,8 +144,19 @@ validate_maven_publish() {
     warn "Maven applications should not be published to GitHub Packages (use only for libraries). Skipping for: $maven_apps_to_github"
 }
 
+filter_by_project_type() {
+  local artifacts="$1" project_type="$2"
+  printf "%s" "$artifacts" | jq -c "[.[] | select(.\"project-type\" == \"${project_type}\")]"
+}
+
+output_sublist() {
+  local prefix="$1" type_name="$2" artifacts="$3"
+  output_multiline "${prefix}-${type_name}-artifacts" "$artifacts"
+}
+
 output_artifacts_by_publish_target() {
   local target filtered count target_name
+  local gp_filtered='[]' mc_filtered='[]'
 
   for target in $PUBLISH_TARGETS; do
     if [[ "$target" = "github-packages" ]]; then
@@ -156,10 +167,14 @@ output_artifacts_by_publish_target() {
           .["project-type"] != "maven" or .["build-type"] != "application"
         )]
       ')
+      gp_filtered="$filtered"
     else
       filtered=$(printf "%s" "$ARTIFACTS" | jq -c '
         [.[] | select((.["publish-to"] // []) | contains(["'"${target}"'"]))]
       ')
+      if [[ "$target" = "maven-central" ]]; then
+        mc_filtered="$filtered"
+      fi
     fi
 
     count=$(printf "%s" "$filtered" | jq 'length')
@@ -173,6 +188,18 @@ output_artifacts_by_publish_target() {
       output "has-${target_name}=false"
     fi
   done
+
+  # Sublists by project type for routing to the correct publish workflow.
+  # Uses pre-computed filtered lists from above rather than re-querying ARTIFACTS.
+  local gp_maven gp_gradle
+  gp_maven=$(printf "%s" "$gp_filtered" | jq -c '[.[] | select(.["project-type"] == "maven" or .["project-type"] == "npm")]')
+  gp_gradle=$(filter_by_project_type "$gp_filtered" "gradle")
+
+  output_sublist "githubpackages" "maven" "$gp_maven"
+  output_sublist "githubpackages" "gradle" "$gp_gradle"
+
+  output_sublist "mavencentral" "maven" "$(filter_by_project_type "$mc_filtered" "maven")"
+  output_sublist "mavencentral" "gradle" "$(filter_by_project_type "$mc_filtered" "gradle")"
 }
 
 output_first_artifact_info() {

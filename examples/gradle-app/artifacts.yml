@@ -7,7 +7,7 @@
 # `project-type: gradle-android` and routes to build-gradle-android.yml,
 # which understands product flavors, AABs, and Google Play publishing.
 artifacts:
-  - name: my-gradle-lib
+  - name: my-gradle-app
     project-type: gradle
     working-directory: .
     build-type: library
@@ -16,3 +16,25 @@ artifacts:
     config:
       java-version: 25
       gradle-tasks: build publish
+      gradle-version-file: gradle.properties
+
+# Optional: Gradle Library with Maven Central publishing
+# artifacts:
+#   - name: my-gradle-lib
+#     project-type: gradle
+#     working-directory: .
+#     build-type: library
+#     publish-to:
+#       - github-packages
+#       - maven-central
+#     config:
+#       java-version: 25
+#       gradle-tasks: build
+#       publish-tasks: publish
+
+# Optional: Container build
+# containers:
+#   - name: my-app
+#     from: [my-gradle-app]
+#     container-file: Containerfile
+#     context: .

@@ -185,6 +185,23 @@ containers:
 - **Default:** `gradle.properties`
 - **Example:** `gradle-version-file: gradle.properties`
 
+#### `config.publish-tasks`
+
+- **Type:** `string`
+- **Description:** Gradle tasks for publishing to Maven Central or GitHub Packages
+- **Default:** `publish`
+- **Applies to:** Gradle libraries with `publish-to: [maven-central]` or `publish-to: [github-packages]`
+- **Example:** `publish-tasks: publishToMavenCentral closeAndReleaseSonatypeStagingRepository`
+- **Note:** The project's `build.gradle(.kts)` must configure the `maven-publish` and `signing` plugins
+
+#### `config.setup-android`
+
+- **Type:** `boolean`
+- **Description:** Whether to install the Android SDK before publishing
+- **Default:** `false`
+- **Applies to:** Gradle projects that require the Android SDK for publishing
+- **Example:** `setup-android: true`
+
 ---
 
 ### Configuration Fields (Xcode iOS/macOS)
@@ -472,9 +489,11 @@ The v2.x `enable-sbom: bool` field on the container block is removed in v3. Cont
 - **Requirements:**
   - `MAVENCENTRAL_USERNAME` secret
   - `MAVENCENTRAL_PASSWORD` secret
+  - `OSPO_BOT_GPG_PRIV` secret (GPG private key)
+  - `OSPO_BOT_GPG_PASS` secret (GPG passphrase)
   - `build-type: library` (required)
-- **Applies to:** Maven only
-- **Note:** Requires Sonatype account and approved groupId
+- **Applies to:** Maven and Gradle
+- **Note:** Requires Sonatype account and approved groupId. For Gradle projects, the `build.gradle(.kts)` must configure `maven-publish` and `signing` plugins.
 
 ### `npmjs`
 
@@ -568,6 +587,23 @@ artifacts:
     working-directory: frontend
     config:
       node-version: 24
+```
+
+### Gradle Library (Maven Central)
+
+```yaml
+artifacts:
+  - name: my-gradle-lib
+    project-type: gradle
+    working-directory: .
+    build-type: library
+    publish-to:
+      - github-packages
+      - maven-central
+    config:
+      java-version: 25
+      gradle-tasks: build
+      publish-tasks: publish
 ```
 
 ### Gradle Android App

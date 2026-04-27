@@ -10,7 +10,6 @@
 # Package Types Supported:
 #   - maven: Publishes to GitHub Maven registry (maven.pkg.github.com)
 #   - npm: Publishes to GitHub NPM registry (npm.pkg.github.com)
-#   - gradle: Publishes to GitHub Maven registry (maven.pkg.github.com)
 #
 # Inputs:
 #   - artifactSource: Name of workflow artifact containing built packages
@@ -32,7 +31,7 @@ on:
         required: true
         type: string
       package-type:
-        description: "Package type: maven, npm, or gradle"
+        description: "Package type: maven or npm"
         required: true
         type: string
       java-version:
@@ -88,7 +87,7 @@ jobs:
           find . -type f -name "*.tgz" -exec ls -lh {} \; || printf "No NPM tarball found\n"
       # Maven publishing
       - name: Set up JDK for Maven
-        if: ${{ inputs['package-type'] == 'maven' || inputs['package-type'] == 'gradle' }}
+        if: ${{ inputs['package-type'] == 'maven' }}
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           java-version: ${{ inputs['java-version'] }}
@@ -97,7 +96,7 @@ jobs:
           server-username: GITHUB_ACTOR
           server-password: GITHUB_TOKEN
       - name: Publish Maven/Gradle to GitHub Packages
-        if: ${{ inputs['package-type'] == 'maven' || inputs['package-type'] == 'gradle' }}
+        if: ${{ inputs['package-type'] == 'maven' }}
         working-directory: ${{ inputs['working-directory'] }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

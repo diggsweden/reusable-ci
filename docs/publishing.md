@@ -14,7 +14,7 @@ The reusable workflows support multiple publishing targets:
 
 | Target | Artifact Types | Authentication |
 |--------|---------------|----------------|
-| **Maven Central** | Maven libraries | Sonatype credentials |
+| **Maven Central** | Maven and Gradle libraries | Sonatype credentials |
 | **npmjs.org** | NPM packages | NPM token |
 | **Container Registries** | Container images | Token/credentials |
 | **Apple App Store** | iOS/macOS apps | App Store Connect API |
@@ -39,7 +39,7 @@ podman pull ghcr.io/diggsweden/repo-name:v1.0.0
 
 ---
 
-## Maven Central
+## Maven Central (Maven & Gradle)
 
 ### Maven Central Prerequisites
 
@@ -291,6 +291,48 @@ Then use snapshot version in your project:
 ```
 
 **Note:** Snapshots are development versions and may change frequently. Use `updatePolicy>always</updatePolicy>` to always check for latest snapshot.
+
+---
+
+## Maven Central (Gradle)
+
+Gradle projects can publish to Maven Central using Gradle's `maven-publish` and `signing` plugins.
+
+### Gradle Configuration
+
+```yaml
+# .github/artifacts.yml
+artifacts:
+  - name: my-gradle-lib
+    project-type: gradle
+    working-directory: .
+    build-type: library
+    publish-to:
+      - github-packages
+      - maven-central
+    config:
+      java-version: 25
+      gradle-tasks: build
+      publish-tasks: publish          # Optional: defaults to 'publish'
+```
+
+### Gradle Project Requirements
+
+Your `build.gradle(.kts)` must configure the `maven-publish` and `signing` plugins. The workflow provides credentials via `ORG_GRADLE_PROJECT_*` environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `mavenCentralUsername` | Sonatype OSSRH username |
+| `mavenCentralPassword` | Sonatype OSSRH password/token |
+| `signingKeyId` | GPG key ID |
+| `signingKey` | GPG private key |
+| `signingPassword` | GPG passphrase |
+| `githubToken` | GitHub token (GitHub Packages target) |
+| `githubActor` | GitHub actor (GitHub Packages target) |
+
+### Required Secrets
+
+Same as Maven projects — see [Maven Central Prerequisites](#maven-central-prerequisites).
 
 ---
 

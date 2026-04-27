@@ -209,6 +209,48 @@ run_parse_artifacts_config() {
   assert_output --partial "has-mavencentral=true"
 }
 
+@test "parse-artifacts-config.sh routes gradle maven-central to mavencentral-gradle-artifacts" {
+  cat > "$TEST_DIR/artifacts.yml" << 'EOF'
+artifacts:
+  - name: my-gradle-lib
+    project-type: gradle
+    build-type: library
+    working-directory: .
+    publish-to:
+      - maven-central
+containers: []
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  assert_output --partial "has-mavencentral=true"
+  assert_output --partial "mavencentral-gradle-artifacts"
+}
+
+@test "parse-artifacts-config.sh routes gradle github-packages to githubpackages-gradle-artifacts" {
+  cat > "$TEST_DIR/artifacts.yml" << 'EOF'
+artifacts:
+  - name: my-gradle-lib
+    project-type: gradle
+    build-type: library
+    working-directory: .
+    publish-to:
+      - github-packages
+containers: []
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  assert_output --partial "has-githubpackages=true"
+  assert_output --partial "githubpackages-gradle-artifacts"
+}
+
 # =============================================================================
 # NPM Config Tests
 # =============================================================================

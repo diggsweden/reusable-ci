@@ -180,8 +180,11 @@ jobs:
       has-rust: ${{ steps.parse.outputs.has-rust }}
 
       # Publish-target artifact groups and flags.
-      mavencentral-artifacts: ${{ steps.parse.outputs.mavencentral-artifacts }}
+      mavencentral-maven-artifacts: ${{ steps.parse.outputs.mavencentral-maven-artifacts }}
+      mavencentral-gradle-artifacts: ${{ steps.parse.outputs.mavencentral-gradle-artifacts }}
       githubpackages-artifacts: ${{ steps.parse.outputs.githubpackages-artifacts }}
+      githubpackages-maven-artifacts: ${{ steps.parse.outputs.githubpackages-maven-artifacts }}
+      githubpackages-gradle-artifacts: ${{ steps.parse.outputs.githubpackages-gradle-artifacts }}
       googleplay-artifacts: ${{ steps.parse.outputs.googleplay-artifacts }}
       has-mavencentral: ${{ steps.parse.outputs.has-mavencentral }}
       has-githubpackages: ${{ steps.parse.outputs.has-githubpackages }}
@@ -335,8 +338,10 @@ jobs:
       branch: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
       reusable-ci-ref: ${{ needs.parse-config.outputs.reusable-ci-ref }}
       xcodeios-artifacts: ${{ needs.parse-config.outputs.xcodeios-artifacts }}
-      githubpackages-artifacts: ${{ needs.parse-config.outputs.githubpackages-artifacts }}
-      mavencentral-artifacts: ${{ needs.parse-config.outputs.mavencentral-artifacts }}
+      githubpackages-maven-artifacts: ${{ needs.parse-config.outputs.githubpackages-maven-artifacts }}
+      githubpackages-gradle-artifacts: ${{ needs.parse-config.outputs.githubpackages-gradle-artifacts }}
+      mavencentral-maven-artifacts: ${{ needs.parse-config.outputs.mavencentral-maven-artifacts }}
+      mavencentral-gradle-artifacts: ${{ needs.parse-config.outputs.mavencentral-gradle-artifacts }}
       googleplay-artifacts: ${{ needs.parse-config.outputs.googleplay-artifacts }}
       containers: ${{ needs.parse-config.outputs.containers }}
       build-result-json: ${{ needs.execute-build-stage.outputs.result-json }}

@@ -1,0 +1,111 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# Gradle Publisher (GitHub Packages / Maven Central)
+#
+# Purpose: Publishes Gradle artifacts to GitHub Packages or Maven Central,
+# selected by the `target` input. Checks out the project source and runs
+# Gradle publish tasks with the appropriate credentials.
+#
+# Requirements:
+#   - Gradle project must use the `maven-publish` plugin
+#   - For Maven Central: build.gradle(.kts) must also configure `signing`
+#   - GPG signing credentials configured (Maven Central only)
+#
+# Required Secrets (GitHub Packages):
+#   GITHUB_TOKEN: Automatically provided by GitHub Actions
+#
+# Required Secrets (Maven Central):
+#   MAVENCENTRAL_USERNAME: Sonatype OSSRH username
+#   MAVENCENTRAL_PASSWORD: Sonatype OSSRH password or token
+#   OSPO_BOT_GPG_PRIV: GPG private key for signing
+#   OSPO_BOT_GPG_PASS: GPG key passphrase
+#
+# Required Permissions:
+#   contents: read   # Checkout code
+#   packages: write  # Publish to GitHub Packages
+#
+name: Publish Gradle
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: "Publish target: github-packages or maven-central"
+        required: true
+        type: string
+      java-version:
+        description: "Java version"
+        required: false
+        default: "25"
+        type: string
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      publish-tasks:
+        description: "Gradle publish tasks (e.g., publish, publishToMavenCentral)"
+        required: false
+        default: "publish"
+        type: string
+      setup-android:
+        description: "Set up Android SDK before publishing"
+        required: false
+        default: false
+        type: boolean
+      branch:
+        description: "Branch to checkout (default: main)"
+        required: false
+        default: "main"
+        type: string
+permissions:
+  contents: read
+jobs:
+  publish-gradle:
+    name: Publish Gradle (${{ inputs.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.branch }}
+      - name: Set up JDK
+        uses: actions/setup-java@f2beeb24e141e01a676f977032f5a29d81c9e27e # v5.1.0
+        with:
+          java-version: ${{ inputs['java-version'] }}
+          distribution: 'temurin'
+          cache: gradle
+      - name: Import GPG key
+        if: ${{ inputs.target == 'maven-central' }}
+        id: import-gpg
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
+        with:
+          gpg_private_key: ${{ secrets.OSPO_BOT_GPG_PRIV }}
+          passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
+      - name: Set up Android SDK
+        if: ${{ inputs.setup-android }}
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+      - name: Make gradlew executable
+        working-directory: ${{ inputs['working-directory'] }}
+        run: chmod +x ./gradlew
+      - name: Publish
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          ORG_GRADLE_PROJECT_githubToken: ${{ secrets.GITHUB_TOKEN }}
+          ORG_GRADLE_PROJECT_githubActor: ${{ github.actor }}
+          MAVEN_CENTRAL_USERNAME: ${{ inputs.target == 'maven-central' && secrets.MAVENCENTRAL_USERNAME || '' }}
+          MAVEN_CENTRAL_PASSWORD: ${{ inputs.target == 'maven-central' && secrets.MAVENCENTRAL_PASSWORD || '' }}
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ inputs.target == 'maven-central' && secrets.MAVENCENTRAL_USERNAME || '' }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ inputs.target == 'maven-central' && secrets.MAVENCENTRAL_PASSWORD || '' }}
+          ORG_GRADLE_PROJECT_signingKeyId: ${{ inputs.target == 'maven-central' && steps.import-gpg.outputs.keyid || '' }}
+          ORG_GRADLE_PROJECT_signingKey: ${{ inputs.target == 'maven-central' && secrets.OSPO_BOT_GPG_PRIV || '' }}
+          ORG_GRADLE_PROJECT_signingPassword: ${{ inputs.target == 'maven-central' && secrets.OSPO_BOT_GPG_PASS || '' }}
+        run: |
+          printf "Publishing to %s via Gradle...\n" "${{ inputs.target }}"
+          ./gradlew ${{ inputs['publish-tasks'] }} --no-daemon
