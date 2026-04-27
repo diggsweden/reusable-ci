@@ -244,7 +244,7 @@ jobs:
         run: bash "${{ github.workspace }}/.github-shared/scripts/sbom/build/gradle/generate-gradle-sbom.sh"
       - name: Upload Build SBOM
         if: ${{ hashFiles(format('{0}/**/build/reports/bom.json', inputs['working-directory'])) != '' }}
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # Variant-scoped name (from generate-artifact-names.sh) so matrix
           # dispatch in release-build-stage.yml doesn't collide when multiple
@@ -283,7 +283,7 @@ jobs:
         run: bash .github-shared/scripts/android/list-built-artifacts.sh
       - name: Upload Debug APK
         if: contains(inputs['build-types'], 'debug')
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.artifact-names.outputs.debug-name }}
           path: |
@@ -291,7 +291,7 @@ jobs:
           retention-days: 7
       - name: Upload Release APK
         if: contains(inputs['build-types'], 'release')
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.artifact-names.outputs.release-name }}
           path: |
@@ -299,7 +299,7 @@ jobs:
           retention-days: 7
       - name: Upload AAB
         if: ${{ inputs['include-aab'] && contains(inputs['build-types'], 'release') }}
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.artifact-names.outputs.aab-name }}
           path: |

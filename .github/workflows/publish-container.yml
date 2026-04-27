@@ -213,7 +213,7 @@ jobs:
           sparse-checkout: scripts
       - name: Download Maven artifacts
         if: &if_has_maven_artifacts ${{ contains(inputs['artifact-types'], 'maven') }}
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         continue-on-error: true
         with:
           name: maven-build-artifacts
@@ -223,7 +223,7 @@ jobs:
         run: bash .github-shared/scripts/container/validate-artifacts.sh maven target
       - name: Download NPM artifacts
         if: &if_has_npm_artifacts ${{ contains(inputs['artifact-types'], 'npm') }}
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         continue-on-error: true
         with:
           name: npm-build-artifacts
@@ -239,7 +239,7 @@ jobs:
         run: bash .github-shared/scripts/container/validate-artifacts.sh npm dist "$CONTAINER_CONTEXT/$CONTAINER_FILE"
       - name: Download Gradle artifacts
         if: &if_has_gradle_artifacts ${{ contains(inputs['artifact-types'], 'gradle') }}
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         continue-on-error: true
         with:
           name: ${{ inputs['gradle-artifact-name'] || 'gradle-build-artifacts' }}
@@ -354,7 +354,7 @@ jobs:
           touch "/tmp/digests/${digest#sha256:}"
       - name: Upload digest
         if: *if_push_image_slsa_ghcr
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: digests-${{ github.run_id }}-${{ github.run_attempt }}
           path: /tmp/digests/*
@@ -371,7 +371,7 @@ jobs:
           vuln-type: 'os,library'
       - name: Save container scan SARIF artifact
         if: *if_scan_enabled
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sarif-container-scan
           path: trivy-results.sarif
@@ -395,7 +395,7 @@ jobs:
         run: bash .github-shared/scripts/sbom/generate-container-sbom-artifacts.sh
       - name: Upload Analyzed-Container SBOMs
         if: *if_sbom_enabled
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: analyzed-container-sbom-${{ github.run_id }}
           path: |
