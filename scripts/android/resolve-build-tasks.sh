@@ -14,18 +14,18 @@ main() {
     FLAVOR_CAPITALIZED="$(printf "%s" "${FLAVOR}" | awk '{print toupper(substr($0,1,1)) tolower(substr($0,2))}')"
   fi
 
-  local TASKS="build"
+  local TASKS=""
 
   if [[ "$BUILD_TYPES" == *"debug"* ]]; then
-    TASKS="${TASKS} assemble${FLAVOR_CAPITALIZED}Debug"
+    TASKS="assemble${FLAVOR_CAPITALIZED}Debug"
   fi
 
   if [[ "$BUILD_TYPES" == *"release"* ]]; then
-    TASKS="${TASKS} assemble${FLAVOR_CAPITALIZED}Release"
+    TASKS="${TASKS:+${TASKS} }assemble${FLAVOR_CAPITALIZED}Release"
   fi
 
   if [[ "$INCLUDE_AAB" == "true" ]] && [[ "$BUILD_TYPES" == *"release"* ]]; then
-    TASKS="${TASKS} ${BUILD_MODULE}:bundle${FLAVOR_CAPITALIZED}Release"
+    TASKS="${TASKS:+${TASKS} }${BUILD_MODULE}:bundle${FLAVOR_CAPITALIZED}Release"
   fi
 
   printf "tasks=%s\n" "${TASKS}"

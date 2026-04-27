@@ -174,9 +174,9 @@ containers:
 #### `config.gradle-tasks`
 
 - **Type:** `string`
-- **Description:** Gradle tasks to execute
-- **Default:** `build`
-- **Example:** `gradle-tasks: build assembleDemoRelease`
+- **Description:** Gradle tasks to execute. For `gradle` (JVM) the default is `assemble`. For `gradle-android` the default is derived from `product-flavor` + `build-types` + `include-aab` — set this only to override that derivation with an explicit task list.
+- **Default:** `assemble` (JVM); derived (Android)
+- **Example:** `gradle-tasks: assembleDemoRelease bundleDemoRelease`
 
 #### `config.gradle-version-file`
 
@@ -579,7 +579,7 @@ artifacts:
     working-directory: .
     config:
       java-version: 21
-      gradle-tasks: build assembleDemoRelease bundleDemoRelease
+      gradle-tasks: assembleDemoRelease bundleDemoRelease
       gradle-version-file: gradle.properties
 ```
 
@@ -595,7 +595,7 @@ artifacts:
       - google-play
     config:
       java-version: 21
-      gradle-tasks: build assembleDemoRelease bundleDemoRelease
+      gradle-tasks: assembleDemoRelease bundleDemoRelease
       build-module: app
       gradle-version-file: gradle.properties
       enable-android-signing: true

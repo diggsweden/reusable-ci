@@ -142,6 +142,8 @@ To skip the container scan: set the source artefact's `sboms` to exclude `analyz
 
 This replaces the v2.x `containers[].enable-sbom: bool` field, which is no longer recognized in v3 (silently ignored — hard cutover, no alias). See CHANGELOG for migration.
 
+> **Note — release-dev does not produce `analyzed-container` SBOMs.** The dev orchestrator generates only `build` and `analyzed-artifact` layers, even when called with `sboms: all`. `release-dev-publish-stage.yml` explicitly excludes `analyzed-container` before invoking `generate-sboms.sh`, and `publish-dev-container.yml` hardcodes `sbom: false` for the dev image. The intent is dev-flow speed: the `sboms` input on the dev orchestrator is a wiring smoke test, not full coverage. Could be revisited in the future if dev-time container SBOMs become useful (e.g. for staging-environment scanning).
+
 ### Source layer is internal
 
 CISA Source SBOMs exist in `generate-sboms.sh` but are not exposed in the user-facing `sboms` enum. Rationale:

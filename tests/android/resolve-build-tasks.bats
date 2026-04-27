@@ -47,14 +47,14 @@ run_resolve_build_tasks() {
   run_resolve_build_tasks "" "debug,release" "true" "app"
 
   assert_success
-  assert_output --partial "tasks=build assembleDebug assembleRelease app:bundleRelease"
+  assert_output --partial "tasks=assembleDebug assembleRelease app:bundleRelease"
 }
 
 @test "resolve-build-tasks generates tasks with flavor" {
   run_resolve_build_tasks "demo" "debug,release" "true" "app"
 
   assert_success
-  assert_output --partial "tasks=build assembleDemoDebug assembleDemoRelease app:bundleDemoRelease"
+  assert_output --partial "tasks=assembleDemoDebug assembleDemoRelease app:bundleDemoRelease"
 }
 
 @test "resolve-build-tasks capitalizes flavor correctly" {
@@ -103,7 +103,7 @@ run_resolve_build_tasks() {
   run_resolve_build_tasks "demo" "release" "true" "app"
 
   assert_success
-  assert_equal "$stderr" "Building with tasks: build assembleDemoRelease app:bundleDemoRelease"
+  assert_equal "$stderr" "Building with tasks: assembleDemoRelease app:bundleDemoRelease"
 }
 
 @test "resolve-build-tasks handles prod flavor" {

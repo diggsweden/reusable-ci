@@ -63,6 +63,11 @@ on:
         required: false
         default: true
         type: boolean
+      gradle-tasks:
+        description: "Override the derived gradle task list (e.g., 'assembleDemoRelease bundleDemoRelease'). When set, takes precedence over product-flavor/build-types/include-aab. Leave empty to derive tasks from those inputs."
+        required: false
+        default: ""
+        type: string
       # === ARTIFACT NAMING ===
       artifact-name-prefix:
         description: "Prefix for artifact names (e.g., testing_store, production)"
@@ -91,6 +96,11 @@ on:
         required: false
         default: "."
         type: string
+      branch:
+        description: "Branch to checkout"
+        required: false
+        default: "main"
+        type: string
       skip-tests:
         description: "Skip tests during build"
         required: false
@@ -106,6 +116,19 @@ on:
         required: false
         default: "main"
         type: string
+    outputs:
+      debug-name:
+        description: "Uploaded artefact name for the debug APK"
+        value: ${{ jobs.build-variants.outputs.debug-name }}
+      release-name:
+        description: "Uploaded artefact name for the release APK"
+        value: ${{ jobs.build-variants.outputs.release-name }}
+      aab-name:
+        description: "Uploaded artefact name for the release AAB"
+        value: ${{ jobs.build-variants.outputs.aab-name }}
+      sbom-name:
+        description: "Uploaded artefact name for the build SBOM"
+        value: ${{ jobs.build-variants.outputs.sbom-name }}
 permissions:
   contents: read
 jobs:
@@ -115,11 +138,20 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    outputs:
+      debug-name: ${{ steps.artifact-names.outputs.debug-name }}
+      release-name: ${{ steps.artifact-names.outputs.release-name }}
+      aab-name: ${{ steps.artifact-names.outputs.aab-name }}
+      sbom-name: ${{ steps.artifact-names.outputs.sbom-name }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 1
+          ref: ${{ inputs.branch }}
+          # Full history needed: many Android build.gradle.kts files read git
+          # history to derive versionCode (e.g. git rev-list --count origin/main).
+          # Matches build-gradle-app.yml.
+          fetch-depth: 0
       - name: Checkout .github repository for scripts
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -165,16 +197,33 @@ jobs:
       - name: Determine build tasks
         id: build-tasks
         env:
+          GRADLE_TASKS_OVERRIDE: ${{ inputs['gradle-tasks'] }}
           PRODUCT_FLAVOR: ${{ inputs['product-flavor'] }}
           BUILD_TYPES: ${{ inputs['build-types'] }}
           INCLUDE_AAB: ${{ inputs['include-aab'] }}
           BUILD_MODULE: ${{ inputs['build-module'] }}
         run: |
-          bash .github-shared/scripts/android/resolve-build-tasks.sh \
-            "$PRODUCT_FLAVOR" \
-            "$BUILD_TYPES" \
-            "$INCLUDE_AAB" \
-            "$BUILD_MODULE" >> "$GITHUB_OUTPUT"
+          if [[ -n "$GRADLE_TASKS_OVERRIDE" ]]; then
+            printf "tasks=%s\n" "$GRADLE_TASKS_OVERRIDE" >> "$GITHUB_OUTPUT"
+            printf "Building with explicit tasks: %s\n" "$GRADLE_TASKS_OVERRIDE"
+          else
+            bash .github-shared/scripts/android/resolve-build-tasks.sh \
+              "$PRODUCT_FLAVOR" \
+              "$BUILD_TYPES" \
+              "$INCLUDE_AAB" \
+              "$BUILD_MODULE" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Decode secrets properties
+        # Standard Android pattern: gradle scripts read secrets.properties for
+        # build-time secrets (API keys, signing config, etc.). Mirrors the
+        # pre-split build-gradle-app.yml step.
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          SECRETS_PROPERTIES: ${{ secrets.SECRETS_PROPERTIES_BASE64 }}
+        run: |
+          if [ -n "$SECRETS_PROPERTIES" ]; then
+            printf "%s" "$SECRETS_PROPERTIES" | base64 -d > secrets.properties
+          fi
       - name: Run Gradle build
         working-directory: ${{ inputs['working-directory'] }}
         env:

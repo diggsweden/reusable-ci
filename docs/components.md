@@ -101,7 +101,10 @@ with:
   enable-signing: true            # Enable Android signing
   artifact-name-prefix: ""        # Artifact name prefix
   include-date-stamp: true        # Include date in artifact names
+  # gradle-tasks: ""              # Optional: explicit task list, overrides product-flavor/build-types/include-aab
 ```
+
+**Task derivation.** By default the workflow derives gradle tasks from `product-flavor` + `build-types` + `include-aab` — e.g., `product-flavor: demo`, `build-types: release`, `include-aab: true` → `assembleDemoRelease app:bundleDemoRelease`. No surrounding `build` task is run by default; only the targeted variants/bundles. Set `gradle-tasks` to override the derived list verbatim — useful when you need custom task names or to add lint/test alongside.
 
 ### Publish Workflows
 
