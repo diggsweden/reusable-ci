@@ -23,7 +23,7 @@ get_pattern() {
   case "$project_type" in
   maven) printf "CHANGELOG.md :(glob)**/pom.xml" ;;
   npm) printf "CHANGELOG.md package.json package-lock.json" ;;
-  gradle | gradle-android) printf "CHANGELOG.md gradle.properties build.gradle.kts settings.gradle.kts build.gradle settings.gradle" ;;
+  gradle | gradle-android) printf "CHANGELOG.md gradle.properties build.gradle.kts settings.gradle.kts" ;;
   xcode-ios) printf "CHANGELOG.md versions.xcconfig :(glob)**/*.xcconfig" ;;
   python) printf "CHANGELOG.md pyproject.toml" ;;
   go) printf "CHANGELOG.md go.mod" ;;
