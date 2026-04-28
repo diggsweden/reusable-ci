@@ -17,6 +17,7 @@ artifacts:
       java-version: 25
       gradle-tasks: build publish
       gradle-version-file: gradle.properties
+      # setup-android: true  # Uncomment for Android library projects (produces .aar)
 
 # Optional: Gradle Library with Maven Central publishing
 # artifacts:

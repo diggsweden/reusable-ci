@@ -56,6 +56,11 @@ on:
         required: false
         default: ""
         type: string
+      setup-android:
+        description: "Set up Android SDK before building (required for Android library projects)"
+        required: false
+        default: false
+        type: boolean
       enable-build-sbom:
         description: "Run the cyclonedx plugin step (false skips Build SBOM generation entirely; derived from per-artefact 'sboms' when called from release-build-stage)"
         required: false
@@ -94,6 +99,9 @@ jobs:
           distribution: 'temurin'
           java-version: ${{ inputs['java-version'] }}
           cache: 'gradle'
+      - name: Set up Android SDK
+        if: ${{ inputs['setup-android'] }}
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
       - name: Make gradlew executable
         working-directory: ${{ inputs['working-directory'] }}
         run: chmod +x ./gradlew
@@ -141,7 +149,7 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           printf "Built artifacts:\n"
-          find . -type f -path '*/build/libs/*.jar' -ls 2>/dev/null || printf "No JAR files found\n"
+          find . -type f \( -path '*/build/libs/*.jar' -o -path '*/build/libs/*.aar' \) -ls 2>/dev/null || printf "No JAR/AAR files found\n"
       - name: Upload Gradle artifacts
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
@@ -151,7 +159,9 @@ jobs:
           # `<subproject>/build/libs/`. Both globs cover the common layouts.
           path: |
             ${{ inputs['working-directory'] }}/build/libs/*.jar
+            ${{ inputs['working-directory'] }}/build/libs/*.aar
             ${{ inputs['working-directory'] }}/**/build/libs/*.jar
+            ${{ inputs['working-directory'] }}/**/build/libs/*.aar
           retention-days: 7
           if-no-files-found: error
       # SBOM artifact is paired with the build artifact name so parallel

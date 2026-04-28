@@ -93,6 +93,7 @@ jobs:
       artifact-name: ${{ matrix.artifact.name }}
       java-version: ${{ matrix.artifact.config['java-version'] }}
       gradle-tasks: ${{ matrix.artifact.config['gradle-tasks'] }}
+      setup-android: ${{ matrix.artifact.config['setup-android'] == true }}
       enable-build-sbom: ${{ contains(matrix.artifact['effective-sboms'], 'build') }}
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   build-gradle-android:
