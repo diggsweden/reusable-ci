@@ -86,6 +86,22 @@ jobs:
         with:
           gpg_private_key: ${{ secrets.OSPO_BOT_GPG_PRIV }}
           passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
+      - name: Re-export signing key for Gradle
+        if: ${{ inputs.target == 'maven-central' }}
+        id: signing-key
+        env:
+          GPG_FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
+          GPG_PASSPHRASE: ${{ secrets.OSPO_BOT_GPG_PASS }}
+        run: |
+          # ghaction-import-gpg handles new OpenPGP packet formats transparently,
+          # but Gradle's useInMemoryPgpKeys goes through Bouncycastle which only
+          # understands RFC 4880. Re-exporting via system GPG normalises the format.
+          {
+            printf 'key<<EOF\n'
+            gpg --batch --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
+                --armor --export-secret-keys "$GPG_FINGERPRINT"
+            printf 'EOF\n'
+          } >> "$GITHUB_OUTPUT"
       - name: Set up Android SDK
         if: ${{ inputs.setup-android }}
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
@@ -104,7 +120,7 @@ jobs:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ inputs.target == 'maven-central' && secrets.MAVENCENTRAL_USERNAME || '' }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ inputs.target == 'maven-central' && secrets.MAVENCENTRAL_PASSWORD || '' }}
           ORG_GRADLE_PROJECT_signingKeyId: ${{ inputs.target == 'maven-central' && steps.import-gpg.outputs.keyid || '' }}
-          ORG_GRADLE_PROJECT_signingKey: ${{ inputs.target == 'maven-central' && secrets.OSPO_BOT_GPG_PRIV || '' }}
+          ORG_GRADLE_PROJECT_signingKey: ${{ inputs.target == 'maven-central' && steps.signing-key.outputs.key || '' }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ inputs.target == 'maven-central' && secrets.OSPO_BOT_GPG_PASS || '' }}
         run: |
           printf "Publishing to %s via Gradle...\n" "${{ inputs.target }}"
