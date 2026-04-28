@@ -149,19 +149,14 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           printf "Built artifacts:\n"
-          find . -type f \( -path '*/build/libs/*.jar' -o -path '*/build/libs/*.aar' \) -ls 2>/dev/null || printf "No JAR/AAR files found\n"
+          find . -type f \( -path '*/build/libs/*.jar' -o -path '*/build/outputs/aar/*.aar' \) -ls 2>/dev/null || printf "No JAR/AAR files found\n"
       - name: Upload Gradle artifacts
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: ${{ inputs['artifact-name'] || 'gradle-build-artifacts' }}
-          # Root and subproject JARs. Single-module projects put jars under
-          # `build/libs/`; multi-module projects put them under
-          # `<subproject>/build/libs/`. Both globs cover the common layouts.
           path: |
-            ${{ inputs['working-directory'] }}/build/libs/*.jar
-            ${{ inputs['working-directory'] }}/build/libs/*.aar
             ${{ inputs['working-directory'] }}/**/build/libs/*.jar
-            ${{ inputs['working-directory'] }}/**/build/libs/*.aar
+            ${{ inputs['working-directory'] }}/**/build/outputs/aar/*.aar
           retention-days: 7
           if-no-files-found: error
       # SBOM artifact is paired with the build artifact name so parallel
