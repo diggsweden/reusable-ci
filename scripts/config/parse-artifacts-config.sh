@@ -10,8 +10,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../ci/output.sh"
 source "$SCRIPT_DIR/../ci/env.sh"
 
-readonly VALID_PROJECT_TYPES="maven npm gradle gradle-android xcode-ios python go rust meta"
-readonly SBOM_SUPPORTED_TYPES="maven npm gradle gradle-android python go rust"
+readonly VALID_PROJECT_TYPES="maven npm gradle gradle-android xcode-ios python go cargo meta"
+readonly SBOM_SUPPORTED_TYPES="maven npm gradle gradle-android python go cargo"
 readonly PUBLISH_TARGETS="maven-central github-packages google-play"
 
 die() {
@@ -106,6 +106,16 @@ resolve_container_types() {
           [(.from // [])[] as $dep |
             ($artifacts[] | select(.name == $dep) | (.["effective-sboms"] // []) | index("analyzed-container"))]
           | any(. != null)
+        ),
+        # docker/build-push-action wants build-args as KEY=VALUE lines
+        # (multi-line string). artifacts.yml uses an object map for ergonomics;
+        # convert here so release-publish-stage can pass the string form
+        # straight through. Empty when no build-args declared.
+        "build-args-string": (
+          (."build-args" // {})
+          | to_entries
+          | map("\(.key)=\(.value)")
+          | join("\n")
         )
       }
     )

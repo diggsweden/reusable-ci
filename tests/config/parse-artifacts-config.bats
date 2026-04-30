@@ -474,6 +474,199 @@ EOF
   assert_output --partial '"enable-analyzed-container-sbom":false'
 }
 
+# =============================================================================
+# Container target / extract-binary / build-args fields
+# =============================================================================
+# These fields support container-first (compiled-native) artefact lifecycle:
+# the Containerfile is the build environment, optional `extract.binary`
+# pulls byproducts (the binary) out of the build as CI artefacts.
+
+@test "parse-artifacts-configpreserves container target field" {
+  cat >"$TEST_DIR/artifacts.yml" <<'EOF'
+artifacts:
+  - name: my-svc
+    project-type: cargo
+    working-directory: my-svc
+containers:
+  - name: my-svc
+    from: [my-svc]
+    container-file: my-svc/Containerfile
+    context: .
+    target: runtime
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  assert_output --partial '"target":"runtime"'
+}
+
+@test "parse-artifacts-configpreserves nested extract.binary fields" {
+  cat >"$TEST_DIR/artifacts.yml" <<'EOF'
+artifacts:
+  - name: hsm-worker
+    project-type: cargo
+    working-directory: hsm-worker
+containers:
+  - name: hsm-worker
+    from: [hsm-worker]
+    container-file: hsm-worker/Containerfile
+    context: .
+    target: runtime
+    extract:
+      binary:
+        target: export-binary
+        names: [hsm-worker, digg-hsm-keytool]
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  assert_output --partial '"target":"export-binary"'
+  assert_output --partial '"hsm-worker"'
+  assert_output --partial '"digg-hsm-keytool"'
+}
+
+@test "parse-artifacts-configpreserves container build-args object" {
+  cat >"$TEST_DIR/artifacts.yml" <<'EOF'
+artifacts:
+  - name: my-svc
+    project-type: cargo
+    working-directory: my-svc
+containers:
+  - name: my-svc
+    from: [my-svc]
+    container-file: Containerfile
+    context: .
+    build-args:
+      SERVICE: my-svc
+      RUST_VERSION: "1.94"
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  assert_output --partial '"build-args"'
+  assert_output --partial '"SERVICE":"my-svc"'
+  assert_output --partial '"RUST_VERSION":"1.94"'
+}
+
+@test "parse-artifacts-configemits build-args-string in KEY=VALUE form" {
+  # docker/build-push-action's build-args input expects KEY=VALUE lines
+  # (multi-line string). artifacts.yml uses object form for ergonomics;
+  # the parser converts it so release-publish-stage can thread the string
+  # straight through.
+  cat >"$TEST_DIR/artifacts.yml" <<'EOF'
+artifacts:
+  - name: my-svc
+    project-type: cargo
+    working-directory: my-svc
+containers:
+  - name: my-svc
+    from: [my-svc]
+    container-file: Containerfile
+    context: .
+    build-args:
+      SERVICE: my-svc
+      RUST_VERSION: "1.94"
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  # JSON-encoded multi-line string (\n is the literal sequence in the JSON).
+  assert_output --partial '"build-args-string":"SERVICE=my-svc\nRUST_VERSION=1.94"'
+}
+
+@test "parse-artifacts-configemits empty build-args-string when build-args absent" {
+  cat >"$TEST_DIR/artifacts.yml" <<'EOF'
+artifacts:
+  - name: api
+    project-type: maven
+    working-directory: .
+containers:
+  - name: api
+    from: [api]
+    container-file: Containerfile
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  assert_output --partial '"build-args-string":""'
+}
+
+@test "parse-artifacts-configcontainers without new fields still parse" {
+  # artefact-first callers (maven/npm/gradle) don't set target/extract/build-args.
+  # Existing config must continue to work unchanged.
+  cat >"$TEST_DIR/artifacts.yml" <<'EOF'
+artifacts:
+  - name: api
+    project-type: maven
+    working-directory: .
+containers:
+  - name: api
+    from: [api]
+    container-file: Containerfile
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  # The container is still emitted with its core fields and the derived
+  # artifact-types / enable-analyzed-container-sbom enrichments. New
+  # optional fields are simply absent, which matrix-side defaults handle.
+  assert_output --partial '"name":"api"'
+  assert_output --partial '"artifact-types":["maven"]'
+}
+
+@test "parse-artifacts-configcoexisting artefact-first and container-first containers" {
+  cat >"$TEST_DIR/artifacts.yml" <<'EOF'
+artifacts:
+  - name: api
+    project-type: maven
+    working-directory: api
+  - name: worker
+    project-type: cargo
+    working-directory: worker
+containers:
+  - name: api
+    from: [api]
+    container-file: api/Containerfile
+  - name: worker
+    from: [worker]
+    container-file: worker/Containerfile
+    context: .
+    target: runtime
+    extract:
+      binary:
+        target: export-binary
+        names: [worker]
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run cat "$GITHUB_OUTPUT"
+  assert_output --partial '"name":"api"'
+  assert_output --partial '"name":"worker"'
+  assert_output --partial '"target":"runtime"'
+  assert_output --partial '"target":"export-binary"'
+}
+
 @test "parse-artifacts-configeffective-sboms reflects build-only opt-in" {
   cat >"$TEST_DIR/artifacts.yml" <<'EOF'
 artifacts:
