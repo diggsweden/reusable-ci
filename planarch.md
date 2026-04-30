@@ -2,7 +2,7 @@
 
 Goal: replace QEMU emulation with `ubuntu-24.04` + `ubuntu-24.04-arm` runners that build natively, then merge into a multi-arch manifest.
 
-**Status:** Phase 1 shipped. Phase 2 + 3 pending.
+**Status:** Phase 1 + Phase 2 shipped. Phase 3 pending.
 
 ## Design decisions (locked in during Phase 1)
 
@@ -61,9 +61,27 @@ on workflow_call ─► build-arch (matrix: amd64, arm64-arm-runner) ─► merg
 
 ---
 
-## Phase 2 — `publish-container.yml` (upstream, bigger)
+## Phase 2 — `publish-container.yml` (DONE)
 
 **Why later:** SLSA + analyzed-container SBOM + Trivy + SARIF upload all need per-arch threading. Doing this after Phase 1 means we already trust the merge mechanics.
+
+**Shipped shape:** matrix-everywhere mirroring Phase 1, with per-arch attestation/SBOM/scan plumbing inside each `build-arch` leg:
+
+- `prep` resolves image-name, tags (via `docker/metadata-action`), labels, platforms-json. Runs validate-namespace early.
+- `build-arch` (matrix on platform): per-arch native runner. Builds by digest with `provenance: mode=max` (per-arch buildkit attestation auto-attaches). Then in the same job: per-arch Trivy scan (SARIF category `container-scan-${arch}`), per-arch syft SBOM (artefact name `analyzed-container-sbom-${run_id}-${arch}`), per-arch `actions/attest-sbom` against the per-arch digest, per-arch `extract.binary` extraction.
+- `merge` runs `docker buildx imagetools create -t TAG1 -t TAG2 ... ${ref1} ${ref2}` to assemble the manifest list and apply all metadata-action tags. Outputs the manifest list digest.
+- `provenance` (existing slsa-framework workflow_call) attests the manifest list digest. Per-platform buildkit provenance covers the platform-level case.
+
+**Locked-in decisions:**
+
+- **Per-arch buildkit provenance + manifest-level SLSA L3.** Two distinct attestation layers, same as today. `cosign verify-attestation` works against either layer.
+- **No double-attestation of manifest with cosign attest.** The slsa-framework job already attests the manifest list; we don't replicate that with a second cosign call.
+- **SARIF category suffixed per-arch.** Code Scanning dedupes per (category, file); without the suffix one arch silently overwrites the other.
+- **SBOM attest subject = per-arch digest.** Each platform image carries its own SBOM attestation. `cosign verify-attestation <image>@<arch-digest>` succeeds for the matching arch.
+- **`extract.binary` artefact name suffixed per-arch.** `${name}-binaries-${arch}` to avoid GHA upload-artifact v4 name collision (which forbids reuse within a run). `release-create-github.yml`'s download pattern updated from `*-binaries` to `*-binaries*` to match both the new and legacy shapes.
+- **Custom `cache-from`/`cache-to` inputs are not threaded into the multi-arch matrix** (per-arch GHA cache scoping wins). Documented on the input. Multi-arch callers wanting non-default caches should file an issue.
+
+**Known carryover into Phase 3:** per-arch extracted binaries currently share basenames (e.g., both arches' `hsm-worker` files). When attached to a GitHub Release, the second upload silently overwrites the first. Pre-existing latent issue (would have bitten today's QEMU multi-arch flow too). Phase 3 fixes this with arch-suffixed binary names.
 
 **Shape**
 

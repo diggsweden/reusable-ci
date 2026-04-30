@@ -194,14 +194,21 @@ jobs:
           path: ./release-artifacts/
       # container-first byproducts: when containers extracted binaries via
       # publish-container.yml's extract-binary-target, those uploads land as
-      # `${container-name}-binaries`. Pull them all in by pattern and place
-      # under ./release-artifacts/binaries/<container-name>/<platform>/...
+      # `${container-name}-binaries-${arch}` (one per matrix leg in the
+      # native-multi-arch path). Pattern matches both that and the legacy
+      # `${container-name}-binaries` shape; pull them all in and place
+      # under ./release-artifacts/binaries/<artefact-name>/...
+      #
+      # KNOWN LIMITATION: per-arch binaries currently share basenames
+      # (e.g., both arches' `hsm-worker` files), so attachment to the
+      # GitHub Release page collides on the second upload. Phase 3 of
+      # planarch.md tracks per-arch suffixing of the binary basenames.
       - name: Download extracted container binaries
         if: ${{ inputs['has-containers'] }}
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         continue-on-error: true
         with:
-          pattern: "*-binaries"
+          pattern: "*-binaries*"
           path: ./release-artifacts/binaries/
       - name: Compute effective attach-artifacts (auto-include extracted binaries)
         # If extract.binary produced any files under ./release-artifacts/binaries/,
