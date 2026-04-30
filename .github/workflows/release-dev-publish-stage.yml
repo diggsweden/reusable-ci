@@ -76,6 +76,7 @@ jobs:
       artifact-types: ${{ join(matrix.container['artifact-types'], ',') }}
       target: ${{ matrix.container.target || '' }}
       name: ${{ matrix.container.name }}
+      platforms: ${{ matrix.container.platforms || 'linux/amd64' }}
       extract-binary-target: ${{ matrix.container.extract.binary.target || '' }}
       extract-binary-names: ${{ matrix.container.extract.binary.names && join(matrix.container.extract.binary.names, ',') || '' }}
       # AND of per-container artifacts.yml flag (mirrors prod) AND the
