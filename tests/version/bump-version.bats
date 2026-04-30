@@ -353,3 +353,94 @@ EOF
   assert_success
   assert_output --partial "gradle"
 }
+
+# =============================================================================
+# Rust tests
+# =============================================================================
+
+# Stub cargo so the script's optional Cargo.lock refresh doesn't actually run.
+# The script is tolerant of cargo failures (warns and continues).
+stub_cargo_noop() {
+  create_mock_binary "cargo" 'exit 0'
+  use_mock_path
+}
+
+@test "bump-version fails when Cargo.toml is missing for cargo" {
+  run_bump_version "cargo" "1.0.0" "$TEST_DIR"
+  assert_failure
+  assert_output --partial "Cargo.toml not found"
+}
+
+@test "bump-version updates [package].version for single-crate cargo" {
+  cat > "$TEST_DIR/Cargo.toml" << 'EOF'
+[package]
+name = "my-crate"
+version = "0.1.0"
+edition = "2021"
+EOF
+  stub_cargo_noop
+
+  run_bump_version "cargo" "1.2.3" "$TEST_DIR"
+
+  assert_success
+  run cat "$TEST_DIR/Cargo.toml"
+  assert_output --partial 'version = "1.2.3"'
+}
+
+@test "bump-version updates [workspace.package].version for cargo workspace" {
+  cat > "$TEST_DIR/Cargo.toml" << 'EOF'
+[workspace]
+members = ["a", "b"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "EUPL-1.2"
+EOF
+  stub_cargo_noop
+
+  run_bump_version "cargo" "1.2.3" "$TEST_DIR"
+
+  assert_success
+  run cat "$TEST_DIR/Cargo.toml"
+  assert_output --partial 'version = "1.2.3"'
+  # The workspace.package version is the source of truth; [workspace] members
+  # array is preserved unchanged.
+  assert_output --partial 'members = ["a", "b"]'
+}
+
+@test "bump-version prefers [workspace.package] when both sections present" {
+  # Some workspaces have both: workspace.package for shared metadata, plus
+  # the root Cargo.toml's own [package] for a binary at the root. We update
+  # workspace.package (the inheritance source).
+  cat > "$TEST_DIR/Cargo.toml" << 'EOF'
+[package]
+name = "root-bin"
+version = "0.1.0"
+
+[workspace.package]
+version = "0.1.0"
+EOF
+  stub_cargo_noop
+
+  run_bump_version "cargo" "1.2.3" "$TEST_DIR"
+
+  assert_success
+  # workspace.package is the source of truth; it must be updated.
+  run grep -A1 '^\[workspace\.package\]' "$TEST_DIR/Cargo.toml"
+  assert_output --partial '1.2.3'
+}
+
+@test "bump-version errors when Cargo.toml has neither package nor workspace.package" {
+  cat > "$TEST_DIR/Cargo.toml" << 'EOF'
+[workspace]
+members = ["a", "b"]
+EOF
+  stub_cargo_noop
+
+  run_bump_version "cargo" "1.2.3" "$TEST_DIR"
+
+  assert_failure
+  assert_output --partial "neither [package] nor [workspace.package]"
+}
+

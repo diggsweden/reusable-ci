@@ -9,11 +9,12 @@ source "$SCRIPT_DIR/../ci/output.sh"
 source "$SCRIPT_DIR/../ci/stage-result.sh"
 
 main() {
-  local maven_result npm_result gradle_result target_key target_result
+  local maven_result npm_result gradle_result cargo_result target_key target_result
 
   maven_result="$(ci_normalize_result "${BUILD_MAVEN_DEV_RESULT:-skipped}")"
   npm_result="$(ci_normalize_result "${BUILD_NPM_DEV_RESULT:-skipped}")"
   gradle_result="$(ci_normalize_result "${BUILD_GRADLE_DEV_RESULT:-skipped}")"
+  cargo_result="$(ci_normalize_result "${CARGO_SBOM_DEV_RESULT:-skipped}")"
 
   case "${PROJECT_TYPE:-}" in
   maven)
@@ -27,6 +28,10 @@ main() {
   gradle)
     target_key='gradle'
     target_result="$gradle_result"
+    ;;
+  cargo)
+    target_key='cargo'
+    target_result="$cargo_result"
     ;;
   *)
     target_key='unknown'
@@ -45,7 +50,7 @@ main() {
   fi
 
   local targets_json result_json
-  targets_json="$(ci_build_targets_json "maven:$maven_result" "npm:$npm_result" "gradle:$gradle_result")"
+  targets_json="$(ci_build_targets_json "maven:$maven_result" "npm:$npm_result" "gradle:$gradle_result" "cargo:$cargo_result")"
   result_json="$(ci_stage_result_json "dev-build" "$stage_result" "$stage_ran" "$targets_json" "project_type:${PROJECT_TYPE:-unknown}")"
 
   ci_output "stage-ran" "$stage_ran"

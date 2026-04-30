@@ -44,7 +44,7 @@ on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
       project-type:
-        description: "Project type: maven, npm"
+        description: "Project type: maven, npm, gradle, gradle-android, xcode-ios, cargo"
         required: true
         type: string
       build-type:
@@ -188,6 +188,36 @@ jobs:
       # NOTE: NPM publishing to npmjs.org not yet implemented in v2
       # NPM packages are attached to GitHub Release as tarballs
       # This validation will be re-enabled when NPM publishing is added
+      - name: Validate Cargo Project Prerequisites
+        if: ${{ inputs['project-type'] == 'cargo' }}
+        run: |
+          # Cargo.lock should be checked in (reproducibility, deterministic
+          # SBOM generation in sbom-cargo.yml). rust-toolchain.toml is the
+          # recommended pin (sbom-cargo.yml and lint-cargo.yml auto-detect
+          # it via scripts/cargo/install-toolchain.sh) but not strictly
+          # required — release without one is allowed but warned.
+          set -euo pipefail
+          status=0
+          if [[ ! -f Cargo.lock ]]; then
+            printf "::error::Cargo.lock not found at repo root\n"
+            printf "::error::Cargo.lock must be committed for reproducible releases\n"
+            status=1
+          else
+            printf "::notice::Cargo.lock present\n"
+          fi
+          if [[ ! -f rust-toolchain.toml && ! -f rust-toolchain ]]; then
+            printf "::warning::No rust-toolchain.toml or rust-toolchain pin found\n"
+            printf "::warning::Recommended: pin the toolchain so CI and local dev match\n"
+          else
+            printf "::notice::Toolchain pin present\n"
+          fi
+          if ! command -v cargo >/dev/null 2>&1; then
+            printf "::error::cargo is not installed on the runner\n"
+            status=1
+          else
+            cargo --version
+          fi
+          exit "$status"
       # ============================================================================
       # SECTION 4: Summary Generation
       # Creates  validation report

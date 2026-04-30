@@ -62,9 +62,25 @@ jobs:
       java-version: ${{ fromJson(inputs['dev-context-json']).java_version }}
       gradle-tasks: build
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+  sbom-cargo-dev:
+    name: Cargo SBOM Dev
+    # container-first (compiled-native): no compile in build-stage; just SBOM.
+    # The actual cargo build happens inside the Containerfile during
+    # publish-stage. Emitting a successful SBOM result here unblocks
+    # the publish-stage gate (build-result == 'success').
+    if: ${{ fromJson(inputs['dev-context-json']).project_type == 'cargo' }}
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/sbom-cargo.yml
+    with:
+      working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
+      branch: ${{ fromJson(inputs['dev-context-json']).branch }}
+      rust-toolchain: ${{ fromJson(inputs['dev-context-json']).rust_toolchain || 'stable' }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   summarize-dev-build-stage:
     name: Summarize Dev Build Stage
-    needs: [build-maven-dev, build-npm-dev, build-gradle-dev]
+    needs: [build-maven-dev, build-npm-dev, build-gradle-dev, sbom-cargo-dev]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -88,4 +104,5 @@ jobs:
           BUILD_MAVEN_DEV_RESULT: ${{ needs.build-maven-dev.result }}
           BUILD_NPM_DEV_RESULT: ${{ needs.build-npm-dev.result }}
           BUILD_GRADLE_DEV_RESULT: ${{ needs.build-gradle-dev.result }}
+          CARGO_SBOM_DEV_RESULT: ${{ needs.sbom-cargo-dev.result }}
         run: bash .github-shared/scripts/summary/write-dev-build-stage-result.sh

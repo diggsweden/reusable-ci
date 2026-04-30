@@ -114,7 +114,7 @@ teardown() {
 }
 
 @test "stage-ran is false for unknown project type" {
-  export PROJECT_TYPE="rust"
+  export PROJECT_TYPE="cargo"
 
   run_script "summary/write-dev-publish-stage-result.sh"
   assert_success
