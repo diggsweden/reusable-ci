@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 # Development Container Image Publisher
-# 
+#
 # Purpose: Fast container builds for development and testing. Optimized for quick
 # feedback loops by removing production security features while maintaining
 # functionality for development environments.
@@ -14,11 +14,15 @@
 # - Any OCI-compatible registry
 #
 # How it works:
-# 1. Checks out repository code
-# 2. Builds project (Maven package or NPM build)
-# 3. Builds multi-platform container image (linux/amd64, linux/arm64)
-# 4. Tags with version, branch name, and SHA (e.g., 0.5.9-dev-feat-awesome-abc1234)
-# 5. Pushes to configured registry for development testing
+# 1. prep: compute the dev version + image coordinate once.
+# 2. build-arch (matrix, fail-fast: false): one job per platform, native runner
+#    (linux/amd64 -> ubuntu-24.04, linux/arm64 -> ubuntu-24.04-arm). Each leg
+#    builds and pushes by digest only — no tag is applied at this stage.
+# 3. merge: assembles the per-arch digests into a single manifest list with
+#    `docker buildx imagetools create`, applying the dev tag. Single-arch
+#    inputs go through the same pipeline (matrix-of-1 + 1-digest merge).
+#
+# No QEMU. Each runner builds its own architecture natively.
 #
 # Security controls:
 # - Minimal - optimized for speed over security
@@ -45,11 +49,10 @@
 #   SBOM generation               | No SBOM
 #   Vulnerability scanning        | No scanning
 #   Multiple tag strategies       | Branch-aware dev tags
-#   ~12-15 min build time        | ~3-4 min build time
 #
 # Outputs:
-#   image: Full image name (registry/org/repo:0.5.9-dev-feat-name-abc1234)
-#   digest: Image digest for verification
+#   image: Full image name (registry/org/repo[/name]:0.5.9-dev-feat-name-abc1234)
+#   digest: Manifest list digest
 name: Publish Dev Container
 on:
   workflow_call: # yamllint disable-line rule:truthy
@@ -68,6 +71,11 @@ on:
         description: "Container artefact name from artifacts.yml. When set, the published image becomes <registry>/<repository>/<name>:<dev-tag>, giving each container in a multi-container project its own GitHub Packages page. Empty preserves single-image behaviour (<registry>/<repository>:<dev-tag>). Mirrors publish-container.yml's name input."
         required: false
         default: ""
+        type: string
+      platforms:
+        description: "Comma-separated list of platforms to build. Each platform builds natively on a runner of that architecture (linux/amd64 -> ubuntu-24.04, linux/arm64 -> ubuntu-24.04-arm). No QEMU emulation. Multi-platform inputs split across runners and are merged into a single manifest list. Default linux/amd64 — set linux/amd64,linux/arm64 to opt into native multi-arch."
+        required: false
+        default: "linux/amd64"
         type: string
       registry:
         description: "Container registry"
@@ -109,35 +117,92 @@ on:
     outputs:
       image:
         description: "Full image name with registry"
-        value: ${{ jobs.build-and-push.outputs.image }}
+        value: ${{ jobs.merge.outputs.image }}
       digest:
-        description: "Image digest"
-        value: ${{ jobs.build-and-push.outputs.digest }}
+        description: "Manifest list digest"
+        value: ${{ jobs.merge.outputs.digest }}
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
-  build-and-push:
-    name: Build and Push Dev Container
+  prep:
+    name: Prepare Dev Build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: write
+    timeout-minutes: 5
     outputs:
-      image: ${{ steps.image.outputs.image }}
-      digest: ${{ steps.build.outputs.digest }}
+      image-name: ${{ steps.coord.outputs.image-name }}
+      dev-version: ${{ steps.coord.outputs.dev-version }}
+      platforms-json: ${{ steps.coord.outputs.platforms-json }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - name: Checkout .github repository for scripts
+      - name: Checkout reusable-ci scripts
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: diggsweden/reusable-ci
           ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
           sparse-checkout: scripts
+      - name: Compute image coordinate and platforms
+        id: coord
+        env:
+          TARGET_REGISTRY: ${{ inputs.registry }}
+          REPOSITORY: ${{ github.repository }}
+          NAME: ${{ inputs.name }}
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          DEV_VERSION=$(bash .github-shared/scripts/version/generate-dev-version.sh)
+          if [[ -n "$NAME" ]]; then
+            IMAGE_NAME="$TARGET_REGISTRY/$REPOSITORY/$NAME"
+          else
+            IMAGE_NAME="$TARGET_REGISTRY/$REPOSITORY"
+          fi
+          # Convert "linux/amd64,linux/arm64" -> JSON array for matrix consumption.
+          PLATFORMS_JSON=$(printf '%s\n' "${PLATFORMS//,/$'\n'}" | jq -R . | jq -s -c .)
+
+          printf "image-name=%s\n" "${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          printf "dev-version=%s\n" "${DEV_VERSION}" >> "$GITHUB_OUTPUT"
+          printf "platforms-json=%s\n" "${PLATFORMS_JSON}" >> "$GITHUB_OUTPUT"
+          printf "→ Dev tag: %s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}"
+          printf "→ Platforms: %s\n" "${PLATFORMS}"
+
+  build-arch:
+    name: Build (${{ matrix.platform }})
+    needs: prep
+    # linux/arm64 -> ubuntu-24.04-arm (native ARM hosted runner). Anything else
+    # falls through to ubuntu-24.04. No QEMU emulation in either path.
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJson(needs.prep.outputs.platforms-json) }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Derive arch suffix
+        id: arch
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          # linux/amd64 -> amd64, linux/arm64 -> arm64. Used for cache + artifact
+          # scoping so the matrix legs don't fight each other.
+          SUFFIX="${PLATFORM#linux/}"
+          SUFFIX="${SUFFIX//\//-}"
+          printf "suffix=%s\n" "$SUFFIX" >> "$GITHUB_OUTPUT"
       - name: Download Maven artifacts
         if: ${{ contains(inputs['artifact-types'], 'maven') }}
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
@@ -204,39 +269,101 @@ jobs:
           registry: ${{ inputs.registry }}
           username: ${{ inputs['registry-username'] || github.actor }}
           password: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
-      - name: Generate dev tags
-        id: tags
-        env:
-          TARGET_REGISTRY: ${{ inputs.registry }}
-          REPOSITORY: ${{ github.repository }}
-          NAME: ${{ inputs.name }}
-        run: |
-          DEV_VERSION=$(bash .github-shared/scripts/version/generate-dev-version.sh)
-          if [[ -n "$NAME" ]]; then
-            IMAGE_NAME="$TARGET_REGISTRY/$REPOSITORY/$NAME"
-          else
-            IMAGE_NAME="$TARGET_REGISTRY/$REPOSITORY"
-          fi
-
-          printf "tags=%s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}" >> "$GITHUB_OUTPUT"
-          printf "image=%s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}" >> "$GITHUB_OUTPUT"
-          printf "→ Dev tag: %s\n" "${DEV_VERSION}"
-      - name: Build and push
+      - name: Build and push by digest
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: ${{ inputs['working-directory'] }}
           file: ${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}
           target: ${{ inputs.target }}
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
-          platforms: linux/amd64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: ${{ matrix.platform }}
+          # No tag at this stage. The merge job applies the dev tag once both
+          # arches' digests exist, via `docker buildx imagetools create`.
+          outputs: type=image,name=${{ needs.prep.outputs.image-name }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=build-${{ steps.arch.outputs.suffix }}
+          cache-to: type=gha,mode=max,scope=build-${{ steps.arch.outputs.suffix }}
           # Disable all security features for dev builds
           provenance: false
           sbom: false
-      - name: Set outputs
-        id: image
-        run: |-
-          printf "image=%s\n" "${{ steps.tags.outputs.image }}" >> "$GITHUB_OUTPUT"
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          # Filename is the bare hash; merge step rebuilds <name>@sha256:<hash>.
+          touch "/tmp/digests/${DIGEST#sha256:}"
+      - name: Upload digest
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: digests-${{ github.run_id }}-${{ steps.arch.outputs.suffix }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Merge Manifest
+    needs: [prep, build-arch]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.outputs.outputs.image }}
+      digest: ${{ steps.outputs.outputs.digest }}
+    steps:
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Download digests
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ github.run_id }}-*
+          merge-multiple: true
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Check registry authentication configuration
+        env:
+          USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
+          TARGET_REGISTRY: ${{ inputs.registry }}
+          REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
+        run: bash .github-shared/scripts/registry/validate-auth.sh
+      - name: Login to Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ inputs['registry-username'] || github.actor }}
+          password: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+      - name: Create manifest list and push
+        env:
+          IMAGE_NAME: ${{ needs.prep.outputs.image-name }}
+          DEV_VERSION: ${{ needs.prep.outputs.dev-version }}
+        working-directory: /tmp/digests
+        run: |
+          # Each file in /tmp/digests is named after a per-arch digest hash.
+          # Reconstruct ${IMAGE_NAME}@sha256:<hash> references and feed them to
+          # imagetools, which assembles a multi-arch manifest list and pushes
+          # it under the dev tag. Single-arch inputs degenerate to a one-entry
+          # manifest — same code path.
+          refs=()
+          for f in *; do
+            refs+=("${IMAGE_NAME}@sha256:${f}")
+          done
+          docker buildx imagetools create \
+            -t "${IMAGE_NAME}:${DEV_VERSION}" \
+            "${refs[@]}"
+      - name: Inspect manifest
+        id: outputs
+        env:
+          IMAGE_NAME: ${{ needs.prep.outputs.image-name }}
+          DEV_VERSION: ${{ needs.prep.outputs.dev-version }}
+        run: |
+          docker buildx imagetools inspect "${IMAGE_NAME}:${DEV_VERSION}"
+          DIGEST=$(docker buildx imagetools inspect "${IMAGE_NAME}:${DEV_VERSION}" --format '{{json .Manifest}}' | jq -r '.digest')
+          printf "image=%s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}" >> "$GITHUB_OUTPUT"
+          printf "digest=%s\n" "${DIGEST}" >> "$GITHUB_OUTPUT"
