@@ -538,6 +538,21 @@ jobs:
           cache-from: type=gha,scope=build-${{ steps.arch.outputs.suffix }}
           build-args: ${{ inputs['build-args'] }}
           secrets: ${{ inputs['build-secrets'] }}
+      # Suffix each extracted binary's basename with -linux-${arch} so that
+      # when the GitHub Release attach step pulls per-arch artefacts together,
+      # they don't collide on the same basename. Convention matches Go's
+      # release-asset naming (e.g., hsm-worker-linux-amd64,
+      # hsm-worker-linux-arm64).
+      - name: Suffix extracted binaries with arch
+        if: ${{ inputs['extract-binary-target'] != '' }}
+        env:
+          SUFFIX: ${{ steps.arch.outputs.suffix }}
+          EXPECTED_NAMES: ${{ inputs['extract-binary-names'] }}
+        run: |
+          bash .github-shared/scripts/container/suffix-extracted-binaries.sh \
+            ./extracted-binaries \
+            "$SUFFIX" \
+            "$EXPECTED_NAMES"
       - name: Upload extracted binaries
         if: ${{ inputs['extract-binary-target'] != '' }}
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0

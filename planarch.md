@@ -2,7 +2,7 @@
 
 Goal: replace QEMU emulation with `ubuntu-24.04` + `ubuntu-24.04-arm` runners that build natively, then merge into a multi-arch manifest.
 
-**Status:** Phase 1 + Phase 2 shipped. Phase 3 pending.
+**Status:** All three phases shipped. Native multi-arch container builds end-to-end, no QEMU.
 
 ## Design decisions (locked in during Phase 1)
 
