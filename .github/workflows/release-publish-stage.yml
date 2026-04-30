@@ -145,7 +145,7 @@ jobs:
       branch: ${{ inputs.branch }}
       container-file: ${{ matrix.container['container-file'] }}
       context: ${{ matrix.container.context || '.' }}
-      platforms: ${{ matrix.container.platforms || 'linux/amd64,linux/arm64' }}
+      platforms: ${{ matrix.container.platforms || 'linux/amd64' }}
       enable-slsa: ${{ matrix.container['enable-slsa'] == true || matrix.container['enable-slsa'] == null }}
       # `enable-analyzed-container-sbom` is derived in parse-artifacts-config.sh
       # from each source artefact's effective-sboms — true if any source includes
