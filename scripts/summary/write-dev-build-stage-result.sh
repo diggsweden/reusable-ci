@@ -28,6 +28,15 @@ main() {
     target_key='gradle'
     target_result="$gradle_result"
     ;;
+  cargo)
+    # container-first: nothing to build at this stage. Truthful 'skipped'
+    # — stage_ran=false because no work happens here. Publish-stage gates
+    # accept (success | skipped), which is the standard GHA semantic.
+    # Mirrors prod's implicit treatment of cargo (release-build-stage.yml
+    # has no cargo job).
+    target_key='cargo'
+    target_result='skipped'
+    ;;
   *)
     target_key='unknown'
     target_result='skipped'
@@ -35,13 +44,15 @@ main() {
   esac
 
   local stage_ran="false"
-  if [[ "$target_key" != "unknown" ]]; then stage_ran="true"; fi
+  if [[ "$target_key" == "maven" || "$target_key" == "npm" || "$target_key" == "gradle" ]]; then
+    stage_ran="true"
+  fi
 
   local stage_result
   if [[ "$stage_ran" == "true" ]]; then
     stage_result="$target_result"
   else
-    stage_result="skipped"
+    stage_result='skipped'
   fi
 
   local targets_json result_json

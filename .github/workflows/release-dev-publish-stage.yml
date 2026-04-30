@@ -47,7 +47,10 @@ permissions:
 jobs:
   build-dev-container:
     name: Build Container Dev
-    if: ${{ inputs['publish-container'] && fromJson(inputs['build-result-json']).result == 'success' }}
+    # Build-stage is allowed to be 'skipped' for container-first
+    # ecosystems (cargo): no artefact-first build runs, but the
+    # container itself can still be built here.
+    if: ${{ inputs['publish-container'] && (fromJson(inputs['build-result-json']).result == 'success' || fromJson(inputs['build-result-json']).result == 'skipped') }}
     permissions:
       contents: read
       packages: write
@@ -76,9 +79,34 @@ jobs:
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
     secrets:
       registry-password: ${{ secrets.registry-password }}
+  # Cargo's lockfile-derived "build" SBOM. container-first means cargo has
+  # no build-stage; the SBOM and its corresponding container ship together,
+  # so the SBOM lives in publish-stage alongside the container build.
+  # Mirrors release-publish-stage.yml's `sbom-cargo` shape but without the
+  # cargo-artifacts matrix (dev runs single-project, not multi-cargo).
+  # Gated on sboms != 'none' so dev's default fast path doesn't pay for
+  # SBOM generation it won't consume.
+  sbom-cargo-dev:
+    name: Cargo SBOM Dev
+    if: ${{ fromJson(inputs['dev-context-json']).project_type == 'cargo' && inputs.sboms != 'none' }}
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/sbom-cargo.yml
+    with:
+      working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
+      branch: ${{ fromJson(inputs['dev-context-json']).branch }}
+      rust-toolchain: ${{ fromJson(inputs['dev-context-json']).rust_toolchain || 'stable' }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   generate-dev-sboms:
     name: Generate Dev SBOMs
-    if: ${{ inputs.sboms != 'none' && fromJson(inputs['build-result-json']).result == 'success' }}
+    needs: [sbom-cargo-dev]
+    # Wait for cargo's build SBOM (when applicable) to upload before
+    # downloading and aggregating. needs[].result == 'skipped' means the
+    # cargo job was gated off (non-cargo project or sboms=none); that's
+    # fine — generate-dev-sboms then aggregates whatever artefact-first
+    # builders produced.
+    if: ${{ inputs.sboms != 'none' && (fromJson(inputs['build-result-json']).result == 'success' || fromJson(inputs['build-result-json']).result == 'skipped') && !cancelled() && needs.sbom-cargo-dev.result != 'failure' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -94,11 +122,34 @@ jobs:
           ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
           sparse-checkout: scripts
-      - name: Download build artifacts
+      # Resolve upload names via the same script prod uses
+      # (release-create-github.yml). Single source of truth for
+      # ecosystem -> upload-name mapping; new ecosystems extend
+      # resolve-artifact-name.sh and dev/prod both pick them up.
+      - name: Determine artefact upload names
+        id: artefact-names
+        env:
+          PROJECT_TYPE: ${{ fromJson(inputs['dev-context-json']).project_type }}
+        run: bash .github-shared/scripts/release/resolve-artifact-name.sh "$PROJECT_TYPE" >> "$GITHUB_OUTPUT"
+      # Download by exact name (mirrors prod). Avoids pulling
+      # multi-arch noise (per-arch digests, .dockerbuild auto-uploads,
+      # per-arch container SBOMs) that an unfiltered download would
+      # try to pull.
+      - name: Download build artefact
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        continue-on-error: true
         with:
+          name: ${{ steps.artefact-names.outputs.name }}
           path: ./release-artifacts
-          merge-multiple: true
+      # Skip the second download for cargo (name == sbom-name) and
+      # when the build layer wasn't requested.
+      - name: Download Build SBOM
+        if: ${{ (contains(inputs.sboms, 'build') || inputs.sboms == 'all') && steps.artefact-names.outputs.sbom-name != steps.artefact-names.outputs.name }}
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        continue-on-error: true
+        with:
+          name: ${{ steps.artefact-names.outputs.sbom-name }}
+          path: ./release-artifacts
       - name: Generate CISA-layer SBOMs (dev)
         env:
           PROJECT_TYPE: ${{ fromJson(inputs['dev-context-json']).project_type }}
@@ -130,7 +181,7 @@ jobs:
           if-no-files-found: warn
   summarize-dev-publish-stage:
     name: Summarize Dev Publish Stage
-    needs: [build-dev-container, publish-npm-dev, generate-dev-sboms]
+    needs: [build-dev-container, publish-npm-dev, sbom-cargo-dev, generate-dev-sboms]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -155,6 +206,7 @@ jobs:
           PUBLISH_NPM: ${{ fromJson(inputs['dev-policy-json']).publish_npm }}
           BUILD_DEV_CONTAINER_RESULT: ${{ needs.build-dev-container.result }}
           PUBLISH_NPM_DEV_RESULT: ${{ needs.publish-npm-dev.result }}
+          CARGO_SBOM_DEV_RESULT: ${{ needs.sbom-cargo-dev.result }}
           GENERATE_DEV_SBOMS_RESULT: ${{ needs.generate-dev-sboms.result }}
           CONTAINER_IMAGE: ${{ needs.build-dev-container.outputs.image }}
           CONTAINER_DIGEST: ${{ needs.build-dev-container.outputs.digest }}

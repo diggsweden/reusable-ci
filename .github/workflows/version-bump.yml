@@ -51,7 +51,7 @@ on:
         default: "main"
         type: string
       project-type:
-        description: "Project type: maven, npm, gradle, gradle-android, xcode-ios"
+        description: "Project type: maven, npm, gradle, gradle-android, xcode-ios, cargo"
         required: true
         type: string
       java-version:
@@ -268,6 +268,20 @@ jobs:
           echo "::group::Update Xcode version"
           bash .github-shared/scripts/version/bump-version.sh \
             xcode-ios \
+            "${GITHUB_REF_NAME#v}" \
+            "$WORKING_DIRECTORY_INPUT"
+          echo "::endgroup::"
+      - name: Update Rust version
+        # cargo is pre-installed on ubuntu-latest GHA runners (rustup-managed).
+        # bump-version.sh handles both Cargo.toml editing and Cargo.lock refresh
+        # via `cargo update --workspace`.
+        if: ${{ steps.project-type.outputs.type == 'cargo' }}
+        env:
+          WORKING_DIRECTORY_INPUT: ${{ inputs['working-directory'] }}
+        run: |
+          echo "::group::Update Rust version"
+          bash .github-shared/scripts/version/bump-version.sh \
+            cargo \
             "${GITHUB_REF_NAME#v}" \
             "$WORKING_DIRECTORY_INPUT"
           echo "::endgroup::"

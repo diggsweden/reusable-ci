@@ -9,22 +9,24 @@ source "$SCRIPT_DIR/../ci/output.sh"
 source "$SCRIPT_DIR/../ci/stage-result.sh"
 
 main() {
-  local container_result npm_result sbom_result
+  local container_result npm_result cargo_sbom_result sbom_result
 
   container_result="$(ci_normalize_result "${BUILD_DEV_CONTAINER_RESULT:-skipped}")"
   npm_result="$(ci_normalize_result "${PUBLISH_NPM_DEV_RESULT:-skipped}")"
+  cargo_sbom_result="$(ci_normalize_result "${CARGO_SBOM_DEV_RESULT:-skipped}")"
   sbom_result="$(ci_normalize_result "${GENERATE_DEV_SBOMS_RESULT:-skipped}")"
 
   local stage_ran="false"
   case "${PROJECT_TYPE:-}" in
-  maven | npm | gradle) stage_ran="true" ;;
+  maven | npm | gradle | cargo) stage_ran="true" ;;
   esac
 
-  # SBOM aggregation is opted-in via the sboms input (non-'none'); include in
-  # the aggregate so an explicit opt-in that crashes surfaces as stage failure
-  # rather than a silent pass.
+  # SBOM aggregation is opted-in via the sboms input (non-'none'); include
+  # in the aggregate so an explicit opt-in that crashes surfaces as stage
+  # failure rather than a silent pass. Cargo build-SBOM is included on the
+  # same principle — it's part of the same SBOM opt-in story.
   local stage_result
-  stage_result="$(ci_stage_result "$stage_ran" "$container_result" "$npm_result" "$sbom_result")"
+  stage_result="$(ci_stage_result "$stage_ran" "$container_result" "$npm_result" "$cargo_sbom_result" "$sbom_result")"
 
   local npm_target="skipped"
   if [[ "${PROJECT_TYPE:-}" == "npm" && "${PUBLISH_NPM:-false}" == "true" ]]; then
@@ -35,6 +37,7 @@ main() {
   targets_json="$(ci_build_targets_json \
     "container:$container_result" \
     "npm:$npm_target" \
+    "cargo-sbom:$cargo_sbom_result" \
     "sbom:$sbom_result")"
   result_json="$(ci_stage_result_json "dev-publish" "$stage_result" "$stage_ran" "$targets_json" "project_type:${PROJECT_TYPE:-unknown}")"
 

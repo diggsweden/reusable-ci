@@ -61,6 +61,35 @@ teardown() {
   assert_output "success"
 }
 
+@test "cargo project (container-first) reports skipped" {
+  # Cargo is container-first: there's no build-stage work for it.
+  # stage_ran=false, stage_result=skipped — publish-stage gates accept
+  # (success | skipped), the standard GHA semantic.
+  export PROJECT_TYPE="cargo"
+
+  run_script "summary/write-dev-build-stage-result.sh"
+  assert_success
+
+  run get_github_output "stage-ran"
+  assert_output "false"
+
+  run get_github_output "stage-result"
+  assert_output "skipped"
+}
+
+@test "cargo project result-json carries skipped and project_type" {
+  export PROJECT_TYPE="cargo"
+
+  run_script "summary/write-dev-build-stage-result.sh"
+  assert_success
+
+  run get_github_output "result-json"
+  assert_output --partial '"stage":"dev-build"'
+  assert_output --partial '"result":"skipped"'
+  assert_output --partial '"ran":false'
+  assert_output --partial '"project_type":"cargo"'
+}
+
 @test "all skipped by default when no env vars set" {
   run_script "summary/write-dev-build-stage-result.sh"
   assert_success
@@ -152,7 +181,7 @@ teardown() {
 }
 
 @test "result-json ran is false for unknown project type" {
-  export PROJECT_TYPE="rust"
+  export PROJECT_TYPE="weird-type"
 
   run_script "summary/write-dev-build-stage-result.sh"
   assert_success
@@ -160,7 +189,7 @@ teardown() {
   run get_github_output "result-json"
   assert_output --partial '"ran":false'
   assert_output --partial '"result":"skipped"'
-  assert_output --partial '"project_type":"rust"'
+  assert_output --partial '"project_type":"weird-type"'
 }
 
 @test "only the matching project type result is used for stage-result" {

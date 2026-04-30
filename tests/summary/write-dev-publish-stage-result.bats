@@ -100,8 +100,8 @@ teardown() {
   assert_output "success"
 }
 
-@test "stage-ran is true for maven npm and gradle project types" {
-  for pt in maven npm gradle; do
+@test "stage-ran is true for maven npm gradle and cargo project types" {
+  for pt in maven npm gradle cargo; do
     export PROJECT_TYPE="$pt"
     : >"$GITHUB_OUTPUT"
 
@@ -114,7 +114,7 @@ teardown() {
 }
 
 @test "stage-ran is false for unknown project type" {
-  export PROJECT_TYPE="rust"
+  export PROJECT_TYPE="weird-type"
 
   run_script "summary/write-dev-publish-stage-result.sh"
   assert_success
@@ -213,6 +213,39 @@ teardown() {
 
   run get_github_output "result-json"
   assert_output --partial '"sbom":"failure"'
+}
+
+@test "cargo project tracks cargo-sbom result" {
+  # Cargo's build-SBOM is generated in publish-stage (container-first
+  # placement). The summary script tracks it as a separate target so an
+  # opted-in cargo SBOM that crashes surfaces as stage failure.
+  export PROJECT_TYPE="cargo"
+  export BUILD_DEV_CONTAINER_RESULT="success"
+  export CARGO_SBOM_DEV_RESULT="success"
+
+  run_script "summary/write-dev-publish-stage-result.sh"
+  assert_success
+
+  run get_github_output "result-json"
+  assert_output --partial '"cargo-sbom":"success"'
+
+  run get_github_output "stage-result"
+  assert_output "success"
+}
+
+@test "cargo-sbom failure propagates to stage result" {
+  export PROJECT_TYPE="cargo"
+  export BUILD_DEV_CONTAINER_RESULT="success"
+  export CARGO_SBOM_DEV_RESULT="failure"
+
+  run_script "summary/write-dev-publish-stage-result.sh"
+  assert_success
+
+  run get_github_output "stage-result"
+  assert_output "failure"
+
+  run get_github_output "result-json"
+  assert_output --partial '"cargo-sbom":"failure"'
 }
 
 @test "artifacts-json contains container and npm details" {

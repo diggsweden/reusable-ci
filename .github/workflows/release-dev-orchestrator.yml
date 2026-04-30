@@ -43,7 +43,7 @@ on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
       project-type:
-        description: "Project type: maven, npm"
+        description: "Project type: maven, npm, gradle, gradle-android, xcode-ios, cargo"
         required: true
         type: string
       container-file:
@@ -70,6 +70,11 @@ on:
         description: "Node.js version (for npm)"
         required: false
         default: "24"
+        type: string
+      rust-toolchain:
+        description: "Rust toolchain (for cargo). Ignored when working-directory contains rust-toolchain.toml."
+        required: false
+        default: "stable"
         type: string
       publish-npm:
         description: "Publish NPM package to registry (npm projects only)"
@@ -159,6 +164,7 @@ jobs:
           WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
           JAVA_VERSION: ${{ inputs['java-version'] }}
           NODE_VERSION: ${{ inputs['node-version'] }}
+          RUST_TOOLCHAIN: ${{ inputs['rust-toolchain'] }}
           CONTAINER_FILE: ${{ inputs['container-file'] }}
           REGISTRY: ${{ inputs.registry }}
           REUSABLE_CI_REF: ${{ inputs['reusable-ci-ref'] }}

@@ -143,6 +143,54 @@ main() {
     fi
     ;;
 
+  cargo)
+    cd "$WORKING_DIR"
+    log "Updating Rust version to ${VERSION}"
+
+    if [[ ! -f Cargo.toml ]]; then
+      log_error "Cargo.toml not found in ${WORKING_DIR}"
+      exit 1
+    fi
+
+    # Cargo workspaces (since Rust 1.64) declare version under
+    # [workspace.package] which members inherit via `version.workspace = true`.
+    # Bumping that single value updates every member that opts in — exactly
+    # what we want for one-version-per-release projects. Single-crate projects
+    # without a [workspace.package] section have version under [package]
+    # instead. We update whichever section is present; if both are present
+    # (rare), the workspace one wins because it's the source of truth for
+    # inheriting members.
+    if grep -q '^\[workspace\.package\]' Cargo.toml; then
+      # Range from [workspace.package] line to next section header. The
+      # substitution replaces the version line within that range only.
+      sed -i '/^\[workspace\.package\]/,/^\[/{s/^version[[:space:]]*=.*/version = "'"$VERSION"'"/}' Cargo.toml
+      log "Updated [workspace.package].version to ${VERSION}"
+    elif grep -q '^\[package\]' Cargo.toml; then
+      sed -i '/^\[package\]/,/^\[/{s/^version[[:space:]]*=.*/version = "'"$VERSION"'"/}' Cargo.toml
+      log "Updated [package].version to ${VERSION}"
+    else
+      log_error "Cargo.toml has neither [package] nor [workspace.package] sections"
+      exit 1
+    fi
+
+    # Refresh Cargo.lock so workspace member entries match the new version.
+    # `cargo update --workspace --offline` rewrites only own-crate lock entries
+    # without consulting the network or pulling dependency updates. If cargo
+    # isn't installed (rare), the lock file goes briefly stale and
+    # self-heals on the next cargo invocation.
+    if command -v cargo >/dev/null 2>&1; then
+      if [[ -f Cargo.lock ]]; then
+        cargo update --workspace --offline 2>/dev/null ||
+          cargo update --workspace 2>/dev/null ||
+          log "Warning: failed to refresh Cargo.lock; will be regenerated on next cargo invocation"
+      fi
+    else
+      log "Warning: cargo not found; Cargo.lock not refreshed (will self-heal on next cargo invocation)"
+    fi
+
+    log_success "Rust version updated"
+    ;;
+
   meta)
     log "Meta project type - no version file to update"
     log_success "Version ${VERSION} recorded for changelog generation only"
