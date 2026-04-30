@@ -82,7 +82,7 @@ EOF
   assert_output --partial "Auto-detected project type: go"
 }
 
-@test "generate-sbomsdetects rust project from Cargo.toml" {
+@test "generate-sbomsdetects cargo project from Cargo.toml" {
   cat > Cargo.toml << 'EOF'
 [package]
 name = "myapp"
@@ -93,7 +93,7 @@ EOF
       --project-type "auto" \
       --layers "build" \
       --working-dir "."
-  assert_output --partial "Auto-detected project type: rust"
+  assert_output --partial "Auto-detected project type: cargo"
 }
 
 @test "generate-sbomsdetects python project from pyproject.toml" {
@@ -225,11 +225,11 @@ EOF
 }
 
 @test "generate-sbomsgenerates build layer for cargo when bom.json exists" {
-  create_rust_project
+  create_cargo_project
   echo '{"bomFormat":"CycloneDX"}' >bom.json
 
   run_script "sbom/generate-sboms.sh" \
-      --project-type "rust" \
+      --project-type "cargo" \
       --layers "build" \
       --version "1.0.0" \
       --name "myapp" \
@@ -240,10 +240,10 @@ EOF
 }
 
 @test "generate-sbomswarns when no bom.json found for cargo build layer" {
-  create_rust_project
+  create_cargo_project
 
   run_script "sbom/generate-sboms.sh" \
-      --project-type "rust" \
+      --project-type "cargo" \
       --layers "build" \
       --version "1.0.0" \
       --name "myapp" \
@@ -344,16 +344,16 @@ EOF
   grep -q '"aggregate":true' "myapp-1.0.0-build-sbom.cyclonedx.json"
 }
 
-@test "generate-sbomsbuild layer prefers root-crate bom over sub-crate (rust workspace)" {
+@test "generate-sbomsbuild layer prefers root-crate bom over sub-crate (cargo workspace)" {
   # Rust workspaces: cargo-cyclonedx emits one bom.json per crate root.
   # Root crate should win when aggregating.
-  create_rust_project
+  create_cargo_project
   mkdir -p release-artifacts/crates/inner
   echo '{"bomFormat":"CycloneDX","root":true}' >release-artifacts/bom.json
   echo '{"bomFormat":"CycloneDX","inner":true}' >release-artifacts/crates/inner/bom.json
 
   run_script "sbom/generate-sboms.sh" \
-      --project-type "rust" \
+      --project-type "cargo" \
       --layers "build" \
       --version "1.0.0" \
       --name "myapp" \
@@ -362,16 +362,16 @@ EOF
   grep -q '"root":true' "myapp-1.0.0-build-sbom.cyclonedx.json"
 }
 
-@test "generate-sbomsbuild layer ignores cargo target cache (rust)" {
+@test "generate-sbomsbuild layer ignores cargo target cache" {
   # cargo may leave stale bom.json fragments under target/; exclude them
   # so compile-cache BOMs can't hijack pickup.
-  create_rust_project
+  create_cargo_project
   mkdir -p release-artifacts/target/debug
   echo '{"bomFormat":"CycloneDX","cached":true}' >release-artifacts/target/debug/bom.json
   echo '{"bomFormat":"CycloneDX","real":true}' >release-artifacts/bom.json
 
   run_script "sbom/generate-sboms.sh" \
-      --project-type "rust" \
+      --project-type "cargo" \
       --layers "build" \
       --version "1.0.0" \
       --name "myapp" \

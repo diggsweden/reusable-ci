@@ -27,6 +27,11 @@ on:
       containers:
         required: true
         type: string
+      cargo-artifacts:
+        description: "JSON array of cargo artefacts (container-first ecosystem). Their lockfile-derived SBOMs run here as siblings of build-containers; the actual cargo compile happens inside each container's builder stage."
+        required: false
+        default: "[]"
+        type: string
       build-result-json:
         required: true
         type: string
@@ -175,9 +180,36 @@ jobs:
       build-args: ${{ matrix.container['build-args-string'] || '' }}
       push-image: true
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+  # Cargo's lockfile-derived "build" SBOM is a publish-stage concern: the
+  # SBOM and its corresponding container ship together. Per artefact, runs
+  # in parallel with build-containers — same pattern as the other
+  # publishers in this stage.
+  sbom-cargo:
+    name: Cargo SBOM - ${{ matrix.artifact.name }}
+    if: ${{ inputs.cargo-artifacts != '[]' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.cargo-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/sbom-cargo.yml
+    with:
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      branch: ${{ inputs.branch }}
+      rust-toolchain: ${{ matrix.artifact.config['rust-toolchain'] || 'stable' }}
+      enable-build-sbom: ${{ contains(matrix.artifact['effective-sboms'], 'build') }}
+      # Per-artefact unique upload name. Without this, multi-cargo-artefact
+      # workspaces (e.g., a workspace shipping hsm-worker AND wallet-bff
+      # as separate cargo artefacts in artifacts.yml) would all upload as
+      # `cargo-build-sbom` and the second matrix leg's actions/upload-artifact
+      # would conflict with the first. Mirrors build-gradle's pattern.
+      artifact-name: ${{ matrix.artifact.name }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   summarize-publish-stage:
     name: Summarize Publish Stage
-    needs: [publish-maven-github, publish-maven-central, publish-apple-appstore, publish-google-play, build-containers]
+    needs: [publish-maven-github, publish-maven-central, publish-apple-appstore, publish-google-play, build-containers, sbom-cargo]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -202,9 +234,11 @@ jobs:
           XCODEIOS_ARTIFACTS: ${{ inputs.xcodeios-artifacts }}
           GOOGLEPLAY_ARTIFACTS: ${{ inputs.googleplay-artifacts }}
           CONTAINERS: ${{ inputs.containers }}
+          CARGO_ARTIFACTS: ${{ inputs.cargo-artifacts }}
           PUBLISH_MAVEN_REGISTRY_RESULT: ${{ needs.publish-maven-github.result }}
           PUBLISH_MAVEN_CENTRAL_RESULT: ${{ needs.publish-maven-central.result }}
           PUBLISH_APPLE_APPSTORE_RESULT: ${{ needs.publish-apple-appstore.result }}
           PUBLISH_GOOGLE_PLAY_RESULT: ${{ needs.publish-google-play.result }}
           BUILD_CONTAINERS_RESULT: ${{ needs.build-containers.result }}
+          CARGO_SBOM_RESULT: ${{ needs.sbom-cargo.result }}
         run: bash .github-shared/scripts/summary/write-publish-stage-result.sh

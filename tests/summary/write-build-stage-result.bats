@@ -168,6 +168,23 @@ teardown() {
   assert_output --partial '"xcodeios":"success"'
 }
 
+@test "cargo is not a build-stage concern (container-first ecosystem)" {
+  # cargo's lockfile-derived SBOM and the container build that actually
+  # compiles cargo both live in publish-stage. CARGO_ARTIFACTS / CARGO_SBOM_RESULT
+  # being set here should not flip stage-ran to true on its own.
+  export CARGO_SBOM_RESULT="success"
+  export CARGO_ARTIFACTS='[{"name":"app"}]'
+
+  run_script "summary/write-build-stage-result.sh"
+  assert_success
+
+  run get_github_output "stage-ran"
+  assert_output "false"
+
+  run get_github_output "result-json"
+  refute_output --partial '"cargo"'
+}
+
 @test "result-json ran is false when stage did not run" {
   run_script "summary/write-build-stage-result.sh"
   assert_success

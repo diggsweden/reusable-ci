@@ -144,6 +144,11 @@ jobs:
       working-directory: ${{ matrix.artifact['working-directory'] }}
       macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+  # cargo is container-first: nothing it produces lives at the build-stage
+  # level. The lockfile-derived SBOM (sbom-cargo) and the actual cargo
+  # compile (inside the Containerfile) both run in release-publish-stage,
+  # alongside the container build. For pure-cargo projects this stage runs
+  # zero jobs by design.
   summarize-build-stage:
     name: Summarize Build Stage
     needs: [build-maven, build-npm, build-gradle, build-gradle-android, build-xcode]

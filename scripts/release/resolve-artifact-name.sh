@@ -45,12 +45,22 @@ main() {
     printf "sbom-name=go-build-sbom\n"
     ;;
   cargo)
-    # cargo emits a Build SBOM only — the actual binary is produced
-    # inside the Containerfile during publish-stage. `name` and
-    # `sbom-name` are identical because the workflow only produces an
-    # SBOM artifact.
-    printf "name=cargo-build-sbom\n"
-    printf "sbom-name=cargo-build-sbom\n"
+    # sbom-cargo.yml emits a manifest-derived Build SBOM only — the actual
+    # binary is produced inside the Containerfile during publish-stage
+    # (container-first; see docs/sbom.md).
+    #
+    # When release-build-stage's matrix dispatches sbom-cargo per artefact,
+    # uploads are namespaced as `${artefact-name}-cargo-build-sbom` to avoid
+    # collisions in multi-cargo-artefact workspaces. Mirrors gradle pairing.
+    # `name` and `sbom-name` are identical because the workflow only
+    # produces an SBOM artifact.
+    if [[ -n "${ARTIFACT_NAME:-}" ]]; then
+      printf "name=%s-cargo-build-sbom\n" "$ARTIFACT_NAME"
+      printf "sbom-name=%s-cargo-build-sbom\n" "$ARTIFACT_NAME"
+    else
+      printf "name=cargo-build-sbom\n"
+      printf "sbom-name=cargo-build-sbom\n"
+    fi
     ;;
   *)
     printf "name=build-artifacts\n"

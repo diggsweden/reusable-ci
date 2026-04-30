@@ -17,6 +17,9 @@ main() {
   gradleandroid_result="$(ci_normalize_result "${BUILD_GRADLE_ANDROID_RESULT:-skipped}")"
   xcodeios_result="$(ci_normalize_result "${BUILD_XCODE_RESULT:-skipped}")"
 
+  # cargo is container-first; its publish-stage sibling sbom-cargo + the
+  # cargo compile inside the Containerfile both report into publish-stage,
+  # not here. For pure-cargo projects this stage runs zero jobs.
   local stage_ran=false
   if [[ "${MAVEN_ARTIFACTS:-[]}" != '[]' || "${NPM_ARTIFACTS:-[]}" != '[]' || "${GRADLE_ARTIFACTS:-[]}" != '[]' || "${GRADLEANDROID_ARTIFACTS:-[]}" != '[]' || "${XCODEIOS_ARTIFACTS:-[]}" != '[]' ]]; then
     stage_ran=true

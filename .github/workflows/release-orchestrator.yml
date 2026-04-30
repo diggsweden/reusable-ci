@@ -319,6 +319,10 @@ jobs:
       xcodeios-artifacts: ${{ needs.parse-config.outputs.xcodeios-artifacts }}
   # ===== Stage 4: Publish =====
   # Publish fanout now lives below this control-plane stage call.
+  # cargo-artifacts is wired here (not in build-stage) because cargo is
+  # container-first: its lockfile-derived SBOM and the actual container
+  # build (which is where cargo compiles) both belong with the publish-
+  # stage's sibling jobs, not before them.
   execute-publish-stage:
     name: Publish
     needs: [parse-config, execute-prepare-stage, execute-build-stage]
@@ -339,6 +343,7 @@ jobs:
       mavencentral-artifacts: ${{ needs.parse-config.outputs.mavencentral-artifacts }}
       googleplay-artifacts: ${{ needs.parse-config.outputs.googleplay-artifacts }}
       containers: ${{ needs.parse-config.outputs.containers }}
+      cargo-artifacts: ${{ needs.parse-config.outputs.cargo-artifacts }}
       build-result-json: ${{ needs.execute-build-stage.outputs.result-json }}
   # ===== Stage 5: Release =====
   # Release creation stays top-level because it is the public end of the pipeline.

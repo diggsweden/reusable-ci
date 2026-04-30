@@ -166,6 +166,31 @@ teardown() {
   assert_output --partial '"containers":"success"'
 }
 
+@test "result-json contains cargo target when CARGO_ARTIFACTS is set" {
+  export CARGO_SBOM_RESULT="success"
+  export CARGO_ARTIFACTS='[{"name":"app"}]'
+
+  run_script "summary/write-publish-stage-result.sh"
+  assert_success
+
+  run get_github_output "stage-ran"
+  assert_output "true"
+
+  run get_github_output "result-json"
+  assert_output --partial '"cargo":"success"'
+}
+
+@test "cargo SBOM failure propagates to stage result" {
+  export CARGO_SBOM_RESULT="failure"
+  export CARGO_ARTIFACTS='[{"name":"app"}]'
+
+  run_script "summary/write-publish-stage-result.sh"
+  assert_success
+
+  run get_github_output "stage-result"
+  assert_output "failure"
+}
+
 @test "result-json ran is false when stage did not run" {
   run_script "summary/write-publish-stage-result.sh"
   assert_success

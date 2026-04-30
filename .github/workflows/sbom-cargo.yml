@@ -2,24 +2,25 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 #
-# Rust Build SBOM (beta)
+# Cargo SBOM
 #
 # Generates a CycloneDX Build SBOM for a Rust project or workspace using
-# cargo-cyclonedx, and uploads it as `rust-build-sbom` by default.
+# cargo-cyclonedx, and uploads it as `cargo-build-sbom` by default.
 # Workspaces get one bom.json per crate; the aggregator in
 # scripts/sbom/generate-sboms.sh picks the aggregate (root crate) BOM — the
 # one with the smallest path depth — when consolidating.
 #
-# Intentionally SBOM-only — this workflow does not invoke `cargo build` or
-# `cargo test`, so it is not (yet) a drop-in Rust builder. Do not wire into
-# release-orchestrator; call directly via `uses:` until a full Rust builder
-# lands. cargo-cyclonedx resolves the dependency graph from Cargo.lock, so
-# the SBOM is accurate whether or not a build has been performed.
+# This workflow handles the platform-agnostic concerns for cargo artefacts.
+# It deliberately does not invoke `cargo build` or `cargo test`: rust binaries
+# are platform-specific and are produced inside the Containerfile during
+# publish-container.yml's matrix dispatch (see docs/sbom.md for the artefact-first
+# vs container-first framing). cargo-cyclonedx resolves the dependency graph from
+# Cargo.lock, so the SBOM is accurate without compiling.
 #
 # `cargo install --locked --version` pins cargo-cyclonedx to a reproducible
 # version so the SBOM tool itself can't drift under us.
 #
-name: Build Rust
+name: Cargo SBOM
 on:
   workflow_call:
     inputs:
@@ -38,15 +39,25 @@ on:
         default: "main"
         type: string
       artifact-name:
-        description: "Artifact name for uploads (defaults to 'rust-build-sbom')"
+        description: "Artifact name for uploads (defaults to 'cargo-build-sbom')"
         required: false
         default: ""
+        type: string
+      enable-build-sbom:
+        description: "Generate CycloneDX Build SBOM (default true)"
+        required: false
+        default: true
+        type: boolean
+      reusable-ci-ref:
+        description: "Ref of diggsweden/reusable-ci to source shared scripts from"
+        required: false
+        default: "main"
         type: string
 permissions:
   contents: read
 jobs:
-  build-rust:
-    name: Build Rust
+  sbom-cargo:
+    name: Cargo SBOM
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -56,12 +67,19 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.branch }}
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+          fetch-depth: 1
       - name: Install Rust toolchain
         env:
+          WORKDIR: ${{ inputs['working-directory'] }}
           TOOLCHAIN: ${{ inputs['rust-toolchain'] }}
-        run: |
-          rustup toolchain install "$TOOLCHAIN" --profile minimal
-          rustup default "$TOOLCHAIN"
+        run: bash .github-shared/scripts/cargo/install-toolchain.sh
       # Caches ~/.cargo (registry, git, installed bins) + target/. Keyed by
       # Cargo.lock so cache invalidates when dependencies change.
       - name: Cache cargo
@@ -70,6 +88,7 @@ jobs:
           workspaces: ${{ inputs['working-directory'] }}
       - name: Generate Build SBOM
         id: sbom
+        if: ${{ inputs['enable-build-sbom'] }}
         continue-on-error: true
         working-directory: ${{ inputs['working-directory'] }}
         env:
@@ -80,11 +99,16 @@ jobs:
           # --all covers every workspace member; single-crate projects get one
           # bom.json at the crate root. --override-filename normalises the name.
           cargo cyclonedx --all --format json --override-filename bom
-      - name: Upload Rust SBOM
+      - name: Upload Cargo SBOM
         if: steps.sbom.outcome == 'success'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: ${{ inputs['artifact-name'] || 'rust-build-sbom' }}
+          # When called from release-build-stage.yml's per-artefact matrix,
+          # artifact-name is set to the cargo artefact's user-chosen name
+          # (e.g. "hsm-worker") so each upload is unique. Direct callers
+          # who don't pass artifact-name fall back to the bare default,
+          # which is fine for single-cargo-artefact projects.
+          name: ${{ inputs['artifact-name'] != '' && format('{0}-cargo-build-sbom', inputs['artifact-name']) || 'cargo-build-sbom' }}
           path: |
             ${{ inputs['working-directory'] }}/bom.json
             ${{ inputs['working-directory'] }}/**/bom.json

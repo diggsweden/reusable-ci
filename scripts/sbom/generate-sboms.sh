@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: CC0-1.0
 
 # Generate Software Bill of Materials (SBOMs) for different project types and layers
-# Supports: maven, npm, gradle, go, rust, python
+# Supports: maven, npm, gradle, go, cargo, python
 # Layers: source (dependency manifests), analyzed-artifact (built binaries), analyzed-container
 
 set -euo pipefail
@@ -13,7 +13,7 @@ source "$SCRIPT_DIR/../ci/output.sh"
 source "$SCRIPT_DIR/../ci/strings.sh"
 source "$SCRIPT_DIR/../ci/install-syft.sh"
 
-readonly VALID_PROJECT_TYPES="auto maven npm gradle gradle-android xcode-ios python go rust"
+readonly VALID_PROJECT_TYPES="auto maven npm gradle gradle-android xcode-ios python go cargo"
 
 #
 # Utility functions
@@ -121,7 +121,7 @@ detect_project_type() {
   elif [[ -f "go.mod" ]]; then
     PROJECT_TYPE="go"
   elif [[ -f "Cargo.toml" ]]; then
-    PROJECT_TYPE="rust"
+    PROJECT_TYPE="cargo"
   elif [[ -f "pyproject.toml" || -f "requirements.txt" || -f "setup.py" ]]; then
     PROJECT_TYPE="python"
   else
@@ -141,7 +141,7 @@ get_version_go() {
   local v
   v=$(grep -oP '^module\s+\S+/v\K[0-9]+' go.mod 2>/dev/null | head -1) && printf "%s.0.0" "$v"
 }
-get_version_rust() { grep -oP '^version\s*=\s*"\K[^"]+' Cargo.toml 2>/dev/null | head -1; }
+get_version_cargo() { grep -oP '^version\s*=\s*"\K[^"]+' Cargo.toml 2>/dev/null | head -1; }
 get_version_python() {
   grep -oP '^version\s*=\s*"\K[^"]+' pyproject.toml 2>/dev/null | head -1 ||
     grep -oP "version\s*=\s*['\"]?\K[^'\"]*" setup.py 2>/dev/null | head -1
@@ -159,7 +159,7 @@ get_version() {
   npm) detected=$(get_version_npm) ;;
   gradle) detected=$(get_version_gradle) ;;
   go) detected=$(get_version_go) ;;
-  rust) detected=$(get_version_rust) ;;
+  cargo) detected=$(get_version_cargo) ;;
   python) detected=$(get_version_python) ;;
   esac
 
@@ -173,7 +173,7 @@ get_name_maven() { mvn help:evaluate -Dexpression=project.artifactId -q -DforceS
 get_name_npm() { node -p "require('./package.json').name" 2>/dev/null | sed 's/@.*\///'; }
 get_name_gradle() { grep -oP "rootProject.name\s*=\s*['\"]?\K[^'\"]*" settings.gradle 2>/dev/null; }
 get_name_go() { grep -oP '^module\s+\K\S+' go.mod 2>/dev/null | head -1 | xargs basename 2>/dev/null; }
-get_name_rust() { grep -oP '^name\s*=\s*"\K[^"]+' Cargo.toml 2>/dev/null | head -1; }
+get_name_cargo() { grep -oP '^name\s*=\s*"\K[^"]+' Cargo.toml 2>/dev/null | head -1; }
 get_name_python() {
   grep -oP '^name\s*=\s*"\K[^"]+' pyproject.toml 2>/dev/null | head -1 ||
     grep -oP "name\s*=\s*['\"]?\K[^'\"]*" setup.py 2>/dev/null | head -1
@@ -191,7 +191,7 @@ get_project_name() {
   npm) detected=$(get_name_npm) ;;
   gradle) detected=$(get_name_gradle) ;;
   go) detected=$(get_name_go) ;;
-  rust) detected=$(get_name_rust) ;;
+  cargo) detected=$(get_name_cargo) ;;
   python) detected=$(get_name_python) ;;
   esac
 
@@ -291,7 +291,7 @@ generate_artifact_layer_go() {
   fi
 }
 
-generate_artifact_layer_rust() {
+generate_artifact_layer_cargo() {
   local name="$1" version="$2"
   local artifacts=()
 
@@ -347,7 +347,7 @@ generate_build_layer() {
   maven) generate_build_layer_maven "$name" "$version" ;;
   npm) generate_build_layer_npm "$name" "$version" ;;
   gradle) generate_build_layer_gradle "$name" "$version" ;;
-  rust) generate_build_layer_cargo "$name" "$version" ;;
+  cargo) generate_build_layer_cargo "$name" "$version" ;;
   go) log_warning "Build SBOM not implemented for project type: go" ;;
   python) log_warning "Build SBOM not implemented for project type: python" ;;
   *) log_warning "Build SBOM not supported for project type: $PROJECT_TYPE" ;;
@@ -472,7 +472,7 @@ generate_artifact_layer() {
   npm) generate_artifact_layer_npm "$name" "$version" ;;
   gradle) generate_artifact_layer_gradle "$name" "$version" ;;
   go) generate_artifact_layer_go "$name" "$version" ;;
-  rust) generate_artifact_layer_rust "$name" "$version" ;;
+  cargo) generate_artifact_layer_cargo "$name" "$version" ;;
   python) generate_artifact_layer_python "$name" "$version" ;;
   *) log_warning "Unknown project type: $PROJECT_TYPE" ;;
   esac
@@ -545,7 +545,7 @@ Usage: $(basename "$0") [flags]
 Generate CISA-layered SBOMs (SPDX + CycloneDX) for a project.
 
 Flags:
-  --project-type <type>     Project type (maven|npm|gradle|gradle-android|go|rust|python|auto). Default: auto
+  --project-type <type>     Project type (maven|npm|gradle|gradle-android|go|cargo|python|auto). Default: auto
   --layers <csv>            Comma-list of layers (build|analyzed-artifact|analyzed-container). Default: build
   --version <ver>           Project version (overrides auto-detect)
   --name <name>             Project name (overrides auto-detect)

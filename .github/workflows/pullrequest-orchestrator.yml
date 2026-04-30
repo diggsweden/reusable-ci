@@ -47,7 +47,7 @@ on:
     inputs:
       # Project configuration
       project-type:
-        description: "Project type: maven, npm, python"
+        description: "Project type: maven, npm, gradle, gradle-android, xcode-ios, cargo, python, go"
         required: true
         type: string
       base-branch:
