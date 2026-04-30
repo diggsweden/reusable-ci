@@ -27,6 +27,10 @@ on:
       xcodeios-artifacts:
         required: true
         type: string
+      cargo-artifacts:
+        required: false
+        default: "[]"
+        type: string
     outputs:
       stage-ran:
         description: Build stage ran at least one ecosystem path
@@ -144,9 +148,32 @@ jobs:
       working-directory: ${{ matrix.artifact['working-directory'] }}
       macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+  sbom-cargo:
+    name: Cargo SBOM - ${{ matrix.artifact.name }}
+    if: ${{ inputs.cargo-artifacts != '[]' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.cargo-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/sbom-cargo.yml
+    with:
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      branch: ${{ inputs.branch }}
+      rust-toolchain: ${{ matrix.artifact.config['rust-toolchain'] || 'stable' }}
+      enable-build-sbom: ${{ contains(matrix.artifact['effective-sboms'], 'build') }}
+      # Per-artefact unique upload name. Without this, multi-cargo-artefact
+      # workspaces (e.g., a workspace shipping hsm-worker AND wallet-bff
+      # as separate cargo artefacts in artifacts.yml) would all upload as
+      # `cargo-build-sbom` and the second matrix leg's actions/upload-artifact
+      # would conflict with the first. Mirrors build-gradle's pattern.
+      artifact-name: ${{ matrix.artifact.name }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   summarize-build-stage:
     name: Summarize Build Stage
-    needs: [build-maven, build-npm, build-gradle, build-gradle-android, build-xcode]
+    needs: [build-maven, build-npm, build-gradle, build-gradle-android, build-xcode, sbom-cargo]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -171,9 +198,11 @@ jobs:
           GRADLE_ARTIFACTS: ${{ inputs.gradle-artifacts }}
           GRADLEANDROID_ARTIFACTS: ${{ inputs.gradleandroid-artifacts }}
           XCODEIOS_ARTIFACTS: ${{ inputs.xcodeios-artifacts }}
+          CARGO_ARTIFACTS: ${{ inputs.cargo-artifacts }}
           BUILD_MAVEN_RESULT: ${{ needs.build-maven.result }}
           BUILD_NPM_RESULT: ${{ needs.build-npm.result }}
           BUILD_GRADLE_RESULT: ${{ needs.build-gradle.result }}
           BUILD_GRADLE_ANDROID_RESULT: ${{ needs.build-gradle-android.result }}
           BUILD_XCODE_RESULT: ${{ needs.build-xcode.result }}
+          CARGO_SBOM_RESULT: ${{ needs.sbom-cargo.result }}
         run: bash .github-shared/scripts/summary/write-build-stage-result.sh

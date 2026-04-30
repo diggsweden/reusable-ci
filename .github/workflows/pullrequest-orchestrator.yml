@@ -47,7 +47,7 @@ on:
     inputs:
       # Project configuration
       project-type:
-        description: "Project type: maven, npm, python"
+        description: "Project type: maven, npm, gradle, gradle-android, xcode-ios, cargo, python, go"
         required: true
         type: string
       base-branch:
@@ -96,6 +96,26 @@ on:
         required: false
         default: false
         type: boolean
+      linters.clippy:
+        description: "Enable cargo clippy for Rust projects"
+        required: false
+        default: false
+        type: boolean
+      linters.rustfmt:
+        description: "Enable cargo fmt --check for Rust projects"
+        required: false
+        default: false
+        type: boolean
+      linters.cargoaudit:
+        description: "Enable cargo audit (RUSTSEC advisories) for Rust projects"
+        required: false
+        default: false
+        type: boolean
+      cargo.apt-packages:
+        description: "Space-separated apt packages required to lint Rust crates (clippy compiles, so native deps for rdkafka/openssl/etc must be available)"
+        required: false
+        default: ""
+        type: string
       security.sast-opengrep:
         description: "Enable OpenGrep SAST scanning"
         required: false
@@ -150,6 +170,9 @@ jobs:
           LINTER_DEVBASECHECK: ${{ inputs['linters.devbasecheck'] }}
           LINTER_SWIFTFORMAT: ${{ inputs['linters.swiftformat'] }}
           LINTER_SWIFTLINT: ${{ inputs['linters.swiftlint'] }}
+          LINTER_CLIPPY: ${{ inputs['linters.clippy'] }}
+          LINTER_RUSTFMT: ${{ inputs['linters.rustfmt'] }}
+          LINTER_CARGOAUDIT: ${{ inputs['linters.cargoaudit'] }}
           SAST_OPENGREP: ${{ inputs['security.sast-opengrep'] }}
           SAST_OPENGREP_RULES: ${{ inputs['security.sast-opengrep-rules'] }}
           SAST_OPENGREP_FAIL_ON_SEVERITY: ${{ inputs['security.sast-opengrep-fail-on-severity'] }}
@@ -166,6 +189,7 @@ jobs:
     with:
       pr-context-json: ${{ needs.compose-pr-interface.outputs.pr-context-json }}
       pr-policy-json: ${{ needs.compose-pr-interface.outputs.pr-policy-json }}
+      cargo-apt-packages: ${{ inputs['cargo.apt-packages'] }}
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
 
   # ===== Summary =====

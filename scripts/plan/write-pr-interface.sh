@@ -9,10 +9,15 @@ source "$SCRIPT_DIR/../ci/output.sh"
 
 main() {
   local swift_bool="false"
+  local cargo_bool="false"
   local sast_opengrep_bool
 
   if [[ "${LINTER_SWIFTFORMAT}" == "true" || "${LINTER_SWIFTLINT}" == "true" ]]; then
     swift_bool="true"
+  fi
+
+  if [[ "${LINTER_CLIPPY}" == "true" || "${LINTER_RUSTFMT}" == "true" || "${LINTER_CARGOAUDIT}" == "true" ]]; then
+    cargo_bool="true"
   fi
 
   sast_opengrep_bool="$(ci_json_bool "${SAST_OPENGREP:-false}")"
@@ -21,7 +26,7 @@ main() {
   pr_context=$(printf '{"project_type":"%s","base_branch":"%s","reusable_ci_ref":"%s","sast_opengrep_rules":"%s","sast_opengrep_fail_on_severity":"%s"}' \
     "$PROJECT_TYPE" "${BASE_BRANCH:-}" "$REUSABLE_CI_REF" "${SAST_OPENGREP_RULES:-p/default}" "${SAST_OPENGREP_FAIL_ON_SEVERITY:-high}")
 
-  pr_policy=$(printf '{"commitlint":%s,"licenselint":%s,"dependencyreview":%s,"sastopengrep":%s,"megalint":%s,"publiccodelint":%s,"devbasecheck":%s,"swiftformat":%s,"swiftlint":%s,"swift":%s}' \
+  pr_policy=$(printf '{"commitlint":%s,"licenselint":%s,"dependencyreview":%s,"sastopengrep":%s,"megalint":%s,"publiccodelint":%s,"devbasecheck":%s,"swiftformat":%s,"swiftlint":%s,"swift":%s,"clippy":%s,"rustfmt":%s,"cargoaudit":%s,"cargo":%s}' \
     "$(ci_json_bool "$LINTER_COMMITLINT")" \
     "$(ci_json_bool "$LINTER_LICENSLINT")" \
     "$(ci_json_bool "$LINTER_DEPENDENCYREVIEW")" \
@@ -31,7 +36,11 @@ main() {
     "$(ci_json_bool "$LINTER_DEVBASECHECK")" \
     "$(ci_json_bool "$LINTER_SWIFTFORMAT")" \
     "$(ci_json_bool "$LINTER_SWIFTLINT")" \
-    "$swift_bool")
+    "$swift_bool" \
+    "$(ci_json_bool "$LINTER_CLIPPY")" \
+    "$(ci_json_bool "$LINTER_RUSTFMT")" \
+    "$(ci_json_bool "$LINTER_CARGOAUDIT")" \
+    "$cargo_bool")
 
   ci_output "pr-context-json" "$pr_context"
   ci_output "pr-policy-json" "$pr_policy"

@@ -25,11 +25,13 @@ teardown() {
   export BUILD_GRADLE_RESULT="success"
   export BUILD_GRADLE_ANDROID_RESULT="success"
   export BUILD_XCODE_RESULT="success"
+  export CARGO_SBOM_RESULT="success"
   export MAVEN_ARTIFACTS='[{"name":"app.jar"}]'
   export NPM_ARTIFACTS='[{"name":"app.tgz"}]'
   export GRADLE_ARTIFACTS='[{"name":"app.jar"}]'
   export GRADLEANDROID_ARTIFACTS='[{"name":"app.apk"}]'
   export XCODEIOS_ARTIFACTS='[{"name":"app.ipa"}]'
+  export CARGO_ARTIFACTS='[{"name":"app"}]'
 
   run_script "summary/write-build-stage-result.sh"
   assert_success
@@ -134,6 +136,7 @@ teardown() {
   export GRADLE_ARTIFACTS='[]'
   export GRADLEANDROID_ARTIFACTS='[]'
   export XCODEIOS_ARTIFACTS='[]'
+  export CARGO_ARTIFACTS='[]'
 
   run_script "summary/write-build-stage-result.sh"
   assert_success
@@ -166,6 +169,31 @@ teardown() {
   assert_output --partial '"gradle":"skipped"'
   assert_output --partial '"gradleandroid":"cancelled"'
   assert_output --partial '"xcodeios":"success"'
+}
+
+@test "result-json contains cargo target" {
+  export CARGO_SBOM_RESULT="success"
+  export CARGO_ARTIFACTS='[{"name":"app"}]'
+
+  run_script "summary/write-build-stage-result.sh"
+  assert_success
+
+  run get_github_output "stage-ran"
+  assert_output "true"
+
+  run get_github_output "result-json"
+  assert_output --partial '"cargo":"success"'
+}
+
+@test "cargo SBOM failure propagates to stage result" {
+  export CARGO_SBOM_RESULT="failure"
+  export CARGO_ARTIFACTS='[{"name":"app"}]'
+
+  run_script "summary/write-build-stage-result.sh"
+  assert_success
+
+  run get_github_output "stage-result"
+  assert_output "failure"
 }
 
 @test "result-json ran is false when stage did not run" {

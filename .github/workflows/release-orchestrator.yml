@@ -167,7 +167,7 @@ jobs:
       xcodeios-artifacts: ${{ steps.parse.outputs.xcodeios-artifacts }}
       python-artifacts: ${{ steps.parse.outputs.python-artifacts }}
       go-artifacts: ${{ steps.parse.outputs.go-artifacts }}
-      rust-artifacts: ${{ steps.parse.outputs.rust-artifacts }}
+      cargo-artifacts: ${{ steps.parse.outputs.cargo-artifacts }}
 
       # Ecosystem presence flags for stage gating.
       has-maven: ${{ steps.parse.outputs.has-maven }}
@@ -177,7 +177,7 @@ jobs:
       has-xcodeios: ${{ steps.parse.outputs.has-xcodeios }}
       has-python: ${{ steps.parse.outputs.has-python }}
       has-go: ${{ steps.parse.outputs.has-go }}
-      has-rust: ${{ steps.parse.outputs.has-rust }}
+      has-cargo: ${{ steps.parse.outputs.has-cargo }}
 
       # Publish-target artifact groups and flags.
       mavencentral-artifacts: ${{ steps.parse.outputs.mavencentral-artifacts }}
@@ -317,6 +317,7 @@ jobs:
       gradle-artifacts: ${{ needs.parse-config.outputs.gradle-artifacts }}
       gradleandroid-artifacts: ${{ needs.parse-config.outputs.gradleandroid-artifacts }}
       xcodeios-artifacts: ${{ needs.parse-config.outputs.xcodeios-artifacts }}
+      cargo-artifacts: ${{ needs.parse-config.outputs.cargo-artifacts }}
   # ===== Stage 4: Publish =====
   # Publish fanout now lives below this control-plane stage call.
   execute-publish-stage:

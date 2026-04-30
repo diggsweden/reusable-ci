@@ -10,7 +10,7 @@ source "$SCRIPT_DIR/../ci/manifest.sh"
 source "$SCRIPT_DIR/../ci/stage-result.sh"
 
 main() {
-  local commitlint_result licenselint_result dependencyreview_result sastopengrep_result megalint_result publiccodelint_result devbasecheck_result swift_result
+  local commitlint_result licenselint_result dependencyreview_result sastopengrep_result megalint_result publiccodelint_result devbasecheck_result swift_result cargo_result
 
   commitlint_result="$(ci_normalize_result "${COMMITLINT_RESULT:-skipped}")"
   licenselint_result="$(ci_normalize_result "${LICENSLINT_RESULT:-skipped}")"
@@ -20,9 +20,10 @@ main() {
   publiccodelint_result="$(ci_normalize_result "${PUBLICCODELINT_RESULT:-skipped}")"
   devbasecheck_result="$(ci_normalize_result "${DEVBASECHECK_RESULT:-skipped}")"
   swift_result="$(ci_normalize_result "${SWIFT_RESULT:-skipped}")"
+  cargo_result="$(ci_normalize_result "${CARGO_RESULT:-skipped}")"
 
   local stage_result
-  stage_result="$(ci_aggregate_results "$commitlint_result" "$licenselint_result" "$dependencyreview_result" "$sastopengrep_result" "$megalint_result" "$publiccodelint_result" "$devbasecheck_result" "$swift_result")"
+  stage_result="$(ci_aggregate_results "$commitlint_result" "$licenselint_result" "$dependencyreview_result" "$sastopengrep_result" "$megalint_result" "$publiccodelint_result" "$devbasecheck_result" "$swift_result" "$cargo_result")"
 
   effective_result() {
     if [[ "$1" == "true" ]]; then printf '%s' "$2"; else printf 'skipped'; fi
@@ -37,7 +38,8 @@ main() {
     "megalint:$(effective_result "${MEGALINT_ENABLED:-false}" "$megalint_result")" \
     "publiccodelint:$(effective_result "${PUBLICCODELINT_ENABLED:-false}" "$publiccodelint_result")" \
     "devbasecheck:$(effective_result "${DEVBASECHECK_ENABLED:-false}" "$devbasecheck_result")" \
-    "swift:$(effective_result "${SWIFT_ENABLED:-false}" "$swift_result")")"
+    "swift:$(effective_result "${SWIFT_ENABLED:-false}" "$swift_result")" \
+    "cargo:$(effective_result "${CARGO_ENABLED:-false}" "$cargo_result")")"
   result_json="$(ci_stage_result_json "pr-quality" "$stage_result" "true" "$targets_json")"
   ci_write_stage_result "pr-quality" "$result_json" >/dev/null
 

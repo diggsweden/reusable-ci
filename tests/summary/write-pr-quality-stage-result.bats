@@ -28,6 +28,7 @@ teardown() {
   export PUBLICCODELINT_RESULT="success"
   export DEVBASECHECK_RESULT="success"
   export SWIFT_RESULT="success"
+  export CARGO_RESULT="success"
   export COMMITLINT_ENABLED="true"
   export LICENSLINT_ENABLED="true"
   export DEPENDENCYREVIEW_ENABLED="true"
@@ -36,6 +37,7 @@ teardown() {
   export PUBLICCODELINT_ENABLED="true"
   export DEVBASECHECK_ENABLED="true"
   export SWIFT_ENABLED="true"
+  export CARGO_ENABLED="true"
 
   run_script "summary/write-pr-quality-stage-result.sh"
   assert_success
@@ -133,6 +135,7 @@ teardown() {
   export PUBLICCODELINT_ENABLED="false"
   export DEVBASECHECK_ENABLED="false"
   export SWIFT_ENABLED="false"
+  export CARGO_ENABLED="false"
 
   run_script "summary/write-pr-quality-stage-result.sh"
   assert_success
@@ -159,6 +162,7 @@ teardown() {
   export PUBLICCODELINT_ENABLED="false"
   export DEVBASECHECK_ENABLED="false"
   export SWIFT_ENABLED="false"
+  export CARGO_ENABLED="false"
 
   run_script "summary/write-pr-quality-stage-result.sh"
   assert_success
@@ -181,6 +185,7 @@ teardown() {
   export PUBLICCODELINT_ENABLED="false"
   export DEVBASECHECK_ENABLED="false"
   export SWIFT_ENABLED="false"
+  export CARGO_ENABLED="false"
 
   run_script "summary/write-pr-quality-stage-result.sh"
   assert_success
@@ -197,6 +202,7 @@ teardown() {
   assert_output --partial '"publiccodelint":"skipped"'
   assert_output --partial '"devbasecheck":"skipped"'
   assert_output --partial '"swift":"skipped"'
+  assert_output --partial '"cargo":"skipped"'
 }
 
 @test "stage-result reflects raw results regardless of enabled flags" {

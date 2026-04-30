@@ -11,6 +11,11 @@ on:
       pr-policy-json:
         required: true
         type: string
+      cargo-apt-packages:
+        description: "Space-separated apt packages forwarded to lint-cargo so clippy can compile crates with native deps."
+        required: false
+        default: ""
+        type: string
       reusable-ci-ref:
         required: false
         default: "main"
@@ -76,11 +81,23 @@ jobs:
     with:
       enable-swiftformat: ${{ fromJson(inputs['pr-policy-json']).swiftformat }}
       enable-swiftlint: ${{ fromJson(inputs['pr-policy-json']).swiftlint }}
+  cargo-lint:
+    name: Cargo Lint
+    if: ${{ fromJson(inputs['pr-policy-json']).cargo }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/lint-cargo.yml
+    with:
+      enable-rustfmt: ${{ fromJson(inputs['pr-policy-json']).rustfmt }}
+      enable-clippy: ${{ fromJson(inputs['pr-policy-json']).clippy }}
+      enable-cargoaudit: ${{ fromJson(inputs['pr-policy-json']).cargoaudit }}
+      apt-packages: ${{ inputs['cargo-apt-packages'] }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   quality-status:
     name: Status
     runs-on: ubuntu-latest
     if: always()
-    needs: [commit-lint, license-lint, dependency-review, sast-opengrep, megalint, publiccode-lint, devbase-check-lint, swift-lint]
+    needs: [commit-lint, license-lint, dependency-review, sast-opengrep, megalint, publiccode-lint, devbase-check-lint, swift-lint, cargo-lint]
     steps:
       - name: Checkout reusable-ci scripts
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -99,6 +116,7 @@ jobs:
           CHECK_PUBLICCODELINT: Publiccode Lint|${{ fromJson(inputs['pr-policy-json']).publiccodelint }}|${{ needs.publiccode-lint.result }}|true
           CHECK_DEVBASECHECK: Devbase Check|${{ fromJson(inputs['pr-policy-json']).devbasecheck }}|${{ needs.devbase-check-lint.result }}|false
           CHECK_SWIFT: Swift Lint|${{ fromJson(inputs['pr-policy-json']).swift }}|${{ needs.swift-lint.result }}|false
+          CHECK_CARGO: Cargo Lint|${{ fromJson(inputs['pr-policy-json']).cargo }}|${{ needs.cargo-lint.result }}|false
         run: |
           bash .github-shared/scripts/summary/write-quality-check-status.sh \
             "$CHECK_COMMITLINT" \
@@ -108,10 +126,11 @@ jobs:
             "$CHECK_MEGALINT" \
             "$CHECK_PUBLICCODELINT" \
             "$CHECK_DEVBASECHECK" \
-            "$CHECK_SWIFT"
+            "$CHECK_SWIFT" \
+            "$CHECK_CARGO"
   summarize-quality-stage:
     name: Summary
-    needs: [commit-lint, license-lint, dependency-review, sast-opengrep, megalint, publiccode-lint, devbase-check-lint, swift-lint, quality-status]
+    needs: [commit-lint, license-lint, dependency-review, sast-opengrep, megalint, publiccode-lint, devbase-check-lint, swift-lint, cargo-lint, quality-status]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -135,6 +154,7 @@ jobs:
           PUBLICCODELINT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).publiccodelint }}
           DEVBASECHECK_ENABLED: ${{ fromJson(inputs['pr-policy-json']).devbasecheck }}
           SWIFT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).swift }}
+          CARGO_ENABLED: ${{ fromJson(inputs['pr-policy-json']).cargo }}
           COMMITLINT_RESULT: ${{ needs.commit-lint.result }}
           LICENSLINT_RESULT: ${{ needs.license-lint.result }}
           DEPENDENCYREVIEW_RESULT: ${{ needs.dependency-review.result }}
@@ -143,6 +163,7 @@ jobs:
           PUBLICCODELINT_RESULT: ${{ needs.publiccode-lint.result }}
           DEVBASECHECK_RESULT: ${{ needs.devbase-check-lint.result }}
           SWIFT_RESULT: ${{ needs.swift-lint.result }}
+          CARGO_RESULT: ${{ needs.cargo-lint.result }}
         run: bash .github-shared/scripts/summary/write-pr-quality-stage-result.sh
       - name: Upload quality stage manifests
         if: always() && hashFiles('.ci-results/*.json') != ''

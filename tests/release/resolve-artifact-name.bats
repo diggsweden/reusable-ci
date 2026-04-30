@@ -117,13 +117,23 @@ run_resolve_artifact_name() {
 # Rust Project Tests
 # =============================================================================
 
-@test "resolve-artifact-name returns rust-build-sbom for rust" {
-  run_resolve_artifact_name "rust"
+@test "resolve-artifact-name returns default cargo-build-sbom without ARTIFACT_NAME" {
+  run_resolve_artifact_name "cargo"
 
   assert_success
-  # Rust builder is SBOM-only, so build artifact and SBOM name coincide.
-  assert_line "name=rust-build-sbom"
-  assert_line "sbom-name=rust-build-sbom"
+  # sbom-cargo.yml is SBOM-only, so build artifact and SBOM name coincide.
+  assert_line "name=cargo-build-sbom"
+  assert_line "sbom-name=cargo-build-sbom"
+}
+
+@test "resolve-artifact-name pairs cargo sbom with artifact-name override" {
+  # Multi-cargo-artefact workspaces dispatch sbom-cargo per artefact and
+  # pass artifact-name to namespace each upload. Mirrors gradle behavior.
+  ARTIFACT_NAME="hsm-worker" run_resolve_artifact_name "cargo"
+
+  assert_success
+  assert_line "name=hsm-worker-cargo-build-sbom"
+  assert_line "sbom-name=hsm-worker-cargo-build-sbom"
 }
 
 # =============================================================================

@@ -1,0 +1,310 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+#
+# Cargo Lint Workflow
+#
+# Purpose: Runs the standard Rust quality gates — rustfmt, clippy, cargo
+# audit (and optionally cargo deny) — modelled on the swift / mega lint
+# workflows. All checks are independently togglable so callers can run a
+# subset (matches the swift two-flag pattern but with three+ tools).
+#
+# How it works:
+#   1. (Optional) Install apt packages for native deps (rdkafka, openssl, ...)
+#   2. Install the Rust toolchain (preferring rust-toolchain.toml when
+#      present), with clippy + rustfmt components.
+#   3. Restore Swatinem/rust-cache.
+#   4. Run rustfmt --check, clippy, and cargo audit in parallel-friendly
+#      jobs gated by their respective enable-* inputs.
+#   5. Emit a summary table.
+#
+# `cargo install --locked --version` pins audit/deny binaries so the lint
+# tools themselves can't drift under us.
+#
+name: Cargo Lint
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: "Working directory for linting"
+        required: false
+        default: "."
+        type: string
+      rust-toolchain:
+        description: "Rust toolchain (e.g. 1.94, stable). Ignored when working-directory contains rust-toolchain.toml."
+        required: false
+        default: "stable"
+        type: string
+      apt-packages:
+        description: "Space-separated apt packages to install before linting (e.g. native deps required by clippy)."
+        required: false
+        default: ""
+        type: string
+      enable-rustfmt:
+        description: "Run cargo fmt --check"
+        required: false
+        default: true
+        type: boolean
+      enable-clippy:
+        description: "Run cargo clippy"
+        required: false
+        default: true
+        type: boolean
+      clippy-args:
+        description: "Args appended to `cargo clippy` (default treats warnings as errors)."
+        required: false
+        default: "--workspace --all-targets --locked -- -D warnings"
+        type: string
+      enable-cargoaudit:
+        description: "Run cargo audit (RUSTSEC advisories)"
+        required: false
+        default: true
+        type: boolean
+      enable-cargodeny:
+        description: "Run cargo deny check (licences, advisories, bans, sources). Off by default; opt in when deny.toml is present."
+        required: false
+        default: false
+        type: boolean
+      reusable-ci-ref:
+        description: "Ref of diggsweden/reusable-ci to source shared scripts from."
+        required: false
+        default: "main"
+        type: string
+permissions:
+  contents: read
+jobs:
+  rustfmt:
+    name: cargo fmt
+    if: ${{ inputs['enable-rustfmt'] }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+          fetch-depth: 1
+      - name: Install Rust toolchain (rustfmt)
+        env:
+          WORKDIR: ${{ inputs['working-directory'] }}
+          TOOLCHAIN: ${{ inputs['rust-toolchain'] }}
+          COMPONENTS: rustfmt
+        run: |
+          bash .github-shared/scripts/cargo/install-toolchain.sh
+          rustfmt --version
+      - name: Run cargo fmt --check
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          set +e
+          cargo fmt --all -- --check > fmt-output.txt 2>&1
+          rc=$?
+          cat fmt-output.txt
+          {
+            if [[ $rc -eq 0 ]]; then
+              printf '## Rust Format ✅\n\nAll Rust files are properly formatted.\n'
+            else
+              printf '## Rust Format 🔴\n\n```\n'
+              cat fmt-output.txt
+              printf '```\n'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+  clippy:
+    name: cargo clippy
+    if: ${{ inputs['enable-clippy'] }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+          fetch-depth: 1
+      - name: Install apt packages
+        if: ${{ inputs['apt-packages'] != '' }}
+        env:
+          APT_PACKAGES: ${{ inputs['apt-packages'] }}
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086 # word-splitting intentional for package list
+          sudo apt-get install -y --no-install-recommends $APT_PACKAGES
+      - name: Install Rust toolchain (clippy)
+        env:
+          WORKDIR: ${{ inputs['working-directory'] }}
+          TOOLCHAIN: ${{ inputs['rust-toolchain'] }}
+          COMPONENTS: clippy
+        run: |
+          bash .github-shared/scripts/cargo/install-toolchain.sh
+          cargo clippy --version
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
+        with:
+          workspaces: ${{ inputs['working-directory'] }}
+      - name: Run cargo clippy
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          CLIPPY_ARGS: ${{ inputs['clippy-args'] }}
+        run: |
+          set +e
+          # shellcheck disable=SC2086 # CLIPPY_ARGS is a deliberate arg list
+          cargo clippy $CLIPPY_ARGS 2>&1 | tee clippy-output.txt
+          rc=${PIPESTATUS[0]}
+          {
+            if [[ $rc -eq 0 ]]; then
+              printf '## Clippy ✅\n\nNo clippy warnings.\n'
+            else
+              printf '## Clippy 🔴\n\nSee job log for details.\n'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+  cargo-audit:
+    name: cargo audit
+    if: ${{ inputs['enable-cargoaudit'] }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+          fetch-depth: 1
+      - name: Install Rust toolchain
+        env:
+          WORKDIR: ${{ inputs['working-directory'] }}
+          TOOLCHAIN: ${{ inputs['rust-toolchain'] }}
+        run: bash .github-shared/scripts/cargo/install-toolchain.sh
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
+        with:
+          workspaces: ${{ inputs['working-directory'] }}
+          # cache-bin propagates the audit binary across runs.
+          cache-bin: true
+      - name: Install cargo-audit
+        env:
+          # renovate: datasource=crate depName=cargo-audit
+          CARGO_AUDIT_VERSION: "0.22.1"
+        run: cargo install --locked cargo-audit --version "${CARGO_AUDIT_VERSION}"
+      - name: Run cargo audit
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          set +e
+          cargo audit 2>&1 | tee audit-output.txt
+          rc=${PIPESTATUS[0]}
+          {
+            if [[ $rc -eq 0 ]]; then
+              printf '## cargo audit ✅\n\nNo known vulnerabilities in dependencies.\n'
+            else
+              printf '## cargo audit 🔴\n\nSee job log for advisory details.\n'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+  cargo-deny:
+    name: cargo deny
+    if: ${{ inputs['enable-cargodeny'] }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+          fetch-depth: 1
+      - name: Install Rust toolchain
+        env:
+          WORKDIR: ${{ inputs['working-directory'] }}
+          TOOLCHAIN: ${{ inputs['rust-toolchain'] }}
+        run: bash .github-shared/scripts/cargo/install-toolchain.sh
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
+        with:
+          workspaces: ${{ inputs['working-directory'] }}
+          cache-bin: true
+      - name: Install cargo-deny
+        env:
+          # renovate: datasource=crate depName=cargo-deny
+          CARGO_DENY_VERSION: "0.16.4"
+        run: cargo install --locked cargo-deny --version "${CARGO_DENY_VERSION}"
+      - name: Run cargo deny check
+        working-directory: ${{ inputs['working-directory'] }}
+        run: cargo deny check
+  summary:
+    name: Lint Summary
+    runs-on: ubuntu-latest
+    needs: [rustfmt, clippy, cargo-audit, cargo-deny]
+    if: always()
+    steps:
+      - name: Render summary
+        env:
+          ENABLE_RUSTFMT: ${{ inputs['enable-rustfmt'] }}
+          RUSTFMT_RESULT: ${{ needs.rustfmt.result }}
+          ENABLE_CLIPPY: ${{ inputs['enable-clippy'] }}
+          CLIPPY_RESULT: ${{ needs.clippy.result }}
+          ENABLE_CARGOAUDIT: ${{ inputs['enable-cargoaudit'] }}
+          CARGOAUDIT_RESULT: ${{ needs['cargo-audit'].result }}
+          ENABLE_CARGODENY: ${{ inputs['enable-cargodeny'] }}
+          CARGODENY_RESULT: ${{ needs['cargo-deny'].result }}
+        run: |
+          row() {
+            local name="$1" enabled="$2" result="$3"
+            if [[ "$enabled" != "true" ]]; then
+              printf '| %s | 🔸 Disabled |\n' "$name"
+            elif [[ "$result" == "success" ]]; then
+              printf '| %s | ✓ Pass |\n' "$name"
+            elif [[ "$result" == "skipped" ]]; then
+              printf '| %s | − Skipped |\n' "$name"
+            else
+              printf '| %s | ✗ Fail |\n' "$name"
+            fi
+          }
+          {
+            printf '## Rust Linting Summary\n\n'
+            printf '| Linter | Status |\n|--------|--------|\n'
+            row "rustfmt"     "$ENABLE_RUSTFMT"     "$RUSTFMT_RESULT"
+            row "clippy"      "$ENABLE_CLIPPY"      "$CLIPPY_RESULT"
+            row "cargo audit" "$ENABLE_CARGOAUDIT"  "$CARGOAUDIT_RESULT"
+            row "cargo deny"  "$ENABLE_CARGODENY"   "$CARGODENY_RESULT"
+          } >> "$GITHUB_STEP_SUMMARY"
+          fail=false
+          for pair in \
+            "$ENABLE_RUSTFMT|$RUSTFMT_RESULT" \
+            "$ENABLE_CLIPPY|$CLIPPY_RESULT" \
+            "$ENABLE_CARGOAUDIT|$CARGOAUDIT_RESULT" \
+            "$ENABLE_CARGODENY|$CARGODENY_RESULT"; do
+            enabled="${pair%%|*}"
+            result="${pair#*|}"
+            if [[ "$enabled" == "true" && "$result" == "failure" ]]; then
+              fail=true
+            fi
+          done
+          if [[ "$fail" == "true" ]]; then
+            printf '\n### ✗ Linting failed\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi

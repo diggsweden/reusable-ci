@@ -730,9 +730,9 @@ go 1.21
 EOF
 }
 
-# Create a Rust project structure
-# Usage: create_rust_project
-create_rust_project() {
+# Create a Cargo project structure
+# Usage: create_cargo_project
+create_cargo_project() {
   cat >Cargo.toml <<'EOF'
 [package]
 name = "myapp"

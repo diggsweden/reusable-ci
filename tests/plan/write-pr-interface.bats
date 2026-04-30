@@ -31,6 +31,9 @@ set_all_linters_enabled() {
   export LINTER_DEVBASECHECK="true"
   export LINTER_SWIFTFORMAT="true"
   export LINTER_SWIFTLINT="true"
+  export LINTER_CLIPPY="true"
+  export LINTER_RUSTFMT="true"
+  export LINTER_CARGOAUDIT="true"
   export SAST_OPENGREP="true"
   export SAST_OPENGREP_RULES="p/default"
   export SAST_OPENGREP_FAIL_ON_SEVERITY="high"
@@ -48,6 +51,9 @@ set_all_linters_disabled() {
   export LINTER_DEVBASECHECK="false"
   export LINTER_SWIFTFORMAT="false"
   export LINTER_SWIFTLINT="false"
+  export LINTER_CLIPPY="false"
+  export LINTER_RUSTFMT="false"
+  export LINTER_CARGOAUDIT="false"
   export SAST_OPENGREP="false"
   export SAST_OPENGREP_RULES="p/default"
   export SAST_OPENGREP_FAIL_ON_SEVERITY="high"
@@ -96,6 +102,9 @@ set_all_linters_disabled() {
   assert_output --partial '"devbasecheck":true'
   assert_output --partial '"swiftformat":true'
   assert_output --partial '"swiftlint":true'
+  assert_output --partial '"clippy":true'
+  assert_output --partial '"rustfmt":true'
+  assert_output --partial '"cargoaudit":true'
 }
 
 @test "swift is true when swiftformat is true" {
@@ -132,6 +141,49 @@ set_all_linters_disabled() {
   assert_output --partial '"swift":false'
 }
 
+@test "cargo umbrella is true when clippy is true" {
+  set_all_linters_disabled
+  export LINTER_CLIPPY="true"
+
+  run_script "plan/write-pr-interface.sh"
+  assert_success
+
+  run get_github_output "pr-policy-json"
+  assert_output --partial '"cargo":true'
+}
+
+@test "cargo umbrella is true when rustfmt is true" {
+  set_all_linters_disabled
+  export LINTER_RUSTFMT="true"
+
+  run_script "plan/write-pr-interface.sh"
+  assert_success
+
+  run get_github_output "pr-policy-json"
+  assert_output --partial '"cargo":true'
+}
+
+@test "cargo umbrella is true when cargoaudit is true" {
+  set_all_linters_disabled
+  export LINTER_CARGOAUDIT="true"
+
+  run_script "plan/write-pr-interface.sh"
+  assert_success
+
+  run get_github_output "pr-policy-json"
+  assert_output --partial '"cargo":true'
+}
+
+@test "cargo umbrella is false when all cargo linters are false" {
+  set_all_linters_disabled
+
+  run_script "plan/write-pr-interface.sh"
+  assert_success
+
+  run get_github_output "pr-policy-json"
+  assert_output --partial '"cargo":false'
+}
+
 @test "all linters disabled produces all false in policy" {
   set_all_linters_disabled
 
@@ -139,5 +191,5 @@ set_all_linters_disabled() {
   assert_success
 
   run get_github_output "pr-policy-json"
-  assert_output '{"commitlint":false,"licenselint":false,"dependencyreview":false,"sastopengrep":false,"megalint":false,"publiccodelint":false,"devbasecheck":false,"swiftformat":false,"swiftlint":false,"swift":false}'
+  assert_output '{"commitlint":false,"licenselint":false,"dependencyreview":false,"sastopengrep":false,"megalint":false,"publiccodelint":false,"devbasecheck":false,"swiftformat":false,"swiftlint":false,"swift":false,"clippy":false,"rustfmt":false,"cargoaudit":false,"cargo":false}'
 }
