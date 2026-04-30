@@ -72,6 +72,7 @@ jobs:
       registry: ${{ matrix.container.registry || fromJson(inputs['dev-context-json']).registry }}
       artifact-types: ${{ join(matrix.container['artifact-types'], ',') }}
       target: ${{ matrix.container.target || '' }}
+      name: ${{ matrix.container.name }}
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
 
   # Legacy single-container path: fires only when artifacts-config wasn't set.

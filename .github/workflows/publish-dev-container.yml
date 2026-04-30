@@ -64,6 +64,11 @@ on:
         required: false
         default: ""
         type: string
+      name:
+        description: "Container artefact name from artifacts.yml. When set, the published image becomes <registry>/<repository>/<name>:<dev-tag>, giving each container in a multi-container project its own GitHub Packages page. Empty preserves single-image behaviour (<registry>/<repository>:<dev-tag>). Mirrors publish-container.yml's name input."
+        required: false
+        default: ""
+        type: string
       registry:
         description: "Container registry"
         required: false
@@ -204,9 +209,14 @@ jobs:
         env:
           TARGET_REGISTRY: ${{ inputs.registry }}
           REPOSITORY: ${{ github.repository }}
+          NAME: ${{ inputs.name }}
         run: |
           DEV_VERSION=$(bash .github-shared/scripts/version/generate-dev-version.sh)
-          IMAGE_NAME="$TARGET_REGISTRY/$REPOSITORY"
+          if [[ -n "$NAME" ]]; then
+            IMAGE_NAME="$TARGET_REGISTRY/$REPOSITORY/$NAME"
+          else
+            IMAGE_NAME="$TARGET_REGISTRY/$REPOSITORY"
+          fi
 
           printf "tags=%s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}" >> "$GITHUB_OUTPUT"
           printf "image=%s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}" >> "$GITHUB_OUTPUT"

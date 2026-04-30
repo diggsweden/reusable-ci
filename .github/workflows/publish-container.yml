@@ -123,7 +123,7 @@ on:
         default: ""
         type: string
       name:
-        description: "Container artefact name from artifacts.yml. Used to namespace the optional binary upload artefact (extract-binary). Optional for direct callers."
+        description: "Container artefact name from artifacts.yml. Namespaces the optional binary upload artefact (extract-binary) AND the published image — when set, the image becomes <registry>/<repository>/<name>:<tag>, giving each container in a multi-container project its own GitHub Packages page. Empty preserves single-image behaviour (<registry>/<repository>:<tag>). Overridden by `image-name` if both are set."
         required: false
         default: ""
         type: string
@@ -300,12 +300,14 @@ jobs:
           IMAGE_NAME_INPUT: ${{ inputs['image-name'] }}
           REPOSITORY: ${{ github.repository }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
+          NAME: ${{ inputs.name }}
         run: |
           bash .github-shared/scripts/container/resolve-image-name.sh \
             "$TARGET_REGISTRY" \
             "$IMAGE_NAME_INPUT" \
             "$REPOSITORY" \
-            "$REPOSITORY_OWNER" >> "$GITHUB_OUTPUT"
+            "$REPOSITORY_OWNER" \
+            "$NAME" >> "$GITHUB_OUTPUT"
       - name: Validate Image Namespace
         if: *if_push_image
         env:

@@ -208,9 +208,41 @@ run_resolve_image_name() {
   assert_success
   # Output should be in format that can be appended to GITHUB_OUTPUT
   assert_output "name=ghcr.io/myapp"
-  
+
   # Simulate writing to GITHUB_OUTPUT
   echo "$output" >> "$TEST_DIR/github_output"
   run cat "$TEST_DIR/github_output"
   assert_output "name=ghcr.io/myapp"
+}
+
+# =============================================================================
+# NAME suffix (multi-container artifacts.yml)
+# =============================================================================
+
+@test "resolve-image-name suffixes NAME when image-name empty" {
+  run_resolve_image_name "ghcr.io" "" "myorg/myrepo" "myorg" "hsm-worker"
+
+  assert_success
+  assert_output "name=ghcr.io/myorg/myrepo/hsm-worker"
+}
+
+@test "resolve-image-name with NAME on docker.io" {
+  run_resolve_image_name "docker.io" "" "myuser/myproject" "myuser" "wallet-bff"
+
+  assert_success
+  assert_output "name=myuser/myuser/myproject/wallet-bff"
+}
+
+@test "resolve-image-name image-name overrides NAME when both set" {
+  run_resolve_image_name "ghcr.io" "explicit-image" "myorg/myrepo" "myorg" "ignored-name"
+
+  assert_success
+  assert_output "name=ghcr.io/explicit-image"
+}
+
+@test "resolve-image-name omitted NAME preserves legacy behaviour" {
+  run_resolve_image_name "ghcr.io" "" "myorg/myrepo" "myorg"
+
+  assert_success
+  assert_output "name=ghcr.io/myorg/myrepo"
 }
