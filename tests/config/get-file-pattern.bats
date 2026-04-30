@@ -188,8 +188,8 @@ run_get_file_pattern() {
 # Rust Project Type Tests
 # =============================================================================
 
-@test "get-file-pattern returns rust pattern" {
-  run_get_file_pattern "rust"
+@test "get-file-pattern returns cargo pattern" {
+  run_get_file_pattern "cargo"
 
   assert_success
   assert_output --partial "CHANGELOG.md"
@@ -263,7 +263,7 @@ run_get_file_pattern() {
 }
 
 @test "get-file-pattern all types include CHANGELOG.md" {
-  local types=("maven" "npm" "gradle" "gradle-android" "xcode-ios" "python" "go" "rust")
+  local types=("maven" "npm" "gradle" "gradle-android" "xcode-ios" "python" "go" "cargo")
 
   for type in "${types[@]}"; do
     run_get_file_pattern "$type"

@@ -27,7 +27,7 @@ get_pattern() {
   xcode-ios) printf "CHANGELOG.md versions.xcconfig :(glob)**/*.xcconfig" ;;
   python) printf "CHANGELOG.md pyproject.toml" ;;
   go) printf "CHANGELOG.md go.mod" ;;
-  rust) printf "CHANGELOG.md Cargo.toml Cargo.lock" ;;
+  cargo) printf "CHANGELOG.md Cargo.toml Cargo.lock" ;;
   *) printf "CHANGELOG.md" ;;
   esac
 }
