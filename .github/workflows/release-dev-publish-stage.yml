@@ -26,6 +26,11 @@ on:
         required: false
         default: true
         type: boolean
+      containers:
+        description: "JSON array of containers from artifacts.yml (multi-container path). Empty array means the legacy single-container path is used."
+        required: false
+        default: "[]"
+        type: string
     secrets:
       registry-password:
         required: false
@@ -45,9 +50,36 @@ on:
 permissions:
   contents: read
 jobs:
+  # Multi-container path: matrix-dispatches one publish-dev-container.yml
+  # invocation per container declared in artifacts.yml. Each leg is its own
+  # GHA job (visible separately in the UI) and runs in parallel.
+  # fail-fast: false — one container's build failure doesn't kill the others.
+  build-dev-container-matrix:
+    name: Build Container Dev - ${{ matrix.container.name }}
+    if: ${{ inputs.containers != '[]' && inputs['publish-container'] && fromJson(inputs['build-result-json']).result == 'success' }}
+    strategy:
+      matrix:
+        container: ${{ fromJson(inputs.containers) }}
+      fail-fast: false
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit
+    uses: ./.github/workflows/publish-dev-container.yml
+    with:
+      working-directory: ${{ matrix.container.context || '.' }}
+      container-file: ${{ matrix.container['container-file'] }}
+      registry: ${{ matrix.container.registry || fromJson(inputs['dev-context-json']).registry }}
+      artifact-types: ${{ join(matrix.container['artifact-types'], ',') }}
+      target: ${{ matrix.container.target || '' }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+
+  # Legacy single-container path: fires only when artifacts-config wasn't set.
+  # Existing callers see no behaviour change. Will be removed at v3.0 once
+  # the artifacts-config path is the only supported shape.
   build-dev-container:
     name: Build Container Dev
-    if: ${{ inputs['publish-container'] && fromJson(inputs['build-result-json']).result == 'success' }}
+    if: ${{ inputs.containers == '[]' && inputs['publish-container'] && fromJson(inputs['build-result-json']).result == 'success' }}
     permissions:
       contents: read
       packages: write
@@ -130,7 +162,7 @@ jobs:
           if-no-files-found: warn
   summarize-dev-publish-stage:
     name: Summarize Dev Publish Stage
-    needs: [build-dev-container, publish-npm-dev, generate-dev-sboms]
+    needs: [build-dev-container-matrix, build-dev-container, publish-npm-dev, generate-dev-sboms]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -153,7 +185,10 @@ jobs:
         env:
           PROJECT_TYPE: ${{ fromJson(inputs['dev-context-json']).project_type }}
           PUBLISH_NPM: ${{ fromJson(inputs['dev-policy-json']).publish_npm }}
-          BUILD_DEV_CONTAINER_RESULT: ${{ needs.build-dev-container.result }}
+          # Either matrix or single fires, never both. Whichever ran reports
+          # its result here; the other reports 'skipped' which the summary
+          # script normalizes correctly.
+          BUILD_DEV_CONTAINER_RESULT: ${{ needs.build-dev-container.result == 'skipped' && needs.build-dev-container-matrix.result || needs.build-dev-container.result }}
           PUBLISH_NPM_DEV_RESULT: ${{ needs.publish-npm-dev.result }}
           GENERATE_DEV_SBOMS_RESULT: ${{ needs.generate-dev-sboms.result }}
           CONTAINER_IMAGE: ${{ needs.build-dev-container.outputs.image }}

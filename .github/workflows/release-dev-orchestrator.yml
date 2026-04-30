@@ -43,11 +43,16 @@ on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
       project-type:
-        description: "Project type: maven, npm, gradle, gradle-android, xcode-ios, cargo"
+        description: "Project type: maven, npm, gradle, gradle-android, xcode-ios, cargo. Required for the legacy single-container path; ignored when artifacts-config is set."
         required: true
         type: string
+      artifacts-config:
+        description: "Path to artifacts.yml. When set, the dev release reads containers from this file and matrix-builds each one in the same run (multi-container support, mirrors release-orchestrator.yml). When empty, falls back to the legacy single-container path driven by container-file/working-directory below."
+        required: false
+        default: ""
+        type: string
       container-file:
-        description: "Containerfile path"
+        description: "Containerfile path. DEPRECATED: prefer artifacts-config. Used only when artifacts-config is empty (legacy single-container path). Will be removed at the v3.0 boundary."
         required: false
         default: "Containerfile"
         type: string
@@ -135,8 +140,56 @@ on:
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
-  # ===== Stage 0: Dev Context =====
+  # ===== Stage 0a: Parse artifacts.yml (multi-container path) =====
+  # Runs only when the caller passed `artifacts-config`. Emits the
+  # containers list (and per-ecosystem artefact lists) so the publish
+  # stage can matrix-dispatch one container build per artefacts.yml
+  # entry — same shape as release-orchestrator.yml's parse-config.
+  parse-dev-config:
+    name: Parse Dev Config
+    if: ${{ inputs['artifacts-config'] != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      containers: ${{ steps.parse.outputs.containers }}
+      has-containers: ${{ steps.plan.outputs.has-containers }}
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Checkout reusable-ci helper scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Install yq for config parsing
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+      - name: Parse artifacts.yml
+        id: parse
+        run: bash .github-shared/scripts/config/parse-artifacts-config.sh
+        env:
+          ARTIFACTS_CONFIG: ${{ inputs['artifacts-config'] }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+      - name: Compute has-containers for stage gating
+        id: plan
+        env:
+          CONTAINERS: ${{ steps.parse.outputs.containers }}
+        run: |
+          if [[ -n "$CONTAINERS" && "$CONTAINERS" != "[]" ]]; then
+            printf 'has-containers=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'has-containers=false\n' >> "$GITHUB_OUTPUT"
+          fi
+
+  # ===== Stage 0b: Dev Context (legacy single-container path) =====
   # Compose the small control-plane payloads that later dev stages consume.
+  # Always runs; consumed by stages whether artifacts-config is set or not
+  # (release-wide context like dev-tag, branch, sha is needed in both paths;
+  # per-container fields only matter on the legacy path).
   compose-dev-interface:
     name: Setup
     runs-on: ubuntu-latest
@@ -190,7 +243,7 @@ jobs:
   # ===== Stage 2: Publish =====
   execute-dev-publish-stage:
     name: Publish
-    needs: [compose-dev-interface, execute-dev-build-stage]
+    needs: [parse-dev-config, compose-dev-interface, execute-dev-build-stage]
     if: ${{ !failure() && !cancelled() }}
     permissions:
       contents: read
@@ -204,11 +257,16 @@ jobs:
       build-result-json: ${{ needs.execute-dev-build-stage.outputs.result-json }}
       sboms: ${{ inputs.sboms }}
       publish-container: ${{ inputs['publish-container'] }}
+      # Multi-container path: containers JSON from parse-dev-config.
+      # Empty when artifacts-config is unset; legacy single-container path
+      # still active in publish-stage gated on this being '[]'.
+      containers: ${{ needs.parse-dev-config.outputs.containers || '[]' }}
 
   # ===== Stage 3: Summary =====
   dev-release-summary:
     name: Summary
     needs:
+      - parse-dev-config
       - compose-dev-interface
       - execute-dev-build-stage
       - execute-dev-publish-stage

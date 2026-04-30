@@ -59,6 +59,11 @@ on:
         required: false
         default: "Containerfile"
         type: string
+      target:
+        description: "Containerfile stage to build for the runtime image. Empty defaults to the last stage. Mirrors publish-container.yml's target input — used by container-first containers (cargo, etc.) where the runtime stage is named explicitly."
+        required: false
+        default: ""
+        type: string
       registry:
         description: "Container registry"
         required: false
@@ -212,6 +217,7 @@ jobs:
         with:
           context: ${{ inputs['working-directory'] }}
           file: ${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}
+          target: ${{ inputs.target }}
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           platforms: linux/amd64,linux/arm64
