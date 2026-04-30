@@ -43,11 +43,17 @@ on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
       project-type:
-        description: "Project type: maven, npm, gradle, gradle-android, xcode-ios, cargo"
-        required: true
+        description: "Project type: maven, npm, gradle, gradle-android, xcode-ios, cargo. Required for the legacy single-container path. Optional when artifacts-config is set — derived from the first artefact's project-type if omitted."
+        required: false
+        default: ""
+        type: string
+      artifacts-config:
+        description: "Path to artifacts.yml. When set, the dev release reads containers from this file and matrix-builds each one in the same run (multi-container support, mirrors release-orchestrator.yml). When empty, falls back to the legacy single-container path driven by container-file/working-directory below."
+        required: false
+        default: ""
         type: string
       container-file:
-        description: "Containerfile path"
+        description: "Containerfile path. DEPRECATED: prefer artifacts-config. Used only when artifacts-config is empty (legacy single-container path). Will be removed at the v3.0 boundary."
         required: false
         default: "Containerfile"
         type: string
@@ -135,17 +141,25 @@ on:
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
-  # ===== Stage 0: Dev Context =====
-  # Compose the small control-plane payloads that later dev stages consume.
-  compose-dev-interface:
+  # ===== Stage 0: Configuration And Policy =====
+  # Single Setup job mirroring release-orchestrator.yml's parse-config shape.
+  # Conditionally parses artifacts.yml when `artifacts-config` is set
+  # (multi-container path); always composes the dev control-plane interface
+  # consumed by every later stage.
+  setup-dev:
     name: Setup
     runs-on: ubuntu-latest
     permissions:
       contents: read
     outputs:
+      containers: ${{ steps.parse.outputs.containers || '[]' }}
+      has-containers: ${{ steps.plan.outputs.has-containers || 'false' }}
       dev-context-json: ${{ steps.interface.outputs.dev-context-json }}
       dev-policy-json: ${{ steps.interface.outputs.dev-policy-json }}
     steps:
+      - name: Checkout caller repository
+        if: ${{ inputs['artifacts-config'] != '' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Checkout reusable-ci helper scripts
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -153,10 +167,38 @@ jobs:
           ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
           sparse-checkout: scripts
+      - name: Install yq for config parsing
+        if: ${{ inputs['artifacts-config'] != '' }}
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+      - name: Parse artifacts.yml
+        id: parse
+        if: ${{ inputs['artifacts-config'] != '' }}
+        run: bash .github-shared/scripts/config/parse-artifacts-config.sh
+        env:
+          ARTIFACTS_CONFIG: ${{ inputs['artifacts-config'] }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+      - name: Compute has-containers for stage gating
+        id: plan
+        if: ${{ inputs['artifacts-config'] != '' }}
+        env:
+          CONTAINERS: ${{ steps.parse.outputs.containers }}
+        run: |
+          if [[ -n "$CONTAINERS" && "$CONTAINERS" != "[]" ]]; then
+            printf 'has-containers=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'has-containers=false\n' >> "$GITHUB_OUTPUT"
+          fi
       - name: Compose dev control-plane interface
         id: interface
         env:
           PROJECT_TYPE: ${{ inputs['project-type'] }}
+          # Fallback when caller didn't pass project-type and artifacts-config
+          # was parsed: use the first artefact's project_type. Empty when
+          # the parse step didn't run (legacy single-container path), in
+          # which case PROJECT_TYPE input must be provided by the caller.
+          FALLBACK_PROJECT_TYPE: ${{ steps.parse.outputs.first-project-type }}
           BRANCH: ${{ github.ref_name }}
           RELEASE_SHA: ${{ github.sha }}
           RELEASE_ACTOR: ${{ github.actor }}
@@ -178,19 +220,19 @@ jobs:
   # ===== Stage 1: Build =====
   execute-dev-build-stage:
     name: Build
-    needs: [compose-dev-interface]
+    needs: [setup-dev]
     permissions:
       contents: read
     secrets: inherit
     uses: ./.github/workflows/release-dev-build-stage.yml
     with:
-      dev-context-json: ${{ needs.compose-dev-interface.outputs.dev-context-json }}
+      dev-context-json: ${{ needs.setup-dev.outputs.dev-context-json }}
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
 
   # ===== Stage 2: Publish =====
   execute-dev-publish-stage:
     name: Publish
-    needs: [compose-dev-interface, execute-dev-build-stage]
+    needs: [setup-dev, execute-dev-build-stage]
     if: ${{ !failure() && !cancelled() }}
     permissions:
       contents: read
@@ -198,18 +240,22 @@ jobs:
     secrets: inherit
     uses: ./.github/workflows/release-dev-publish-stage.yml
     with:
-      dev-context-json: ${{ needs.compose-dev-interface.outputs.dev-context-json }}
+      dev-context-json: ${{ needs.setup-dev.outputs.dev-context-json }}
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
-      dev-policy-json: ${{ needs.compose-dev-interface.outputs.dev-policy-json }}
+      dev-policy-json: ${{ needs.setup-dev.outputs.dev-policy-json }}
       build-result-json: ${{ needs.execute-dev-build-stage.outputs.result-json }}
       sboms: ${{ inputs.sboms }}
       publish-container: ${{ inputs['publish-container'] }}
+      # Multi-container path: containers JSON from setup-dev's parse step.
+      # Empty when artifacts-config is unset; legacy single-container path
+      # still active in publish-stage gated on this being '[]'.
+      containers: ${{ needs.setup-dev.outputs.containers }}
 
   # ===== Stage 3: Summary =====
   dev-release-summary:
     name: Summary
     needs:
-      - compose-dev-interface
+      - setup-dev
       - execute-dev-build-stage
       - execute-dev-publish-stage
     if: always()

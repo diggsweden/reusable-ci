@@ -62,6 +62,11 @@ jobs:
       java-version: ${{ fromJson(inputs['dev-context-json']).java_version }}
       gradle-tasks: build
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+  # cargo is container-first: nothing it produces lives at the dev build-stage
+  # level. The lockfile-derived SBOM (sbom-cargo-dev) and the actual cargo
+  # compile (inside the Containerfile) both run in release-dev-publish-stage,
+  # alongside the container build. For cargo dev releases this stage runs
+  # zero jobs by design — mirrors release-build-stage.yml's prod shape.
   summarize-dev-build-stage:
     name: Summarize Dev Build Stage
     needs: [build-maven-dev, build-npm-dev, build-gradle-dev]

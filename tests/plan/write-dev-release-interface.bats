@@ -125,3 +125,37 @@ set_all_dev_vars() {
   run get_github_output "dev-policy-json"
   assert_output '{"publish_npm":false,"use_ci_token":false}'
 }
+
+@test "project_type derives from FALLBACK when PROJECT_TYPE input is empty" {
+  set_all_dev_vars
+  export PROJECT_TYPE=""
+  export FALLBACK_PROJECT_TYPE="cargo"
+
+  run_script "plan/write-dev-release-interface.sh"
+  assert_success
+
+  run get_github_output "dev-context-json"
+  assert_output --partial '"project_type":"cargo"'
+}
+
+@test "PROJECT_TYPE input wins over FALLBACK when both set" {
+  set_all_dev_vars
+  export PROJECT_TYPE="maven"
+  export FALLBACK_PROJECT_TYPE="cargo"
+
+  run_script "plan/write-dev-release-interface.sh"
+  assert_success
+
+  run get_github_output "dev-context-json"
+  assert_output --partial '"project_type":"maven"'
+}
+
+@test "fails loudly when both PROJECT_TYPE input and FALLBACK are empty" {
+  set_all_dev_vars
+  export PROJECT_TYPE=""
+  export FALLBACK_PROJECT_TYPE=""
+
+  run_script "plan/write-dev-release-interface.sh"
+  assert_failure
+  assert_stderr_contains "project-type input is empty"
+}

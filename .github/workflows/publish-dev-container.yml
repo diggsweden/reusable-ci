@@ -59,6 +59,16 @@ on:
         required: false
         default: "Containerfile"
         type: string
+      target:
+        description: "Containerfile stage to build for the runtime image. Empty defaults to the last stage. Mirrors publish-container.yml's target input — used by container-first containers (cargo, etc.) where the runtime stage is named explicitly."
+        required: false
+        default: ""
+        type: string
+      name:
+        description: "Container artefact name from artifacts.yml. When set, the published image becomes <registry>/<repository>/<name>:<dev-tag>, giving each container in a multi-container project its own GitHub Packages page. Empty preserves single-image behaviour (<registry>/<repository>:<dev-tag>). Mirrors publish-container.yml's name input."
+        required: false
+        default: ""
+        type: string
       registry:
         description: "Container registry"
         required: false
@@ -78,6 +88,21 @@ on:
         required: false
         default: "."
         type: string
+      extract-binary-target:
+        description: "Containerfile stage to extract as a binary CI artefact. When set, a second buildx build runs per arch leg with --output type=local and the result is uploaded as ${name}-binaries-${arch}. Mirrors publish-container.yml's input — used by container-first ecosystems (cargo, go) where binaries are byproducts of the container build."
+        required: false
+        default: ""
+        type: string
+      extract-binary-names:
+        description: "Comma-separated binary file names expected in the export-binary stage output. Used by suffix-extracted-binaries.sh and the step summary; not enforced."
+        required: false
+        default: ""
+        type: string
+      enable-analyzed-container-sbom:
+        description: "Run syft on the pushed image and produce per-arch analyzed-container SBOMs. Mirrors publish-container.yml's sibling input. Caller (release-dev-publish-stage) derives this from sboms input."
+        required: false
+        default: false
+        type: boolean
       registry-username:
         description: "Registry username (defaults to github.actor for GHCR)"
         required: false
@@ -199,9 +224,14 @@ jobs:
         env:
           TARGET_REGISTRY: ${{ inputs.registry }}
           REPOSITORY: ${{ github.repository }}
+          NAME: ${{ inputs.name }}
         run: |
           DEV_VERSION=$(bash .github-shared/scripts/version/generate-dev-version.sh)
-          IMAGE_NAME="$TARGET_REGISTRY/$REPOSITORY"
+          if [[ -n "$NAME" ]]; then
+            IMAGE_NAME="$TARGET_REGISTRY/$REPOSITORY/$NAME"
+          else
+            IMAGE_NAME="$TARGET_REGISTRY/$REPOSITORY"
+          fi
 
           printf "tags=%s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}" >> "$GITHUB_OUTPUT"
           printf "image=%s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}" >> "$GITHUB_OUTPUT"
@@ -212,6 +242,7 @@ jobs:
         with:
           context: ${{ inputs['working-directory'] }}
           file: ${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}
+          target: ${{ inputs.target }}
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           platforms: linux/amd64,linux/arm64

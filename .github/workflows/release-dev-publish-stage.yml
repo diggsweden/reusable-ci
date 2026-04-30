@@ -26,6 +26,11 @@ on:
         required: false
         default: true
         type: boolean
+      containers:
+        description: "JSON array of containers from artifacts.yml (multi-container path). Empty array means the legacy single-container path is used."
+        required: false
+        default: "[]"
+        type: string
     secrets:
       registry-password:
         required: false
@@ -45,12 +50,46 @@ on:
 permissions:
   contents: read
 jobs:
+  # Multi-container path: matrix-dispatches one publish-dev-container.yml
+  # invocation per container declared in artifacts.yml. Each leg is its own
+  # GHA job (visible separately in the UI) and runs in parallel.
+  # fail-fast: false — one container's build failure doesn't kill the others.
+  build-dev-container-matrix:
+    name: Build Container Dev - ${{ matrix.container.name }}
+    # Build-stage is allowed to be 'skipped' for container-first ecosystems
+    # (e.g., cargo): no artefact-first build runs, but the container itself
+    # can still be built here.
+    if: ${{ inputs.containers != '[]' && inputs['publish-container'] && (fromJson(inputs['build-result-json']).result == 'success' || fromJson(inputs['build-result-json']).result == 'skipped') }}
+    strategy:
+      matrix:
+        container: ${{ fromJson(inputs.containers) }}
+      fail-fast: false
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit
+    uses: ./.github/workflows/publish-dev-container.yml
+    with:
+      working-directory: ${{ matrix.container.context || '.' }}
+      container-file: ${{ matrix.container['container-file'] }}
+      registry: ${{ matrix.container.registry || fromJson(inputs['dev-context-json']).registry }}
+      artifact-types: ${{ join(matrix.container['artifact-types'], ',') }}
+      target: ${{ matrix.container.target || '' }}
+      name: ${{ matrix.container.name }}
+      extract-binary-target: ${{ matrix.container.extract.binary.target || '' }}
+      extract-binary-names: ${{ matrix.container.extract.binary.names && join(matrix.container.extract.binary.names, ',') || '' }}
+      # AND of per-container artifacts.yml flag (mirrors prod) AND the
+      # orchestrator's dev-only sboms opt-in. Dev keeps `sboms: none` as a
+      # fast path even when artifacts.yml would normally produce SBOMs.
+      enable-analyzed-container-sbom: ${{ matrix.container['enable-analyzed-container-sbom'] && (contains(inputs.sboms, 'analyzed-container') || inputs.sboms == 'all') }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+
+  # Legacy single-container path: fires only when artifacts-config wasn't set.
+  # Existing callers see no behaviour change. Will be removed at v3.0 once
+  # the artifacts-config path is the only supported shape.
   build-dev-container:
     name: Build Container Dev
-    # Build-stage is allowed to be 'skipped' for container-first
-    # ecosystems (cargo): no artefact-first build runs, but the
-    # container itself can still be built here.
-    if: ${{ inputs['publish-container'] && (fromJson(inputs['build-result-json']).result == 'success' || fromJson(inputs['build-result-json']).result == 'skipped') }}
+    if: ${{ inputs.containers == '[]' && inputs['publish-container'] && (fromJson(inputs['build-result-json']).result == 'success' || fromJson(inputs['build-result-json']).result == 'skipped') }}
     permissions:
       contents: read
       packages: write
@@ -61,6 +100,7 @@ jobs:
       container-file: ${{ fromJson(inputs['dev-context-json']).container_file }}
       registry: ${{ fromJson(inputs['dev-context-json']).registry }}
       artifact-types: ${{ fromJson(inputs['dev-context-json']).project_type }}
+      enable-analyzed-container-sbom: ${{ contains(inputs.sboms, 'analyzed-container') || inputs.sboms == 'all' }}
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   publish-npm-dev:
     name: Publish Dev NPM Package
@@ -150,6 +190,18 @@ jobs:
         with:
           name: ${{ steps.artefact-names.outputs.sbom-name }}
           path: ./release-artifacts
+      # Pull container-extracted binaries (cargo, go) so the analyzed-artifact
+      # layer can scan the actual produced binaries. publish-dev-container.yml
+      # uploads these as ${name}-binaries-${arch}; pattern-match to grab every
+      # leg without enumerating containers/arches here.
+      - name: Download extracted container binaries
+        if: ${{ contains(inputs.sboms, 'analyzed-artifact') || inputs.sboms == 'all' }}
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        continue-on-error: true
+        with:
+          pattern: "*-binaries*"
+          path: ./release-artifacts/binaries
+          merge-multiple: true
       - name: Generate CISA-layer SBOMs (dev)
         env:
           PROJECT_TYPE: ${{ fromJson(inputs['dev-context-json']).project_type }}
@@ -181,7 +233,7 @@ jobs:
           if-no-files-found: warn
   summarize-dev-publish-stage:
     name: Summarize Dev Publish Stage
-    needs: [build-dev-container, publish-npm-dev, sbom-cargo-dev, generate-dev-sboms]
+    needs: [build-dev-container-matrix, build-dev-container, publish-npm-dev, sbom-cargo-dev, generate-dev-sboms]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -204,7 +256,10 @@ jobs:
         env:
           PROJECT_TYPE: ${{ fromJson(inputs['dev-context-json']).project_type }}
           PUBLISH_NPM: ${{ fromJson(inputs['dev-policy-json']).publish_npm }}
-          BUILD_DEV_CONTAINER_RESULT: ${{ needs.build-dev-container.result }}
+          # Either matrix or single fires, never both. Whichever ran reports
+          # its result here; the other reports 'skipped' which the summary
+          # script normalizes correctly.
+          BUILD_DEV_CONTAINER_RESULT: ${{ needs.build-dev-container.result == 'skipped' && needs.build-dev-container-matrix.result || needs.build-dev-container.result }}
           PUBLISH_NPM_DEV_RESULT: ${{ needs.publish-npm-dev.result }}
           CARGO_SBOM_DEV_RESULT: ${{ needs.sbom-cargo-dev.result }}
           GENERATE_DEV_SBOMS_RESULT: ${{ needs.generate-dev-sboms.result }}

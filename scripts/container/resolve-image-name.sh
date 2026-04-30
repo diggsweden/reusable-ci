@@ -9,9 +9,14 @@ main() {
   local IMAGE_NAME="${2}"
   local REPOSITORY="${3}"
   local REPOSITORY_OWNER="${4}"
+  local NAME="${5:-}"
 
   if [[ -z "$IMAGE_NAME" ]]; then
-    IMAGE_NAME="$REPOSITORY"
+    if [[ -n "$NAME" ]]; then
+      IMAGE_NAME="$REPOSITORY/$NAME"
+    else
+      IMAGE_NAME="$REPOSITORY"
+    fi
   fi
 
   if [[ "$IMAGE_NAME" != *"/"* ]] || [[ "$IMAGE_NAME" != *"."* ]]; then
