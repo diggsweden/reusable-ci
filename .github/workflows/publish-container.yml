@@ -2,10 +2,11 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 # Container Image Publisher
-# 
-# Purpose: Builds and publishes production-grade container images to any OCI-compatible
-# registry with  security features including multi-platform support,
-# vulnerability scanning, SBOM generation, and SLSA attestation (GHCR only).
+#
+# Purpose: Builds and publishes production-grade container images to any
+# OCI-compatible registry with security features including multi-platform
+# support, vulnerability scanning, SBOM generation, and SLSA attestation
+# (GHCR only).
 #
 # Supported Registries:
 # - GitHub Container Registry (ghcr.io) - Full SLSA support
@@ -14,20 +15,36 @@
 # - Any OCI-compatible registry - No SLSA support
 #
 # How it works:
-# 1. Downloads build artifacts from previous jobs (Maven JARs, NPM dist)
-# 2. Sets up Buildx for multi-platform builds
-# 3. Builds container image for specified platforms (amd64, arm64)
-# 4. Scans image for vulnerabilities using Trivy
-# 5. Generates SBOM in multiple formats (CycloneDX, SPDX)
-# 6. Creates SLSA provenance attestation for supply chain security (GHCR only)
-# 7. Pushes image with all attestations to registry
+# 1. prep: compute image coordinate, tags (docker/metadata-action), and
+#    labels once. Validate namespace early.
+# 2. build-arch (matrix, fail-fast: false): per-platform native runner
+#    (linux/amd64 -> ubuntu-24.04, linux/arm64 -> ubuntu-24.04-arm).
+#    Each leg builds and pushes by digest only — no tag is applied yet.
+#    Within the same job: per-arch Trivy scan (SARIF category-suffixed),
+#    per-arch syft SBOM (artefact upload suffixed), per-arch attest-sbom
+#    against the per-arch digest, per-arch extract-binary. Buildkit
+#    provenance attaches to each platform digest via `provenance: mode=max`.
+# 3. merge: assembles the per-arch digests into a single manifest list
+#    via `docker buildx imagetools create`, applying all tags from
+#    metadata-action. Single-arch inputs go through the same pipeline
+#    (matrix-of-1 + one-entry manifest list).
+# 4. provenance (separate workflow_call): SLSA L3 generator attests the
+#    manifest list digest. Same as today's behaviour, just consuming
+#    merge's output instead of build-and-push's.
+#
+# No QEMU. Each runner builds its own architecture natively.
 #
 # Security controls:
-# - SLSA Level 3 provenance attestation (GHCR only)
-# - Vulnerability scanning with severity thresholds
-# - SBOM generation for dependency transparency
+# - SLSA Level 3 provenance attestation against the manifest list (GHCR only)
+# - Per-platform buildkit provenance (provenance: mode=max) attached to each
+#   platform digest
+# - Per-platform vulnerability scan with Trivy; per-arch SARIF category
+#   suffixing keeps both arches visible in Code Scanning
+# - Per-platform SBOM generation (analyzed-container layer) with attest-sbom
+#   against the per-arch digest
 # - Signed attestations attached to image
-# - Security scan results uploaded to Code Scanning (when SARIF_UPLOAD_TOKEN is configured)
+# - Security scan results uploaded to Code Scanning (when SARIF_UPLOAD_TOKEN
+#   is configured)
 # - Namespace validation (enforces ghcr.io/OWNER/REPO pattern)
 #
 # Registry Authentication:
@@ -41,21 +58,23 @@
 # Required Permissions:
 #   contents: read         # Read Containerfile and context
 #   packages: write        # Push images to registry
-#   id-token: write       # Generate OIDC token for SLSA (GHCR only)
+#   id-token: write        # Generate OIDC token for SLSA (GHCR only)
 #   secrets: inherit       # Pass SARIF_UPLOAD_TOKEN for Code Scanning upload
-#   attestations: write   # Attach SBOM attestation
-#   actions: read         # Read workflow for provenance
+#   attestations: write    # Attach SBOM attestation
+#   actions: read          # Read workflow for provenance
+#   security-events: write # Upload SARIF (only required when running without
+#                            SARIF_UPLOAD_TOKEN; the script falls back to the
+#                            github/codeql-action upload path)
 #
 # Outputs:
-#   image: Full image name with registry
-#   digest: Image digest for verification
-#   metadata: Image metadata JSON
+#   image: Full image name with primary tag
+#   digest: Manifest list digest
+#   metadata: Image metadata JSON (from docker/metadata-action)
 #
-# Tagging Strategy:
+# Tagging Strategy (applied to the manifest list, not per-arch):
 #   - semver: Version-based tags (v1.0.0, v1, v1.0)
 #   - branch: Branch-based tags (main, develop)
 #   - sha: SHA-based tags (main-abc1234)
-#   - custom: User-defined tags
 name: Publish Container
 on:
   workflow_call: # yamllint disable-line rule:truthy
@@ -76,7 +95,7 @@ on:
         default: "main"
         type: string
       platforms:
-        description: "Comma-separated list of platforms to build"
+        description: "Comma-separated list of platforms to build. Each platform builds natively on a runner of that architecture (linux/amd64 -> ubuntu-24.04, linux/arm64 -> ubuntu-24.04-arm). No QEMU emulation. Multi-platform inputs split across runners and are merged into a single manifest list."
         required: false
         default: "linux/amd64"
         type: string
@@ -128,7 +147,7 @@ on:
         default: ""
         type: string
       extract-binary-target:
-        description: "Containerfile stage to extract as a binary CI artefact (typically `FROM scratch AS export-binary` with COPY --from=builder). When set, a second buildx build runs with --output type=local and the result is uploaded as ${name}-binaries. Used by compiled-native ecosystems (cargo, go) where binaries are byproducts of the container build."
+        description: "Containerfile stage to extract as a binary CI artefact (typically `FROM scratch AS export-binary` with COPY --from=builder). When set, a second buildx build runs per arch leg with --output type=local and the result is uploaded as ${name}-binaries-${arch}. Used by compiled-native ecosystems (cargo, go) where binaries are byproducts of the container build."
         required: false
         default: ""
         type: string
@@ -147,12 +166,12 @@ on:
         default: true
         type: boolean
       cache-from:
-        description: "Cache sources for build"
+        description: "Cache sources for build. Honoured on the single-arch path. The multi-arch matrix uses per-arch GHA cache scoping internally; a custom cache-from is ignored on that path. Multi-arch callers needing non-default caches should file an issue."
         required: false
         default: "type=gha"
         type: string
       cache-to:
-        description: "Cache destinations for build"
+        description: "Cache destinations for build. Honoured on the single-arch path. The multi-arch matrix uses per-arch GHA cache scoping internally; a custom cache-to is ignored on that path."
         required: false
         default: "type=gha,mode=max"
         type: string
@@ -188,33 +207,29 @@ on:
         required: false
     outputs:
       image:
-        description: "Full image name with registry"
-        value: ${{ jobs.build-and-push.outputs.image }}
+        description: "Full image name with primary tag"
+        value: ${{ jobs.merge.outputs.image }}
       digest:
-        description: "Image digest"
-        value: ${{ jobs.build-and-push.outputs.digest }}
+        description: "Manifest list digest"
+        value: ${{ jobs.merge.outputs.digest }}
       metadata:
-        description: "Image metadata JSON"
-        value: ${{ jobs.build-and-push.outputs.metadata }}
+        description: "Image metadata JSON (from docker/metadata-action)"
+        value: ${{ jobs.prep.outputs.metadata }}
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
-  build-and-push:
-    name: Build and Push Container
+  prep:
+    name: Prepare Build${{ inputs.name && format(' ({0})', inputs.name) || '' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 5
     permissions:
       contents: read
-      packages: write
-      id-token: write # Required for SLSA provenance
-      attestations: write # Required for SBOM attestation
-      actions: read # Required for SLSA provenance v2
-    env:
-      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
     outputs:
-      image: ${{ steps.image.outputs.image }}
-      digest: ${{ steps.build.outputs.digest }}
+      image-name: ${{ steps.image-name.outputs.name }}
+      tags: ${{ steps.metadata.outputs.tags }}
+      labels: ${{ steps.metadata.outputs.labels }}
       metadata: ${{ steps.metadata.outputs.json }}
+      platforms-json: ${{ steps.platforms.outputs.json }}
     steps:
       - name: Harden GitHub runner
         uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
@@ -224,13 +239,121 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.branch }}
-      - name: Checkout .github repository for scripts
+      - name: Checkout reusable-ci scripts
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: diggsweden/reusable-ci
           ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
           sparse-checkout: scripts
+      - name: Determine Image Name
+        id: image-name
+        env:
+          TARGET_REGISTRY: ${{ inputs.registry }}
+          IMAGE_NAME_INPUT: ${{ inputs['image-name'] }}
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          NAME: ${{ inputs.name }}
+        run: |
+          bash .github-shared/scripts/container/resolve-image-name.sh \
+            "$TARGET_REGISTRY" \
+            "$IMAGE_NAME_INPUT" \
+            "$REPOSITORY" \
+            "$REPOSITORY_OWNER" \
+            "$NAME" >> "$GITHUB_OUTPUT"
+      - name: Validate Image Namespace
+        if: ${{ inputs['push-image'] }}
+        env:
+          IMAGE_NAME: ${{ steps.image-name.outputs.name }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_REGISTRY: ${{ inputs.registry }}
+          ENFORCE_NAMESPACE: ${{ inputs['enforce-namespace'] || github.repository_owner }}
+        run: |
+          bash .github-shared/scripts/container/validate-namespace.sh \
+            "$IMAGE_NAME" \
+            "$REPOSITORY" \
+            "$TARGET_REGISTRY" \
+            "$ENFORCE_NAMESPACE"
+      - name: Extract Image Metadata
+        id: metadata
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ steps.image-name.outputs.name }}
+          flavor: |
+            latest=false
+          tags: |
+            # Always include the ref as-is (branch name, tag name, or PR number)
+            type=ref,event=branch
+            type=ref,event=tag
+            type=ref,event=pr
+
+            # For version tags only (v1.0.0, v2.3.4, etc)
+            type=semver,pattern={{version}},enable=${{ github.ref_type == 'tag' }}
+
+            # For stable versions only (no dash in tag name like -beta, -rc)
+            type=semver,pattern={{major}}.{{minor}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
+            type=semver,pattern={{major}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
+
+            # SHA-based tags for non-tag refs (branches, PRs) for traceability
+            type=sha,prefix={{branch}}-,enable=${{ github.ref_type != 'tag' }}
+      - name: Compute platforms JSON
+        id: platforms
+        env:
+          NAME: ${{ inputs.name }}
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          # Convert "linux/amd64,linux/arm64" -> JSON array for matrix consumption.
+          JSON=$(printf '%s\n' "${PLATFORMS//,/$'\n'}" | jq -R . | jq -s -c .)
+          printf "json=%s\n" "${JSON}" >> "$GITHUB_OUTPUT"
+          printf "→ Container: %s\n" "${NAME:-(unnamed)}"
+          printf "→ Platforms: %s\n" "${PLATFORMS}"
+
+  build-arch:
+    name: Build${{ inputs.name && format(' ({0})({1})', inputs.name, matrix.platform) || format(' ({0})', matrix.platform) }}
+    needs: prep
+    # linux/arm64 -> ubuntu-24.04-arm (native ARM hosted runner). Anything
+    # else falls through to ubuntu-24.04. No QEMU emulation in either path.
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJson(needs.prep.outputs.platforms-json) }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # Required for SLSA provenance + attest-sbom
+      attestations: write # Required for SBOM attestation
+      actions: read # Required for SLSA provenance v2
+    env:
+      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
+    steps:
+      - name: Harden GitHub runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        with:
+          egress-policy: ${{ inputs.egress-policy }}
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.branch }}
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Derive arch suffix
+        id: arch
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          # linux/amd64 -> amd64, linux/arm64 -> arm64. Used for cache,
+          # artefact, and SARIF-category scoping so the matrix legs don't
+          # collide with each other.
+          SUFFIX="${PLATFORM#linux/}"
+          SUFFIX="${SUFFIX//\//-}"
+          printf "suffix=%s\n" "$SUFFIX" >> "$GITHUB_OUTPUT"
       - name: Download Maven artifacts
         if: &if_has_maven_artifacts ${{ contains(inputs['artifact-types'], 'maven') }}
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
@@ -272,9 +395,6 @@ jobs:
         env:
           CONTAINER_FILE: ${{ inputs['container-file'] }}
         run: bash .github-shared/scripts/container/validate-containerfile.sh "$CONTAINER_FILE"
-      - name: Set up QEMU
-        if: contains(inputs.platforms, ',') || contains(inputs.platforms, 'arm')
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
       - name: Set up Buildx
         id: buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
@@ -293,69 +413,26 @@ jobs:
           registry: ${{ inputs.registry }}
           username: ${{ inputs['registry-username'] || github.actor }}
           password: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
-      - name: Determine Image Name
-        id: image-name
-        env:
-          TARGET_REGISTRY: ${{ inputs.registry }}
-          IMAGE_NAME_INPUT: ${{ inputs['image-name'] }}
-          REPOSITORY: ${{ github.repository }}
-          REPOSITORY_OWNER: ${{ github.repository_owner }}
-          NAME: ${{ inputs.name }}
-        run: |
-          bash .github-shared/scripts/container/resolve-image-name.sh \
-            "$TARGET_REGISTRY" \
-            "$IMAGE_NAME_INPUT" \
-            "$REPOSITORY" \
-            "$REPOSITORY_OWNER" \
-            "$NAME" >> "$GITHUB_OUTPUT"
-      - name: Validate Image Namespace
-        if: *if_push_image
-        env:
-          IMAGE_NAME: ${{ steps.image-name.outputs.name }}
-          REPOSITORY: ${{ github.repository }}
-          TARGET_REGISTRY: ${{ inputs.registry }}
-          ENFORCE_NAMESPACE: ${{ inputs['enforce-namespace'] || github.repository_owner }}
-        run: |
-          bash .github-shared/scripts/container/validate-namespace.sh \
-            "$IMAGE_NAME" \
-            "$REPOSITORY" \
-            "$TARGET_REGISTRY" \
-            "$ENFORCE_NAMESPACE"
-      - name: Extract Image Metadata
-        id: metadata
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
-        with:
-          images: ${{ steps.image-name.outputs.name }}
-          flavor: |
-            latest=false
-          tags: |
-            # Always include the ref as-is (branch name, tag name, or PR number)
-            type=ref,event=branch
-            type=ref,event=tag
-            type=ref,event=pr
-
-            # For version tags only (v1.0.0, v2.3.4, etc)
-            type=semver,pattern={{version}},enable=${{ github.ref_type == 'tag' }}
-
-            # For stable versions only (no dash in tag name like -beta, -rc)
-            type=semver,pattern={{major}}.{{minor}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
-            type=semver,pattern={{major}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
-
-            # SHA-based tags for non-tag refs (branches, PRs) for traceability
-            type=sha,prefix={{branch}}-,enable=${{ github.ref_type != 'tag' }}
-      - name: Build Container Image
+      - name: Build by digest
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: ${{ inputs.context }}
           file: ${{ steps.containerfile.outputs.containerfile }}
           target: ${{ inputs.target }}
-          platforms: ${{ inputs.platforms }}
-          push: ${{ inputs['push-image'] }}
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
-          cache-from: ${{ inputs['cache-from'] }}
-          cache-to: ${{ inputs['cache-to'] }}
+          platforms: ${{ matrix.platform }}
+          # No tag at this stage. The merge job applies all tags from
+          # metadata-action via `docker buildx imagetools create` once both
+          # arches' digests exist. push-by-digest pushes the image without
+          # tagging; name-canonical=true ensures the digest reference uses
+          # the canonical image name.
+          outputs: ${{ inputs['push-image'] && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', needs.prep.outputs.image-name) || format('type=image,name={0}', needs.prep.outputs.image-name) }}
+          labels: ${{ needs.prep.outputs.labels }}
+          # Per-arch GHA cache scope keeps the matrix legs from evicting
+          # each other. Custom cache-from/cache-to inputs are not threaded
+          # into the multi-arch matrix today (documented on the input).
+          cache-from: type=gha,scope=build-${{ steps.arch.outputs.suffix }}
+          cache-to: type=gha,mode=max,scope=build-${{ steps.arch.outputs.suffix }}
           build-args: ${{ inputs['build-args'] }}
           secrets: ${{ inputs['build-secrets'] }}
           provenance: ${{ inputs['enable-slsa'] && 'mode=max' || 'false' }}
@@ -370,24 +447,34 @@ jobs:
           printf "::notice::SLSA provenance attestation will be skipped\n"
           printf "::notice::To enable SLSA: Use registry: ghcr.io or set enable-slsa: false\n"
       - name: Export digest
-        if: &if_push_image_slsa_ghcr ${{ inputs['push-image'] && inputs['enable-slsa'] && inputs.registry == 'ghcr.io' }}
+        if: *if_push_image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
+          # Filename is the bare hash; the merge step rebuilds <name>@sha256:<hash>.
+          touch "/tmp/digests/${DIGEST#sha256:}"
+      # Artefact names MUST be unique across the entire workflow run, not
+      # just within this workflow_call invocation: when multiple containers
+      # are matrix-dispatched (release-publish-stage's per-container
+      # matrix), each container's publish-container call shares
+      # github.run_id. Without per-container scoping, hsm-worker's
+      # digests-<run_id>-amd64 would collide with wallet-bff's; one upload
+      # silently wins and the merge job downloads the wrong container's
+      # digest. Same root cause applies to SARIF + SBOM uploads below.
       - name: Upload digest
-        if: *if_push_image_slsa_ghcr
+        if: *if_push_image
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: digests-${{ github.run_id }}-${{ github.run_attempt }}
+          name: digests-${{ github.run_id }}-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
-      - name: Scan Container Image
+      - name: Scan Container Image${{ inputs.name && format(' ({0})', inputs.name) || '' }}
         if: &if_scan_enabled ${{ inputs['enable-scan'] && inputs['push-image'] }}
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
-          image-ref: ${{ steps.image-name.outputs.name }}@${{ steps.build.outputs.digest }}
+          image-ref: ${{ needs.prep.outputs.image-name }}@${{ steps.build.outputs.digest }}
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
@@ -396,23 +483,27 @@ jobs:
         if: *if_scan_enabled
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: sarif-container-scan
+          name: sarif-container-scan-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
           path: trivy-results.sarif
           retention-days: 5
           if-no-files-found: ignore
       - name: Upload container scan results to Code Scanning
-        if: ${{ inputs['enable-scan'] && inputs['push-image'] }}
+        if: *if_scan_enabled
         env:
           SARIF_FILE: trivy-results.sarif
-          SARIF_CATEGORY: container-scan
+          # Per-(container, arch) category keeps every leg visible in Code
+          # Scanning; GitHub dedupes per (category, file). Without the
+          # per-container scoping, two containers' amd64 scans share a
+          # category and one silently overwrites the other.
+          SARIF_CATEGORY: container-scan-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
         run: bash .github-shared/scripts/security/upload-sarif.sh
-      - name: Generate Container SBOMs (SPDX + CycloneDX)
+      - name: Generate Container SBOMs${{ inputs.name && format(' — {0}', inputs.name) || '' }} (SPDX + CycloneDX)
         if: &if_sbom_enabled ${{ inputs['enable-analyzed-container-sbom'] && inputs['push-image'] }}
         env:
           ARTIFACT_TYPES: ${{ inputs['artifact-types'] }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          IMAGE_NAME: ${{ steps.image-name.outputs.name }}
+          IMAGE_NAME: ${{ needs.prep.outputs.image-name }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
           SBOM_SCRIPT_ROOT: .github-shared/scripts/sbom
         run: bash .github-shared/scripts/sbom/generate-container-sbom-artifacts.sh
@@ -420,7 +511,10 @@ jobs:
         if: *if_sbom_enabled
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: analyzed-container-sbom-${{ github.run_id }}
+          # Per-(container, arch) suffix avoids upload-artifact name
+          # collision across the workflow run; every leg's SBOM lands as
+          # a separate release-attached artefact.
+          name: analyzed-container-sbom-${{ github.run_id }}-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
           path: |
             *-analyzed-container-sbom.spdx.json
             *-analyzed-container-sbom.cyclonedx.json
@@ -429,61 +523,55 @@ jobs:
         if: &if_sbom_and_slsa_enabled ${{ inputs['enable-analyzed-container-sbom'] && inputs['push-image'] && inputs['enable-slsa'] }}
         id: find-sbom
         run: bash .github-shared/scripts/sbom/find-container-sbom.sh
-      - name: Attest Container SBOM
+      - name: Attest Container SBOM${{ inputs.name && format(' — {0}', inputs.name) || '' }}
         if: *if_sbom_and_slsa_enabled
         uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3.0.0
         with:
-          subject-name: ${{ steps.image-name.outputs.name }}
+          subject-name: ${{ needs.prep.outputs.image-name }}
+          # Per-arch digest: each platform image gets its own SBOM
+          # attestation. cosign verify-attestation against the per-arch
+          # digest succeeds for the corresponding platform.
           subject-digest: ${{ steps.build.outputs.digest }}
           sbom-path: ${{ steps.find-sbom.outputs.sbom-file }}
           push-to-registry: true
-      - name: Output image details
-        id: image
-        env:
-          IMAGE_NAME: ${{ steps.image-name.outputs.name }}
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-          IMAGE_METADATA: ${{ steps.metadata.outputs.json }}
-        run: bash .github-shared/scripts/container/write-image-details.sh
       # Optional binary extraction (container-first / compiled-native ecosystems).
-      # Runs a second buildx invocation against the same context and Containerfile
-      # but pointed at a different stage (typically `FROM scratch AS export-binary`
-      # with COPY --from=builder). The cargo build step in the builder stage is
-      # cached from the runtime build above, so this only adds the cost of
-      # writing the extracted files to disk.
-      - name: Extract binaries
+      # Each native arch leg extracts its own binary directly. No QEMU.
+      # Per-arch artefact name avoids upload-artifact collision.
+      - name: Extract binaries${{ inputs.name && format(' ({0})', inputs.name) || '' }}
         if: ${{ inputs['extract-binary-target'] != '' }}
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: ${{ inputs.context }}
           file: ${{ steps.containerfile.outputs.containerfile }}
           target: ${{ inputs['extract-binary-target'] }}
-          platforms: ${{ inputs.platforms }}
+          platforms: ${{ matrix.platform }}
           push: false
           outputs: type=local,dest=./extracted-binaries
-          cache-from: ${{ inputs['cache-from'] }}
+          cache-from: type=gha,scope=build-${{ steps.arch.outputs.suffix }}
           build-args: ${{ inputs['build-args'] }}
           secrets: ${{ inputs['build-secrets'] }}
-      - name: Upload extracted binaries
+      - name: Upload extracted binaries${{ inputs.name && format(' ({0})', inputs.name) || '' }}
         if: ${{ inputs['extract-binary-target'] != '' }}
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: ${{ inputs.name != '' && format('{0}-binaries', inputs.name) || 'container-binaries' }}
+          name: ${{ inputs.name != '' && format('{0}-binaries-{1}', inputs.name, steps.arch.outputs.suffix) || format('container-binaries-{0}', steps.arch.outputs.suffix) }}
           path: ./extracted-binaries/**
           retention-days: 30
           if-no-files-found: error
       - name: Write binary extraction summary
         if: ${{ inputs['extract-binary-target'] != '' }}
         env:
-          ARTEFACT_NAME: ${{ inputs.name != '' && format('{0}-binaries', inputs.name) || 'container-binaries' }}
+          ARTEFACT_NAME: ${{ inputs.name != '' && format('{0}-binaries-{1}', inputs.name, steps.arch.outputs.suffix) || format('container-binaries-{0}', steps.arch.outputs.suffix) }}
+          DISPLAY_NAME: ${{ inputs.name || 'container' }}
           EXTRACT_TARGET: ${{ inputs['extract-binary-target'] }}
           EXPECTED_NAMES: ${{ inputs['extract-binary-names'] }}
-          PLATFORMS: ${{ inputs.platforms }}
+          PLATFORM: ${{ matrix.platform }}
         run: |
           {
-            printf '### Extracted Binaries\n\n'
+            printf '### Extracted Binaries — %s (%s)\n\n' "$DISPLAY_NAME" "$PLATFORM"
             printf -- '- **Stage:** %s\n' "$EXTRACT_TARGET"
             printf -- '- **Artefact:** %s\n' "$ARTEFACT_NAME"
-            printf -- '- **Platforms:** %s\n' "$PLATFORMS"
+            printf -- '- **Platform:** %s\n' "$PLATFORM"
             if [[ -n "$EXPECTED_NAMES" ]]; then
               printf -- '- **Binaries:** %s\n' "$EXPECTED_NAMES"
             fi
@@ -491,9 +579,91 @@ jobs:
             printf 'Files in extracted-binaries/:\n\n'
             find ./extracted-binaries -type f 2>/dev/null | sort | head -50 || true
           } >> "$GITHUB_STEP_SUMMARY"
-  # Generate SLSA provenance (called as separate job if enabled)
+
+  merge:
+    name: Merge Manifest${{ inputs.name && format(' ({0})', inputs.name) || '' }}
+    needs: [prep, build-arch]
+    if: ${{ inputs['push-image'] }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.outputs.outputs.image }}
+      digest: ${{ steps.outputs.outputs.digest }}
+    steps:
+      - name: Harden GitHub runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        with:
+          egress-policy: ${{ inputs.egress-policy }}
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Download digests
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ github.run_id }}-${{ inputs.name || 'container' }}-*
+          merge-multiple: true
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Check registry authentication configuration
+        env:
+          USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
+          TARGET_REGISTRY: ${{ inputs.registry }}
+          CI_REGISTRY: ghcr.io
+          REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
+        run: bash .github-shared/scripts/registry/validate-auth.sh
+      - name: Log in to Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ inputs['registry-username'] || github.actor }}
+          password: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+      - name: Create manifest list and push
+        env:
+          IMAGE_NAME: ${{ needs.prep.outputs.image-name }}
+          TAGS: ${{ needs.prep.outputs.tags }}
+        working-directory: /tmp/digests
+        run: |
+          # Each file in /tmp/digests is named after a per-arch digest hash.
+          # Reconstruct ${IMAGE_NAME}@sha256:<hash> references and feed them
+          # to imagetools, which assembles a multi-arch manifest list and
+          # pushes it under each tag from metadata-action. Single-arch
+          # inputs degenerate to a one-entry manifest list — same code path.
+          refs=()
+          for f in *; do
+            refs+=("${IMAGE_NAME}@sha256:${f}")
+          done
+          tag_args=()
+          while IFS= read -r tag; do
+            [[ -z "$tag" ]] && continue
+            tag_args+=("-t" "$tag")
+          done <<<"$TAGS"
+
+          docker buildx imagetools create "${tag_args[@]}" "${refs[@]}"
+      - name: Inspect manifest and emit outputs
+        id: outputs
+        env:
+          TAGS: ${{ needs.prep.outputs.tags }}
+        run: |
+          PRIMARY_TAG=$(printf "%s\n" "$TAGS" | head -n1)
+          docker buildx imagetools inspect "${PRIMARY_TAG}"
+          DIGEST=$(docker buildx imagetools inspect "${PRIMARY_TAG}" --format '{{json .Manifest}}' | jq -r '.digest')
+          printf "image=%s\n" "${PRIMARY_TAG}" >> "$GITHUB_OUTPUT"
+          printf "digest=%s\n" "${DIGEST}" >> "$GITHUB_OUTPUT"
+
+  # SLSA L3 provenance attestation against the manifest list digest.
+  # Stays as a separate workflow_call to slsa-framework/slsa-github-generator;
+  # the per-platform buildkit provenance attached by build-push-action covers
+  # platform-level attestation.
   provenance:
-    needs: [build-and-push]
+    needs: merge
     if: ${{ inputs['push-image'] && inputs['enable-slsa'] && startsWith(github.ref, 'refs/tags/') && inputs.registry == 'ghcr.io' }}
     permissions:
       actions: read
@@ -501,8 +671,8 @@ jobs:
       packages: write
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
     with:
-      image: ${{ needs.build-and-push.outputs.image }}
-      digest: ${{ needs.build-and-push.outputs.digest }}
+      image: ${{ needs.merge.outputs.image }}
+      digest: ${{ needs.merge.outputs.digest }}
       registry-username: ${{ github.actor }}
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}

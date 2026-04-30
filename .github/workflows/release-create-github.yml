@@ -148,14 +148,18 @@ jobs:
         continue-on-error: true
         with:
           name: release-changelog
-      # Download analyzed-container SBOM if it exists (from publish-container job)
+      # Download analyzed-container SBOMs if they exist (from publish-container
+      # job). Multi-container, multi-arch projects upload one SBOM per
+      # (container, arch) — pull them all in by pattern; merge-multiple
+      # flattens into a single directory.
       - name: Download Analyzed-Container SBOM artifacts
         if: ${{ inputs['has-containers'] && (contains(inputs.sboms, 'analyzed-container') || inputs.sboms == 'all') }}
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         continue-on-error: true
         with:
-          name: analyzed-container-sbom-${{ github.run_id }}
+          pattern: analyzed-container-sbom-${{ github.run_id }}-*
           path: ./sbom-artifacts/
+          merge-multiple: true
       - name: Checkout .github repo for release scripts
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -194,8 +198,10 @@ jobs:
           path: ./release-artifacts/
       # container-first byproducts: when containers extracted binaries via
       # publish-container.yml's extract-binary-target, those uploads land as
-      # `${container-name}-binaries`. Pull them all in by pattern and place
-      # under ./release-artifacts/binaries/<container-name>/<platform>/...
+      # `${container-name}-binaries-${arch}` (one per matrix leg in the
+      # native-multi-arch path). Pattern matches both that and the legacy
+      # `${container-name}-binaries` shape; pull them all in and place
+      # under ./release-artifacts/binaries/<artefact-name>/...
       - name: Download extracted container binaries
         if: ${{ inputs['has-containers'] }}
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
