@@ -348,6 +348,38 @@ jobs:
             *-analyzed-container-sbom.spdx.json
             *-analyzed-container-sbom.cyclonedx.json
           retention-days: 7
+      # Optional binary extraction (container-first / compiled-native ecosystems).
+      # Each native arch leg extracts its own binary directly. No QEMU. Mirrors
+      # publish-container.yml's extract-binary path.
+      - name: Extract binaries${{ inputs.name && format(' ({0})', inputs.name) || '' }}
+        if: &if_extract_binary ${{ inputs['extract-binary-target'] != '' }}
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: ${{ inputs['working-directory'] }}
+          file: ${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}
+          target: ${{ inputs['extract-binary-target'] }}
+          platforms: ${{ matrix.platform }}
+          push: false
+          outputs: type=local,dest=./extracted-binaries
+          cache-from: type=gha,scope=build-${{ steps.arch.outputs.suffix }}
+      - name: Suffix extracted binaries with arch
+        if: *if_extract_binary
+        env:
+          SUFFIX: ${{ steps.arch.outputs.suffix }}
+          EXPECTED_NAMES: ${{ inputs['extract-binary-names'] }}
+        run: |
+          bash .github-shared/scripts/container/suffix-extracted-binaries.sh \
+            ./extracted-binaries \
+            "$SUFFIX" \
+            "$EXPECTED_NAMES"
+      - name: Upload extracted binaries${{ inputs.name && format(' ({0})', inputs.name) || '' }}
+        if: *if_extract_binary
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: ${{ inputs.name != '' && format('{0}-binaries-{1}', inputs.name, steps.arch.outputs.suffix) || format('container-binaries-{0}', steps.arch.outputs.suffix) }}
+          path: ./extracted-binaries/**
+          retention-days: 7
+          if-no-files-found: error
 
   merge:
     name: Merge Manifest${{ inputs.name && format(' ({0})', inputs.name) || '' }}
