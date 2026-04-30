@@ -117,6 +117,26 @@ on:
         description: "Build arguments (KEY=VALUE format, one per line)"
         required: false
         type: string
+      target:
+        description: "Containerfile stage to build for the runtime image. Empty defaults to the last stage (current docker behavior). Useful for multi-stage Containerfiles where the deployable image is not the last stage."
+        required: false
+        default: ""
+        type: string
+      name:
+        description: "Container artefact name from artifacts.yml. Used to namespace the optional binary upload artefact (extract-binary). Optional for direct callers."
+        required: false
+        default: ""
+        type: string
+      extract-binary-target:
+        description: "Containerfile stage to extract as a binary CI artefact (typically `FROM scratch AS export-binary` with COPY --from=builder). When set, a second buildx build runs with --output type=local and the result is uploaded as ${name}-binaries. Used by compiled-native ecosystems (cargo, go) where binaries are byproducts of the container build."
+        required: false
+        default: ""
+        type: string
+      extract-binary-names:
+        description: "Comma-separated binary file names expected in the export-binary stage output. Used in the step summary for visibility; not enforced."
+        required: false
+        default: ""
+        type: string
       build-secrets:
         description: "Build secrets to pass (KEY=VALUE format, one per line)"
         required: false
@@ -327,6 +347,7 @@ jobs:
         with:
           context: ${{ inputs.context }}
           file: ${{ steps.containerfile.outputs.containerfile }}
+          target: ${{ inputs.target }}
           platforms: ${{ inputs.platforms }}
           push: ${{ inputs['push-image'] }}
           tags: ${{ steps.metadata.outputs.tags }}
@@ -421,6 +442,53 @@ jobs:
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
           IMAGE_METADATA: ${{ steps.metadata.outputs.json }}
         run: bash .github-shared/scripts/container/write-image-details.sh
+      # Optional binary extraction (container-first / compiled-native ecosystems).
+      # Runs a second buildx invocation against the same context and Containerfile
+      # but pointed at a different stage (typically `FROM scratch AS export-binary`
+      # with COPY --from=builder). The cargo build step in the builder stage is
+      # cached from the runtime build above, so this only adds the cost of
+      # writing the extracted files to disk.
+      - name: Extract binaries
+        if: ${{ inputs['extract-binary-target'] != '' }}
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ steps.containerfile.outputs.containerfile }}
+          target: ${{ inputs['extract-binary-target'] }}
+          platforms: ${{ inputs.platforms }}
+          push: false
+          outputs: type=local,dest=./extracted-binaries
+          cache-from: ${{ inputs['cache-from'] }}
+          build-args: ${{ inputs['build-args'] }}
+          secrets: ${{ inputs['build-secrets'] }}
+      - name: Upload extracted binaries
+        if: ${{ inputs['extract-binary-target'] != '' }}
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: ${{ inputs.name != '' && format('{0}-binaries', inputs.name) || 'container-binaries' }}
+          path: ./extracted-binaries/**
+          retention-days: 30
+          if-no-files-found: error
+      - name: Write binary extraction summary
+        if: ${{ inputs['extract-binary-target'] != '' }}
+        env:
+          ARTEFACT_NAME: ${{ inputs.name != '' && format('{0}-binaries', inputs.name) || 'container-binaries' }}
+          EXTRACT_TARGET: ${{ inputs['extract-binary-target'] }}
+          EXPECTED_NAMES: ${{ inputs['extract-binary-names'] }}
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          {
+            printf '### Extracted Binaries\n\n'
+            printf -- '- **Stage:** %s\n' "$EXTRACT_TARGET"
+            printf -- '- **Artefact:** %s\n' "$ARTEFACT_NAME"
+            printf -- '- **Platforms:** %s\n' "$PLATFORMS"
+            if [[ -n "$EXPECTED_NAMES" ]]; then
+              printf -- '- **Binaries:** %s\n' "$EXPECTED_NAMES"
+            fi
+            printf '\n'
+            printf 'Files in extracted-binaries/:\n\n'
+            find ./extracted-binaries -type f 2>/dev/null | sort | head -50 || true
+          } >> "$GITHUB_STEP_SUMMARY"
   # Generate SLSA provenance (called as separate job if enabled)
   provenance:
     needs: [build-and-push]

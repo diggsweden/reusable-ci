@@ -162,6 +162,17 @@ jobs:
       # those types would mismatch the upload. Uniform thread-through across
       # all builders is tracked for a follow-up PR.
       gradle-artifact-name: ${{ contains(matrix.container['artifact-types'], 'gradle') && matrix.container.from[0] || '' }}
+      # container-first (compiled-native) fields: optional, default empty for
+      # artefact-first containers (maven/npm/gradle).
+      name: ${{ matrix.container.name }}
+      target: ${{ matrix.container.target || '' }}
+      extract-binary-target: ${{ matrix.container.extract.binary.target || '' }}
+      extract-binary-names: ${{ matrix.container.extract.binary.names && join(matrix.container.extract.binary.names, ',') || '' }}
+      # build-args is converted from artifacts.yml's object form to
+      # KEY=VALUE lines by parse-artifacts-config.sh (see build-args-string
+      # field). publish-container.yml's build-args input is a string for
+      # docker/build-push-action compatibility.
+      build-args: ${{ matrix.container['build-args-string'] || '' }}
       push-image: true
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   summarize-publish-stage:

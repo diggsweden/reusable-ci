@@ -192,6 +192,41 @@ jobs:
         with:
           name: ${{ steps.artifact-name.outputs.sbom-name }}
           path: ./release-artifacts/
+      # container-first byproducts: when containers extracted binaries via
+      # publish-container.yml's extract-binary-target, those uploads land as
+      # `${container-name}-binaries`. Pull them all in by pattern and place
+      # under ./release-artifacts/binaries/<container-name>/<platform>/...
+      - name: Download extracted container binaries
+        if: ${{ inputs['has-containers'] }}
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        continue-on-error: true
+        with:
+          pattern: "*-binaries"
+          path: ./release-artifacts/binaries/
+      - name: Compute effective attach-artifacts (auto-include extracted binaries)
+        # If extract.binary produced any files under ./release-artifacts/binaries/,
+        # append a glob so they get checksummed, signed, and attached to the
+        # GitHub Release alongside the user-specified globs. Without this,
+        # callers who declare extract.binary in artifacts.yml would see binaries
+        # only as run-page CI artefacts (90-day retention) but not on the
+        # permanent Release page — silent footgun. The append is non-destructive
+        # to the user's own attach-artifacts input.
+        id: attach-effective
+        env:
+          USER_ATTACH: ${{ inputs['attach-artifacts'] }}
+        run: |
+          set -euo pipefail
+          binaries_glob="release-artifacts/binaries/**"
+          # compgen -G requires extglob in some shells; use find for portability.
+          if find ./release-artifacts/binaries -type f -print -quit 2>/dev/null | grep -q .; then
+            if [[ -n "$USER_ATTACH" ]]; then
+              printf 'attach-artifacts=%s,%s\n' "$USER_ATTACH" "$binaries_glob" >> "$GITHUB_OUTPUT"
+            else
+              printf 'attach-artifacts=%s\n' "$binaries_glob" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            printf 'attach-artifacts=%s\n' "$USER_ATTACH" >> "$GITHUB_OUTPUT"
+          fi
       - name: Resolve release metadata
         id: release-metadata
         env:
@@ -223,7 +258,7 @@ jobs:
           fi
       - name: Generate checksums
         env:
-          ATTACH_ARTIFACTS: ${{ inputs['attach-artifacts'] }}
+          ATTACH_ARTIFACTS: ${{ steps.attach-effective.outputs.attach-artifacts }}
         run: bash .github-shared/scripts/release/generate-checksums.sh
       - name: Sign artifacts
         if: *if_sign_artifacts
@@ -252,7 +287,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           DRAFT: ${{ inputs.draft }}
           MAKE_LATEST: ${{ inputs['make-latest'] }}
-          ATTACH_ARTIFACTS: ${{ inputs['attach-artifacts'] }}
+          ATTACH_ARTIFACTS: ${{ steps.attach-effective.outputs.attach-artifacts }}
           RELEASE_NOTES_FILE: release-notes.md
           ARTIFACT_NAME: ${{ inputs['artifact-name'] }}
         run: bash .github-shared/scripts/release/create-github-release.sh
