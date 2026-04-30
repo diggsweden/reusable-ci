@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Example: Rust workspace with two services published as separate containers.
+#
+# container-first (compiled-native): the Containerfile is the build environment.
+# `cargo build` runs inside each service's multi-stage Containerfile, the
+# runtime image is the primary deliverable, and the binary is optionally
+# extracted as a CI artefact via `extract.binary` (see below).
+#
+# sbom-cargo.yml runs alongside in build-stage to emit a CycloneDX SBOM
+# from Cargo.lock — no compile, just dependency-graph analysis.
+#
+# Workspace tests (`cargo test --workspace --features ...`) run from the
+# caller's own test.yml; workspace features and testcontainers can't be
+# expressed per-artefact.
+#
+# context: . means each Containerfile sees the entire workspace root,
+# which is required because `COPY Cargo.toml Cargo.lock` and the per-crate
+# COPYs in the builder stage need workspace-level paths to resolve.
+artifacts:
+  - name: hsm-worker
+    project-type: cargo
+    working-directory: ./hsm-worker
+  - name: wallet-bff
+    project-type: cargo
+    working-directory: ./wallet-bff
+
+containers:
+  - name: hsm-worker
+    from: [hsm-worker]
+    container-file: hsm-worker/Containerfile
+    context: .
+    target: runtime
+    platforms: linux/amd64,linux/arm64
+    registry: ghcr.io
+    # Optional: extract the compiled binary as a CI artefact so it can be
+    # attached to the GitHub Release alongside the container image.
+    # Same Containerfile, same compile (cached) — second buildx invocation
+    # just writes the binary to ./extracted-binaries.
+    extract:
+      binary:
+        target: export-binary
+        names: [hsm-worker, digg-hsm-keytool]
+
+  - name: wallet-bff
+    from: [wallet-bff]
+    container-file: wallet-bff/Containerfile
+    context: .
+    target: runtime
+    platforms: linux/amd64,linux/arm64
+    registry: ghcr.io
+    extract:
+      binary:
+        target: export-binary
+        names: [wallet-bff]
+
+publishers:
+  - type: github-packages
+    artifacts: [hsm-worker, wallet-bff]

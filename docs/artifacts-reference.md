@@ -8,6 +8,8 @@ SPDX-License-Identifier: CC0-1.0
 
 Complete reference for `artifacts.yml` configuration format.
 
+> For per-ecosystem capability matrices and the artefact-first vs container-first framing, see **[docs/ecosystems.md](ecosystems.md)**.
+
 ## Overview
 
 The `artifacts.yml` file defines what to build and where to publish. It consists of two main sections:
@@ -38,7 +40,7 @@ containers:
 
 - **Type:** `string`
 - **Description:** Build system type
-- **Valid values:** `maven`, `npm`, `gradle`, `gradle-android`, `xcode-ios`, `python`, `go`, `rust`
+- **Valid values:** `maven`, `npm`, `gradle`, `gradle-android`, `xcode-ios`, `cargo`, `python`, `go`
 - **Example:** `project-type: maven`
 
 #### `working-directory`
@@ -109,7 +111,7 @@ containers:
   - `analyzed-container` — Syft scan of the published container only
   - Any comma-list of the three layer names, e.g. `build,analyzed-artifact`
 - **Default:** Automatic based on project type:
-  - `all` for: `maven`, `npm`, `gradle`, `gradle-android`, `python`, `go`, `rust`
+  - `all` for: `maven`, `npm`, `gradle`, `gradle-android`, `cargo`, `python`, `go`
   - `none` for: `xcode-ios`, `meta`
 - **Examples:**
   ```yaml
@@ -454,6 +456,82 @@ The v2.x `enable-sbom: bool` field on the container block is removed in v3. Cont
 - **Default:** `true`
 - **Requires:** `SARIF_UPLOAD_TOKEN` org secret for results to appear in Code Scanning
 - **Example:** `enable-scan: true`
+
+#### `target`
+
+- **Type:** `string`
+- **Description:** Containerfile stage to build for the runtime image. Useful for multi-stage Containerfiles where the deployable image is not the last stage.
+- **Default:** empty (builds the last stage; current `docker build` behavior)
+- **Example:** `target: runtime`
+- **Used by:** container-first ecosystems primarily, but the field is generic — any multi-stage Containerfile may set it.
+- **See also:** [artefact-first vs container-first framing](ecosystems.md)
+
+#### `extract.binary`
+
+Opt-in extraction of compiled binaries as a CI artefact. Used by container-first ecosystems (`cargo`, future `go`) where the binary is a byproduct of the container build. The same Containerfile is built a second time with `--target` set to the extraction stage; the resulting files are uploaded as `${container.name}-binaries`.
+
+The extraction shares cache with the runtime image build (same buildkit daemon, same `--mount=type=cache` IDs), so it does not double-compile.
+
+##### `extract.binary.target`
+
+- **Type:** `string`
+- **Description:** Containerfile stage that exposes the binaries. Typically `FROM scratch AS export-binary` with `COPY --from=builder ...` lines.
+- **Required when** `extract.binary` is set.
+- **Example:** `target: export-binary`
+
+##### `extract.binary.names`
+
+- **Type:** list of `string`
+- **Description:** Expected binary file basenames in the extracted output. Informational — surfaced in the GitHub Actions step summary and used downstream for naming. Not enforced; if the names don't match the export-binary stage's COPYs, no error is raised.
+- **Example:** `names: [hsm-worker, digg-hsm-keytool]`
+
+##### Full example
+
+```yaml
+containers:
+  - name: hsm-worker
+    from: [hsm-worker]
+    container-file: hsm-worker/Containerfile
+    context: .
+    target: runtime
+    platforms: linux/amd64,linux/arm64
+    extract:
+      binary:
+        target: export-binary
+        names: [hsm-worker, digg-hsm-keytool]
+```
+
+##### Output
+
+- GHA artefact `${container.name}-binaries` with per-platform subdirectories (e.g., `linux_amd64/hsm-worker`, `linux_arm64/hsm-worker`).
+- Aggregated into the GitHub Release alongside SBOMs and other release artefacts when matched by the caller's `release.attachartifacts` glob.
+
+#### `build-args`
+
+- **Type:** key/value object
+- **Description:** Build arguments for the Containerfile (e.g., `RUST_VERSION`, `DEBIAN_VARIANT`). The parser converts the object to `KEY=VALUE` lines for `docker/build-push-action`, so callers can use the more readable object form in `artifacts.yml`.
+- **Example (in artifacts.yml):**
+
+  ```yaml
+  containers:
+    - name: my-svc
+      from: [my-svc]
+      container-file: Containerfile
+      context: .
+      build-args:
+        RUST_VERSION: "1.94"
+        DEBIAN_VARIANT: bookworm-slim
+  ```
+
+- **Direct caller equivalent** (when invoking `publish-container.yml` directly, bypassing the orchestrator):
+
+  ```yaml
+  uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@v2.9.0
+  with:
+    build-args: |
+      RUST_VERSION=1.94
+      DEBIAN_VARIANT=bookworm-slim
+  ```
 
 ---
 

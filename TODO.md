@@ -17,3 +17,18 @@ scripts checkout (resolved before any tag movement). The name suggests it is the
 original ref input, but it is actually a resolved SHA used only for checking out
 helper scripts. Consider renaming to `reusable-ci-sha` or `scripts-ref` to make
 the intent clearer.
+
+## Cargo release-side ergonomics — follow-ups
+
+v2.9.0 ships `sbom-cargo.yml` (manifest SBOM), `lint-cargo.yml`, the
+orchestrator linter sub-flags, `bump-version.sh` cargo case, and a
+cargo branch in `validate-release-prerequisites.yml` (Cargo.lock +
+toolchain pin checks). Remaining release-side ergonomics for cargo:
+
+- **`publish-cratesio.yml`** — analogous to `publish-mavencentral.yml` /
+  `publish-npm.yml`. Wired into `release-orchestrator.yml` via
+  `publish-to: [crates-io]`. Needs API token handling, dry-run support,
+  and workspace publishing order.
+
+Shippable as a v2.9.x patch or v2.10.0 minor when a real library
+caller surfaces.

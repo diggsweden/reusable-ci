@@ -2,6 +2,8 @@
 
 This document describes reusable workflow components and how they relate to the supported orchestrator entrypoints.
 
+> For a per-ecosystem capability matrix and the artefact-first vs container-first framing (when does a language ship via `build-<lang>.yml` vs `sbom-<lang>.yml` + Containerfile compile?), see **[docs/ecosystems.md](ecosystems.md)**.
+
 **Recommended stable GitHub entrypoints:**
 - `pullrequest-orchestrator.yml`
 - `release-orchestrator.yml`
@@ -194,7 +196,7 @@ Orchestrates all quality checks for pull requests. Composes a control-plane inte
 ```yaml
 uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
 with:
-  project-type: maven              # Required: maven, npm, python
+  project-type: maven              # Required: maven, npm, gradle, gradle-android, xcode-ios, cargo, python, go
   base-branch: ""                  # Optional: auto-detects PR target
   linters.commitlint: true         # Deprecated v3.0: migrate to devbasecheck
   linters.licenselint: true        # Deprecated v3.0: migrate to devbasecheck
@@ -207,6 +209,9 @@ with:
   linters.devbasecheck: false      # Recommended: replaces deprecated linters
   linters.swiftformat: false       # Swift format for iOS/macOS
   linters.swiftlint: false         # SwiftLint for iOS/macOS
+  linters.clippy: false            # cargo clippy for Rust
+  linters.rustfmt: false           # cargo fmt --check for Rust
+  linters.cargoaudit: false        # cargo audit (RUSTSEC) for Rust
   reusable-ci-ref: v2.7.0           # Match the pinned workflow release
 ```
 

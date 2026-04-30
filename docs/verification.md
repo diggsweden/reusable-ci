@@ -163,7 +163,7 @@ Simply add or remove `lint-*` tasks in your justfile - no workflow changes neede
 
 ```just
 # Add a new linter - automatically discovered
-lint-rust:
+lint-cargo:
     cargo clippy -- -D warnings
 
 # Remove by deleting the task - automatically excluded
