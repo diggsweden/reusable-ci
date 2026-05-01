@@ -38,8 +38,8 @@ See [Workflow Guide](workflows.md) for orchestrator documentation and [Artifacts
 
 | Component | Purpose | Features | Build Time | Use When |
 |-----------|---------|----------|------------|----------|
-| **publish-container** | Production multi-platform container builds | SLSA attestation, SBOM, vulnerability scanning, multi-arch | ~10-15 min | Production releases |
-| **publish-dev-container** | Fast single-platform dev builds | Basic image only, SHA-based tags | ~2-3 min | Development/testing |
+| **publish-container** | Production multi-platform container builds | SLSA attestation, SBOM, vulnerability scanning, native split-runner multi-arch (no QEMU) | ~5-10 min | Production releases |
+| **publish-dev-container** | Fast dev container builds, single- or multi-platform | Basic image only, SHA-based tags, native split-runner when multi-arch | ~3-5 min | Development/testing |
 
 #### Release Tools
 

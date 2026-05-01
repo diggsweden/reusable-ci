@@ -432,10 +432,10 @@ Containers reference artifacts via the `from:` field and are built after all art
 #### `platforms`
 
 - **Type:** `string` (comma-separated)
-- **Description:** Target CPU architectures for multi-platform builds
+- **Description:** Target CPU architectures. Each platform builds natively on a runner of that architecture (`linux/amd64` → `ubuntu-24.04`, `linux/arm64` → `ubuntu-24.04-arm`). No QEMU. Multi-platform inputs split across runners and merge into a single manifest list.
 - **Default:** `linux/amd64`
 - **Example:** `platforms: linux/amd64,linux/arm64`
-- **Performance:** Multi-platform builds take ~2x longer
+- **Performance:** Multi-platform runs in parallel; wall-clock is dominated by the slowest arch leg (≈1.1× single-arch, plus the merge job).
 
 #### `enable-slsa`
 

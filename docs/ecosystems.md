@@ -58,7 +58,8 @@ belongs for compiled-native code.
 
 Forcing compiled-native ecosystems into artefact-first would require
 cross-compile machinery in CI (cargo-zigbuild, cross-rs, native-apt
-sysroots) — significant complexity for a problem that buildkit + QEMU
+sysroots) — significant complexity for a problem that split-runner
+multi-arch (`ubuntu-24.04` for amd64 + `ubuntu-24.04-arm` for arm64)
 already solves inside the Containerfile. container-first accepts that the
 container IS the build environment and orchestrates accordingly. The
 naming reflects this: `build-<lang>.yml` for artefact-first (produces the
@@ -97,11 +98,11 @@ reviews drop into this template.
 | SBOM — build layer | ✅ | `sbom-cargo.yml` (cargo-cyclonedx) | From Cargo.lock; no compile required |
 | SBOM — analyzed-artifact | ❌ | — | Would require pre-built binary upload; not in v2.9 path |
 | SBOM — analyzed-container | ✅ | `publish-container.yml` (syft) | Standard for all containers; derived from `sboms` |
-| Container build | ✅ | `publish-container.yml` | Multi-arch via buildx + QEMU |
-| Multi-arch (linux variants) | ✅ | buildkit + QEMU | linux/amd64, linux/arm64, etc. — any arch buildkit supports |
-| Multi-arch (macOS / Windows) | ❌ | — | QEMU is linux-only for containers |
-| Binary extraction (CI artefact) | ✅ | `extract.binary` field | Opt-in; uploads as `${name}-binaries` |
-| Multi-binary in one container | ✅ | `extract.binary.names: [a, b]` | E.g., `hsm-worker` + `digg-hsm-keytool` |
+| Container build | ✅ | `publish-container.yml` | Native split-runner multi-arch (no QEMU) |
+| Multi-arch (linux variants) | ✅ | split-runner matrix | linux/amd64 → `ubuntu-24.04`, linux/arm64 → `ubuntu-24.04-arm`, merged into one manifest list |
+| Multi-arch (macOS / Windows) | ❌ | — | Linux-only for containers |
+| Binary extraction (CI artefact) | ✅ | `extract.binary` field | Opt-in; uploads as `${name}-binaries-${arch}` (per-arch, see Phase 3 of `planarch.md`) |
+| Multi-binary in one container | ✅ | `extract.binary.names: [a, b]` | E.g., `hsm-worker` + `digg-hsm-keytool`; basenames suffixed with `-linux-${arch}` to avoid release-asset collision |
 | Workspace (multi-crate) | ✅ | sbom-cargo `--all`; bump-version `[workspace.package]` | One bump per release |
 | Single-crate | ✅ | Same workflows; bump-version `[package].version` | |
 | Version-bump (Cargo.toml + Cargo.lock) | ✅ | `bump-version.sh cargo` | `cargo update --workspace` syncs lockfile |
