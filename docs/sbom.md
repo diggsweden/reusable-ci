@@ -42,7 +42,7 @@ The effective set per artefact is the **intersection** of the two. Empty interse
 
 | Where | Default | Why |
 |---|---|---|
-| Per-artefact (`artifacts.yml`) | `all` for build-SBOM-supporting ecosystems (maven, npm, gradle, gradle-android, python, go, rust); `none` for `xcode-ios` and `meta` | Match historical "SBOMs on by default for buildable types" |
+| Per-artefact (`artifacts.yml`) | `all` for build-SBOM-supporting ecosystems (maven, npm, gradle, gradle-android, python, go, cargo); `none` for `xcode-ios` and `meta` | Match historical "SBOMs on by default for buildable types" |
 | Release orchestrator (`release.sboms`) | `all` | Release fires on tag push, once per release; SBOMs expected for compliance |
 | Release-dev orchestrator (`sboms`) | `none` | Dev fires per-PR; SBOMs add 30–60 s/run that most reviews don't need |
 
@@ -110,13 +110,17 @@ Source-layer Syft scans see declared dependencies but not the resolved version g
 | Gradle (JVM) | `cyclonedx-gradle-plugin` (init-script) | `build-gradle-app.yml` | `gradle-build-sbom` (or `<artifact-name>-sbom` when overridden) |
 | Gradle (Android) | same as above | `build-gradle-android.yml` | per matrix-variant name |
 | npm | `@cyclonedx/cyclonedx-npm` (via `npx`) | `build-npm.yml` | `npm-build-sbom` |
-| Cargo (beta) | `cargo-cyclonedx` (`--all` for workspaces) | `build-rust.yml` | `rust-build-sbom` |
+| Cargo | `cargo-cyclonedx` (`--all` for workspaces) | `sbom-cargo.yml` (publish stage; lockfile-derived) | `cargo-build-sbom` |
 
 The build SBOM lives in its own upload artefact — separate from the code artefact (`maven-build-artifacts`, `npm-build-artifacts`, etc.). A broken SBOM plugin can't take down the code upload. Tool versions are pinned and tracked by Renovate via `# renovate: datasource=...` comments.
 
-### Rust workflow is direct-call only (beta)
+### Cargo workflow is SBOM-only by design
 
-`build-rust.yml` is currently SBOM-only — it runs `cargo-cyclonedx` without invoking `cargo build`/`cargo test`. cargo-cyclonedx resolves the dependency graph from `Cargo.lock`, so the SBOM is accurate whether or not a build has been performed. The workflow is **not** wired into `release-orchestrator.yml`; consumers call it directly via `uses:` until a full Rust builder lands. The filename stays stable across that expansion.
+`sbom-cargo.yml` runs `cargo-cyclonedx` against `Cargo.lock` and uploads the resulting `bom.json` files. It deliberately does **not** invoke `cargo build` or `cargo test` — the same reasoning applies as for Go: Rust services typically ship as multi-stage container images, so the actual compile happens once inside the Containerfile, with `linux/amd64,linux/arm64` produced by split-runner native builds (`ubuntu-24.04` + `ubuntu-24.04-arm`, merged into a manifest list) rather than twice. Workspace-level `cargo test` lives in the caller's own `test.yml`, since workspace features can't be expressed per-artefact.
+
+Because cargo is container-first, `sbom-cargo.yml` is wired into the **publish** stage of `release-orchestrator.yml` (sibling of `build-containers`), not the build stage — the SBOM and its corresponding container ship together. For default cargo projects this is identical to a build-observed SBOM since `Cargo.lock` is the fully-resolved graph; projects using `[target.'cfg(...)'.dependencies]` may see crates listed that aren't in a given arch's binary.
+
+This split — artefact-first ecosystems (maven/npm/gradle) emit SBOMs as a byproduct of `build-<lang>.yml`; container-first ecosystems (cargo, future go) emit SBOMs from `sbom-<lang>.yml` while the actual compile lives in the Containerfile — is documented end-to-end in **[docs/ecosystems.md](ecosystems.md)**, including the per-ecosystem capability matrix.
 
 ## How it works internally
 
@@ -132,7 +136,7 @@ Setting `sboms: none` on an artefact really means "skip everything for this arte
 
 When called directly (not from `release-build-stage.yml`), each builder defaults `enable-build-sbom: true` for backward compatibility — direct callers always get a Build SBOM unless they explicitly say otherwise.
 
-`build-rust.yml` is intentionally **not** gated this way: it's SBOM-only by design (no `cargo build` step), so gating it would make the entire workflow a no-op. Direct callers control its execution by choosing whether to invoke it at all.
+`sbom-cargo.yml` accepts the same `enable-build-sbom` input for parity with the other builders, but since the SBOM step is the only thing it does, setting it to `false` from the orchestrator path turns the matrix entry into a no-op. Direct callers can either skip the input (defaults to true) or pass `enable-build-sbom: false` to suppress generation explicitly.
 
 ### Container scanning is derived, not separately gated
 

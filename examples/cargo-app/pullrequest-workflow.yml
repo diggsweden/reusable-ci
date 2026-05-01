@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+name: Pull Request Workflow
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pr-checks:
+    uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@v2.9.0
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    with:
+      reusable-ci-ref: v2.9.0
+      project-type: cargo
+      linters.devbasecheck: true
+      linters.commitlint: false
+      linters.licenselint: false
+      linters.megalint: false
+      # Rust quality gates. clippy compiles, so any native-dep crate
+      # (rdkafka, openssl-sys, libsasl, ...) needs apt packages below.
+      linters.clippy: true
+      linters.rustfmt: true
+      linters.cargoaudit: true
+      cargo.apt-packages: "cmake libsasl2-dev libzstd-dev libssl-dev pkg-config zlib1g-dev"
+
+  # Workspace-level tests (testcontainers, workspace features) live in the
+  # caller. sbom-cargo.yml does not run cargo test — that path is per-artefact
+  # and can't express workspace features. Uncomment once you've added
+  # .github/workflows/test.yml that runs `cargo test --workspace`.
+  # test:
+  #   permissions:
+  #     contents: read
+  #     packages: read
+  #   uses: ./.github/workflows/test.yml

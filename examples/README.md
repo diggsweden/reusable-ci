@@ -8,6 +8,8 @@ SPDX-License-Identifier: CC0-1.0
 
 Complete working examples for different project types.
 
+> Each example follows one of the two ecosystem patterns (A: build artefact + container COPY; B: container is the build environment). See **[docs/ecosystems.md](../docs/ecosystems.md)** for the full framing and per-ecosystem capability matrices.
+
 ## Available Examples
 
 ### 1. [Maven Application](maven-app/)
@@ -60,7 +62,26 @@ Complete working examples for different project types.
 
 ---
 
-### 4. [Monorepo](monorepo/)
+### 4. [Rust Application](cargo-app/)
+
+**Use case:** Rust workspace shipped as one or more containers
+
+**Contains:**
+
+- Pull request workflow with clippy / rustfmt / cargo-audit
+- `cargo.apt-packages` for crates with native deps
+- SBOM-only `sbom-cargo.yml` (cargo-cyclonedx) wired into the release stage
+- Multi-stage Containerfile pattern for the actual `cargo build`
+- Multi-platform container builds via buildx + QEMU
+
+**Good for:**
+
+- Rust services and CLIs
+- Cargo workspaces with multiple binaries shipped as separate images
+
+---
+
+### 5. [Monorepo](monorepo/)
 **Use case:** Multiple artifacts in one repository
 
 **Contains:**

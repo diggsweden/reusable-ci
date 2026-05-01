@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+#
+# Reference Containerfile for a Rust service in a Cargo workspace.
+#
+# Place this file at <service>/Containerfile (e.g., hsm-worker/Containerfile).
+# Build context is the workspace root (`context: .` in artifacts.yml) so
+# the COPY statements can pull workspace-level Cargo.toml/Cargo.lock and
+# every workspace member's Cargo.toml + src.
+#
+# Three named stages:
+# - builder: compiles the binary. Cache mounts (--mount=type=cache)
+#   persist cargo's registry and target/ across runs via the GHA cache
+#   backend, used by every other ecosystem in reusable-ci. Multi-arch via
+#   buildkit + QEMU; the rust:bookworm-slim base ships per-arch variants.
+# - export-binary: scratch image with the binary at the root. Used by
+#   reusable-ci's `extract.binary.target: export-binary` to upload the
+#   binary as a CI artefact (see ../artifacts.yml).
+# - runtime: the deployable image. Lean Debian base + the binary +
+#   non-root user.
+#
+# Compatible with `docker build` and `podman build` (>= 4.0). Local dev
+# example: `podman build --target runtime --build-arg SERVICE=hsm-worker .`
+
+# syntax=docker/dockerfile:1.7
+
+ARG RUST_VERSION=1.94
+ARG DEBIAN_VARIANT=bookworm-slim
+
+FROM --platform=$BUILDPLATFORM rust:${RUST_VERSION}-${DEBIAN_VARIANT} AS builder
+ARG TARGETPLATFORM
+WORKDIR /src
+
+# Native build deps for crates that link C libraries (rdkafka, openssl-sys,
+# libsasl, libzstd, etc.). Each Containerfile installs only what its
+# service needs. Versions intentionally unpinned in this example file —
+# real callers should pin via lockfile or version-pin per their policy.
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      cmake libsasl2-dev libzstd-dev libssl-dev pkg-config zlib1g-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# Workspace context: bring in everything cargo needs to resolve.
+COPY Cargo.toml Cargo.lock ./
+COPY hsm-common ./hsm-common
+COPY hsm-worker ./hsm-worker
+COPY wallet-bff ./wallet-bff
+# Add other workspace members as needed.
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target,id=cargo-${TARGETPLATFORM} \
+    cargo build --release --locked -p hsm-worker \
+ && mkdir -p /out \
+ && cp target/release/hsm-worker /out/ \
+ && cp target/release/digg-hsm-keytool /out/
+
+FROM scratch AS export-binary
+COPY --from=builder /out/hsm-worker /hsm-worker
+COPY --from=builder /out/digg-hsm-keytool /digg-hsm-keytool
+
+FROM debian:${DEBIAN_VARIANT} AS runtime
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates libsasl2-2 libssl3 libzstd1 \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd -r -u 10001 -m app
+USER app
+COPY --from=builder /out/hsm-worker /usr/local/bin/hsm-worker
+COPY --from=builder /out/digg-hsm-keytool /usr/local/bin/digg-hsm-keytool
+ENTRYPOINT ["/usr/local/bin/hsm-worker"]
