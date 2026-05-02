@@ -119,7 +119,11 @@ jobs:
           ACTION_REF: ${{ github.action_ref }}
         run: bash .github-shared/scripts/ci/debug-workspace.sh
       - name: Verify Triggered by Tag
-        run: bash .github-shared/scripts/validate/ref-type.sh "${{ github.ref_type }}" "${{ github.ref_name }}" "${{ github.ref }}"
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          REF: ${{ github.ref }}
+        run: bash .github-shared/scripts/validate/ref-type.sh "$REF_TYPE" "$REF_NAME" "$REF"
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
         with:
@@ -134,12 +138,16 @@ jobs:
           git fetch --tags --force
       - name: Validate Tag Format
         if: ${{ github.ref_type == 'tag' }}
-        run: bash .github-shared/scripts/validate/tag-format.sh "${{ github.ref_name }}"
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: bash .github-shared/scripts/validate/tag-format.sh "$REF_NAME"
       - name: Validate Tag Signature
         if: ${{ github.ref_type == 'tag' }}
         env:
+          REF_NAME: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
           OSPO_BOT_GPG_PUB: ${{ secrets.OSPO_BOT_GPG_PUB }}
-        run: bash .github-shared/scripts/validate/tag-signature.sh "${{ github.ref_name }}" "${{ github.repository }}" "$OSPO_BOT_GPG_PUB"
+        run: bash .github-shared/scripts/validate/tag-signature.sh "$REF_NAME" "$REPOSITORY" "$OSPO_BOT_GPG_PUB"
       - name: Validate Tag Uniqueness
         if: ${{ github.ref_type == 'tag' }}
         env:
@@ -157,11 +165,15 @@ jobs:
       # ============================================================================
       - name: Check Release Authorization
         if: ${{ inputs['check-authorization'] }}
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          AUTHORIZED_RELEASE_DEVELOPERS: ${{ secrets.AUTHORIZED_RELEASE_DEVELOPERS }}
         run: |
           bash .github-shared/scripts/validate/authorization.sh \
-            "${{ github.ref_name }}" \
-            "${{ github.actor }}" \
-            "${{ secrets.AUTHORIZED_RELEASE_DEVELOPERS }}"
+            "$REF_NAME" \
+            "$ACTOR" \
+            "$AUTHORIZED_RELEASE_DEVELOPERS"
       # ============================================================================
       # SECTION 3: Secrets and Credentials Validation
       # Validates GPG keys, GitHub tokens, and publishing credentials

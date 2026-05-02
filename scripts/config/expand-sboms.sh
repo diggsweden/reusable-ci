@@ -164,8 +164,12 @@ main() {
     printf "%s\n" "$out"
     ;;
   comma)
-    local IFS=','
-    printf "%s\n" "${layers[*]}"
+    local out=""
+    local layer
+    for layer in "${layers[@]}"; do
+      out+="${out:+,}$layer"
+    done
+    printf "%s\n" "$out"
     ;;
   esac
 }
