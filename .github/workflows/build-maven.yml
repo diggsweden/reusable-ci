@@ -160,7 +160,7 @@ jobs:
           printf "Checking for multi-module artifacts:\n"
           find . -type f -name "*.jar" -path "*/target/*" ! -name "original-*.jar" -exec ls -lh {} \; 2>/dev/null || printf "No JAR files found in sub-modules\n"
       - name: Upload Maven artifacts
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: maven-build-artifacts
           path: |
@@ -179,7 +179,7 @@ jobs:
       # artifact and downstream consumers can fetch just what they need.
       - name: Upload Maven Build SBOM
         if: steps.sbom.outcome == 'success'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: maven-build-sbom
           path: |

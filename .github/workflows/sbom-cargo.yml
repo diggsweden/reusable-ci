@@ -83,7 +83,7 @@ jobs:
       # Caches ~/.cargo (registry, git, installed bins) + target/. Keyed by
       # Cargo.lock so cache invalidates when dependencies change.
       - name: Cache cargo
-        uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: ${{ inputs['working-directory'] }}
       - name: Generate Build SBOM
@@ -101,7 +101,7 @@ jobs:
           cargo cyclonedx --all --format json --override-filename bom
       - name: Upload Cargo SBOM
         if: steps.sbom.outcome == 'success'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # When called from release-build-stage.yml's per-artefact matrix,
           # artifact-name is set to the cargo artefact's user-chosen name
