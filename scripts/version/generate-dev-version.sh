@@ -22,6 +22,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../ci/env.sh"
+source "$SCRIPT_DIR/../ci/strings.sh"
 
 main() {
   git fetch --tags || true
@@ -38,12 +39,10 @@ main() {
     BASE_VERSION="${LATEST_TAG#v}"
   fi
 
-  # Sanitize branch name for version compatibility
-  # - Replace non-alphanumeric (except . _ -) with dash
-  # - Remove leading/trailing dashes
-  local BRANCH_NAME="$CI_REF_NAME"
+  # Sanitize branch name for version compatibility (Docker tag + filesystem
+  # safe). Single rule lives in scripts/ci/strings.sh.
   local SANITIZED_BRANCH
-  SANITIZED_BRANCH=$(printf "%s" "$BRANCH_NAME" | sed 's|[^a-zA-Z0-9._-]|-|g' | sed 's|^-*||; s|-*$||')
+  SANITIZED_BRANCH=$(sanitize_path_token "$CI_REF_NAME")
 
   # Get short SHA (7 characters)
   local SHORT_SHA

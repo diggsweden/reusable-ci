@@ -10,6 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../ci/output.sh"
+source "$SCRIPT_DIR/../ci/strings.sh"
 source "$SCRIPT_DIR/../ci/install-syft.sh"
 
 readonly VALID_PROJECT_TYPES="auto maven npm gradle gradle-android xcode-ios python go rust"
@@ -65,6 +66,17 @@ generate_dual_sboms() {
   local version="$3"
   local layer_name="$4"
   local custom_basename="$5"
+
+  # Single defence point: every component that flows into the redirect target
+  # gets sanitised here. Slashed branch refs (`feat/x`), slashed tags
+  # (`release/2026.05`), spaces, etc. become safe path tokens. Idempotent on
+  # already-clean input (dev-version, version-no-v on standard tags).
+  name=$(sanitize_path_token "$name")
+  version=$(sanitize_path_token "$version")
+  layer_name=$(sanitize_path_token "$layer_name")
+  if [[ -n "$custom_basename" ]]; then
+    custom_basename=$(sanitize_path_token "$custom_basename")
+  fi
 
   local spdx_file cdx_file
 

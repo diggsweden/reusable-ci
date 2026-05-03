@@ -504,6 +504,30 @@ EOF
   assert_output --partial "ghcr.io/org/myapp:1.0.0"
 }
 
+# Regression: a slashed version (branch name like `feat/x`, slashed tag like
+# `release/2026.05`, or PR ref `42/merge`) once crashed the redirect target
+# because bash treated the slash as a path. The file-write boundary in
+# generate_dual_sboms must sanitise it. Cf. scripts/ci/strings.sh.
+@test "generate-sbomstolerates slashed version on container layer" {
+  run_script "sbom/generate-sboms.sh" \
+      --project-type "maven" \
+      --layers "analyzed-container" \
+      --version "feat/x" \
+      --name "myapp" \
+      --working-dir "." \
+      --container-image "ghcr.io/org/myapp:feat-x"
+  assert_success
+  refute_output --partial "No such file or directory"
+
+  # The slashed version must have been collapsed to a dash. Outside a git repo
+  # _analyzed_basename returns the SHA-less form; the helper sees a single
+  # `-` between `x` and `analyzed-container`.
+  assert_file_exist "myapp-feat-x-analyzed-container-sbom.spdx.json"
+  assert_file_exist "myapp-feat-x-analyzed-container-sbom.cyclonedx.json"
+  # The slashed name must NOT have created a `myapp-feat/` subdirectory.
+  assert_dir_not_exist "myapp-feat"
+}
+
 @test "generate-sbomsskips container layer when no image provided" {
   run_script "sbom/generate-sboms.sh" \
       --project-type "maven" \
