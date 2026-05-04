@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.1] - 2026-05-03
+
+### Added
+
+- Add sbom-cargo workflow
+- Add target, extract.binary and build-args inputs
+- Address OpenGrep findings on lint and validate workflows
+
+### Changed
+
+- Bump devbase-check to v0.5.3
+- Bump pinned actions to Node.js 24 versions
+- Ecosystem matrix + artefact-first/container-first framing
+- Suffix per-arch extracted binaries with -linux-${arch}
+- Native multi-arch production builds via split runners
+- Native multi-arch dev builds via split runners
+- Multi-container dev releases via artifacts-config
+- Version-bump, release-prereq, and dev-release path
+- Cargo project-type + new container fields
+
+### Fixed
+
+- Sanitize path tokens at file-write boundary
+
 ## [2.8.0] - 2026-04-27
 
 ### Added
@@ -25,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restore default android releasedev params
 - Migrate generate-sboms.bats to direct flag CLI
 - Surface generate-dev-sbom in publish-stage summary
+
 
 ## [2.7.9] - 2026-04-14
 
@@ -450,6 +475,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial commit
 
+[2.8.1]: https://github.com/diggsweden/reusable-ci/compare/v2.8.0..v2.8.1
 [2.8.0]: https://github.com/diggsweden/reusable-ci/compare/v2.7.9..v2.8.0
 [2.7.9]: https://github.com/diggsweden/reusable-ci/compare/v2.7.8..v2.7.9
 [2.7.8]: https://github.com/diggsweden/reusable-ci/compare/v2.7.7..v2.7.8
