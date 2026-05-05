@@ -23,9 +23,14 @@ main() {
   if [[ "$REGISTRY" == "ghcr.io" ]]; then
     local EXPECTED_PREFIX="ghcr.io/${ENFORCE_NAMESPACE}/${REPO_SHORT}"
 
-    if [[ ! "$IMAGE_NAME" =~ ^${EXPECTED_PREFIX}(-.*)?$ ]]; then
-      ci_log_error "Security: Image name must start with '${EXPECTED_PREFIX}'"
-      ci_log_error "Got: $IMAGE_NAME"
+    # Accept the prefix exactly, a single -suffix segment (sibling variant
+    # package — '-[^/]*'), or a /subpath (multi-container form
+    # 'ghcr.io/org/repo/<name>[/...]'), but not the two combined: a name like
+    # '<repo>-evil/payload' would be a sibling top-level package masquerading
+    # as a subpath under <repo>, with no documented use case.
+    if [[ ! "$IMAGE_NAME" =~ ^${EXPECTED_PREFIX}(-[^/]*|/.*)?$ ]]; then
+      ci_log_error "Security: Image '${IMAGE_NAME}' is outside the allowed namespace"
+      ci_log_error "Allowed: '${EXPECTED_PREFIX}', '${EXPECTED_PREFIX}-<suffix>', or '${EXPECTED_PREFIX}/<subpath>'"
       ci_log_error "This prevents pushing to unauthorized namespaces"
       exit 1
     fi

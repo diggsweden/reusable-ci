@@ -28,7 +28,8 @@
 # - Minimal - optimized for speed over security
 # - Images clearly marked with -dev suffix
 # - Basic authentication to registry
-# - No production features enabled
+# - Namespace validation (enforces ghcr.io/OWNER/REPO[/<container>] pattern)
+# - No production features enabled (no SLSA, no SBOM, no vuln scan)
 #
 # Registry Authentication:
 #   GHCR (default): Uses GITHUB_TOKEN (no secrets needed)
@@ -164,15 +165,17 @@ jobs:
         env:
           TARGET_REGISTRY: ${{ inputs.registry }}
           REPOSITORY: ${{ github.repository }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
           NAME: ${{ inputs.name }}
           PLATFORMS: ${{ inputs.platforms }}
         run: |
           DEV_VERSION=$(bash .github-shared/scripts/version/generate-dev-version.sh)
-          if [[ -n "$NAME" ]]; then
-            IMAGE_NAME="$TARGET_REGISTRY/$REPOSITORY/$NAME"
-          else
-            IMAGE_NAME="$TARGET_REGISTRY/$REPOSITORY"
-          fi
+          # Share the prod-path resolver so dev and prod agree on the image
+          # name shape — including the single-container collapse when the
+          # container `name` matches the repo's short name.
+          IMAGE_NAME=$(bash .github-shared/scripts/container/resolve-image-name.sh \
+            "$TARGET_REGISTRY" "" "$REPOSITORY" "$REPOSITORY_OWNER" "$NAME")
+          IMAGE_NAME="${IMAGE_NAME#name=}"
           # Convert "linux/amd64,linux/arm64" -> JSON array for matrix consumption.
           PLATFORMS_JSON=$(printf '%s\n' "${PLATFORMS//,/$'\n'}" | jq -R . | jq -s -c .)
 
@@ -184,6 +187,18 @@ jobs:
           printf "→ Container: %s\n" "${NAME:-(unnamed)}"
           printf "→ Dev tag: %s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}"
           printf "→ Platforms: %s\n" "${PLATFORMS}"
+      - name: Validate Image Namespace
+        env:
+          IMAGE_NAME: ${{ steps.coord.outputs.image-name }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_REGISTRY: ${{ inputs.registry }}
+          ENFORCE_NAMESPACE: ${{ github.repository_owner }}
+        run: |
+          bash .github-shared/scripts/container/validate-namespace.sh \
+            "$IMAGE_NAME" \
+            "$REPOSITORY" \
+            "$TARGET_REGISTRY" \
+            "$ENFORCE_NAMESPACE"
 
   build-arch:
     name: Build${{ inputs.name && format(' ({0})({1})', inputs.name, matrix.platform) || format(' ({0})', matrix.platform) }}

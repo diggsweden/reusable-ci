@@ -246,3 +246,50 @@ run_resolve_image_name() {
   assert_success
   assert_output "name=ghcr.io/myorg/myrepo"
 }
+
+@test "resolve-image-name collapses NAME equal to repo short to single-image form" {
+  # Single-container artifacts.yml usually names the container after the repo
+  # (per docs example). Without this collapse, the result would be the
+  # redundant 'ghcr.io/<org>/<repo>/<repo>' subpath.
+  run_resolve_image_name "ghcr.io" "" "diggsweden/wallet-backend-reference" "diggsweden" "wallet-backend-reference"
+
+  assert_success
+  assert_output "name=ghcr.io/diggsweden/wallet-backend-reference"
+}
+
+@test "resolve-image-name preserves NAME when distinct from repo short" {
+  # Multi-container case: each container gets its own subpath.
+  run_resolve_image_name "ghcr.io" "" "diggsweden/monorepo" "diggsweden" "api"
+
+  assert_success
+  assert_output "name=ghcr.io/diggsweden/monorepo/api"
+}
+
+@test "resolve-image-name compares NAME against repo short, not full repository" {
+  # Repository is 'org/myrepo'; short name is 'myrepo'. NAME='org' should NOT
+  # collapse — only a match against the short name (last path segment) does.
+  run_resolve_image_name "ghcr.io" "" "myorg/myrepo" "myorg" "myorg"
+
+  assert_success
+  assert_output "name=ghcr.io/myorg/myrepo/myorg"
+}
+
+@test "resolve-image-name preserves multi-segment NAME containing a slash" {
+  # If a caller passes a NAME with an internal slash (e.g. 'subdir/api'),
+  # treat it as an explicit subpath and pass it through verbatim. The
+  # validator's '/.*' branch will then accept the result.
+  run_resolve_image_name "ghcr.io" "" "myorg/myrepo" "myorg" "subdir/api"
+
+  assert_success
+  assert_output "name=ghcr.io/myorg/myrepo/subdir/api"
+}
+
+@test "resolve-image-name does not collapse on case mismatch" {
+  # Comparison is byte-exact. 'WALLET-backend-reference' (mixed case) is not
+  # equal to 'wallet-backend-reference' so the collapse does not apply; the
+  # subpath form is preserved. docker/metadata-action lowercases for push.
+  run_resolve_image_name "ghcr.io" "" "diggsweden/wallet-backend-reference" "diggsweden" "WALLET-backend-reference"
+
+  assert_success
+  assert_output "name=ghcr.io/diggsweden/wallet-backend-reference/WALLET-backend-reference"
+}

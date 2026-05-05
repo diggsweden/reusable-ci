@@ -88,16 +88,94 @@ run_validate_namespace() {
   assert_output --partial "namespace validated"
 }
 
-@test "validate-namespace rejects multi-level image names not matching repo" {
-  # Multi-level paths like /backend are not allowed - must start with exact repo name
+@test "validate-namespace accepts multi-container subpath under repo prefix" {
+  # Multi-container artifacts.yml produces ghcr.io/<org>/<repo>/<container-name>
+  # — a subpath under the same org+repo, which is the security boundary.
   run_validate_namespace \
     "ghcr.io/myorg/myrepo/backend" \
     "myorg/myrepo" \
     "ghcr.io" \
     "myorg"
 
+  assert_success
+  assert_output --partial "namespace validated"
+}
+
+@test "validate-namespace accepts deeply nested subpath under repo prefix" {
+  run_validate_namespace \
+    "ghcr.io/myorg/myrepo/services/api" \
+    "myorg/myrepo" \
+    "ghcr.io" \
+    "myorg"
+
+  assert_success
+  assert_output --partial "namespace validated"
+}
+
+@test "validate-namespace rejects sibling-prefix sub-namespace (e.g. myrepo-evil/payload)" {
+  # 'myrepo-evil/payload' is in the same org but would be a separate
+  # top-level package — not a subpath under 'myrepo'. The combination of
+  # a '-suffix' AND a '/subpath' in the same image name has no documented
+  # use case and enables typosquat-style sibling packages.
+  run_validate_namespace \
+    "ghcr.io/myorg/myrepo-evil/payload" \
+    "myorg/myrepo" \
+    "ghcr.io" \
+    "myorg"
+
   assert_failure
-  assert_output --partial "must start with"
+  assert_output --partial "outside the allowed namespace"
+}
+
+@test "validate-namespace accepts simple suffix variants without subpaths" {
+  # The suffix form remains valid for sibling packages of the same repo.
+  run_validate_namespace \
+    "ghcr.io/myorg/myrepo-staging" \
+    "myorg/myrepo" \
+    "ghcr.io" \
+    "myorg"
+
+  assert_success
+  assert_output --partial "namespace validated"
+}
+
+@test "validate-namespace accepts suffix with internal dashes and dots" {
+  # Common variant naming patterns — '-api-v2', '-1.2.3' — must not be
+  # mistaken for namespace escapes by the suffix regex.
+  run_validate_namespace \
+    "ghcr.io/myorg/myrepo-api-v2-rc1" \
+    "myorg/myrepo" \
+    "ghcr.io" \
+    "myorg"
+
+  assert_success
+  assert_output --partial "namespace validated"
+}
+
+@test "validate-namespace accepts subpath with internal dashes" {
+  # Multi-container name-with-dashes (e.g. 'my-api-service') is the most
+  # common shape; dashes inside the subpath segment must not trip the regex.
+  run_validate_namespace \
+    "ghcr.io/myorg/myrepo/my-api-service" \
+    "myorg/myrepo" \
+    "ghcr.io" \
+    "myorg"
+
+  assert_success
+  assert_output --partial "namespace validated"
+}
+
+@test "validate-namespace rejects bare extension of repo name without separator" {
+  # 'myrepofoo' starts with 'myrepo' textually but extends the package name
+  # without a '-' or '/' separator — that's a different package entirely.
+  run_validate_namespace \
+    "ghcr.io/myorg/myrepofoo" \
+    "myorg/myrepo" \
+    "ghcr.io" \
+    "myorg"
+
+  assert_failure
+  assert_output --partial "outside the allowed namespace"
 }
 
 # =============================================================================
@@ -124,7 +202,7 @@ run_validate_namespace() {
     "myorg"
 
   assert_failure
-  assert_output --partial "must start with"
+  assert_output --partial "outside the allowed namespace"
 }
 
 @test "validate-namespace rejects completely mismatched image" {

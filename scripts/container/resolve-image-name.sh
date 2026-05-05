@@ -12,7 +12,11 @@ main() {
   local NAME="${5:-}"
 
   if [[ -z "$IMAGE_NAME" ]]; then
-    if [[ -n "$NAME" ]]; then
+    # Collapse the subpath when the container name matches the repo's short
+    # name — the resulting <repo>/<repo> would be a redundant package nested
+    # under itself, and the single-container convention in artifacts.yml
+    # naturally names the container after the repo.
+    if [[ -n "$NAME" && "$NAME" != "${REPOSITORY##*/}" ]]; then
       IMAGE_NAME="$REPOSITORY/$NAME"
     else
       IMAGE_NAME="$REPOSITORY"

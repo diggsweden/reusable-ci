@@ -142,7 +142,7 @@ on:
         default: ""
         type: string
       name:
-        description: "Container artefact name from artifacts.yml. Namespaces the optional binary upload artefact (extract-binary) AND the published image — when set, the image becomes <registry>/<repository>/<name>:<tag>, giving each container in a multi-container project its own GitHub Packages page. Empty preserves single-image behaviour (<registry>/<repository>:<tag>). Overridden by `image-name` if both are set."
+        description: "Container artefact name from artifacts.yml. Namespaces the optional binary upload artefact (extract-binary) AND the published image — when set, the image becomes <registry>/<repository>/<name>:<tag>, giving each container in a multi-container project its own GitHub Packages page. Empty (or set to the repo's short name — the common single-container case) preserves single-image behaviour (<registry>/<repository>:<tag>). Overridden by `image-name` if both are set."
         required: false
         default: ""
         type: string

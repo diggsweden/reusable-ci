@@ -403,6 +403,7 @@ Containers reference artifacts via the `from:` field and are built after all art
 - **Description:** Container image name (becomes part of image tag)
 - **Example:** `backend-api`, `frontend-ui`
 - **Resulting image:** `ghcr.io/org/repo/backend-api:v1.0.0`
+- **Single-container collapse:** When `name` equals the repo's short name (the common single-container pattern), the redundant `<repo>/<repo>` subpath is collapsed to `ghcr.io/org/repo:<tag>`. Multi-container layouts where each `name` is distinct from the repo are unaffected.
 
 #### `from`
 
