@@ -473,6 +473,16 @@ jobs:
       - name: Scan Container Image${{ inputs.name && format(' ({0})', inputs.name) || '' }}
         if: &if_scan_enabled ${{ inputs['enable-scan'] && inputs['push-image'] }}
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        env:
+          # The image was pushed by digest only — never loaded into the local
+          # docker daemon — so trivy falls through to remote pull. In remote
+          # mode trivy's default target platform is linux/amd64, which works
+          # accidentally on the amd64 leg but fails on every other arch with
+          # "no child with platform linux/amd64 in index" (buildkit's
+          # provenance: mode=max + sbom: true wraps the per-arch image in an
+          # OCI index alongside attestations). Pin the platform per leg so
+          # each scan resolves to its own child manifest.
+          TRIVY_PLATFORM: ${{ matrix.platform }}
         with:
           image-ref: ${{ needs.prep.outputs.image-name }}@${{ steps.build.outputs.digest }}
           format: 'sarif'
