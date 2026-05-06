@@ -102,3 +102,27 @@ teardown() {
   assert_line --partial "release-name=ci - myapp - staging - APK release"
   assert_line --partial "aab-name=ci - myapp - staging - AAB release"
 }
+
+@test "generate-artifact-names override mode: aab-name is the bare override" {
+  # Orchestrator path passes artifacts.yml `name:` so build uploads under the
+  # exact identifier release-publish-stage forwards to publish-google-play.
+  run_script "android/generate-artifact-names.sh" "true" "ignored" "myapp" "ignored" "wallet-android-demo"
+
+  assert_success
+  assert_line "aab-name=wallet-android-demo"
+  assert_line "debug-name=wallet-android-demo-debug"
+  assert_line "release-name=wallet-android-demo-release"
+  assert_line "sbom-name=wallet-android-demo-sbom"
+}
+
+@test "generate-artifact-names override mode ignores date/prefix/flavor" {
+  # Override is the single source of truth — derivation inputs must not bleed in.
+  run_script "android/generate-artifact-names.sh" "true" "ci" "myapp" "prod" "my-artifact"
+
+  assert_success
+  assert_line "aab-name=my-artifact"
+  refute_line --partial "ci -"
+  refute_line --regexp "[0-9]{4}-[0-9]{2}-[0-9]{2}"
+  refute_line --partial "prod"
+  refute_line --partial "myapp"
+}

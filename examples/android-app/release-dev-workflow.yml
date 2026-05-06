@@ -57,9 +57,10 @@ jobs:
     secrets: inherit
     with:
       reusable-ci-ref: v2.7.0
-      # Artifact name format: "{prefix} - {repo-name} - {flavor} - AAB release"
-      # Adjust to match your repository name and flavor
-      aab-artifact-name: dev - my-android-app - demo - AAB release
+      # Pull the AAB upload name straight from the build job's output instead
+      # of duplicating the derived format string. Stays correct if the format
+      # ever changes.
+      aab-artifact-name: ${{ needs.build.outputs.aab-name }}
       package-name: com.example.myapp
       track: internal
       status: completed

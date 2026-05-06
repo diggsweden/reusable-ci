@@ -176,9 +176,11 @@ containers:
 #### `config.gradle-tasks`
 
 - **Type:** `string`
-- **Description:** Gradle tasks to execute. For `gradle` (JVM) the default is `assemble`. For `gradle-android` the default is derived from `product-flavor` + `build-types` + `include-aab` — set this only to override that derivation with an explicit task list.
-- **Default:** `assemble` (JVM); derived (Android)
-- **Example:** `gradle-tasks: assembleDemoRelease bundleDemoRelease`
+- **Description:** Gradle tasks to execute.
+  - **`gradle` (JVM):** default is `assemble`; set to override.
+  - **`gradle-android`:** **not honored** on the orchestrator path. The orchestrator (`release-build-stage.yml`) derives tasks from `product-flavor` + `build-types` + `include-aab` and ignores this field. Configure those instead. The override input still exists on `build-gradle-android.yml` for direct callers (e.g., a hand-rolled `release-dev-workflow.yml`).
+- **Default:** `assemble` (JVM); derived (Android, ignored)
+- **Example (JVM):** `gradle-tasks: build test`
 
 #### `config.gradle-version-file`
 
@@ -186,6 +188,45 @@ containers:
 - **Description:** File containing version properties
 - **Default:** `gradle.properties`
 - **Example:** `gradle-version-file: gradle.properties`
+
+---
+
+### Configuration Fields (Gradle Android)
+
+#### `config.build-module`
+
+- **Type:** `string`
+- **Description:** Gradle module to build (the application module).
+- **Required:** Yes (for `project-type: gradle-android`)
+- **Example:** `build-module: app`
+
+#### `config.product-flavor`
+
+- **Type:** `string`
+- **Description:** Product flavor for the build. Combined with `build-types` and `include-aab` to derive the gradle task list (e.g. `demo` + `release` + AAB → `assembleDemoRelease bundleDemoRelease`).
+- **Default:** `""` (no flavor)
+- **Example:** `product-flavor: demo`
+
+#### `config.build-types`
+
+- **Type:** `string`
+- **Description:** Comma-separated build types to produce.
+- **Default:** `debug,release`
+- **Example:** `build-types: release`
+
+#### `config.include-aab`
+
+- **Type:** `boolean`
+- **Description:** Also build the Android App Bundle (AAB) for the release build type. Required for Google Play publishing.
+- **Default:** `true`
+- **Example:** `include-aab: true`
+
+#### `config.artifact-name-prefix`
+
+- **Type:** `string`
+- **Description:** Prefix for derived artifact names when calling `build-gradle-android.yml` directly. Ignored on the orchestrator path — the orchestrator forwards the artifact's `name:` as the upload identifier so it lines up with what `release-publish-stage.yml` hands to `publish-google-play.yml`.
+- **Default:** `""`
+- **Example:** `artifact-name-prefix: dev`
 
 ---
 
@@ -658,7 +699,9 @@ artifacts:
     working-directory: .
     config:
       java-version: 21
-      gradle-tasks: assembleDemoRelease bundleDemoRelease
+      build-module: app
+      product-flavor: demo
+      build-types: release
       gradle-version-file: gradle.properties
 ```
 
@@ -674,8 +717,9 @@ artifacts:
       - google-play
     config:
       java-version: 21
-      gradle-tasks: assembleDemoRelease bundleDemoRelease
       build-module: app
+      product-flavor: demo
+      build-types: release
       gradle-version-file: gradle.properties
       enable-android-signing: true
       # Google Play configuration

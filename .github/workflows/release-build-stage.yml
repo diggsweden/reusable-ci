@@ -113,7 +113,13 @@ jobs:
       product-flavor: ${{ matrix.artifact.config['product-flavor'] || '' }}
       build-types: ${{ matrix.artifact.config['build-types'] || 'debug,release' }}
       include-aab: ${{ matrix.artifact.config['include-aab'] != false }}
-      artifact-name-prefix: ${{ matrix.artifact.config['artifact-name-prefix'] || '' }}
+      # Forward artifacts.yml `name:` as the upload identifier so the AAB
+      # lands under the exact string release-publish-stage.yml forwards to
+      # publish-google-play.yml as `aab-artifact-name`. Without this override
+      # the build's date/prefix-derived name and publish's expected name
+      # diverge and the download step fails. Direct callers leave it empty
+      # and get derived naming.
+      artifact-name: ${{ matrix.artifact.name }}
       enable-signing: ${{ matrix.artifact.config['enable-android-signing'] }}
       enable-build-sbom: ${{ contains(matrix.artifact['effective-sboms'], 'build') }}
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}

@@ -101,12 +101,18 @@ with:
   build-types: "debug,release"    # Build types to create
   include-aab: true               # Build AAB for Play Store
   enable-signing: true            # Enable Android signing
-  artifact-name-prefix: ""        # Artifact name prefix
-  include-date-stamp: true        # Include date in artifact names
+  artifact-name: ""               # Override the derived upload name (orchestrator passes artifacts.yml `name:`)
+  artifact-name-prefix: ""        # Prefix for derived names (ignored when artifact-name is set)
+  include-date-stamp: true        # Include date in derived names (ignored when artifact-name is set)
   # gradle-tasks: ""              # Optional: explicit task list, overrides product-flavor/build-types/include-aab
 ```
 
 **Task derivation.** By default the workflow derives gradle tasks from `product-flavor` + `build-types` + `include-aab` — e.g., `product-flavor: demo`, `build-types: release`, `include-aab: true` → `assembleDemoRelease app:bundleDemoRelease`. No surrounding `build` task is run by default; only the targeted variants/bundles. Set `gradle-tasks` to override the derived list verbatim — useful when you need custom task names or to add lint/test alongside.
+
+**Artifact naming.** Two modes:
+
+- **Override (orchestrator path).** `release-build-stage.yml` forwards each artifact's `name:` from artifacts.yml as `artifact-name`. The AAB uploads under that exact identifier; APK debug/release and the build SBOM get `<name>-debug`, `<name>-release`, `<name>-sbom`. `release-publish-stage.yml` then hands the same `name:` to `publish-google-play.yml` as `aab-artifact-name`, so the download matches what build uploaded. `artifact-name-prefix` and `include-date-stamp` are ignored in this mode.
+- **Derived (direct callers).** When `artifact-name` is empty, upload names are composed as `[<date> - ][<prefix> - ]<repo>[ - <flavor>] - {APK debug|APK release|AAB release|build SBOM}` from `include-date-stamp`, `artifact-name-prefix`, `${{ github.event.repository.name }}`, and `product-flavor`. Direct callers should wire the publish step's `aab-artifact-name` to `${{ needs.build.outputs.aab-name }}` instead of duplicating the format string.
 
 ### Publish Workflows
 

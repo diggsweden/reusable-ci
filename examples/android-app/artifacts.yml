@@ -11,8 +11,11 @@ artifacts:
       - google-play
     config:
       java-version: 21
-      gradle-tasks: build assembleDemoRelease bundleDemoRelease
       build-module: app
+      # Declarative variant selection: the orchestrator derives gradle tasks
+      # (e.g., assembleDemoRelease, bundleDemoRelease) from these.
+      product-flavor: demo
+      build-types: release
       gradle-version-file: gradle.properties
       # Signing configuration (requires secrets)
       enable-android-signing: true

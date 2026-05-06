@@ -69,13 +69,18 @@ on:
         default: ""
         type: string
       # === ARTIFACT NAMING ===
+      artifact-name:
+        description: "Override the derived artifact-name format. When set, the AAB is uploaded under this exact name and APK/SBOM variants get -debug/-release/-sbom suffixes. Used by the orchestrator (release-build-stage.yml) to align uploads with the artifacts.yml `name:` that release-publish-stage forwards to publish-google-play. Leave empty for date/prefix/repo/flavor-derived naming."
+        required: false
+        default: ""
+        type: string
       artifact-name-prefix:
-        description: "Prefix for artifact names (e.g., testing_store, production)"
+        description: "Prefix for derived artifact names (e.g., testing_store, production). Ignored when artifact-name is set."
         required: false
         default: ""
         type: string
       include-date-stamp:
-        description: "Include date in artifact names"
+        description: "Include date in derived artifact names. Ignored when artifact-name is set."
         required: false
         default: true
         type: boolean
@@ -166,12 +171,14 @@ jobs:
           ARTIFACT_NAME_PREFIX: ${{ inputs['artifact-name-prefix'] }}
           REPOSITORY_NAME: ${{ github.event.repository.name }}
           PRODUCT_FLAVOR: ${{ inputs['product-flavor'] }}
+          ARTIFACT_NAME: ${{ inputs['artifact-name'] }}
         run: |
           bash .github-shared/scripts/android/generate-artifact-names.sh \
             "$INCLUDE_DATE_STAMP" \
             "$ARTIFACT_NAME_PREFIX" \
             "$REPOSITORY_NAME" \
-            "$PRODUCT_FLAVOR" >> "$GITHUB_OUTPUT"
+            "$PRODUCT_FLAVOR" \
+            "$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
       - name: Set up JDK
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:

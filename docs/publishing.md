@@ -667,8 +667,9 @@ artifacts:
       - google-play    # <-- This enables Google Play publishing
     config:
       java-version: 21
-      gradle-tasks: assembleDemoRelease bundleDemoRelease
       build-module: app
+      product-flavor: demo
+      build-types: release
       gradle-version-file: gradle.properties
       enable-android-signing: true
       # Google Play configuration (required when publish-to includes google-play)
