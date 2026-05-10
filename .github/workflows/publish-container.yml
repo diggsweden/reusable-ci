@@ -232,7 +232,7 @@ jobs:
       platforms-json: ${{ steps.platforms.outputs.json }}
     steps:
       - name: Harden GitHub runner
-        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
         with:
           egress-policy: ${{ inputs.egress-policy }}
       - name: Checkout repository
@@ -329,7 +329,7 @@ jobs:
       SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
     steps:
       - name: Harden GitHub runner
-        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
         with:
           egress-policy: ${{ inputs.egress-policy }}
       - name: Checkout repository
@@ -472,7 +472,7 @@ jobs:
           retention-days: 1
       - name: Scan Container Image${{ inputs.name && format(' ({0})', inputs.name) || '' }}
         if: &if_scan_enabled ${{ inputs['enable-scan'] && inputs['push-image'] }}
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           # The image was pushed by digest only — never loaded into the local
           # docker daemon — so trivy falls through to remote pull. In remote
@@ -619,7 +619,7 @@ jobs:
       digest: ${{ steps.outputs.outputs.digest }}
     steps:
       - name: Harden GitHub runner
-        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
         with:
           egress-policy: ${{ inputs.egress-policy }}
       - name: Checkout reusable-ci scripts
