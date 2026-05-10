@@ -27,7 +27,7 @@ env:
   # renovate: datasource=github-releases depName=casey/just
   JUST_VERSION: "1.47.0"
   # renovate: datasource=github-releases depName=jdx/mise
-  MISE_VERSION: "2026.3.10"
+  MISE_VERSION: "2026.4.28"
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
