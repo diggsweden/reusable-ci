@@ -66,10 +66,9 @@ on:
         required: false
         default: false
         type: boolean
-      project-type:
-        description: "Project type (maven, npm, gradle, python, etc.)"
-        required: false
-        default: "maven"
+      artifacts:
+        description: "Parsed artifacts JSON array (from parse-artifacts-config). SBOM generation loops over the array; download steps fetch by pattern (no per-artifact-name resolution needed)."
+        required: true
         type: string
       changelog-config:
         description: "Path to changelog configuration file"
@@ -86,20 +85,16 @@ on:
         required: false
         default: "audit"
         type: string
-      reusable-ci-ref:
-        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+      runtime-image:
+        description: "reusable-ci runtime image (full — needs syft for SBOM generation). Pin to a digest or version tag; default tracks main."
         required: false
-        default: "main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime:main"
         type: string
       has-containers:
         description: "Whether containers were built (to determine if container SBOMs exist)"
         required: false
         default: false
         type: boolean
-      artifact-name:
-        description: "Artifact name for SBOM generation (e.g., 'token-lib-ci' for Maven artifactId). If not provided, uses repository name."
-        required: false
-        type: string
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
@@ -114,12 +109,14 @@ jobs:
       output-file: "ReleasenotesTmp"
       upload-as-artifact: true
       artifact-name: "release-changelog"
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+      changelog-config: ${{ inputs['changelog-config'] }}
   create-release:
     name: Create GitHub Release
     needs: [generate-changelog]
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: write
       packages: read
@@ -138,11 +135,11 @@ jobs:
       - name: Import GPG key
         if: &if_sign_artifacts ${{ inputs['sign-artifacts'] }}
         id: import-gpg
-        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
-        with:
-          gpg_private_key: ${{ secrets.OSPO_BOT_GPG_PRIV }}
-          passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
-          git_user_signingkey: true
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          GIT_USER_SIGNINGKEY: "true"
+        run: reusable-ci release gpg-import
       - name: Download Release Changelog
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         continue-on-error: true
@@ -160,31 +157,17 @@ jobs:
           pattern: analyzed-container-sbom-${{ github.run_id }}-*
           path: ./sbom-artifacts/
           merge-multiple: true
-      - name: Checkout .github repo for release scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
-      - name: Determine artifact name
-        id: artifact-name
-        env:
-          PROJECT_TYPE: ${{ inputs['project-type'] }}
-          # Gradle pairs its SBOM with the user-selected artifact-name from
-          # artifacts.yml; pass it through so resolve-artifact-name.sh can
-          # compute a matching sbom-name.
-          ARTIFACT_NAME: ${{ inputs['artifact-name'] }}
-        run: |
-          bash .github-shared/scripts/release/resolve-artifact-name.sh \
-            "$PROJECT_TYPE" >> "$GITHUB_OUTPUT"
-      # Download build artifacts based on project type
+      # Multi-artifact-aware downloads: per-ecosystem build artifacts and
+      # build SBOMs are uploaded under names like 'maven-build-artifacts',
+      # 'npm-build-artifacts', '<gradle-artifact-name>-build-artifacts',
+      # etc. The pattern download grabs them all in one step.
       - name: Download build artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         continue-on-error: true
         with:
-          name: ${{ steps.artifact-name.outputs.name }}
+          pattern: "*-build-artifacts"
           path: ./release-artifacts/
+          merge-multiple: true
       # Build SBOM lives in its own artifact so a broken SBOM plugin can't
       # fail the code upload. Only needed when the `build` layer is in the
       # effective sboms — generate-sboms.sh reads the aggregate bom.json from
@@ -194,14 +177,14 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         continue-on-error: true
         with:
-          name: ${{ steps.artifact-name.outputs.sbom-name }}
+          pattern: "*-build-sbom*"
           path: ./release-artifacts/
+          merge-multiple: true
       # container-first byproducts: when containers extracted binaries via
       # publish-container.yml's extract-binary-target, those uploads land as
       # `${container-name}-binaries-${arch}` (one per matrix leg in the
-      # native-multi-arch path). Pattern matches both that and the legacy
-      # `${container-name}-binaries` shape; pull them all in and place
-      # under ./release-artifacts/binaries/<artefact-name>/...
+      # native-multi-arch path). Pull them all in and place under
+      # ./release-artifacts/binaries/<artefact-name>/...
       - name: Download extracted container binaries
         if: ${{ inputs['has-containers'] }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -237,57 +220,66 @@ jobs:
         id: release-metadata
         env:
           VERSION: ${{ github.ref_name }}
-          ARTIFACT_NAME: ${{ inputs['artifact-name'] }}
           REPOSITORY: ${{ github.repository }}
-        run: bash .github-shared/scripts/release/resolve-release-metadata.sh
+        run: reusable-ci release resolve-release-metadata
       - name: Generate CISA-layer SBOMs
         if: &if_has_sboms ${{ inputs.sboms != 'none' }}
         env:
-          PROJECT_TYPE: ${{ inputs['project-type'] }}
+          ARTIFACTS: ${{ inputs.artifacts }}
           RELEASE_VERSION_NO_V: ${{ steps.release-metadata.outputs.version-no-v }}
           PROJECT_NAME: ${{ steps.release-metadata.outputs.project-name }}
           SBOMS: ${{ inputs.sboms }}
         run: |
+          set -euo pipefail
           # analyzed-container is scanned separately at container-publish time
           # and the resulting BOM is already landed under ./sbom-artifacts/ —
           # pass only the artifact-level layers to generate-sboms.sh.
-          layers=$(bash .github-shared/scripts/config/expand-sboms.sh \
+          layers=$(reusable-ci config expand-sboms \
             --format comma --exclude analyzed-container "$SBOMS")
-          if [[ -n "$layers" ]]; then
-            bash .github-shared/scripts/sbom/generate-sboms.sh \
-              --project-type "$PROJECT_TYPE" \
+          if [[ -z "$layers" ]]; then
+            printf "No artifact-level SBOM layers requested; analyzed-container (if any) is already downloaded.\n"
+            exit 0
+          fi
+          # Loop per artifact: each ecosystem has its own SBOM-generation
+          # logic in generate-sboms.sh (--project-type drives it), and the
+          # --name parameter pairs the resulting BOM with the matching
+          # artifact in the release ZIP.
+          while IFS= read -r artifact; do
+            [[ -z "$artifact" ]] && continue
+            pt=$(printf '%s' "$artifact" | jq -r '.["project-type"]')
+            name=$(printf '%s' "$artifact" | jq -r '.name')
+            reusable-ci sbom generate \
+              --project-type "$pt" \
               --layers "$layers" \
               --version "$RELEASE_VERSION_NO_V" \
-              --name "$PROJECT_NAME"
-          else
-            printf "No artifact-level SBOM layers requested; analyzed-container (if any) is already downloaded.\n"
-          fi
+              --name "$name"
+          done < <(printf '%s' "$ARTIFACTS" | jq -c '.[]')
       - name: Generate checksums
         env:
           ATTACH_ARTIFACTS: ${{ steps.attach-effective.outputs.attach-artifacts }}
-        run: bash .github-shared/scripts/release/generate-checksums.sh
+        run: reusable-ci release checksums
       - name: Sign artifacts
         if: *if_sign_artifacts
         env:
           GPG_KEY_ID: ${{ steps.import-gpg.outputs.keyid }}
-        run: bash .github-shared/scripts/release/sign-release-artifacts.sh
+        run: reusable-ci release sign
       - name: Create SBOM ZIP
         if: *if_has_sboms
         env:
           SIGN_ARTIFACTS: ${{ inputs['sign-artifacts'] }}
           GPG_KEY_ID: ${{ steps.import-gpg.outputs.keyid }}
         run: >-
-          bash .github-shared/scripts/release/create-sbom-zip.sh "${{ steps.release-metadata.outputs.project-name }}" "${{ steps.release-metadata.outputs.version }}"
+          reusable-ci release sbom-zip "${{ steps.release-metadata.outputs.project-name }}" "${{ steps.release-metadata.outputs.version }}"
       - name: Prepare release notes
         env:
           SOURCE_FILE: ReleasenotesTmp
           TARGET_FILE: release-notes.md
           RELEASE_VERSION: ${{ github.ref_name }}
           RELEASE_COMMIT: ${{ github.sha }}
-        run: bash .github-shared/scripts/release/prepare-release-notes.sh
+        run: reusable-ci release notes
       - name: Create GitHub Release
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           TAG_NAME: ${{ github.ref_name }}
           RELEASE_NAME: ${{ inputs['release-name'] }}
           REPOSITORY: ${{ github.repository }}
@@ -295,8 +287,7 @@ jobs:
           MAKE_LATEST: ${{ inputs['make-latest'] }}
           ATTACH_ARTIFACTS: ${{ steps.attach-effective.outputs.attach-artifacts }}
           RELEASE_NOTES_FILE: release-notes.md
-          ARTIFACT_NAME: ${{ inputs['artifact-name'] }}
-        run: bash .github-shared/scripts/release/create-github-release.sh
+        run: reusable-ci release create
       - name: Upload release artifacts summary
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -308,3 +299,8 @@ jobs:
             release-notes.md
           retention-days: 30
           if-no-files-found: ignore
+      - name: Cleanup GPG key
+        if: always()
+        env:
+          GPG_FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
+        run: reusable-ci release gpg-cleanup

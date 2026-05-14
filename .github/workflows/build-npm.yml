@@ -2,9 +2,12 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 # NPM Builder
-# 
+#
 # Purpose: Builds NPM projects and uploads artifacts for subsequent publishing steps.
 # Separates build logic from registry-specific publishing.
+#
+# Runs inside the reusable-ci-runtime-node image. Node + npm + corepack are
+# baked in; scripts at /opt/reusable-ci/scripts/.
 #
 # Build Process:
 #   1. Install dependencies (npm ci)
@@ -22,10 +25,6 @@ name: Build NPM
 on:
   workflow_call:
     inputs:
-      node-version:
-        description: "Node.js version"
-        required: true
-        type: string
       working-directory:
         description: "Working directory"
         required: false
@@ -41,16 +40,16 @@ on:
         required: false
         default: "main"
         type: string
-      reusable-ci-ref:
-        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
-        required: false
-        default: "main"
-        type: string
       enable-build-sbom:
         description: "Run the cyclonedx-npm step (false skips Build SBOM generation entirely; derived from per-artefact 'sboms' when called from release-build-stage)"
         required: false
         default: true
         type: boolean
+      runtime-image:
+        description: "reusable-ci runtime image carrying Node. Pin to a digest or version tag; default tracks main."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-node-24:main"
+        type: string
 permissions:
   contents: read
 jobs:
@@ -58,6 +57,8 @@ jobs:
     name: Build NPM Project
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     steps:
@@ -65,20 +66,6 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.branch }}
-      - name: Checkout .github repository for scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
-          fetch-depth: 1
-      - name: Set up Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
-        with:
-          node-version: ${{ inputs['node-version'] }}
-          cache: 'npm'
-          cache-dependency-path: ${{ inputs['working-directory'] }}/package-lock.json
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs['working-directory'] }}
@@ -175,6 +162,6 @@ jobs:
         env:
           PACKAGE_NAME: ${{ steps.version-info.outputs.NAME }}
           VERSION: ${{ steps.version-info.outputs.VERSION }}
-          NODE_VERSION: ${{ inputs['node-version'] }}
+          NODE_VERSION: "24"
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
-        run: bash .github-shared/scripts/summary/write-npm-build-summary.sh
+        run: reusable-ci summary npm-build

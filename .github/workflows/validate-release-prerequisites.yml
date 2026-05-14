@@ -27,8 +27,8 @@
 # Required Secrets (depending on configuration):
 #   GPG_SECRET_KEY: For signature validation
 #   GPG_PASSPHRASE: For signature validation
-#   MAVENCENTRAL_USERNAME: For Maven Central auth check
-#   MAVENCENTRAL_PASSWORD: For Maven Central auth check
+#   MAVEN_CENTRAL_USERNAME: For Maven Central auth check
+#   MAVEN_CENTRAL_PASSWORD: For Maven Central auth check
 #   NPM_TOKEN: For NPM registry auth check
 #   AUTHORIZED_DEVELOPERS: Comma-separated list of authorized users
 #
@@ -37,20 +37,27 @@
 #   packages: read   # Verify package registry access
 #
 # Usage:
-# Called automatically as the first step in release-orchestrator.yml
-# Can also be run manually via workflow_dispatch for testing
+# Called as the first step in release-orchestrator.yml. The orchestrator
+# passes the parsed artifacts JSON array; type-specific gates (cargo
+# prerequisites, Maven Central credentials) trigger on the per-target
+# arrays being non-empty.
 name: Validate Release Prerequisites
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
-      project-type:
-        description: "Project type: maven, npm, gradle, gradle-android, xcode-ios, cargo"
+      artifacts:
+        description: "Parsed artifacts JSON array (from parse-artifacts-config). Type-specific checks gate on derived per-target arrays below."
         required: true
         type: string
-      build-type:
-        description: "Build type: application or library"
+      cargo-artifacts:
+        description: "Per-ecosystem cargo artifacts JSON array. Drives Cargo prerequisite checks when non-empty."
         required: false
-        default: "application"
+        default: "[]"
+        type: string
+      mavencentral-artifacts:
+        description: "Per-target maven-central publish artifacts JSON array. Drives Maven Central credential checks when non-empty."
+        required: false
+        default: "[]"
         type: string
       container-registry:
         description: "Container registry"
@@ -72,20 +79,11 @@ on:
         required: false
         default: "main"
         type: string
-      reusable-ci-ref:
-        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+      runtime-image:
+        description: "reusable-ci runtime image. Pin to a digest or version tag; default tracks main."
         required: false
-        default: "main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:main"
         type: string
-  workflow_dispatch: # Allow manual validation
-    inputs:
-      project-type:
-        description: "Project type"
-        required: true
-        type: choice
-        options:
-          - maven
-          - npm
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
@@ -93,6 +91,8 @@ jobs:
     name: Validate Prerequisites
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    container:
+      image: ${{ inputs['runtime-image'] }}
     # ============================================================================
     # This job validates all prerequisites required for a successful release:
     #   1. Tag Validation - Format, signature, uniqueness, commit availability
@@ -106,32 +106,26 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-      - name: Checkout .github repository for scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
       - name: Debug - List checked out files
         env:
           ACTION_REPOSITORY: ${{ github.action_repository }}
           ACTION_REF: ${{ github.action_ref }}
-        run: bash .github-shared/scripts/ci/debug-workspace.sh
+        run: reusable-ci ci debug-workspace
       - name: Verify Triggered by Tag
         env:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
           REF: ${{ github.ref }}
-        run: bash .github-shared/scripts/validate/ref-type.sh "$REF_TYPE" "$REF_NAME" "$REF"
+        run: reusable-ci validate ref-type "$REF_TYPE" "$REF_NAME" "$REF"
       - name: Import GPG key
-        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
-        with:
-          gpg_private_key: ${{ secrets.OSPO_BOT_GPG_PRIV }}
-          passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
-          git_user_signingkey: true
-          git_commit_gpgsign: true
-          git_config_global: true
+        id: import-gpg
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          GIT_USER_SIGNINGKEY: "true"
+          GIT_COMMIT_GPGSIGN: "true"
+          GIT_CONFIG_GLOBAL: "true"
+        run: reusable-ci release gpg-import
       - name: Fetch all tags
         run: |
           printf "Fetching all tags to ensure we have tag objects...\n"
@@ -140,25 +134,25 @@ jobs:
         if: ${{ github.ref_type == 'tag' }}
         env:
           REF_NAME: ${{ github.ref_name }}
-        run: bash .github-shared/scripts/validate/tag-format.sh "$REF_NAME"
+        run: reusable-ci validate tag-format "$REF_NAME"
       - name: Validate Tag Signature
         if: ${{ github.ref_type == 'tag' }}
         env:
           REF_NAME: ${{ github.ref_name }}
           REPOSITORY: ${{ github.repository }}
-          OSPO_BOT_GPG_PUB: ${{ secrets.OSPO_BOT_GPG_PUB }}
-        run: bash .github-shared/scripts/validate/tag-signature.sh "$REF_NAME" "$REPOSITORY" "$OSPO_BOT_GPG_PUB"
+          RELEASE_GPG_PUBLIC_KEY: ${{ secrets.RELEASE_GPG_PUBLIC_KEY }}
+        run: reusable-ci validate tag-signature "$REF_NAME" "$REPOSITORY"
       - name: Validate Tag Uniqueness
         if: ${{ github.ref_type == 'tag' }}
         env:
           TAG_NAME: ${{ github.ref_name }}
-        run: bash .github-shared/scripts/validate/tag-uniqueness.sh "$TAG_NAME"
+        run: reusable-ci validate tag-uniqueness "$TAG_NAME"
       - name: Validate Tag Commit Availability
         if: ${{ github.ref_type == 'tag' }}
         env:
           TAG_NAME: ${{ github.ref_name }}
           TARGET_BRANCH: ${{ inputs.branch }}
-        run: bash .github-shared/scripts/validate/tag-commit.sh "$TAG_NAME" "$TARGET_BRANCH"
+        run: reusable-ci validate tag-commit "$TAG_NAME" "$TARGET_BRANCH"
       # ============================================================================
       # SECTION 2: Authorization Validation
       # Checks if user is authorized for non-SNAPSHOT releases
@@ -168,12 +162,12 @@ jobs:
         env:
           REF_NAME: ${{ github.ref_name }}
           ACTOR: ${{ github.actor }}
-          AUTHORIZED_RELEASE_DEVELOPERS: ${{ secrets.AUTHORIZED_RELEASE_DEVELOPERS }}
+          RELEASE_AUTHORIZED_USERS: ${{ secrets.RELEASE_AUTHORIZED_USERS }}
         run: |
-          bash .github-shared/scripts/validate/authorization.sh \
+          reusable-ci validate authorization \
             "$REF_NAME" \
             "$ACTOR" \
-            "$AUTHORIZED_RELEASE_DEVELOPERS"
+            "$RELEASE_AUTHORIZED_USERS"
       # ============================================================================
       # SECTION 3: Secrets and Credentials Validation
       # Validates GPG keys, GitHub tokens, and publishing credentials
@@ -182,31 +176,31 @@ jobs:
       - name: Validate GPG Public Key
         if: ${{ inputs['sign-artifacts'] }}
         env:
-          OSPO_BOT_GPG_PUB: ${{ secrets.OSPO_BOT_GPG_PUB }}
-        run: bash .github-shared/scripts/validate/gpg-public-key.sh
-      - name: Validate Release Bot Token
-        run: bash .github-shared/scripts/validate/github-token.sh "${{ secrets.RELEASE_BOT_TOKEN }}" "${{ github.repository }}"
-      - name: Validate Bot Token Permissions
+          RELEASE_GPG_PUBLIC_KEY: ${{ secrets.RELEASE_GPG_PUBLIC_KEY }}
+        run: reusable-ci validate gpg-public-key
+      - name: Validate Release Token
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
-        run: |
-          bash .github-shared/scripts/validate/bot-permissions.sh "${{ github.repository }}"
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: reusable-ci validate token
+      - name: Validate Release Token Permissions
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: reusable-ci validate bot-permissions "${{ github.repository }}"
       - name: Validate Maven Central Credentials
-        if: ${{ inputs['build-type'] == 'library' }}
+        if: ${{ inputs['mavencentral-artifacts'] != '[]' }}
         env:
-          MAVENCENTRAL_USERNAME: ${{ secrets.MAVENCENTRAL_USERNAME }}
-          MAVENCENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD }}
-        run: bash .github-shared/scripts/validate/mavencentral-credentials.sh
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: reusable-ci validate maven-central-credentials
       # NOTE: NPM publishing to npmjs.org not yet implemented in v2
       # NPM packages are attached to GitHub Release as tarballs
       # This validation will be re-enabled when NPM publishing is added
       - name: Validate Cargo Project Prerequisites
-        if: ${{ inputs['project-type'] == 'cargo' }}
+        if: ${{ inputs['cargo-artifacts'] != '[]' }}
         run: |
           # Cargo.lock should be checked in (reproducibility, deterministic
           # SBOM generation in sbom-cargo.yml). rust-toolchain.toml is the
-          # recommended pin (sbom-cargo.yml and lint-cargo.yml auto-detect
-          # it via scripts/cargo/install-toolchain.sh) but not strictly
+          # recommended pin (the cargo workflows auto-detect it) but not strictly
           # required — release without one is allowed but warned.
           set -euo pipefail
           status=0
@@ -240,20 +234,23 @@ jobs:
           TAG_NAME: ${{ github.ref_name }}
           COMMIT_SHA: ${{ github.sha }}
           REF_TYPE: ${{ github.ref_type }}
-          PROJECT_TYPE: ${{ inputs['project-type'] }}
-          BUILD_TYPE: ${{ inputs['build-type'] }}
+          ARTIFACTS: ${{ inputs.artifacts }}
           CONTAINER_REGISTRY: ${{ inputs['container-registry'] }}
           SIGN_ARTIFACTS: ${{ inputs['sign-artifacts'] }}
           CHECK_AUTHORIZATION: ${{ inputs['check-authorization'] }}
           ACTOR: ${{ github.actor }}
           JOB_STATUS: ${{ job.status }}
-          HAS_GPG_PRIV: ${{ secrets.OSPO_BOT_GPG_PRIV != '' }}
-          HAS_GPG_PASS: ${{ secrets.OSPO_BOT_GPG_PASS != '' }}
-          HAS_RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN != '' }}
-          HAS_GPG_PUB: ${{ secrets.OSPO_BOT_GPG_PUB != '' }}
-          HAS_MAVENCENTRAL_USERNAME: ${{ secrets.MAVENCENTRAL_USERNAME != '' }}
-          HAS_MAVENCENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD != '' }}
+          HAS_RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY != '' }}
+          HAS_RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE != '' }}
+          HAS_RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN != '' }}
+          HAS_RELEASE_GPG_PUBLIC_KEY: ${{ secrets.RELEASE_GPG_PUBLIC_KEY != '' }}
+          HAS_MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME != '' }}
+          HAS_MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD != '' }}
           HAS_NPM_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
-          HAS_SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN != '' }}
-        run: |
-          bash .github-shared/scripts/summary/write-prerequisites-summary.sh
+          HAS_CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN != '' }}
+        run: reusable-ci summary prerequisites
+      - name: Cleanup GPG key
+        if: always()
+        env:
+          GPG_FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
+        run: reusable-ci release gpg-cleanup

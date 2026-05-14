@@ -24,10 +24,6 @@ on:
         description: "Build type: app (application) or lib (library with sources/javadoc)"
         required: true
         type: string
-      java-version:
-        description: "Java version"
-        required: true
-        type: string
       working-directory:
         description: "Working directory"
         required: false
@@ -48,16 +44,16 @@ on:
         required: false
         default: ""
         type: string
-      reusable-ci-ref:
-        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
-        required: false
-        default: "main"
-        type: string
       enable-build-sbom:
         description: "Run the cyclonedx plugin step (false skips Build SBOM generation entirely; derived from per-artefact 'sboms' when called from release-build-stage)"
         required: false
         default: true
         type: boolean
+      runtime-image:
+        description: "reusable-ci runtime image carrying JDK + Maven. Pin to a digest or version tag; default tracks main."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:main"
+        type: string
 permissions:
   contents: read
 env:
@@ -67,6 +63,8 @@ jobs:
     name: Build Maven Project
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     steps:
@@ -75,20 +73,12 @@ jobs:
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 1
-      - name: Checkout .github repository for scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Cache Maven dependencies
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
-      - name: Set up JDK
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
-        with:
-          java-version: ${{ inputs['java-version'] }}
-          distribution: 'temurin'
-          cache: maven
-          cache-dependency-path: ${{ inputs['working-directory'] }}/pom.xml
+          path: ~/.m2/repository
+          key: maven-${{ hashFiles(format('{0}/pom.xml', inputs['working-directory']), format('{0}/**/pom.xml', inputs['working-directory'])) }}
+          restore-keys: maven-
       - name: Install dependencies for multi-module projects
         working-directory: ${{ inputs['working-directory'] }}
         run: |
@@ -98,7 +88,7 @@ jobs:
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs['working-directory'] }}
-        run: bash "${{ github.workspace }}/.github-shared/scripts/build/extract-maven-metadata.sh"
+        run: reusable-ci build maven metadata
       - name: Build application
         if: ${{ inputs['build-type'] == 'app' }}
         working-directory: ${{ inputs['working-directory'] }}
@@ -118,7 +108,7 @@ jobs:
         env:
           MAVEN_PROFILE: ${{ inputs['profile'] }}
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
-        run: bash "${{ github.workspace }}/.github-shared/scripts/build/maven-library.sh"
+        run: reusable-ci build maven library
       - name: Generate Build SBOM
         id: sbom
         if: ${{ inputs['enable-build-sbom'] }}
@@ -193,7 +183,7 @@ jobs:
           GROUP_ID: ${{ steps.version-info.outputs.GROUP_ID }}
           ARTIFACT_ID: ${{ steps.version-info.outputs.ARTIFACT_ID }}
           VERSION: ${{ steps.version-info.outputs.VERSION }}
-          JAVA_VERSION: ${{ inputs['java-version'] }}
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
           IS_SNAPSHOT: ${{ steps.version-info.outputs.IS_SNAPSHOT }}
-        run: bash .github-shared/scripts/summary/write-maven-build-summary.sh
+          JAVA_VERSION: "25"
+        run: reusable-ci summary maven-build

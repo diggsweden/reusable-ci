@@ -8,9 +8,10 @@ on:
       branch:
         required: true
         type: string
-      reusable-ci-ref:
+      runtime-image:
+        description: "reusable-ci runtime image for the summarize job (base is sufficient)"
         required: false
-        default: "main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:main"
         type: string
       artifacts:
         required: true
@@ -53,16 +54,21 @@ jobs:
       branch: ${{ inputs.branch }}
       project-type: ${{ matrix.artifact['project-type'] }}
       file-pattern: ${{ inputs['file-pattern'] }}
-      java-version: ${{ matrix.artifact.config['java-version'] }}
-      node-version: ${{ matrix.artifact.config['node-version'] }}
       gradle-version-file: ${{ matrix.artifact.config['gradle-version-file'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+      # Pick the runtime image that matches the project-type's bump
+      # tooling: maven/gradle/gradle-android need JDK + Maven; npm needs
+      # Node; cargo needs cargo for Cargo.lock refresh; xcode-ios is
+      # sed-only and uses base.
+      runtime-image: >-
+        ${{ (contains(fromJson('["maven","gradle","gradle-android"]'), matrix.artifact['project-type']) && 'ghcr.io/diggsweden/reusable-ci-runtime-java-25:main') || (matrix.artifact['project-type'] == 'npm' && 'ghcr.io/diggsweden/reusable-ci-runtime-node-24:main') || (matrix.artifact['project-type'] == 'cargo' && 'ghcr.io/diggsweden/reusable-ci-runtime-rust-stable:main') || 'ghcr.io/diggsweden/reusable-ci-runtime-base:main' }}
   summarize-prepare-stage:
     name: Summarize Prepare Stage
     needs: [execute-version-bump]
     if: always()
     runs-on: ubuntu-latest
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     outputs:
@@ -70,17 +76,19 @@ jobs:
       stage-result: ${{ steps.summary.outputs.stage-result }}
       result-json: ${{ steps.summary.outputs.result-json }}
     steps:
-      - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
       - name: Normalize prepare stage result
         id: summary
         env:
           ARTIFACTS: ${{ inputs.artifacts }}
           SHOULD_RUN_VERSION_BUMP: ${{ inputs['should-run-version-bump'] }}
           PREPARE_RELEASE_RESULT: ${{ needs.execute-version-bump.result }}
-        run: bash .github-shared/scripts/summary/write-prepare-stage-result.sh
+        run: reusable-ci summary prepare-stage-result
+      - name: Upload prepare stage manifests
+        if: always() && hashFiles('.ci-results/*.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-results-prepare
+          path: .ci-results/*.json
+          include-hidden-files: true
+          retention-days: 5
+          if-no-files-found: ignore

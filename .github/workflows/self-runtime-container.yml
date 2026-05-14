@@ -1,0 +1,377 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+# SPDX-License-Identifier: CC0-1.0
+#
+# Internal workflow — builds, smoke-tests, and publishes the shared
+# reusable-ci runtime container image.
+#
+# Two images are produced from the same Containerfile:
+#   ghcr.io/<owner>/reusable-ci-runtime-base — base stage
+#   ghcr.io/<owner>/reusable-ci-runtime      — full stage (with security/SBOM tools)
+#
+# Triggers:
+#   pull_request — verify only (build + smoke-test, no push)
+#   push to main — verify + publish with `main` tag
+#   tag v*       — verify + publish with semver tags
+#   schedule     — weekly rebuild to refresh pinned tools and base image
+#   dispatch     — manual, opt-in publish via `publish` input
+name: Self Runtime Container
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - containers/runtime/**
+      - scripts/bootstrap/install-yq.sh
+      - scripts/bootstrap/install-opengrep.sh
+      - scripts/bootstrap/install-syft.sh
+      - scripts/bootstrap/install-trivy.sh
+      - scripts/bootstrap/install-git-cliff.sh
+      - scripts/bootstrap/install-gh.sh
+      - scripts/bootstrap/install-glab.sh
+      - scripts/bootstrap/install-mise.sh
+      - scripts/bootstrap/install-publiccode-parser.sh
+      - cmd/reusable-ci/**
+      - internal/**
+      - go.mod
+      - go.sum
+      - .github/workflows/self-runtime-container.yml
+  push:
+    branches:
+      - main
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-alpha*"
+      - "v[0-9]+.[0-9]+.[0-9]+-beta*"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc*"
+      # No `paths:` filter on push: tag pushes routinely don't touch runtime
+      # files, but every release tag must produce a matching image so consumers
+      # can pin runtime-image to the version they're using. Branch pushes pay
+      # a ~3 min cached build cost on every main merge — acceptable.
+  schedule:
+    - cron: "30 2 * * 1"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish runtime container images"
+        required: false
+        default: false
+        type: boolean
+concurrency:
+  group: runtime-container-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  verify:
+    name: Build And Verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime:
+          - name: reusable-ci-runtime-base
+            target: base
+            local-tag: reusable-ci-runtime-base:verify
+            smoke-test: |
+              bash --version
+              git --version
+              gpg --version
+              jq --version
+              yq --version
+              zip -v >/dev/null
+              git-cliff --version
+              gh --version
+              glab --version
+              reusable-ci --version
+              test -d /opt/reusable-ci/scripts
+              test -f /opt/reusable-ci/templates/gitcliff/default.toml
+          - name: reusable-ci-runtime
+            target: full
+            local-tag: reusable-ci-runtime:verify
+            smoke-test: |
+              bash --version
+              git --version
+              gpg --version
+              jq --version
+              yq --version
+              git-cliff --version
+              gh --version
+              glab --version
+              opengrep --version
+              syft version
+              trivy --version
+              reusable-ci --version
+              reusable-ci security run-opengrep --help >/dev/null
+              test -f /opt/reusable-ci/templates/gitcliff/default.toml
+          # Toolchain images are named with the major version they target
+          # (rust-stable, node-24, java-25, android-35). When the next LTS
+          # rolls over (e.g. Java 28), a sibling image is added alongside —
+          # the old name keeps building patch updates for its line.
+          - name: reusable-ci-runtime-rust-stable
+            target: rust
+            local-tag: reusable-ci-runtime-rust-stable:verify
+            smoke-test: |
+              bash --version
+              git --version
+              jq --version
+              yq --version
+              rustc --version
+              cargo --version
+              cargo-cyclonedx --version
+              reusable-ci --version
+              test -d /opt/reusable-ci/scripts
+          - name: reusable-ci-runtime-node-24
+            target: node
+            local-tag: reusable-ci-runtime-node-24:verify
+            smoke-test: |
+              bash --version
+              git --version
+              jq --version
+              yq --version
+              node --version
+              npm --version
+              corepack --version
+              reusable-ci --version
+              test -d /opt/reusable-ci/scripts
+          - name: reusable-ci-runtime-java-25
+            target: java
+            local-tag: reusable-ci-runtime-java-25:verify
+            smoke-test: |
+              bash --version
+              git --version
+              jq --version
+              yq --version
+              java -version 2>&1
+              mvn -version
+              gradle --version
+              reusable-ci --version
+              test -d /opt/reusable-ci/scripts
+          - name: reusable-ci-runtime-android-35
+            target: android
+            local-tag: reusable-ci-runtime-android-35:verify
+            smoke-test: |
+              bash --version
+              git --version
+              java -version 2>&1
+              gradle --version
+              sdkmanager --version
+              adb --version
+              reusable-ci --version
+              test -d /opt/android-sdk/platforms
+              test -d /opt/android-sdk/build-tools
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        with:
+          egress-policy: audit
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Build runtime image
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          file: containers/runtime/Containerfile
+          target: ${{ matrix.runtime.target }}
+          load: true
+          push: false
+          tags: ${{ matrix.runtime.local-tag }}
+          build-args: |
+            REUSABLE_CI_VERSION=${{ github.ref_name }}
+            REUSABLE_CI_COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=self-runtime-container-${{ matrix.runtime.target }}
+          cache-to: type=gha,mode=max,scope=self-runtime-container-${{ matrix.runtime.target }}
+      - name: Smoke-test runtime image
+        run: |
+          docker run --rm ${{ matrix.runtime.local-tag }} bash -c '
+            set -euo pipefail
+            ${{ matrix.runtime.smoke-test }}
+          '
+  # Publish phase 1: build each (target, arch) leg natively. linux/amd64 ->
+  # ubuntu-24.04, linux/arm64 -> ubuntu-24.04-arm. No QEMU emulation. Each
+  # leg pushes by digest only; tags are applied later by publish-merge.
+  publish-arch:
+    name: Publish (${{ matrix.runtime.name }} - ${{ matrix.platform }})
+    needs: [verify]
+    if: >-
+      github.event_name == 'schedule' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime:
+          - name: reusable-ci-runtime-base
+            target: base
+          - name: reusable-ci-runtime
+            target: full
+          - name: reusable-ci-runtime-rust-stable
+            target: rust
+          - name: reusable-ci-runtime-node-24
+            target: node
+          - name: reusable-ci-runtime-java-25
+            target: java
+          - name: reusable-ci-runtime-android-35
+            target: android
+        platform:
+          - linux/amd64
+          - linux/arm64
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        with:
+          egress-policy: audit
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Derive arch suffix
+        id: arch
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          # linux/amd64 -> amd64, linux/arm64 -> arm64. Used to scope the
+          # cache, the digest artefact, and (later) the manifest merge so
+          # legs do not collide with each other.
+          SUFFIX="${PLATFORM#linux/}"
+          SUFFIX="${SUFFIX//\//-}"
+          printf "suffix=%s\n" "$SUFFIX" >> "$GITHUB_OUTPUT"
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Log in to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          file: containers/runtime/Containerfile
+          target: ${{ matrix.runtime.target }}
+          platforms: ${{ matrix.platform }}
+          # Push by digest only — no tag at this stage. publish-merge applies
+          # all tags from metadata-action via `docker buildx imagetools create`
+          # once both arches' digests exist.
+          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/${{ matrix.runtime.name }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            REUSABLE_CI_VERSION=${{ github.ref_name }}
+            REUSABLE_CI_COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=self-runtime-container-${{ matrix.runtime.target }}-${{ steps.arch.outputs.suffix }}
+          cache-to: type=gha,mode=max,scope=self-runtime-container-${{ matrix.runtime.target }}-${{ steps.arch.outputs.suffix }}
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+      - name: Upload digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digests-${{ matrix.runtime.target }}-${{ steps.arch.outputs.suffix }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Publish phase 2: assemble each target's per-arch digests into a single
+  # multi-arch manifest list and apply tags from metadata-action.
+  publish-merge:
+    name: Publish Manifest (${{ matrix.runtime.name }})
+    needs: [publish-arch]
+    if: >-
+      github.event_name == 'schedule' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime:
+          - name: reusable-ci-runtime-base
+            target: base
+          - name: reusable-ci-runtime
+            target: full
+          - name: reusable-ci-runtime-rust-stable
+            target: rust
+          - name: reusable-ci-runtime-node-24
+            target: node
+          - name: reusable-ci-runtime-java-25
+            target: java
+          - name: reusable-ci-runtime-android-35
+            target: android
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        with:
+          egress-policy: audit
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Build reusable-ci binary
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install ./cmd/reusable-ci
+          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Download digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ matrix.runtime.target }}-*
+          merge-multiple: true
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Log in to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute image metadata
+        id: metadata
+        env:
+          IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/${{ matrix.runtime.name }}
+          FLAVOR: latest=false
+          TAG_RULES: |
+            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=weekly,enable=${{ github.event_name == 'schedule' }}
+            type=sha,prefix=sha-,enable=${{ github.event_name != 'schedule' && github.ref_type != 'tag' }}
+            type=semver,pattern={{version}},enable=${{ github.ref_type == 'tag' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
+            type=semver,pattern={{major}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
+        run: reusable-ci container metadata
+      - name: Create manifest list and push
+        env:
+          IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/${{ matrix.runtime.name }}
+          TAGS: ${{ steps.metadata.outputs.tags }}
+        working-directory: /tmp/digests
+        run: |
+          # Each file in /tmp/digests is named after a per-arch digest hash.
+          # Reconstruct ${IMAGE_NAME}@sha256:<hash> references and feed them
+          # to imagetools, which assembles a multi-arch manifest list and
+          # pushes it under each tag from metadata-action.
+          refs=()
+          for f in *; do
+            refs+=("${IMAGE_NAME}@sha256:${f}")
+          done
+          tag_args=()
+          while IFS= read -r tag; do
+            [[ -z "$tag" ]] && continue
+            tag_args+=("-t" "$tag")
+          done <<<"$TAGS"
+
+          docker buildx imagetools create "${tag_args[@]}" "${refs[@]}"
+      - name: Inspect manifest
+        env:
+          TAGS: ${{ steps.metadata.outputs.tags }}
+        run: |
+          PRIMARY_TAG=$(printf "%s\n" "$TAGS" | head -n1)
+          docker buildx imagetools inspect "${PRIMARY_TAG}"

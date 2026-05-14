@@ -1,0 +1,66 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+# SPDX-License-Identifier: CC0-1.0
+#
+# goreleaser config for reusable-ci.
+#
+# Produces linux/darwin × amd64/arm64 archives plus a checksums file.
+# Cosign signing + SBOM emission are gated behind env-only secrets — set
+# COSIGN_PRIVATE_KEY / COSIGN_PASSWORD on the release runner to enable.
+#
+# See docs/go-port-plan.md (Distribution) for the rationale.
+
+version: 2
+
+project_name: reusable-ci
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: reusable-ci
+    main: ./cmd/reusable-ci
+    binary: reusable-ci
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - LICENSES/**/*
+      - README.md
+
+checksum:
+  name_template: 'checksums.txt'
+
+# SBOM emission and cosign signing are deliberately omitted for the
+# bootstrap release config — adding them requires syft + cosign on the
+# release runner, which the release-binary workflow doesn't currently
+# install. They land later alongside the broader sigstore wiring;
+# see docs/go-port-plan.md (Distribution).
+
+snapshot:
+  version_template: '{{ incpatch .Version }}-snapshot+{{ .ShortCommit }}'
+
+release:
+  github:
+    owner: diggsweden
+    name: reusable-ci
+  draft: false
+  prerelease: auto
+
+changelog:
+  disable: true

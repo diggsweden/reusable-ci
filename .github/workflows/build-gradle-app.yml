@@ -27,10 +27,6 @@ name: Build Gradle
 on:
   workflow_call:
     inputs:
-      java-version:
-        description: "Java version"
-        required: true
-        type: string
       working-directory:
         description: "Working directory"
         required: false
@@ -61,10 +57,10 @@ on:
         required: false
         default: true
         type: boolean
-      reusable-ci-ref:
-        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+      runtime-image:
+        description: "reusable-ci runtime image carrying JDK + Gradle. Pin to a digest or version tag; default tracks main."
         required: false
-        default: "main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:main"
         type: string
 permissions:
   contents: read
@@ -73,6 +69,8 @@ jobs:
     name: Build Gradle Project
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     steps:
@@ -81,19 +79,14 @@ jobs:
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 0
-      - name: Checkout .github repository for scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Cache Gradle
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
-      - name: Set up JDK
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
-        with:
-          distribution: 'temurin'
-          java-version: ${{ inputs['java-version'] }}
-          cache: 'gradle'
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles(format('{0}/gradle/wrapper/gradle-wrapper.properties', inputs['working-directory']), format('{0}/**/*.gradle*', inputs['working-directory']), format('{0}/**/gradle.properties', inputs['working-directory'])) }}
+          restore-keys: gradle-
       - name: Make gradlew executable
         working-directory: ${{ inputs['working-directory'] }}
         run: chmod +x ./gradlew
@@ -136,7 +129,7 @@ jobs:
         env:
           # renovate: datasource=maven depName=org.cyclonedx:cyclonedx-gradle-plugin
           CYCLONEDX_GRADLE_VERSION: "3.2.1"
-        run: bash "${{ github.workspace }}/.github-shared/scripts/sbom/build/gradle/generate-gradle-sbom.sh"
+        run: reusable-ci build gradle sbom
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         run: |
@@ -195,8 +188,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Generate build summary
         env:
-          JAVA_VERSION: ${{ inputs['java-version'] }}
           GRADLE_TASKS: ${{ inputs['gradle-tasks'] }}
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
           VERSION: ${{ steps.version-info.outputs.VERSION }}
-        run: bash .github-shared/scripts/summary/write-gradle-build-summary.sh
+          JAVA_VERSION: "25"
+        run: reusable-ci summary gradle-build

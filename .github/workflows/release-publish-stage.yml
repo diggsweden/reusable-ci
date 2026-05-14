@@ -8,9 +8,14 @@ on:
       branch:
         required: true
         type: string
-      reusable-ci-ref:
+      scripts-ref:
         required: false
         default: "main"
+        type: string
+      runtime-image:
+        description: "reusable-ci runtime image for the summarize job (base is sufficient)"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:main"
         type: string
       xcodeios-artifacts:
         required: true
@@ -85,7 +90,6 @@ jobs:
     with:
       working-directory: ${{ matrix.artifact['working-directory'] }}
       artifact-source: maven-build-artifacts
-      java-version: ${{ matrix.artifact.config['java-version'] }}
       settings-path: ${{ matrix.artifact.config['settings-path'] }}
       profile: ${{ matrix.artifact.config['profile'] || 'central-release' }}
   publish-apple-appstore:
@@ -101,11 +105,10 @@ jobs:
     uses: ./.github/workflows/publish-apple-appstore.yml
     with:
       ipa-artifact-name: ${{ matrix.artifact.name }}
-      working-directory: ${{ matrix.artifact['working-directory'] }}
       macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
       submit-for-review: ${{ matrix.artifact.config['submit-for-review'] || false }}
       skip-validation: ${{ matrix.artifact.config['skip-validation'] || false }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+      scripts-ref: ${{ inputs['scripts-ref'] }}
   publish-google-play:
     name: Publish Google Play - ${{ matrix.artifact.name }}
     if: ${{ inputs.googleplay-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.gradleandroid == 'success' }}
@@ -119,7 +122,6 @@ jobs:
     uses: ./.github/workflows/publish-google-play.yml
     with:
       aab-artifact-name: ${{ matrix.artifact.name }}
-      working-directory: ${{ matrix.artifact['working-directory'] }}
       package-name: ${{ matrix.artifact.config['package-name'] }}
       track: ${{ matrix.artifact.config['google-play-track'] || 'internal' }}
       status: ${{ matrix.artifact.config['google-play-status'] || 'completed' }}
@@ -130,7 +132,6 @@ jobs:
       whats-new-directory: ${{ matrix.artifact.config['whats-new-directory'] || '' }}
       mapping-file: ${{ matrix.artifact.config['mapping-file'] || '' }}
       debug-symbols: ${{ matrix.artifact.config['debug-symbols'] || '' }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   build-containers:
     name: Build Container - ${{ matrix.container.name }}
     if: ${{ inputs.containers != '[]' && fromJson(inputs['build-result-json']).result == 'success' }}
@@ -179,7 +180,7 @@ jobs:
       # docker/build-push-action compatibility.
       build-args: ${{ matrix.container['build-args-string'] || '' }}
       push-image: true
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+      scripts-ref: ${{ inputs['scripts-ref'] }}
   # Cargo's lockfile-derived "build" SBOM is a publish-stage concern: the
   # SBOM and its corresponding container ship together. Per artefact, runs
   # in parallel with build-containers — same pattern as the other
@@ -198,7 +199,6 @@ jobs:
     with:
       working-directory: ${{ matrix.artifact['working-directory'] }}
       branch: ${{ inputs.branch }}
-      rust-toolchain: ${{ matrix.artifact.config['rust-toolchain'] || 'stable' }}
       enable-build-sbom: ${{ contains(matrix.artifact['effective-sboms'], 'build') }}
       # Per-artefact unique upload name. Without this, multi-cargo-artefact
       # workspaces (e.g., a workspace shipping hsm-worker AND wallet-bff
@@ -206,12 +206,13 @@ jobs:
       # `cargo-build-sbom` and the second matrix leg's actions/upload-artifact
       # would conflict with the first. Mirrors build-gradle's pattern.
       artifact-name: ${{ matrix.artifact.name }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   summarize-publish-stage:
     name: Summarize Publish Stage
     needs: [publish-maven-github, publish-maven-central, publish-apple-appstore, publish-google-play, build-containers, sbom-cargo]
     if: always()
     runs-on: ubuntu-latest
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     outputs:
@@ -219,13 +220,6 @@ jobs:
       stage-result: ${{ steps.summary.outputs.stage-result }}
       result-json: ${{ steps.summary.outputs.result-json }}
     steps:
-      - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
       - name: Normalize publish stage result
         id: summary
         env:
@@ -241,4 +235,13 @@ jobs:
           PUBLISH_GOOGLE_PLAY_RESULT: ${{ needs.publish-google-play.result }}
           BUILD_CONTAINERS_RESULT: ${{ needs.build-containers.result }}
           CARGO_SBOM_RESULT: ${{ needs.sbom-cargo.result }}
-        run: bash .github-shared/scripts/summary/write-publish-stage-result.sh
+        run: reusable-ci summary publish-stage-result
+      - name: Upload publish stage manifests
+        if: always() && hashFiles('.ci-results/*.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-results-publish
+          path: .ci-results/*.json
+          include-hidden-files: true
+          retention-days: 5
+          if-no-files-found: ignore

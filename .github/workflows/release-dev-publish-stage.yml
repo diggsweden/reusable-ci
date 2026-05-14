@@ -14,9 +14,14 @@ on:
       build-result-json:
         required: true
         type: string
-      reusable-ci-ref:
+      scripts-ref:
         required: false
         default: "main"
+        type: string
+      runtime-image:
+        description: "reusable-ci runtime image (full — generate-dev-sboms needs syft)"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime:main"
         type: string
       sboms:
         required: false
@@ -27,7 +32,17 @@ on:
         default: true
         type: boolean
       containers:
-        description: "JSON array of containers from artifacts.yml (multi-container path). Empty array means the legacy single-container path is used."
+        description: "JSON array of containers from artifacts.yml. Each entry becomes a parallel matrix job."
+        required: false
+        default: "[]"
+        type: string
+      npm-artifacts:
+        description: "Per-ecosystem npm artifacts. publish-npm-dev fires when this array is non-empty."
+        required: false
+        default: "[]"
+        type: string
+      cargo-artifacts:
+        description: "Per-ecosystem cargo artifacts. sbom-cargo-dev fires when this array is non-empty."
         required: false
         default: "[]"
         type: string
@@ -50,9 +65,9 @@ on:
 permissions:
   contents: read
 jobs:
-  # Multi-container path: matrix-dispatches one publish-dev-container.yml
-  # invocation per container declared in artifacts.yml. Each leg is its own
-  # GHA job (visible separately in the UI) and runs in parallel.
+  # Matrix-dispatches one publish-dev-container.yml invocation per container
+  # declared in artifacts.yml. Each leg is its own GHA job (visible separately
+  # in the UI) and runs in parallel.
   # fail-fast: false — one container's build failure doesn't kill the others.
   build-dev-container-matrix:
     name: Build Container Dev - ${{ matrix.container.name }}
@@ -83,41 +98,19 @@ jobs:
       # orchestrator's dev-only sboms opt-in. Dev keeps `sboms: none` as a
       # fast path even when artifacts.yml would normally produce SBOMs.
       enable-analyzed-container-sbom: ${{ matrix.container['enable-analyzed-container-sbom'] && (contains(inputs.sboms, 'analyzed-container') || inputs.sboms == 'all') }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
-
-  # Legacy single-container path: fires only when artifacts-config wasn't set.
-  # Existing callers see no behaviour change. Will be removed at v3.0 once
-  # the artifacts-config path is the only supported shape.
-  build-dev-container:
-    name: Build Container Dev
-    if: ${{ inputs.containers == '[]' && inputs['publish-container'] && (fromJson(inputs['build-result-json']).result == 'success' || fromJson(inputs['build-result-json']).result == 'skipped') }}
-    permissions:
-      contents: read
-      packages: write
-    secrets: inherit
-    uses: ./.github/workflows/publish-dev-container.yml
-    with:
-      working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
-      container-file: ${{ fromJson(inputs['dev-context-json']).container_file }}
-      registry: ${{ fromJson(inputs['dev-context-json']).registry }}
-      artifact-types: ${{ fromJson(inputs['dev-context-json']).project_type }}
-      enable-analyzed-container-sbom: ${{ contains(inputs.sboms, 'analyzed-container') || inputs.sboms == 'all' }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+      scripts-ref: ${{ inputs['scripts-ref'] }}
   publish-npm-dev:
     name: Publish Dev NPM Package
-    if: ${{ fromJson(inputs['dev-context-json']).project_type == 'npm' && fromJson(inputs['dev-policy-json']).publish_npm && fromJson(inputs['build-result-json']).targets.npm == 'success' }}
+    if: ${{ inputs['npm-artifacts'] != '[]' && fromJson(inputs['dev-policy-json']).publish_npm && fromJson(inputs['build-result-json']).targets.npm == 'success' }}
     permissions:
       contents: read
       packages: write
     uses: ./.github/workflows/publish-dev-npm.yml
     with:
       working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
-      node-version: ${{ fromJson(inputs['dev-context-json']).node_version }}
       registry: ${{ fromJson(inputs['dev-context-json']).npm_registry }}
       package-scope: ${{ fromJson(inputs['dev-context-json']).package_scope }}
-      registry-username: ${{ fromJson(inputs['dev-context-json']).npm_registry_username }}
       use-ci-token: ${{ fromJson(inputs['dev-policy-json']).use_ci_token }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
     secrets:
       registry-password: ${{ secrets.registry-password }}
   # Cargo's lockfile-derived "build" SBOM. container-first means cargo has
@@ -129,7 +122,7 @@ jobs:
   # SBOM generation it won't consume.
   sbom-cargo-dev:
     name: Cargo SBOM Dev
-    if: ${{ fromJson(inputs['dev-context-json']).project_type == 'cargo' && inputs.sboms != 'none' }}
+    if: ${{ inputs['cargo-artifacts'] != '[]' && inputs.sboms != 'none' }}
     permissions:
       contents: read
     secrets: inherit
@@ -137,8 +130,6 @@ jobs:
     with:
       working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
       branch: ${{ fromJson(inputs['dev-context-json']).branch }}
-      rust-toolchain: ${{ fromJson(inputs['dev-context-json']).rust_toolchain || 'stable' }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   generate-dev-sboms:
     name: Generate Dev SBOMs
     needs: [sbom-cargo-dev]
@@ -149,6 +140,8 @@ jobs:
     # builders produced.
     if: ${{ inputs.sboms != 'none' && (fromJson(inputs['build-result-json']).result == 'success' || fromJson(inputs['build-result-json']).result == 'skipped') && !cancelled() && needs.sbom-cargo-dev.result != 'failure' }}
     runs-on: ubuntu-latest
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     steps:
@@ -156,13 +149,6 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
       # Resolve upload names via the same script prod uses
       # (release-create-github.yml). Single source of truth for
       # ecosystem -> upload-name mapping; new ecosystems extend
@@ -171,7 +157,7 @@ jobs:
         id: artefact-names
         env:
           PROJECT_TYPE: ${{ fromJson(inputs['dev-context-json']).project_type }}
-        run: bash .github-shared/scripts/release/resolve-artifact-name.sh "$PROJECT_TYPE" >> "$GITHUB_OUTPUT"
+        run: reusable-ci release resolve-artifact-name "$PROJECT_TYPE" >> "$GITHUB_OUTPUT"
       # Download by exact name (mirrors prod). Avoids pulling
       # multi-arch noise (per-arch digests, .dockerbuild auto-uploads,
       # per-arch container SBOMs) that an unfiltered download would
@@ -212,10 +198,10 @@ jobs:
         run: |
           # analyzed-container is scanned at container-publish time, not here —
           # feed generate-sboms.sh only the artifact-level layers.
-          layers=$(bash .github-shared/scripts/config/expand-sboms.sh \
+          layers=$(reusable-ci config expand-sboms \
             --format comma --exclude analyzed-container "$SBOMS")
           if [[ -n "$layers" ]]; then
-            bash .github-shared/scripts/sbom/generate-sboms.sh \
+            reusable-ci sbom generate \
               --project-type "$PROJECT_TYPE" \
               --layers "$layers" \
               --version "$DEV_VERSION" \
@@ -234,9 +220,11 @@ jobs:
           if-no-files-found: warn
   summarize-dev-publish-stage:
     name: Summarize Dev Publish Stage
-    needs: [build-dev-container-matrix, build-dev-container, publish-npm-dev, sbom-cargo-dev, generate-dev-sboms]
+    needs: [build-dev-container-matrix, publish-npm-dev, sbom-cargo-dev, generate-dev-sboms]
     if: always()
     runs-on: ubuntu-latest
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     outputs:
@@ -245,28 +233,25 @@ jobs:
       result-json: ${{ steps.summary.outputs.result-json }}
       artifacts-json: ${{ steps.summary.outputs.artifacts-json }}
     steps:
-      - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
       - name: Normalize dev publish stage result
         id: summary
         env:
           PROJECT_TYPE: ${{ fromJson(inputs['dev-context-json']).project_type }}
           PUBLISH_NPM: ${{ fromJson(inputs['dev-policy-json']).publish_npm }}
-          # Either matrix or single fires, never both. Whichever ran reports
-          # its result here; the other reports 'skipped' which the summary
-          # script normalizes correctly.
-          BUILD_DEV_CONTAINER_RESULT: ${{ needs.build-dev-container.result == 'skipped' && needs.build-dev-container-matrix.result || needs.build-dev-container.result }}
+          BUILD_DEV_CONTAINER_RESULT: ${{ needs.build-dev-container-matrix.result }}
           PUBLISH_NPM_DEV_RESULT: ${{ needs.publish-npm-dev.result }}
           CARGO_SBOM_DEV_RESULT: ${{ needs.sbom-cargo-dev.result }}
           GENERATE_DEV_SBOMS_RESULT: ${{ needs.generate-dev-sboms.result }}
-          CONTAINER_IMAGE: ${{ needs.build-dev-container.outputs.image }}
-          CONTAINER_DIGEST: ${{ needs.build-dev-container.outputs.digest }}
           NPM_PACKAGE_NAME: ${{ needs.publish-npm-dev.outputs.package-name }}
           NPM_PACKAGE_VERSION: ${{ needs.publish-npm-dev.outputs.package-version }}
           NPM_PUBLISH_STATUS: ${{ needs.publish-npm-dev.outputs.publish-status }}
-        run: bash .github-shared/scripts/summary/write-dev-publish-stage-result.sh
+        run: reusable-ci summary dev-publish-stage-result
+      - name: Upload dev publish stage manifests
+        if: always() && hashFiles('.ci-results/*.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-results-dev-publish
+          path: .ci-results/*.json
+          include-hidden-files: true
+          retention-days: 5
+          if-no-files-found: ignore

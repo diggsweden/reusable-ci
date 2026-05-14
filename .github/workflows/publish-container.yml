@@ -15,8 +15,9 @@
 # - Any OCI-compatible registry - No SLSA support
 #
 # How it works:
-# 1. prep: compute image coordinate, tags (docker/metadata-action), and
-#    labels once. Validate namespace early.
+# 1. prep: compute image coordinate, tags, and labels once via the shared
+#    scripts/container/compute-image-metadata.sh helper. Validate namespace
+#    early.
 # 2. build-arch (matrix, fail-fast: false): per-platform native runner
 #    (linux/amd64 -> ubuntu-24.04, linux/arm64 -> ubuntu-24.04-arm).
 #    Each leg builds and pushes by digest only — no tag is applied yet.
@@ -43,7 +44,7 @@
 # - Per-platform SBOM generation (analyzed-container layer) with attest-sbom
 #   against the per-arch digest
 # - Signed attestations attached to image
-# - Security scan results uploaded to Code Scanning (when SARIF_UPLOAD_TOKEN
+# - Security scan results uploaded to Code Scanning (when CODE_SCANNING_TOKEN
 #   is configured)
 # - Namespace validation (enforces ghcr.io/OWNER/REPO pattern)
 #
@@ -53,23 +54,23 @@
 #
 # Required Secrets:
 #   registryPassword: Required when useGithubToken=false (for Docker Hub, Quay, etc)
-#   SARIF_UPLOAD_TOKEN: Optional — uploads Trivy scan results to Code Scanning
+#   CODE_SCANNING_TOKEN: Optional — uploads Trivy scan results to Code Scanning
 #
 # Required Permissions:
 #   contents: read         # Read Containerfile and context
 #   packages: write        # Push images to registry
 #   id-token: write        # Generate OIDC token for SLSA (GHCR only)
-#   secrets: inherit       # Pass SARIF_UPLOAD_TOKEN for Code Scanning upload
+#   secrets: inherit       # Pass CODE_SCANNING_TOKEN for Code Scanning upload
 #   attestations: write    # Attach SBOM attestation
 #   actions: read          # Read workflow for provenance
 #   security-events: write # Upload SARIF (only required when running without
-#                            SARIF_UPLOAD_TOKEN; the script falls back to the
+#                            CODE_SCANNING_TOKEN; the script falls back to the
 #                            github/codeql-action upload path)
 #
 # Outputs:
 #   image: Full image name with primary tag
 #   digest: Manifest list digest
-#   metadata: Image metadata JSON (from docker/metadata-action)
+#   metadata: Image metadata JSON (tags + labels)
 #
 # Tagging Strategy (applied to the manifest list, not per-arch):
 #   - semver: Version-based tags (v1.0.0, v1, v1.0)
@@ -193,7 +194,7 @@ on:
         description: "Enforce namespace validation (defaults to repository owner)"
         required: false
         type: string
-      reusable-ci-ref:
+      scripts-ref:
         description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
         required: false
         default: "main"
@@ -202,7 +203,7 @@ on:
       registry-password:
         description: "Registry password/token (required when use-ci-token=false)"
         required: false
-      SARIF_UPLOAD_TOKEN:
+      CODE_SCANNING_TOKEN:
         description: "Token with code_scanning_alerts:write for uploading SARIF to Code Scanning"
         required: false
     outputs:
@@ -213,7 +214,7 @@ on:
         description: "Manifest list digest"
         value: ${{ jobs.merge.outputs.digest }}
       metadata:
-        description: "Image metadata JSON (from docker/metadata-action)"
+        description: "Image metadata JSON (tags + labels)"
         value: ${{ jobs.prep.outputs.metadata }}
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
@@ -239,13 +240,20 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.branch }}
-      - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
+          go-version: stable
+          check-latest: true
+      - name: Install reusable-ci binary
+        env:
+          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
+        run: |
+          # publish-container runs on plain ubuntu (no runtime container), so
+          # install the reusable-ci binary directly with `go install`.
+          GOBIN="$RUNNER_TEMP/bin" \
+            go install "github.com/diggsweden/reusable-ci/cmd/reusable-ci@${SCRIPTS_REF}"
+          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Determine Image Name
         id: image-name
         env:
@@ -254,13 +262,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
           NAME: ${{ inputs.name }}
-        run: |
-          bash .github-shared/scripts/container/resolve-image-name.sh \
-            "$TARGET_REGISTRY" \
-            "$IMAGE_NAME_INPUT" \
-            "$REPOSITORY" \
-            "$REPOSITORY_OWNER" \
-            "$NAME" >> "$GITHUB_OUTPUT"
+        run: reusable-ci container resolve-name
       - name: Validate Image Namespace
         if: ${{ inputs['push-image'] }}
         env:
@@ -268,20 +270,14 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           TARGET_REGISTRY: ${{ inputs.registry }}
           ENFORCE_NAMESPACE: ${{ inputs['enforce-namespace'] || github.repository_owner }}
-        run: |
-          bash .github-shared/scripts/container/validate-namespace.sh \
-            "$IMAGE_NAME" \
-            "$REPOSITORY" \
-            "$TARGET_REGISTRY" \
-            "$ENFORCE_NAMESPACE"
+        run: reusable-ci container validate-namespace
       - name: Extract Image Metadata
         id: metadata
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
-        with:
-          images: ${{ steps.image-name.outputs.name }}
-          flavor: |
-            latest=false
-          tags: |
+        env:
+          IMAGE_NAME: ${{ steps.image-name.outputs.name }}
+          FLAVOR: latest=false
+          EMIT_LABELS: "true"
+          TAG_RULES: |
             # Always include the ref as-is (branch name, tag name, or PR number)
             type=ref,event=branch
             type=ref,event=tag
@@ -296,6 +292,7 @@ jobs:
 
             # SHA-based tags for non-tag refs (branches, PRs) for traceability
             type=sha,prefix={{branch}}-,enable=${{ github.ref_type != 'tag' }}
+        run: reusable-ci container metadata
       - name: Compute platforms JSON
         id: platforms
         env:
@@ -326,7 +323,7 @@ jobs:
       attestations: write # Required for SBOM attestation
       actions: read # Required for SLSA provenance v2
     env:
-      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
     steps:
       - name: Harden GitHub runner
         uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
@@ -336,13 +333,27 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.branch }}
-      - name: Checkout reusable-ci scripts
+      - name: Checkout reusable-ci bootstrap installers
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
+          ref: ${{ inputs['scripts-ref'] }}
           path: .github-shared
-          sparse-checkout: scripts
+          sparse-checkout: scripts/bootstrap
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: stable
+          check-latest: true
+      - name: Install reusable-ci binary
+        env:
+          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
+        run: |
+          # publish-container runs on plain ubuntu (no runtime container), so
+          # install the reusable-ci binary directly with `go install`.
+          GOBIN="$RUNNER_TEMP/bin" \
+            go install "github.com/diggsweden/reusable-ci/cmd/reusable-ci@${SCRIPTS_REF}"
+          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Derive arch suffix
         id: arch
         env:
@@ -363,7 +374,7 @@ jobs:
           path: ./
       - name: Verify Maven artifacts
         if: *if_has_maven_artifacts
-        run: bash .github-shared/scripts/container/validate-artifacts.sh maven target
+        run: reusable-ci container validate-artifacts maven target
       - name: Download NPM artifacts
         if: &if_has_npm_artifacts ${{ contains(inputs['artifact-types'], 'npm') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -373,13 +384,13 @@ jobs:
           path: ./
       - name: Extract NPM tarball
         if: *if_has_npm_artifacts
-        run: bash .github-shared/scripts/container/extract-npm-tarball.sh
+        run: reusable-ci container extract-npm-tarball
       - name: Verify NPM artifacts
         if: *if_has_npm_artifacts
         env:
           CONTAINER_CONTEXT: ${{ inputs.context }}
           CONTAINER_FILE: ${{ inputs['container-file'] }}
-        run: bash .github-shared/scripts/container/validate-artifacts.sh npm dist "$CONTAINER_CONTEXT/$CONTAINER_FILE"
+        run: reusable-ci container validate-artifacts npm dist "$CONTAINER_CONTEXT/$CONTAINER_FILE"
       - name: Download Gradle artifacts
         if: &if_has_gradle_artifacts ${{ contains(inputs['artifact-types'], 'gradle') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -389,12 +400,12 @@ jobs:
           path: build/libs/
       - name: Verify Gradle artifacts
         if: *if_has_gradle_artifacts
-        run: bash .github-shared/scripts/container/validate-artifacts.sh gradle build/libs
+        run: reusable-ci container validate-artifacts gradle build/libs
       - name: Verify Containerfile
         id: containerfile
         env:
           CONTAINER_FILE: ${{ inputs['container-file'] }}
-        run: bash .github-shared/scripts/container/validate-containerfile.sh "$CONTAINER_FILE"
+        run: reusable-ci container validate-containerfile "$CONTAINER_FILE"
       - name: Set up Buildx
         id: buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
@@ -405,7 +416,7 @@ jobs:
           TARGET_REGISTRY: ${{ inputs.registry }}
           CI_REGISTRY: ghcr.io
           REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
-        run: bash .github-shared/scripts/registry/validate-auth.sh
+        run: reusable-ci publish validate-auth
       - name: Log in to Container Registry
         if: *if_push_image
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
@@ -470,9 +481,8 @@ jobs:
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
-      - name: Scan Container Image${{ inputs.name && format(' ({0})', inputs.name) || '' }}
+      - name: Scan container image and derive reports${{ inputs.name && format(' ({0})', inputs.name) || '' }}
         if: &if_scan_enabled ${{ inputs['enable-scan'] && inputs['push-image'] }}
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         env:
           # The image was pushed by digest only — never loaded into the local
           # docker daemon — so trivy falls through to remote pull. In remote
@@ -483,18 +493,39 @@ jobs:
           # OCI index alongside attestations). Pin the platform per leg so
           # each scan resolves to its own child manifest.
           TRIVY_PLATFORM: ${{ matrix.platform }}
-        with:
-          image-ref: ${{ needs.prep.outputs.image-name }}@${{ steps.build.outputs.digest }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
-          vuln-type: 'os,library'
+          IMAGE_REF: ${{ needs.prep.outputs.image-name }}@${{ steps.build.outputs.digest }}
+        run: |
+          # shellcheck disable=SC1091
+          source .github-shared/scripts/bootstrap/install-trivy.sh
+          install_trivy
+          # Scan once in JSON; SARIF and the GitLab container-scanning report
+          # are derived from this file via `trivy convert` and the transform
+          # script below. Avoids a redundant second full image scan.
+          trivy image \
+            --format json \
+            --output trivy-results.json \
+            --severity CRITICAL,HIGH \
+            --vuln-type os,library \
+            --exit-code 0 \
+            "${IMAGE_REF}"
+          if [ -s trivy-results.json ]; then
+            trivy convert --format sarif --output trivy-results.sarif trivy-results.json
+            reusable-ci security trivy-to-gitlab-container trivy-results.json gl-container-scanning-report.json
+          fi
       - name: Save container scan SARIF artifact
         if: *if_scan_enabled
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sarif-container-scan-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
           path: trivy-results.sarif
+          retention-days: 5
+          if-no-files-found: ignore
+      - name: Save GitLab container-scanning report
+        if: ${{ inputs['enable-scan'] && inputs['push-image'] && hashFiles('gl-container-scanning-report.json') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gitlab-container-scanning-report-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
+          path: gl-container-scanning-report.json
           retention-days: 5
           if-no-files-found: ignore
       - name: Upload container scan results to Code Scanning
@@ -506,7 +537,7 @@ jobs:
           # per-container scoping, two containers' amd64 scans share a
           # category and one silently overwrites the other.
           SARIF_CATEGORY: container-scan-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
-        run: bash .github-shared/scripts/security/upload-sarif.sh
+        run: reusable-ci security upload-sarif
       - name: Generate Container SBOMs${{ inputs.name && format(' — {0}', inputs.name) || '' }} (SPDX + CycloneDX)
         if: &if_sbom_enabled ${{ inputs['enable-analyzed-container-sbom'] && inputs['push-image'] }}
         env:
@@ -515,8 +546,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           IMAGE_NAME: ${{ needs.prep.outputs.image-name }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-          SBOM_SCRIPT_ROOT: .github-shared/scripts/sbom
-        run: bash .github-shared/scripts/sbom/generate-container-sbom-artifacts.sh
+        run: reusable-ci sbom generate-container
       - name: Upload Analyzed-Container SBOMs
         if: *if_sbom_enabled
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -532,7 +562,7 @@ jobs:
       - name: Find Container SBOM file
         if: &if_sbom_and_slsa_enabled ${{ inputs['enable-analyzed-container-sbom'] && inputs['push-image'] && inputs['enable-slsa'] }}
         id: find-sbom
-        run: bash .github-shared/scripts/sbom/find-container-sbom.sh
+        run: reusable-ci sbom find-container-sbom
       - name: Attest Container SBOM${{ inputs.name && format(' — {0}', inputs.name) || '' }}
         if: *if_sbom_and_slsa_enabled
         uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3.0.0
@@ -571,7 +601,7 @@ jobs:
           SUFFIX: ${{ steps.arch.outputs.suffix }}
           EXPECTED_NAMES: ${{ inputs['extract-binary-names'] }}
         run: |
-          bash .github-shared/scripts/container/suffix-extracted-binaries.sh \
+          reusable-ci container suffix-extracted-binaries \
             ./extracted-binaries \
             "$SUFFIX" \
             "$EXPECTED_NAMES"
@@ -622,13 +652,20 @@ jobs:
         uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
         with:
           egress-policy: ${{ inputs.egress-policy }}
-      - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
+          go-version: stable
+          check-latest: true
+      - name: Install reusable-ci binary
+        env:
+          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
+        run: |
+          # publish-container runs on plain ubuntu (no runtime container), so
+          # install the reusable-ci binary directly with `go install`.
+          GOBIN="$RUNNER_TEMP/bin" \
+            go install "github.com/diggsweden/reusable-ci/cmd/reusable-ci@${SCRIPTS_REF}"
+          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -643,7 +680,7 @@ jobs:
           TARGET_REGISTRY: ${{ inputs.registry }}
           CI_REGISTRY: ghcr.io
           REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
-        run: bash .github-shared/scripts/registry/validate-auth.sh
+        run: reusable-ci publish validate-auth
       - name: Log in to Container Registry
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:

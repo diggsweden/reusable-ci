@@ -42,20 +42,14 @@ name: Orchestrate Dev Release
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
-      project-type:
-        description: "Project type: maven, npm, gradle, gradle-android, xcode-ios, cargo. Required for the legacy single-container path. Optional when artifacts-config is set — derived from the first artefact's project-type if omitted."
-        required: false
-        default: ""
-        type: string
       artifacts-config:
-        description: "Path to artifacts.yml. When set, the dev release reads containers from this file and matrix-builds each one in the same run (multi-container support, mirrors release-orchestrator.yml). When empty, falls back to the legacy single-container path driven by container-file/working-directory below."
+        description: "Path to artifacts.yml. The dev release reads containers and per-artefact configuration from this file."
+        required: true
+        type: string
+      project-type:
+        description: "Project type override. Optional — defaults to the first artefact's project-type from artifacts.yml."
         required: false
         default: ""
-        type: string
-      container-file:
-        description: "Containerfile path. DEPRECATED: prefer artifacts-config. Used only when artifacts-config is empty (legacy single-container path). Will be removed at the v3.0 boundary."
-        required: false
-        default: "Containerfile"
         type: string
       registry:
         description: "Container registry"
@@ -97,19 +91,20 @@ on:
         required: false
         default: ""
         type: string
-      npm-registry-username:
-        description: "NPM registry username (defaults to github.actor for GitHub Packages)"
-        required: false
-        type: string
       use-ci-token:
         description: "Use GITHUB_TOKEN for NPM authentication (GitHub Packages only)"
         required: false
         default: true
         type: boolean
-      reusable-ci-ref:
+      scripts-ref:
         description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
         required: false
         default: "main"
+        type: string
+      runtime-image:
+        description: "reusable-ci runtime image. Pin to a digest or version tag; default tracks main."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:main"
         type: string
       sboms:
         description: "SBOMs to generate: all | none | comma-list of build,analyzed-artifact,analyzed-container (default: none for dev speed; set to 'all' to test SBOM wiring)"
@@ -126,12 +121,6 @@ on:
         description: "NPM registry auth token (required when use-ci-token=false)"
         required: false
     outputs:
-      container-image:
-        description: "Published container image"
-        value: ${{ fromJson(jobs.execute-dev-publish-stage.outputs['artifacts-json'] || '{}').container_image }}
-      container-digest:
-        description: "Container image digest"
-        value: ${{ fromJson(jobs.execute-dev-publish-stage.outputs['artifacts-json'] || '{}').container_digest }}
       npm-package-name:
         description: "Published NPM package name (if published)"
         value: ${{ fromJson(jobs.execute-dev-publish-stage.outputs['artifacts-json'] || '{}').npm_package_name }}
@@ -149,6 +138,8 @@ jobs:
   setup-dev:
     name: Setup
     runs-on: ubuntu-latest
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     outputs:
@@ -156,32 +147,27 @@ jobs:
       has-containers: ${{ steps.plan.outputs.has-containers || 'false' }}
       dev-context-json: ${{ steps.interface.outputs.dev-context-json }}
       dev-policy-json: ${{ steps.interface.outputs.dev-policy-json }}
+      # Per-ecosystem artifact arrays — fed into the dev build stage so the
+      # matrix shape mirrors release-build-stage.yml. cargo is forwarded
+      # to publish-stage (sbom-cargo-dev gate), not build-stage (cargo
+      # is container-first; no build-stage work).
+      maven-artifacts: ${{ steps.parse.outputs.maven-artifacts || '[]' }}
+      npm-artifacts: ${{ steps.parse.outputs.npm-artifacts || '[]' }}
+      gradle-artifacts: ${{ steps.parse.outputs.gradle-artifacts || '[]' }}
+      gradleandroid-artifacts: ${{ steps.parse.outputs.gradleandroid-artifacts || '[]' }}
+      xcodeios-artifacts: ${{ steps.parse.outputs.xcodeios-artifacts || '[]' }}
+      cargo-artifacts: ${{ steps.parse.outputs.cargo-artifacts || '[]' }}
     steps:
       - name: Checkout caller repository
-        if: ${{ inputs['artifacts-config'] != '' }}
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Checkout reusable-ci helper scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
-      - name: Install yq for config parsing
-        if: ${{ inputs['artifacts-config'] != '' }}
-        run: |
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
       - name: Parse artifacts.yml
         id: parse
-        if: ${{ inputs['artifacts-config'] != '' }}
-        run: bash .github-shared/scripts/config/parse-artifacts-config.sh
+        run: reusable-ci config parse-artifacts
         env:
           ARTIFACTS_CONFIG: ${{ inputs['artifacts-config'] }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
       - name: Compute has-containers for stage gating
         id: plan
-        if: ${{ inputs['artifacts-config'] != '' }}
         env:
           CONTAINERS: ${{ steps.parse.outputs.containers }}
         run: |
@@ -190,15 +176,22 @@ jobs:
           else
             printf 'has-containers=false\n' >> "$GITHUB_OUTPUT"
           fi
+      - name: Resolve fallback project-type from artifacts.yml
+        id: fallback
+        env:
+          ARTIFACTS: ${{ steps.parse.outputs.artifacts }}
+        run: |
+          set -euo pipefail
+          # When the dev caller didn't pass project-type, take the first
+          # artefact's type as a convenience default. Multi-artifact
+          # callers should set project-type explicitly.
+          fallback=$(printf '%s' "$ARTIFACTS" | jq -r '.[0]["project-type"] // ""')
+          printf 'project-type=%s\n' "$fallback" >>"$GITHUB_OUTPUT"
       - name: Compose dev control-plane interface
         id: interface
         env:
           PROJECT_TYPE: ${{ inputs['project-type'] }}
-          # Fallback when caller didn't pass project-type and artifacts-config
-          # was parsed: use the first artefact's project_type. Empty when
-          # the parse step didn't run (legacy single-container path), in
-          # which case PROJECT_TYPE input must be provided by the caller.
-          FALLBACK_PROJECT_TYPE: ${{ steps.parse.outputs.first-project-type }}
+          FALLBACK_PROJECT_TYPE: ${{ steps.fallback.outputs.project-type }}
           BRANCH: ${{ github.ref_name }}
           RELEASE_SHA: ${{ github.sha }}
           RELEASE_ACTOR: ${{ github.actor }}
@@ -207,15 +200,13 @@ jobs:
           JAVA_VERSION: ${{ inputs['java-version'] }}
           NODE_VERSION: ${{ inputs['node-version'] }}
           RUST_TOOLCHAIN: ${{ inputs['rust-toolchain'] }}
-          CONTAINER_FILE: ${{ inputs['container-file'] }}
           REGISTRY: ${{ inputs.registry }}
-          REUSABLE_CI_REF: ${{ inputs['reusable-ci-ref'] }}
+          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
           NPM_REGISTRY: ${{ inputs['npm-registry'] }}
           PACKAGE_SCOPE: ${{ inputs['package-scope'] }}
-          NPM_REGISTRY_USERNAME: ${{ inputs['npm-registry-username'] }}
           PUBLISH_NPM: ${{ inputs['publish-npm'] }}
           USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
-        run: bash .github-shared/scripts/plan/write-dev-release-interface.sh
+        run: reusable-ci plan write-dev-release-interface
 
   # ===== Stage 1: Build =====
   execute-dev-build-stage:
@@ -227,7 +218,13 @@ jobs:
     uses: ./.github/workflows/release-dev-build-stage.yml
     with:
       dev-context-json: ${{ needs.setup-dev.outputs.dev-context-json }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+      scripts-ref: ${{ inputs['scripts-ref'] }}
+      maven-artifacts: ${{ needs.setup-dev.outputs.maven-artifacts }}
+      npm-artifacts: ${{ needs.setup-dev.outputs.npm-artifacts }}
+      gradle-artifacts: ${{ needs.setup-dev.outputs.gradle-artifacts }}
+      gradleandroid-artifacts: ${{ needs.setup-dev.outputs.gradleandroid-artifacts }}
+      xcodeios-artifacts: ${{ needs.setup-dev.outputs.xcodeios-artifacts }}
+      sboms: ${{ inputs.sboms }}
 
   # ===== Stage 2: Publish =====
   execute-dev-publish-stage:
@@ -241,15 +238,17 @@ jobs:
     uses: ./.github/workflows/release-dev-publish-stage.yml
     with:
       dev-context-json: ${{ needs.setup-dev.outputs.dev-context-json }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+      scripts-ref: ${{ inputs['scripts-ref'] }}
       dev-policy-json: ${{ needs.setup-dev.outputs.dev-policy-json }}
       build-result-json: ${{ needs.execute-dev-build-stage.outputs.result-json }}
       sboms: ${{ inputs.sboms }}
       publish-container: ${{ inputs['publish-container'] }}
-      # Multi-container path: containers JSON from setup-dev's parse step.
-      # Empty when artifacts-config is unset; legacy single-container path
-      # still active in publish-stage gated on this being '[]'.
+      # Containers JSON from setup-dev's parse step. Each entry becomes a
+      # parallel matrix job in release-dev-publish-stage.yml.
       containers: ${{ needs.setup-dev.outputs.containers }}
+      # Per-ecosystem arrays drive the publish-target gates.
+      npm-artifacts: ${{ needs.setup-dev.outputs.npm-artifacts }}
+      cargo-artifacts: ${{ needs.setup-dev.outputs.cargo-artifacts }}
 
   # ===== Stage 3: Summary =====
   dev-release-summary:
@@ -260,16 +259,11 @@ jobs:
       - execute-dev-publish-stage
     if: always()
     runs-on: ubuntu-latest
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     steps:
-      - name: Checkout .github repository for scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
       - name: Generate Dev Release Summary
         env:
           # Dev release context.
@@ -283,4 +277,4 @@ jobs:
           BUILD_STAGE_RESULT_JSON: ${{ needs.execute-dev-build-stage.outputs.result-json }}
           PUBLISH_STAGE_RESULT_JSON: ${{ needs.execute-dev-publish-stage.outputs.result-json }}
           DEV_ARTIFACTS_JSON: ${{ needs.execute-dev-publish-stage.outputs.artifacts-json }}
-        run: bash .github-shared/scripts/summary/write-dev-release-summary.sh
+        run: reusable-ci summary dev-release

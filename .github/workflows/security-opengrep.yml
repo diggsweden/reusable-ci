@@ -3,7 +3,11 @@
 # SPDX-License-Identifier: CC0-1.0
 # Description:
 # Runs OpenGrep SAST, emits portable JSON/SARIF/GitLab SAST outputs, and
-# uploads SARIF to GitHub Code Scanning when SARIF_UPLOAD_TOKEN is configured.
+# uploads SARIF to GitHub Code Scanning when CODE_SCANNING_TOKEN is configured.
+#
+# Runs inside the reusable-ci runtime container — scripts are baked at
+# /opt/reusable-ci/scripts and `opengrep` is on PATH, so this workflow does
+# not check out reusable-ci itself.
 name: Analyze OpenGrep SAST
 on:
   workflow_call:
@@ -18,10 +22,10 @@ on:
         required: false
         default: "high"
         type: string
-      reusable-ci-ref:
-        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+      runtime-image:
+        description: "reusable-ci runtime image. Pin to a digest or version tag for reproducibility; default tracks main."
         required: false
-        default: "main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime:main"
         type: string
 permissions:
   contents: read
@@ -30,6 +34,8 @@ jobs:
     name: OpenGrep SAST
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     steps:
@@ -37,25 +43,17 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - name: Checkout reusable-ci scripts
-        if: always()
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
       - name: Run OpenGrep SAST
         env:
           OPENGREP_CONFIG: ${{ inputs['opengrep-rules'] }}
           OPENGREP_FAIL_ON_SEVERITY: ${{ inputs['fail-on-severity'] }}
-          HAS_SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN != '' }}
-        run: bash .github-shared/scripts/security/run-opengrep.sh
+          HAS_CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN != '' }}
+        run: reusable-ci security run-opengrep
       - name: Enrich OpenGrep SARIF for GitHub
         if: always() && hashFiles('opengrep-results.sarif') != ''
         env:
           SARIF_FILE: opengrep-results.sarif
-        run: bash .github-shared/scripts/security/enrich-github-sarif.sh
+        run: reusable-ci security enrich-github-sarif
       - name: Archive OpenGrep outputs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -86,6 +84,8 @@ jobs:
     if: always() && needs.analysis.result != 'cancelled' && needs.analysis.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 1
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     steps:
@@ -94,19 +94,11 @@ jobs:
         with:
           name: sarif-opengrep
         continue-on-error: true
-      - name: Checkout reusable-ci scripts
-        if: hashFiles('opengrep-results.sarif') != ''
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
       - name: Upload OpenGrep results to Code Scanning
         if: hashFiles('opengrep-results.sarif') != ''
         continue-on-error: true
         env:
-          SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
+          CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
           SARIF_FILE: opengrep-results.sarif
           SARIF_CATEGORY: opengrep-sast
-        run: bash .github-shared/scripts/security/upload-sarif.sh
+        run: reusable-ci security upload-sarif

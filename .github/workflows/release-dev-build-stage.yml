@@ -8,13 +8,38 @@ on:
       dev-context-json:
         required: true
         type: string
-      reusable-ci-ref:
+      scripts-ref:
         required: false
         default: "main"
         type: string
+      runtime-image:
+        description: "reusable-ci runtime image for the summarize job (base is sufficient)"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:main"
+        type: string
+      maven-artifacts:
+        required: true
+        type: string
+      npm-artifacts:
+        required: true
+        type: string
+      gradle-artifacts:
+        required: true
+        type: string
+      gradleandroid-artifacts:
+        required: true
+        type: string
+      xcodeios-artifacts:
+        required: true
+        type: string
+      sboms:
+        description: "Dev's SBOM opt-in. When 'none' (default), per-build SBOMs are off even if artifacts.yml requests them."
+        required: false
+        default: "none"
+        type: string
     outputs:
       stage-ran:
-        description: Dev build stage ran a supported build path
+        description: Dev build stage ran at least one ecosystem path
         value: ${{ jobs.summarize-dev-build-stage.outputs.stage-ran }}
       stage-result:
         description: Normalized dev build stage result
@@ -26,42 +51,101 @@ permissions:
   contents: read
 jobs:
   build-maven-dev:
-    name: Build Maven Dev
-    if: ${{ fromJson(inputs['dev-context-json']).project_type == 'maven' }}
+    name: Build Maven Dev - ${{ matrix.artifact.name }}
+    if: ${{ inputs.maven-artifacts != '[]' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.maven-artifacts) }}
+      fail-fast: false
     permissions:
       contents: read
+    secrets: inherit
     uses: ./.github/workflows/build-maven.yml
     with:
-      working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
       branch: ${{ fromJson(inputs['dev-context-json']).branch }}
-      build-type: app
-      java-version: ${{ fromJson(inputs['dev-context-json']).java_version }}
-      profile: ''
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+      build-type: ${{ matrix.artifact['build-type'] == 'library' && 'lib' || 'app' }}
+      profile: ${{ matrix.artifact['build-type'] == 'library' && (matrix.artifact.config['maven-profile'] || 'central-release') || '' }}
+      enable-build-sbom: ${{ inputs.sboms != 'none' && contains(matrix.artifact['effective-sboms'], 'build') }}
   build-npm-dev:
-    name: Build NPM Dev
-    if: ${{ fromJson(inputs['dev-context-json']).project_type == 'npm' }}
+    name: Build NPM Dev - ${{ matrix.artifact.name }}
+    if: ${{ inputs.npm-artifacts != '[]' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.npm-artifacts) }}
+      fail-fast: false
     permissions:
       contents: read
+    secrets: inherit
     uses: ./.github/workflows/build-npm.yml
     with:
-      working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
       branch: ${{ fromJson(inputs['dev-context-json']).branch }}
-      node-version: ${{ fromJson(inputs['dev-context-json']).node_version }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+      enable-build-sbom: ${{ inputs.sboms != 'none' && contains(matrix.artifact['effective-sboms'], 'build') }}
   build-gradle-dev:
-    name: Build Gradle Dev
-    if: ${{ fromJson(inputs['dev-context-json']).project_type == 'gradle' }}
+    name: Build Gradle Dev - ${{ matrix.artifact.name }}
+    if: ${{ inputs.gradle-artifacts != '[]' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.gradle-artifacts) }}
+      fail-fast: false
     permissions:
       contents: read
     secrets: inherit
     uses: ./.github/workflows/build-gradle-app.yml
     with:
-      working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
       branch: ${{ fromJson(inputs['dev-context-json']).branch }}
-      java-version: ${{ fromJson(inputs['dev-context-json']).java_version }}
-      gradle-tasks: build
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+      artifact-name: ${{ matrix.artifact.name }}
+      gradle-tasks: ${{ matrix.artifact.config['gradle-tasks'] }}
+      enable-build-sbom: ${{ inputs.sboms != 'none' && contains(matrix.artifact['effective-sboms'], 'build') }}
+  build-gradle-android-dev:
+    name: Build Gradle Android Dev - ${{ matrix.artifact.name }}
+    if: ${{ inputs.gradleandroid-artifacts != '[]' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.gradleandroid-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/build-gradle-android.yml
+    with:
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      build-module: ${{ matrix.artifact.config['build-module'] }}
+      product-flavor: ${{ matrix.artifact.config['product-flavor'] || '' }}
+      build-types: ${{ matrix.artifact.config['build-types'] || 'debug,release' }}
+      include-aab: ${{ matrix.artifact.config['include-aab'] != false }}
+      artifact-name: ${{ matrix.artifact.name }}
+      enable-signing: ${{ matrix.artifact.config['enable-android-signing'] }}
+      enable-build-sbom: ${{ inputs.sboms != 'none' && contains(matrix.artifact['effective-sboms'], 'build') }}
+  build-xcode-dev:
+    name: Build Xcode Dev - ${{ matrix.artifact.name }}
+    if: ${{ inputs.xcodeios-artifacts != '[]' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.xcodeios-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/build-xcode-ios.yml
+    with:
+      xcode-version: ${{ matrix.artifact.config['xcode-version'] }}
+      scheme: ${{ matrix.artifact.config['scheme'] }}
+      workspace: ${{ matrix.artifact.config['workspace'] }}
+      project: ${{ matrix.artifact.config['project'] }}
+      configuration: ${{ matrix.artifact.config['configuration'] || 'Release' }}
+      enable-code-signing: ${{ matrix.artifact.config['enable-code-signing'] != false }}
+      export-options-var: ${{ matrix.artifact.config['export-options-var'] || 'EXPORT_OPTIONS_BASE64' }}
+      use-xcodegen: ${{ matrix.artifact.config['use-xcodegen'] || false }}
+      xcodegen-spec: ${{ matrix.artifact.config['xcodegen-spec'] || 'project.yml' }}
+      artifact-name: ${{ matrix.artifact.name }}
+      include-tag: false
+      build-number: ${{ matrix.artifact.config['build-number'] }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
+      scripts-ref: ${{ inputs['scripts-ref'] }}
   # cargo is container-first: nothing it produces lives at the dev build-stage
   # level. The lockfile-derived SBOM (sbom-cargo-dev) and the actual cargo
   # compile (inside the Containerfile) both run in release-dev-publish-stage,
@@ -69,9 +153,11 @@ jobs:
   # zero jobs by design — mirrors release-build-stage.yml's prod shape.
   summarize-dev-build-stage:
     name: Summarize Dev Build Stage
-    needs: [build-maven-dev, build-npm-dev, build-gradle-dev]
+    needs: [build-maven-dev, build-npm-dev, build-gradle-dev, build-gradle-android-dev, build-xcode-dev]
     if: always()
     runs-on: ubuntu-latest
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     outputs:
@@ -79,18 +165,28 @@ jobs:
       stage-result: ${{ steps.summary.outputs.stage-result }}
       result-json: ${{ steps.summary.outputs.result-json }}
     steps:
-      - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
       - name: Normalize dev build stage result
         id: summary
         env:
+          STAGE_NAME: dev-build
           PROJECT_TYPE: ${{ fromJson(inputs['dev-context-json']).project_type }}
-          BUILD_MAVEN_DEV_RESULT: ${{ needs.build-maven-dev.result }}
-          BUILD_NPM_DEV_RESULT: ${{ needs.build-npm-dev.result }}
-          BUILD_GRADLE_DEV_RESULT: ${{ needs.build-gradle-dev.result }}
-        run: bash .github-shared/scripts/summary/write-dev-build-stage-result.sh
+          MAVEN_ARTIFACTS: ${{ inputs.maven-artifacts }}
+          NPM_ARTIFACTS: ${{ inputs.npm-artifacts }}
+          GRADLE_ARTIFACTS: ${{ inputs.gradle-artifacts }}
+          GRADLEANDROID_ARTIFACTS: ${{ inputs.gradleandroid-artifacts }}
+          XCODEIOS_ARTIFACTS: ${{ inputs.xcodeios-artifacts }}
+          BUILD_MAVEN_RESULT: ${{ needs.build-maven-dev.result }}
+          BUILD_NPM_RESULT: ${{ needs.build-npm-dev.result }}
+          BUILD_GRADLE_RESULT: ${{ needs.build-gradle-dev.result }}
+          BUILD_GRADLE_ANDROID_RESULT: ${{ needs.build-gradle-android-dev.result }}
+          BUILD_XCODE_RESULT: ${{ needs.build-xcode-dev.result }}
+        run: reusable-ci summary build-stage-result
+      - name: Upload dev build stage manifests
+        if: always() && hashFiles('.ci-results/*.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-results-dev-build
+          path: .ci-results/*.json
+          include-hidden-files: true
+          retention-days: 5
+          if-no-files-found: ignore

@@ -7,7 +7,7 @@
 #
 # Features:
 # - Uses the same verify.sh script locally and in CI
-# - Client justfile overrides (e.g., lint-license: @echo "Skipping") work in CI
+# - Client justfile overrides (e.g., lint-yaml: @echo "Skipping") work in CI
 # - Generates GitHub Actions summary with pass/fail per linter
 # - Version-pinned devbase-check with Renovate auto-updates
 #
@@ -40,7 +40,7 @@ permissions:
   contents: read
 jobs:
   devbase-check-lint:
-    name: Quality Checks
+    name: Devbase Check
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

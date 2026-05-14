@@ -8,9 +8,14 @@ on:
       branch:
         required: true
         type: string
-      reusable-ci-ref:
+      scripts-ref:
         required: false
         default: "main"
+        type: string
+      runtime-image:
+        description: "reusable-ci runtime image for the summarize job (base is sufficient)"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:main"
         type: string
       maven-artifacts:
         required: true
@@ -54,11 +59,9 @@ jobs:
     with:
       working-directory: ${{ matrix.artifact['working-directory'] }}
       branch: ${{ inputs.branch }}
-      java-version: ${{ matrix.artifact.config['java-version'] }}
       build-type: ${{ matrix.artifact['build-type'] == 'library' && 'lib' || 'app' }}
       profile: ${{ matrix.artifact['build-type'] == 'library' && (matrix.artifact.config['maven-profile'] || 'central-release') || '' }}
       enable-build-sbom: ${{ contains(matrix.artifact['effective-sboms'], 'build') }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   build-npm:
     name: Build NPM - ${{ matrix.artifact.name }}
     if: ${{ inputs.npm-artifacts != '[]' }}
@@ -73,9 +76,7 @@ jobs:
     with:
       working-directory: ${{ matrix.artifact['working-directory'] }}
       branch: ${{ inputs.branch }}
-      node-version: ${{ matrix.artifact.config['node-version'] }}
       enable-build-sbom: ${{ contains(matrix.artifact['effective-sboms'], 'build') }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   build-gradle:
     name: Build Gradle - ${{ matrix.artifact.name }}
     if: ${{ inputs.gradle-artifacts != '[]' }}
@@ -91,10 +92,8 @@ jobs:
       working-directory: ${{ matrix.artifact['working-directory'] }}
       branch: ${{ inputs.branch }}
       artifact-name: ${{ matrix.artifact.name }}
-      java-version: ${{ matrix.artifact.config['java-version'] }}
       gradle-tasks: ${{ matrix.artifact.config['gradle-tasks'] }}
       enable-build-sbom: ${{ contains(matrix.artifact['effective-sboms'], 'build') }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   build-gradle-android:
     name: Build Gradle Android - ${{ matrix.artifact.name }}
     if: ${{ inputs.gradleandroid-artifacts != '[]' }}
@@ -108,7 +107,6 @@ jobs:
     uses: ./.github/workflows/build-gradle-android.yml
     with:
       working-directory: ${{ matrix.artifact['working-directory'] }}
-      java-version: ${{ matrix.artifact.config['java-version'] }}
       build-module: ${{ matrix.artifact.config['build-module'] }}
       product-flavor: ${{ matrix.artifact.config['product-flavor'] || '' }}
       build-types: ${{ matrix.artifact.config['build-types'] || 'debug,release' }}
@@ -122,7 +120,6 @@ jobs:
       artifact-name: ${{ matrix.artifact.name }}
       enable-signing: ${{ matrix.artifact.config['enable-android-signing'] }}
       enable-build-sbom: ${{ contains(matrix.artifact['effective-sboms'], 'build') }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   build-xcode:
     name: Build Xcode - ${{ matrix.artifact.name }}
     if: ${{ inputs.xcodeios-artifacts != '[]' }}
@@ -149,7 +146,7 @@ jobs:
       build-number: ${{ matrix.artifact.config['build-number'] }}
       working-directory: ${{ matrix.artifact['working-directory'] }}
       macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+      scripts-ref: ${{ inputs['scripts-ref'] }}
   # cargo is container-first: nothing it produces lives at the build-stage
   # level. The lockfile-derived SBOM (sbom-cargo) and the actual cargo
   # compile (inside the Containerfile) both run in release-publish-stage,
@@ -160,6 +157,8 @@ jobs:
     needs: [build-maven, build-npm, build-gradle, build-gradle-android, build-xcode]
     if: always()
     runs-on: ubuntu-latest
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     outputs:
@@ -167,13 +166,6 @@ jobs:
       stage-result: ${{ steps.summary.outputs.stage-result }}
       result-json: ${{ steps.summary.outputs.result-json }}
     steps:
-      - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
       - name: Normalize build stage result
         id: summary
         env:
@@ -187,4 +179,13 @@ jobs:
           BUILD_GRADLE_RESULT: ${{ needs.build-gradle.result }}
           BUILD_GRADLE_ANDROID_RESULT: ${{ needs.build-gradle-android.result }}
           BUILD_XCODE_RESULT: ${{ needs.build-xcode.result }}
-        run: bash .github-shared/scripts/summary/write-build-stage-result.sh
+        run: reusable-ci summary build-stage-result
+      - name: Upload build stage manifests
+        if: always() && hashFiles('.ci-results/*.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-results-build
+          path: .ci-results/*.json
+          include-hidden-files: true
+          retention-days: 5
+          if-no-files-found: ignore

@@ -27,8 +27,8 @@
 #   - Examples: "2025-01-15 - demo_store - wallet-app-ios - Wallet Demo - IPA Release"
 #
 # Required Secrets (for signing):
-#   CERTIFICATE_BASE64: Base64-encoded distribution certificate (.p12)
-#   CERTIFICATE_PASSPHRASE: Certificate passphrase
+#   IOS_SIGNING_CERTIFICATE_BASE64: Base64-encoded distribution certificate (.p12)
+#   IOS_SIGNING_CERTIFICATE_PASSPHRASE: Certificate passphrase
 #   PROVISIONING_PROFILE_BASE64: Base64-encoded provisioning profile
 #   KEYCHAIN_PASSWORD: Temporary keychain password
 #   EXPORT_OPTIONS_BASE64: Base64-encoded exportOptions.plist (optional, can use vars)
@@ -120,10 +120,15 @@ on:
         required: false
         default: "macos-26"
         type: string
-      reusable-ci-ref:
-        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+      scripts-ref:
+        description: "reusable-ci scripts version to fetch (branch, tag, or SHA). For coherent pinning, set to the same tag value used in `runtime-image:` on Linux jobs."
         required: false
         default: "main"
+        type: string
+      scripts-archive-url:
+        description: "URL template for the scripts source archive. `{ref}` is substituted with `scripts-ref`. Override to point at a mirror (e.g. a GitLab mirror of reusable-ci) for sovereign environments that should not reach github.com."
+        required: false
+        default: "https://github.com/diggsweden/reusable-ci/archive/{ref}.tar.gz"
         type: string
 permissions:
   contents: read
@@ -140,13 +145,20 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Checkout .github repository for scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
+          go-version: stable
+          check-latest: true
+      - name: Install reusable-ci binary
+        env:
+          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
+        run: |
+          # macOS jobs can't run inside the linux runtime container, so use
+          # `go install` to build the reusable-ci binary at the requested ref.
+          GOBIN="$RUNNER_TEMP/bin" \
+            go install "github.com/diggsweden/reusable-ci/cmd/reusable-ci@${SCRIPTS_REF}"
+          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Generate artifact names
         id: artifact-names
@@ -200,11 +212,11 @@ jobs:
       - name: Setup code signing
         if: ${{ inputs['enable-code-signing'] }}
         env:
-          CERTIFICATE_BASE64: ${{ secrets.CERTIFICATE_BASE64 }}
-          CERTIFICATE_PASSPHRASE: ${{ secrets.CERTIFICATE_PASSPHRASE }}
+          IOS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.IOS_SIGNING_CERTIFICATE_BASE64 }}
+          IOS_SIGNING_CERTIFICATE_PASSPHRASE: ${{ secrets.IOS_SIGNING_CERTIFICATE_PASSPHRASE }}
           PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: bash .github-shared/scripts/apple/setup-code-signing.sh
+        run: reusable-ci build xcode-ios setup-code-signing
 
       - name: Get version info
         id: version-info
@@ -213,9 +225,9 @@ jobs:
           PROJECT_PATH_INPUT: ${{ inputs.project }}
           WORKSPACE_PATH_INPUT: ${{ inputs.workspace }}
         run: |
-          bash .github-shared/scripts/apple/get-version-info.sh \
+          reusable-ci build xcode-ios version-info \
             "$PROJECT_PATH_INPUT" \
-            "$WORKSPACE_PATH_INPUT" >> "$GITHUB_OUTPUT"
+            "$WORKSPACE_PATH_INPUT"
 
       - name: Setup xcconfig from secret
         id: setup-xcconfig
@@ -241,7 +253,7 @@ jobs:
           DESTINATION: ${{ inputs.destination }}
           XC_CONFIG_PATH: ${{ steps.setup-xcconfig.outputs.xcconfig-path }}
           BUILD_NUMBER: ${{ inputs['build-number'] }}
-        run: bash .github-shared/scripts/apple/archive-app.sh
+        run: reusable-ci build xcode-ios archive
 
       - name: Export IPA
         if: ${{ inputs['enable-code-signing'] }}
@@ -249,11 +261,11 @@ jobs:
         env:
           EXPORT_OPTIONS_BASE64: ${{ vars[inputs.export-options-var] }}
           EXPORT_OPTIONS_VAR: ${{ inputs.export-options-var }}
-        run: bash .github-shared/scripts/apple/export-ipa.sh
+        run: reusable-ci build xcode-ios export-ipa
 
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
-        run: bash .github-shared/scripts/apple/list-built-artifacts.sh
+        run: reusable-ci build xcode-ios list-artifacts
 
       - name: Upload IPA artifact
         if: ${{ inputs['enable-code-signing'] }}
@@ -283,4 +295,4 @@ jobs:
           VERSION: ${{ steps.version-info.outputs.version }}
           BUILD_NUMBER: ${{ steps.version-info.outputs.build }}
           IPA_NAME: ${{ steps.artifact-names.outputs.ipa-name }}
-        run: bash .github-shared/scripts/summary/write-xcode-build-summary.sh >> "$GITHUB_STEP_SUMMARY"
+        run: reusable-ci summary xcode-build

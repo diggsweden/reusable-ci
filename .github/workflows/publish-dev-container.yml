@@ -121,7 +121,7 @@ on:
         required: false
         default: true
         type: boolean
-      reusable-ci-ref:
+      scripts-ref:
         description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
         required: false
         default: "main"
@@ -153,29 +153,45 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
-      - name: Compute image coordinate and platforms
-        id: coord
+          go-version: stable
+          check-latest: true
+      - name: Install reusable-ci binary
+        env:
+          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
+        run: |
+          # publish-dev-container runs on plain ubuntu (no runtime container),
+          # so install the reusable-ci binary directly with `go install`.
+          GOBIN="$RUNNER_TEMP/bin" \
+            go install "github.com/diggsweden/reusable-ci/cmd/reusable-ci@${SCRIPTS_REF}"
+          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Resolve image name + dev version
+        id: image
         env:
           TARGET_REGISTRY: ${{ inputs.registry }}
           REPOSITORY: ${{ github.repository }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
           NAME: ${{ inputs.name }}
+        # Both binary commands emit to $GITHUB_OUTPUT via OutputSink —
+        # the image name lands as `name=<value>` and the dev version as
+        # `dev-version=<value>`. Subsequent steps reference them via
+        # steps.image.outputs.{name,dev-version}.
+        run: |
+          reusable-ci container resolve-name
+          # `version generate-dev` prints to stdout — wrap into the step output here.
+          {
+            printf 'dev-version=%s\n' "$(reusable-ci version generate-dev)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Compute image coordinate and platforms
+        id: coord
+        env:
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+          DEV_VERSION: ${{ steps.image.outputs.dev-version }}
+          NAME: ${{ inputs.name }}
           PLATFORMS: ${{ inputs.platforms }}
         run: |
-          DEV_VERSION=$(bash .github-shared/scripts/version/generate-dev-version.sh)
-          # Share the prod-path resolver so dev and prod agree on the image
-          # name shape — including the single-container collapse when the
-          # container `name` matches the repo's short name.
-          IMAGE_NAME=$(bash .github-shared/scripts/container/resolve-image-name.sh \
-            "$TARGET_REGISTRY" "" "$REPOSITORY" "$REPOSITORY_OWNER" "$NAME")
-          IMAGE_NAME="${IMAGE_NAME#name=}"
           # Convert "linux/amd64,linux/arm64" -> JSON array for matrix consumption.
           PLATFORMS_JSON=$(printf '%s\n' "${PLATFORMS//,/$'\n'}" | jq -R . | jq -s -c .)
 
@@ -193,12 +209,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           TARGET_REGISTRY: ${{ inputs.registry }}
           ENFORCE_NAMESPACE: ${{ github.repository_owner }}
-        run: |
-          bash .github-shared/scripts/container/validate-namespace.sh \
-            "$IMAGE_NAME" \
-            "$REPOSITORY" \
-            "$TARGET_REGISTRY" \
-            "$ENFORCE_NAMESPACE"
+        run: reusable-ci container validate-namespace
 
   build-arch:
     name: Build${{ inputs.name && format(' ({0})({1})', inputs.name, matrix.platform) || format(' ({0})', matrix.platform) }}
@@ -219,13 +230,20 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
+          go-version: stable
+          check-latest: true
+      - name: Install reusable-ci binary
+        env:
+          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
+        run: |
+          # publish-dev-container runs on plain ubuntu (no runtime container),
+          # so install the reusable-ci binary directly with `go install`.
+          GOBIN="$RUNNER_TEMP/bin" \
+            go install "github.com/diggsweden/reusable-ci/cmd/reusable-ci@${SCRIPTS_REF}"
+          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Derive arch suffix
         id: arch
         env:
@@ -248,7 +266,7 @@ jobs:
           WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
           CONTAINER_FILE: ${{ inputs['container-file'] }}
         run: |
-          bash .github-shared/scripts/container/validate-artifacts.sh \
+          reusable-ci container validate-artifacts \
             maven \
             "$WORKING_DIRECTORY/target" \
             "$WORKING_DIRECTORY/$CONTAINER_FILE"
@@ -261,14 +279,14 @@ jobs:
       - name: Extract NPM tarball
         if: ${{ contains(inputs['artifact-types'], 'npm') }}
         working-directory: ${{ inputs['working-directory'] }}
-        run: bash "$GITHUB_WORKSPACE/.github-shared/scripts/container/extract-npm-tarball.sh"
+        run: reusable-ci container extract-npm-tarball
       - name: Verify NPM artifacts
         if: ${{ contains(inputs['artifact-types'], 'npm') }}
         env:
           WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
           CONTAINER_FILE: ${{ inputs['container-file'] }}
         run: |
-          bash .github-shared/scripts/container/validate-artifacts.sh \
+          reusable-ci container validate-artifacts \
             npm \
             "$WORKING_DIRECTORY/dist" \
             "$WORKING_DIRECTORY/$CONTAINER_FILE"
@@ -284,7 +302,7 @@ jobs:
           WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
           CONTAINER_FILE: ${{ inputs['container-file'] }}
         run: |
-          bash .github-shared/scripts/container/validate-artifacts.sh \
+          reusable-ci container validate-artifacts \
             gradle \
             "$WORKING_DIRECTORY/build/libs" \
             "$WORKING_DIRECTORY/$CONTAINER_FILE"
@@ -295,7 +313,7 @@ jobs:
           USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
           TARGET_REGISTRY: ${{ inputs.registry }}
           REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
-        run: bash .github-shared/scripts/registry/validate-auth.sh
+        run: reusable-ci publish validate-auth
       - name: Login to Container Registry
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
@@ -352,8 +370,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           IMAGE_NAME: ${{ needs.prep.outputs.image-name }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-          SBOM_SCRIPT_ROOT: .github-shared/scripts/sbom
-        run: bash .github-shared/scripts/sbom/generate-container-sbom-artifacts.sh
+        run: reusable-ci sbom generate-container
       - name: Upload Analyzed-Container SBOMs
         if: *if_sbom_enabled
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -383,7 +400,7 @@ jobs:
           SUFFIX: ${{ steps.arch.outputs.suffix }}
           EXPECTED_NAMES: ${{ inputs['extract-binary-names'] }}
         run: |
-          bash .github-shared/scripts/container/suffix-extracted-binaries.sh \
+          reusable-ci container suffix-extracted-binaries \
             ./extracted-binaries \
             "$SUFFIX" \
             "$EXPECTED_NAMES"
@@ -408,13 +425,20 @@ jobs:
       image: ${{ steps.outputs.outputs.image }}
       digest: ${{ steps.outputs.outputs.digest }}
     steps:
-      - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
+          go-version: stable
+          check-latest: true
+      - name: Install reusable-ci binary
+        env:
+          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
+        run: |
+          # publish-dev-container runs on plain ubuntu (no runtime container),
+          # so install the reusable-ci binary directly with `go install`.
+          GOBIN="$RUNNER_TEMP/bin" \
+            go install "github.com/diggsweden/reusable-ci/cmd/reusable-ci@${SCRIPTS_REF}"
+          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -428,7 +452,7 @@ jobs:
           USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
           TARGET_REGISTRY: ${{ inputs.registry }}
           REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
-        run: bash .github-shared/scripts/registry/validate-auth.sh
+        run: reusable-ci publish validate-auth
       - name: Login to Container Registry
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:

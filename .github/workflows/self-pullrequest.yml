@@ -23,24 +23,51 @@ jobs:
       packages: read
     with:
       project-type: npm
-      reusable-ci-ref: ${{ github.head_ref }}
+      scripts-ref: ${{ github.head_ref }}
       linters.devbasecheck: true
       linters.dependencyreview: true
-      linters.commitlint: false
-      linters.licenselint: false
-      linters.megalint: false
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3.1.0
+      - name: Install mise and project tools
+        run: |
+          source ./scripts/bootstrap/install-mise.sh
+          install_mise
+          mise install
+          # Expose mise-managed binaries to subsequent steps.
+          printf '%s\n' "${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims" >>"$GITHUB_PATH"
+          dirname "$(command -v mise)" >>"$GITHUB_PATH"
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          # renovate: datasource=github-releases depName=casey/just
-          just-version: 1.47.0
-      - name: Setup test dependencies
-        run: just test-setup
+          go-version-file: go.mod
+          check-latest: true
       - name: Validate reusable workflow input defaults
-        run: ./scripts/validate/workflow-input-defaults.sh
+        run: go run ./cmd/reusable-ci validate workflow-input-defaults
       - name: Run tests
         run: just test
+  go:
+    name: Go (build, test, lint)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: go build
+        run: go build -o /tmp/reusable-ci ./cmd/reusable-ci
+      - name: go test
+        run: go test -race -timeout 120s ./...
+      - name: go test e2e
+        run: just test-e2e
+      - name: go test fuzz seed corpora
+        run: just test-fuzz
+      - name: go vet
+        run: go vet ./...
+      - name: smoke — --version
+        run: /tmp/reusable-ci --version

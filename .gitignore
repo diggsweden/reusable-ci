@@ -1,5 +1,5 @@
 .vscode
-
-# Bats test libraries (installed via setup-bats-libs.sh)
-tests/libs/
 .claude
+
+# Go build output
+/bin/

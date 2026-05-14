@@ -17,17 +17,13 @@
 # vs container-first framing). cargo-cyclonedx resolves the dependency graph from
 # Cargo.lock, so the SBOM is accurate without compiling.
 #
-# `cargo install --locked --version` pins cargo-cyclonedx to a reproducible
-# version so the SBOM tool itself can't drift under us.
+# Runs inside the reusable-ci-runtime-rust image — Rust toolchain and
+# cargo-cyclonedx are baked in, so no `cargo install` happens per run.
 #
 name: Cargo SBOM
 on:
   workflow_call:
     inputs:
-      rust-toolchain:
-        description: "Rust toolchain version (e.g., 1.90, stable)"
-        required: true
-        type: string
       working-directory:
         description: "Working directory"
         required: false
@@ -48,10 +44,10 @@ on:
         required: false
         default: true
         type: boolean
-      reusable-ci-ref:
-        description: "Ref of diggsweden/reusable-ci to source shared scripts from"
+      runtime-image:
+        description: "reusable-ci runtime image carrying the Rust toolchain. Pin to a digest or version tag; default tracks main."
         required: false
-        default: "main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-rust-stable:main"
         type: string
 permissions:
   contents: read
@@ -60,6 +56,8 @@ jobs:
     name: Cargo SBOM
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     steps:
@@ -67,37 +65,29 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.branch }}
-      - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      # Cache only what cargo-cyclonedx actually consults: the crates.io
+      # registry index/cache and the git db (for git-source dependencies).
+      # No target/ — this workflow doesn't compile. CARGO_HOME is fixed
+      # at /usr/local/cargo by the runtime image.
+      - name: Cache cargo registry
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
-          fetch-depth: 1
-      - name: Install Rust toolchain
-        env:
-          WORKDIR: ${{ inputs['working-directory'] }}
-          TOOLCHAIN: ${{ inputs['rust-toolchain'] }}
-        run: bash .github-shared/scripts/cargo/install-toolchain.sh
-      # Caches ~/.cargo (registry, git, installed bins) + target/. Keyed by
-      # Cargo.lock so cache invalidates when dependencies change.
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          workspaces: ${{ inputs['working-directory'] }}
+          path: |
+            /usr/local/cargo/registry/index
+            /usr/local/cargo/registry/cache
+            /usr/local/cargo/git/db
+          key: cargo-sbom-${{ runner.os }}-${{ hashFiles(format('{0}/Cargo.lock', inputs['working-directory'])) }}
+          restore-keys: |
+            cargo-sbom-${{ runner.os }}-
       - name: Generate Build SBOM
         id: sbom
         if: ${{ inputs['enable-build-sbom'] }}
         continue-on-error: true
         working-directory: ${{ inputs['working-directory'] }}
-        env:
-          # renovate: datasource=crate depName=cargo-cyclonedx
-          CARGO_CYCLONEDX_VERSION: "0.5.9"
         run: |
-          cargo install --locked cargo-cyclonedx --version "${CARGO_CYCLONEDX_VERSION}"
-          # --all covers every workspace member; single-crate projects get one
-          # bom.json at the crate root. --override-filename normalises the name.
+          # cargo-cyclonedx is baked into the runtime image. --all covers every
+          # workspace member; single-crate projects get one bom.json at the
+          # crate root. --override-filename normalises the name.
           cargo cyclonedx --all --format json --override-filename bom
       - name: Upload Cargo SBOM
         if: steps.sbom.outcome == 'success'
