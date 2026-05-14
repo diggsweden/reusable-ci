@@ -150,6 +150,36 @@ Guideline:
 - prefer small stage contracts over many per-target cross-stage outputs
 - prefer structured stage payloads when they reduce top-level dependency sprawl
 
+## Third-Party Action Rules
+
+Every external action (`uses: <owner>/<repo>@...`) is supply-chain surface
+area: a compromised release, an unreviewed transitive dependency, or an
+opaque shell step running with the workflow's secrets and `GITHUB_TOKEN`.
+Treat each one as an explicit risk decision, not a convenience.
+
+- prefer a direct CLI call or a `scripts/bootstrap/install-<tool>.sh` helper over
+  a Marketplace action that wraps the same binary
+- prefer baking tools into the runtime container over installing them per
+  job — fewer downloads, one audit point
+- when an action **must** be used, pin to a full commit SHA with a version
+  comment, never a floating tag or `@main`
+  (the one exception is `slsa-framework/slsa-github-generator`, which
+  requires tag-based pinning for the provenance to be valid)
+- before adding a new action, check if it duplicates something already
+  available via a runtime-container binary, a `scripts/bootstrap/install-*.sh`
+  helper, or a few lines of bash
+- removing an action is a feature: smaller attack surface, fewer
+  Renovate edges, fewer breakages on upstream rewrites
+- this principle also feeds the GitLab portability story — anything
+  expressible without a Marketplace action runs on both providers
+  unchanged
+
+The exceptions worth keeping are actions that wrap a GitHub-platform
+feature with no CLI equivalent (`actions/checkout`, `actions/{up,down}load-artifact`,
+`actions/cache`, `actions/attest-sbom`), or a build-system primitive that
+would be substantially more code inline (`docker/build-push-action`).
+Everything else should justify its own existence on each review.
+
 ## Validation Expectations
 
 For workflow refactors, run at least:

@@ -26,7 +26,7 @@ jobs:
       actions: read
     secrets: inherit
     with:
-      reusable-ci-ref: v2.7.0
+      scripts-ref: v2.7.0
       artifacts-config: .github/artifacts.yml
       release.attachartifacts: |
         app/build/outputs/apk/demo/release/*.apk

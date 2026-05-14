@@ -32,7 +32,7 @@ See [Workflow Guide](workflows.md) for orchestrator documentation and [Artifacts
 | Component | Purpose | Output | Required Secrets | Use When |
 |-----------|---------|--------|------------------|----------|
 | **publish-github** | Publishes Maven/NPM/Gradle to GitHub Packages | Artifacts in GitHub Packages | GITHUB_TOKEN | Default publishing target |
-| **publish-maven-central** | Publishes Maven libraries to Maven Central | Public Maven artifacts | MAVENCENTRAL_USERNAME, MAVENCENTRAL_PASSWORD | Public libraries (requires build-type: library) |
+| **publish-maven-central** | Publishes Maven libraries to Maven Central | Public Maven artifacts | MAVEN_CENTRAL_USERNAME, MAVEN_CENTRAL_PASSWORD | Public libraries (requires build-type: library) |
 
 #### Container Builders
 
@@ -45,8 +45,8 @@ See [Workflow Guide](workflows.md) for orchestrator documentation and [Artifacts
 
 | Component | Purpose | Creates/Updates | Required Secrets | Use When |
 |-----------|---------|----------------|------------------|----------|
-| **release-github** | GitHub release creation | GitHub release, changelog, signatures | RELEASE_BOT_TOKEN, GPG keys | Any production release |
-| **version-bump** | Version management | Updated version files | GITHUB_TOKEN, RELEASE_BOT_TOKEN | Before releases |
+| **release-github** | GitHub release creation | GitHub release, changelog, signatures | RELEASE_TOKEN, GPG keys | Any production release |
+| **version-bump** | Version management | Updated version files | GITHUB_TOKEN, RELEASE_TOKEN | Before releases |
 | **generate-changelog** | Changelog generation | Formatted changelog | GITHUB_TOKEN | Before releases |
 
 #### Validators
@@ -204,21 +204,15 @@ uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@72b9
 with:
   project-type: maven              # Required: maven, npm, gradle, gradle-android, xcode-ios, cargo, python, go
   base-branch: ""                  # Optional: auto-detects PR target
-  linters.commitlint: true         # Deprecated v3.0: migrate to devbasecheck
-  linters.licenselint: true        # Deprecated v3.0: migrate to devbasecheck
+  linters.devbasecheck: true       # Default — covers commit messages, SPDX/license headers, and filesystem-level multi-language checks
   linters.dependencyreview: true   # Dependency vulnerability review
   security.sast-opengrep: true     # OpenGrep SAST (default; set false to opt out)
   security.sast-opengrep-rules: p/default
   security.sast-opengrep-fail-on-severity: high
-  linters.megalint: true           # Deprecated v3.0: migrate to devbasecheck
   linters.publiccodelint: false    # Publiccode.yml validation
-  linters.devbasecheck: false      # Recommended: replaces deprecated linters
   linters.swiftformat: false       # Swift format for iOS/macOS
   linters.swiftlint: false         # SwiftLint for iOS/macOS
-  linters.clippy: false            # cargo clippy for Rust
-  linters.rustfmt: false           # cargo fmt --check for Rust
-  linters.cargoaudit: false        # cargo audit (RUSTSEC) for Rust
-  reusable-ci-ref: v2.7.0           # Match the pinned workflow release
+  scripts-ref: v3.0.0              # Match the pinned workflow release
 ```
 
 **Behavior:** The orchestrator remains the supported entrypoint. Internally it delegates to the quality stage, which writes a normalized manifest consumed by the top-level PR summary. See [PR Quality Stage Result Contract](workflows.md#pr-quality-stage-result-contract) for the internal schema.
@@ -226,24 +220,6 @@ with:
 ### Lint Workflows
 
 These workflows are automatically called by `pullrequest-orchestrator.yml`.
-
-#### `lint-commit.yml`
-Validates commit messages follow conventional commit format using [gommitlint](https://codeberg.org/itiquette/gommitlint).
-```yaml
-uses: ./.github/workflows/lint-commit.yml
-```
-
-#### `lint-license.yml`
-Checks license compliance using REUSE specifications.
-```yaml
-uses: ./.github/workflows/lint-license.yml
-```
-
-#### `lint-mega.yml`
-Runs MegaLinter for multi-language code quality checks.
-```yaml
-uses: ./.github/workflows/lint-mega.yml
-```
 
 #### `lint-misc.yml`
 Performs miscellaneous validation checks.
@@ -258,7 +234,7 @@ uses: ./.github/workflows/lint-publiccode.yml
 ```
 
 #### `lint-devbase.yml`
-Runs quality checks using devbase-check. Client justfile overrides work both locally and in CI.
+Default lint surface — runs `devbase-check`, which covers commit messages, SPDX/license headers, and filesystem-level multi-language linting. Client `justfile` overrides work both locally and in CI.
 ```yaml
 uses: ./.github/workflows/lint-devbase.yml
 with:
@@ -267,7 +243,7 @@ with:
 
 **Features:**
 - Same `verify.sh` script runs locally and in CI
-- Client justfile overrides (e.g., `lint-license: @echo "Skipping"`) work in CI
+- Client justfile overrides (e.g., `lint-yaml: @echo "Skipping"`) work in CI
 - Generates GitHub Actions summary with pass/fail per linter
 - Version-pinned devbase-check with Renovate auto-updates
 
@@ -292,7 +268,7 @@ with:
 
 The workflow runs directly on the GitHub runner in this branch. The runtime container path is introduced later on the GitLab prep branch.
 
-SARIF is always generated and saved as a workflow artifact. To publish results into GitHub Security / Code Scanning, configure the org or repo secret `SARIF_UPLOAD_TOKEN` and pass secrets with `secrets: inherit`.
+SARIF is always generated and saved as a workflow artifact. To publish results into GitHub Security / Code Scanning, configure the org or repo secret `CODE_SCANNING_TOKEN` and pass secrets with `secrets: inherit`.
 
 #### `security-openssf-scorecard.yml`
 Generates OpenSSF security scorecard for the repository.

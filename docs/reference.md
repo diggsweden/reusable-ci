@@ -3,14 +3,14 @@
 | Variable/Secret | Required For | When Checked | Expected Value | Notes |
 |-----------------|--------------|--------------|----------------|--------|
 | **GITHUB_TOKEN** | All workflows | Always | Valid GitHub token | Provided by GitHub Actions |
-| **RELEASE_BOT_TOKEN** | Release workflows | During release | GitHub PAT | Bot token for pushing commits, tags, and creating releases |
-| **OSPO_BOT_GPG_PUB** | GPG signing | During signing | GPG public key | Public key for verification |
-| **OSPO_BOT_GPG_PRIV** | GPG signing | During signing | Base64 GPG private key | Private key for signing |
-| **OSPO_BOT_GPG_PASS** | GPG signing | During signing | GPG key passphrase | Passphrase for GPG key |
-| **MAVENCENTRAL_USERNAME** | Maven Central publishing | During publish | Sonatype username | Maven Central auth |
-| **MAVENCENTRAL_PASSWORD** | Maven Central publishing | During publish | Sonatype password | Maven Central auth |
+| **RELEASE_TOKEN** | Release workflows | During release | GitHub PAT | Bot token for pushing commits, tags, and creating releases |
+| **RELEASE_GPG_PUBLIC_KEY** | GPG signing | During signing | GPG public key | Public key for verification |
+| **RELEASE_GPG_PRIVATE_KEY** | GPG signing | During signing | Base64 GPG private key | Private key for signing |
+| **RELEASE_GPG_PASSPHRASE** | GPG signing | During signing | GPG key passphrase | Passphrase for GPG key |
+| **MAVEN_CENTRAL_USERNAME** | Maven Central publishing | During publish | Sonatype username | Maven Central auth |
+| **MAVEN_CENTRAL_PASSWORD** | Maven Central publishing | During publish | Sonatype password | Maven Central auth |
 | **NPM_TOKEN** | NPM publishing to npmjs.org | During publish | npmjs.org auth token | NPM public registry auth (not GitHub Packages) |
-| **AUTHORIZED_RELEASE_DEVELOPERS** | Production releases | Pre-release check | Comma-separated usernames | Who can release |
+| **RELEASE_AUTHORIZED_USERS** | Production releases | Pre-release check | Comma-separated usernames | Who can release |
 
 ## Prerequisites Check Matrix
 
@@ -33,7 +33,7 @@
 |----------|------------|------------|------------|
 | **PR Workflow** | `contents: read` | Read code | Cannot checkout |
 | | `packages: read` | Read private packages | Cannot fetch dependencies |
-| | `secrets: inherit` | Pass `SARIF_UPLOAD_TOKEN` | Code Scanning won't show results |
+| | `secrets: inherit` | Pass `CODE_SCANNING_TOKEN` | Code Scanning won't show results |
 | **Release Workflow** | `contents: write` | Create tags/releases | Cannot create release |
 | | `packages: write` | Push packages | Cannot publish artifacts |
 | | `id-token: write` | OIDC for SLSA | No attestation |
@@ -52,16 +52,16 @@
 1. **Don't need to create secrets** - They already exist at DiggSweden org level
 2. **Request access** - Contact your DiggSweden GitHub org owner/admin
 3. **Specify which ones** - Tell them which secrets your repo needs:
-   - Release bot token → Request `RELEASE_BOT_TOKEN`
-   - GPG signing → Request `OSPO_BOT_GPG_PRIV`, `OSPO_BOT_GPG_PASS`, and `OSPO_BOT_GPG_PUB`
-   - Maven Central → Request `MAVENCENTRAL_USERNAME` and `MAVENCENTRAL_PASSWORD`
+   - Release token → Request `RELEASE_TOKEN`
+   - GPG signing → Request `RELEASE_GPG_PRIVATE_KEY`, `RELEASE_GPG_PASSPHRASE`, and `RELEASE_GPG_PUBLIC_KEY`
+   - Maven Central → Request `MAVEN_CENTRAL_USERNAME` and `MAVEN_CENTRAL_PASSWORD`
    - NPM public registry → Request `NPM_TOKEN` (only if publishing to npmjs.org)
-   - Code Scanning upload → Request `SARIF_UPLOAD_TOKEN`
+   - Code Scanning upload → Request `CODE_SCANNING_TOKEN`
 4. **Get enabled** - DiggSweden admin grants your repository access to the secrets
 
 - **No manual configuration** - Developers never touch secret values
 
-### RELEASE_BOT_TOKEN
+### RELEASE_TOKEN
 
 Used for pushing commits, moving tags, and creating GitHub releases.
 
@@ -69,19 +69,19 @@ Used for pushing commits, moving tags, and creating GitHub releases.
 
 Note: GitHub Packages uploads use `GITHUB_TOKEN` (automatic, no configuration needed).
 
-### SARIF_UPLOAD_TOKEN
+### CODE_SCANNING_TOKEN
 
 Used for uploading security scan results (SARIF) to GitHub Security / Code Scanning. Without this token, scans still run, SARIF is still generated, and SARIF files are still saved as workflow artifacts, but results won't appear in Security / Code Scanning.
 
 **Option A — GitHub App (recommended):**
 - Create a GitHub App with `code_scanning_alerts: write` repository permission
 - Install on target repositories
-- Generate installation token and store as org secret `SARIF_UPLOAD_TOKEN`
+- Generate installation token and store as org secret `CODE_SCANNING_TOKEN`
 
 **Option B — Fine-grained PAT:**
 - Create a fine-grained PAT with "Code scanning alerts" set to **Write**
 - Scope to the target repositories
-- Store as org secret `SARIF_UPLOAD_TOKEN`
+- Store as org secret `CODE_SCANNING_TOKEN`
 
 The token is passed to reusable workflows via `secrets: inherit`.
 
@@ -91,13 +91,12 @@ Results appear in the Code Scanning tab grouped by category:
 
 | Category | Scanner | When |
 |----------|---------|------|
-| `megalinter` | MegaLinter | PR quality checks |
 | `dependency-review` | Trivy | PR dependency scan |
 | `opengrep-sast` | OpenGrep | PR SAST scan |
 | `scorecard` | OpenSSF Scorecard | Scheduled analysis |
 | `container-scan` | Trivy | Release container build |
 
-SARIF files are also saved as workflow artifacts (`sarif-megalinter`, `sarif-dependency-review`, `sarif-opengrep`, `sarif-scorecard`, `sarif-container-scan`) regardless of whether the token is configured.
+SARIF files are also saved as workflow artifacts (`sarif-dependency-review`, `sarif-opengrep`, `sarif-scorecard`, `sarif-container-scan`) regardless of whether the token is configured.
 
 ---
 

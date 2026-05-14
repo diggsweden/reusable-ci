@@ -26,12 +26,9 @@ jobs:
       packages: read
       security-events: write
     with:
-      reusable-ci-ref: v2.9.0
+      scripts-ref: v2.9.0
       project-type: cargo
       linters.devbasecheck: true
-      linters.commitlint: false
-      linters.licenselint: false
-      linters.megalint: false
       # Rust quality gates. clippy compiles, so any native-dep crate
       # (rdkafka, openssl-sys, libsasl, ...) needs apt packages below.
       linters.clippy: true

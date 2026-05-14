@@ -80,7 +80,7 @@ jobs:
   release-dev:
     uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@<sha>
     with:
-      project-type: maven
+      artifacts-config: .github/artifacts.yml
       sboms: all                # release-dev-orchestrator uses flat names
 ```
 
@@ -199,7 +199,7 @@ jq '.metadata.component.name, (.components | length)' bom.json
 ## Testing
 
 ```bash
-bats tests/sbom/
+go test ./internal/domain/sbom ./internal/app/sbom ./internal/cli/commands/sbom ./internal/app/build ./scripts/...
 ```
 
 Coverage includes project-type auto-detection, build-layer pickup (working-directory subdirs, multi-module Maven aggregate preference, npm `node_modules/` exclusion), gradle init-script contract, multi-layer runs, and ZIP packaging.

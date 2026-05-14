@@ -100,4 +100,6 @@ When changing workflows or workflow helper scripts:
 3. Run `actionlint .github/workflows/*.yml`.
 4. Parse workflow YAML and check reusable-workflow input compatibility.
 5. Run `bash -n` for touched helper scripts.
-6. Add or update Bats tests when helper scripts are added or changed.
+6. Add or update Go tests for behavior changes. For standalone shell
+   scripts, keep `bash -n`, `shellcheck`, and targeted Go black-box tests
+   next to the scripts when needed.

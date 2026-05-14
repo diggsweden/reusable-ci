@@ -162,8 +162,8 @@ artifacts:
 
 **Requirements:**
 - Sonatype account
-- MAVENCENTRAL_USERNAME secret
-- MAVENCENTRAL_PASSWORD secret
+- MAVEN_CENTRAL_USERNAME secret
+- MAVEN_CENTRAL_PASSWORD secret
 
 See [Publishing Guide](../docs/publishing.md#maven-central) for setup.
 
@@ -254,7 +254,7 @@ jobs:
   dev-release:
     uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
-      reusable-ci-ref: v2.7.0
+      scripts-ref: v2.7.0
       artifacts-config: .github/artifacts.yml
     permissions:
       contents: write

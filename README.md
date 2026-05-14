@@ -80,7 +80,7 @@ Most projects require two or three files:
 ```yaml
 uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
 with:
-  reusable-ci-ref: v2.7.0
+  scripts-ref: v2.7.0
   artifacts-config: .github/artifacts.yml
   release-publisher: github-cli
 ```
@@ -91,7 +91,7 @@ jobs:
   build-maven:
     uses: diggsweden/reusable-ci/.github/workflows/build-maven.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
-      reusable-ci-ref: v2.7.0
+      scripts-ref: v2.7.0
       build-type: app
       java-version: "21"
 
@@ -99,7 +99,7 @@ jobs:
     needs: build-maven
     uses: diggsweden/reusable-ci/.github/workflows/publish-maven-github.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
-      reusable-ci-ref: v2.7.0
+      scripts-ref: v2.7.0
       package-type: maven
       artifact-source: maven-build-artifacts
 
@@ -107,7 +107,7 @@ jobs:
     needs: build-maven
     uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
-      reusable-ci-ref: v2.7.0
+      scripts-ref: v2.7.0
       container-file: Containerfile
       artifact-source: maven-build-artifacts
 ```
@@ -142,23 +142,20 @@ jobs:
         permissions:
           contents: read
           packages: read
-        secrets: inherit  # Pass SARIF_UPLOAD_TOKEN if you want Security / Code Scanning upload
+        secrets: inherit  # Pass CODE_SCANNING_TOKEN if you want Security / Code Scanning upload
         with:
-          reusable-ci-ref: v2.7.0
+          scripts-ref: v2.7.0
           project-type: maven  # or npm, gradle, gradle-android, xcode-ios
           # Recommended: Use devbase-check (lightweight, just+mise-based)
-           linters.devbasecheck: true
-           linters.commitlint: false
-           linters.licenselint: false
-           linters.megalint: false
-           # Optional linters:
-           # linters.dependencyreview: true  # Dependency vulnerability scan
-           # security.sast-opengrep: false   # Opt out of OpenGrep SAST
-           # security.sast-opengrep-rules: p/default
-           # security.sast-opengrep-fail-on-severity: high
-           # linters.publiccodelint: false   # publiccode.yml validation
-           # linters.swiftlint: false        # Swift linting for iOS/macOS
-    ```
+          linters.devbasecheck: true
+          # Optional linters:
+          # linters.dependencyreview: true  # Dependency vulnerability scan
+          # security.sast-opengrep: false   # Opt out of OpenGrep SAST
+          # security.sast-opengrep-rules: p/default
+          # security.sast-opengrep-fail-on-severity: high
+          # linters.publiccodelint: false   # publiccode.yml validation
+          # linters.swiftlint: false        # Swift linting for iOS/macOS
+   ```
 
 3. **Create release workflow** - Trigger builds on tags:
    ```yaml
@@ -200,8 +197,8 @@ jobs:
           packages: write
         secrets: inherit
         with:
-          reusable-ci-ref: v2.7.0
-          project-type: maven  # or npm, gradle, gradle-android, xcode-ios
+          scripts-ref: v2.7.0
+          artifacts-config: .github/artifacts.yml
     ```
 
 5. **Create your first release**:
@@ -222,23 +219,14 @@ jobs:
 └────────────────────────────────┬────────────────────────────────────┘
                                  │
                     ┌────────────▼────────────┐
-                    │   Commit Lint Check     │
-                    │   (conventional commits)│
-                    └────────────┬────────────┘
-                                 │
-                    ┌────────────▼────────────┐
-                    │   License Lint Check    │
-                    │   (SPDX headers)        │
+                    │      Devbase Check      │
+                    │  (commits, SPDX/license,│
+                    │   filesystem linters)   │
                     └────────────┬────────────┘
                                  │
                     ┌────────────▼────────────┐
                     │  Dependency Review      │
                     │  (vulnerability scan)   │
-                    └────────────┬────────────┘
-                                 │
-                    ┌────────────▼────────────┐
-                    │      MegaLint           │
-                    │  (50+ code linters)     │
                     └────────────┬────────────┘
                                  │
                     ┌────────────▼────────────┐

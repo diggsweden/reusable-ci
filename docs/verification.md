@@ -12,18 +12,18 @@ Documentation for verifying code quality and the authenticity and integrity of a
 
 ### Devbase-Check Linting Workflow
 
-The `lint-devbase.yml` workflow provides dynamic, MegaLinter-style output for code quality verification.
+The `lint-devbase.yml` workflow provides dynamic, formatted output for code quality verification.
 
 #### Overview
 
-This lightweight linting workflow automatically discovers and runs linting tasks defined in your project's `justfile`, providing rich formatted output in GitHub Actions similar to MegaLinter but without the overhead.
+This lightweight linting workflow automatically discovers and runs linting tasks defined in your project's `justfile`, providing rich formatted output in GitHub Actions without pulling a multi-GB linter container.
 
 **Key Features:**
 - **Dynamic Discovery**: Automatically finds all `lint-*` tasks in your justfile
 - **Rich Output**: Individual linter results with pass/fail status, timing, and error details
 - **Zero Configuration**: No need to specify which linters to run - adapts automatically
 - **Excludes Fix Tasks**: Automatically skips `*-fix` tasks (e.g., `lint-yaml-fix`)
-- **MegaLinter-Style UI**: Formatted markdown tables in GitHub Actions Summary tab
+- **Formatted UI**: Markdown tables in the GitHub Actions Summary tab
 
 #### Requirements
 
@@ -471,7 +471,7 @@ cosign download attestation \
 
 ### 2. Maven Artifact Verification
 
-Verifies OSPO_BOT signature and artifact integrity.
+Verifies release signature and artifact integrity.
 
 #### Verify GPG Signature
 

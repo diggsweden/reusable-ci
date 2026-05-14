@@ -117,7 +117,7 @@ jobs:
 
 Pin the toolchain via `rust-toolchain.toml` at the repo root so CI and
 local dev share one source of truth. `sbom-cargo.yml` and `lint-cargo.yml`
-auto-detect this file via `scripts/cargo/install-toolchain.sh`.
+auto-detect this file directly.
 
 ## Adding a third service
 

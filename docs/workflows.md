@@ -29,17 +29,11 @@ graph TD
     C --> D[pullrequest-quality-stage.yml]
     D --> E[Project test.yml]
 
-    D --> F[commit-lint]
-    D --> G[license-lint]
     D --> H[dependency-review]
-    D --> I[megalint]
     D --> J[publiccode-lint]
     D --> K[devbase-check-lint]
     D --> L[swift-lint]
-    F --> M[quality-status]
-    G --> M
-    H --> M
-    I --> M
+    H --> M[quality-status]
     J --> M
     K --> M
     L --> M
@@ -72,18 +66,15 @@ The PR orchestrator produces two JSON payloads that drive the quality stage:
 |-------|--------|---------|
 | `project_type` | `inputs.project-type` | Project ecosystem (maven, npm, python) |
 | `base_branch` | `inputs.base-branch` or PR target | Base branch for commit linting |
-| `reusable_ci_ref` | `github.workflow_sha` | Reusable workflow revision used for helper script checkout |
+| `scripts_ref` | `github.workflow_sha` | Reusable workflow revision used for helper script checkout |
 
 **`pr-policy-json`** — quality check toggles:
 
 | Field | Default | Purpose |
 |-------|---------|---------|
-| `commitlint` | `true` | Enable commit message linting (deprecated v3.0) |
-| `licenselint` | `true` | Enable SPDX license header linting (deprecated v3.0) |
+| `devbasecheck` | `true` | Run devbase-check — covers commit messages, SPDX/license headers, and filesystem-level multi-language checks |
 | `dependencyreview` | `true` | Enable dependency vulnerability review |
-| `megalint` | `true` | Enable MegaLinter (deprecated v3.0) |
 | `publiccodelint` | `false` | Enable publiccode.yml linting |
-| `devbasecheck` | `false` | Enable devbase-check (recommended, replaces deprecated linters) |
 | `swiftformat` | `false` | Enable swift-format for iOS/macOS |
 | `swiftlint` | `false` | Enable SwiftLint for iOS/macOS |
 | `swift` | derived | `true` if either swiftformat or swiftlint is enabled |
@@ -98,10 +89,8 @@ The quality stage produces a normalized result payload (`result-json`):
   "result": "success|failure|cancelled",
   "ran": true,
   "targets": {
-    "commitlint": "success|failure|cancelled|skipped",
-    "licenselint": "success|failure|cancelled|skipped",
     "dependencyreview": "success|failure|cancelled|skipped",
-    "megalint": "success|failure|cancelled|skipped",
+    "sastopengrep": "success|failure|cancelled|skipped",
     "publiccodelint": "success|failure|cancelled|skipped",
     "devbasecheck": "success|failure|cancelled|skipped",
     "swift": "success|failure|cancelled|skipped"

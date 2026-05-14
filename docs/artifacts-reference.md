@@ -73,7 +73,7 @@ containers:
 - **Default:** `false`
 - **Use case:** Production libraries that need release approval
 - **Example:** `require-authorization: true`
-- **Requires:** `AUTHORIZED_RELEASE_DEVELOPERS` secret set
+- **Requires:** `RELEASE_AUTHORIZED_USERS` secret set
 
 #### `publish-to`
 
@@ -291,8 +291,8 @@ containers:
 - **Default:** `true`
 - **Example:** `enable-code-signing: true`
 - **Requires secrets:**
-  - `CERTIFICATE_BASE64` - Base64-encoded .p12 certificate
-  - `CERTIFICATE_PASSPHRASE` - Certificate password
+  - `IOS_SIGNING_CERTIFICATE_BASE64` - Base64-encoded .p12 certificate
+  - `IOS_SIGNING_CERTIFICATE_PASSPHRASE` - Certificate password
   - `PROVISIONING_PROFILE_BASE64` - Base64-encoded provisioning profile
   - `KEYCHAIN_PASSWORD` - Temporary keychain password
 
@@ -496,7 +496,7 @@ The v2.x `enable-sbom: bool` field on the container block is removed in v3. Cont
 - **Type:** `boolean`
 - **Description:** Run Trivy vulnerability scan
 - **Default:** `true`
-- **Requires:** `SARIF_UPLOAD_TOKEN` org secret for results to appear in Code Scanning
+- **Requires:** `CODE_SCANNING_TOKEN` org secret for results to appear in Code Scanning
 - **Example:** `enable-scan: true`
 
 #### `target`
@@ -590,8 +590,8 @@ containers:
 
 - **Description:** Maven Central (Sonatype OSSRH)
 - **Requirements:**
-  - `MAVENCENTRAL_USERNAME` secret
-  - `MAVENCENTRAL_PASSWORD` secret
+  - `MAVEN_CENTRAL_USERNAME` secret
+  - `MAVEN_CENTRAL_PASSWORD` secret
   - `build-type: library` (required)
 - **Applies to:** Maven only
 - **Note:** Requires Sonatype account and approved groupId
@@ -637,7 +637,7 @@ jobs:
   release:
     uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
-      reusable-ci-ref: v2.7.0
+      scripts-ref: v2.7.0
       artifacts-config: .github/artifacts.yml
       release-publisher: github-cli
 ```
@@ -760,8 +760,8 @@ artifacts:
 
 **Required Secrets:**
 ```text
-CERTIFICATE_BASE64
-CERTIFICATE_PASSPHRASE
+IOS_SIGNING_CERTIFICATE_BASE64
+IOS_SIGNING_CERTIFICATE_PASSPHRASE
 PROVISIONING_PROFILE_BASE64
 KEYCHAIN_PASSWORD
 APP_STORE_CONNECT_ISSUER_ID
@@ -940,7 +940,7 @@ jobs:
       attestations: write
     secrets: inherit
     with:
-      reusable-ci-ref: v2.7.0
+      scripts-ref: v2.7.0
       artifacts-config: .github/artifacts.yml
       changelog-creator: git-cliff
       release-publisher: github-cli

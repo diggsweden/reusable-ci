@@ -224,7 +224,7 @@ Full normalized matrix planned in a follow-up PR.
 |---|---|
 | Pattern | TBD |
 | project-type identifier | `python` |
-| Status | Reserved — recognized in `parse-artifacts-config.sh` but no workflows implement it yet |
+| Status | Reserved — recognized in the Go config schema, but no workflows implement it yet |
 
 Python's build tool landscape (pip, poetry, uv, hatch, flit, setuptools)
 has no canonical winner, so the eventual choice between artefact-first
@@ -239,7 +239,7 @@ only, container does the build) depends on the first real caller.
 |---|---|
 | Pattern | TBD (likely container-first by analogy with cargo) |
 | project-type identifier | `go` |
-| Status | Reserved — recognized in `parse-artifacts-config.sh` but no workflows implement it yet |
+| Status | Reserved — recognized in the Go config schema, but no workflows implement it yet |
 
 Go's tool and language share a name (`go build`, `go.mod`). When
 implemented, it'll likely follow container-first (cargo's shape) since Go also
@@ -253,9 +253,8 @@ When adding support for a new ecosystem:
 
 1. Pick the pattern that matches how the language actually ships in
    production (don't force-fit).
-2. Add the project-type identifier to `VALID_PROJECT_TYPES` in
-   `scripts/config/parse-artifacts-config.sh` (and `SBOM_SUPPORTED_TYPES`
-   if it produces SBOMs).
+2. Add the project-type identifier to `internal/domain/config/schema.go`
+   (`ValidProjectTypes`, and `SBOMSupportedTypes` if it produces SBOMs).
 3. For artefact-first: add `build-<tool>.yml`. For container-first: add
    `sbom-<tool>.yml` plus document the caller's Containerfile contract.
 4. Wire into `release-build-stage.yml` matrix (if a build/sbom workflow

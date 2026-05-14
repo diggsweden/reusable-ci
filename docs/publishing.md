@@ -192,8 +192,8 @@ If you need custom repository configuration:
   <servers>
     <server>
       <id>central</id>
-      <username>${env.MAVENCENTRAL_USERNAME}</username>
-      <password>${env.MAVENCENTRAL_PASSWORD}</password>
+      <username>${env.MAVEN_CENTRAL_USERNAME}</username>
+      <password>${env.MAVEN_CENTRAL_PASSWORD}</password>
     </server>
   </servers>
 </settings>
@@ -437,7 +437,7 @@ jobs:
   release:
     uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
-      reusable-ci-ref: v2.7.0
+      scripts-ref: v2.7.0
       artifacts-config: .github/artifacts.yml
       container.registry: docker.io
       container.registry-username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -459,7 +459,7 @@ jobs:
   release:
     uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
-      reusable-ci-ref: v2.7.0
+      scripts-ref: v2.7.0
       artifacts-config: .github/artifacts.yml
       container.registry: registry.example.com
       container.registry-username: ${{ secrets.REGISTRY_USERNAME }}
@@ -540,8 +540,8 @@ If your app uses XcodeGen, keep `project` or `workspace` configured as well so t
 
 ```text
 # Code Signing
-CERTIFICATE_BASE64              # Base64-encoded .p12 distribution certificate
-CERTIFICATE_PASSPHRASE          # Certificate password
+IOS_SIGNING_CERTIFICATE_BASE64              # Base64-encoded .p12 distribution certificate
+IOS_SIGNING_CERTIFICATE_PASSPHRASE          # Certificate password
 PROVISIONING_PROFILE_BASE64     # Base64-encoded provisioning profile
 KEYCHAIN_PASSWORD               # Temporary keychain password (any value)
 

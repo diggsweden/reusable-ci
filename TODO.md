@@ -9,11 +9,3 @@ the value from the last-completing matrix leg, which may not be deterministic.
 
 Single-artifact projects (the common case) are unaffected. For multi-artifact projects,
 consider serializing version-bump or consolidating it into a single job.
-
-## Rename `reusable-ci-ref` output in orchestrator
-
-The `parse-config` job output `reusable-ci-ref` holds the pinned commit SHA of the
-scripts checkout (resolved before any tag movement). The name suggests it is the
-original ref input, but it is actually a resolved SHA used only for checking out
-helper scripts. Consider renaming to `reusable-ci-sha` or `scripts-ref` to make
-the intent clearer.

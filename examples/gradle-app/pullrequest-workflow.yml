@@ -25,13 +25,10 @@ jobs:
       contents: read
       packages: read
     with:
-      reusable-ci-ref: v2.7.0
+      scripts-ref: v2.7.0
       project-type: gradle
       # Recommended: Use devbase-check (lightweight, just+mise-based)
       linters.devbasecheck: true
-      linters.commitlint: false
-      linters.licenselint: false
-      linters.megalint: false
       # OpenGrep SAST is enabled by default. Opt out if needed:
       # security.sast-opengrep: false
       # security.sast-opengrep-rules: p/default
