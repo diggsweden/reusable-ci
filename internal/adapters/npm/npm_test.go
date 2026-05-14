@@ -1,0 +1,51 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+// SPDX-License-Identifier: CC0-1.0
+
+package npm_test
+
+import (
+	"bytes"
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/diggsweden/reusable-ci/internal/adapters/npm"
+	"github.com/diggsweden/reusable-ci/internal/testutil/mockbinary"
+)
+
+func TestNew(t *testing.T) {
+	if npm.New() == nil {
+		t.Fatal("New returned nil")
+	}
+}
+
+func TestAdapter_RunInherit(t *testing.T) {
+	m := mockbinary.New(t)
+	m.Add("npm", `printf 'npm %s\n' "$*"; printf 'warn\n' >&2`)
+	a := &npm.Adapter{Bin: m.Path("npm")}
+
+	var stdout, stderr bytes.Buffer
+	if err := a.RunInherit(context.Background(), "", &stdout, &stderr, "version", "1.2.3", "--no-git-tag-version"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "npm version 1.2.3 --no-git-tag-version") {
+		t.Errorf("stdout = %q", stdout.String())
+	}
+	if strings.TrimSpace(stderr.String()) != "warn" {
+		t.Errorf("stderr = %q", stderr.String())
+	}
+	if got := m.Invocations("npm")[0].Args; len(got) != 3 || got[0] != "version" || got[1] != "1.2.3" || got[2] != "--no-git-tag-version" {
+		t.Errorf("args = %v", got)
+	}
+}
+
+func TestAdapter_RunInheritWrapsFailure(t *testing.T) {
+	m := mockbinary.New(t)
+	m.Add("npm", `exit 7`)
+	a := &npm.Adapter{Bin: m.Path("npm")}
+
+	err := a.RunInherit(context.Background(), "", &bytes.Buffer{}, &bytes.Buffer{}, "version", "1.2.3")
+	if err == nil || !strings.Contains(err.Error(), "version 1.2.3") {
+		t.Fatalf("err = %v", err)
+	}
+}
