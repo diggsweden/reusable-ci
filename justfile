@@ -147,7 +147,7 @@ lint-actions:
 # Validate reusable workflow contracts
 [group('lint')]
 lint-workflow-contracts:
-    @./scripts/validate/workflow-input-defaults.sh
+	@go run ./cmd/reusable-ci validate workflow-input-defaults
 
 # Check license compliance
 [group('lint')]
@@ -194,66 +194,119 @@ lint-shell-fmt-fix:
 # TEST - Run tests
 # ==================================================================================== #
 
-# ▪ Run all tests
+# ▪ Run all Go tests (unit + integration)
 [group('test')]
-test:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    if ! command -v bats &>/dev/null; then
-        printf "Error: bats not installed. Run 'mise install' first.\n" >&2
-        exit 1
-    fi
-    [[ -d tests/libs ]] || ./tests/setup-bats-libs.sh
-    bats tests/*/*.bats
-    result=$?
-    if [[ $result -le 1 ]]; then exit 0; else exit $result; fi
+test: test-unit test-integration
 
-# Setup test dependencies (bats libraries)
+# Run only Go unit tests (no //go:build integration tag — no real gpg / git / etc. required)
 [group('test')]
-test-setup:
-    @./tests/setup-bats-libs.sh
+test-unit:
+    @go test -count=1 -race -buildvcs=false ./...
 
-# Run tests with verbose output
+# Run Go integration tests (requires real gpg / git on PATH)
 [group('test')]
-test-verbose:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    if ! command -v bats &>/dev/null; then
-        printf "Error: bats not installed. Run 'mise install' first.\n" >&2
-        exit 1
-    fi
-    [[ -d tests/libs ]] || ./tests/setup-bats-libs.sh
-    bats --verbose-run tests/*/*.bats
-    result=$?
-    if [[ $result -le 1 ]]; then exit 0; else exit $result; fi
+test-integration:
+    @go test -tags=integration -count=1 -race -buildvcs=false ./...
 
-# Run specific test file
+# Run binary end-to-end tests (builds the reusable-ci binary and exercises it as a black box)
 [group('test')]
-test-file file:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    if ! command -v bats &>/dev/null; then
-        printf "Error: bats not installed. Run 'mise install' first.\n" >&2
-        exit 1
-    fi
-    [[ -d tests/libs ]] || ./tests/setup-bats-libs.sh
-    bats "tests/{{file}}"
-    result=$?
-    if [[ $result -le 1 ]]; then exit 0; else exit $result; fi
+test-e2e:
+    @go test -tags=e2e -count=1 -buildvcs=false ./cmd/...
 
-# Run tests matching a filter
+# Run unit tests with verbose output
 [group('test')]
-test-filter filter:
+test-unit-verbose:
+    @go test -v -count=1 -race -buildvcs=false ./...
+
+# Run integration tests with verbose output
+[group('test')]
+test-integration-verbose:
+    @go test -v -tags=integration -count=1 -race -buildvcs=false ./...
+
+# Run binary end-to-end tests with verbose output
+[group('test')]
+test-e2e-verbose:
+    @go test -v -tags=e2e -count=1 -buildvcs=false ./cmd/...
+
+# Run all tests with verbose output
+[group('test')]
+test-verbose: test-unit-verbose test-integration-verbose
+
+# Run fuzz seed corpora only (CI-safe)
+[group('test')]
+test-fuzz:
+    @go test -run=Fuzz ./...
+
+# Run active fuzzing for all discovered fuzz tests
+[group('test')]
+test-fuzz-run fuzztime="14s":
     #!/usr/bin/env bash
-    set -uo pipefail
-    if ! command -v bats &>/dev/null; then
-        printf "Error: bats not installed. Run 'mise install' first.\n" >&2
-        exit 1
-    fi
-    [[ -d tests/libs ]] || ./tests/setup-bats-libs.sh
-    bats -f "{{filter}}" tests/*/*.bats
-    result=$?
-    if [[ $result -le 1 ]]; then exit 0; else exit $result; fi
+    set -euo pipefail
+    FUZZTIME="{{fuzztime}}"
+    while IFS= read -r pkg; do
+        while IFS= read -r testname; do
+            [[ -n "$testname" ]] || continue
+            go test "$pkg" -run=^$ -fuzz="^${testname}$" -fuzztime="$FUZZTIME"
+        done < <(go test -list '^Fuzz' "$pkg" 2>/dev/null | grep '^Fuzz' || true)
+    done < <(go list ./...)
+
+# Run unit + integration coverage profile
+[group('test')]
+test-coverage:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -f bin/coverage.out bin/coverage.html
+    mkdir -p bin
+    go test -tags=integration -count=1 -race -buildvcs=false -coverprofile=bin/coverage.out ./...
+    go tool cover -html=bin/coverage.out -o=bin/coverage.html
+    printf 'Coverage written to %s and %s\n' "bin/coverage.out" "bin/coverage.html"
+
+# Generate merged coverage plus HTML report (alias for test-coverage)
+[group('test')]
+test-coverage-html: test-coverage
+
+# Run a single Go test by name (e.g. `just test-go-one TestClassify`)
+[group('test')]
+test-go-one name:
+    @go test -v -count=1 -race -run "{{name}}" ./...
+
+# ==================================================================================== #
+# LINT-GO - golangci-lint
+# ==================================================================================== #
+
+# ▪ Run golangci-lint with the repo's .golangci.yml
+[group('lint')]
+lint-go:
+    @golangci-lint run ./...
+
+# Run golangci-lint with auto-fix where supported
+[group('lint-fix')]
+lint-go-fix:
+    @golangci-lint run --fix ./...
+
+# Run all Go static analysis tools (vet + lint + test)
+[group('lint')]
+verify-go:
+    @go vet ./...
+    @golangci-lint run ./...
+    @go test -count=1 -race -buildvcs=false ./...
+
+# ==================================================================================== #
+# DOCS - Generated documentation
+# ==================================================================================== #
+
+# ▪ Regenerate docs/cli-reference.md from the urfave/cli command tree
+[group('docs')]
+gen-cli-reference:
+    @go run ./cmd/gen-cli-reference > docs/cli-reference.md
+    @printf "Regenerated docs/cli-reference.md\n"
+
+# Verify docs/cli-reference.md is in sync with the CLI surface.
+# Thin wrapper around the TestDocsCLIReferenceInSync go-test that
+# already gates PR merges via the standard test infrastructure.
+[group('docs')]
+check-cli-reference:
+    @go test ./internal/cli/docs/... -run '^TestDocsCLIReferenceInSync$' -count=1
 
 # ==================================================================================== #
 # INTERNAL
