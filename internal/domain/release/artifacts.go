@@ -1,0 +1,67 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+// SPDX-License-Identifier: CC0-1.0
+
+// Package release holds pure release-flow domain helpers — file
+// discovery, SBOM/checksum policy, etc. Adapter calls and file I/O
+// live in app/release.
+package release
+
+import (
+	"path/filepath"
+	"strings"
+)
+
+// ReleaseArtifactExtensions is the set of file extensions considered
+// release artefacts. Mirrors `ci_find_release_artifacts` in
+// scripts/ci/output.sh.
+var ReleaseArtifactExtensions = []string{
+	".jar", ".tgz", ".tar.gz", ".zip", ".war",
+}
+
+// IsReleaseArtifact reports whether path looks like a release artefact:
+// has one of the recognised extensions and is not a Maven "original-*.jar"
+// (those are pre-shaded copies kept for diagnostics).
+func IsReleaseArtifact(path string) bool {
+	base := filepath.Base(path)
+
+	if strings.HasPrefix(base, "original-") && strings.HasSuffix(base, ".jar") {
+		return false
+	}
+	for _, ext := range ReleaseArtifactExtensions {
+		if strings.HasSuffix(base, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// SBOMFilePatterns is the list of glob patterns the SBOM zip + checksum
+// flows look for in the working directory.
+var SBOMFilePatterns = []string{
+	"*-sbom.spdx.json",
+	"*-sbom.cyclonedx.json",
+}
+
+// AnalyzedContainerSBOMPattern matches per-arch / per-container SBOMs that
+// land in ./sbom-artifacts/ from publish-container.yml.
+const AnalyzedContainerSBOMPattern = "*-analyzed-container-sbom.*.json"
+
+// ChecksumsFile is the canonical filename for the SHA256 manifest.
+const ChecksumsFile = "checksums.sha256"
+
+// DefaultReleaseArtifactsDir is the cwd-relative directory release-flow
+// commands scan for build outputs by default. Mirrors the bash
+// $RELEASE_ARTIFACTS_DIR fallback. Keep callers using this constant
+// rather than the literal string so the convention has one home.
+const DefaultReleaseArtifactsDir = "./release-artifacts"
+
+// DefaultSBOMArtifactsDir is the cwd-relative directory containing
+// publish-container SBOMs (one per architecture / per container).
+// Mirrors $SBOM_DIR.
+const DefaultSBOMArtifactsDir = "./sbom-artifacts"
+
+// DefaultReleaseNotesFile is the canonical filename for the markdown
+// release notes consumed by `gh release create --notes-file`. CLI flag
+// defaults and app-layer empty-string fallbacks both reference this
+// constant so the value has one home.
+const DefaultReleaseNotesFile = "release-notes.md"

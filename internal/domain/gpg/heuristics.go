@@ -1,0 +1,69 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+// SPDX-License-Identifier: CC0-1.0
+
+package gpg
+
+import (
+	"encoding/base64"
+	"fmt"
+	"strings"
+
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+)
+
+// AgentConfig is the gpg-agent.conf content that import-gpg-key writes
+// when a passphrase is provided. Matches the upstream
+// crazy-max/ghaction-import-gpg defaults so cached passphrases live for
+// the duration of the job.
+const AgentConfig = `default-cache-ttl 21600
+max-cache-ttl 31536000
+allow-preset-passphrase
+`
+
+// IsArmored reports whether the input is an ASCII-armored PGP key
+// (the "-----BEGIN PGP …-----" header). Same heuristic the upstream
+// action uses: anything else is treated as base64.
+func IsArmored(key string) bool {
+	trimmed := strings.TrimLeft(key, "\n")
+	return strings.HasPrefix(trimmed, "-----")
+}
+
+// DecodeKey returns the raw key bytes from either an armored input
+// (passed through unchanged) or a base64-encoded armored input
+// (decoded once).
+func DecodeKey(key string) ([]byte, error) {
+	if IsArmored(key) {
+		return []byte(key), nil
+	}
+	// Tolerate whitespace in the base64 (some workflow callers wrap their
+	// secrets across multiple lines).
+	cleaned := strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\t', '\n', '\r':
+			return -1
+		}
+		return r
+	}, key)
+	out, err := base64.StdEncoding.DecodeString(cleaned)
+	if err != nil {
+		return nil, fmt.Errorf("decode base64 key: %w: %w", err, errs.ErrMalformedInput)
+	}
+	return out, nil
+}
+
+// HexEncodePassphrase returns the uppercase-hex byte representation of
+// the input. UTF-8-faithful: matches the bash `od -An -tx1 | tr -d ' \n'
+// | tr 'a-f' 'A-F'` exactly. Used as the PRESET_PASSPHRASE argument to
+// gpg-connect-agent (sent via stdin so the value never appears in `ps`).
+func HexEncodePassphrase(passphrase string) string {
+	if passphrase == "" {
+		return ""
+	}
+	const hex = "0123456789ABCDEF"
+	out := make([]byte, 0, len(passphrase)*2)
+	for i := range len(passphrase) {
+		c := passphrase[i]
+		out = append(out, hex[c>>4], hex[c&0x0F])
+	}
+	return string(out)
+}
