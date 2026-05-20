@@ -27,3 +27,12 @@ type CommitInfo struct {
 	Message string
 	Body    string
 }
+
+// TaggerInfo is the result of a TaggerInfo lookup on an annotated tag.
+// Tagger is "Name <email>"; Date is the tagger date. Mirrors CommitInfo
+// for the tag-object metadata path so callers get a self-describing value
+// instead of a positional (string, string) pair.
+type TaggerInfo struct {
+	Tagger string
+	Date   string
+}

@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+# SPDX-License-Identifier: CC0-1.0
+#
+# Resolve the uploaded artifact name(s) for a given project type. Emits
+# GitHub Actions outputs on stdout:
+#   name=<build-artifact-name>
+#   sbom-name=<sbom-artifact-name>
+#
+# For gradle, ARTIFACT_NAME may be set to honour the `artifact-name` input
+# that build-gradle-app.yml passes through when a matrix dispatch uses a
+# user-defined name from artifacts.yml. Other stacks have a fixed upload
+# name so the env var is ignored there.
+set -euo pipefail
+
+main() {
+  readonly PROJECT_TYPE="${1:?Usage: $0 <project-type>}"
+
+  case "$PROJECT_TYPE" in
+  maven)
+    printf "name=maven-build-artifacts\n"
+    printf "sbom-name=maven-build-sbom\n"
+    ;;
+  npm)
+    printf "name=npm-build-artifacts\n"
+    printf "sbom-name=npm-build-sbom\n"
+    ;;
+  gradle)
+    # Pair SBOM name with build artifact name so matrix dispatch doesn't
+    # collide. Mirrors the logic in build-gradle-app.yml.
+    if [[ -n "${ARTIFACT_NAME:-}" ]]; then
+      printf "name=%s\n" "$ARTIFACT_NAME"
+      printf "sbom-name=%s-sbom\n" "$ARTIFACT_NAME"
+    else
+      printf "name=gradle-build-artifacts\n"
+      printf "sbom-name=gradle-build-sbom\n"
+    fi
+    ;;
+  python)
+    printf "name=python-build-artifacts\n"
+    printf "sbom-name=python-build-sbom\n"
+    ;;
+  go)
+    printf "name=go-build-artifacts\n"
+    printf "sbom-name=go-build-sbom\n"
+    ;;
+  cargo)
+    # sbom-cargo.yml emits a manifest-derived Build SBOM only — the actual
+    # binary is produced inside the Containerfile during publish-stage
+    # (container-first; see docs/sbom.md).
+    #
+    # When release-build-stage's matrix dispatches sbom-cargo per artefact,
+    # uploads are namespaced as `${artefact-name}-cargo-build-sbom` to avoid
+    # collisions in multi-cargo-artefact workspaces. Mirrors gradle pairing.
+    # `name` and `sbom-name` are identical because the workflow only
+    # produces an SBOM artifact.
+    if [[ -n "${ARTIFACT_NAME:-}" ]]; then
+      printf "name=%s-cargo-build-sbom\n" "$ARTIFACT_NAME"
+      printf "sbom-name=%s-cargo-build-sbom\n" "$ARTIFACT_NAME"
+    else
+      printf "name=cargo-build-sbom\n"
+      printf "sbom-name=cargo-build-sbom\n"
+    fi
+    ;;
+  *)
+    printf "name=build-artifacts\n"
+    printf "sbom-name=build-sbom\n"
+    ;;
+  esac
+}
+
+main "$@"

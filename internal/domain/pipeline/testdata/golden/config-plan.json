@@ -29,7 +29,7 @@
         "project_type": "npm",
         "working_directory": "apps/web",
         "publish_to": [
-          "github-packages",
+          "forge-packages",
           "npmjs"
         ],
         "sboms": "all",
@@ -91,7 +91,7 @@
         "project_type": "npm",
         "working_directory": "apps/web",
         "publish_to": [
-          "github-packages",
+          "forge-packages",
           "npmjs"
         ],
         "sboms": "all",
@@ -152,13 +152,13 @@
     ],
     "cargo_artifact_first": [],
     "cargo_container_first": [],
-    "github_packages": [
+    "forge_packages": [
       {
         "name": "web",
         "project_type": "npm",
         "working_directory": "apps/web",
         "publish_to": [
-          "github-packages",
+          "forge-packages",
           "npmjs"
         ],
         "sboms": "all",
@@ -234,6 +234,11 @@
   "fallback_project_type": "maven",
   "sign": {
     "method": "gpg",
-    "requires_id_token": false
+    "requires_id_token": false,
+    "imports_gpg_key": true,
+    "signs_containers": false
+  },
+  "git_signing": {
+    "method": "gpg"
   }
 }

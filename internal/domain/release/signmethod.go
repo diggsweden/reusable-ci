@@ -6,7 +6,7 @@ package release
 import (
 	"fmt"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // SignMethod selects how `release sign` produces the per-artefact

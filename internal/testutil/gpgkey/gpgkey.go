@@ -21,7 +21,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/testutil/testenv"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testenv"
 )
 
 // Process-wide GPG keyring lock state — must be package-level because

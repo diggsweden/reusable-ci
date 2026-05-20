@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/testutil/fakemanifestsink"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakemanifestsink"
 )
 
 type manifestBody struct {

@@ -6,22 +6,19 @@ SPDX-License-Identifier: CC0-1.0
 
 # Publishing Guide
 
-Configure and verify the supported publishing targets — Maven Central,
-GitHub Packages, container registries, App Store Connect, and Google
-Play. Per-target sections cover prerequisites, the `artifacts.yml`
-fields and secrets each one needs, and the consumer-side fetch
-commands.
+Complete guide to publishing artifacts to different registries.
 
-## Targets at a glance
+## Overview
 
-| Target                    | Artefact types     | Authentication              |
-|---------------------------|--------------------|-----------------------------|
-| Maven Central             | Maven libraries    | Sonatype credentials        |
-| GitHub Packages (Maven)   | Maven artefacts    | `GITHUB_TOKEN` (automatic)  |
-| GitHub Packages (NPM)     | NPM packages       | `GITHUB_TOKEN` (automatic)  |
-| Container registries      | Container images   | `GITHUB_TOKEN` or registry-password |
-| Apple App Store           | iOS / macOS apps   | App Store Connect API v2    |
-| Google Play Store         | Android apps       | Service Account JSON        |
+The reusable workflows support multiple publishing targets:
+
+| Target | Artifact Types | Authentication |
+|--------|---------------|----------------|
+| **Maven Central** | Maven libraries | Sonatype credentials |
+| **npmjs.org** | NPM packages | NPM token |
+| **Container Registries** | Container images | Token/credentials |
+| **Apple App Store** | iOS/macOS apps | App Store Connect API |
+| **Google Play Store** | Android apps | Service Account JSON |
 
 ---
 
@@ -29,7 +26,7 @@ commands.
 
 ```bash
 # Configure npm to use GitHub Packages
-npm config set @your-github-org:registry https://npm.pkg.github.com
+npm config set @diggsweden:registry https://npm.pkg.github.com
 npm config set //npm.pkg.github.com/:_authToken YOUR_GITHUB_TOKEN
 ```
 
@@ -37,26 +34,25 @@ npm config set //npm.pkg.github.com/:_authToken YOUR_GITHUB_TOKEN
 
 ```bash
 # Pull image
-podman pull ghcr.io/<owner>/<repo>:v1.0.0
+podman pull ghcr.io/diggsweden/repo-name:v1.0.0
 ```
 
 ---
 
 ## Maven Central
 
-### Prerequisites
+### Maven Central Prerequisites
 
-1. **GPG Key Setup** — configure `RELEASE_GPG_PRIVATE_KEY`,
-   `RELEASE_GPG_PASSPHRASE`, and `RELEASE_GPG_PUBLIC_KEY` as repository
-   or organization secrets.
+1. **GPG Key Setup**
+   - Already configured at DiggSweden org level
 
-2. **Maven Central Credentials** — configure `MAVEN_CENTRAL_USERNAME`
-   and `MAVEN_CENTRAL_PASSWORD` the same way.
+2. **Maven Central Credentials**
+   - Already configured at DiggSweden org level
 
 ### Configuration
 
 ```yaml
-# .reusable-ci/artifacts.yml
+# .github/artifacts.yml
 artifacts:
   - name: my-library
     project-type: maven
@@ -78,14 +74,14 @@ Your `pom.xml` must include:
 ```xml
 <project>
   <!-- Required metadata -->
-  <groupId>com.example</groupId>
+  <groupId>se.digg</groupId>
   <artifactId>my-library</artifactId>
   <version>1.0.0</version>
   <packaging>jar</packaging>
 
   <name>My Library</name>
   <description>A brief description</description>
-  <url>https://github.com/<owner>/my-library</url>
+  <url>https://github.com/diggsweden/my-library</url>
 
   <!-- Required license -->
   <licenses>
@@ -99,17 +95,17 @@ Your `pom.xml` must include:
   <developers>
     <developer>
       <name>Your Name</name>
-      <email>your.email@example.com</email>
-      <organization>Your Organization</organization>
-      <organizationUrl>https://example.com</organizationUrl>
+      <email>your.email@digg.se</email>
+      <organization>Digg</organization>
+      <organizationUrl>https://www.digg.se</organizationUrl>
     </developer>
   </developers>
 
   <!-- Required SCM info -->
   <scm>
-    <connection>scm:git:git://github.com/<owner>/my-library.git</connection>
-    <developerConnection>scm:git:ssh://github.com:<owner>/my-library.git</developerConnection>
-    <url>https://github.com/<owner>/my-library/tree/main</url>
+    <connection>scm:git:git://github.com/diggsweden/my-library.git</connection>
+    <developerConnection>scm:git:ssh://github.com:diggsweden/my-library.git</developerConnection>
+    <url>https://github.com/diggsweden/my-library/tree/main</url>
   </scm>
 
   <build>
@@ -196,8 +192,8 @@ If you need custom repository configuration:
   <servers>
     <server>
       <id>central</id>
-      <username>${env.MAVEN_CENTRAL_USERNAME}</username>
-      <password>${env.MAVEN_CENTRAL_PASSWORD}</password>
+      <username>${env.MAVENCENTRAL_USERNAME}</username>
+      <password>${env.MAVENCENTRAL_PASSWORD}</password>
     </server>
   </servers>
 </settings>
@@ -210,25 +206,21 @@ config:
   settings-path: .mvn/settings.xml
 ```
 
-### Release Process
+### Maven Central Release Process
 
-1. **Request a release** — push a SIGNED request tag:
+1a. **Tag your release:**
 
    ```bash
-   git tag -s release-request/v1.0.0 -m "Release v1.0.0"
-   git push origin release-request/v1.0.0
+   git tag -s v1.0.0 -m "Release v1.0.0"
+   git push origin v1.0.0
    ```
 
-   reusable-ci verifies your signature (against the committed allowlist, when
-   enabled), bumps the version + changelog, then **creates the immutable
-   `v1.0.0` release tag once** at the bump commit — no tag is force-pushed or
-   mutated. Your signed `release-request/v1.0.0` tag remains as the
-   authorisation anchor, and the bot's release commit records you as the
-   original tagger (`Release-Authorized-By` / `Co-authored-by` trailers).
+1b. **or, Tag your SNAPSHOT release:**
 
-   The reusable-ci example release workflows trigger on `release-request/v*`.
-   (SNAPSHOT/dev builds are a separate `workflow_dispatch` flow — see the
-   snapshot orchestrator — and do not use release-request tags.)
+   ```bash
+   git tag -s v1.0.0-SNAPSHOT -m "v1.0.0-SNAPSHOT"
+   git push origin v1.0.0
+   ```
 
 2. **Workflow automatically:**
    - Builds library with sources and javadoc
@@ -248,7 +240,7 @@ Users add to their `pom.xml`:
 
 ```xml
 <dependency>
-  <groupId>com.example</groupId>
+  <groupId>se.digg</groupId>
   <artifactId>my-library</artifactId>
   <version>1.0.0</version>
 </dependency>
@@ -269,7 +261,7 @@ To consume `-SNAPSHOT` versions, add snapshot repository to `~/.m2/settings.xml`
       <repositories>
         <repository>
           <id>maven-snapshots</id>
-          <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+          <url>https://s01.oss.sonatype.org/content/repositories/snapshots/</url>
           <releases>
             <enabled>false</enabled>
           </releases>
@@ -292,7 +284,7 @@ Then use snapshot version in your project:
 
 ```xml
 <dependency>
-  <groupId>com.example</groupId>
+  <groupId>se.digg</groupId>
   <artifactId>my-library</artifactId>
   <version>1.0.0-SNAPSHOT</version>
 </dependency>
@@ -302,29 +294,28 @@ Then use snapshot version in your project:
 
 ---
 
-## NPM Packages (GitHub Packages)
+## NPM Registry (npmjs.org)
 
-NPM publishing goes to `npm.pkg.github.com` and authenticates with the
-auto-provided `GITHUB_TOKEN`; no separate npm token is needed. The
-package name must use the `@<owner>/` scope, with `<owner>` matching
-the lowercased GitHub repository owner.
+### NPM Registry Overview
 
-Public-registry publishing to `npmjs.org` is not implemented today.
-The `npmjs` `publish-to` value is reserved in the schema; current
-config validation rejects it.
+- **Public distribution** - Available to all Node.js developers
+- **Scoped packages** - Use `@diggsweden/` prefix
+- **No approval needed** - Publish immediately
 
-### Configuration
+### NPM Configuration
 
 ```yaml
-# .reusable-ci/artifacts.yml
+# .github/artifacts.yml
 artifacts:
   - name: my-package
     project-type: npm
     working-directory: packages/my-package
     publish-to:
-      - github-packages  # Publish to GitHub Packages
+      - github-packages  # Also publish to GitHub
+      - npmjs            # Publish to npmjs.org
     config:
       node-version: 24
+      npm-tag: latest    # or 'next', 'beta'
 ```
 
 ### Package Requirements
@@ -333,7 +324,7 @@ Your `package.json` must include:
 
 ```json
 {
-  "name": "@your-github-org/my-package",
+  "name": "@diggsweden/my-package",
   "version": "1.0.0",
   "description": "A brief description",
   "main": "dist/index.js",
@@ -341,7 +332,7 @@ Your `package.json` must include:
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-github-org/my-package.git"
+    "url": "https://github.com/diggsweden/my-package.git"
   },
   "publishConfig": {
     "access": "public"
@@ -359,39 +350,41 @@ Your `package.json` must include:
 1. **Tag your release:**
 
    ```bash
-   git tag -s release-request/v1.0.0 -m "Release v1.0.0"
-   git push origin release-request/v1.0.0
+   git tag -s v1.0.0 -m "Release v1.0.0"
+   git push origin v1.0.0
    ```
 
 2. **Workflow automatically:**
-    - Runs `npm run build` when a `build` script exists
-    - Packs the package tarball
-    - Publishes the tarball to GitHub Packages
+   - Builds package (`npm run build`)
+   - Publishes to npmjs.org
+   - Publishes to GitHub Packages
 
 3. **Availability:**
-    - Appears under the repository/organization packages in GitHub
-    - Installable through `npm.pkg.github.com` after registry authentication
+   - Appears on npmjs.org within ~1 minute
+   - Searchable at <https://www.npmjs.com/>
 
 ### Consuming Published Package
 
 Users install with:
 
 ```bash
-npm install @your-github-org/my-package
+npm install @diggsweden/my-package
 ```
 
 ---
 
 ## Container Registries
 
-`ghcr.io` is the default — `GITHUB_TOKEN` covers auth, no setup
-beyond declaring the container in `artifacts.yml`. Other registries
-work via the `registry-password` secret on
-`publish-container.yml`'s call site.
+### Supported Registries
+
+| Registry | Default | Authentication |
+|----------|---------|----------------|
+| `ghcr.io` | ✅ Yes | `GITHUB_TOKEN` (automatic) |
+| Custom | No | Custom credentials |
 
 ### GitHub Container Registry (ghcr.io)
 
-No setup required — declare the container and push:
+**Default** - No setup required:
 
 ```yaml
 containers:
@@ -404,118 +397,87 @@ containers:
 **Image naming:**
 
 ```text
-ghcr.io/OWNER/REPO_NAME/container-name:v1.0.0
+ghcr.io/diggsweden/repo-name/container-name:v1.0.0
 ```
 
 **Namespace security:**
-- Images must follow pattern: `ghcr.io/<owner>/<repo>` or `ghcr.io/<owner>/<repo>-*`
-- Default owner: `github.repository_owner` (lowercased)
-- Configurable via direct `publish-container.yml` `enforce-namespace` input
+- Images must follow pattern: `ghcr.io/OWNER/REPO_NAME` or `ghcr.io/OWNER/REPO_NAME-*`
+- Default owner: `github.repository_owner` (e.g., `diggsweden`)
+- Configurable via `enforce-namespace` input
 - Prevents pushing to unauthorized namespaces
 - Enforced automatically during container build
 
-**Custom namespace (direct component use only):**
+**Custom namespace (optional):**
 
 ```yaml
-jobs:
-  publish-container:
-    uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@v3.0.0
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
-      actions: read
-    secrets: inherit
-    with:
-      reusable-ci-binary-ref: v3.0.0
-      container-file: Containerfile
-      artifact-types: maven
-      registry: ghcr.io
-      enforce-namespace: my-custom-org  # Override default
+containers:
+  - name: my-app
+    from: [my-app]
+    container-file: Containerfile
+    enforce-namespace: my-custom-org  # Override default
 ```
 
 **Pull image:**
 
 ```bash
-podman pull ghcr.io/<owner>/<repo>/my-app:v1.0.0
+podman pull ghcr.io/diggsweden/repo-name/my-app:v1.0.0
 ```
 
 ### Docker Hub
 
-Requires a Docker Hub access token. Store the username and token as
-secrets (`DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`).
+**Requires credentials:**
 
-The release orchestrator publishes containers to GHCR. For Docker
-Hub, call `publish-container.yml` directly after the build job, set
-the Docker Hub image name explicitly, and pass registry credentials
-through the `registry-username` input and the `registry-password`
-secret:
+1. Create Docker Hub account
+2. Generate access token
+3. Request secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`
 
 ```yaml
+# .github/workflows/release-workflow.yml
 jobs:
-  publish-container:
-    needs: build-maven
-    uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@v3.0.0
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
-      actions: read
+  release:
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
-      reusable-ci-binary-ref: v3.0.0
-      container-file: Containerfile
-      artifact-types: maven
-      registry: docker.io
-      image-name: docker.io/DOCKERHUB_ORG/my-app
-      registry-username: ${{ vars.DOCKERHUB_USERNAME }}
-      use-ci-token: false
-      enable-slsa: false
-    secrets:
-      registry-password: ${{ secrets.DOCKERHUB_TOKEN }}
+      reusable-ci-ref: v2.7.0
+      artifacts-config: .github/artifacts.yml
+      container.registry: docker.io
+      container.registry-username: ${{ secrets.DOCKERHUB_USERNAME }}
+      container.use-ci-token: false
+    secrets: inherit
 ```
 
 **Image naming:**
 
 ```text
-docker.io/DOCKERHUB_ORG/my-app:v1.0.0
+docker.io/diggsweden/my-app:v1.0.0
 ```
 
 ### Custom Registry
 
 ```yaml
+# .github/workflows/release-workflow.yml
 jobs:
-  publish-container:
-    needs: build-maven
-    uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@v3.0.0
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
-      actions: read
+  release:
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
-      reusable-ci-binary-ref: v3.0.0
-      container-file: Containerfile
-      artifact-types: maven
-      registry: registry.example.com
-      registry-username: ${{ vars.REGISTRY_USERNAME }}
-      use-ci-token: false
-      enable-slsa: false
-    secrets:
-      registry-password: ${{ secrets.REGISTRY_TOKEN }}
+      reusable-ci-ref: v2.7.0
+      artifacts-config: .github/artifacts.yml
+      container.registry: registry.example.com
+      container.registry-username: ${{ secrets.REGISTRY_USERNAME }}
+      container.use-ci-token: false
+    secrets: inherit
 ```
 
 ---
 
 ## Apple App Store (TestFlight)
 
-iOS builds upload to App Store Connect via API v2 (no Fastlane).
-Review submission stays a manual step in App Store Connect; reusable-ci
-gets the artefact uploaded and stops there.
+### Apple App Store Overview
 
-### Prerequisites
+- **TestFlight distribution** - Automated beta testing
+- **App Store submission** - Optional automatic submission for review
+- **API-based uploads** - Uses App Store Connect API v2
+
+### Apple App Store Prerequisites
 
 1. **Apple Developer Account**
    - Enrolled in Apple Developer Program
@@ -538,25 +500,24 @@ iOS apps with `project-type: xcode-ios` **automatically publish to App Store Con
 1. `enable-code-signing: true` is set
 2. The required secrets are configured
 
-**To build without App Store publishing**, set `enable-code-signing: false`:
+**To disable App Store publishing**, set `enable-code-signing: false`:
 
 ```yaml
 config:
-  enable-code-signing: false  # Build archive only; release publish skips App Store upload
+  enable-code-signing: false  # Build only, no IPA export or upload
 ```
 
-**Note:** iOS apps use `publish-to: []` because they don't publish to package
-registries like Maven Central or npm. The App Store upload happens automatically
-for signed Xcode artifacts and is skipped for unsigned archive-only builds.
+**Note:** iOS apps use `publish-to: []` because they don't publish to package registries like Maven Central or npm. The App Store upload happens automatically based on `enable-code-signing`.
 
-### Configuration
+### Apple App Store Configuration
 
 ```yaml
-# .reusable-ci/artifacts.yml
+# .github/artifacts.yml
 artifacts:
   - name: my-ios-app
     project-type: xcode-ios
     working-directory: .
+    build-type: application
     publish-to: []  # iOS apps publish via App Store Connect, not package registries
     config:
       xcode-version: "16.1"
@@ -565,11 +526,11 @@ artifacts:
       xcodegen-spec: "project.yml"
       project: "MyApp.xcodeproj"
       configuration: Release
-      enable-code-signing: true   # Enables IPA export and App Store Connect upload
+      enable-code-signing: true   # <-- This enables App Store publishing
       export-options-var: EXPORT_OPTIONS_BASE64
       macos-version: macos-26
-      # App Store Connect upload options
-      submit-for-review: false  # Summary intent only; submit review manually in App Store Connect
+      # App Store submission options
+      submit-for-review: false  # true = submit to App Store, false = TestFlight only
       skip-validation: false    # Validate IPA before upload (recommended)
 ```
 
@@ -579,8 +540,8 @@ If your app uses XcodeGen, keep `project` or `workspace` configured as well so t
 
 ```text
 # Code Signing
-IOS_SIGNING_CERTIFICATE_BASE64              # Base64-encoded .p12 distribution certificate
-IOS_SIGNING_CERTIFICATE_PASSPHRASE          # Certificate password
+CERTIFICATE_BASE64              # Base64-encoded .p12 distribution certificate
+CERTIFICATE_PASSPHRASE          # Certificate password
 PROVISIONING_PROFILE_BASE64     # Base64-encoded provisioning profile
 KEYCHAIN_PASSWORD               # Temporary keychain password (any value)
 
@@ -631,13 +592,13 @@ base64 -i exportOptions.plist -o exportOptions.txt
 </plist>
 ```
 
-### Release Process
+### Apple App Store Release Process
 
 1. **Tag your release:**
 
    ```bash
-   git tag -s release-request/v1.0.0 -m "Release v1.0.0"
-   git push origin release-request/v1.0.0
+   git tag -s v1.0.0 -m "Release v1.0.0"
+   git push origin v1.0.0
    ```
 
 2. **Workflow automatically:**
@@ -649,17 +610,19 @@ base64 -i exportOptions.plist -o exportOptions.txt
 
 3. **Availability:**
    - TestFlight: ~10-15 minutes after upload processing
-   - App Store: After manual review submission in App Store Connect
+   - App Store: After manual or automatic review submission
 
 ---
 
 ## Google Play Store
 
-Android builds upload to Google Play via the Developer API v3. The
-workflow supports the four standard tracks (internal, alpha, beta,
-production) and staged rollouts to a fraction of users.
+### Google Play Store Overview
 
-### Prerequisites
+- **Multiple tracks** - internal, alpha, beta, production
+- **Staged rollouts** - Gradual release to percentage of users
+- **API-based uploads** - Uses Google Play Developer API v3
+
+### Google Play Store Prerequisites
 
 1. **Google Play Developer Account**
    - Enrolled in Google Play Developer Program
@@ -691,17 +654,19 @@ publish-to:
 publish-to: []     # No publishing - only build and attach to GitHub Release
 ```
 
-### Configuration
+### Google Play Store Configuration
 
 ```yaml
-# .reusable-ci/artifacts.yml
+# .github/artifacts.yml
 artifacts:
   - name: my-android-app
     project-type: gradle-android
     working-directory: .
+    build-type: application
     publish-to:
       - google-play    # <-- This enables Google Play publishing
     config:
+      java-version: 21
       build-module: app
       product-flavor: demo
       build-types: release
@@ -732,10 +697,6 @@ ANDROID_KEY_PASSWORD            # Key password
 # Google Play API
 GOOGLE_PLAY_SERVICE_ACCOUNT_JSON  # Service account JSON key (plain text, not base64)
 ```
-
-The workflow maps the `ANDROID_KEYSTORE` secret to the internal
-`ANDROID_KEYSTORE_BASE64` environment variable used by the `reusable-ci` CLI.
-Repository users should create the secret as `ANDROID_KEYSTORE`.
 
 ### Encoding Keystore to Base64
 
@@ -806,13 +767,13 @@ config:
   whats-new-directory: distribution/whatsnew
 ```
 
-### Release Process
+### Google Play Store Release Process
 
 1. **Tag your release:**
 
    ```bash
-   git tag -s release-request/v1.0.0 -m "Release v1.0.0"
-   git push origin release-request/v1.0.0
+   git tag -s v1.0.0 -m "Release v1.0.0"
+   git push origin v1.0.0
    ```
 
 2. **Workflow automatically:**
@@ -830,12 +791,11 @@ config:
 
 ## Security Features
 
-Published artifacts can include these security features, depending on artifact
-type and enabled workflow inputs:
+All published artifacts include security features:
 
-- **GPG Signing** - Release checksums and package artifacts when signing is enabled
-- **SBOM Generation** - CycloneDX/SPDX outputs for supported `sboms` layers
-- **SLSA Provenance** - Level 3 attestations for supported GHCR container publishes when enabled
+- **GPG Signing** - JAR files, POM files, release checksums, git tags
+- **SBOM Generation** - SPDX and CycloneDX formats for all artifacts and containers
+- **SLSA Provenance** - Level 3 attestations for containers
 - **Namespace Validation** - Enforces correct registry namespaces to prevent unauthorized publishing
 
 For verification instructions, see [Artifact Verification Guide](verification.md).

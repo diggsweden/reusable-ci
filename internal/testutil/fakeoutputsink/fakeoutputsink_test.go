@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/testutil/fakeoutputsink"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 )
 
 func TestSink_SetAndRead(t *testing.T) {

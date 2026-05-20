@@ -27,7 +27,7 @@ const (
 // ("moderate" here, "medium" there) and the two should not alias.
 //
 // Single source of truth: the CLI flag's default Value, the app-layer
-// cmp.Or fallback, and the switch in MapTrivyFailSeverity all reference
+// cmp.Or fallback, and the switch in DepSeverity.TrivyFilter all reference
 // these constants.
 type DepSeverity string
 
@@ -59,16 +59,21 @@ const (
 	DefaultTrivyGitLabContainerFile = "gl-container-scanning-report.json"
 )
 
-// MapTrivyFailSeverity returns the cumulative Trivy --severity filter
-// string for a user-facing severity threshold. Lower thresholds widen
-// the filter to include higher-severity classes.
-//
-// Unknown inputs map to "CRITICAL" (the bash default) — the caller is
-// expected to also log a warning in that path.
-func MapTrivyFailSeverity(level string) string {
-	switch DepSeverity(strings.ToLower(strings.TrimSpace(level))) {
+// ParseDepSeverity normalizes a user-facing threshold string (case- and
+// whitespace-insensitive) into a DepSeverity. Unrecognized input is kept
+// (lowercased) so callers can distinguish it via IsKnown.
+func ParseDepSeverity(raw string) DepSeverity {
+	return DepSeverity(strings.ToLower(strings.TrimSpace(raw)))
+}
+
+// TrivyFilter returns the cumulative Trivy --severity filter string for
+// this threshold. Lower thresholds widen the filter to include higher
+// classes. An unknown severity falls back to "CRITICAL" (the trivy
+// default) — callers that care should check IsKnown first.
+func (s DepSeverity) TrivyFilter() string {
+	switch s {
 	case DepSeverityCritical:
-		return "CRITICAL" //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		return "CRITICAL" //nolint:goconst // generic severity literal; extracting would not aid readability.
 	case DepSeverityHigh:
 		return "CRITICAL,HIGH"
 	case DepSeverityModerate:
@@ -80,10 +85,9 @@ func MapTrivyFailSeverity(level string) string {
 	}
 }
 
-// IsKnownTrivyFailSeverity reports whether level is one of the accepted
-// user-facing threshold values.
-func IsKnownTrivyFailSeverity(level string) bool {
-	switch DepSeverity(strings.ToLower(strings.TrimSpace(level))) {
+// IsKnown reports whether s is one of the accepted threshold values.
+func (s DepSeverity) IsKnown() bool {
+	switch s {
 	case DepSeverityCritical, DepSeverityHigh, DepSeverityModerate, DepSeverityLow:
 		return true
 	default:

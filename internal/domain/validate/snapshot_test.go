@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/validate"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/validate"
 )
 
 func TestIsSnapshot_RecognisesSuffix(t *testing.T) {

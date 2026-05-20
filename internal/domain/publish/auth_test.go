@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/publish"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/publish"
 )
 
 func TestValidateRegistryAuth_OKWithCITokenAndDefaultRegistry(t *testing.T) {

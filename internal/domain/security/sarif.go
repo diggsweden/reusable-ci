@@ -66,19 +66,27 @@ func TrivyToSARIF(report *TrivyReport, opts Options) *sarif.Report {
 	return out
 }
 
+// SARIF result.level enum (note|warning|error|none).
+const (
+	sarifLevelError   = "error"
+	sarifLevelWarning = "warning"
+	sarifLevelNote    = "note"
+	sarifLevelNone    = "none"
+)
+
 // trivySeverityLevel maps Trivy's severity string onto SARIF's level
 // enum (note|warning|error|none). The mapping matches trivy's own
 // SARIF emitter so Code Scanning's severity colouring stays unchanged.
 func trivySeverityLevel(severity string) string {
 	switch strings.ToUpper(severity) {
 	case "CRITICAL", "HIGH": //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		return "error"
+		return sarifLevelError
 	case "MEDIUM":
-		return "warning"
+		return sarifLevelWarning
 	case "LOW":
-		return "note"
+		return sarifLevelNote
 	default:
-		return "none"
+		return sarifLevelNone
 	}
 }
 

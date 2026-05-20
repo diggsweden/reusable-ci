@@ -6,8 +6,8 @@ package release_test
 import (
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
-	"github.com/diggsweden/reusable-ci/internal/domain/release"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
 
 func TestResolveArtifactNames_PackageOverridesUseBuildSuffix(t *testing.T) {

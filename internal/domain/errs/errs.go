@@ -154,7 +154,7 @@ func ExitCodeFromError(err error) ExitCodeType {
 		// case it would fall through to ExitCodeSoftware (70), telling CI
 		// to file a bug report for what is really "the registry was slow."
 		return ExitCodeUnavailable
-	case errors.Is(err, ErrUsage):
+	case errors.Is(err, ErrUsage), errors.Is(err, ErrCIRuntimeRequired):
 		return ExitCodeUsage
 	case errors.Is(err, ErrValidation):
 		return ExitCodeValidation

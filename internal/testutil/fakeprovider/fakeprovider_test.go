@@ -8,8 +8,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/provider"
-	"github.com/diggsweden/reusable-ci/internal/testutil/fakeprovider"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeprovider"
 )
 
 // Compile-time check: Fake satisfies provider.Provider.

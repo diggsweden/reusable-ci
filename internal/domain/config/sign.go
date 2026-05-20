@@ -8,8 +8,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
 
 // SignConfig is the top-level `sign:` block in artifacts.yml. It

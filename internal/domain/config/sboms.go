@@ -5,8 +5,10 @@ package config
 
 import (
 	"fmt"
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"strings"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/listval"
 )
 
 // ExpandSBOMs translates an `sboms` enum value to the deduped list of
@@ -43,7 +45,7 @@ func ExpandSBOMs(value string) ([]SBOMLayer, error) {
 		return []SBOMLayer{}, nil
 	}
 
-	parts := strings.Split(cleaned, ",")
+	parts := listval.Tokens(cleaned)
 	seen := make(map[SBOMLayer]struct{}, len(parts))
 
 	out := make([]SBOMLayer, 0, len(parts))

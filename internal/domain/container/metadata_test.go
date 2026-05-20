@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 )
 
 func TestLabel_String(t *testing.T) {

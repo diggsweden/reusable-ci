@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/gpg"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/gpg"
 )
 
 func TestIsArmored(t *testing.T) {

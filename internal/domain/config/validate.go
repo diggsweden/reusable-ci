@@ -10,8 +10,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
 
 // buildSecretNamePattern is the env-var identifier shape:
@@ -138,7 +138,7 @@ func unsupportedTargetReason(artifact Artifact, target PublishTarget) string {
 // Validate checks Config against the schema rules: artifacts list non-empty,
 // every project-type recognised, publish targets are supported for the
 // artifact type, and container `from` references existing artefacts.
-// Maven-application-to-github-packages combinations only emit a warning
+// Maven-application-to-forge-packages combinations only emit a warning
 // (returned via Warnings); they don't fail validation.
 func Validate(cfg *Config) error {
 	if cfg == nil {
@@ -161,6 +161,10 @@ func Validate(cfg *Config) error {
 	}
 
 	if err := cfg.Sign.Validate(); err != nil {
+		violations = append(violations, err.Error())
+	}
+
+	if err := cfg.GitSigning.Validate(); err != nil {
 		violations = append(violations, err.Error())
 	}
 
@@ -466,7 +470,7 @@ func validateContainer(ct Container, artifactNames map[string]bool, artifactByNa
 }
 
 // Warnings returns non-fatal observations about a Config: e.g. Maven
-// applications publishing to github-packages (libraries should, but
+// applications publishing to forge-packages (libraries should, but
 // applications shouldn't). Validation passes regardless.
 func Warnings(c *Config) []string { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if c == nil {
@@ -478,9 +482,9 @@ func Warnings(c *Config) []string { //nolint:varnamelen // idiomatic short name 
 	for _, a := range c.Artifacts { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		if a.ProjectType == projecttype.Maven &&
 			a.BuildType == BuildTypeApplication &&
-			slices.Contains(a.PublishTo, PublishGitHubPackages) {
+			slices.Contains(a.PublishTo, PublishForgePackages) {
 			w = append(w, fmt.Sprintf(
-				"Maven application %q publishing to github-packages — applications should not (libraries only)",
+				"Maven application %q publishing to forge-packages — applications should not (libraries only)",
 				a.Name,
 			))
 		}

@@ -58,3 +58,26 @@ type ManifestSink interface {
 		MarshalJSON() ([]byte, error)
 	}) error
 }
+
+// JobResultStore persists and collects per-job outcome records — the
+// forge-neutral replacement for GitHub Actions' `toJson(needs)`. Each job
+// writes its own outcome as its last (always-run) step; a downstream summary
+// job collects every record and aggregates the stage result from them. This
+// works identically on GitHub, Forgejo, and GitLab, where no job can read a
+// sibling's status: the records travel as ordinary run artifacts and live at
+// $CI_RESULTS_DIR/jobs/<job>.json, kept separate from the <stage>-result.json
+// manifests so the two are globbed independently.
+//
+// CollectJobs returns the raw JSON documents (not parsed): validation/parsing
+// belongs to the domain (summary.ParseJobResultEnvelope), so this port stays
+// free of summary types.
+type JobResultStore interface {
+	// WriteJob persists one job's outcome under jobs/<job>.json.
+	WriteJob(ctx context.Context, job string, body interface {
+		MarshalJSON() ([]byte, error)
+	}) error
+
+	// CollectJobs reads back every persisted job record as raw JSON.
+	// A missing jobs directory is not an error — it yields no records.
+	CollectJobs(ctx context.Context) ([][]byte, error)
+}

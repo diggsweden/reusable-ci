@@ -6,54 +6,13 @@ SPDX-License-Identifier: CC0-1.0
 
 # Artifacts Reference
 
-Complete reference for the artifacts config format.
+Complete reference for `artifacts.yml` configuration format.
 
 > For per-ecosystem capability matrices and the artefact-first vs container-first framing, see **[docs/ecosystems.md](ecosystems.md)**.
 
-## Location
-
-The canonical path is **`.reusable-ci/artifacts.yml`**. The release-orchestrator reads it by default — operators no longer need to pass `artifacts-config:` explicitly. To use a different path, set `artifacts-config: <path>` on the workflow_call.
-
-Co-located with the other reusable-ci files:
-
-```text
-.reusable-ci/
-├── artifacts.yml                       ← the release plan
-├── artifacts.schema.json               ← JSON Schema for editor autocomplete
-├── allowed_signers                     ← release-authorisation (SSH)
-└── allowed_gpg_keys.asc                ← release-authorisation (GPG)
-```
-
-### JSON Schema
-
-[`.reusable-ci/artifacts.schema.json`](../.reusable-ci/artifacts.schema.json) is a Draft 2020-12 schema covering every field of the file. Most editors honour the `# yaml-language-server: $schema=…` directive at the top of a YAML file:
-
-```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/diggsweden/reusable-ci/main/.reusable-ci/artifacts.schema.json
-artifacts:
-  - name: my-artifact
-    project-type: maven
-```
-
-The schema is contract-tested against every shipped `examples/*/artifacts.yml`, so editor warnings line up with what `config parse-artifacts` actually rejects.
-
-## Auto-derive: skip the file for simple repos
-
-When `.reusable-ci/artifacts.yml` is absent AND the repo has **exactly one** ecosystem manifest at root, reusable-ci synthesises the equivalent plan in-memory:
-
-| Manifest at root | Synthesised |
-|---|---|
-| `pom.xml` | one Maven artefact, name = `artifactId`, working-directory = `.` |
-| `package.json` | one NPM artefact, name = unscoped package name |
-| `Cargo.toml` | one Cargo artefact, name = `package.name` |
-| `go.mod` | one Go artefact, name = basename of `module` path |
-| `build.gradle` or `build.gradle.kts` | one Gradle artefact, name = `rootProject.name` (or repo dir name as fallback) |
-
-This collapses the common "single-library repo" case to zero configuration. **Polyglot repos** (more than one root manifest) refuse to auto-derive and demand an explicit `artifacts.yml` — the error names every manifest it found.
-
 ## Overview
 
-`artifacts.yml` has two main sections:
+The `artifacts.yml` file defines what to build and where to publish. It consists of two main sections:
 
 ```yaml
 artifacts:
@@ -81,8 +40,7 @@ containers:
 
 - **Type:** `string`
 - **Description:** Build system type
-- **Valid values:** `maven`, `npm`, `gradle`, `gradle-android`, `xcode-ios`, `cargo`, `meta`, `python`, `go`
-- **Note:** `go` and `cargo` require an explicit `config.build-mode`. `python` is reserved in the schema but has no workflows yet.
+- **Valid values:** `maven`, `npm`, `gradle`, `gradle-android`, `xcode-ios`, `cargo`, `python`, `go`
 - **Example:** `project-type: maven`
 
 #### `working-directory`
@@ -99,33 +57,30 @@ containers:
 #### `build-type`
 
 - **Type:** `string`
-- **Description:** Maven build type used by the orchestrator when calling `build-maven.yml`
+- **Description:** Build type (affects Maven/Gradle behavior)
 - **Valid values:** `application` (default), `library`
 - **Default:** `application`
-- **Applies to:** Maven only. Gradle workflows ignore this field today.
+- **Applies to:** Maven and Gradle only
 - **Example:** `build-type: library`
 - **Behavior:**
   - `application`: Builds with `mvn package`
-  - `library`: Builds with `mvn package` via the library path, generating sources/javadoc according to the configured Maven profile/project setup
+  - `library`: Builds with `mvn install`, generates javadoc and sources JARs
 
 #### `require-authorization`
 
 - **Type:** `boolean`
-- **Description:** Require the release tag to be signed by a key listed in the project's committed allowlist files (`.reusable-ci/allowed_signers` for SSH-signed tags, `.reusable-ci/allowed_gpg_keys.asc` for GPG-signed tags).
+- **Description:** Require user to be in authorized list for releases
 - **Default:** `false`
-- **Use case:** Production libraries that need cryptographic proof of release authorship.
+- **Use case:** Production libraries that need release approval
 - **Example:** `require-authorization: true`
-- **Effect:** When true, a missing or empty allowlist file fails the release closed with `EX_NOPERM` (exit 77). When the file is present, the signing-key fingerprint must match an entry. See [verification.md → Release Authorisation](verification.md#release-authorisation) for the file format and a worked example.
+- **Requires:** `AUTHORIZED_RELEASE_DEVELOPERS` secret set
 
 #### `publish-to`
 
 - **Type:** `array of strings`
 - **Description:** Publishing targets for built artifacts
-- **Default:** `[]` (no package-registry publisher; container publishing is configured separately under `containers[]`)
-- **Supported values:** `github-packages`, `maven-central`, `google-play`
-- **Reserved value:** `npmjs` is schema-recognized for future use, but current
-  config validation rejects it because production npmjs.org publishing is not
-  implemented yet. Use `github-packages` for current NPM package publishing.
+- **Default:** `[github-packages]`
+- **Valid values:** `github-packages`, `maven-central`, `npmjs`, `google-play`
 - **Example:**
 
   ```yaml
@@ -142,7 +97,7 @@ containers:
   ```
 
 - **Behavior:** Workflows only run if target is listed
-- **Note:** iOS apps use `publish-to: []` as signed Xcode artifacts publish via App Store Connect automatically; unsigned archive-only builds skip App Store upload
+- **Note:** iOS apps use `publish-to: []` as they publish via App Store Connect automatically
 
 #### `sboms`
 
@@ -156,7 +111,7 @@ containers:
   - `analyzed-container` — Syft scan of the published container only
   - Any comma-list of the three layer names, e.g. `build,analyzed-artifact`
 - **Default:** Automatic based on project type:
-  - `all` for: `maven`, `npm`, `gradle`, `gradle-android`, `cargo`, `go`, `python` (`python` is reserved but has no workflow yet)
+  - `all` for: `maven`, `npm`, `gradle`, `gradle-android`, `cargo`, `python`, `go`
   - `none` for: `xcode-ios`, `meta`
 - **Examples:**
   ```yaml
@@ -169,10 +124,10 @@ containers:
   # Turn off SBOMs for this artefact
   sboms: none
   ```
-- **Formats produced:** Build layer: CycloneDX 1.6. Analyzed-artifact and analyzed-container layers: SPDX 2.3 and CycloneDX 1.6.
-- **Pipeline cap:** The release orchestrator `release.sboms` input (default `all`) and release-snapshot orchestrator `sboms` input (default `none`) cap aggregate release/snapshot SBOM generation against the pipeline-wide SBOM union. They do not rewrite each artefact's parsed `effective-sboms`.
-- **What it controls:** Effective SBOM layers for this artefact. On the orchestrator path it controls build-time Build SBOM execution and container SBOM generation. Direct build workflow calls still default their Build SBOM input to `true` unless explicitly disabled. See [docs/sbom.md](sbom.md) for the full semantics.
-- **Note:** `analyzed-*` scans use [Syft](https://github.com/anchore/syft); ecosystem coverage varies. Gradle Android currently produces Build SBOMs and analyzed-container SBOMs, but not APK/AAB analyzed-artifact SBOMs. The `build` layer uses the language-native cyclonedx plugin and is the highest-fidelity type.
+- **Formats produced:** SPDX 2.3 and CycloneDX 1.6 (JSON)
+- **Pipeline cap:** The orchestrator `sboms` input (default `all` on release, `none` on release-dev) intersects with this field; the effective set per artefact is the intersection.
+- **What it controls:** Release-bundle inclusion, **not** build-time plugin execution. The language's cyclonedx plugin always runs in the per-stack build workflow with `continue-on-error: true`; this field decides whether the resulting BOMs (and syft scans) are included in the release artefact bundle. See [docs/sbom.md](sbom.md) for the full semantics.
+- **Note:** `analyzed-*` scans use [Syft](https://github.com/anchore/syft); ecosystem coverage varies. The `build` layer uses the language-native cyclonedx plugin and is the highest-fidelity type.
 
 ---
 
@@ -181,7 +136,7 @@ containers:
 #### `config.java-version`
 
 - **Type:** `string` or `number`
-- **Description:** JDK version forwarded to publishing/setup steps. The build runtime is selected by the workflow `runtime-image` input.
+- **Description:** JDK version for Maven/Gradle builds
 - **Default:** `25`
 - **Valid values:** `8`, `11`, `17`, `21`, `25`
 - **Example:** `java-version: 25`
@@ -201,146 +156,20 @@ containers:
 #### `config.node-version`
 
 - **Type:** `string` or `number`
-- **Description:** Node.js version forwarded to publishing/setup steps. The build runtime is selected by the workflow `runtime-image` input.
+- **Description:** Node.js version for NPM builds
 - **Default:** `24`
 - **Valid values:** `18`, `20`, `22`, `24`
 - **Example:** `node-version: 24`
 
+#### `config.npm-tag`
+
+- **Type:** `string`
+- **Description:** NPM distribution tag for publishing
+- **Default:** `latest`
+- **Valid values:** `latest`, `next`, `beta`, `alpha`
+- **Example:** `npm-tag: latest`
+
 ---
-
-### Configuration Fields (Go)
-
-#### `config.build-mode`
-
-- **Type:** `string`
-- **Required:** Yes for `project-type: go`
-- **Valid values:** `artifact-first`, `container-first`
-- **Description:** Selects whether reusable-ci compiles Go binaries in `build-go.yml` or lets the project's Containerfile compile them.
-
-Use `artifact-first` for CLI/tools released as standalone binaries:
-
-```yaml
-artifacts:
-  - name: my-cli
-    project-type: go
-    config:
-      build-mode: artifact-first
-      main-package: ./cmd/my-cli
-      binary-name: my-cli
-      platforms: linux/amd64,linux/arm64,darwin/amd64,darwin/arm64
-```
-
-Use `container-first` for services where the container image is the primary deliverable:
-
-```yaml
-artifacts:
-  - name: my-service
-    project-type: go
-    config:
-      build-mode: container-first
-containers:
-  - name: my-service
-    from: [my-service]
-    container-file: Containerfile
-    context: .
-    target: runtime
-```
-
-When an artifact-first Go binary is copied into a container, that container may
-reference one artifact-first Go artifact. Multiple Go binaries should either be
-built in the Containerfile (`container-first`) or split across containers.
-The downloaded layout inside the container build context is
-`dist/<goos>-<goarch>/<binary>-<goos>-<goarch>`, so multi-arch Containerfiles
-can copy `dist/${TARGETOS}-${TARGETARCH}/...` using BuildKit's target
-arguments.
-
-#### `config.main-package`
-
-- **Type:** `string`
-- **Applies to:** Go `artifact-first`
-- **Default:** `.`
-- **Description:** Go package passed to `go build`.
-- **Example:** `main-package: ./cmd/my-cli`
-
-#### `config.binary-name`
-
-- **Type:** `string`
-- **Applies to:** Go `artifact-first`
-- **Default:** artifact `name`, then Go module basename
-- **Description:** Output binary basename.
-
-#### `config.platforms`
-
-- **Type:** comma-separated `GOOS/GOARCH` list
-- **Applies to:** Go `artifact-first`
-- **Default:** `linux/amd64,linux/arm64,darwin/amd64,darwin/arm64`
-- **Description:** Cross-compile targets written as `dist/<goos>-<goarch>/<binary>-<goos>-<goarch>` so release asset basenames are unique.
-
-#### `config.build-tags`, `config.ldflags`, `config.skip-tests`
-
-- **Applies to:** Go `artifact-first`
-- **Description:** Optional build tags, additional ldflags, and release-build test suppression. `govulncheck` remains caller-owned in PR/test workflows.
-
-### Configuration Fields (Cargo)
-
-#### `config.build-mode`
-
-- **Type:** `string`
-- **Required:** Yes for `project-type: cargo`
-- **Valid values:** `artifact-first`, `container-first`
-- **Description:** Selects whether reusable-ci cross-compiles Rust binaries in `build-cargo.yml` or lets the project's Containerfile compile them. Symmetric with Go's `build-mode`.
-
-Use `artifact-first` for CLI/tools released as standalone binaries:
-
-```yaml
-artifacts:
-  - name: my-cli
-    project-type: cargo
-    config:
-      build-mode: artifact-first
-      binary-name: my-cli
-      platforms: linux/amd64,linux/arm64
-```
-
-Use `container-first` for services where the container image is the primary deliverable. This is also the right choice when your Containerfile already runs `cargo build`:
-
-```yaml
-artifacts:
-  - name: my-service
-    project-type: cargo
-    config:
-      build-mode: container-first
-containers:
-  - name: my-service
-    from: [my-service]
-    container-file: Containerfile
-    context: .
-    target: runtime
-```
-
-When an artefact-first Cargo binary feeds a container, the downloaded layout
-inside the build context matches Go's: `dist/<goos>-<goarch>/<binary>-<goos>-<goarch>`.
-Multi-arch Containerfiles can copy `dist/${TARGETOS}-${TARGETARCH}/...` the same
-way Go containers do.
-
-#### `config.binary-name`
-
-- **Type:** `string`
-- **Applies to:** Cargo `artifact-first`
-- **Default:** Cargo.toml `[[bin]]` target name, then `[package].name`
-- **Description:** Output binary basename. The default is what cargo itself produces under `target/<triple>/release/`.
-
-#### `config.platforms`
-
-- **Type:** comma-separated `GOOS/GOARCH` list
-- **Applies to:** Cargo `artifact-first`
-- **Default:** `linux/amd64`
-- **Description:** Cross-compile targets. Each value is mapped to a Rust target triple at build time (`linux/amd64 → x86_64-unknown-linux-gnu`, `linux/arm64 → aarch64-unknown-linux-gnu`, etc.). The runtime image installs the targets and cross-linkers it supports; `linux/amd64` + `linux/arm64` are validated for the default `runtime-rust-stable` image. Other targets require either a runtime image extension or a host with the matching cross-linker.
-
-#### `config.skip-tests`
-
-- **Applies to:** Cargo `artifact-first`
-- **Description:** Skip `cargo test --locked --all-targets` during the release build. PR/test workflows remain the canonical home for test execution.
 
 ### Configuration Fields (Gradle)
 
@@ -349,7 +178,7 @@ way Go containers do.
 - **Type:** `string`
 - **Description:** Gradle tasks to execute.
   - **`gradle` (JVM):** default is `assemble`; set to override.
-  - **`gradle-android`:** **not honored** on the orchestrator path. The orchestrator (`release-build-stage.yml`) derives tasks from `product-flavor` + `build-types` + `include-aab` and ignores this field. Configure those instead. The override input still exists on `build-gradle-android.yml` for direct callers (e.g., a hand-rolled `release-snapshot-workflow.yml`).
+  - **`gradle-android`:** **not honored** on the orchestrator path. The orchestrator (`release-build-stage.yml`) derives tasks from `product-flavor` + `build-types` + `include-aab` and ignores this field. Configure those instead. The override input still exists on `build-gradle-android.yml` for direct callers (e.g., a hand-rolled `release-dev-workflow.yml`).
 - **Default:** `assemble` (JVM); derived (Android, ignored)
 - **Example (JVM):** `gradle-tasks: build test`
 
@@ -374,7 +203,7 @@ way Go containers do.
 #### `config.product-flavor`
 
 - **Type:** `string`
-- **Description:** Product flavor for the build. Combined with `build-types` and `include-aab` to derive the gradle task list (e.g. `demo` + `release` + AAB → `assembleDemoRelease app:bundleDemoRelease`).
+- **Description:** Product flavor for the build. Combined with `build-types` and `include-aab` to derive the gradle task list (e.g. `demo` + `release` + AAB → `assembleDemoRelease bundleDemoRelease`).
 - **Default:** `""` (no flavor)
 - **Example:** `product-flavor: demo`
 
@@ -458,12 +287,12 @@ way Go containers do.
 #### `config.enable-code-signing`
 
 - **Type:** `boolean`
-- **Description:** Enable iOS/macOS code signing and IPA export. When false, the build uploads an archive and release publishing skips App Store Connect upload.
+- **Description:** Enable iOS/macOS code signing and IPA export
 - **Default:** `true`
 - **Example:** `enable-code-signing: true`
 - **Requires secrets:**
-  - `IOS_SIGNING_CERTIFICATE_BASE64` - Base64-encoded .p12 certificate
-  - `IOS_SIGNING_CERTIFICATE_PASSPHRASE` - Certificate password
+  - `CERTIFICATE_BASE64` - Base64-encoded .p12 certificate
+  - `CERTIFICATE_PASSPHRASE` - Certificate password
   - `PROVISIONING_PROFILE_BASE64` - Base64-encoded provisioning profile
   - `KEYCHAIN_PASSWORD` - Temporary keychain password
 
@@ -493,11 +322,11 @@ way Go containers do.
 #### `config.submit-for-review`
 
 - **Type:** `boolean`
-- **Description:** Records App Store review intent in the upload summary. Current workflows upload to App Store Connect/TestFlight; review submission is manual in App Store Connect.
+- **Description:** Submit to Apple App Store for review (not just TestFlight)
 - **Default:** `false`
-- **Example:** `submit-for-review: false` (upload only)
-- **Example:** `submit-for-review: true` (record that review submission is intended)
-- **Note:** Automatic App Store review submission is not implemented today
+- **Example:** `submit-for-review: false` (TestFlight only)
+- **Example:** `submit-for-review: true` (Submit for App Store review)
+- **Note:** Use `false` for beta testing, `true` for production releases
 
 #### `config.skip-validation`
 
@@ -522,8 +351,6 @@ way Go containers do.
   - `ANDROID_KEYSTORE_PASSWORD` - Keystore password
   - `ANDROID_KEY_ALIAS` - Key alias
   - `ANDROID_KEY_PASSWORD` - Key password
-- **Note:** The workflow maps `ANDROID_KEYSTORE` to the internal
-  `ANDROID_KEYSTORE_BASE64` environment variable used by the `reusable-ci` CLI.
 
 #### `config.package-name`
 
@@ -655,9 +482,9 @@ Containers reference artifacts via the `from:` field and are built after all art
 #### `enable-slsa`
 
 - **Type:** `boolean`
-- **Description:** Generate SLSA build-provenance attestation for this container. The per-container value propagates through the typed plan to `publish-container.yml`; set to `false` to opt this specific image out of provenance.
+- **Description:** Generate SLSA provenance attestation
 - **Default:** `true`
-- **Requires:** `id-token: write`, `actions: read` permissions (set by `release-orchestrator.yml`)
+- **Requires:** `id-token: write`, `actions: read` permissions
 - **Example:** `enable-slsa: true`
 
 #### Container `enable-sbom` (removed in v3)
@@ -667,17 +494,10 @@ The v2.x `enable-sbom: bool` field on the container block is removed in v3. Cont
 #### `enable-scan`
 
 - **Type:** `boolean`
-- **Description:** Run Trivy vulnerability scan AND gate the publish on its findings. When `true` (default), any finding at the configured `scan-severity` or above fails the publish — the SARIF + GitLab reports are still produced so the rejection is visible in Code Scanning. Set to `false` to skip both the scan and the gate.
+- **Description:** Run Trivy vulnerability scan
 - **Default:** `true`
-- **Requires:** `CODE_SCANNING_TOKEN` org secret for results to appear in Code Scanning
+- **Requires:** `SARIF_UPLOAD_TOKEN` org secret for results to appear in Code Scanning
 - **Example:** `enable-scan: true`
-
-#### `scan-severity`
-
-- **Type:** `string` (comma-separated trivy severities)
-- **Description:** Trivy `--severity` filter AND fail-on threshold for `enable-scan`. Any finding at this severity or above fails the publish. Narrow the filter to relax the gate (e.g. `CRITICAL` only). To skip the gate entirely use `enable-scan: false` rather than emptying this field.
-- **Default:** `"CRITICAL,HIGH"`
-- **Example:** `scan-severity: "CRITICAL"`
 
 #### `target`
 
@@ -690,7 +510,7 @@ The v2.x `enable-sbom: bool` field on the container block is removed in v3. Cont
 
 #### `extract.binary`
 
-Opt-in extraction of compiled binaries as CI artefacts. Used by container-first ecosystems (`cargo`, `go`) where the binary is a byproduct of the container build. The same Containerfile is built a second time with `--target` set to the extraction stage; each platform leg uploads `${container.name}-binaries-${arch}`.
+Opt-in extraction of compiled binaries as a CI artefact. Used by container-first ecosystems (`cargo`, future `go`) where the binary is a byproduct of the container build. The same Containerfile is built a second time with `--target` set to the extraction stage; the resulting files are uploaded as `${container.name}-binaries`.
 
 The extraction shares cache with the runtime image build (same buildkit daemon, same `--mount=type=cache` IDs), so it does not double-compile.
 
@@ -705,28 +525,28 @@ The extraction shares cache with the runtime image build (same buildkit daemon, 
 
 - **Type:** list of `string`
 - **Description:** Expected binary file basenames in the extracted output. Informational — surfaced in the GitHub Actions step summary and used downstream for naming. Not enforced; if the names don't match the export-binary stage's COPYs, no error is raised.
-- **Example:** `names: [my-service, my-service-cli]`
+- **Example:** `names: [hsm-worker, digg-hsm-keytool]`
 
 ##### Full example
 
 ```yaml
 containers:
-  - name: my-service
-    from: [my-service]
-    container-file: my-service/Containerfile
+  - name: hsm-worker
+    from: [hsm-worker]
+    container-file: hsm-worker/Containerfile
     context: .
     target: runtime
     platforms: linux/amd64,linux/arm64
     extract:
       binary:
         target: export-binary
-        names: [my-service, my-service-cli]
+        names: [hsm-worker, digg-hsm-keytool]
 ```
 
 ##### Output
 
-- GHA artefacts `${container.name}-binaries-${arch}` for each platform leg (for example, `my-service-binaries-amd64` and `my-service-binaries-arm64`).
-- Automatically included in the GitHub Release when extraction produced files; callers can still add their own `release.attachartifacts` globs for other assets.
+- GHA artefact `${container.name}-binaries` with per-platform subdirectories (e.g., `linux_amd64/hsm-worker`, `linux_arm64/hsm-worker`).
+- Aggregated into the GitHub Release alongside SBOMs and other release artefacts when matched by the caller's `release.attachartifacts` glob.
 
 #### `build-args`
 
@@ -748,82 +568,12 @@ containers:
 - **Direct caller equivalent** (when invoking `publish-container.yml` directly, bypassing the orchestrator):
 
   ```yaml
-  uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@v3.0.0
+  uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@v2.9.0
   with:
-    reusable-ci-binary-ref: v3.0.0
-    artifact-types: cargo
     build-args: |
       RUST_VERSION=1.94
       DEBIAN_VARIANT=bookworm-slim
   ```
-
-#### `build-secrets`
-
-- **Type:** array of strings (each matches `^[A-Z_][A-Z0-9_]*$`)
-- **Description:** Names of GitHub Actions secrets to forward into the Containerfile build as BuildKit secret mounts. Use this for any secret needed at build time (private registry tokens, build-time API keys). Unlike `build-args` — whose values BuildKit records verbatim in SLSA `mode=max` provenance attestations attached to the published image — build-secret values are mounted on tmpfs into the consuming `RUN` step and **never recorded in provenance**, workflow logs, or step inputs.
-- **How it works:** Each name listed here must appear as a key in
-  the `REUSABLE_CI_BUILD_SECRETS_JSON` envelope secret (see the
-  recipe below). At build time, `reusable-ci container
-  materialize-build-secrets` unpacks the envelope into mode-0600
-  tmpfiles under `$RUNNER_TEMP/buildkit-secrets/` and emits the
-  `secrets:` payload that `docker/build-push-action` consumes.
-  Reserved names — those reusable-ci already uses for its own
-  publish flows (`RELEASE_GPG_PRIVATE_KEY`, `MAVEN_CENTRAL_PASSWORD`,
-  etc.) — are rejected at config-parse time to prevent accidental
-  shadowing.
-- **artifacts.yml:**
-
-  ```yaml
-  containers:
-    - name: my-svc
-      from: [my-svc]
-      container-file: Containerfile
-      context: .
-      build-secrets:
-        - PRIVATE_REGISTRY_TOKEN
-        - BUILD_TIME_API_KEY
-  ```
-
-- **Containerfile:** declare each secret on the `RUN` line that consumes it. The `id=` value is the **lowercased** name; `target=` is the file path inside the mount namespace (a conventional value, the file disappears once the `RUN` step exits).
-
-  ```dockerfile
-  # syntax=docker/dockerfile:1
-  RUN --mount=type=secret,id=private_registry_token,target=/run/secrets/token \
-      curl -H "Authorization: Bearer $(cat /run/secrets/token)" \
-           https://internal.example/private/dep.tar.gz -o /tmp/dep.tar.gz
-  ```
-
-- **Caller workflow:** the adopter's top-level caller forwards the envelope as the `REUSABLE_CI_BUILD_SECRETS_JSON` secret. The value must stay inside the `secrets:` context end-to-end — step outputs, job outputs, and `with:` inputs are **not** secret-scoped (their values are queryable through the workflow-run API even when GHA masks them in log text). Two correct shapes, picked by how much scoping you want:
-
-  **Option A — single pre-packed org secret (recommended).** Create one GitHub secret named `REUSABLE_CI_BUILD_SECRETS_JSON` at the repo or org level whose value is the compact JSON object you'd otherwise build at runtime, e.g.:
-
-  ```json
-  {"PRIVATE_REGISTRY_TOKEN":"<value>","BUILD_TIME_API_KEY":"<value>"}
-  ```
-
-  Then forward it untouched:
-
-  ```yaml
-  jobs:
-    release:
-      uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v3.0.0
-      secrets:
-        # ... your usual secret forwards ...
-        REUSABLE_CI_BUILD_SECRETS_JSON: ${{ secrets.REUSABLE_CI_BUILD_SECRETS_JSON }}
-  ```
-
-  Pros: the value never enters a non-secret channel; rotation is one secret update; the envelope ships exactly the keys you declared.
-
-  **Option B — `toJSON(secrets)` shortcut.** If every name in `containers[].build-secrets` matches a top-level secret name exactly, forward the whole context:
-
-  ```yaml
-  secrets:
-    REUSABLE_CI_BUILD_SECRETS_JSON: ${{ toJSON(secrets) }}
-  ```
-
-  The materialize step ignores envelope keys it didn't declare, so unrelated org secrets riding along are decoded into memory and dropped without touching disk. The value still stays in the secrets channel. Trade-off: the envelope JSON is larger than it needs to be, and the auto-`GITHUB_TOKEN` rides along.
-
-  Avoid: packing the envelope at runtime via a `jq` step into `$GITHUB_OUTPUT`, then forwarding `needs.pack.outputs.envelope`. Step / job outputs are not a secrets channel, and the value leaves the masked path the moment you write it there.
 
 ---
 
@@ -833,26 +583,25 @@ containers:
 
 - **Description:** GitHub Packages registry
 - **Requirements:** `GITHUB_TOKEN` (automatic)
-- **Applies to:** Maven libraries and NPM packages. Maven apps and Gradle publishing are not wired today; use a project-owned publishing workflow until reusable-ci adds those publishers.
+- **Applies to:** Maven, NPM, Gradle
 - **Registry:** `ghcr.io` (containers), `npm.pkg.github.com` (NPM)
 
 ### `maven-central`
 
-- **Description:** Maven Central (Sonatype Central Portal)
+- **Description:** Maven Central (Sonatype OSSRH)
 - **Requirements:**
-  - `MAVEN_CENTRAL_USERNAME` secret
-  - `MAVEN_CENTRAL_PASSWORD` secret
+  - `MAVENCENTRAL_USERNAME` secret
+  - `MAVENCENTRAL_PASSWORD` secret
   - `build-type: library` (required)
 - **Applies to:** Maven only
 - **Note:** Requires Sonatype account and approved groupId
 
 ### `npmjs`
 
-- **Description:** Public npmjs.org registry (reserved for future production support)
-- **Requirements:** Not currently wired into production release publishing; current config validation rejects this target
+- **Description:** Public npmjs.org registry
+- **Requirements:** `NPM_TOKEN` secret
 - **Applies to:** NPM only
-- **Note:** Current NPM package publishing uses `github-packages` and
-  `npm.pkg.github.com`.
+- **Note:** Package must be scoped or publicly available
 
 ### `google-play`
 
@@ -860,7 +609,7 @@ containers:
 - **Requirements:**
   - `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` secret (service account JSON key)
   - `ANDROID_KEYSTORE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` secrets (for signing)
-  - Signed release AAB setup. `config.enable-android-signing: true` is normally required by Google Play, but reusable-ci does not currently validate this coupling.
+  - `config.enable-android-signing: true`
   - `config.package-name` specified
 - **Applies to:** Gradle Android only
 - **Note:** App must already exist in Google Play Console (upload first AAB manually)
@@ -871,7 +620,7 @@ containers:
 
 ### Single Artifact (Maven)
 
-**`.reusable-ci/artifacts.yml`**
+**`.github/artifacts.yml`**
 ```yaml
 artifacts:
   - name: my-app
@@ -886,16 +635,16 @@ artifacts:
 ```yaml
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v3.0.0
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
-      reusable-ci-binary-ref: v3.0.0
-      artifacts-config: .reusable-ci/artifacts.yml
+      reusable-ci-ref: v2.7.0
+      artifacts-config: .github/artifacts.yml
       release-publisher: github-cli
 ```
 
 ### Single Artifact with Container (Maven)
 
-**`.reusable-ci/artifacts.yml`**
+**`.github/artifacts.yml`**
 ```yaml
 artifacts:
   - name: my-app
@@ -949,6 +698,7 @@ artifacts:
     project-type: gradle-android
     working-directory: .
     config:
+      java-version: 21
       build-module: app
       product-flavor: demo
       build-types: release
@@ -962,9 +712,11 @@ artifacts:
   - name: my-android-app
     project-type: gradle-android
     working-directory: .
+    build-type: application
     publish-to:
       - google-play
     config:
+      java-version: 21
       build-module: app
       product-flavor: demo
       build-types: release
@@ -992,6 +744,7 @@ artifacts:
   - name: my-ios-app
     project-type: xcode-ios
     working-directory: .
+    build-type: application
     publish-to: []  # iOS apps don't publish to package registries
     config:
       xcode-version: "16.1"
@@ -1007,8 +760,8 @@ artifacts:
 
 **Required Secrets:**
 ```text
-IOS_SIGNING_CERTIFICATE_BASE64
-IOS_SIGNING_CERTIFICATE_PASSPHRASE
+CERTIFICATE_BASE64
+CERTIFICATE_PASSPHRASE
 PROVISIONING_PROFILE_BASE64
 KEYCHAIN_PASSWORD
 APP_STORE_CONNECT_ISSUER_ID
@@ -1040,6 +793,7 @@ artifacts:
   - name: my-ios-app
     project-type: xcode-ios
     working-directory: .
+    build-type: application
     publish-to: []
     config:
       xcode-version: "16.1"
@@ -1067,7 +821,7 @@ artifacts:
       scheme: "Wallet Demo"
       project: "Wallet.xcodeproj"
       configuration: Release
-      submit-for-review: false  # Upload only for demo builds
+      submit-for-review: false  # TestFlight only for demo builds
 
   - name: wallet-ios-production
     project-type: xcode-ios
@@ -1077,7 +831,7 @@ artifacts:
       scheme: "Wallet Production"
       project: "Wallet.xcodeproj"
       configuration: Release
-      submit-for-review: true  # Record production review intent in the summary
+      submit-for-review: true  # Submit to App Store for production
 ```
 
 ### iOS App Store Submission Options
@@ -1092,8 +846,8 @@ artifacts:
       scheme: "MyApp"
       project: "MyApp.xcodeproj"
 
-      # App Store Connect upload options
-      submit-for-review: true   # Summary intent only; submit review manually in App Store Connect
+      # App Store submission options
+      submit-for-review: true   # Submit to App Store (not just TestFlight)
       skip-validation: false    # Validate IPA before upload (recommended)
 ```
 
@@ -1105,7 +859,7 @@ Build multiple artifacts from a single repository.
 
 ### Separate Containers (One Artifact → One Container)
 
-**`.reusable-ci/artifacts.yml`**
+**`.github/artifacts.yml`**
 ```yaml
 artifacts:
   - name: backend
@@ -1125,17 +879,17 @@ containers:
   - name: backend
     from: [backend]
     container-file: java-backend/Containerfile
-    context: .
+    context: java-backend
 
   - name: frontend
     from: [frontend]
     container-file: frontend/Containerfile
-    context: .
+    context: frontend
 ```
 
 ### Combined Container (Multiple Artifacts → One Container)
 
-**`.reusable-ci/artifacts.yml`**
+**`.github/artifacts.yml`**
 ```yaml
 artifacts:
   - name: backend
@@ -1156,8 +910,8 @@ containers:
 **`Containerfile`**
 ```dockerfile
 FROM registry.access.redhat.com/ubi9/openjdk-21-runtime:latest
-COPY target/*.jar app.jar
-COPY dist/ /app/static/
+COPY java-backend/target/*.jar app.jar
+COPY frontend/dist/ /app/static/
 CMD ["java", "-jar", "app.jar"]
 ```
 
@@ -1170,14 +924,14 @@ name: Release Workflow
 on:
   push:
     tags:
-      - "v*.*.*"
+      - "v[0-9]+.[0-9]+.[0-9]+"
 
 permissions:
   contents: read
 
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v3.0.0
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     permissions:
       contents: write
       packages: write
@@ -1186,8 +940,8 @@ jobs:
       attestations: write
     secrets: inherit
     with:
-      reusable-ci-binary-ref: v3.0.0
-      artifacts-config: .reusable-ci/artifacts.yml
+      reusable-ci-ref: v2.7.0
+      artifacts-config: .github/artifacts.yml
       changelog-creator: git-cliff
       release-publisher: github-cli
 ```
@@ -1196,8 +950,8 @@ jobs:
 
 - **Unified versioning**: All artifacts share the same version (from git tag)
 - **Single changelog**: One changelog for the entire repository
-- **No change detection**: All artifacts build on every release
-- **Version bump concurrency**: Multi-artifact version bump currently uses a matrix and can race on pushes/tag moves; single-artifact projects are unaffected. See [`TODO.md`](../TODO.md).
+- **No change detection**: All artifacts build on every release (smart builds coming in future)
+- **Sequential version bumps**: Artifacts bump versions one at a time (parallel coming in future)
 
 ## Complete Working Examples
 

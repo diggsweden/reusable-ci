@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
 
 // Derive applies the post-parse computed fields used by downstream
@@ -85,7 +85,7 @@ func CargoArtifactBuildMode(a Artifact) CargoBuildMode {
 // contract, not every schema-recognised future value.
 func SupportedPublishTarget(a Artifact, target PublishTarget) bool { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	switch target {
-	case PublishGitHubPackages:
+	case PublishForgePackages:
 		return a.ProjectType == projecttype.Maven || a.ProjectType == projecttype.NPM
 	case PublishMavenCentral:
 		return a.ProjectType == projecttype.Maven && a.BuildType == BuildTypeLibrary

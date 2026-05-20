@@ -6,7 +6,7 @@ package release_test
 import (
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/release"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
 
 func TestIsReleaseArtifact(t *testing.T) {

@@ -9,27 +9,32 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
 
 // Parse turns a byte slice (artifacts.yml content) into a typed Config.
 // It does not validate or compute derived fields — call Validate next,
 // then Derive when you need the SBOM defaults / container enrichment.
 //
-// The `config:` block on each artifact is decoded directly into the
-// typed per-ecosystem sub-struct (Artifact.Maven, .GradleAndroid,
-// .XcodeIOS, .Go, etc.) selected by ProjectType, with strict mode so
-// unknown or wrong-typed keys fail here rather than silently downstream.
-// See (*Artifact).UnmarshalYAML.
+// Decoding is strict at EVERY level: a typo'd top-level key
+// (`artifactz:`), a typo'd artifact key (`project-typ:`), or an unknown
+// per-ecosystem `config:` key all fail here with the offending key named,
+// rather than being silently dropped and surfacing as a pipeline that
+// does nothing. The consumer's config file is the one input a human
+// hand-types, so it gets the same strictness the codebase applies to
+// itself. See (*Artifact).UnmarshalYAML for the artifact/ecosystem levels.
 func Parse(data []byte) (*Config, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("config: empty input: %w", errs.ErrInvalidConfig)
 	}
 
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+
 	var c Config
-	if err := yaml.Unmarshal(data, &c); err != nil {
-		return nil, fmt.Errorf("config: parse yaml: %w: %w", err, errs.ErrInvalidConfig)
+	if err := dec.Decode(&c); err != nil {
+		return nil, fmt.Errorf("config: unknown or wrong-typed key in artifacts.yml: %w: %w", err, errs.ErrInvalidConfig)
 	}
 
 	return &c, nil
@@ -59,8 +64,8 @@ func (a *Artifact) UnmarshalYAML(value *yaml.Node) error {
 	}
 
 	var s artifactSurface //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	if err := value.Decode(&s); err != nil {
-		return err
+	if err := strictDecodeNode(value, &s); err != nil {
+		return fmt.Errorf("artifact entry has an unknown or wrong-typed key: %w: %w", err, errs.ErrInvalidConfig)
 	}
 
 	a.Name = s.Name

@@ -7,7 +7,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/security"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/security"
 )
 
 func sample() *security.TrivyReport {

@@ -6,8 +6,8 @@ package pipeline
 import (
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/config"
-	"github.com/diggsweden/reusable-ci/internal/domain/validate"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/validate"
 )
 
 // releasePolicyInputs is the typed envelope of everything the policy

@@ -6,7 +6,7 @@ package validate_test
 import (
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/validate"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/validate"
 )
 
 //nolint:cyclop // fuzz harness exercising the parser exhaustively.

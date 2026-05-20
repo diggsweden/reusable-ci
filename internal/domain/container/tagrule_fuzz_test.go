@@ -7,7 +7,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 )
 
 //nolint:cyclop // fuzz harness exercising the parser exhaustively.

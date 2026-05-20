@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
-# Example: Gradle JVM project build.
+# Example: Gradle JVM library (publishes to Maven Central).
 #
 # For Android applications, see examples/android-app/ — that path uses
 # `project-type: gradle-android` and routes to build-gradle-android.yml,
@@ -10,6 +10,9 @@ artifacts:
   - name: my-gradle-lib
     project-type: gradle
     working-directory: .
+    build-type: library
+    publish-to:
+      - maven-central
     config:
       java-version: 25
-      gradle-tasks: build
+      gradle-tasks: build publish

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // RuleType is the supported subset of docker/metadata-action tag types.

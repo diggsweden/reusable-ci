@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	"github.com/diggsweden/reusable-ci/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/listval"
 )
 
 // OpengrepSeverity is the canonical severity threshold used by
@@ -257,13 +258,13 @@ func RenderOpengrepFailureSummary(in OpengrepFailureSummaryInput) string {
 	return b.String()
 }
 
-// ParseConfigList splits a comma-separated config string and trims
+// ParseConfigList splits a comma/space/newline-separated config string and trims
 // whitespace from each entry. Empty entries are dropped. Mirrors the
 // bash `build_config_args` logic.
 //
 // Returns an error when no non-empty configs remain.
 func ParseConfigList(raw string) ([]string, error) {
-	parts := strings.Split(raw, ",")
+	parts := listval.Tokens(raw)
 
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {

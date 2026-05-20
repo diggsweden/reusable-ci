@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/ci"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 )
 
 // Sink implements ci.ManifestSink. Safe for concurrent use.

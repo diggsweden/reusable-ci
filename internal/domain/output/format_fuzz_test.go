@@ -6,8 +6,8 @@ package output_test
 import (
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/output"
-	"github.com/diggsweden/reusable-ci/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
 func FuzzParseOutputFormat(f *testing.F) {

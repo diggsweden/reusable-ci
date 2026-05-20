@@ -13,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/cliio"
+	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 )
 
 // TestWithLock_SerializesReadModifyWrite is the regression for the ledger

@@ -9,7 +9,7 @@ package publish
 import (
 	"fmt"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 )
 
 // RegistryAuthInput describes the auth configuration the workflow wants

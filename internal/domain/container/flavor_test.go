@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 )
 
 func TestValidateFlavor_Empty(t *testing.T) {

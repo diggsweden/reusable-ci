@@ -1,4 +1,4 @@
-module github.com/diggsweden/reusable-ci
+module github.com/diggsweden/reusable-ci/v3
 
 go 1.26.3
 

@@ -8,8 +8,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/config"
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/listval"
 )
 
 // ReleasePlanVersion is the current release plan contract version.
@@ -183,7 +184,7 @@ type ReleasePublishStagePlan struct {
 
 // ReleasePublishTargets are the release publish-stage jobs.
 type ReleasePublishTargets struct {
-	GitHubPackages      TargetPlan[PlannedArtifact]  `json:"github_packages"`
+	ForgePackages       TargetPlan[PlannedArtifact]  `json:"forge_packages"`
 	MavenCentral        TargetPlan[PlannedArtifact]  `json:"maven_central"`
 	GooglePlay          TargetPlan[PlannedArtifact]  `json:"google_play"`
 	XcodeIOS            TargetPlan[PlannedArtifact]  `json:"xcode_ios"`
@@ -291,7 +292,7 @@ func NewReleasePublishStagePlan(configPlan ConfigPlan, buildSBOM bool) ReleasePu
 		Version: ReleasePlanVersion,
 		Stage:   "publish",
 		Targets: ReleasePublishTargets{
-			GitHubPackages:      newTargetPlan(artifacts.GitHubPackages),
+			ForgePackages:       newTargetPlan(artifacts.ForgePackages),
 			MavenCentral:        newTargetPlan(artifacts.MavenCentral),
 			GooglePlay:          newTargetPlan(artifacts.GooglePlay),
 			XcodeIOS:            newTargetPlan(artifacts.XcodeIOS),
@@ -396,7 +397,7 @@ func transferPlatformSuffixes(platforms string) []string {
 
 	out := make([]string, 0)
 
-	for _, raw := range strings.Split(platforms, ",") {
+	for _, raw := range listval.Tokens(platforms) {
 		platform := strings.TrimSpace(raw)
 		if platform == "" {
 			continue

@@ -7,7 +7,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // Registry is the set of registry operations the promotion flow needs:
@@ -115,7 +116,7 @@ func promoteEntry(ctx context.Context, reg Registry, sigCopier SignatureCopier, 
 // without a configured copier is refused rather than silently dropping the
 // signature.
 func copyToDest(ctx context.Context, reg Registry, sigCopier SignatureCopier, source, dest string) error {
-	if stripTag(source) == stripTag(dest) {
+	if container.StripTag(source) == container.StripTag(dest) {
 		if err := reg.CopyTag(ctx, source, dest); err != nil {
 			return fmt.Errorf("copy %s -> %s: %w", source, dest, err)
 		}

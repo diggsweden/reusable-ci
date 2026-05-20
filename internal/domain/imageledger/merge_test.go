@@ -6,7 +6,7 @@ package imageledger_test
 import (
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/imageledger"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
 )
 
 func TestMerge_CombinesAndDeduplicates(t *testing.T) {

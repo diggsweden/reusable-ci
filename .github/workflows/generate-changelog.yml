@@ -1,17 +1,16 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
-# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+# SPDX-License-Identifier: CC0-1.0
 #
 # Generate Changelog
-#
-# Reusable workflow that wraps git-cliff. Runs inside the reusable-ci runtime
-# container; `git-cliff` is on PATH and changelog validation lives in the
-# reusable-ci binary.
+# 
+# This reusable workflow generates a changelog using git-cliff with flexible configuration.
+# Can generate full history, latest changes only, with or without headers.
 #
 # Common use cases:
-#   - Full history: git-cliff-args=""
-#   - Latest release: git-cliff-args="--latest"
-#   - Commit message: git-cliff-args="--latest --strip header"
+#   - Full history: gitCliffArgs="" 
+#   - Latest release: gitCliffArgs="--latest"
+#   - Commit message: gitCliffArgs="--latest --strip header"
 name: Generate Changelog
 on:
   workflow_call:
@@ -22,9 +21,9 @@ on:
         default: "main"
         type: string
       changelog-config:
-        description: "Path to git-cliff configuration file. Defaults to the bundled template at /opt/reusable-ci/templates/gitcliff/default.toml inside the runtime image."
+        description: "Path to git-cliff configuration file"
         required: false
-        default: "/opt/reusable-ci/templates/gitcliff/default.toml"
+        default: ".github-templates/templates/gitcliff/default.toml"
         type: string
       git-cliff-args:
         description: "Arguments for git-cliff (empty for full, '--latest' for latest release)"
@@ -46,46 +45,56 @@ on:
         required: false
         default: "release-changelog"
         type: string
-      runtime-image:
-        description: "reusable-ci runtime image. Optional override; default uses the matching v3.0.0 runtime image."
+      reusable-ci-ref:
+        description: "Ref for reusable-ci templates checkout (defaults to main)"
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+        default: "main"
         type: string
 permissions:
   contents: read
 jobs:
   generate-changelog:
     name: Generate
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
-    container:
-      image: ${{ inputs['runtime-image'] }}
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 0 # Need full history for git-cliff
+      - name: Fetch git-cliff templates
+        if: ${{ startsWith(inputs['changelog-config'], '.github-templates/') }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          path: .github-templates
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          sparse-checkout: |
+            templates/
       - name: Generate Changelog with git-cliff
+        uses: orhun/git-cliff-action@c93ef52f3d0ddcdcc9bd5447d98d458a11cd4f72 # v4.7.1
+        with:
+          config: ${{ inputs['changelog-config'] }}
+          args: ${{ inputs['git-cliff-args'] }}
         env:
-          CONFIG: ${{ inputs['changelog-config'] }}
-          ARGS: ${{ inputs['git-cliff-args'] }}
           OUTPUT: ${{ inputs['output-file'] }}
           GITHUB_REPO: ${{ github.repository }}
-        run: |
-          # git-cliff is baked into the runtime image; ARGS is split on
-          # whitespace by design (git-cliff flags like `--latest`).
-          # shellcheck disable=SC2086
-          git-cliff --config "$CONFIG" --output "$OUTPUT" $ARGS
+      - name: Checkout .github repository for scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
       - name: Verify Changelog Generation
         env:
           CHANGELOG_FILE: ${{ inputs['output-file'] }}
-        run: reusable-ci release verify-changelog
+        run: bash "${{ github.workspace }}/.github-shared/scripts/release/validate-changelog.sh"
       - name: Upload Changelog Artifact
         if: ${{ inputs['upload-as-artifact'] }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ inputs['artifact-name'] }}
           path: ${{ inputs['output-file'] }}
-          retention-days: "7"
-          if-no-files-found: warn
+          retention-days: 7

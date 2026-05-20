@@ -1,24 +1,24 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
-# Example: Multiple artifacts building into ONE combined container
-# Use case: Monorepo with Maven + Gradle services and 1 NPM frontend → 1 combined container image
+# Example: Multiple artifacts building into ONE combined container (v2)
+# Use case: Monorepo with 2 Maven services + 1 NPM frontend → 1 combined container image
 artifacts:
-  # Backend API (Maven) - built for the combined container
+  # Backend API (Maven) - published to GitHub Packages
   - name: api
     project-type: maven
     working-directory: services/api
     build-type: application
     config:
       java-version: 25
-  # Background worker (Gradle JVM) - built for the combined container
+  # Background worker (Maven) - published to GitHub Packages
   - name: worker
-    project-type: gradle
+    project-type: maven
     working-directory: services/worker
+    build-type: application
     config:
       java-version: 25
-      gradle-tasks: build
-  # Web frontend (NPM) - built for the combined container
+  # Web frontend (NPM) - published to GitHub Packages
   - name: web
     project-type: npm
     working-directory: apps/web

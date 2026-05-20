@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/testutil/gpgkey"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/gpgkey"
 )
 
 func TestNew_GeneratesValidKey(t *testing.T) {

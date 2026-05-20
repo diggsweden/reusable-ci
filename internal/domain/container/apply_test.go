@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/container"
-	"github.com/diggsweden/reusable-ci/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
 func TestIsCleanRefTag(t *testing.T) {
@@ -246,7 +246,7 @@ func TestApply_RejectsInvalidTag(t *testing.T) {
 	r := mustRule(t, "type=raw,value=bad/tag,enable=true")
 
 	_, _, err := container.Apply(r, container.MetadataContext{})
-	if err == nil || !strings.Contains(err.Error(), "invalid docker tag") {
+	if err == nil || !strings.Contains(err.Error(), "invalid image tag") {
 		t.Errorf("error = %v", err)
 	}
 }

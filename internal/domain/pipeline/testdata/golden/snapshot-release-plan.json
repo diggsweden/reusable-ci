@@ -60,7 +60,7 @@
               "project_type": "npm",
               "working_directory": "apps/web",
               "publish_to": [
-                "github-packages",
+                "forge-packages",
                 "npmjs"
               ],
               "sboms": "all",
@@ -118,7 +118,7 @@
               "project_type": "npm",
               "working_directory": "apps/web",
               "publish_to": [
-                "github-packages",
+                "forge-packages",
                 "npmjs"
               ],
               "sboms": "all",

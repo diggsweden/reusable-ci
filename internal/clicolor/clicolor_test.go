@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/clicolor"
+	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
 )
 
 func TestCheckCross_PlainForNonTerminalWriter(t *testing.T) {

@@ -9,8 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/config"
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
 
 func TestParse_Maven(t *testing.T) {
@@ -95,6 +95,30 @@ func TestParse_InvalidYAML(t *testing.T) {
 	_, err := config.Parse([]byte("not: valid: yaml: at: all: \n  - "))
 	if err == nil {
 		t.Errorf("expected parse error, got nil")
+	}
+}
+
+// TestParse_RejectsUnknownKeysAtEveryLevel pins the strict-decode contract:
+// a typo'd key is refused with the key named, never silently dropped — at
+// the top level, the artifact level, and (pre-existing behavior) inside the
+// per-ecosystem config block.
+func TestParse_RejectsUnknownKeysAtEveryLevel(t *testing.T) {
+	t.Parallel()
+
+	for name, doc := range map[string]string{
+		"top_level":      "artifactz:\n  - name: x\n    project-type: go\n",
+		"artifact_level": "artifacts:\n  - name: x\n    project-typ: go\n",
+		"container_level": "artifacts:\n  - name: x\n    project-type: npm\n" +
+			"containers:\n  - name: img\n    containerfilez: Containerfile\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := config.Parse([]byte(doc))
+			if err == nil || !strings.Contains(err.Error(), "not found") {
+				t.Errorf("typo'd key should be rejected with the field named, got %v", err)
+			}
+		})
 	}
 }
 

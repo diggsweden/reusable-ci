@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/validate"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/validate"
 )
 
 func TestParseTagFormat_EmptyInputUsage(t *testing.T) {

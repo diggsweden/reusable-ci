@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	"github.com/diggsweden/reusable-ci/internal/domain/provenance"
-	"github.com/diggsweden/reusable-ci/internal/testutil/golden"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provenance"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/golden"
 )
 
 func TestParseChecksums(t *testing.T) {
@@ -93,7 +93,7 @@ func TestBuild_RequiresSubjectsAndContext(t *testing.T) {
 	}
 }
 
-func TestBuild_GoldenForgejo(t *testing.T) {
+func TestBuild_Golden(t *testing.T) {
 	t.Parallel()
 
 	in := provenance.Input{
@@ -101,18 +101,13 @@ func TestBuild_GoldenForgejo(t *testing.T) {
 			{Name: "dist/app_linux_amd64.tar.gz", SHA256: strings.Repeat("a", 64)},
 			{Name: "dist/checksums.txt", SHA256: strings.Repeat("b", 64)},
 		},
-		RepositoryURL: "https://codeberg.org/itiquette/gommitlint",
-		Ref:           "v1.2.3",
-		WorkflowFile:  "release.yml",
-		BuilderID:     "https://codeberg.org/itiquette/gommitlint/.forgejo/workflows/release.yml@v1.2.3",
-		InvocationID:  "https://codeberg.org/itiquette/gommitlint/actions/runs/4242",
-		StartedOn:     "2026-06-01T12:00:00Z",
-		FinishedOn:    "2026-06-01T12:00:00Z",
-		Profile: provenance.Profile{
-			BuildType:         "https://forgejo.org/actions/buildtypes/workflow/v1",
-			WorkflowDirPrefix: ".forgejo/workflows/",
-			RunnerLabel:       "forgejo-actions",
-		},
+		BuildType:    provenance.ReleaseBuildType,
+		BuilderID:    "https://codeberg.org/itiquette/gommitlint/release.yml@v1.2.3",
+		SourceURI:    "git+https://codeberg.org/itiquette/gommitlint",
+		Ref:          "v1.2.3",
+		InvocationID: "https://codeberg.org/itiquette/gommitlint/actions/runs/4242",
+		StartedOn:    "2026-06-01T12:00:00Z",
+		FinishedOn:   "2026-06-01T12:00:00Z",
 		ResolvedDeps: []provenance.Dependency{
 			provenance.SourceDependency("https://codeberg.org/itiquette/gommitlint", "v1.2.3", strings.Repeat("c", 40)),
 			{URI: "pkg:golang/github.com/foo/bar@v1.2.3", DigestType: "gomod_h1", Digest: "abc123"},
@@ -129,5 +124,38 @@ func TestBuild_GoldenForgejo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	golden.Equal(t, "forgejo_provenance.json", body)
+	golden.Equal(t, "provenance_statement.json", body)
+}
+
+func TestPredicate_Golden(t *testing.T) {
+	t.Parallel()
+
+	// The container path: same builder/source/run vocabulary, predicate only
+	// (cosign binds the image subject), with an image external parameter.
+	body, err := provenance.Predicate(provenance.Input{
+		BuildType:    provenance.ContainerBuildType,
+		BuilderID:    "https://github.com/diggsweden/reusable-ci/v3/.github/workflows/publish-container.yml@refs/tags/v1.2.3",
+		SourceURI:    "git+https://github.com/diggsweden/reusable-ci/v3",
+		Ref:          "refs/tags/v1.2.3",
+		ImageName:    "ghcr.io/diggsweden/app",
+		InvocationID: "https://github.com/diggsweden/reusable-ci/v3/actions/runs/4242",
+		StartedOn:    "2026-06-01T12:00:00Z",
+		FinishedOn:   "2026-06-01T12:00:00Z",
+		ResolvedDeps: []provenance.Dependency{
+			provenance.SourceDependency("https://github.com/diggsweden/reusable-ci/v3", "refs/tags/v1.2.3", strings.Repeat("c", 40)),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	golden.Equal(t, "provenance_predicate.json", body)
+}
+
+func TestPredicate_RequiresContext(t *testing.T) {
+	t.Parallel()
+
+	if _, err := provenance.Predicate(provenance.Input{}); !errors.Is(err, errs.ErrUsage) {
+		t.Errorf("empty input should be usage error, got %v", err)
+	}
 }

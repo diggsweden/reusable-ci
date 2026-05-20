@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
 // Annotator emits CI-platform annotations (error / warning / notice)
@@ -93,9 +93,12 @@ func (a Annotator) Noticef(msgFormat string, args ...any) {
 }
 
 // emit writes one annotation line, picking the encoding per format.
-// FormatGitHub uses the workflow command vocabulary; all other formats
-// fall through to the human prefix because none of them have a
-// universally-understood inline equivalent.
+// Only FormatGitHub uses the workflow-command vocabulary; all other
+// formats fall through to the human prefix because none of them have a
+// universally-understood inline equivalent. FormatForgejo deliberately
+// takes the plain branch: Forgejo/Gitea Actions does not render
+// `::error::` annotations (go-gitea/gitea#27898), so emitting them would
+// be unrenderable log noise.
 func (a Annotator) emit(ghaLevel, plainPrefix, msgFormat string, args ...any) {
 	if a.w == nil {
 		return // zero-value sink: discard

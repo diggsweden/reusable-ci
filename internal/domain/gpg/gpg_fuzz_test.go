@@ -7,7 +7,7 @@ import (
 	"encoding/base64"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/gpg"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/gpg"
 )
 
 func FuzzDecodeKey(f *testing.F) {

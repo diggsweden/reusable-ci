@@ -1,36 +1,19 @@
-# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
 
-# Gitleaks configuration. Inherits the upstream default ruleset and
-# allowlists a handful of files whose whole purpose is to contain
-# secret-shaped strings (test fixtures for redaction logic, throwaway
-# keypair generators, documentation showing placeholder tokens).
+# Gitleaks configuration for secret scanning
 
 [extend]
+# Use default gitleaks rules
 useDefault = true
 
+# Allowlist for documentation containing example curl commands with placeholder tokens
 [allowlist]
-description = "Files where secret-shaped strings are by-design test fixtures or doc placeholders."
+description = "Ignore files with placeholder tokens in documentation and tests"
 paths = [
   # Documentation with example curl commands using GITHUB_TOKEN as a placeholder (not a real token)
   '''docs/verification\.md''',
-
-  # Go fuzz seed / test fixture using PGP armor headers (no real key material)
-  '''internal/domain/gpg/gpg_fuzz_test\.go''',
-
-  # Test infra that materialises a throwaway GPG keypair to disk for isolated tests
-  '''internal/testutil/gpgkey/gpgkey_test\.go''',
-
-  # RedactKeyMaterial unit test. The whole point of the file is to feed
-  # PEM private-key markers and a JWT-shaped token through the redactor
-  # and assert the bytes get replaced. The fixtures HAVE to look like
-  # real secrets for the test to be meaningful.
-  '''internal/safeexec/redact_test\.go''',
-
-  # GPG --import-via-stdin integration test. Ships a throwaway PGP
-  # private key fixture so it can exercise the real `gpg --import`
-  # path end-to-end. The key is generated for that test and not used
-  # anywhere else.
-  '''internal/adapters/gpg/import_stdin_test\.go''',
+  # Test file for CI scrub function using fake tokens to verify scrubbing works
+  '''tests/ci/scrub\.bats'''
 ]

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
-# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+# SPDX-License-Identifier: CC0-1.0
 # Pull Request Orchestrator
 # 
 # Purpose: Orchestrates all quality checks for pull requests and pushes, ensuring
@@ -19,24 +19,28 @@
 # - Dependency vulnerability scanning
 # - License compliance validation
 # - SAST (Static Application Security Testing)
-# - Results uploaded to GitHub Code Scanning (requires CODE_SCANNING_TOKEN secret)
+# - Results uploaded to GitHub Code Scanning (requires SARIF_UPLOAD_TOKEN secret)
 #
 # Required Secrets:
 #   None required - uses GITHUB_TOKEN for operations
-#   Optional: CODE_SCANNING_TOKEN for uploading scan results to Code Scanning
+#   Optional: SARIF_UPLOAD_TOKEN for uploading scan results to Code Scanning
 #             (requires code_scanning_alerts:write — GitHub App or fine-grained PAT)
 #   Optional: Organization secrets for private package access
 #
 # Required Permissions:
 #   contents: read         # Read source code
 #   packages: read         # Access private packages
-#   secrets: inherit       # Pass CODE_SCANNING_TOKEN for Code Scanning upload
+#   secrets: inherit       # Pass SARIF_UPLOAD_TOKEN for Code Scanning upload
 #
 # Configurable Linters:
-#   linters.nanolinter:   run nanolinter (default: true) — `nanolinter verify`
-#                         against the consumer repo inside the nanolinter flavour
-#                         image; uploads security findings to Code Scanning as
-#                         SARIF. Swift/iOS linting runs separately (lint-swift.yml).
+#   linters.commitlint: Commit message linting (default: true)
+#   linters.licenselint: License compliance checking (default: true)
+#   linters.dependencyreview: Dependency vulnerability scan (default: true)
+#   linters.megalint: MegaLinter with 50+ linters (default: true)
+#   linters.publiccodelint: Publiccode.yml validation (default: false)
+#   linters.devbasecheck: devbase-check linting (default: false) - RECOMMENDED
+# Configurable Security:
+#   security.sast-opengrep: OpenGrep SAST with SARIF/GitLab SAST outputs (default: true, opt out with false)
 name: Orchestrate Pull Request
 on:
   workflow_call:
@@ -47,15 +51,40 @@ on:
         required: true
         type: string
       base-branch:
-        description: "Base branch (auto-detects PR target if empty)"
+        description: "Base branch for commit linting (auto-detects PR target if empty)"
         required: false
         default: ""
         type: string
-      # Linter toggles
-      linters.nanolinter:
-        description: "Enable nanolinter linting — runs `nanolinter verify` in the nanolinter flavour image; uploads security findings to Code Scanning as SARIF (default: true)"
+      # Linter toggles (all can be disabled if needed)
+      linters.commitlint:
+        description: "⚠️ DEPRECATED v3.0: Enable commit message linting (migrate to devbasecheck)"
         required: false
         default: true
+        type: boolean
+      linters.licenselint:
+        description: "⚠️ DEPRECATED v3.0: Enable SPDX license header linting (migrate to devbasecheck)"
+        required: false
+        default: true
+        type: boolean
+      linters.dependencyreview:
+        description: "Enable dependency vulnerability review"
+        required: false
+        default: true
+        type: boolean
+      linters.megalint:
+        description: "⚠️ DEPRECATED v3.0: Enable MegaLinter (migrate to devbasecheck)"
+        required: false
+        default: true
+        type: boolean
+      linters.publiccodelint:
+        description: "Enable publiccode.yml linting"
+        required: false
+        default: false
+        type: boolean
+      linters.devbasecheck:
+        description: "✅ RECOMMENDED: Enable devbase-check linting (replaces megalint, commitlint, licenselint)"
+        required: false
+        default: false
         type: boolean
       linters.swiftformat:
         description: "Enable swift-format (Google Swift Style Guide) for iOS/macOS projects"
@@ -67,88 +96,103 @@ on:
         required: false
         default: false
         type: boolean
-      reusable-ci-binary-ref:
-        description: "reusable-ci ref/version passed to downstream plain-runner jobs (defaults to v3.0.0)"
+      security.sast-opengrep:
+        description: "Enable OpenGrep SAST scanning"
         required: false
-        default: "v3.0.0"
+        default: true
+        type: boolean
+      security.sast-opengrep-rules:
+        description: "OpenGrep rules path, registry pack, or comma-separated list"
+        required: false
+        default: "p/default"
         type: string
-      runtime-image:
-        description: "reusable-ci base runtime image for PR control-plane and summary jobs. Optional override; default uses the matching v3.0.0 runtime image."
+      security.sast-opengrep-fail-on-severity:
+        description: "Fail OpenGrep on none, low, medium, or high findings"
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+        default: "high"
         type: string
-      nanolinter-image:
-        description: "nanolinter flavour image the nanolinter lint job runs in (pin by @sha256 to your ecosystem flavour, e.g. codeberg.org/itiquette/nanolinter:java)"
+      reusable-ci-ref:
+        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
         required: false
-        default: "codeberg.org/itiquette/nanolinter:full"
+        default: "main"
         type: string
-    secrets:
-      CODE_SCANNING_TOKEN:
-        description: "Token with security-events:write for SARIF upload (nanolinter security findings)"
-        required: false
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
-  # ===== Stage 0: PR Plan =====
-  compose-pr-plan:
+  # ===== Stage 0: PR Interface =====
+  compose-pr-interface:
     name: Setup
-    runs-on: ubuntu-24.04
-    container:
-      image: ${{ inputs['runtime-image'] }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     outputs:
-      pr-plan-json: ${{ steps.plan.outputs.pr-plan-json }}
-      quality-stage-plan-json: ${{ steps.plan.outputs.quality-stage-plan-json }}
+      pr-context-json: ${{ steps.interface.outputs.pr-context-json }}
+      pr-policy-json: ${{ steps.interface.outputs.pr-policy-json }}
     steps:
-      - name: Compose PR control-plane plan
-        id: plan
+      - name: Checkout reusable-ci helper scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Compose PR control-plane interface
+        id: interface
         env:
           PROJECT_TYPE: ${{ inputs['project-type'] }}
           BASE_BRANCH: ${{ inputs['base-branch'] }}
-          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
-          LINTER_NANOLINTER: ${{ inputs['linters.nanolinter'] }}
+          REUSABLE_CI_REF: ${{ inputs['reusable-ci-ref'] }}
+          LINTER_COMMITLINT: ${{ inputs['linters.commitlint'] }}
+          LINTER_LICENSLINT: ${{ inputs['linters.licenselint'] }}
+          LINTER_DEPENDENCYREVIEW: ${{ inputs['linters.dependencyreview'] }}
+          LINTER_MEGALINT: ${{ inputs['linters.megalint'] }}
+          LINTER_PUBLICCODELINT: ${{ inputs['linters.publiccodelint'] }}
+          LINTER_DEVBASECHECK: ${{ inputs['linters.devbasecheck'] }}
           LINTER_SWIFTFORMAT: ${{ inputs['linters.swiftformat'] }}
           LINTER_SWIFTLINT: ${{ inputs['linters.swiftlint'] }}
-        run: reusable-ci plan pr
+          SAST_OPENGREP: ${{ inputs['security.sast-opengrep'] }}
+          SAST_OPENGREP_RULES: ${{ inputs['security.sast-opengrep-rules'] }}
+          SAST_OPENGREP_FAIL_ON_SEVERITY: ${{ inputs['security.sast-opengrep-fail-on-severity'] }}
+        run: bash .github-shared/scripts/plan/write-pr-interface.sh
 
   # ===== Stage 1: Quality =====
   execute-quality-stage:
     name: Quality
-    needs: [compose-pr-plan]
+    needs: [compose-pr-interface]
     permissions:
       contents: read
-    secrets:
-      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
+    secrets: inherit
     uses: ./.github/workflows/pullrequest-quality-stage.yml
     with:
-      pr-plan-json: ${{ needs.compose-pr-plan.outputs.pr-plan-json }}
-      quality-stage-plan-json: ${{ needs.compose-pr-plan.outputs.quality-stage-plan-json }}
-      runtime-image: ${{ inputs['runtime-image'] }}
-      nanolinter-image: ${{ inputs['nanolinter-image'] }}
-      reusable-ci-binary-ref: ${{ inputs['reusable-ci-binary-ref'] }}
+      pr-context-json: ${{ needs.compose-pr-interface.outputs.pr-context-json }}
+      pr-policy-json: ${{ needs.compose-pr-interface.outputs.pr-policy-json }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
 
   # ===== Summary =====
   pr-summary:
     name: PR Summary
-    needs: [compose-pr-plan, execute-quality-stage]
+    needs: [compose-pr-interface, execute-quality-stage]
     if: always()
-    runs-on: ubuntu-24.04
-    container:
-      image: ${{ inputs['runtime-image'] }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
       - name: Download quality stage manifests
         if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARTIFACT_NAME: ci-results-pr-quality
-          ARTIFACT_DIR: .ci-results
-        run: reusable-ci artifact download
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ci-results-pr-quality
+          path: .ci-results
       - name: Generate PR summary
         env:
-          PROJECT_TYPE: ${{ fromJson(needs.compose-pr-plan.outputs['pr-plan-json']).context.project_type }}
+          PROJECT_TYPE: ${{ inputs['project-type'] }}
           QUALITY_STAGE_RESULT_PATH: .ci-results/pr-quality-result.json
-          HAS_CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN != '' }}
-        run: reusable-ci report pr
+          HAS_SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN != '' }}
+        run: bash .github-shared/scripts/summary/write-pr-summary.sh

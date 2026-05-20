@@ -8,8 +8,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	"github.com/diggsweden/reusable-ci/internal/domain/summary"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
 func TestAggregateResults(t *testing.T) {

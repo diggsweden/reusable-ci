@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/validate"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/validate"
 )
 
 func TestDetectTagSignatures(t *testing.T) {

@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // stageNameRE matches a stage name safe to use as the tag component of a
@@ -92,7 +93,7 @@ func (s Stage) destinations(entry Entry) []string {
 		name = ReleaseStageName
 	}
 
-	base := stripTag(entry.FinalTag)
+	base := container.StripTag(entry.FinalTag)
 	if s.TargetRepo != "" {
 		// Cross-registry: rehome under the target prefix while preserving the
 		// source repository path (<prefix>/<source-path-after-host>), so every

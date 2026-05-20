@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // checksumLine matches a GoReleaser-format checksum line:

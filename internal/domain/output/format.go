@@ -19,7 +19,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
 // Format is the rendering the CLI emits for a given run. Each
@@ -44,6 +44,13 @@ const (
 	// ::group::, $GITHUB_OUTPUT k=v writes). Suppresses ANSI.
 	FormatGitHub Format = "github"
 
+	// FormatForgejo is Forgejo/Gitea Actions. It is NOT FormatGitHub:
+	// Forgejo does not render `::error::`-style annotations or `::group::`
+	// log folds (go-gitea/gitea#27898), so this format emits plain,
+	// readable `Error: …` log lines instead of workflow-command noise.
+	// Step outputs still use a file sink ($FORGEJO_OUTPUT), wired in deps.
+	FormatForgejo Format = "forgejo"
+
 	// FormatGitLab speaks GitLab's annotation conventions (section_start
 	// / section_end, environment-file appends, JUnit attachments).
 	FormatGitLab Format = "gitlab"
@@ -52,7 +59,7 @@ const (
 // concrete is the resolved (post-Resolve) format set, in display order.
 //
 //nolint:gochecknoglobals // resolved-format enumeration — read-only.
-var concrete = []Format{FormatText, FormatJSON, FormatGitHub, FormatGitLab}
+var concrete = []Format{FormatText, FormatJSON, FormatGitHub, FormatForgejo, FormatGitLab}
 
 // All returns every accepted flag value including "auto". Used for the
 // urfave flag's help-text and validation.
@@ -101,15 +108,17 @@ func ParseAndResolve(s string, runner provider.RunnerKind) (Format, error) {
 // Resolve turns FormatAuto into a concrete format based on the active
 // runner conventions. Non-auto inputs pass through unchanged.
 //
-// Output format is a *runner* concern, not a forge-API one: GitHub
-// Actions and Forgejo Actions both speak the GitHub workflow-command
-// dialect (RunnerGHA → FormatGitHub) even though their forge APIs
-// differ.
+// Output format is a *runner* concern, not a forge-API one: the same
+// forge can be reached from different runners. GitHub Actions and Forgejo
+// Actions are distinct dialects here (RunnerGitHub → FormatGitHub,
+// RunnerForgejo → FormatForgejo) — Forgejo does not render GitHub
+// workflow commands, so it gets its own plain-output format.
 //
 // Mapping:
-//   - provider.RunnerGHA    → FormatGitHub
-//   - provider.RunnerGitLab → FormatGitLab
-//   - anything else         → FormatText
+//   - provider.RunnerGitHub  → FormatGitHub
+//   - provider.RunnerForgejo → FormatForgejo
+//   - provider.RunnerGitLab  → FormatGitLab
+//   - anything else          → FormatText
 //
 // JSON is never auto-selected; ask for it explicitly. Callers obtain
 // the runner from internal/platform.DetectRunner() (which owns the
@@ -120,8 +129,10 @@ func Resolve(f Format, runner provider.RunnerKind) Format {
 	}
 
 	switch runner {
-	case provider.RunnerGHA:
+	case provider.RunnerGitHub:
 		return FormatGitHub
+	case provider.RunnerForgejo:
+		return FormatForgejo
 	case provider.RunnerGitLab:
 		return FormatGitLab
 	default:

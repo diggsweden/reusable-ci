@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
 )
 
 func TestExpandSBOMs(t *testing.T) {

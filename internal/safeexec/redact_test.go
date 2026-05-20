@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/safeexec"
+	"github.com/diggsweden/reusable-ci/v3/internal/safeexec"
 )
 
 func TestRedactKeyMaterial_PassesThroughCleanOutput(t *testing.T) {

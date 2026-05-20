@@ -1,0 +1,96 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+name: Dev Release Build Stage
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      dev-context-json:
+        required: true
+        type: string
+      reusable-ci-ref:
+        required: false
+        default: "main"
+        type: string
+    outputs:
+      stage-ran:
+        description: Dev build stage ran a supported build path
+        value: ${{ jobs.summarize-dev-build-stage.outputs.stage-ran }}
+      stage-result:
+        description: Normalized dev build stage result
+        value: ${{ jobs.summarize-dev-build-stage.outputs.stage-result }}
+      result-json:
+        description: Dev build stage result payload
+        value: ${{ jobs.summarize-dev-build-stage.outputs.result-json }}
+permissions:
+  contents: read
+jobs:
+  build-maven-dev:
+    name: Build Maven Dev
+    if: ${{ fromJson(inputs['dev-context-json']).project_type == 'maven' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-maven.yml
+    with:
+      working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
+      branch: ${{ fromJson(inputs['dev-context-json']).branch }}
+      build-type: app
+      java-version: ${{ fromJson(inputs['dev-context-json']).java_version }}
+      profile: ''
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+  build-npm-dev:
+    name: Build NPM Dev
+    if: ${{ fromJson(inputs['dev-context-json']).project_type == 'npm' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-npm.yml
+    with:
+      working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
+      branch: ${{ fromJson(inputs['dev-context-json']).branch }}
+      node-version: ${{ fromJson(inputs['dev-context-json']).node_version }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+  build-gradle-dev:
+    name: Build Gradle Dev
+    if: ${{ fromJson(inputs['dev-context-json']).project_type == 'gradle' }}
+    permissions:
+      contents: read
+    secrets: inherit
+    uses: ./.github/workflows/build-gradle-app.yml
+    with:
+      working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
+      branch: ${{ fromJson(inputs['dev-context-json']).branch }}
+      java-version: ${{ fromJson(inputs['dev-context-json']).java_version }}
+      gradle-tasks: build
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+  # cargo is container-first: nothing it produces lives at the dev build-stage
+  # level. The lockfile-derived SBOM (sbom-cargo-dev) and the actual cargo
+  # compile (inside the Containerfile) both run in release-dev-publish-stage,
+  # alongside the container build. For cargo dev releases this stage runs
+  # zero jobs by design — mirrors release-build-stage.yml's prod shape.
+  summarize-dev-build-stage:
+    name: Summarize Dev Build Stage
+    needs: [build-maven-dev, build-npm-dev, build-gradle-dev]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      stage-ran: ${{ steps.summary.outputs.stage-ran }}
+      stage-result: ${{ steps.summary.outputs.stage-result }}
+      result-json: ${{ steps.summary.outputs.result-json }}
+    steps:
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Normalize dev build stage result
+        id: summary
+        env:
+          PROJECT_TYPE: ${{ fromJson(inputs['dev-context-json']).project_type }}
+          BUILD_MAVEN_DEV_RESULT: ${{ needs.build-maven-dev.result }}
+          BUILD_NPM_DEV_RESULT: ${{ needs.build-npm-dev.result }}
+          BUILD_GRADLE_DEV_RESULT: ${{ needs.build-gradle-dev.result }}
+        run: bash .github-shared/scripts/summary/write-dev-build-stage-result.sh

@@ -1,0 +1,206 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+# SPDX-License-Identifier: CC0-1.0
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../ci/output.sh"
+
+log() {
+  printf "%s\n" "$1"
+}
+
+log_success() {
+  printf "✓ %s\n" "$1"
+}
+
+log_error() {
+  ci_log_error "$1"
+}
+
+usage() {
+  printf "Usage: %s <project-type> <version> [working-dir] [version-file]\n" "$(basename "$0")" >&2
+}
+
+update_or_add_property() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local separator="${4:- = }"
+
+  if grep -q "^${key}" "$file"; then
+    sed -i "s/^${key}.*/${key}${separator}${value}/" "$file"
+    log "Updated ${key} to ${value}"
+  else
+    printf "%s%s%s\n" "$key" "$separator" "$value" >>"$file"
+    log "Added ${key}${separator}${value}"
+  fi
+}
+
+increment_version_code() {
+  local file="$1"
+
+  if grep -q '^versionCode=' "$file"; then
+    local current_code
+    current_code=$(grep '^versionCode=' "$file" | cut -d'=' -f2 | tr -d ' ')
+    local new_code=$((current_code + 1))
+    sed -i "s/^versionCode=.*/versionCode=$new_code/" "$file"
+    log "Incremented versionCode: ${current_code} → ${new_code}"
+  else
+    printf "versionCode=1\n" >>"$file"
+    log "Added versionCode=1"
+  fi
+}
+
+main() {
+  if [[ $# -lt 2 ]]; then
+    usage
+    exit 1
+  fi
+
+  local PROJECT_TYPE="$1"
+  local VERSION="$2"
+  local WORKING_DIR="${3:-.}"
+  local GRADLE_VERSION_FILE="${4:-gradle.properties}"
+
+  log "Bumping version to ${VERSION} for ${PROJECT_TYPE} project in ${WORKING_DIR}"
+
+  case "$PROJECT_TYPE" in
+  maven)
+    cd "$WORKING_DIR"
+    log "Updating Maven version to ${VERSION}"
+    # shellcheck disable=SC2086
+    mvn ${MAVEN_CLI_OPTS:-} versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false -DprocessAllModules=true -DskipTests
+    log_success "Maven version updated (including all sub-modules)"
+    ;;
+
+  npm)
+    cd "$WORKING_DIR"
+    log "Updating NPM version to ${VERSION}"
+    npm version "$VERSION" --no-git-tag-version --allow-same-version
+    log_success "NPM version updated"
+    ;;
+
+  gradle)
+    cd "$WORKING_DIR"
+    log "Version file: ${GRADLE_VERSION_FILE}"
+
+    if [[ ! -f "$GRADLE_VERSION_FILE" ]]; then
+      log_error "Gradle version file not found: ${GRADLE_VERSION_FILE}"
+      exit 1
+    fi
+
+    # JVM Gradle: a single `version=` key, matching what build-gradle-app.yml
+    # reads in its version-info step. Separator-anchored grep (`^version=`)
+    # ensures we don't accidentally match or rewrite `versionName=` /
+    # `versionCode=` if a consumer is mid-migration from gradle-android and
+    # still has the Android-style keys lying around.
+    if grep -q '^version=' "$GRADLE_VERSION_FILE"; then
+      sed -i "s/^version=.*/version=${VERSION}/" "$GRADLE_VERSION_FILE"
+      log "Updated version to ${VERSION}"
+    else
+      printf "version=%s\n" "$VERSION" >>"$GRADLE_VERSION_FILE"
+      log "Added version=${VERSION}"
+    fi
+
+    log_success "Gradle JVM version updated"
+    cat "$GRADLE_VERSION_FILE"
+    ;;
+
+  gradle-android)
+    cd "$WORKING_DIR"
+    log "Version file: ${GRADLE_VERSION_FILE}"
+
+    if [[ ! -f "$GRADLE_VERSION_FILE" ]]; then
+      log_error "Gradle version file not found: ${GRADLE_VERSION_FILE}"
+      exit 1
+    fi
+
+    # Android: versionName (human-readable) + versionCode (monotonic integer
+    # required by Google Play). Matches get-version-info.sh's reads.
+    update_or_add_property "$GRADLE_VERSION_FILE" "versionName" "$VERSION" "="
+    increment_version_code "$GRADLE_VERSION_FILE"
+
+    log_success "Gradle Android version updated"
+    cat "$GRADLE_VERSION_FILE"
+    ;;
+
+  xcode-ios)
+    cd "$WORKING_DIR"
+    log "Updating Xcode version to ${VERSION}"
+
+    local XCCONFIG_FILE="${XCODE_VERSION_FILE:-versions.xcconfig}"
+
+    if [[ ! -f "$XCCONFIG_FILE" ]]; then
+      log "Creating ${XCCONFIG_FILE}"
+      printf "MARKETING_VERSION = %s\n" "$VERSION" >"$XCCONFIG_FILE"
+      log_success "Created ${XCCONFIG_FILE} with MARKETING_VERSION = ${VERSION}"
+    else
+      update_or_add_property "$XCCONFIG_FILE" "MARKETING_VERSION" "$VERSION" " = "
+      log_success "Xcode version updated"
+      cat "$XCCONFIG_FILE"
+    fi
+    ;;
+
+  cargo)
+    cd "$WORKING_DIR"
+    log "Updating Rust version to ${VERSION}"
+
+    if [[ ! -f Cargo.toml ]]; then
+      log_error "Cargo.toml not found in ${WORKING_DIR}"
+      exit 1
+    fi
+
+    # Cargo workspaces (since Rust 1.64) declare version under
+    # [workspace.package] which members inherit via `version.workspace = true`.
+    # Bumping that single value updates every member that opts in — exactly
+    # what we want for one-version-per-release projects. Single-crate projects
+    # without a [workspace.package] section have version under [package]
+    # instead. We update whichever section is present; if both are present
+    # (rare), the workspace one wins because it's the source of truth for
+    # inheriting members.
+    if grep -q '^\[workspace\.package\]' Cargo.toml; then
+      # Range from [workspace.package] line to next section header. The
+      # substitution replaces the version line within that range only.
+      sed -i '/^\[workspace\.package\]/,/^\[/{s/^version[[:space:]]*=.*/version = "'"$VERSION"'"/}' Cargo.toml
+      log "Updated [workspace.package].version to ${VERSION}"
+    elif grep -q '^\[package\]' Cargo.toml; then
+      sed -i '/^\[package\]/,/^\[/{s/^version[[:space:]]*=.*/version = "'"$VERSION"'"/}' Cargo.toml
+      log "Updated [package].version to ${VERSION}"
+    else
+      log_error "Cargo.toml has neither [package] nor [workspace.package] sections"
+      exit 1
+    fi
+
+    # Refresh Cargo.lock so workspace member entries match the new version.
+    # `cargo update --workspace --offline` rewrites only own-crate lock entries
+    # without consulting the network or pulling dependency updates. If cargo
+    # isn't installed (rare), the lock file goes briefly stale and
+    # self-heals on the next cargo invocation.
+    if command -v cargo >/dev/null 2>&1; then
+      if [[ -f Cargo.lock ]]; then
+        cargo update --workspace --offline 2>/dev/null ||
+          cargo update --workspace 2>/dev/null ||
+          log "Warning: failed to refresh Cargo.lock; will be regenerated on next cargo invocation"
+      fi
+    else
+      log "Warning: cargo not found; Cargo.lock not refreshed (will self-heal on next cargo invocation)"
+    fi
+
+    log_success "Rust version updated"
+    ;;
+
+  meta)
+    log "Meta project type - no version file to update"
+    log_success "Version ${VERSION} recorded for changelog generation only"
+    ;;
+
+  *)
+    log_error "Unknown project type: ${PROJECT_TYPE}"
+    exit 1
+    ;;
+  esac
+}
+
+main "$@"

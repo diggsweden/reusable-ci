@@ -14,8 +14,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/ci"
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // Sink implements ci.OutputSink. Safe for concurrent use.

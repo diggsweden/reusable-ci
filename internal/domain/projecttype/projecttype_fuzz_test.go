@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
 
 func FuzzDetectFromEntries(f *testing.F) {

@@ -8,7 +8,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/testutil/testfs"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
 func TestReal_WriteAndRead(t *testing.T) {

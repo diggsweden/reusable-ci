@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/diggsweden/reusable-ci/internal/testutil/isolatedenv"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/isolatedenv"
 )
 
 func TestIsolate_ScrubsAndPinsProcessEnv(t *testing.T) {

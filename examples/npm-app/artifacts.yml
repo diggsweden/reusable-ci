@@ -6,8 +6,6 @@ artifacts:
   - name: my-app
     project-type: npm
     working-directory: .
-    publish-to:
-      - github-packages
     config:
       node-version: 24
 containers:

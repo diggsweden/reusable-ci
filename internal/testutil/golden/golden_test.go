@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/testutil/golden"
-	"github.com/diggsweden/reusable-ci/internal/testutil/testfs"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/golden"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
 // probeT records whether Errorf or Fatalf was called. It satisfies golden.T.

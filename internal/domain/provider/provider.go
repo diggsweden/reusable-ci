@@ -13,10 +13,11 @@ import "context"
 // Platform identifies the *forge API* the binary talks to — the server
 // REST surface used for releases, asset upload, token/permission checks,
 // repo metadata, and SARIF. It is one of two orthogonal axes; the other
-// is RunnerKind (the workflow-runner conventions). Forgejo runs on a
-// GitHub-Actions-compatible runner (RunnerGHA) but speaks a distinct
-// forge API (PlatformForgejo) — keeping the axes separate is what lets
-// one binary serve both without misrouting API calls.
+// is RunnerKind (the workflow-runner conventions). The axes are genuinely
+// independent: Forgejo, for instance, is its own value on both — a
+// distinct forge API (PlatformForgejo) and a distinct runner dialect
+// (RunnerForgejo) — and keeping them separate is what lets one binary
+// serve every combination without misrouting API calls or output.
 type Platform string
 
 // Recognised Platform (forge API) values.
@@ -51,17 +52,34 @@ func (p Platform) IsValid() bool {
 // RunnerKind identifies the *workflow-runner conventions* the binary
 // emits for — output format, $*_OUTPUT key/value writes, annotation
 // vocabulary, and step-summary file. It is the second axis alongside
-// Platform (forge API). GitHub Actions and Forgejo Actions share
-// RunnerGHA; GitLab CI is RunnerGitLab; bare/dev invocations are
-// RunnerLocal.
+// Platform (forge API).
+//
+// GitHub Actions and Forgejo Actions are deliberately *separate* runner
+// kinds, not one shared "gha-compatible" value: Forgejo itself states it
+// "is not designed to be compatible" with GitHub Actions, only familiar
+// (https://forgejo.org/docs/latest/user/actions/github-actions/), and the
+// differences are exactly in this binary's output surface — its native
+// step-output var is $FORGEJO_OUTPUT (with $GITHUB_OUTPUT as a compat alias
+// since Forgejo Runner 7.0.0), it documents NO job-summary variable at all,
+// and it does not render `::error::`-style annotations, `::group::` log
+// folds, or job summaries (go-gitea/gitea#27898; nektos/act#1187, #1533).
+// Collapsing the two would emit workflow-command noise that Forgejo drops
+// on the floor.
 type RunnerKind string
 
 // Recognised RunnerKind values.
 const (
-	// RunnerGHA is the GitHub-Actions workflow-command dialect
-	// (::error::, $GITHUB_OUTPUT k=v, $GITHUB_STEP_SUMMARY). Forgejo
-	// Actions is wire-compatible with it.
-	RunnerGHA RunnerKind = "gha-compatible"
+	// RunnerGitHub is the GitHub Actions workflow-command dialect
+	// (::error::, ::group::, $GITHUB_OUTPUT k=v, $GITHUB_STEP_SUMMARY),
+	// rendered in the run UI.
+	RunnerGitHub RunnerKind = "github"
+
+	// RunnerForgejo is Forgejo/Gitea Actions: $FORGEJO_OUTPUT for step
+	// outputs (file-based, like GitHub's), but no UI rendering of
+	// annotations / log groups / job summaries — so the binary emits
+	// plain, readable log lines instead of workflow commands and routes
+	// summaries to the job log. See the RunnerKind doc above.
+	RunnerForgejo RunnerKind = "forgejo"
 
 	// RunnerGitLab is GitLab CI's dialect (section_start/section_end,
 	// dotenv $CI_OUTPUT appends, $CI_SUMMARY_FILE).
@@ -79,7 +97,7 @@ func (r RunnerKind) String() string { return string(r) }
 // single source consumers (IsValid, the --runner flag help/validation)
 // derive from.
 func AllRunnerKinds() []RunnerKind {
-	return []RunnerKind{RunnerGHA, RunnerGitLab, RunnerLocal}
+	return []RunnerKind{RunnerGitHub, RunnerForgejo, RunnerGitLab, RunnerLocal}
 }
 
 // IsValid reports whether the value is one of the known runner kinds.
@@ -133,23 +151,6 @@ type TokenAdviser interface {
 	// means "the shape is fine; say nothing".
 	AdviseToken(token string) (advice string, reject bool)
 }
-
-// ProvenanceProfile carries the forge-specific SLSA-provenance
-// vocabulary: the predicate build-type URI, the workflow directory
-// prefix (".forgejo/workflows/" vs ".github/workflows/"), and the
-// internal-parameters runner label. It lets the pure provenance domain
-// stay provider-agnostic — adapters supply these values.
-type ProvenanceProfile struct {
-	BuildType         string
-	WorkflowDirPrefix string
-	RunnerLabel       string
-}
-
-// ProvenanceProfiler is implemented by providers that can describe their
-// SLSA-provenance build profile (the GHA-compatible forges: github,
-// forgejo). Forges without a workflow-provenance story (gitlab, local)
-// do not implement it, so the CLI gates on its presence.
-type ProvenanceProfiler interface{ ProvenanceProfile() ProvenanceProfile }
 
 // TagDeleter removes a single container tag from the forge's registry,
 // keeping the underlying manifest. This is deliberately a per-forge role
@@ -231,6 +232,8 @@ type BotPermissions struct {
 // accepts "true", "false", and "legacy"; other forges may ignore it.
 type MakeLatestMode string
 
+// MakeLatest modes select how a release marks itself "latest": force true,
+// force false, or defer to the platform's default (legacy).
 const (
 	MakeLatestTrue   MakeLatestMode = "true"
 	MakeLatestFalse  MakeLatestMode = "false"

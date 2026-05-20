@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/build"
 )
 
 func TestParseXcodeVersionFromPbxproj_FindsBothKeys(t *testing.T) {

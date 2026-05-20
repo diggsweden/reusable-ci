@@ -8,7 +8,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/version"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 )
 
 // FuzzSanitizePathToken exercises the branch-name → path-safe-token

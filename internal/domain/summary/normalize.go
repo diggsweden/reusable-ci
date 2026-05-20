@@ -28,6 +28,32 @@ func NormalizeResult(s string) Result {
 	}
 }
 
+// NormalizeJobStatus maps a CI runner's own job-status string to a canonical
+// Result, accepting both forge spellings: GitHub Actions `job.status`
+// (success/failure/cancelled) and GitLab `$CI_JOB_STATUS`
+// (success/failed/canceled).
+//
+// Unlike NormalizeResult, it is **fail-closed**: an unknown or empty status
+// maps to ResultFailure, never ResultSkipped. A job records its own outcome,
+// so an unrecognised value means the outcome could not be confirmed — treating
+// that as success/skipped would silently hide a failed job from the stage gate.
+// (A genuinely skipped job never runs its steps, so it writes no record at all;
+// absence is handled by the stage plan, not by this function.)
+func NormalizeJobStatus(s string) Result {
+	switch s {
+	case string(ResultSuccess):
+		return ResultSuccess
+	case string(ResultFailure), "failed":
+		return ResultFailure
+	case string(ResultCancelled), "canceled":
+		return ResultCancelled
+	case string(ResultSkipped):
+		return ResultSkipped
+	default:
+		return ResultFailure
+	}
+}
+
 // IsResult reports whether r is one of the canonical CI result values.
 func IsResult(r Result) bool {
 	switch r {

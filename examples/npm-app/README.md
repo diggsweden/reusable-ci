@@ -20,13 +20,12 @@ my-npm-app/
 └── .github/
     ├── artifacts.yml
     └── workflows/
-        ├── pullrequest-workflow.yml
         └── release-workflow.yml
 ```
 
 ## Configuration Files
 
-### `.reusable-ci/artifacts.yml`
+### `.github/artifacts.yml`
 
 See [artifacts.yml](artifacts.yml) in this directory.
 
@@ -39,25 +38,19 @@ Key points:
 
 See [release-workflow.yml](release-workflow.yml) in this directory.
 
-### `.github/workflows/pullrequest-workflow.yml`
-
-See [pullrequest-workflow.yml](pullrequest-workflow.yml) in this directory.
-
 ## How to Use
 
 1. **Copy files to your repository:**
    ```bash
    mkdir -p .github/workflows
    cp examples/npm-app/artifacts.yml .github/
-   cp examples/npm-app/pullrequest-workflow.yml .github/workflows/
    cp examples/npm-app/release-workflow.yml .github/workflows/
    ```
 
 2. **Customize for your project:**
    - Update `name` in artifacts.yml
-   - Review any `node-version` publishing config
+   - Adjust `node-version` if needed
    - Verify `Containerfile` path
-   - Configure release secrets from [Reference Guide](../../docs/reference.md), including `RELEASE_TOKEN` and GPG signing secrets
 
 3. **Create first release:**
    ```bash
@@ -67,30 +60,29 @@ See [pullrequest-workflow.yml](pullrequest-workflow.yml) in this directory.
 
 ## What Gets Built
 
-- NPM package → Runs `npm run build` when a `build` script exists, then packs
-  the package
+- NPM package → Built with `npm run build`
 - Published to → GitHub Packages
 - Container image → `ghcr.io/org/repo:v1.0.0`
 - Platforms → `linux/amd64`, `linux/arm64`
 
-## NPM Registry Support
+## Publishing to npmjs.org
 
-Current release workflows publish NPM packages to GitHub Packages:
+To publish to public NPM registry:
 
 ```yaml
 # artifacts.yml
 artifacts:
   - name: my-package
-    project-type: npm
     publish-to:
       - github-packages
+      - npmjs  # Add this
 ```
 
-npmjs.org production publishing is not implemented yet. Current config
-validation rejects `npmjs`; do not add it unless you are working on that
-implementation.
+**Requirements:**
+- NPM_TOKEN secret configured
+- Package name must be scoped: `@org/package`
 
-See [Publishing Guide](../../docs/publishing.md#npm-packages-github-packages) for details.
+See [Publishing Guide](../../docs/publishing.md#npm-registry-npmjsorg) for details.
 
 ## See Also
 

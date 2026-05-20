@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // procSwapsPath is the kernel-published list of active swap areas.

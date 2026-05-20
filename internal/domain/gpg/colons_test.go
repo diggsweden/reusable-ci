@@ -6,7 +6,7 @@ package gpg_test
 import (
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/gpg"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/gpg"
 )
 
 const sampleColons = `sec:u:255:22:ABCDEF1234567890:1700000000:::u:::scESC:::+:::ed25519:::0:

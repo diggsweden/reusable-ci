@@ -13,7 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 func TestExitCodeFromError(t *testing.T) {
@@ -30,6 +30,8 @@ func TestExitCodeFromError(t *testing.T) {
 		{name: "context_deadline_exceeded", err: context.DeadlineExceeded, want: errs.ExitCodeUnavailable, wraps: true},
 		{name: "unsupported", err: errs.ErrUnsupported, want: errs.ExitCodeUnavailable, wraps: true},
 		{name: "usage", err: errs.ErrUsage, want: errs.ExitCodeUsage, wraps: true},
+		{name: "ci_runtime_required", err: errs.ErrCIRuntimeRequired, want: errs.ExitCodeUsage, wraps: true},
+		{name: "ci_runtime_built", err: errs.RuntimeRequired("transfer run artifacts", "github", []errs.EnvVar{{Name: "ACTIONS_RUNTIME_TOKEN", What: "x"}}), want: errs.ExitCodeUsage},
 		{name: "invalid_config", err: errs.ErrInvalidConfig, want: errs.ExitCodeConfiguration, wraps: true},
 		{name: "missing_input", err: errs.ErrMissingInput, want: errs.ExitCodeNoInput, wraps: true},
 		{name: "release_not_found", err: errs.ErrReleaseNotFound, want: errs.ExitCodeNoInput},

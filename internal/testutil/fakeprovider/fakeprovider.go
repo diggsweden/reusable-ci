@@ -17,8 +17,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/provider"
-	"github.com/diggsweden/reusable-ci/internal/domain/validate"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/validate"
 )
 
 // Calls records every method invocation count for assertions.

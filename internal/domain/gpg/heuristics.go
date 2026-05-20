@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // AgentConfig is the gpg-agent.conf content that import-gpg-key writes

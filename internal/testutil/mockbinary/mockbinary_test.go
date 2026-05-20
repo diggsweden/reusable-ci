@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/testutil/mockbinary"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/mockbinary"
 )
 
 func TestMock_StubReturnsCannedOutput(t *testing.T) {

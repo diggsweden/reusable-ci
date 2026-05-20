@@ -128,7 +128,7 @@ func buildDepVuln(result TrivyResult, v TrivyVulnerability) GitLabVulnerability 
 		Links:       linksFor(v),
 		Location: GitLabLocation{
 			File: result.Target,
-			Dependency: GitLabDependency{
+			Dependency: &GitLabDependency{
 				Package: GitLabPackage{Name: v.PkgName},
 				Version: v.InstalledVersion,
 			},
@@ -151,7 +151,7 @@ func buildContainerVuln(v TrivyVulnerability, image, osDesc string) GitLabVulner
 		Location: GitLabLocation{
 			Image:           image,
 			OperatingSystem: osDesc,
-			Dependency: GitLabDependency{
+			Dependency: &GitLabDependency{
 				Package: GitLabPackage{Name: v.PkgName},
 				Version: v.InstalledVersion,
 			},
@@ -236,20 +236,18 @@ func linksFor(v TrivyVulnerability) []GitLabLink { //nolint:varnamelen // idioma
 func NormalizeSeverity(in string) string {
 	switch strings.ToLower(in) {
 	case "critical":
-		return "Critical"
+		return SeverityCritical
 	case "high":
-		return "High"
+		return SeverityHigh
 	case "medium":
-		return "Medium"
+		return SeverityMedium
 	case "low":
-		return "Low"
+		return SeverityLow
 	case "info", "informational":
-		return "Info"
-	case "":
-		return "Unknown"
+		return SeverityInfo
 	default:
-		// Includes "unknown" and any unexpected token.
-		return "Unknown"
+		// Includes "", "unknown", and any unexpected token.
+		return SeverityUnknown
 	}
 }
 

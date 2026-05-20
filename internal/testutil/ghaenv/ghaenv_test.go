@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/diggsweden/reusable-ci/internal/testutil/ghaenv"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/ghaenv"
 )
 
 func TestSetup_ExportsEnvVars(t *testing.T) {

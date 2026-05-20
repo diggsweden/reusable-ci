@@ -8,10 +8,10 @@ import (
 	"cmp"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/build"
-	"github.com/diggsweden/reusable-ci/internal/domain/config"
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
-	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
+	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
 
 // ConfigPlanVersion is the current config-plan contract version.
@@ -22,13 +22,14 @@ const ConfigPlanVersion = 1
 // reuse config.Artifact/config.Container, whose JSON tags preserve legacy
 // workflow array shapes.
 type ConfigPlan struct {
-	Version                 int              `json:"version"`
-	Artifacts               ArtifactSets     `json:"artifacts"`
-	Containers              ContainerSets    `json:"containers"`
-	AnyRequireAuthorization bool             `json:"any_require_authorization"`
-	PipelineSBOMs           string           `json:"pipeline_sboms"`
-	FallbackProjectType     projecttype.Type `json:"fallback_project_type,omitempty"`
-	Sign                    PlannedSign      `json:"sign"`
+	Version                 int               `json:"version"`
+	Artifacts               ArtifactSets      `json:"artifacts"`
+	Containers              ContainerSets     `json:"containers"`
+	AnyRequireAuthorization bool              `json:"any_require_authorization"`
+	PipelineSBOMs           string            `json:"pipeline_sboms"`
+	FallbackProjectType     projecttype.Type  `json:"fallback_project_type,omitempty"`
+	Sign                    PlannedSign       `json:"sign"`
+	GitSigning              PlannedGitSigning `json:"git_signing"`
 }
 
 // PlannedSign is the resolved signing-backend choice. Always present in
@@ -38,10 +39,28 @@ type ConfigPlan struct {
 // for the orchestrator workflow's `permissions:` decision — keyless
 // Sigstore is the only method that needs id-token: write.
 type PlannedSign struct {
-	Method          domainrelease.SignMethod `json:"method"`
-	Key             string                   `json:"key,omitempty"`
-	OIDCIssuer      string                   `json:"oidc_issuer,omitempty"`
-	RequiresIDToken bool                     `json:"requires_id_token"`
+	Method     domainrelease.SignMethod `json:"method"`
+	Key        string                   `json:"key,omitempty"`
+	OIDCIssuer string                   `json:"oidc_issuer,omitempty"`
+	// RequiresIDToken: keyless Sigstore is the only method needing
+	// `id-token: write`.
+	RequiresIDToken bool `json:"requires_id_token"`
+	// ImportsGPGKey is true only for gpg, so the release workflow gates the
+	// "import GPG key" step on this precomputed flag instead of comparing the
+	// method string in YAML.
+	ImportsGPGKey bool `json:"imports_gpg_key"`
+	// SignsContainers is true for the cosign-based methods (sigstore, kms),
+	// which can sign OCI manifests; gpg cannot. The container publish stage
+	// gates image signing/attestation on this instead of `method != 'gpg'`.
+	SignsContainers bool `json:"signs_containers"`
+}
+
+// PlannedGitSigning is the resolved git-object (release commit + tag) signing
+// choice. Always present (Method defaults to gpg when artifacts.yml has no
+// git-signing: block), so the orchestrator can read git_signing.method
+// unconditionally to choose `release ssh setup` vs `release gpg import`.
+type PlannedGitSigning struct {
+	Method config.GitSignMethod `json:"method"`
 }
 
 // ArtifactSets groups artifacts by project type, Go build mode, and supported
@@ -61,7 +80,7 @@ type ArtifactSets struct {
 	GoContainerFirst    []PlannedArtifact `json:"go_container_first"`
 	CargoArtifactFirst  []PlannedArtifact `json:"cargo_artifact_first"`
 	CargoContainerFirst []PlannedArtifact `json:"cargo_container_first"`
-	GitHubPackages      []PlannedArtifact `json:"github_packages"`
+	ForgePackages       []PlannedArtifact `json:"forge_packages"`
 	MavenCentral        []PlannedArtifact `json:"maven_central"`
 	GooglePlay          []PlannedArtifact `json:"google_play"`
 	NPMJS               []PlannedArtifact `json:"npmjs"`
@@ -164,10 +183,10 @@ func NewConfigPlan(cfg *config.Config) ConfigPlan {
 			CargoContainerFirst: filterArtifacts(artifacts, func(a PlannedArtifact) bool {
 				return a.ProjectType == projecttype.Cargo && a.CargoBuildMode == config.CargoBuildModeContainerFirst
 			}),
-			GitHubPackages: filterArtifactsByPublishTarget(artifacts, config.PublishGitHubPackages),
-			MavenCentral:   filterArtifactsByPublishTarget(artifacts, config.PublishMavenCentral),
-			GooglePlay:     filterArtifactsByPublishTarget(artifacts, config.PublishGooglePlay),
-			NPMJS:          filterArtifactsByPublishTarget(artifacts, config.PublishNPMJS),
+			ForgePackages: filterArtifactsByPublishTarget(artifacts, config.PublishForgePackages),
+			MavenCentral:  filterArtifactsByPublishTarget(artifacts, config.PublishMavenCentral),
+			GooglePlay:    filterArtifactsByPublishTarget(artifacts, config.PublishGooglePlay),
+			NPMJS:         filterArtifactsByPublishTarget(artifacts, config.PublishNPMJS),
 		},
 		Containers: ContainerSets{
 			All:           containers,
@@ -176,6 +195,7 @@ func NewConfigPlan(cfg *config.Config) ConfigPlan {
 		AnyRequireAuthorization: config.AnyRequireAuthorization(cfg.Artifacts),
 		PipelineSBOMs:           config.PipelineSBOMs(cfg.Artifacts),
 		Sign:                    planSign(cfg.Sign),
+		GitSigning:              PlannedGitSigning{Method: cfg.GitSigning.EffectiveMethod()},
 	}
 	if len(artifacts) > 0 {
 		plan.FallbackProjectType = artifacts[0].ProjectType
@@ -199,6 +219,8 @@ func planSign(sign config.SignConfig) PlannedSign {
 		Key:             sign.Key,
 		OIDCIssuer:      sign.OIDCIssuer,
 		RequiresIDToken: method == domainrelease.SignMethodSigstore,
+		ImportsGPGKey:   method == domainrelease.SignMethodGPG,
+		SignsContainers: method == domainrelease.SignMethodSigstore || method == domainrelease.SignMethodKMS,
 	}
 }
 
@@ -401,7 +423,7 @@ func filterArtifactsByPublishTarget(in []PlannedArtifact, target config.PublishT
 				ProjectType: a.ProjectType,
 				BuildType:   a.BuildType,
 			}, target) {
-				if target == config.PublishGitHubPackages && a.ProjectType == projecttype.Maven && a.BuildType == config.BuildTypeApplication {
+				if target == config.PublishForgePackages && a.ProjectType == projecttype.Maven && a.BuildType == config.BuildTypeApplication {
 					return false
 				}
 

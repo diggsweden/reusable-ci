@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/release"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
 
 func TestIsPrereleaseTag_KnownIdentifiers(t *testing.T) {

@@ -8,9 +8,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	"github.com/diggsweden/reusable-ci/internal/domain/provider"
-	"github.com/diggsweden/reusable-ci/internal/domain/version"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 )
 
 // MetadataContext is the slice of provider.EventContext that tag-rule
@@ -79,7 +79,7 @@ func Apply(r Rule, ctx MetadataContext) (AppliedTag, bool, error) { //nolint:var
 	// build or a registry call.
 	if !dockerTagValid.MatchString(tag) {
 		return AppliedTag{}, false, fmt.Errorf(
-			"rule produced invalid docker tag %q (must match %s): %w",
+			"rule produced invalid image tag %q (must match %s): %w",
 			tag, dockerTagValid.String(), errs.ErrValidation,
 		)
 	}

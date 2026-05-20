@@ -6,7 +6,7 @@ package summary_test
 import (
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/summary"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
 func TestNormalizeResult(t *testing.T) {
@@ -31,6 +31,38 @@ func TestNormalizeResult(t *testing.T) {
 
 			if got := summary.NormalizeResult(tc.in); got != tc.want {
 				t.Errorf("NormalizeResult(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeJobStatus_FailClosed(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		in   string
+		want summary.Result
+	}{
+		// GitHub Actions job.status spellings.
+		{"success", summary.ResultSuccess},
+		{"failure", summary.ResultFailure},
+		{"cancelled", summary.ResultCancelled},
+		{"skipped", summary.ResultSkipped},
+		// GitLab CI_JOB_STATUS spellings.
+		{"failed", summary.ResultFailure},
+		{"canceled", summary.ResultCancelled},
+		// Fail-closed: unknown / empty must NOT become skipped (which would
+		// hide a failed job from the stage gate) — they become failure.
+		{"", summary.ResultFailure},
+		{"unknown", summary.ResultFailure},
+		{"running", summary.ResultFailure},
+	}
+	for _, tc := range tests {
+		t.Run(tc.in+"-->"+string(tc.want), func(t *testing.T) {
+			t.Parallel()
+
+			if got := summary.NormalizeJobStatus(tc.in); got != tc.want {
+				t.Errorf("NormalizeJobStatus(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}

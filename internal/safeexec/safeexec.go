@@ -20,7 +20,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // cancelGrace bounds how long Wait blocks after the context is cancelled

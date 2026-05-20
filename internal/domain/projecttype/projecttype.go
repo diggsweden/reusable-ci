@@ -27,7 +27,7 @@ type Type string
 // detected from manifest files; Auto, Meta and Unknown are sentinels.
 const (
 	// Auto requests filesystem-based detection (DetectFromEntries).
-	// Valid as an input to `sbom generate` only.
+	// Valid as an input to `sbom assemble` only.
 	Auto Type = "auto"
 
 	Maven         Type = "maven"

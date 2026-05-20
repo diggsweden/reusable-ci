@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/testutil/testenv"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testenv"
 )
 
 // Repo represents an isolated git working tree under t.TempDir().

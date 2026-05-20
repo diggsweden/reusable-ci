@@ -3,7 +3,7 @@
 
 package version
 
-import "github.com/diggsweden/reusable-ci/internal/domain/projecttype"
+import "github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 
 // FilePattern returns the git-add pathspec for a project type's
 // version-bump commit. The CHANGELOG.md is included for every type;

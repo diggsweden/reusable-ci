@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/testutil/isolatedenv"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/isolatedenv"
 )
 
 // Env is the isolated environment handle for a test.

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
-# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+# SPDX-License-Identifier: CC0-1.0
 name: Release Publish Stage
 on:
   workflow_call: # yamllint disable-line rule:truthy
@@ -8,87 +8,33 @@ on:
       branch:
         required: true
         type: string
-      publish-stage-plan-json:
+      reusable-ci-ref:
+        required: false
+        default: "main"
+        type: string
+      xcodeios-artifacts:
         required: true
         type: string
-      reusable-ci-binary-ref:
-        required: false
-        default: "v3.0.0"
+      githubpackages-artifacts:
+        required: true
         type: string
-      runtime-image:
-        description: "reusable-ci runtime image for the summarize job (base is sufficient)"
-        required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+      mavencentral-artifacts:
+        required: true
         type: string
-      runtime-image-java:
-        description: "reusable-ci runtime image for Maven Central publish jobs"
-        required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
+      googleplay-artifacts:
+        required: true
         type: string
-      runtime-image-rust:
-        description: "reusable-ci runtime image for container-first Cargo SBOM jobs (sbom-cargo.yml). Artefact-first Cargo runs in release-build-stage and uses the same image there."
-        required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-rust-stable:v3.0.0"
+      containers:
+        required: true
         type: string
-      runtime-image-go:
-        description: "reusable-ci runtime image for Go SBOM jobs"
+      cargo-artifacts:
+        description: "JSON array of cargo artefacts (container-first ecosystem). Their lockfile-derived SBOMs run here as siblings of build-containers; the actual cargo compile happens inside each container's builder stage."
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-go-1.26:v3.0.0"
+        default: "[]"
         type: string
       build-result-json:
         required: true
         type: string
-      config-plan-json:
-        description: "Typed config-plan-json emitted by `reusable-ci config parse-artifacts`. Carries the sign.* block needed for container signing."
-        required: false
-        default: ""
-        type: string
-      sign-artifacts:
-        description: "Whether to sign release artifacts (forwarded to publish-container for image signing). When true AND sign.method != gpg in config-plan, the pushed image is signed with cosign."
-        required: false
-        default: false
-        type: boolean
-    # Aggregator: forwards to publish-{maven-github,maven-central,
-    # google-play,apple-appstore,container} and sbom-{cargo,go}.
-    # All `required: false`; `secrets: inherit` at the orchestrator
-    # callsite continues to forward org-scoped secrets transparently.
-    secrets:
-      MAVEN_CENTRAL_USERNAME:
-        description: "Sonatype OSSRH portal username"
-        required: false
-      MAVEN_CENTRAL_PASSWORD:
-        description: "Sonatype OSSRH portal token"
-        required: false
-      RELEASE_GPG_PRIVATE_KEY:
-        description: "Armored OpenPGP private key for jar signing"
-        required: false
-      RELEASE_GPG_PASSPHRASE:
-        description: "Passphrase for RELEASE_GPG_PRIVATE_KEY"
-        required: false
-      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:
-        description: "Google Play Console service-account JSON"
-        required: false
-      APP_STORE_CONNECT_API_KEY_ID:
-        description: "App Store Connect API key ID"
-        required: false
-      APP_STORE_CONNECT_ISSUER_ID:
-        description: "App Store Connect API issuer ID"
-        required: false
-      APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64:
-        description: "Base64-encoded App Store Connect API .p8 private key"
-        required: false
-      CODE_SCANNING_TOKEN:
-        description: "Token with security-events:write for SARIF upload"
-        required: false
-      REUSABLE_CI_BUILD_SECRETS_JSON:
-        description: |
-          JSON envelope of {name: value} for every name listed in
-          containers[].build-secrets; forwarded verbatim to
-          publish-container.yml. Stored as a single pre-packed
-          repo/org secret by the adopter so the value stays inside
-          the secrets channel end-to-end (step / job outputs are not
-          a secrets channel and must not be used to assemble it).
-        required: false
     outputs:
       stage-ran:
         description: Publish stage ran at least one destination
@@ -104,109 +50,93 @@ permissions:
 jobs:
   # Cross-cutting publish jobs depend on the build stage as a whole.
   # Platform-specific store publishing still checks the relevant build-stage result.
-  github-packages:
+  publish-maven-github:
     name: Publish GitHub - ${{ matrix.artifact.name }}
-    if: ${{ fromJson(inputs['publish-stage-plan-json']).targets.github_packages.runs && fromJson(inputs['build-result-json']).result == 'success' }}
+    if: ${{ inputs.githubpackages-artifacts != '[]' && fromJson(inputs['build-result-json']).result == 'success' }}
     strategy:
       matrix:
-        artifact: ${{ fromJson(inputs['publish-stage-plan-json']).targets.github_packages.items }}
+        artifact: ${{ fromJson(inputs.githubpackages-artifacts) }}
       fail-fast: false
     permissions:
-      # Least-privilege: forwards to publish-maven-github (GitHub Packages via
-      # GITHUB_TOKEN); no git write. Confirm on next release.
-      contents: read
+      contents: write
       packages: write
-    # publish-maven-github uses only the auto-provided GITHUB_TOKEN.
-    # No `secrets:` block needed — auto-token always flows.
+    secrets: inherit
     uses: ./.github/workflows/publish-maven-github.yml
     with:
-      working-directory: ${{ matrix.artifact.working_directory }}
-      branch: ${{ inputs.branch }}
-      artifact-source: ${{ matrix.artifact.build_artifact_name }}
-      package-type: ${{ matrix.artifact.project_type }}
-      java-version: ${{ matrix.artifact.maven.java_version }}
-      node-version: ${{ matrix.artifact.npm.node_version }}
-      attach-pattern: ${{ matrix.artifact.maven.attach_pattern || matrix.artifact.npm.attach_pattern }}
-  maven-central:
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      artifact-source: ${{ matrix.artifact['project-type'] }}-build-artifacts
+      package-type: ${{ matrix.artifact['project-type'] }}
+      java-version: ${{ matrix.artifact.config['java-version'] }}
+      node-version: ${{ matrix.artifact.config['node-version'] }}
+      attach-pattern: ${{ matrix.artifact.config['attach-pattern'] }}
+  publish-maven-central:
     name: Publish Maven Central - ${{ matrix.artifact.name }}
-    if: ${{ fromJson(inputs['publish-stage-plan-json']).targets.maven_central.runs && fromJson(inputs['build-result-json']).targets.maven == 'success' }}
+    if: ${{ inputs.mavencentral-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.maven == 'success' }}
     strategy:
       matrix:
-        artifact: ${{ fromJson(inputs['publish-stage-plan-json']).targets.maven_central.items }}
+        artifact: ${{ fromJson(inputs.mavencentral-artifacts) }}
       fail-fast: false
     permissions:
-      # Least-privilege: forwards to publish-maven-central (external Sonatype);
-      # no git write. Confirm on next release.
-      contents: read
+      contents: write
       packages: write
       id-token: write
-    secrets:
-      MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
-      MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
-      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
-      RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+    secrets: inherit
     uses: ./.github/workflows/publish-maven-central.yml
     with:
-      working-directory: ${{ matrix.artifact.working_directory }}
-      branch: ${{ inputs.branch }}
-      artifact-source: ${{ matrix.artifact.build_artifact_name }}
-      settings-path: ${{ matrix.artifact.maven.settings_path }}
-      profile: ${{ matrix.artifact.maven.profile || 'central-release' }}
-      runtime-image: ${{ inputs['runtime-image-java'] }}
-  xcode-ios:
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      artifact-source: maven-build-artifacts
+      java-version: ${{ matrix.artifact.config['java-version'] }}
+      settings-path: ${{ matrix.artifact.config['settings-path'] }}
+      profile: ${{ matrix.artifact.config['profile'] || 'central-release' }}
+  publish-apple-appstore:
     name: Publish Apple App Store - ${{ matrix.artifact.name }}
-    if: ${{ fromJson(inputs['publish-stage-plan-json']).targets.xcode_ios.runs && fromJson(inputs['build-result-json']).targets.xcode_ios == 'success' }}
+    if: ${{ inputs.xcodeios-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.xcodeios == 'success' }}
     strategy:
       matrix:
-        artifact: ${{ fromJson(inputs['publish-stage-plan-json']).targets.xcode_ios.items }}
+        artifact: ${{ fromJson(inputs.xcodeios-artifacts) }}
       fail-fast: false
     permissions:
       contents: read
-    secrets:
-      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-      APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 }}
+    secrets: inherit
     uses: ./.github/workflows/publish-apple-appstore.yml
     with:
       ipa-artifact-name: ${{ matrix.artifact.name }}
-      enabled: ${{ matrix.artifact.xcode_ios.enable_code_signing != false }}
-      branch: ${{ inputs.branch }}
-      macos-version: ${{ matrix.artifact.xcode_ios.macos_version || 'macos-26' }}
-      submit-for-review: ${{ matrix.artifact.xcode_ios.submit_for_review || false }}
-      skip-validation: ${{ matrix.artifact.xcode_ios.skip_validation || false }}
-      reusable-ci-binary-ref: ${{ inputs['reusable-ci-binary-ref'] }}
-  google-play:
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      macos-version: ${{ matrix.artifact.config['macos-version'] || 'macos-26' }}
+      submit-for-review: ${{ matrix.artifact.config['submit-for-review'] || false }}
+      skip-validation: ${{ matrix.artifact.config['skip-validation'] || false }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+  publish-google-play:
     name: Publish Google Play - ${{ matrix.artifact.name }}
-    if: ${{ fromJson(inputs['publish-stage-plan-json']).targets.google_play.runs && fromJson(inputs['build-result-json']).targets.gradle_android == 'success' }}
+    if: ${{ inputs.googleplay-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.gradleandroid == 'success' }}
     strategy:
       matrix:
-        artifact: ${{ fromJson(inputs['publish-stage-plan-json']).targets.google_play.items }}
+        artifact: ${{ fromJson(inputs.googleplay-artifacts) }}
       fail-fast: false
     permissions:
       contents: read
-    secrets:
-      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+    secrets: inherit
     uses: ./.github/workflows/publish-google-play.yml
     with:
       aab-artifact-name: ${{ matrix.artifact.name }}
-      branch: ${{ inputs.branch }}
-      package-name: ${{ matrix.artifact.gradle_android.package_name }}
-      track: ${{ matrix.artifact.gradle_android.google_play_track || 'internal' }}
-      status: ${{ matrix.artifact.gradle_android.google_play_status || 'completed' }}
-      release-name: ${{ matrix.artifact.gradle_android.google_play_release_name || '' }}
-      user-fraction: ${{ matrix.artifact.gradle_android.google_play_user_fraction || '' }}
-      in-app-update-priority: ${{ matrix.artifact.gradle_android.google_play_update_priority || '0' }}
-      changes-not-sent-for-review: ${{ matrix.artifact.gradle_android.google_play_changes_not_sent_for_review || false }}
-      whats-new-directory: ${{ matrix.artifact.gradle_android.whats_new_directory || '' }}
-      mapping-file: ${{ matrix.artifact.gradle_android.mapping_file || '' }}
-      debug-symbols: ${{ matrix.artifact.gradle_android.debug_symbols || '' }}
-      runtime-image: ${{ inputs['runtime-image'] }}
-  containers:
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      package-name: ${{ matrix.artifact.config['package-name'] }}
+      track: ${{ matrix.artifact.config['google-play-track'] || 'internal' }}
+      status: ${{ matrix.artifact.config['google-play-status'] || 'completed' }}
+      release-name: ${{ matrix.artifact.config['google-play-release-name'] || '' }}
+      user-fraction: ${{ matrix.artifact.config['google-play-user-fraction'] || '' }}
+      in-app-update-priority: ${{ matrix.artifact.config['google-play-update-priority'] || '0' }}
+      changes-not-sent-for-review: ${{ matrix.artifact.config['google-play-changes-not-sent-for-review'] || false }}
+      whats-new-directory: ${{ matrix.artifact.config['whats-new-directory'] || '' }}
+      mapping-file: ${{ matrix.artifact.config['mapping-file'] || '' }}
+      debug-symbols: ${{ matrix.artifact.config['debug-symbols'] || '' }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+  build-containers:
     name: Build Container - ${{ matrix.container.name }}
-    if: ${{ fromJson(inputs['publish-stage-plan-json']).targets.containers.runs && (fromJson(inputs['build-result-json']).result == 'success' || fromJson(inputs['build-result-json']).result == 'skipped') }}
+    if: ${{ inputs.containers != '[]' && fromJson(inputs['build-result-json']).result == 'success' }}
     strategy:
       matrix:
-        container: ${{ fromJson(inputs['publish-stage-plan-json']).targets.containers.items }}
+        container: ${{ fromJson(inputs.containers) }}
       fail-fast: false
     permissions:
       contents: read
@@ -214,116 +144,74 @@ jobs:
       id-token: write
       attestations: write
       actions: read
-    secrets:
-      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
-      REUSABLE_CI_BUILD_SECRETS_JSON: ${{ secrets.REUSABLE_CI_BUILD_SECRETS_JSON }}
+    secrets: inherit
     uses: ./.github/workflows/publish-container.yml
     with:
       branch: ${{ inputs.branch }}
-      container-file: ${{ matrix.container.container_file }}
+      container-file: ${{ matrix.container['container-file'] }}
       context: ${{ matrix.container.context || '.' }}
       platforms: ${{ matrix.container.platforms || 'linux/amd64' }}
-      # All three per-container gates default true in the planner
-      # (`Container.EnableSLSAEffective`, `Container.EnableScanEffective`).
-      # Explicit `enable-slsa: false` / `enable-scan: false` in artifacts.yml
-      # surface here so adopters can opt out per-container — e.g. a
-      # debug image that intentionally ships with known CVEs.
-      enable-slsa: ${{ matrix.container.enable_slsa }}
-      # `enable-analyzed-container-sbom` is derived by `reusable-ci config parse-artifacts`
+      enable-slsa: ${{ matrix.container['enable-slsa'] == true || matrix.container['enable-slsa'] == null }}
+      # `enable-analyzed-container-sbom` is derived in parse-artifacts-config.sh
       # from each source artefact's effective-sboms — true if any source includes
       # 'analyzed-container'. Replaces the v2.x user-facing `enable-sbom` flag.
-      enable-analyzed-container-sbom: ${{ matrix.container.enable_analyzed_container_sbom }}
-      enable-scan: ${{ matrix.container.enable_scan }}
-      # Per-container severity override; empty → publish-container's
-      # default ("CRITICAL,HIGH") applies. Narrow to relax (e.g.
-      # "CRITICAL"); set enable-scan: false to skip the gate entirely.
-      scan-severity: ${{ matrix.container.scan_severity || 'CRITICAL,HIGH' }}
+      enable-analyzed-container-sbom: ${{ matrix.container['enable-analyzed-container-sbom'] }}
+      enable-scan: ${{ matrix.container['enable-scan'] == true || matrix.container['enable-scan'] == null }}
       registry: ghcr.io
-      artifact-types: ${{ join(matrix.container.artifact_types, ',') }}
-      artifact-types-json: ${{ toJson(matrix.container.artifact_types) }}
-      maven-artifact-name: ${{ matrix.container.maven_artifact_name || '' }}
-      npm-artifact-name: ${{ matrix.container.npm_artifact_name || '' }}
-      gradle-artifact-name: ${{ matrix.container.gradle_artifact_name || '' }}
-      go-artifact-name: ${{ matrix.container.go_artifact_name || '' }}
-      cargo-artifact-name: ${{ matrix.container.cargo_artifact_name || '' }}
+      artifact-types: ${{ join(matrix.container['artifact-types'], ',') }}
+      # Only gradle builds honour `artifact-name` today, so the thread-through
+      # is gated on the container declaring a gradle source. matrix.container.from[0]
+      # is the artifact's user-chosen name from artifacts.yml, matching the
+      # build-gradle-app upload. Maven/npm builders do not accept artifact-name
+      # yet — they keep the hardcoded default — so passing a name here for
+      # those types would mismatch the upload. Uniform thread-through across
+      # all builders is tracked for a follow-up PR.
+      gradle-artifact-name: ${{ contains(matrix.container['artifact-types'], 'gradle') && matrix.container.from[0] || '' }}
       # container-first (compiled-native) fields: optional, default empty for
-      # artefact-first containers (maven/npm/gradle/go/cargo artifact-first).
+      # artefact-first containers (maven/npm/gradle).
       name: ${{ matrix.container.name }}
       target: ${{ matrix.container.target || '' }}
-      extract-binary-target: ${{ matrix.container.extract_binary_target || '' }}
-      extract-binary-names: ${{ matrix.container.extract_binary_names && join(matrix.container.extract_binary_names, ',') || '' }}
+      extract-binary-target: ${{ matrix.container.extract.binary.target || '' }}
+      extract-binary-names: ${{ matrix.container.extract.binary.names && join(matrix.container.extract.binary.names, ',') || '' }}
       # build-args is converted from artifacts.yml's object form to
-      # KEY=VALUE lines by `reusable-ci config parse-artifacts` (see build-args-string
+      # KEY=VALUE lines by parse-artifacts-config.sh (see build-args-string
       # field). publish-container.yml's build-args input is a string for
       # docker/build-push-action compatibility.
-      build-args: ${{ matrix.container.build_args_string || '' }}
-      # Space-separated NAMES list — values arrive via the workflow
-      # secret REUSABLE_CI_BUILD_SECRETS_JSON, packed once at the
-      # adopter's top-level caller. Empty when this container declares
-      # no build-secrets, in which case the materialize step is a no-op.
-      build-secrets: ${{ matrix.container.build_secrets && join(matrix.container.build_secrets, ' ') || '' }}
+      build-args: ${{ matrix.container['build-args-string'] || '' }}
       push-image: true
-      reusable-ci-binary-ref: ${{ inputs['reusable-ci-binary-ref'] }}
-      # Container image signing: enabled when the release policy says
-      # to sign artifacts AND the configured method is cosign-capable
-      # (sigstore or kms). gpg cannot sign OCI manifests. The fields
-      # are no-ops when the publish-container's own sign-image input
-      # is false (default), so omitting config-plan-json on direct
-      # callers degrades gracefully.
-      sign-image: ${{ inputs['sign-artifacts'] && inputs['config-plan-json'] != '' && fromJson(inputs['config-plan-json']).sign.method != 'gpg' }}
-      sign-method: ${{ inputs['config-plan-json'] != '' && fromJson(inputs['config-plan-json']).sign.method || '' }}
-      sign-key: ${{ inputs['config-plan-json'] != '' && fromJson(inputs['config-plan-json']).sign.key || '' }}
-      sign-oidc-issuer: ${{ inputs['config-plan-json'] != '' && fromJson(inputs['config-plan-json']).sign.oidc_issuer || '' }}
-  # Container-first cargo's lockfile-derived "build" SBOM. Artefact-first
-  # cargo emits its Build SBOM inline in build-cargo.yml at build-stage,
-  # so the publish-stage targets.cargo_container_first set excludes
-  # artefact-first artefacts. Mirrors the go-container-first job below.
-  cargo-container-first:
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+  # Cargo's lockfile-derived "build" SBOM is a publish-stage concern: the
+  # SBOM and its corresponding container ship together. Per artefact, runs
+  # in parallel with build-containers — same pattern as the other
+  # publishers in this stage.
+  sbom-cargo:
     name: Cargo SBOM - ${{ matrix.artifact.name }}
-    if: ${{ fromJson(inputs['publish-stage-plan-json']).targets.cargo_container_first.runs }}
+    if: ${{ inputs.cargo-artifacts != '[]' }}
     strategy:
       matrix:
-        artifact: ${{ fromJson(inputs['publish-stage-plan-json']).targets.cargo_container_first.items }}
+        artifact: ${{ fromJson(inputs.cargo-artifacts) }}
       fail-fast: false
     permissions:
       contents: read
-    # sbom-cargo uses only auto-provided GITHUB_TOKEN.
+    secrets: inherit
     uses: ./.github/workflows/sbom-cargo.yml
     with:
-      working-directory: ${{ matrix.artifact.working_directory }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
       branch: ${{ inputs.branch }}
-      enable-build-sbom: ${{ contains(matrix.artifact.effective_sboms, 'build') }}
+      rust-toolchain: ${{ matrix.artifact.config['rust-toolchain'] || 'stable' }}
+      enable-build-sbom: ${{ contains(matrix.artifact['effective-sboms'], 'build') }}
       # Per-artefact unique upload name. Without this, multi-cargo-artefact
       # workspaces (e.g., a workspace shipping hsm-worker AND wallet-bff
       # as separate cargo artefacts in artifacts.yml) would all upload as
       # `cargo-build-sbom` and the second matrix leg's actions/upload-artifact
       # would conflict with the first. Mirrors build-gradle's pattern.
       artifact-name: ${{ matrix.artifact.name }}
-      runtime-image: ${{ inputs['runtime-image-rust'] }}
-  go-container-first:
-    name: Go SBOM - ${{ matrix.artifact.name }}
-    if: ${{ fromJson(inputs['publish-stage-plan-json']).targets.go_container_first.runs }}
-    strategy:
-      matrix:
-        artifact: ${{ fromJson(inputs['publish-stage-plan-json']).targets.go_container_first.items }}
-      fail-fast: false
-    permissions:
-      contents: read
-    # sbom-go uses only auto-provided GITHUB_TOKEN.
-    uses: ./.github/workflows/sbom-go.yml
-    with:
-      working-directory: ${{ matrix.artifact.working_directory }}
-      branch: ${{ inputs.branch }}
-      artifact-name: ${{ matrix.artifact.name }}
-      enable-build-sbom: ${{ contains(matrix.artifact.effective_sboms, 'build') }}
-      runtime-image: ${{ inputs['runtime-image-go'] }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   summarize-publish-stage:
     name: Summarize Publish Stage
-    needs: [github-packages, maven-central, xcode-ios, google-play, containers, cargo-container-first, go-container-first]
+    needs: [publish-maven-github, publish-maven-central, publish-apple-appstore, publish-google-play, build-containers, sbom-cargo]
     if: always()
-    runs-on: ubuntu-24.04
-    container:
-      image: ${{ inputs['runtime-image'] }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     outputs:
@@ -331,18 +219,26 @@ jobs:
       stage-result: ${{ steps.summary.outputs.stage-result }}
       result-json: ${{ steps.summary.outputs.result-json }}
     steps:
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
       - name: Normalize publish stage result
         id: summary
         env:
-          STAGE_PLAN_JSON: ${{ inputs['publish-stage-plan-json'] }}
-          NEEDS_JSON: ${{ toJson(needs) }}
-        run: reusable-ci report status stage
-      - name: Upload publish stage manifests
-        if: always() && hashFiles('.ci-results/*.json') != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ci-results-publish
-          path: .ci-results/*.json
-          include-hidden-files: "true"
-          retention-days: "5"
-          if-no-files-found: ignore
+          GITHUBPACKAGES_ARTIFACTS: ${{ inputs.githubpackages-artifacts }}
+          MAVENCENTRAL_ARTIFACTS: ${{ inputs.mavencentral-artifacts }}
+          XCODEIOS_ARTIFACTS: ${{ inputs.xcodeios-artifacts }}
+          GOOGLEPLAY_ARTIFACTS: ${{ inputs.googleplay-artifacts }}
+          CONTAINERS: ${{ inputs.containers }}
+          CARGO_ARTIFACTS: ${{ inputs.cargo-artifacts }}
+          PUBLISH_MAVEN_REGISTRY_RESULT: ${{ needs.publish-maven-github.result }}
+          PUBLISH_MAVEN_CENTRAL_RESULT: ${{ needs.publish-maven-central.result }}
+          PUBLISH_APPLE_APPSTORE_RESULT: ${{ needs.publish-apple-appstore.result }}
+          PUBLISH_GOOGLE_PLAY_RESULT: ${{ needs.publish-google-play.result }}
+          BUILD_CONTAINERS_RESULT: ${{ needs.build-containers.result }}
+          CARGO_SBOM_RESULT: ${{ needs.sbom-cargo.result }}
+        run: bash .github-shared/scripts/summary/write-publish-stage-result.sh

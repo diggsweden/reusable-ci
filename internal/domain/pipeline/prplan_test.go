@@ -6,8 +6,8 @@ package pipeline_test
 import (
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/pipeline"
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
 
 func TestNewPRPlan_BuildsQualityStagePlan(t *testing.T) {
@@ -15,7 +15,7 @@ func TestNewPRPlan_BuildsQualityStagePlan(t *testing.T) {
 
 	plan := pipeline.NewPRPlan(pipeline.PRPlanInput{
 		ProjectType: projecttype.Go,
-		Nanolinter:  true,
+		Engine:      pipeline.LintEngineNanolinter,
 		SwiftFormat: true,
 	})
 	if plan.Version != pipeline.PRPlanVersion || plan.Stages.Quality.Stage != "pr-quality" {

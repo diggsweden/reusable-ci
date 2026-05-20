@@ -9,6 +9,16 @@ package security
 // across them.
 const GitLabSchemaVersion = "15.2.1"
 
+// GitLab severity enum (Title-case) used across all report transforms.
+const (
+	SeverityCritical = "Critical"
+	SeverityHigh     = "High"
+	SeverityMedium   = "Medium"
+	SeverityLow      = "Low"
+	SeverityInfo     = "Info"
+	SeverityUnknown  = "Unknown"
+)
+
 // GitLabReport is the top-level schema-v15 object GitLab CI ingests via
 // `artifacts:reports:dependency_scanning` or `artifacts:reports:container_scanning`.
 type GitLabReport struct {
@@ -66,14 +76,17 @@ type GitLabLink struct {
 	URL string `json:"url"`
 }
 
-// GitLabLocation differs between dep and container reports — the dep
-// schema uses `file`, the container schema uses `image` +
-// `operating_system`. Both share the dependency.{package,version} sub-shape.
+// GitLabLocation differs by scan type — dependency uses `file` +
+// `dependency`, container uses `image` + `operating_system` + `dependency`,
+// and SAST uses `file` + `start_line` + `end_line` (no dependency). Dependency
+// is a pointer so it is omitted from the SAST shape.
 type GitLabLocation struct {
-	File            string           `json:"file,omitempty"`
-	Image           string           `json:"image,omitempty"`
-	OperatingSystem string           `json:"operating_system,omitempty"`
-	Dependency      GitLabDependency `json:"dependency"`
+	File            string            `json:"file,omitempty"`
+	StartLine       int               `json:"start_line,omitempty"`
+	EndLine         int               `json:"end_line,omitempty"`
+	Image           string            `json:"image,omitempty"`
+	OperatingSystem string            `json:"operating_system,omitempty"`
+	Dependency      *GitLabDependency `json:"dependency,omitempty"`
 }
 
 // GitLabDependency describes the vulnerable dependency at a location.

@@ -13,40 +13,29 @@ each container manifest.
 
 ## Why this shape (container-first)
 
-reusable-ci handles two artefact lifecycle patterns, and Cargo (like Go)
-supports both via `config.build-mode`:
+reusable-ci handles two artefact lifecycle patterns:
 
-- **artefact-first — platform-agnostic ecosystems + cross-compiled binaries**
-  (maven, npm, gradle, plus go/cargo with `build-mode: artifact-first`):
-  `build-<lang>.yml` produces a deployable artefact (JAR, tarball, binary);
+- **artefact-first — platform-agnostic ecosystems** (maven, npm, gradle):
+  `build-<lang>.yml` produces a deployable artefact (JAR, tarball);
   `publish-container.yml` downloads it and `COPY`s it into a thin runtime
-  image. Standalone-CLI releases use this path.
-- **container-first — compile-inside-Containerfile** (go/cargo with
-  `build-mode: container-first`): the Containerfile is the build environment.
-  `cargo build` runs inside the builder stage of the container build, the
-  runtime image is the primary deliverable, and the binary is optionally
-  extracted as a CI artefact via `extract.binary`.
+  image.
+- **container-first — compiled-native ecosystems** (cargo, go): the Containerfile
+  is the build environment. `cargo build` runs inside the builder stage of
+  the container build, the runtime image is the primary deliverable, and
+  the binary is optionally extracted as a CI artefact via `extract.binary`.
 
-This example uses **container-first** because it ships Rust *services* as
-container images, not standalone CLIs. Running the compile inside the
-Containerfile means multi-arch (linux/amd64 + linux/arm64) works via
-buildkit on native per-architecture runners — no cross-compile linker
-needed in CI, and native system deps (`apt-get install libssl-dev`) stay
-with the build environment.
-
-For a standalone Rust CLI binary released on GitHub Releases, choose
-`build-mode: artifact-first` instead — `build-cargo.yml` cross-compiles to
-`dist/<goos>-<goarch>/<binary>-<goos>-<goarch>` (same shape as Go),
-attaches SBOMs and signatures, and the runtime image carries the
-`linux/amd64 + linux/arm64` cross-linker matrix.
+Cargo follows container-first because Rust binaries are platform-specific; running
+the compile inside the Containerfile means multi-arch (linux/amd64 +
+linux/arm64) Just Works via buildkit + QEMU without per-target cross-compile
+machinery in CI.
 
 | Concern             | Where it runs                          | Why                                                        |
 | ------------------- | -------------------------------------- | ---------------------------------------------------------- |
-| `cargo build`       | inside each service's `Containerfile`  | multi-arch via native buildx runners; no cross-compile     |
+| `cargo build`       | inside each service's `Containerfile`  | multi-arch via buildx + QEMU; no cross-compile in CI       |
 | `cargo test`        | caller's `test.yml`                    | workspace features can't be expressed per-artefact         |
-| `cargo clippy/fmt`  | caller's `test.yml`                    | workspace-specific quality gates stay in the consumer repo |
-| `cargo audit`       | caller's `test.yml`                    | RUSTSEC policy can match the consumer's dependency model   |
-| Build SBOM          | `sbom-cargo.yml` (publish stage)       | `cargo cyclonedx` reads `Cargo.lock`; no compile required (artefact-first would use the inline SBOM step in `build-cargo.yml` instead) |
+| `cargo clippy/fmt`  | `lint-cargo.yml` (PR-time)             | one job for the whole workspace, fast feedback             |
+| `cargo audit`       | `lint-cargo.yml` (PR-time)             | RUSTSEC advisories block PRs, not just releases            |
+| Build SBOM          | `sbom-cargo.yml` (release-time)        | `cargo cyclonedx` reads `Cargo.lock`; no compile required  |
 | Container scan SBOM | `publish-container.yml`                | derived from each service's effective-sboms                |
 | Binary extraction   | `publish-container.yml` (`extract:`)   | reuses the container builder's compile; no double-build    |
 
@@ -62,13 +51,12 @@ binary extraction.
 - `Containerfile.example` — reference multi-stage Containerfile with the
   three named stages (`builder`, `export-binary`, `runtime`). Copy to
   `<service>/Containerfile` and adjust per-service.
-- `pullrequest-workflow.yml` — runs reusable-ci nanolinter checks.
-  Add a caller-owned `test.yml` for workspace-specific Rust checks.
+- `pullrequest-workflow.yml` — turns on clippy / rustfmt / cargo-audit and
+  passes `cargo.apt-packages` so clippy can compile crates with native deps.
 - `release-workflow.yml` — standard tag-driven release; the orchestrator
   dispatches `sbom-cargo` per artefact and `publish-container` per container.
   When `extract.binary` is set, each container's compiled binary is uploaded
-  as `${name}-binaries-${arch}` per platform leg and aggregated into the
-  GitHub Release.
+  as `${name}-binaries` and aggregated into the GitHub Release.
 
 ## Containerfile pattern
 
@@ -107,8 +95,7 @@ without docker installed.
 ## Workspace tests live in the caller's `test.yml`
 
 Workspace-level features and testcontainers can't be expressed per-artefact,
-so they live in the caller. The reusable-ci PR orchestrator does not invoke
-this workflow automatically; call it from your own PR workflow if you need it.
+so they live in the caller:
 
 ```yaml
 # .github/workflows/test.yml
@@ -128,49 +115,14 @@ jobs:
             -- --test-threads=1
 ```
 
-**Required:** pin the toolchain via `rust-toolchain.toml` at every Cargo
-artefact's `working-directory`. `validate cargo` enforces this — a
-release will fail at the prerequisites stage if the pin is missing.
-`sbom-cargo.yml` auto-detects the file directly.
-
-## Private cargo registry credentials (build-time)
-
-If the workspace pulls from a private cargo registry, **do not** put the
-token in `containers[].build-args` — BuildKit records build-arg values
-verbatim in SLSA `mode=max` provenance, so the token would end up in the
-public image attestation.
-
-Use `containers[].build-secrets` instead. Declare the name once:
-
-```yaml
-containers:
-  - name: hsm-worker
-    from: [hsm-worker]
-    container-file: hsm-worker/Containerfile
-    context: .
-    build-secrets:
-      - PRIVATE_CARGO_REGISTRY_TOKEN
-```
-
-Consume it in the `builder` stage with a tmpfs mount:
-
-```dockerfile
-RUN --mount=type=secret,id=private_cargo_registry_token,target=/run/secrets/cargo-token \
-    CARGO_REGISTRIES_INTERNAL_TOKEN="$(cat /run/secrets/cargo-token)" \
-    cargo build --release
-```
-
-The caller workflow forwards a single `REUSABLE_CI_BUILD_SECRETS_JSON`
-envelope; see [docs/artifacts-reference.md `build-secrets`](../../docs/artifacts-reference.md#build-secrets)
-for the full recipe.
+Pin the toolchain via `rust-toolchain.toml` at the repo root so CI and
+local dev share one source of truth. `sbom-cargo.yml` and `lint-cargo.yml`
+auto-detect this file via `scripts/cargo/install-toolchain.sh`.
 
 ## Adding a third service
 
-1. New `artifacts:` entry with `project-type: cargo`, its
-   `working-directory`, and `config.build-mode: container-first` (this
-   example wraps each crate in its own Containerfile; for a standalone
-   CLI binary release, use `artifact-first` instead — see the Go-style
-   dual-mode comparison in `docs/ecosystems.md#cargo-dual-mode`).
+1. New `artifacts:` entry with `project-type: cargo` and its
+   `working-directory`.
 2. New `containers:` entry referencing the artefact by name, pointing at
    `<service>/Containerfile`. Include `target:` and `extract:` if you want
    the binary as a CI artefact.

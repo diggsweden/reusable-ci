@@ -28,8 +28,8 @@ Artifact configuration for release builds (used with release-workflow.yml).
 ### `release-workflow.yml`
 Production release workflow triggered by version tags. Creates GitHub Release with changelog, version bump, and optionally publishes to Google Play.
 
-### `release-snapshot-workflow.yml`
-Manual snapshot/testing release workflow that builds and uploads to Google Play internal track. This mirrors the iOS `release-snapshot-workflow.yml` which uploads to TestFlight.
+### `release-dev-workflow.yml`
+Manual dev/testing release workflow that builds and uploads to Google Play internal track. This mirrors the iOS `release-dev-workflow.yml` which uploads to TestFlight.
 
 ## Features
 
@@ -53,11 +53,12 @@ Support for multiple flavors:
 - `staging` - Staging environment
 - Custom flavors as needed
 
-### Runtime Image
-The Android workflow runs in the reusable-ci Android runtime image, which
-contains the supported JDK, Gradle, and Android SDK toolchain. Normal consumers
-use the workflow default; override `runtime-image` only for branch testing,
-mirroring, or stricter reproducibility.
+### JDK Distribution Options
+Choose your preferred JDK:
+- `temurin` (default)
+- `zulu`
+- `adopt`
+- `corretto`
 
 ## Configuration
 
@@ -66,8 +67,9 @@ mirroring, or stricter reproducibility.
 ```yaml
 jobs:
   build:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@v3.0.0
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
+      java-version: "25"
       build-module: "app"
       product-flavor: "demo"
 ```
@@ -77,9 +79,10 @@ jobs:
 ```yaml
 jobs:
   build:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@v3.0.0
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     secrets: inherit  # Required for signing secrets
     with:
+      java-version: "25"
       build-module: "app"
       product-flavor: "prod"
       enable-signing: true
@@ -91,18 +94,14 @@ jobs:
 - `ANDROID_KEY_ALIAS` - Key alias
 - `ANDROID_KEY_PASSWORD` - Key password
 
-The workflow maps `ANDROID_KEYSTORE` to the internal `ANDROID_KEYSTORE_BASE64`
-environment variable used by the `reusable-ci` CLI. Create the repository secret
-as `ANDROID_KEYSTORE`.
-
 ### Release Only (No Debug)
 
 ```yaml
 jobs:
   build:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@v3.0.0
-    secrets: inherit  # Required for signing secrets
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
+      java-version: "25"
       build-module: "app"
       build-types: "release"  # Only release builds
       include-aab: true
@@ -114,8 +113,9 @@ jobs:
 ```yaml
 jobs:
   build:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@v3.0.0
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
+      java-version: "25"
       build-module: "app"
       artifact-name-prefix: "production_store"  # Custom prefix
       include-date-stamp: true  # Include date in name
@@ -128,17 +128,14 @@ Build multiple flavors in parallel:
 ```yaml
 jobs:
   build-demo:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@v3.0.0
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
-      build-module: "app"
       product-flavor: "demo"
       artifact-name-prefix: "demo_store"
 
   build-prod:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@v3.0.0
-    secrets: inherit  # Required for signing secrets
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
-      build-module: "app"
       product-flavor: "prod"
       artifact-name-prefix: "production_store"
       enable-signing: true
@@ -175,7 +172,7 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file(System.getenv("ANDROID_KEYSTORE_PATH") ?: "release.keystore")
+            storeFile = file("release.keystore")
             storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
             keyAlias = System.getenv("ANDROID_KEY_ALIAS")
             keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
@@ -194,17 +191,17 @@ android {
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
+| `java-version` | Yes | - | Java version (e.g., 17, 25) |
 | `build-module` | Yes | - | Gradle module to build |
 | `product-flavor` | No | "" | Product flavor (demo, prod, etc.) |
 | `build-types` | No | "debug,release" | Comma-separated build types |
 | `include-aab` | No | true | Generate AAB files |
-| `artifact-name` | No | "" | Exact artifact name override |
 | `artifact-name-prefix` | No | "" | Custom artifact name prefix |
 | `include-date-stamp` | No | true | Include date in artifact names |
+| `jdk-distribution` | No | "temurin" | JDK distribution |
 | `enable-signing` | No | false | Enable Android app signing |
 | `working-directory` | No | "." | Working directory |
 | `skip-tests` | No | false | Skip tests during build |
-| `runtime-image` | No | Workflow default | Optional Android runtime override |
 
 ## Artifacts
 
@@ -227,24 +224,24 @@ The workflow generates separate artifacts for each variant:
 | Workflow | iOS | Android |
 |----------|-----|---------|
 | **Release (Production)** | Tag-triggered, version bump, changelog, TestFlight, GitHub Release | Tag-triggered, version bump, changelog, Google Play, GitHub Release |
-| **Release Snapshot (Testing)** | Manual trigger, build + TestFlight only | Manual trigger, build + Google Play internal track |
+| **Release Dev (Testing)** | Manual trigger, build + TestFlight only | Manual trigger, build + Google Play internal track |
 
-### Release Snapshot Workflow
+### Release Dev Workflow
 
-The `release-snapshot-workflow.yml` is for testing builds before a formal release:
+The `release-dev-workflow.yml` is for testing builds before a formal release:
 
 ```yaml
 # Manual trigger - no version bump, no changelog, no GitHub release
 # Just build and upload to Google Play internal track
-name: Release Snapshot Workflow
+name: Release Dev Workflow
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@v3.0.0
-    secrets: inherit  # Required for signing secrets
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
+      java-version: "21"
       build-module: app
       product-flavor: demo
       build-types: release
@@ -253,10 +250,9 @@ jobs:
 
   upload-play-store:
     needs: build
-    uses: diggsweden/reusable-ci/.github/workflows/publish-google-play.yml@v3.0.0
-    secrets: inherit  # Required for GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
+    uses: diggsweden/reusable-ci/.github/workflows/publish-google-play.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
     with:
-      aab-artifact-name: ${{ needs.build.outputs.aab-name }}
+      aab-artifact-name: dev-my-android-app-demo-AAB
       package-name: com.example.myapp
       track: internal  # Equivalent to TestFlight
 ```

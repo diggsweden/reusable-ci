@@ -8,8 +8,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	"github.com/diggsweden/reusable-ci/internal/domain/imageledger"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
 )
 
 // fakeRegistry is a mutable ref→digest map with a CopyTag that points

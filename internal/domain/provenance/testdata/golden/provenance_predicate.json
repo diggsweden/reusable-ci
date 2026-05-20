@@ -1,0 +1,29 @@
+{
+  "buildDefinition": {
+    "buildType": "https://diggsweden.github.io/reusable-ci/container-build/v1",
+    "externalParameters": {
+      "image": "ghcr.io/diggsweden/app",
+      "ref": "refs/tags/v1.2.3",
+      "source": "git+https://github.com/diggsweden/reusable-ci"
+    },
+    "internalParameters": {},
+    "resolvedDependencies": [
+      {
+        "uri": "git+https://github.com/diggsweden/reusable-ci@refs/tags/v1.2.3",
+        "digest": {
+          "gitCommit": "cccccccccccccccccccccccccccccccccccccccc"
+        }
+      }
+    ]
+  },
+  "runDetails": {
+    "builder": {
+      "id": "https://github.com/diggsweden/reusable-ci/.github/workflows/publish-container.yml@refs/tags/v1.2.3"
+    },
+    "metadata": {
+      "invocationId": "https://github.com/diggsweden/reusable-ci/actions/runs/4242",
+      "startedOn": "2026-06-01T12:00:00Z",
+      "finishedOn": "2026-06-01T12:00:00Z"
+    }
+  }
+}

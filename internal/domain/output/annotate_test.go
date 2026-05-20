@@ -9,8 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/output"
-	"github.com/diggsweden/reusable-ci/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
 func TestAnnotator_GitHubFormat_EmitsWorkflowCommands(t *testing.T) {
@@ -145,12 +145,19 @@ func TestAnnotatorFromFlag_ResolvesFormat(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	a := output.AnnotatorFromFlag(&buf, "auto", provider.RunnerGHA) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	a := output.AnnotatorFromFlag(&buf, "auto", provider.RunnerGitHub) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	a.Warningf("watch out")
 	require.Equal(t, "::warning::watch out\n", buf.String())
 
 	buf.Reset()
-	a = output.AnnotatorFromFlag(&buf, "bogus", provider.RunnerGHA)
+	a = output.AnnotatorFromFlag(&buf, "bogus", provider.RunnerGitHub)
+	a.Warningf("watch out")
+	require.Equal(t, "Warning: watch out\n", buf.String())
+
+	// Forgejo resolves to FormatForgejo, which takes the plain branch —
+	// no unrenderable ::warning:: workflow command (go-gitea/gitea#27898).
+	buf.Reset()
+	a = output.AnnotatorFromFlag(&buf, "auto", provider.RunnerForgejo)
 	a.Warningf("watch out")
 	require.Equal(t, "Warning: watch out\n", buf.String())
 }

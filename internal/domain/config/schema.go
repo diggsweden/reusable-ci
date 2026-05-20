@@ -6,7 +6,7 @@
 // `reusable-ci config parse|validate`.
 package config
 
-import "github.com/diggsweden/reusable-ci/internal/domain/projecttype"
+import "github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 
 // ValidProjectTypes lists every project type accepted by the
 // artifacts.yml schema. Order is significant: per-ecosystem output arrays
@@ -50,7 +50,7 @@ var SBOMSupportedTypes = map[projecttype.Type]bool{
 // between deployable applications and reusable libraries (currently only
 // Maven). Empty / unrecognised values are treated as library by the
 // publish-target filter rule: "Maven applications should not publish to
-// github-packages.".
+// forge-packages.".
 type BuildType string
 
 // Recognised BuildType values.
@@ -88,10 +88,10 @@ type PublishTarget string
 
 // Recognised PublishTarget values.
 const (
-	PublishMavenCentral   PublishTarget = "maven-central"
-	PublishGitHubPackages PublishTarget = "github-packages"
-	PublishGooglePlay     PublishTarget = "google-play"
-	PublishNPMJS          PublishTarget = "npmjs"
+	PublishMavenCentral  PublishTarget = "maven-central"
+	PublishForgePackages PublishTarget = "forge-packages"
+	PublishGooglePlay    PublishTarget = "google-play"
+	PublishNPMJS         PublishTarget = "npmjs"
 )
 
 // ValidPublishTargets lists every PublishTarget the schema recognises.
@@ -99,7 +99,7 @@ const (
 //nolint:gochecknoglobals // schema enumeration — read-only and ordered.
 var ValidPublishTargets = []PublishTarget{
 	PublishMavenCentral,
-	PublishGitHubPackages,
+	PublishForgePackages,
 	PublishGooglePlay,
 	PublishNPMJS,
 }
@@ -133,6 +133,10 @@ type Config struct {
 	// `release sbom-zip --sign`. Empty defaults to gpg (preserves
 	// the pre-cosign contract for existing repos).
 	Sign SignConfig `yaml:"sign,omitempty"`
+
+	// GitSigning selects how the release commit and tag are signed
+	// (git objects), independent of Sign. Empty defaults to gpg.
+	GitSigning GitSigningConfig `yaml:"git-signing,omitempty"`
 }
 
 // Artifact is one entry under the top-level `artifacts:` list. It is the

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/provider"
-	"github.com/diggsweden/reusable-ci/internal/domain/security"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/security"
 )
 
 func TestNormalizeOpengrepFailSeverity(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // DefaultAllowedEvents lists the trigger events under which a privileged

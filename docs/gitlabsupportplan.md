@@ -4,18 +4,51 @@ SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 SPDX-License-Identifier: CC0-1.0
 -->
 
-# GitLab CI Support — Architecture & Future Plan
+# Final Proposal: GitLab CI Support for Reusable-CI
 
-Architecture, design rules, and the phases still ahead. For the
-remaining work list, see [`gitlab.prep.md`](gitlab.prep.md). What's
-already in place is readable from the code: the GitLab provider
-adapter (`internal/adapters/gitlab/`), the dual-emit security tools
-(SARIF + `gl-*-scanning-report.json`), the cross-platform runtime
-images, and the `.ci-results/` manifest sink are present and used by
-the existing GitHub workflows; the Catalog adapter YAML is what's not
-yet written.
+Consolidated from proposals 1-3, with all claims verified against the codebase.
+
+## Completed (in codebase, verified)
+
+- **1a** — `ci_log_error/warning` in `output.sh` + all scripts migrated (zero bare `::error::` outside `output.sh`)
+- **1b (GitHub half)** — `CI_PLATFORM="github"` in `env.sh`, exported
+- **1c** — `ci_release_url`/`ci_packages_url`/`ci_docs_url` in `output.sh`; hardcoded URLs fixed in 3 summary/validate scripts; `> [!WARNING]` → `> **Warning:**`
+- **1f** — 6 inline shell blocks extracted into `scripts/build/`, `scripts/publish/`, `scripts/release/`, `scripts/validate/`; 5 workflow YAMLs updated
+- **1d** — GitHub-specific variables renamed: `SHOULD_CREATE_GITHUB_RELEASE` → `SHOULD_CREATE_RELEASE`, `USE_GITHUB_TOKEN` → `USE_CI_TOKEN` (incl. workflow_call inputs `use-github-token` → `use-ci-token`), `GITHUB_REGISTRY` → `CI_REGISTRY`, `PUBLISH_MAVEN_GITHUB_RESULT` → `PUBLISH_MAVEN_REGISTRY_RESULT`; JSON keys + output names updated across scripts, workflows, tests, and docs
+
+**Internal simplifications** (no external impact):
+
+- Removed unused `ci_log_notice()` from `output.sh` (zero callers)
+- Merged `resolve-file-pattern.sh` into `get-file-pattern.sh` (dual-mode: positional args + env vars)
+- Merged `validate-auth-configuration.sh` into `validate-auth.sh` (dual-mode: positional args + env vars)
+- Extracted `scripts/ci/stage-result.sh` — shared aggregation helpers used by all 6 stage-result scripts
+- Merged `create-and-sign-sbom-zip.sh` into `create-sbom-zip.sh` (signing via optional `SIGN_ARTIFACTS`/`GPG_KEY_ID` env vars)
+
+---
+
+## Remaining GitHub Coupling in Scripts
+
+- `scripts/container/validate-namespace.sh:23-24` — hardcoded `ghcr.io` check (security validation, registry-specific by design)
+
+**GitHub CLI (`gh`) usage** (Phase 1e — provider dispatch):
+
+- `scripts/release/create-github-release.sh:22,31,141-142` — `gh release view/delete/create`
+- `scripts/validate/bot-permissions.sh:14,19,25` — `gh api`
+- `scripts/validate/github-token.sh:20,37,48` — `github.com/settings`, `api.github.com`
+
+### `artifacts.yml` — Almost Platform-Agnostic
+
+Two field values carry platform assumptions:
+- `publish-to: github-packages` — GitHub-specific registry name
+- `enable-slsa: true` — only works on GitHub (SLSA L3 via `slsa-github-generator`)
+
+These don't break the format — a GitLab adapter can map `github-packages` → `gitlab-registry` or skip it, and ignore `enable-slsa`. No schema change needed.
+
+---
 
 ## Architecture
+
+All three proposals agree. Verified as sound:
 
 ```text
                     ┌─────────────────────┐
@@ -26,162 +59,298 @@ yet written.
               │                               │
     ┌─────────▼──────────┐         ┌──────────▼─────────┐
     │  .github/workflows │         │  .gitlab/ci/       │
-    │  GitHub adapter    │         │  GitLab adapter    │
+    │  Idiomatic GHA     │         │  Idiomatic GitLab  │
+    │  (thin adapters)   │         │  (thin adapters)   │
     └─────────┬──────────┘         └──────────┬─────────┘
               │                               │
               └───────────────┬───────────────┘
                               │
                     ┌─────────▼───────────┐
-                    │ reusable-ci binary  │  Shared logic + provider adapters
+                    │     scripts/        │  Shared business logic
+                    │  (stays where it is)│
                     └─────────────────────┘
 ```
 
-## Design Rules
+### Design Rules
 
-1. **The Go binary owns decisions.** Config parsing, policy, validation,
-   build wrappers, security transforms, SBOM generation, summaries, and release
-   helper logic live behind `reusable-ci` commands.
-2. **YAML is a platform adapter.** GitHub and GitLab YAML own triggers, job
-   graphs, runners, secrets, cache syntax, artifact transport, matrix syntax,
-   and platform-native report declarations.
-3. **Provider-specific behavior goes behind Go adapters.** GitHub/GitLab/local
-   differences belong in `internal/adapters/{github,gitlab,local}` behind
-   interfaces in `internal/domain/provider`, not scattered through workflows.
-4. **`artifacts.yml` stays pure.** It describes product/release intent, not CI
-   platform wiring. Do not add `ci.github` / `ci.gitlab` blocks.
-5. **Inter-stage communication uses files and compact JSON.** Scalar CI outputs
-   are for same-platform plumbing; stage manifests under `.ci-results/` are the
-   durable cross-provider shape.
-6. **Capabilities, not fake parity.** Document what each platform provides;
-   skip or degrade clearly when GitLab lacks a GitHub-only feature.
-7. **No compatibility aliases unless there is persisted data.** Workflow input
-   names should reflect the long-term contract, even when that means a major
-   version break.
+1. **Scripts stay at `scripts/`** — no move to `.ci-shared/` (breaking change with zero benefit)
+2. **`artifacts.yml` stays pure** — no `ci:` or `platform:` sections (product intent, not CI wiring)
+3. **YAML is a thin adapter** — triggers, job graph, runners, secrets, artifact transport
+4. **Scripts own all decisions** — config parsing, policy, validation, build commands, results
+5. **Provider-specific logic uses explicit dispatch** — `scripts/*/providers/{github,gitlab}.sh`
+6. **Inter-stage communication uses file-based manifests** — not `GITHUB_OUTPUT` directly
+7. **Capabilities, not parity** — document what each platform provides; don't fake what it doesn't
 
-## `artifacts.yml`
+---
 
-Two field values carry GitHub assumptions today:
+## Phase Plan
 
-- `publish-to: github-packages` — GitHub-specific package destination.
-- `enable-slsa: true` — only works on GitHub SLSA L3 infrastructure.
+### Phase 1: Remaining shared-core prep
 
-These do not require schema changes. The GitLab adapter can map, skip, or warn
-based on platform capability while keeping the artifact contract stable.
+#### 1b. Complete `scripts/ci/env.sh` (GitLab branch)
 
-## Capability Matrix
+GitHub branch is done. Fill in the GitLab stub when starting Phase 3:
 
-| Capability | GitHub | GitLab | Shared implementation |
+```bash
+elif [[ "${GITLAB_CI:-}" == "true" ]]; then
+  CI_PLATFORM="gitlab"
+  CI_COMMIT="${CI_COMMIT_SHA:-}"
+  CI_REPO="${CI_PROJECT_PATH:-}"
+  CI_RUN_ID="${CI_PIPELINE_ID:-}"
+  CI_ACTOR="${GITLAB_USER_LOGIN:-}"
+  CI_BRANCH="${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:-${CI_COMMIT_BRANCH:-}}"
+  CI_REF_NAME="${CI_COMMIT_REF_NAME:-}"
+  CI_REF="${CI_COMMIT_REF_NAME:-}"
+  CI_SERVER_URL="${CI_SERVER_URL:-}"
+  CI_RUN_URL="${CI_PIPELINE_URL:-}"
+else
+  CI_PLATFORM="local"
+fi
+```
+
+#### 1e. Introduce provider dispatch for release creation
+
+Restructure:
+```text
+scripts/release/
+  create-github-release.sh    →  providers/github.sh  (move, don't delete)
+  create-release.sh           →  new generic entrypoint
+  providers/
+    github.sh                 ←  current create-github-release.sh
+    gitlab.sh                 ←  future (placeholder)
+```
+
+`create-release.sh`:
+```bash
+source "$(dirname "$0")/../ci/env.sh"
+case "${CI_PLATFORM:-github}" in
+  github) source "$(dirname "$0")/providers/github.sh" ;;
+  gitlab) source "$(dirname "$0")/providers/gitlab.sh" ;;
+  *) printf "Unsupported platform: %s\n" "$CI_PLATFORM" >&2; exit 1 ;;
+esac
+create_release "$@"
+```
+
+Apply same pattern to:
+- `scripts/validate/github-token.sh` → `providers/github.sh` (100% GitHub-specific)
+- `scripts/validate/bot-permissions.sh` → `providers/github.sh` (uses `gh api`)
+
+#### 1g. Introduce file-based stage manifest contract
+
+Define a convention for inter-stage results:
+
+```text
+.ci-results/
+  build-result.json
+  publish-result.json
+  prepare-result.json
+```
+
+Scripts write to these files via a new helper:
+
+```bash
+# scripts/ci/manifest.sh
+ci_write_stage_result() {
+  local stage="$1" result="$2"
+  local dir="${CI_RESULTS_DIR:-.ci-results}"
+  mkdir -p "$dir"
+  printf '{"stage":"%s","result":"%s"}\n' "$stage" "$result" > "$dir/${stage}-result.json"
+}
+```
+
+Platform YAML wires these files through its own transport:
+- GitHub: `actions/upload-artifact` / `actions/download-artifact`
+- GitLab: `artifacts: paths:` / `needs:`
+
+This decouples scripts from `GITHUB_OUTPUT` for structured data.
+
+### Phase 2: Define the adapter contract (design document)
+
+Extend `docs/workflow-design-policy.md` to codify:
+
+1. **YAML adapter owns**: triggers, job graph, runners, secrets, artifact transport, matrix syntax, platform-native integrations
+2. **Scripts own**: all business logic, all validation, all build commands, all output formatting, provider dispatch
+3. **Stage manifest JSON schema** (from Phase 1g)
+4. **Provider dispatch convention** (`scripts/*/providers/{github,gitlab}.sh`)
+5. **Capability matrix**:
+
+| Capability | GitHub | GitLab | Shared logic |
 |---|---|---|---|
-| Build wrappers | Reusable workflows | CI components/jobs | `reusable-ci build ...` |
-| Release planning | Reusable workflows | CI components/jobs | `reusable-ci config ...`, `reusable-ci plan ...` |
-| Container build | Docker/Buildx actions | Docker/Buildx or GitLab runner Docker | Workflow/YAML adapter, shared `reusable-ci container ...` helpers |
-| SLSA L3 provenance | Native GitHub generator | No direct equivalent | GitHub-only; skip on GitLab |
-| SBOM generation | Artifacts + attestations | Artifacts + `reports:cyclonedx` | `reusable-ci sbom ...` |
-| Release creation | `gh` / GitHub API | GitLab API / `release:` keyword | Provider adapter plus GitLab YAML upload strategy |
-| Package registry | GitHub Packages | GitLab Package Registry | Platform YAML + provider-aware validation |
-| Container registry | GHCR | GitLab Container Registry | Registry URL config + namespace validation policy |
-| SAST upload | SARIF to Code Scanning | `artifacts:reports:sast` | Producer emits SARIF + GitLab SAST JSON |
-| Dependency scan upload | SARIF to Code Scanning | `artifacts:reports:dependency_scanning` | Producer emits SARIF + GitLab dependency JSON |
-| Container scan upload | SARIF to Code Scanning | `artifacts:reports:container_scanning` | Producer emits SARIF + GitLab container JSON |
-| Step summaries | `GITHUB_STEP_SUMMARY` | Markdown artifact or MR comment | Summary use cases render provider-neutral Markdown |
-| Build-time secret mounts | `containers[].build-secrets` + `REUSABLE_CI_BUILD_SECRETS_JSON` envelope (GHA secret) | same envelope shape supplied as a GitLab CI variable | `reusable-ci container materialize-build-secrets` consumes the envelope identically on both platforms |
-| Privileged-trigger gate | `reusable-ci validate event-context` reads `GITHUB_EVENT_NAME` | needs `CI_PIPELINE_SOURCE` reader and a port allowlist (`push`, `web`, `schedule`, `pipeline`, `trigger`, `api`); refuse `merge_request_event` / `external_pull_request_event` | shared allowlist policy in `internal/domain/validate.RequireAllowedEvent`; provider-specific reader behind the `provider` interface |
+| Build (Maven/NPM/Gradle) | Yes | Yes | `scripts/build/` |
+| Container build | Yes | Yes | Docker/Buildx (portable) |
+| SLSA L3 provenance | Yes (native) | No | N/A — GitHub-only |
+| SBOM generation | Yes | Yes | `scripts/sbom/` (syft) |
+| SBOM attestation | Yes (native) | Artifact upload | Provider dispatch |
+| Release creation | Yes (`gh`) | Yes (`glab`/API) | `scripts/release/providers/` |
+| Package registry | GitHub Packages | GitLab Registry | Provider dispatch |
+| Container registry | GHCR | GitLab CR | Registry URL config |
+| Security scan upload | SARIF → Security tab | `reports: sast:` | Same SARIF generation, different upload |
+| Container signing | Cosign + GitHub OIDC | Cosign + GitLab OIDC | Same tool, different OIDC config |
+| Step summaries | `GITHUB_STEP_SUMMARY` | MR comment or artifact | `ci_summary()` dispatch |
+| Dependency scanning | `dependency-review-action` | GitLab native | Different tools, same intent |
 
-## Phases Ahead
-
-### Phase 1: GitLab Component Skeleton
-
-Add the GitLab-facing entrypoints without trying to port every workflow at
-once:
+### Phase 3: Build the GitLab CI adapter
 
 ```text
 .gitlab/
   ci/
-    security-opengrep.yml
+    pullrequest.yml              # MR pipeline orchestrator
+    release.yml                  # Tag pipeline orchestrator
+    release-dev.yml              # Branch pipeline orchestrator
     templates/
-      reusable-ci.yml
+      .build-maven.yml           # Hidden job template
+      .build-npm.yml
+      .build-gradle.yml
+      .publish-container.yml
+      .lint-devbase.yml
+      .validate-prerequisites.yml
 ```
 
-The first component should run inside a runtime image and invoke the existing
-binary command, for example `reusable-ci security scan opengrep`, then publish
-GitLab-native reports via `artifacts:reports:*`.
+**Use idiomatic GitLab, not translated GitHub**:
+- `include:` + `extends:` for composition (not `workflow_call`)
+- `rules:` for conditional execution
+- `artifacts: reports: dotenv:` for inter-job key-value outputs
+- `artifacts: paths:` for inter-job file passing (stage manifests)
+- `parallel: matrix:` for fan-out builds
+- `trigger:` with child pipelines for stage isolation (closest to stage workflows)
+- `release:` keyword for GitLab releases
+- `artifacts: reports: sast:` for security scan results
 
-### Phase 2: Shared Component Contracts
+**Caller contract**:
+```yaml
+# .gitlab-ci.yml
+include:
+  - project: 'diggsweden/reusable-ci'
+    ref: v3.0.0
+    file: '.gitlab/ci/release.yml'
 
-Define reusable include/extends shapes for common concerns:
+variables:
+  ARTIFACTS_CONFIG: .gitlab/artifacts.yml
+  CHANGELOG_CREATOR: git-cliff
+```
 
-- runtime image selection
-- `reusable-ci` invocation and env mapping
-- artifact paths and report declarations
-- `.ci-results/` manifest upload
-- failure semantics for quality/security jobs
+**Add GitLab examples** alongside existing GitHub examples:
+```text
+examples/maven-app/
+  .github/workflows/release-workflow.yml     # existing
+  .gitlab-ci.yml                              # new
+```
 
-### Phase 3: Release/Build Stage Adapter
+### Phase 4: Platform-specific depth
 
-Port the GitHub stage structure into idiomatic GitLab jobs/components:
+Features that don't have cross-platform equivalents — handle with graceful degradation:
 
-- release setup: `reusable-ci config parse-artifacts`, `reusable-ci plan ...`
-- build fanout: Maven, npm, Gradle, Android, Xcode where applicable
-- publish fanout: Maven Central, npm, container, Google Play/App Store where applicable
-- release summary and manifest upload
+| Feature | GitHub | GitLab | Strategy |
+|---|---|---|---|
+| SLSA L3 provenance | `slsa-github-generator` | Not available | Skip on GitLab, document as GitHub advantage |
+| SBOM attestation | `actions/attest-sbom` | Upload as artifact | Generate SBOM via shared scripts, attach differently |
+| Step summaries | `GITHUB_STEP_SUMMARY` | N/A | Write to artifact markdown file; optionally post as MR comment |
+| Container signing | Cosign + GitHub OIDC | Cosign + GitLab OIDC | Same tool, adapter for OIDC config |
+| Dependency review | `dependency-review-action` | GitLab Dependency Scanning | Different tools, same intent — no shared logic |
 
-Use GitLab-native `rules:`, `parallel:matrix`, `needs:`, `artifacts:paths`,
-`artifacts:reports:dotenv`, child pipelines where they improve readability, and
-the `release:` keyword when it fits.
+---
 
-### Phase 4: Provider Depth
+## What NOT To Do (verified against codebase)
 
-Finish provider behavior only when a GitLab component actually needs it:
+1. **Don't move `scripts/` to `.ci-shared/`** — Proposal 2 suggested this. It breaks all 35+ script references in existing workflows, all BATS tests, and the justfile. Zero architectural benefit.
 
-- correct GitLab token header selection (`PRIVATE-TOKEN` vs `JOB-TOKEN`)
-- release asset upload/linking via GitLab Package Registry or another real URL
-- MR comments or artifact-based step summaries
-- package/container registry validation semantics
+2. **Don't add `ci:` sections to `artifacts.yml`** — Proposal 2 suggested per-artifact `ci.github` and `ci.gitlab` blocks. This pollutes the product-intent contract with CI wiring. Platform-specific config belongs in platform YAML.
 
-## Deliberate GitHub coupling
+3. **Don't aim for 100% feature parity** — Proposal 2 set this as a success metric. SLSA L3 literally does not exist on GitLab. Container attestation workflows are fundamentally different. Forcing parity creates fake abstractions.
 
-Two reusable-ci surfaces stay GitHub-specific by design, not by
-oversight:
+4. **Don't build a meta-DSL or YAML generator** — All proposals agree. Breaks IDE tooling, creates a third thing to maintain, produces unidiomatic pipelines on both platforms.
 
-- `reusable-ci container validate namespace` — hardcoded `ghcr.io`
-  namespace policy. Registry-specific security validation is the
-  right shape; a GitLab Catalog component validates against the
-  GitLab Container Registry's own rules separately.
-- `reusable-ci security report upload-sarif` — pushes SARIF to GitHub
-  Code Scanning. The GitLab equivalent isn't an imperative upload:
-  GitLab ingests `artifacts:reports:sast` declaratively, which the
-  producer (`reusable-ci security scan opengrep`) already emits.
+5. **Don't start by writing GitLab YAML** — The shared core still has gaps: provider dispatch (1e) and the env.sh GitLab branch (1b). Fix these first.
 
-Both surfaces have GitLab counterparts that work through different
-mechanisms; no shared command can wrap them cleanly.
+6. **Don't put time estimates on phases** — Scope is clear; timeline depends on team capacity.
 
-## What Not To Do
-
-1. **Do not revive a shell shared-logic layer.** The long-term shared surface is
-   `reusable-ci`, not `scripts/*`.
-2. **Do not build a YAML generator or meta-DSL.** It would produce unidiomatic
-   pipelines on both platforms and create a third thing to maintain.
-3. **Do not add GitLab-specific keys to `artifacts.yml`.** Platform wiring
-   belongs in platform YAML or provider adapters.
-4. **Do not force parity where capabilities differ.** SLSA L3, GitHub Code
-   Scanning, and GitLab report ingestion are different platform features.
-5. **Do not keep compatibility aliases for renamed workflow inputs.** Major
-   releases can break workflow contracts when the new name is clearer.
+---
 
 ## End-State Directory Structure
 
 ```text
 reusable-ci/
-├── .github/workflows/           # GitHub Actions adapter
-├── .gitlab/ci/                  # GitLab CI adapter / Catalog components
-├── cmd/reusable-ci/             # CLI entrypoint
-├── internal/                    # shared Go domain/app/adapters/cli
-├── containers/runtime/          # shared runtime images carrying reusable-ci
-├── scripts/bootstrap/           # runtime-image build-time installers only
-├── examples/                    # GitHub and GitLab consumer examples
-├── docs/
-│   ├── gitlab.prep.md
-│   ├── gitlabsupportplan.md
+├── .github/workflows/           # GitHub Actions adapter (existing, stable public API)
+│   ├── pullrequest-orchestrator.yml
+│   ├── release-orchestrator.yml
+│   ├── release-dev-orchestrator.yml
+│   ├── release-*-stage.yml      # Stage controllers
+│   ├── build-*.yml              # Leaf build workflows
+│   ├── publish-*.yml            # Leaf publish workflows
+│   ├── lint-*.yml               # Quality workflows
+│   └── security-*.yml           # Security workflows
+├── .gitlab/ci/                  # GitLab CI adapter (new)
+│   ├── pullrequest.yml
+│   ├── release.yml
+│   ├── release-dev.yml
+│   └── templates/
+│       ├── .build-maven.yml
+│       ├── .build-npm.yml
+│       ├── .publish-container.yml
+│       └── ...
+├── scripts/                     # Shared logic
+│   ├── ci/
+│   │   ├── env.sh              # Platform detection + CI_PLATFORM
+│   │   ├── output.sh           # ci_log_*, ci_output, ci_summary, URL helpers
+│   │   ├── stage-result.sh     # Stage result aggregation helpers
+│   │   └── manifest.sh         # Stage result file I/O (Phase 1g)
+│   ├── build/
+│   │   ├── extract-maven-metadata.sh
+│   │   └── maven-library.sh
+│   ├── config/                 # artifacts.yml parsing (portable)
+│   ├── plan/                   # Policy decisions (portable)
+│   ├── publish/
+│   │   ├── maven-validate-artifacts.sh
+│   │   └── npm-validate-tarball.sh
+│   ├── release/
+│   │   ├── create-release.sh            # Generic dispatch (Phase 1e)
+│   │   ├── providers/
+│   │   │   ├── github.sh               # From current create-github-release.sh (Phase 1e)
+│   │   │   └── gitlab.sh               # Phase 3
+│   │   ├── validate-changelog.sh
+│   │   ├── generate-checksums.sh
+│   │   └── sign-release-artifacts.sh
+│   ├── validate/
+│   │   ├── tag-format.sh
+│   │   ├── tag-signature.sh
+│   │   ├── providers/
+│   │   │   ├── github.sh               # From github-token.sh + bot-permissions.sh (Phase 1e)
+│   │   │   └── gitlab.sh               # Phase 3
+│   │   └── ...
+│   ├── summary/                # Platform-aware URL helpers
+│   ├── sbom/                   # Portable (syft-based)
+│   ├── container/              # Registry validation still has ghcr.io (security check, registry-specific)
+│   ├── registry/               # Portable (variables renamed)
+│   └── version/                # Portable
+├── examples/
+│   ├── maven-app/
+│   │   ├── .github/workflows/  # GitHub examples (existing)
+│   │   └── .gitlab-ci.yml      # GitLab example (new)
 │   └── ...
-└── artifacts.yml                # platform-agnostic config examples/schema docs
+├── tests/                      # BATS tests (expanded for new scripts)
+├── docs/
+│   ├── gitlab-ci.md            # GitLab setup + capability matrix (new)
+│   ├── workflow-design-policy.md  # Extended with adapter contract (Phase 2)
+│   └── ...
+└── artifacts.yml               # Platform-agnostic config (unchanged)
 ```
+
+---
+
+## Ordering and Dependencies
+
+```text
+Phase 1e (provider dispatch)      ── Depends on CI_PLATFORM (done)
+Phase 1g (stage manifests)        ── Independent, can overlap with 1e
+         │
+         ▼
+Phase 2 (adapter contract doc)    ── Depends on Phase 1 being complete
+         │
+         ▼
+Phase 3 (GitLab CI adapter)       ── Depends on Phase 2; includes 1b GitLab branch
+         │
+         ▼
+Phase 4 (platform depth)          ── Depends on Phase 3
+```
+
+The remaining Phase 1 items (1e, 1g) require GitLab design decisions — they are best done at the start of Phase 3 when the target platform shapes the design.

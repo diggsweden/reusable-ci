@@ -1,19 +1,20 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
-# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+# SPDX-License-Identifier: CC0-1.0
 # GitHub Packages Publisher
 # 
-# Purpose: Publishes artifacts to GitHub Packages registry. Supports Maven and NPM
-# from a unified interface. Downloads pre-built artifacts from workflow
+# Purpose: Publishes artifacts to GitHub Packages registry. Supports multiple package types
+# (Maven, NPM, Gradle) from a unified interface. Downloads pre-built artifacts from workflow
 # artifacts and publishes them to the appropriate GitHub Packages registry.
 #
 # Package Types Supported:
 #   - maven: Publishes to GitHub Maven registry (maven.pkg.github.com)
 #   - npm: Publishes to GitHub NPM registry (npm.pkg.github.com)
+#   - gradle: Publishes to GitHub Maven registry (maven.pkg.github.com)
 #
 # Inputs:
 #   - artifactSource: Name of workflow artifact containing built packages
-#   - packageType: Type of package (maven|npm)
+#   - packageType: Type of package (maven|npm|gradle)
 #
 # Required Secrets:
 #   GITHUB_TOKEN: Automatically provided by GitHub Actions
@@ -31,7 +32,7 @@ on:
         required: true
         type: string
       package-type:
-        description: "Package type: maven or npm"
+        description: "Package type: maven, npm, or gradle"
         required: true
         type: string
       java-version:
@@ -59,58 +60,35 @@ on:
         required: false
         default: "main"
         type: string
-      reusable-ci-binary-ref:
-        description: "reusable-ci ref/version to install on plain-runner jobs (defaults to v3.0.0)"
-        required: false
-        default: "v3.0.0"
-        type: string
 permissions:
   contents: read
 jobs:
   publish-maven-github:
     name: Publish to GitHub Packages (${{ inputs['package-type'] }})
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      # Least-privilege: publishes to GitHub Packages via GITHUB_TOKEN
-      # (packages: write); no git write performed. Confirm on next release.
-      contents: read
+      contents: write
       packages: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.branch }}
-      - name: Checkout reusable-ci bootstrap installers
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-binary-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts/bootstrap
-      # Tagged refs (vN.N.N) install from GitHub Releases with SHA-256
-      # verification — no Go toolchain needed. Branch/SHA refs require Go on
-      # the runner; the install script errors with an actionable message if
-      # absent.
-      - name: Install reusable-ci binary
-        env:
-          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
-        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
-      # Defense-in-depth: refuse PR-context triggers. GITHUB_PACKAGES
-      # publish uses the auto GITHUB_TOKEN today; the gate prevents
-      # any future secret addition (or a misconfigured direct caller)
-      # from leaking via PR-HEAD code.
-      - name: Refuse PR-context trigger (publish/release secrets in scope)
-        run: reusable-ci validate event-context
       - name: Download build artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARTIFACT_NAME: ${{ inputs['artifact-source'] }}
-          ARTIFACT_DIR: ${{ inputs['working-directory'] }}/
-        run: reusable-ci artifact download
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs['artifact-source'] }}
+          path: ${{ inputs['working-directory'] }}/
+      - name: List downloaded artifacts
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          printf "Downloaded artifacts:\n"
+          find . -type f -name "*.jar" -path "*/target/*" ! -name "original-*.jar" -exec ls -lh {} \; || printf "No JAR artifacts found\n"
+          find . -type f -name "*.tgz" -exec ls -lh {} \; || printf "No NPM tarball found\n"
       # Maven publishing
       - name: Set up JDK for Maven
-        if: ${{ inputs['package-type'] == 'maven' }}
+        if: ${{ inputs['package-type'] == 'maven' || inputs['package-type'] == 'gradle' }}
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           java-version: ${{ inputs['java-version'] }}
@@ -118,8 +96,8 @@ jobs:
           server-id: github
           server-username: GITHUB_ACTOR
           server-password: GITHUB_TOKEN
-      - name: Publish Maven to GitHub Packages
-        if: ${{ inputs['package-type'] == 'maven' }}
+      - name: Publish Maven/Gradle to GitHub Packages
+        if: ${{ inputs['package-type'] == 'maven' || inputs['package-type'] == 'gradle' }}
         working-directory: ${{ inputs['working-directory'] }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -139,11 +117,6 @@ jobs:
           node-version: ${{ inputs['node-version'] }}
           registry-url: 'https://npm.pkg.github.com'
           scope: '@${{ github.repository_owner }}'
-      - name: Find NPM tarball
-        if: ${{ inputs['package-type'] == 'npm' }}
-        id: find-npm-tarball
-        working-directory: ${{ inputs['working-directory'] }}
-        run: reusable-ci publish npm find-tarball
       - name: Publish NPM to GitHub Packages
         if: ${{ inputs['package-type'] == 'npm' }}
         working-directory: ${{ inputs['working-directory'] }}
@@ -151,7 +124,13 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           printf "Publishing to GitHub NPM registry...\n"
-          npm publish "${{ steps.find-npm-tarball.outputs.tarball }}"
+          TARBALL=$(find . -maxdepth 1 -name "*.tgz" -type f | head -n 1)
+          if [ -z "$TARBALL" ]; then
+            printf "::error::No tarball found. build-npm must create and upload a tarball.\n"
+            exit 1
+          fi
+          printf "Publishing tarball: %s\n" "$TARBALL"
+          npm publish "$TARBALL"
       # Optional: Attach artifacts to GitHub release
       - name: Upload artifacts to release
         if: ${{ inputs['attach-pattern'] != '' }}
@@ -159,10 +138,31 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ATTACH_PATTERN: ${{ inputs['attach-pattern'] }}
           REF_NAME: ${{ github.ref_name }}
-          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
-        run: reusable-ci release attachments upload
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          for file in $ATTACH_PATTERN; do
+            if [ -f "$file" ]; then
+              printf "Uploading %s to release...\n" "$file"
+              gh release upload "$REF_NAME" "$file" --clobber || printf "::warning::Failed to upload %s\n" "$file"
+            fi
+          done
       - name: Generate publish summary
         env:
           REPOSITORY: ${{ github.repository }}
           PACKAGE_TYPE: ${{ inputs['package-type'] }}
-        run: reusable-ci report publish github-packages
+        run: |
+          print_repository_link() {
+            local repo
+            repo="$REPOSITORY"
+            printf "%s **Repository:** [%s](https://github.com/%s/packages)\n" "-" "$repo" "$repo"
+          }
+
+          {
+            printf "## Published to GitHub Packages 📦\n"
+            printf "\n"
+            printf "%s **Package Type:** %s\n" "-" "$PACKAGE_TYPE"
+            printf "%s **Registry:** GitHub Packages\n" "-"
+            print_repository_link
+            printf "\n"
+            printf "*Published at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          } >> "$GITHUB_STEP_SUMMARY"

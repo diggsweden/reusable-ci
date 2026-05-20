@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/security"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/security"
 )
 
 // runID parses a SARIF body and returns runs[i].automationDetails.id.

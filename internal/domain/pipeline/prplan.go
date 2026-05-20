@@ -4,7 +4,7 @@
 package pipeline
 
 import (
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
 
 // PRPlanVersion is the current pull-request plan contract version.
@@ -15,7 +15,7 @@ type PRPlanInput struct {
 	ProjectType         projecttype.Type
 	BaseBranch          string
 	ReusableCIBinaryRef string
-	Nanolinter          bool
+	Engine              LintEngine
 	SwiftFormat         bool
 	SwiftLint           bool
 }
@@ -35,12 +35,13 @@ type PRContext struct {
 	ReusableCIBinaryRef string           `json:"reusable_ci_binary_ref"`
 }
 
-// PRPolicy is the pull-request quality gate policy.
+// PRPolicy is the pull-request quality gate policy. Engine selects the single
+// general lint engine; the swift flags are orthogonal language-specific checks.
 type PRPolicy struct {
-	Nanolinter  bool `json:"nanolinter"`
-	SwiftFormat bool `json:"swift_format"`
-	SwiftLint   bool `json:"swift_lint"`
-	Swift       bool `json:"swift"`
+	Engine      LintEngine `json:"engine"`
+	SwiftFormat bool       `json:"swift_format"`
+	SwiftLint   bool       `json:"swift_lint"`
+	Swift       bool       `json:"swift"`
 }
 
 // PRStagePlans contains PR stage-specific plans.
@@ -55,16 +56,19 @@ type PRQualityStagePlan struct {
 	Targets PRQualityTargets `json:"targets"`
 }
 
-// PRQualityTargets are the PR quality jobs.
+// PRQualityTargets are the PR quality jobs. Nanolinter and Megalinter are the
+// mutually-exclusive lint-engine jobs (at most one runs); the quality stage
+// dispatches each from a static `uses:`, gated on its own `runs`.
 type PRQualityTargets struct {
 	Nanolinter TargetPlan[string] `json:"nanolinter"`
+	Megalinter TargetPlan[string] `json:"megalinter"`
 	Swift      TargetPlan[string] `json:"swift"`
 }
 
 // NewPRPlan builds the PR plan contract from workflow inputs.
 func NewPRPlan(in PRPlanInput) PRPlan {
 	policy := PRPolicy{
-		Nanolinter:  in.Nanolinter,
+		Engine:      in.Engine,
 		SwiftFormat: in.SwiftFormat,
 		SwiftLint:   in.SwiftLint,
 		Swift:       in.SwiftFormat || in.SwiftLint,
@@ -73,7 +77,8 @@ func NewPRPlan(in PRPlanInput) PRPlan {
 		Version: PRPlanVersion,
 		Stage:   "pr-quality",
 		Targets: PRQualityTargets{
-			Nanolinter: singletonTargetPlan("nanolinter", policy.Nanolinter),
+			Nanolinter: singletonTargetPlan("nanolinter", policy.Engine == LintEngineNanolinter),
+			Megalinter: singletonTargetPlan("megalinter", policy.Engine == LintEngineMegalinter),
 			Swift:      singletonTargetPlan("swift", policy.Swift),
 		},
 	}

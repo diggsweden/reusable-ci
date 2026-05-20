@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/config"
-	"github.com/diggsweden/reusable-ci/internal/domain/pipeline"
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
 
 //nolint:cyclop // exercises many invariants on one SnapshotReleasePlan.

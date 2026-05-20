@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/testutil/fixtures"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fixtures"
 )
 
 func TestRead_FoundFile(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/testutil/testenv"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testenv"
 )
 
 func TestNew_IsolatesAndProvidesTempPaths(t *testing.T) {

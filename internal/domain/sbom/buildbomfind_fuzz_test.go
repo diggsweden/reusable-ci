@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/sbom"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/sbom"
 )
 
 // FuzzFindBuildBOM exercises the include/exclude glob matcher. The

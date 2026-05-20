@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"slices"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // DefaultRegistry is the registry the namespace and auth policies assume

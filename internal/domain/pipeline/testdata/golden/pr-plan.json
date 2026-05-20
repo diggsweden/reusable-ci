@@ -6,7 +6,7 @@
     "reusable_ci_binary_ref": "v3.0.0"
   },
   "policy": {
-    "nanolinter": true,
+    "engine": "nanolinter",
     "swift_format": false,
     "swift_lint": false,
     "swift": false
@@ -21,6 +21,10 @@
           "items": [
             "nanolinter"
           ]
+        },
+        "megalinter": {
+          "runs": false,
+          "items": []
         },
         "swift": {
           "runs": false,

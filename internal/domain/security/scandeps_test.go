@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/security"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/security"
 )
 
 func TestMapTrivyFailSeverity(t *testing.T) {
@@ -19,7 +19,7 @@ func TestMapTrivyFailSeverity(t *testing.T) {
 		"weird":    "CRITICAL",                 // default
 	}
 	for in, want := range cases {
-		if got := security.MapTrivyFailSeverity(in); got != want {
+		if got := security.ParseDepSeverity(in).TrivyFilter(); got != want {
 			t.Errorf("%q → %q, want %q", in, got, want)
 		}
 	}
@@ -29,13 +29,13 @@ func TestIsKnownTrivyFailSeverity(t *testing.T) {
 	t.Parallel()
 
 	for _, level := range []string{"critical", " HIGH ", "Moderate", "low"} {
-		if !security.IsKnownTrivyFailSeverity(level) {
+		if !security.ParseDepSeverity(level).IsKnown() {
 			t.Errorf("%q should be known", level)
 		}
 	}
 
 	for _, level := range []string{"", "medium", "unknown"} { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		if security.IsKnownTrivyFailSeverity(level) {
+		if security.ParseDepSeverity(level).IsKnown() {
 			t.Errorf("%q should not be known", level)
 		}
 	}

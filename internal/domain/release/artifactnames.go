@@ -6,7 +6,7 @@ package release
 import (
 	"path"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
 
 // ArtifactNamePair is the (build, sbom) pair of upload-artifact names

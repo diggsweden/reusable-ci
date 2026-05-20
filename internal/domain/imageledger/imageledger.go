@@ -20,7 +20,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // Entry is one image in the ledger.
@@ -32,10 +33,10 @@ import (
 // release record carry the audit fields.
 type Entry struct {
 	// Kind is an optional image-role label (e.g. distroless, alpine).
-	Kind         string `json:"kind,omitempty"`
-	Flavor       string `json:"flavor,omitempty"`
-	Ref          string `json:"ref"`
-	Digest       string `json:"digest"`
+	Kind   string `json:"kind,omitempty"`
+	Flavor string `json:"flavor,omitempty"`
+	Ref    string `json:"ref"`
+	Digest string `json:"digest"`
 	// SBOM is an optional path to the image's CycloneDX SBOM.
 	SBOM         string `json:"sbom,omitempty"`
 	FinalTag     string `json:"final_tag"`
@@ -63,7 +64,6 @@ func DeriveTags(imageName, releaseTag string) (string, string) {
 //
 //nolint:gochecknoglobals // compiled regex table — read-only.
 var (
-	digestRE   = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	imageRefRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?@sha256:[0-9a-f]{64}$`)
 	tagRefRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
 	// sbomRE accepts any relative CycloneDX path, matching the filenames
@@ -82,18 +82,6 @@ func tagName(ref string) string {
 	return ref
 }
 
-// stripTag removes a trailing ":tag" from a registry ref, keeping the
-// registry/path. A ':' that precedes the final '/' (a host:port) is left
-// alone.
-func stripTag(ref string) string {
-	slash := strings.LastIndex(ref, "/")
-	if colon := strings.LastIndex(ref, ":"); colon > slash {
-		return ref[:colon]
-	}
-
-	return ref
-}
-
 // repoPathAfterHost is a ref's repository path with the registry host (the
 // first path segment) removed: ghcr.io/org/team/app:v1 → "org/team/app". Used
 // to rehome an image under a cross-registry target prefix while PRESERVING its
@@ -102,7 +90,7 @@ func stripTag(ref string) string {
 // destinations are distinct by construction — collision-free without relying on
 // any external naming invariant.
 func repoPathAfterHost(ref string) string {
-	repo := stripTag(ref)
+	repo := container.StripTag(ref)
 	if slash := strings.Index(repo, "/"); slash >= 0 {
 		return repo[slash+1:]
 	}
@@ -128,7 +116,7 @@ func (e Entry) DigestSource() string {
 // the ref by hand.
 func (e *Entry) PinDigest(digest string) {
 	e.Digest = digest
-	e.Ref = stripTag(e.DigestSource()) + "@" + digest
+	e.Ref = container.StripTag(e.DigestSource()) + "@" + digest
 }
 
 // Validate enforces the full trust-boundary rules for one entry against
@@ -193,7 +181,7 @@ func (e Entry) validateFormat() error {
 		}
 	}
 
-	if !digestRE.MatchString(e.Digest) {
+	if !container.ValidDigest(e.Digest) {
 		return fmt.Errorf("imageledger: digest must be sha256:<64 hex>: %q: %w", e.Digest, errs.ErrValidation)
 	}
 

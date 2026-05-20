@@ -48,7 +48,7 @@ func TestTargetKeys_MatchStructTags(t *testing.T) {
 		{TargetVersionBump, ReleasePrepareTargets{}, "VersionBump"},
 
 		// Release publish-stage targets.
-		{TargetGitHubPackages, ReleasePublishTargets{}, "GitHubPackages"},
+		{TargetForgePackages, ReleasePublishTargets{}, "ForgePackages"},
 		{TargetMavenCentral, ReleasePublishTargets{}, "MavenCentral"},
 		{TargetGooglePlay, ReleasePublishTargets{}, "GooglePlay"},
 		{TargetXcodeIOS, ReleasePublishTargets{}, "XcodeIOS"},

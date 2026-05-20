@@ -10,7 +10,7 @@ import (
 	"sort"
 	"testing"
 
-	domainartifact "github.com/diggsweden/reusable-ci/internal/domain/artifact"
+	domainartifact "github.com/diggsweden/reusable-ci/v3/internal/domain/artifact"
 )
 
 // relPaths returns the sorted artifact-relative paths of the collected set.

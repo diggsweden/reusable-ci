@@ -10,9 +10,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/archive"
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	"github.com/diggsweden/reusable-ci/internal/testutil/testfs"
+	"github.com/diggsweden/reusable-ci/v3/internal/archive"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
 // writeTarball lets a test write a tarball with arbitrary header fields

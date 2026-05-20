@@ -1,14 +1,5 @@
 # TODO
 
-## MegaLinter lint route (`linters.megalinter`)
-
-The PR orchestrator's lint route is `linters.nanolinter`. A second route,
-`linters.megalinter`, is still to add: wire a `linters.megalinter` input + a
-`nanolinter`-style planner target + a `lint-megalinter.yml` reusable workflow
-that runs MegaLinter (its own container/action, not the mise toolchain). Its
-execution model differs from nanolinter (which runs the consumer's `just
-lint`), so it needs its own job design.
-
 ## Multi-artifact version-bump race condition
 
 The `execute-version-bump` job in `release-prepare-stage.yml` uses a matrix strategy.
@@ -18,3 +9,11 @@ the value from the last-completing matrix leg, which may not be deterministic.
 
 Single-artifact projects (the common case) are unaffected. For multi-artifact projects,
 consider serializing version-bump or consolidating it into a single job.
+
+## Rename `reusable-ci-ref` output in orchestrator
+
+The `parse-config` job output `reusable-ci-ref` holds the pinned commit SHA of the
+scripts checkout (resolved before any tag movement). The name suggests it is the
+original ref input, but it is actually a resolved SHA used only for checking out
+helper scripts. Consider renaming to `reusable-ci-sha` or `scripts-ref` to make
+the intent clearer.

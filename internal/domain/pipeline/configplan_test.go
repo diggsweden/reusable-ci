@@ -7,9 +7,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/config"
-	"github.com/diggsweden/reusable-ci/internal/domain/pipeline"
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
 
 //nolint:cyclop // exercises many independent invariants on one ConfigPlan; splitting adds setup duplication.
@@ -18,9 +18,9 @@ func TestNewConfigPlan_GroupsArtifactsAndDefaultsContainers(t *testing.T) {
 
 	cfg := &config.Config{
 		Artifacts: []config.Artifact{
-			{Name: "app", ProjectType: projecttype.Maven, BuildType: config.BuildTypeApplication, PublishTo: []config.PublishTarget{config.PublishGitHubPackages}},                         //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			{Name: "lib", ProjectType: projecttype.Maven, BuildType: config.BuildTypeLibrary, PublishTo: []config.PublishTarget{config.PublishGitHubPackages, config.PublishMavenCentral}}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			{Name: "pkg", ProjectType: projecttype.NPM, PublishTo: []config.PublishTarget{config.PublishGitHubPackages, config.PublishNPMJS}},                                              //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			{Name: "app", ProjectType: projecttype.Maven, BuildType: config.BuildTypeApplication, PublishTo: []config.PublishTarget{config.PublishForgePackages}},                         //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			{Name: "lib", ProjectType: projecttype.Maven, BuildType: config.BuildTypeLibrary, PublishTo: []config.PublishTarget{config.PublishForgePackages, config.PublishMavenCentral}}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			{Name: "pkg", ProjectType: projecttype.NPM, PublishTo: []config.PublishTarget{config.PublishForgePackages, config.PublishNPMJS}},                                              //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			{Name: "jvm-app", ProjectType: projecttype.Gradle},
 			{Name: "go-cli", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeArtifactFirst}},      //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			{Name: "go-service", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeContainerFirst}}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
@@ -44,7 +44,7 @@ func TestNewConfigPlan_GroupsArtifactsAndDefaultsContainers(t *testing.T) {
 		t.Errorf("fallback project type = %q", plan.FallbackProjectType)
 	}
 
-	if got := names(plan.Artifacts.GitHubPackages); !reflect.DeepEqual(got, []string{"lib", "pkg"}) {
+	if got := names(plan.Artifacts.ForgePackages); !reflect.DeepEqual(got, []string{"lib", "pkg"}) {
 		t.Errorf("github packages = %v", got)
 	}
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/publish"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/publish"
 )
 
 func TestRenderAppStoreUploadSummary_Full(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/testutil/isolatedgit"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/isolatedgit"
 )
 
 func TestNewRepo_HasInitialCommit(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/testutil/fakegitserver"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakegitserver"
 )
 
 func TestServer_RoutesGET(t *testing.T) {

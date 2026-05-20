@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/diggsweden/reusable-ci/internal/testutil/glabenv"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/glabenv"
 )
 
 func TestSetup_ExportsCIVars(t *testing.T) {

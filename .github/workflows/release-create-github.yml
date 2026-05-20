@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
-# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+# SPDX-License-Identifier: CC0-1.0
 # GitHub Release Creator
 # 
 # Purpose: Creates GitHub releases with  security features including
@@ -21,9 +21,9 @@
 # - Support for attestation attachment
 #
 # Required Secrets:
-#   RELEASE_GPG_PRIVATE_KEY: For GPG import/signing in release creation
-#   RELEASE_GPG_PASSPHRASE: Passphrase for the imported release GPG key
-#   RELEASE_TOKEN: For release creation and asset upload
+#   GPG_SECRET_KEY: For artifact signing (if sign-artifacts: true)
+#   GPG_PASSPHRASE: For artifact signing (if sign-artifacts: true)
+#   GITHUB_TOKEN: For release creation (automatic)
 #
 # Required Permissions:
 #   contents: write      # Create releases
@@ -66,13 +66,10 @@ on:
         required: false
         default: false
         type: boolean
-      config-plan-json:
-        description: "Typed config-plan-json emitted by config parse-artifacts. SBOM generation uses it to preserve per-artifact working directories."
-        required: true
-        type: string
-      artifact-transfer-plan-json:
-        description: "Typed artifact transfer plan emitted by plan release."
-        required: true
+      project-type:
+        description: "Project type (maven, npm, gradle, python, etc.)"
+        required: false
+        default: "maven"
         type: string
       changelog-config:
         description: "Path to changelog configuration file"
@@ -85,31 +82,24 @@ on:
         default: "true"
         type: string
       egress-policy:
-        description: "Egress policy for the Harden Runner step. Default `audit` (visibility-only). Promote to `block` for strict posture — pair with `egress-allowed-endpoints` covering at minimum: api.github.com:443, objects.githubusercontent.com:443, *.actions.githubusercontent.com:443, github.com:443, codeload.github.com:443. Add fulcio.sigstore.dev:443 + rekor.sigstore.dev:443 + tuf-repo-cdn.sigstore.dev:443 + token.actions.githubusercontent.com:443 when sign.method=sigstore. Add your KMS provider (e.g. *.amazonaws.com, *.googleapis.com, *.vault.azure.net) when sign.method=kms."
+        description: "Egress policy for the Harden Runner step"
         required: false
         default: "audit"
         type: string
-      egress-allowed-endpoints:
-        description: "Multi-line space/newline-separated list of `host:port` endpoints permitted under `egress-policy: block`. Ignored when policy is `audit`. See the egress-policy description for the recommended baseline."
+      reusable-ci-ref:
+        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
         required: false
-        default: ""
+        default: "main"
         type: string
-      runtime-image:
-        description: "reusable-ci runtime image (full — needs syft for SBOM generation). Optional override; default uses the matching v3.0.0 runtime image."
+      has-containers:
+        description: "Whether containers were built (to determine if container SBOMs exist)"
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime:v3.0.0"
+        default: false
+        type: boolean
+      artifact-name:
+        description: "Artifact name for SBOM generation (e.g., 'token-lib-ci' for Maven artifactId). If not provided, uses repository name."
+        required: false
         type: string
-    # All `required: false` — `secrets: inherit` callers unchanged.
-    secrets:
-      RELEASE_GPG_PRIVATE_KEY:
-        description: "Armored OpenPGP private key (used when sign.method=gpg in artifacts.yml)"
-        required: false
-      RELEASE_GPG_PASSPHRASE:
-        description: "Passphrase for RELEASE_GPG_PRIVATE_KEY"
-        required: false
-      RELEASE_TOKEN:
-        description: "Token with contents:write permission for creating the GitHub Release"
-        required: false
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
@@ -120,68 +110,105 @@ jobs:
     uses: ./.github/workflows/generate-changelog.yml
     with:
       branch: ${{ inputs['checkout-ref'] }}
-      runtime-image: ${{ inputs['runtime-image'] }}
       git-cliff-args: "--latest"
       output-file: "ReleasenotesTmp"
       upload-as-artifact: true
       artifact-name: "release-changelog"
-      changelog-config: ${{ inputs['changelog-config'] }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   create-release:
     name: Create GitHub Release
     needs: [generate-changelog]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 20
-    container:
-      image: ${{ inputs['runtime-image'] }}
     permissions:
-      actions: read
       contents: write
       packages: read
       id-token: write
     steps:
       - name: Harden GitHub runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
         with:
-          egress-policy: ${{ inputs['egress-policy'] }}
-          allowed-endpoints: ${{ inputs['egress-allowed-endpoints'] }}
-      # Defense-in-depth: refuse PR-context triggers. RELEASE_TOKEN +
-      # RELEASE_GPG_PRIVATE_KEY land in env on this job and must
-      # never run with PR-HEAD code. reusable-ci is pre-baked.
-      - name: Refuse PR-context trigger (publish/release secrets in scope)
-        run: reusable-ci validate event-context
+          egress-policy: ${{ inputs.egress-policy }}
       - name: Checkout repository with moved tag
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           ref: ${{ inputs['checkout-ref'] }}
           fetch-tags: true
       - name: Import GPG key
-        # GPG agent setup is only needed when artifact signing uses the
-        # GPG backend. Sigstore (keyless OIDC) and KMS (cosign + external
-        # provider) don't read $GPG_PRIVATE_KEY at all — running this
-        # step with no secret would fail loud, and running it with the
-        # secret would needlessly decrypt a key the flow doesn't use.
-        if: ${{ inputs['sign-artifacts'] && fromJSON(inputs['config-plan-json']).sign.method == 'gpg' }}
+        if: &if_sign_artifacts ${{ inputs['sign-artifacts'] }}
         id: import-gpg
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
-          GIT_USER_SIGNINGKEY: "true"
-        run: reusable-ci release gpg import
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
+        with:
+          gpg_private_key: ${{ secrets.OSPO_BOT_GPG_PRIV }}
+          passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
+          git_user_signingkey: true
       - name: Download Release Changelog
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         continue-on-error: true
+        with:
+          name: release-changelog
+      # Download analyzed-container SBOMs if they exist (from publish-container
+      # job). Multi-container, multi-arch projects upload one SBOM per
+      # (container, arch) — pull them all in by pattern; merge-multiple
+      # flattens into a single directory.
+      - name: Download Analyzed-Container SBOM artifacts
+        if: ${{ inputs['has-containers'] && (contains(inputs.sboms, 'analyzed-container') || inputs.sboms == 'all') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          pattern: analyzed-container-sbom-${{ github.run_id }}-*
+          path: ./sbom-artifacts/
+          merge-multiple: true
+      - name: Checkout .github repo for release scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Determine artifact name
+        id: artifact-name
         env:
-          GH_TOKEN: ${{ github.token }}
-          ARTIFACT_NAME: release-changelog
-          ARTIFACT_DIR: .
-        run: reusable-ci artifact download
-      - name: Download planned release artifacts
-        env:
-          ARTIFACT_TRANSFER_PLAN_JSON: ${{ inputs['artifact-transfer-plan-json'] }}
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
-        run: reusable-ci release download-artifacts
+          PROJECT_TYPE: ${{ inputs['project-type'] }}
+          # Gradle pairs its SBOM with the user-selected artifact-name from
+          # artifacts.yml; pass it through so resolve-artifact-name.sh can
+          # compute a matching sbom-name.
+          ARTIFACT_NAME: ${{ inputs['artifact-name'] }}
+        run: |
+          bash .github-shared/scripts/release/resolve-artifact-name.sh \
+            "$PROJECT_TYPE" >> "$GITHUB_OUTPUT"
+      # Download build artifacts based on project type
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          name: ${{ steps.artifact-name.outputs.name }}
+          path: ./release-artifacts/
+      # Build SBOM lives in its own artifact so a broken SBOM plugin can't
+      # fail the code upload. Only needed when the `build` layer is in the
+      # effective sboms — generate-sboms.sh reads the aggregate bom.json from
+      # ./release-artifacts/.
+      - name: Download Build SBOM
+        if: ${{ contains(inputs.sboms, 'build') || inputs.sboms == 'all' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          name: ${{ steps.artifact-name.outputs.sbom-name }}
+          path: ./release-artifacts/
+      # container-first byproducts: when containers extracted binaries via
+      # publish-container.yml's extract-binary-target, those uploads land as
+      # `${container-name}-binaries-${arch}` (one per matrix leg in the
+      # native-multi-arch path). Pattern matches both that and the legacy
+      # `${container-name}-binaries` shape; pull them all in and place
+      # under ./release-artifacts/binaries/<artefact-name>/...
+      - name: Download extracted container binaries
+        if: ${{ inputs['has-containers'] }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          pattern: "*-binaries*"
+          path: ./release-artifacts/binaries/
       - name: Compute effective attach-artifacts (auto-include extracted binaries)
         # If extract.binary produced any files under ./release-artifacts/binaries/,
         # append a glob so they get checksummed, signed, and attached to the
@@ -193,88 +220,91 @@ jobs:
         id: attach-effective
         env:
           USER_ATTACH: ${{ inputs['attach-artifacts'] }}
-        run: reusable-ci release attachments plan
+        run: |
+          set -euo pipefail
+          binaries_glob="release-artifacts/binaries/**"
+          # compgen -G requires extglob in some shells; use find for portability.
+          if find ./release-artifacts/binaries -type f -print -quit 2>/dev/null | grep -q .; then
+            if [[ -n "$USER_ATTACH" ]]; then
+              printf 'attach-artifacts=%s,%s\n' "$USER_ATTACH" "$binaries_glob" >> "$GITHUB_OUTPUT"
+            else
+              printf 'attach-artifacts=%s\n' "$binaries_glob" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            printf 'attach-artifacts=%s\n' "$USER_ATTACH" >> "$GITHUB_OUTPUT"
+          fi
       - name: Resolve release metadata
         id: release-metadata
         env:
-          VERSION: ${{ inputs['release-name'] }}
+          VERSION: ${{ github.ref_name }}
+          ARTIFACT_NAME: ${{ inputs['artifact-name'] }}
           REPOSITORY: ${{ github.repository }}
-        run: reusable-ci release resolve metadata
+        run: bash .github-shared/scripts/release/resolve-release-metadata.sh
       - name: Generate CISA-layer SBOMs
         if: &if_has_sboms ${{ inputs.sboms != 'none' }}
         env:
-          CONFIG_PLAN_JSON: ${{ inputs['config-plan-json'] }}
-          VERSION: ${{ steps.release-metadata.outputs.version-no-v }}
-          SBOMS: ${{ inputs.sboms }}
-        run: reusable-ci sbom generate artifacts
-      - name: Assemble release files
-        env:
-          CONFIG_PLAN_JSON: ${{ inputs['config-plan-json'] }}
-          ARTIFACT_TRANSFER_PLAN_JSON: ${{ inputs['artifact-transfer-plan-json'] }}
-          ATTACH_ARTIFACTS: ${{ steps.attach-effective.outputs.attach-artifacts }}
+          PROJECT_TYPE: ${{ inputs['project-type'] }}
+          RELEASE_VERSION_NO_V: ${{ steps.release-metadata.outputs.version-no-v }}
           PROJECT_NAME: ${{ steps.release-metadata.outputs.project-name }}
-          VERSION: ${{ steps.release-metadata.outputs.version }}
-          RELEASE_ASSEMBLY: .reusable-ci/release-assembly.json
-        run: reusable-ci release assemble
+          SBOMS: ${{ inputs.sboms }}
+        run: |
+          # analyzed-container is scanned separately at container-publish time
+          # and the resulting BOM is already landed under ./sbom-artifacts/ —
+          # pass only the artifact-level layers to generate-sboms.sh.
+          layers=$(bash .github-shared/scripts/config/expand-sboms.sh \
+            --format comma --exclude analyzed-container "$SBOMS")
+          if [[ -n "$layers" ]]; then
+            bash .github-shared/scripts/sbom/generate-sboms.sh \
+              --project-type "$PROJECT_TYPE" \
+              --layers "$layers" \
+              --version "$RELEASE_VERSION_NO_V" \
+              --name "$PROJECT_NAME"
+          else
+            printf "No artifact-level SBOM layers requested; analyzed-container (if any) is already downloaded.\n"
+          fi
+      - name: Generate checksums
+        env:
+          ATTACH_ARTIFACTS: ${{ steps.attach-effective.outputs.attach-artifacts }}
+        run: bash .github-shared/scripts/release/generate-checksums.sh
+      - name: Sign artifacts
+        if: *if_sign_artifacts
+        env:
+          GPG_KEY_ID: ${{ steps.import-gpg.outputs.keyid }}
+        run: bash .github-shared/scripts/release/sign-release-artifacts.sh
       - name: Create SBOM ZIP
         if: *if_has_sboms
         env:
-          PROJECT_NAME: ${{ steps.release-metadata.outputs.project-name }}
-          VERSION: ${{ steps.release-metadata.outputs.version }}
-          RELEASE_ASSEMBLY: .reusable-ci/release-assembly.json
-        run: reusable-ci release sbom-zip
-      - name: Generate checksums
-        env:
-          RELEASE_ASSEMBLY: .reusable-ci/release-assembly.json
-        run: reusable-ci release checksums
-      - name: Sign artifacts
-        if: ${{ inputs['sign-artifacts'] }}
-        # Backend selected by sign.method in artifacts.yml:
-        #   gpg      → reads $GPG_PRIVATE_KEY / $GPG_PASSPHRASE (in-process openpgp signer)
-        #   sigstore → cosign + GHA OIDC (no secret; needs id-token: write — granted above)
-        #   kms      → cosign + $SIGN_KEY URI (KMS auth handled by cosign + KMS provider)
-        # Secrets scoped to this step so they don't leak to later steps.
-        env:
-          SIGN_METHOD: ${{ fromJSON(inputs['config-plan-json']).sign.method }}
-          SIGN_KEY: ${{ fromJSON(inputs['config-plan-json']).sign.key }}
-          SIGN_OIDC_ISSUER: ${{ fromJSON(inputs['config-plan-json']).sign.oidc_issuer }}
-          GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          SIGN_ARTIFACTS: ${{ inputs['sign-artifacts'] }}
           GPG_KEY_ID: ${{ steps.import-gpg.outputs.keyid }}
-          RELEASE_ASSEMBLY: .reusable-ci/release-assembly.json
-        run: reusable-ci release sign
+        run: >-
+          bash .github-shared/scripts/release/create-sbom-zip.sh "${{ steps.release-metadata.outputs.project-name }}" "${{ steps.release-metadata.outputs.version }}"
       - name: Prepare release notes
         env:
           SOURCE_FILE: ReleasenotesTmp
           TARGET_FILE: release-notes.md
-          RELEASE_VERSION: ${{ inputs['release-name'] }}
+          RELEASE_VERSION: ${{ github.ref_name }}
           RELEASE_COMMIT: ${{ github.sha }}
-        run: reusable-ci release notes
+        run: bash .github-shared/scripts/release/prepare-release-notes.sh
       - name: Create GitHub Release
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          TAG_NAME: ${{ inputs['release-name'] }}
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
           RELEASE_NAME: ${{ inputs['release-name'] }}
           REPOSITORY: ${{ github.repository }}
           DRAFT: ${{ inputs.draft }}
           MAKE_LATEST: ${{ inputs['make-latest'] }}
-          RELEASE_ASSEMBLY: .reusable-ci/release-assembly.json
+          ATTACH_ARTIFACTS: ${{ steps.attach-effective.outputs.attach-artifacts }}
           RELEASE_NOTES_FILE: release-notes.md
-        run: reusable-ci release create
+          ARTIFACT_NAME: ${{ inputs['artifact-name'] }}
+        run: bash .github-shared/scripts/release/create-github-release.sh
       - name: Upload release artifacts summary
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-artifacts-${{ github.run_id }}
           path: |
-            .reusable-ci/release-assembly.json
             release-files/
             ReleasenotesTmp
             release-notes.md
-          retention-days: "30"
+          retention-days: 30
           if-no-files-found: ignore
-      - name: Cleanup GPG key
-        if: always()
-        env:
-          GPG_FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
-        run: reusable-ci release gpg cleanup

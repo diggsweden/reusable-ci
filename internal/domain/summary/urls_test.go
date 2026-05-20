@@ -6,8 +6,8 @@ package summary_test
 import (
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/provider"
-	"github.com/diggsweden/reusable-ci/internal/domain/summary"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
 func TestReleaseURL(t *testing.T) {

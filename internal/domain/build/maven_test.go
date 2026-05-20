@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/build"
 )
 
 func TestIsSnapshot_RecognisesSuffix(t *testing.T) {

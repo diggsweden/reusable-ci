@@ -26,7 +26,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/testutil/testenv"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testenv"
 )
 
 // Env wraps the CI_OUTPUT tempfile path for tests to inspect.

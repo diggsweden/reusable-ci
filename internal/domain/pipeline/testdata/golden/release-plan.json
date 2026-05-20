@@ -51,7 +51,7 @@
               "project_type": "npm",
               "working_directory": "apps/web",
               "publish_to": [
-                "github-packages",
+                "forge-packages",
                 "npmjs"
               ],
               "sboms": "all",
@@ -125,7 +125,7 @@
               "project_type": "npm",
               "working_directory": "apps/web",
               "publish_to": [
-                "github-packages",
+                "forge-packages",
                 "npmjs"
               ],
               "sboms": "all",
@@ -168,7 +168,7 @@
       "version": 1,
       "stage": "publish",
       "targets": {
-        "github_packages": {
+        "forge_packages": {
           "runs": true,
           "items": [
             {
@@ -176,7 +176,7 @@
               "project_type": "npm",
               "working_directory": "apps/web",
               "publish_to": [
-                "github-packages",
+                "forge-packages",
                 "npmjs"
               ],
               "sboms": "all",

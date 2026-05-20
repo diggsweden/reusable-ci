@@ -6,7 +6,7 @@ package validate_test
 import (
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/validate"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/validate"
 )
 
 func TestClassifyBranchPosition(t *testing.T) {

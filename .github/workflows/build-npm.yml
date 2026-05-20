@@ -1,13 +1,10 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
-# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+# SPDX-License-Identifier: CC0-1.0
 # NPM Builder
-#
+# 
 # Purpose: Builds NPM projects and uploads artifacts for subsequent publishing steps.
 # Separates build logic from registry-specific publishing.
-#
-# Runs inside the reusable-ci-runtime-node image. Node, npm, corepack, and the
-# reusable-ci binary are baked in.
 #
 # Build Process:
 #   1. Install dependencies (npm ci)
@@ -16,7 +13,7 @@
 #   4. Upload built artifacts
 #
 # Outputs:
-#   - Artifacts uploaded as '<artifact-name>-build-artifacts' or 'npm-build-artifacts' for use by publish-* workflows
+#   - Artifacts uploaded as 'npm-build-artifacts' for use by publish-* workflows
 #
 # Required Permissions:
 #   contents: read  # Checkout code
@@ -25,6 +22,10 @@ name: Build NPM
 on:
   workflow_call:
     inputs:
+      node-version:
+        description: "Node.js version"
+        required: true
+        type: string
       working-directory:
         description: "Working directory"
         required: false
@@ -40,41 +41,53 @@ on:
         required: false
         default: "main"
         type: string
-      artifact-name:
-        description: "Logical artifact name for upload naming (defaults to 'npm-build-artifacts' when empty)"
+      reusable-ci-ref:
+        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
         required: false
-        default: ""
+        default: "main"
         type: string
       enable-build-sbom:
         description: "Run the cyclonedx-npm step (false skips Build SBOM generation entirely; derived from per-artefact 'sboms' when called from release-build-stage)"
         required: false
         default: true
         type: boolean
-      runtime-image:
-        description: "reusable-ci runtime image carrying Node. Optional override; default uses the matching v3.0.0 runtime image."
-        required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-node-24:v3.0.0"
-        type: string
 permissions:
   contents: read
 jobs:
   build-npm:
     name: Build NPM Project
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
-    container:
-      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.branch }}
+      - name: Checkout .github repository for scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+          fetch-depth: 1
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: ${{ inputs['node-version'] }}
+          cache: 'npm'
+          cache-dependency-path: ${{ inputs['working-directory'] }}/package-lock.json
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs['working-directory'] }}
-        run: reusable-ci build npm metadata
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          NAME=$(node -p "require('./package.json').name")
+          printf "VERSION=%s\n" "${VERSION}" >> "$GITHUB_OUTPUT"
+          printf "NAME=%s\n" "${NAME}" >> "$GITHUB_OUTPUT"
+          printf "Package: %s@%s\n" "${NAME}" "${VERSION}"
       - name: Install dependencies
         working-directory: ${{ inputs['working-directory'] }}
         run: npm ci
@@ -84,10 +97,17 @@ jobs:
         run: npm test || printf "::warning::No tests configured\n"
       - name: Build application
         working-directory: ${{ inputs['working-directory'] }}
-        run: reusable-ci build npm application
+        run: |
+          if grep -q '"build"' package.json; then
+            printf "Running build script...\n"
+            npm run build
+          else
+            printf "No build script found, skipping build step\n"
+          fi
       - name: Generate Build SBOM
         id: sbom
         if: ${{ inputs['enable-build-sbom'] }}
+        continue-on-error: true
         working-directory: ${{ inputs['working-directory'] }}
         env:
           # renovate: datasource=npm depName=@cyclonedx/cyclonedx-npm
@@ -95,24 +115,51 @@ jobs:
         # One-shot npx runs the pinned version without mutating global state,
         # so a follow-up step can't inadvertently shadow the binary with a
         # different version.
-        run: npx --yes "@cyclonedx/cyclonedx-npm@${CYCLONEDX_VERSION}" --output-format json --output bom.json
+        run: npx --yes "@cyclonedx/cyclonedx-npm@${CYCLONEDX_VERSION}" --output-format json --output-file bom.json
       - name: Write SBOM status to step summary
         if: always()
         env:
-          ECOSYSTEM: npm
           SBOM_OUTCOME: ${{ steps.sbom.outcome }}
-          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
-        run: reusable-ci report status build-sbom
+          WORKDIR: ${{ inputs['working-directory'] }}
+        run: |
+          # shellcheck disable=SC2016  # backticks inside single quotes are intentional markdown
+          {
+            printf '### Build SBOM\n'
+            bom="${WORKDIR%/}/bom.json"
+            if [[ "$SBOM_OUTCOME" == "success" && -s "$bom" ]]; then
+              printf -- '- ✅ CycloneDX: `%s`\n' "$bom"
+            elif [[ "$SBOM_OUTCOME" == "success" ]]; then
+              printf -- '- ⚠️ cyclonedx-npm reported success but produced no bom.json\n'
+            else
+              printf -- '- ⚠️ Generation step did not succeed (continued as advisory)\n'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: List built artifacts
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          printf "Package contents:\n"
+          if [ -d "dist" ]; then
+            printf "dist/ directory:\n"
+            ls -lh dist/ || true
+          fi
+          if [ -d "build" ]; then
+            printf "build/ directory:\n"
+            ls -lh build/ || true
+          fi
       - name: Pack NPM tarball
         id: pack
         working-directory: ${{ inputs['working-directory'] }}
-        run: reusable-ci build npm pack
+        run: |
+          TARBALL=$(npm pack 2>&1 | tail -n 1)
+          printf "tarball=%s\n" "$TARBALL" >> "$GITHUB_OUTPUT"
+          printf "Created tarball: %s\n" "$TARBALL"
+          ls -lh "$TARBALL"
       - name: Upload NPM artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ inputs['artifact-name'] && format('{0}-build-artifacts', inputs['artifact-name']) || 'npm-build-artifacts' }}
+          name: npm-build-artifacts
           path: ${{ inputs['working-directory'] }}/${{ steps.pack.outputs.tarball }}
-          retention-days: "7"
+          retention-days: 7
           if-no-files-found: error
       # Build SBOM is a separate compliance deliverable; see build-maven.yml
       # for rationale.
@@ -120,14 +167,14 @@ jobs:
         if: steps.sbom.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ inputs['artifact-name'] && format('{0}-build-sbom', inputs['artifact-name']) || 'npm-build-sbom' }}
+          name: npm-build-sbom
           path: ${{ inputs['working-directory'] }}/bom.json
-          retention-days: "7"
+          retention-days: 7
           if-no-files-found: warn
       - name: Generate build summary
         env:
-          PACKAGE_NAME: ${{ steps.version-info.outputs.name }}
-          VERSION: ${{ steps.version-info.outputs.version }}
-          NODE_VERSION: "24"
+          PACKAGE_NAME: ${{ steps.version-info.outputs.NAME }}
+          VERSION: ${{ steps.version-info.outputs.VERSION }}
+          NODE_VERSION: ${{ inputs['node-version'] }}
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
-        run: reusable-ci report build npm
+        run: bash .github-shared/scripts/summary/write-npm-build-summary.sh

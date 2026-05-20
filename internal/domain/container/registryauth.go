@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // MergeAuth adds (or replaces) the credential for registry in a docker/OCI auth
@@ -49,4 +49,40 @@ func MergeAuth(existing []byte, registry, username, password string) ([]byte, er
 	root["auths"] = auths
 
 	return json.MarshalIndent(root, "", "  ")
+}
+
+// RemoveAuth deletes registry's credential from an OCI auth config document,
+// the inverse of MergeAuth. Other registries and fields are preserved. It
+// reports whether an entry was actually removed (false when the config is
+// empty or holds no credential for registry) so callers can stay idempotent —
+// a logout for a registry that was never logged in is a successful no-op, not
+// a rewrite. The password is never touched, so nothing sensitive is echoed.
+func RemoveAuth(existing []byte, registry string) ([]byte, bool, error) {
+	if registry == "" {
+		return nil, false, fmt.Errorf("registry is required: %w", errs.ErrUsage)
+	}
+
+	if len(bytes.TrimSpace(existing)) == 0 {
+		return existing, false, nil
+	}
+
+	root := map[string]any{}
+	if err := json.Unmarshal(existing, &root); err != nil {
+		return nil, false, fmt.Errorf("parse existing auth config: %w", errs.ErrMalformedInput)
+	}
+
+	auths, _ := root["auths"].(map[string]any)
+	if _, ok := auths[registry]; !ok {
+		return existing, false, nil
+	}
+
+	delete(auths, registry)
+	root["auths"] = auths
+
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return nil, false, fmt.Errorf("encode auth config: %w", err)
+	}
+
+	return out, true, nil
 }

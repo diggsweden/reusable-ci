@@ -39,7 +39,7 @@ const (
 	// publish stage. The *ArtifactFirst pair (dev only today) carries
 	// the artefact-first set so dev-publish can disambiguate without
 	// re-deriving build-mode from the planned-artifact list.
-	TargetGitHubPackages      = "github_packages"
+	TargetForgePackages       = "forge_packages"
 	TargetMavenCentral        = "maven_central"
 	TargetGooglePlay          = "google_play"
 	TargetContainers          = "containers"
@@ -51,5 +51,6 @@ const (
 
 	// Quality-stage targets (PR).
 	TargetNanolinter = "nanolinter"
+	TargetMegalinter = "megalinter"
 	TargetSwift      = "swift"
 )

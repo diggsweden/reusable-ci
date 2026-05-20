@@ -69,24 +69,44 @@ func vars(keys ...string) cli.ValueSourceChain {
 // fallbacks can never drift again.
 
 // Repository resolves "owner/repo".
-func Repository() cli.ValueSourceChain { return vars("REPOSITORY", "CI_REPO", "GITHUB_REPOSITORY") }
+//
+// As with every chain below that falls back to a $GITHUB_* var: Forgejo's
+// native $FORGEJO_* name is preferred ahead of the $GITHUB_* compat alias.
+// Forgejo Runner 7.0.0 lets workflows drop the GITHUB_ names entirely, so
+// relying on the alias alone is fragile; on GitHub the FORGEJO_* var is
+// unset, so the alias still wins there.
+func Repository() cli.ValueSourceChain {
+	return vars("REPOSITORY", "CI_REPO", "FORGEJO_REPOSITORY", "GITHUB_REPOSITORY")
+}
 
 // RepositoryOwner resolves the owning org/user.
 func RepositoryOwner() cli.ValueSourceChain {
-	return vars("REPOSITORY_OWNER", "GITHUB_REPOSITORY_OWNER")
+	return vars("REPOSITORY_OWNER", "FORGEJO_REPOSITORY_OWNER", "GITHUB_REPOSITORY_OWNER")
 }
 
 // RefName resolves the short git ref name (branch or tag, no refs/ prefix).
-func RefName() cli.ValueSourceChain { return vars("REF_NAME", "CI_REF_NAME", "GITHUB_REF_NAME") }
+func RefName() cli.ValueSourceChain {
+	return vars("REF_NAME", "CI_REF_NAME", "FORGEJO_REF_NAME", "GITHUB_REF_NAME")
+}
 
 // Ref resolves the full git ref (refs/heads/…, refs/tags/…).
-func Ref() cli.ValueSourceChain { return vars("REF", "GITHUB_REF") }
+func Ref() cli.ValueSourceChain { return vars("REF", "FORGEJO_REF", "GITHUB_REF") }
 
 // RefType resolves the ref kind ("branch" or "tag").
-func RefType() cli.ValueSourceChain { return vars("REF_TYPE", "GITHUB_REF_TYPE") }
+func RefType() cli.ValueSourceChain { return vars("REF_TYPE", "FORGEJO_REF_TYPE", "GITHUB_REF_TYPE") }
 
 // Commit resolves the commit SHA.
-func Commit() cli.ValueSourceChain { return vars("CI_COMMIT", "CI_COMMIT_SHA", "GITHUB_SHA") }
+func Commit() cli.ValueSourceChain {
+	return vars("CI_COMMIT", "CI_COMMIT_SHA", "FORGEJO_SHA", "GITHUB_SHA")
+}
+
+// CheckoutRef resolves the ref `platform checkout` materializes: an explicit
+// CHECKOUT_REF (branch, tag, or SHA) takes precedence — letting a workflow
+// check out a branch via env — and falls back to the triggering commit so the
+// default is unchanged.
+func CheckoutRef() cli.ValueSourceChain {
+	return vars("CHECKOUT_REF", "CI_COMMIT", "CI_COMMIT_SHA", "FORGEJO_SHA", "GITHUB_SHA")
+}
 
 // RunID resolves the CI run identifier.
 func RunID() cli.ValueSourceChain { return vars("CI_RUN_ID", "FORGEJO_RUN_ID", "GITHUB_RUN_ID") }
@@ -109,15 +129,25 @@ func ServerURL() cli.ValueSourceChain {
 func TempDir() cli.ValueSourceChain { return vars("CI_TEMP_DIR", "RUNNER_TEMP") }
 
 // Workspace resolves the checkout target directory.
-func Workspace() cli.ValueSourceChain { return vars("CI_WORKSPACE", "GITHUB_WORKSPACE") }
+func Workspace() cli.ValueSourceChain {
+	return vars("CI_WORKSPACE", "FORGEJO_WORKSPACE", "GITHUB_WORKSPACE")
+}
 
 // Token resolves the forge API/clone token. Non-empty semantics matter:
 // an empty GITHUB_TOKEN must not shadow a populated FORGEJO_TOKEN, and an
 // empty result means an anonymous (public-repo) checkout.
 func Token() cli.ValueSourceChain { return vars("CI_TOKEN", "FORGEJO_TOKEN", "GITHUB_TOKEN") }
 
-// Workflow resolves the workflow name.
-func Workflow() cli.ValueSourceChain { return vars("WORKFLOW", "FORGEJO_WORKFLOW", "GITHUB_WORKFLOW") }
+// ReleaseToken resolves the write-scoped token used to push the release
+// commit and tag. The dedicated RELEASE_TOKEN wins (least-privilege: a
+// separate write token, distinct from the read-only clone token), then the
+// same forge-generic chain as Token() so the push works on any forge. Empty
+// semantics matter here too: an unset RELEASE_TOKEN (a `${{ secrets.* }}`
+// that resolved to "") must fall through, not shadow the forge's ambient
+// token.
+func ReleaseToken() cli.ValueSourceChain {
+	return vars("RELEASE_TOKEN", "CI_TOKEN", "FORGEJO_TOKEN", "GITHUB_TOKEN")
+}
 
 // Tag resolves a release tag. Tag-specific vars win, then the generic
 // ref-name fallbacks (a tag push exposes the tag as the ref name).

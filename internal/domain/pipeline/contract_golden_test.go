@@ -7,10 +7,10 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/config"
-	"github.com/diggsweden/reusable-ci/internal/domain/pipeline"
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
-	"github.com/diggsweden/reusable-ci/internal/testutil/golden"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/golden"
 )
 
 func TestPlanContracts_Golden(t *testing.T) {
@@ -53,7 +53,7 @@ func TestPlanContracts_Golden(t *testing.T) {
 		ProjectType:         projecttype.Go,
 		BaseBranch:          "main",
 		ReusableCIBinaryRef: "v3.0.0",
-		Nanolinter:          true,
+		Engine:              pipeline.LintEngineNanolinter,
 	})
 
 	for _, tc := range []struct {
@@ -100,7 +100,7 @@ func contractConfig(t *testing.T) *config.Config {
 				Name:             "web", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 				ProjectType:      projecttype.NPM,
 				WorkingDirectory: "apps/web",
-				PublishTo:        []config.PublishTarget{config.PublishGitHubPackages, config.PublishNPMJS},
+				PublishTo:        []config.PublishTarget{config.PublishForgePackages, config.PublishNPMJS},
 				NPM: &config.NPMConfig{
 					NodeVersion: "24",
 				},

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/config"
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
 
 func TestValidate_HappyPath(t *testing.T) {
@@ -50,7 +50,7 @@ func TestValidate_RejectsUnsupportedPublishTarget(t *testing.T) {
 
 	c := &config.Config{ //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		Artifacts: []config.Artifact{
-			{Name: "gradle-lib", ProjectType: projecttype.Gradle, PublishTo: []config.PublishTarget{config.PublishGitHubPackages}},
+			{Name: "gradle-lib", ProjectType: projecttype.Gradle, PublishTo: []config.PublishTarget{config.PublishForgePackages}},
 			{Name: "maven-app", ProjectType: projecttype.Maven, BuildType: config.BuildTypeApplication, PublishTo: []config.PublishTarget{config.PublishMavenCentral}},
 			{Name: "npm-public", ProjectType: projecttype.NPM, PublishTo: []config.PublishTarget{config.PublishNPMJS}},
 		},
@@ -545,7 +545,7 @@ func TestValidate_ReportsAllViolations(t *testing.T) {
 	}
 }
 
-func TestWarnings_MavenAppToGitHubPackages(t *testing.T) {
+func TestWarnings_MavenAppToForgePackages(t *testing.T) {
 	t.Parallel()
 
 	c := &config.Config{ //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
@@ -553,7 +553,7 @@ func TestWarnings_MavenAppToGitHubPackages(t *testing.T) {
 			{
 				Name: "app", ProjectType: projecttype.Maven,
 				BuildType: "application",
-				PublishTo: []config.PublishTarget{config.PublishGitHubPackages},
+				PublishTo: []config.PublishTarget{config.PublishForgePackages},
 			},
 		},
 	}
@@ -564,7 +564,7 @@ func TestWarnings_MavenAppToGitHubPackages(t *testing.T) {
 	}
 }
 
-func TestWarnings_LibraryToGitHubPackagesIsOK(t *testing.T) {
+func TestWarnings_LibraryToForgePackagesIsOK(t *testing.T) {
 	t.Parallel()
 
 	c := &config.Config{ //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
@@ -572,7 +572,7 @@ func TestWarnings_LibraryToGitHubPackagesIsOK(t *testing.T) {
 			{
 				Name: "lib", ProjectType: projecttype.Maven, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 				BuildType: "library",
-				PublishTo: []config.PublishTarget{config.PublishGitHubPackages},
+				PublishTo: []config.PublishTarget{config.PublishForgePackages},
 			},
 		},
 	}

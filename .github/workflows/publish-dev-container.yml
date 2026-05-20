@@ -1,0 +1,465 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# Development Container Image Publisher
+#
+# Purpose: Fast container builds for development and testing. Optimized for quick
+# feedback loops by removing production security features while maintaining
+# functionality for development environments.
+#
+# Supported Registries:
+# - GitHub Container Registry (ghcr.io) - Default, uses GITHUB_TOKEN
+# - Docker Hub (docker.io) - Set useGithubToken=false, provide registryPassword
+# - Quay.io (quay.io) - Set useGithubToken=false, provide registryPassword
+# - Any OCI-compatible registry
+#
+# How it works:
+# 1. prep: compute the dev version + image coordinate once.
+# 2. build-arch (matrix, fail-fast: false): one job per platform, native runner
+#    (linux/amd64 -> ubuntu-24.04, linux/arm64 -> ubuntu-24.04-arm). Each leg
+#    builds and pushes by digest only — no tag is applied at this stage.
+# 3. merge: assembles the per-arch digests into a single manifest list with
+#    `docker buildx imagetools create`, applying the dev tag. Single-arch
+#    inputs go through the same pipeline (matrix-of-1 + 1-digest merge).
+#
+# No QEMU. Each runner builds its own architecture natively.
+#
+# Security controls:
+# - Minimal - optimized for speed over security
+# - Images clearly marked with -dev suffix
+# - Basic authentication to registry
+# - Namespace validation (enforces ghcr.io/OWNER/REPO[/<container>] pattern)
+# - No production features enabled (no SLSA, no SBOM, no vuln scan)
+#
+# Registry Authentication:
+#   GHCR (default): Uses GITHUB_TOKEN (no secrets needed)
+#   Other registries: Set useGithubToken=false and provide registryPassword secret
+#
+# Required Secrets:
+#   registryPassword: Required when useGithubToken=false (for Docker Hub, Quay, etc)
+#
+# Required Permissions:
+#   contents: read   # Read source code and Containerfile
+#   packages: write  # Push images to registry
+#
+# Differences from Production:
+#   Production                    | Development
+#   ----------------------------- | ---------------------------
+#   Version tags (v1.0.0, latest) | Dev tags (0.5.9-dev-feat-name-abc1234)
+#   SLSA attestation              | No attestation
+#   SBOM generation               | No SBOM
+#   Vulnerability scanning        | No scanning
+#   Multiple tag strategies       | Branch-aware dev tags
+#
+# Outputs:
+#   image: Full image name (registry/org/repo[/name]:0.5.9-dev-feat-name-abc1234)
+#   digest: Manifest list digest
+name: Publish Dev Container
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      container-file:
+        description: "Containerfile path"
+        required: false
+        default: "Containerfile"
+        type: string
+      target:
+        description: "Containerfile stage to build for the runtime image. Empty defaults to the last stage. Mirrors publish-container.yml's target input — used by container-first containers (cargo, etc.) where the runtime stage is named explicitly."
+        required: false
+        default: ""
+        type: string
+      name:
+        description: "Container artefact name from artifacts.yml. When set, the published image becomes <registry>/<repository>/<name>:<dev-tag>, giving each container in a multi-container project its own GitHub Packages page. Empty preserves single-image behaviour (<registry>/<repository>:<dev-tag>). Mirrors publish-container.yml's name input."
+        required: false
+        default: ""
+        type: string
+      platforms:
+        description: "Comma-separated list of platforms to build. Each platform builds natively on a runner of that architecture (linux/amd64 -> ubuntu-24.04, linux/arm64 -> ubuntu-24.04-arm). No QEMU emulation. Multi-platform inputs split across runners and are merged into a single manifest list. Default linux/amd64 — set linux/amd64,linux/arm64 to opt into native multi-arch."
+        required: false
+        default: "linux/amd64"
+        type: string
+      registry:
+        description: "Container registry"
+        required: false
+        default: "ghcr.io"
+        type: string
+      artifact-types:
+        description: "Comma-separated artifact types (maven,npm,gradle)"
+        required: true
+        type: string
+      gradle-artifact-name:
+        description: "Name of the uploaded gradle build artifact to download. Default `gradle-build-artifacts`. Override to match a matrix-named gradle artifact (build-gradle-app.yml's `artifact-name` input). Maven and npm builders currently have no such override; thread-through for those stacks is tracked for a follow-up PR."
+        required: false
+        default: ""
+        type: string
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      extract-binary-target:
+        description: "Containerfile stage to extract as a binary CI artefact. When set, a second buildx build runs per arch leg with --output type=local and the result is uploaded as ${name}-binaries-${arch}. Mirrors publish-container.yml's input — used by container-first ecosystems (cargo, go) where binaries are byproducts of the container build."
+        required: false
+        default: ""
+        type: string
+      extract-binary-names:
+        description: "Comma-separated binary file names expected in the export-binary stage output. Used by suffix-extracted-binaries.sh and the step summary; not enforced."
+        required: false
+        default: ""
+        type: string
+      enable-analyzed-container-sbom:
+        description: "Run syft on the pushed image and produce per-arch analyzed-container SBOMs. Mirrors publish-container.yml's sibling input. Caller (release-dev-publish-stage) derives this from sboms input."
+        required: false
+        default: false
+        type: boolean
+      registry-username:
+        description: "Registry username (defaults to github.actor for GHCR)"
+        required: false
+        type: string
+      use-ci-token:
+        description: "Use GITHUB_TOKEN for authentication (GHCR only)"
+        required: false
+        default: true
+        type: boolean
+      reusable-ci-ref:
+        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+        required: false
+        default: "main"
+        type: string
+    secrets:
+      registry-password:
+        description: "Registry password/token (required when use-ci-token=false)"
+        required: false
+    outputs:
+      image:
+        description: "Full image name with registry"
+        value: ${{ jobs.merge.outputs.image }}
+      digest:
+        description: "Manifest list digest"
+        value: ${{ jobs.merge.outputs.digest }}
+permissions:
+  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+jobs:
+  prep:
+    name: Prepare Dev Build${{ inputs.name && format(' ({0})', inputs.name) || '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      image-name: ${{ steps.coord.outputs.image-name }}
+      dev-version: ${{ steps.coord.outputs.dev-version }}
+      platforms-json: ${{ steps.coord.outputs.platforms-json }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Compute image coordinate and platforms
+        id: coord
+        env:
+          TARGET_REGISTRY: ${{ inputs.registry }}
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          NAME: ${{ inputs.name }}
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          DEV_VERSION=$(bash .github-shared/scripts/version/generate-dev-version.sh)
+          # Share the prod-path resolver so dev and prod agree on the image
+          # name shape — including the single-container collapse when the
+          # container `name` matches the repo's short name.
+          IMAGE_NAME=$(bash .github-shared/scripts/container/resolve-image-name.sh \
+            "$TARGET_REGISTRY" "" "$REPOSITORY" "$REPOSITORY_OWNER" "$NAME")
+          IMAGE_NAME="${IMAGE_NAME#name=}"
+          # Convert "linux/amd64,linux/arm64" -> JSON array for matrix consumption.
+          PLATFORMS_JSON=$(printf '%s\n' "${PLATFORMS//,/$'\n'}" | jq -R . | jq -s -c .)
+
+          {
+            printf "image-name=%s\n" "${IMAGE_NAME}"
+            printf "dev-version=%s\n" "${DEV_VERSION}"
+            printf "platforms-json=%s\n" "${PLATFORMS_JSON}"
+          } >> "$GITHUB_OUTPUT"
+          printf "→ Container: %s\n" "${NAME:-(unnamed)}"
+          printf "→ Dev tag: %s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}"
+          printf "→ Platforms: %s\n" "${PLATFORMS}"
+      - name: Validate Image Namespace
+        env:
+          IMAGE_NAME: ${{ steps.coord.outputs.image-name }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_REGISTRY: ${{ inputs.registry }}
+          ENFORCE_NAMESPACE: ${{ github.repository_owner }}
+        run: |
+          bash .github-shared/scripts/container/validate-namespace.sh \
+            "$IMAGE_NAME" \
+            "$REPOSITORY" \
+            "$TARGET_REGISTRY" \
+            "$ENFORCE_NAMESPACE"
+
+  build-arch:
+    name: Build${{ inputs.name && format(' ({0})({1})', inputs.name, matrix.platform) || format(' ({0})', matrix.platform) }}
+    needs: prep
+    # linux/arm64 -> ubuntu-24.04-arm (native ARM hosted runner). Anything else
+    # falls through to ubuntu-24.04. No QEMU emulation in either path.
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJson(needs.prep.outputs.platforms-json) }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Derive arch suffix
+        id: arch
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          # linux/amd64 -> amd64, linux/arm64 -> arm64. Used for cache + artifact
+          # scoping so the matrix legs don't fight each other.
+          SUFFIX="${PLATFORM#linux/}"
+          SUFFIX="${SUFFIX//\//-}"
+          printf "suffix=%s\n" "$SUFFIX" >> "$GITHUB_OUTPUT"
+      - name: Download Maven artifacts
+        if: ${{ contains(inputs['artifact-types'], 'maven') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: maven-build-artifacts
+          path: ${{ inputs['working-directory'] }}
+      - name: Verify Maven artifacts
+        if: ${{ contains(inputs['artifact-types'], 'maven') }}
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+          CONTAINER_FILE: ${{ inputs['container-file'] }}
+        run: |
+          bash .github-shared/scripts/container/validate-artifacts.sh \
+            maven \
+            "$WORKING_DIRECTORY/target" \
+            "$WORKING_DIRECTORY/$CONTAINER_FILE"
+      - name: Download NPM artifacts
+        if: ${{ contains(inputs['artifact-types'], 'npm') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-build-artifacts
+          path: ${{ inputs['working-directory'] }}
+      - name: Extract NPM tarball
+        if: ${{ contains(inputs['artifact-types'], 'npm') }}
+        working-directory: ${{ inputs['working-directory'] }}
+        run: bash "$GITHUB_WORKSPACE/.github-shared/scripts/container/extract-npm-tarball.sh"
+      - name: Verify NPM artifacts
+        if: ${{ contains(inputs['artifact-types'], 'npm') }}
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+          CONTAINER_FILE: ${{ inputs['container-file'] }}
+        run: |
+          bash .github-shared/scripts/container/validate-artifacts.sh \
+            npm \
+            "$WORKING_DIRECTORY/dist" \
+            "$WORKING_DIRECTORY/$CONTAINER_FILE"
+      - name: Download Gradle artifacts
+        if: ${{ contains(inputs['artifact-types'], 'gradle') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs['gradle-artifact-name'] || 'gradle-build-artifacts' }}
+          path: ${{ inputs['working-directory'] }}
+      - name: Verify Gradle artifacts
+        if: ${{ contains(inputs['artifact-types'], 'gradle') }}
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+          CONTAINER_FILE: ${{ inputs['container-file'] }}
+        run: |
+          bash .github-shared/scripts/container/validate-artifacts.sh \
+            gradle \
+            "$WORKING_DIRECTORY/build/libs" \
+            "$WORKING_DIRECTORY/$CONTAINER_FILE"
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Check registry authentication configuration
+        env:
+          USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
+          TARGET_REGISTRY: ${{ inputs.registry }}
+          REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
+        run: bash .github-shared/scripts/registry/validate-auth.sh
+      - name: Login to Container Registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ inputs['registry-username'] || github.actor }}
+          password: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: ${{ inputs['working-directory'] }}
+          file: ${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}
+          target: ${{ inputs.target }}
+          platforms: ${{ matrix.platform }}
+          # No tag at this stage. The merge job applies the dev tag once both
+          # arches' digests exist, via `docker buildx imagetools create`.
+          outputs: type=image,name=${{ needs.prep.outputs.image-name }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=build-${{ steps.arch.outputs.suffix }}
+          cache-to: type=gha,mode=max,scope=build-${{ steps.arch.outputs.suffix }}
+          # Disable all security features for dev builds
+          provenance: false
+          sbom: false
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          # Filename is the bare hash; merge step rebuilds <name>@sha256:<hash>.
+          touch "/tmp/digests/${DIGEST#sha256:}"
+      # Artefact name MUST be unique across the entire workflow run, not
+      # just within this workflow_call invocation: when multiple containers
+      # are matrix-dispatched (release-dev-publish-stage's artifacts-config
+      # path), each container's publish-dev-container call shares
+      # github.run_id. Without the per-container scoping, hsm-worker's
+      # digests-<run_id>-amd64 would collide with wallet-bff's; one upload
+      # silently wins and the merge job downloads the wrong container's
+      # digest. Same root cause as the image-name collision in 836cc3f.
+      - name: Upload digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digests-${{ github.run_id }}-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+      # Analyzed-container SBOM (per arch). Mirrors publish-container.yml's
+      # syft step, minus the attest-sbom call (dev has no SLSA trust plane).
+      # Each leg's SBOM is uploaded as a separate artefact so generate-dev-sboms
+      # — and downstream release attach — can pick them up by run-id pattern.
+      - name: Generate Container SBOMs${{ inputs.name && format(' — {0}', inputs.name) || '' }} (SPDX + CycloneDX)
+        if: &if_sbom_enabled ${{ inputs['enable-analyzed-container-sbom'] }}
+        env:
+          ARTIFACT_TYPES: ${{ inputs['artifact-types'] }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          IMAGE_NAME: ${{ needs.prep.outputs.image-name }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          SBOM_SCRIPT_ROOT: .github-shared/scripts/sbom
+        run: bash .github-shared/scripts/sbom/generate-container-sbom-artifacts.sh
+      - name: Upload Analyzed-Container SBOMs
+        if: *if_sbom_enabled
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: analyzed-container-sbom-${{ github.run_id }}-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
+          path: |
+            *-analyzed-container-sbom.spdx.json
+            *-analyzed-container-sbom.cyclonedx.json
+          retention-days: 7
+      # Optional binary extraction (container-first / compiled-native ecosystems).
+      # Each native arch leg extracts its own binary directly. No QEMU. Mirrors
+      # publish-container.yml's extract-binary path.
+      - name: Extract binaries${{ inputs.name && format(' ({0})', inputs.name) || '' }}
+        if: &if_extract_binary ${{ inputs['extract-binary-target'] != '' }}
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: ${{ inputs['working-directory'] }}
+          file: ${{ inputs['working-directory'] }}/${{ inputs['container-file'] }}
+          target: ${{ inputs['extract-binary-target'] }}
+          platforms: ${{ matrix.platform }}
+          push: false
+          outputs: type=local,dest=./extracted-binaries
+          cache-from: type=gha,scope=build-${{ steps.arch.outputs.suffix }}
+      - name: Suffix extracted binaries with arch
+        if: *if_extract_binary
+        env:
+          SUFFIX: ${{ steps.arch.outputs.suffix }}
+          EXPECTED_NAMES: ${{ inputs['extract-binary-names'] }}
+        run: |
+          bash .github-shared/scripts/container/suffix-extracted-binaries.sh \
+            ./extracted-binaries \
+            "$SUFFIX" \
+            "$EXPECTED_NAMES"
+      - name: Upload extracted binaries${{ inputs.name && format(' ({0})', inputs.name) || '' }}
+        if: *if_extract_binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.name != '' && format('{0}-binaries-{1}', inputs.name, steps.arch.outputs.suffix) || format('container-binaries-{0}', steps.arch.outputs.suffix) }}
+          path: ./extracted-binaries/**
+          retention-days: 7
+          if-no-files-found: error
+
+  merge:
+    name: Merge Manifest${{ inputs.name && format(' ({0})', inputs.name) || '' }}
+    needs: [prep, build-arch]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.outputs.outputs.image }}
+      digest: ${{ steps.outputs.outputs.digest }}
+    steps:
+      - name: Checkout reusable-ci scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Download digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ github.run_id }}-${{ inputs.name || 'container' }}-*
+          merge-multiple: true
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Check registry authentication configuration
+        env:
+          USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
+          TARGET_REGISTRY: ${{ inputs.registry }}
+          REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
+        run: bash .github-shared/scripts/registry/validate-auth.sh
+      - name: Login to Container Registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ inputs['registry-username'] || github.actor }}
+          password: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+      - name: Create manifest list and push
+        env:
+          IMAGE_NAME: ${{ needs.prep.outputs.image-name }}
+          DEV_VERSION: ${{ needs.prep.outputs.dev-version }}
+        working-directory: /tmp/digests
+        run: |
+          # Each file in /tmp/digests is named after a per-arch digest hash.
+          # Reconstruct ${IMAGE_NAME}@sha256:<hash> references and feed them to
+          # imagetools, which assembles a multi-arch manifest list and pushes
+          # it under the dev tag. Single-arch inputs degenerate to a one-entry
+          # manifest — same code path.
+          refs=()
+          for f in *; do
+            refs+=("${IMAGE_NAME}@sha256:${f}")
+          done
+          docker buildx imagetools create \
+            -t "${IMAGE_NAME}:${DEV_VERSION}" \
+            "${refs[@]}"
+      - name: Inspect manifest
+        id: outputs
+        env:
+          IMAGE_NAME: ${{ needs.prep.outputs.image-name }}
+          DEV_VERSION: ${{ needs.prep.outputs.dev-version }}
+        run: |
+          docker buildx imagetools inspect "${IMAGE_NAME}:${DEV_VERSION}"
+          DIGEST=$(docker buildx imagetools inspect "${IMAGE_NAME}:${DEV_VERSION}" --format '{{json .Manifest}}' | jq -r '.digest')
+          printf "image=%s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}" >> "$GITHUB_OUTPUT"
+          printf "digest=%s\n" "${DIGEST}" >> "$GITHUB_OUTPUT"

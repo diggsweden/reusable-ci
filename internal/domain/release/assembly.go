@@ -14,11 +14,11 @@ const DefaultAssemblyFile = ".reusable-ci/release-assembly.json"
 // summary artifact and consumed by checksum/sign/create commands.
 const DefaultReleaseFilesDir = "release-files"
 
-// ReleaseAssembly records the canonical file set for a release. Orchestrated
+// Assembly records the canonical file set for a release. Orchestrated
 // flows produce this once after all CI artifacts and generated SBOMs are on
 // disk; checksum, signing, SBOM ZIP, and release creation then consume the same
 // manifest instead of rediscovering divergent file sets.
-type ReleaseAssembly struct {
+type Assembly struct {
 	Version      int            `json:"version"`
 	Assets       []AssemblyFile `json:"assets"`
 	SBOMs        []AssemblyFile `json:"sboms,omitempty"`

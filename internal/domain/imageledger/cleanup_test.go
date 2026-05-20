@@ -9,7 +9,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/imageledger"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
 )
 
 // fakeCleanupRegistry resolves digests and records/applies deletes.

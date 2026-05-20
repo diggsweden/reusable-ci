@@ -6,7 +6,7 @@ package summary
 import (
 	"fmt"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
 // ReleaseURL builds the platform-aware URL to a release page.

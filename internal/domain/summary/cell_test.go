@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/summary"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
 func TestSanitizeCell(t *testing.T) {

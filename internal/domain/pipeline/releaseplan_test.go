@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/config"
-	"github.com/diggsweden/reusable-ci/internal/domain/pipeline"
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
 
 //nolint:cyclop // exercises many invariants on one ReleasePlan.
@@ -25,7 +25,7 @@ func TestNewReleasePlan_ComputesPolicyAndStagePlans(t *testing.T) {
 				PublishTo:            []config.PublishTarget{config.PublishMavenCentral},
 				RequireAuthorization: true,
 			},
-			{Name: "web", ProjectType: projecttype.NPM, PublishTo: []config.PublishTarget{config.PublishGitHubPackages}},                       //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			{Name: "web", ProjectType: projecttype.NPM, PublishTo: []config.PublishTarget{config.PublishForgePackages}},                        //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			{Name: "rust-service", ProjectType: projecttype.Cargo, Cargo: &config.CargoConfig{BuildMode: config.CargoBuildModeContainerFirst}}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			{Name: "go-service", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeContainerFirst}},               //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		},
@@ -72,7 +72,7 @@ func TestNewReleasePlan_ComputesPolicyAndStagePlans(t *testing.T) {
 		t.Errorf("build = %+v", plan.Stages.Build.Targets)
 	}
 
-	if !plan.Stages.Publish.Targets.MavenCentral.Runs || !plan.Stages.Publish.Targets.GitHubPackages.Runs {
+	if !plan.Stages.Publish.Targets.MavenCentral.Runs || !plan.Stages.Publish.Targets.ForgePackages.Runs {
 		t.Errorf("publish package targets = %+v", plan.Stages.Publish.Targets)
 	}
 

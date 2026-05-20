@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	domainartifact "github.com/diggsweden/reusable-ci/internal/domain/artifact"
+	domainartifact "github.com/diggsweden/reusable-ci/v3/internal/domain/artifact"
 )
 
 func TestCollectGlobEntries_StarPreservesStructure(t *testing.T) {

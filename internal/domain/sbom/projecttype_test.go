@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
-	"github.com/diggsweden/reusable-ci/internal/domain/sbom"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/sbom"
 )
 
 func TestDetectProjectType_DelegatesToProjectTypeDetection(t *testing.T) {
@@ -29,6 +29,20 @@ func TestParseLayerCSV_TrimsAndDropsEmpty(t *testing.T) {
 
 	got := sbom.ParseLayerCSV("build, analyzed-artifact ,, analyzed-container ")
 	require.Equal(t, []string{"build", "analyzed-artifact", "analyzed-container"}, got)
+}
+
+func TestParseLayerCSV_ExpandsAllAndDedupes(t *testing.T) {
+	t.Parallel()
+
+	all := []string{"build", "analyzed-artifact", "analyzed-container"}
+	require.Equal(t, all, sbom.ParseLayerCSV("all"))
+	require.Equal(t, all, sbom.AllLayers())
+
+	// "all" mixed with an explicit (duplicate) layer collapses, order preserved.
+	require.Equal(t, all, sbom.ParseLayerCSV("all, build"))
+
+	// a non-"all" explicit set is unaffected.
+	require.Equal(t, []string{"build"}, sbom.ParseLayerCSV("build"))
 }
 
 func TestIsValidLayer_KnownLayers(t *testing.T) {

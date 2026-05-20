@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/version"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 )
 
 func TestSanitizePathToken(t *testing.T) {

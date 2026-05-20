@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
-# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+# SPDX-License-Identifier: CC0-1.0
 #
 # Gradle JVM Builder
 #
@@ -27,6 +27,10 @@ name: Build Gradle
 on:
   workflow_call:
     inputs:
+      java-version:
+        description: "Java version"
+        required: true
+        type: string
       working-directory:
         description: "Working directory"
         required: false
@@ -48,7 +52,7 @@ on:
         default: "main"
         type: string
       artifact-name:
-        description: "Logical artifact name for upload naming (defaults to 'gradle-build-artifacts' when empty)"
+        description: "Artifact name for uploads (defaults to 'gradle-build-artifacts')"
         required: false
         default: ""
         type: string
@@ -57,73 +61,98 @@ on:
         required: false
         default: true
         type: boolean
-      runtime-image:
-        description: "reusable-ci runtime image carrying JDK + Gradle. Optional override; default uses the matching v3.0.0 runtime image."
+      reusable-ci-ref:
+        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
+        default: "main"
         type: string
 permissions:
   contents: read
 jobs:
   build-gradle:
     name: Build Gradle Project
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
-    container:
-      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 0
-      - name: Cache Gradle
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      - name: Checkout .github repository for scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ hashFiles(format('{0}/gradle/wrapper/gradle-wrapper.properties', inputs['working-directory']), format('{0}/**/*.gradle*', inputs['working-directory']), format('{0}/**/gradle.properties', inputs['working-directory'])) }}
-          restore-keys: gradle-
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+      - name: Set up JDK
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: 'temurin'
+          java-version: ${{ inputs['java-version'] }}
+          cache: 'gradle'
       - name: Make gradlew executable
         working-directory: ${{ inputs['working-directory'] }}
         run: chmod +x ./gradlew
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs['working-directory'] }}
-        run: reusable-ci build gradle metadata
+        run: |
+          # JVM Gradle convention: `version=` in gradle.properties. Best-effort:
+          # absence is a warning, not a failure — the consumer may carry version
+          # in build.gradle(.kts) or an external source.
+          if [ -f "gradle.properties" ] && grep -q '^version=' gradle.properties; then
+            VERSION=$(grep '^version=' gradle.properties | head -1 | cut -d'=' -f2-)
+            printf "VERSION=%s\n" "${VERSION}" >> "$GITHUB_OUTPUT"
+            printf "Version: %s\n" "${VERSION}"
+          else
+            printf "::warning::version not found in gradle.properties\n"
+          fi
       - name: Run Gradle build
         working-directory: ${{ inputs['working-directory'] }}
         env:
           GRADLE_TASKS: ${{ inputs['gradle-tasks'] }}
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
-        run: reusable-ci build gradle application
-      # Separate Gradle invocation so an SBOM-tool problem surfaces as
-      # a distinct, named failure rather than masquerading as a build
-      # regression. The step itself is mandatory: when enable-build-sbom
-      # is true, an SBOM failure fails the workflow — adopters who want
-      # to skip SBOM generation set enable-build-sbom: false explicitly.
+        run: |
+          printf "Running Gradle tasks: %s\n" "$GRADLE_TASKS"
+          # shellcheck disable=SC2086
+          if [ "$SKIP_TESTS" = "true" ]; then
+            ./gradlew $GRADLE_TASKS -x test
+          else
+            # shellcheck disable=SC2086
+            ./gradlew $GRADLE_TASKS
+          fi
+      # Separate Gradle invocation keeps SBOM failures advisory (continue-on-error).
+      # Injecting the plugin into the real build would make a build regression
+      # cascade from an SBOM-tool problem, which is the wrong failure domain.
       - name: Generate Build SBOM
         id: sbom
         if: ${{ inputs['enable-build-sbom'] }}
+        continue-on-error: true
         working-directory: ${{ inputs['working-directory'] }}
         env:
           # renovate: datasource=maven depName=org.cyclonedx:cyclonedx-gradle-plugin
           CYCLONEDX_GRADLE_VERSION: "3.2.1"
-        run: reusable-ci build gradle sbom
+        run: bash "${{ github.workspace }}/.github-shared/scripts/sbom/build/gradle/generate-gradle-sbom.sh"
+      - name: List built artifacts
+        working-directory: ${{ inputs['working-directory'] }}
+        run: |
+          printf "Built artifacts:\n"
+          find . -type f -path '*/build/libs/*.jar' -ls 2>/dev/null || printf "No JAR files found\n"
       - name: Upload Gradle artifacts
-        # Root and subproject JARs. Single-module projects put jars under
-        # `build/libs/`; multi-module projects put them under
-        # `<subproject>/build/libs/`. Both globs cover the common layouts.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ inputs['artifact-name'] && format('{0}-build-artifacts', inputs['artifact-name']) || 'gradle-build-artifacts' }}
+          name: ${{ inputs['artifact-name'] || 'gradle-build-artifacts' }}
+          # Root and subproject JARs. Single-module projects put jars under
+          # `build/libs/`; multi-module projects put them under
+          # `<subproject>/build/libs/`. Both globs cover the common layouts.
           path: |
             ${{ inputs['working-directory'] }}/build/libs/*.jar
             ${{ inputs['working-directory'] }}/**/build/libs/*.jar
-          retention-days: "7"
+          retention-days: 7
           if-no-files-found: error
       # SBOM artifact is paired with the build artifact name so parallel
       # matrix uploads (release-build-stage dispatches build-gradle per
@@ -135,25 +164,39 @@ jobs:
         if: steps.sbom.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ inputs['artifact-name'] && format('{0}-build-sbom', inputs['artifact-name']) || 'gradle-build-sbom' }}
+          name: ${{ inputs['artifact-name'] && format('{0}-sbom', inputs['artifact-name']) || 'gradle-build-sbom' }}
           path: |
             ${{ inputs['working-directory'] }}/build/reports/bom.json
             ${{ inputs['working-directory'] }}/**/build/reports/bom.json
             ${{ inputs['working-directory'] }}/build/reports/cyclonedx/bom.json
             ${{ inputs['working-directory'] }}/**/build/reports/cyclonedx/bom.json
-          retention-days: "7"
+          retention-days: 7
           if-no-files-found: warn
       - name: Write SBOM status to step summary
         if: always()
         env:
-          ECOSYSTEM: gradle
           SBOM_OUTCOME: ${{ steps.sbom.outcome }}
-          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
-        run: reusable-ci report status build-sbom
+          WORKDIR: ${{ inputs['working-directory'] }}
+        run: |
+          # shellcheck disable=SC2016  # backticks inside single quotes are intentional markdown
+          {
+            printf '### Build SBOM\n'
+            if [[ "$SBOM_OUTCOME" == "success" ]]; then
+              # Report the aggregate bom.json (smallest path depth) relative to the working dir.
+              bom=$(find "$WORKDIR" -path '*/build/reports/bom.json' -o -path '*/build/reports/cyclonedx/bom.json' 2>/dev/null | sort | head -1)
+              if [[ -n "$bom" ]]; then
+                printf -- '- ✅ CycloneDX: `%s`\n' "$bom"
+              else
+                printf -- '- ⚠️ Generated but file not located — check plugin output path\n'
+              fi
+            else
+              printf -- '- ⚠️ Generation step did not succeed (continued as advisory)\n'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Generate build summary
         env:
+          JAVA_VERSION: ${{ inputs['java-version'] }}
           GRADLE_TASKS: ${{ inputs['gradle-tasks'] }}
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
-          VERSION: ${{ steps.version-info.outputs.version }}
-          JAVA_VERSION: "25"
-        run: reusable-ci report build gradle
+          VERSION: ${{ steps.version-info.outputs.VERSION }}
+        run: bash .github-shared/scripts/summary/write-gradle-build-summary.sh

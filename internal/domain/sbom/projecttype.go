@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/listval"
 )
 
 // ValidProjectTypes is the SBOM-context valid list — accepted by the
-// `sbom generate --project-type` flag, in argv order from the bash for
+// `sbom assemble --project-type` flag, in argv order from the bash for
 // consistent diagnostics. Includes Auto (request detection) and
 // excludes Meta (not a buildable type for SBOM purposes).
 //
@@ -35,26 +36,44 @@ func DetectProjectType(dirEntries []string) projecttype.Type {
 	return projecttype.DetectFromEntries(dirEntries)
 }
 
-// ParseLayerCSV splits a comma-separated layer list and trims
-// whitespace from each entry. Empty entries are dropped.
-//
-// Recognised layers: "build", "analyzed-artifact", "analyzed-container".
-// Unknown layers are returned in the slice as-is — callers decide whether
-// to error or skip.
-func ParseLayerCSV(s string) []string {
-	parts := strings.Split(s, ",")
+// ParseLayerCSV splits a comma-separated layer list, trimming whitespace and
+// dropping empties. The token "all" expands to every canonical layer
+// (build, analyzed-artifact, analyzed-container); duplicates are collapsed and
+// first-seen order is preserved. Unknown names pass through unchanged — callers
+// decide whether to error or skip.
+func ParseLayerCSV(csv string) []string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0)
 
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		t := strings.TrimSpace(p)
-		if t == "" {
-			continue
+	add := func(layer string) {
+		if _, ok := seen[layer]; ok {
+			return
 		}
 
-		out = append(out, t)
+		seen[layer] = struct{}{}
+		out = append(out, layer)
+	}
+
+	for _, part := range listval.Tokens(csv) {
+		switch tok := strings.TrimSpace(part); tok {
+		case "":
+			continue
+		case "all":
+			for _, layer := range AllLayers() {
+				add(layer)
+			}
+		default:
+			add(tok)
+		}
 	}
 
 	return out
+}
+
+// AllLayers returns the three canonical layers in generation order. Single
+// source of truth for the "all" expansion.
+func AllLayers() []string {
+	return []string{string(LayerBuild), string(LayerAnalyzedArtifact), string(LayerAnalyzedContainer)}
 }
 
 // LayerName is one of the three canonical layer identifiers.

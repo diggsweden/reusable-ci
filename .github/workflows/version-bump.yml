@@ -1,21 +1,11 @@
 # SPDX-FileCopyrightText: 2025 The Reusable CI Authors
 #
-# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+# SPDX-License-Identifier: CC0-1.0
 # Version Bump
-#
+# 
 # Purpose: Automates version management for releases. Updates version files,
 # downloads generated changelogs, and commits all changes back to the repository
 # with proper signing.
-#
-# Runs inside a runtime image chosen by the caller per project-type:
-# Maven/Gradle workflows pass runtime-java-25; NPM passes runtime-node-24;
-# cargo passes runtime-rust-stable; others (xcode-ios, gradle-android) use
-# the base image since their bumps are sed-only.
-#
-# Toolchain caches are warmed by the actual build workflows (build-maven,
-# build-npm, …) on the next stage. Pre-warming here was nice-to-have under
-# the old setup-java/setup-node model; with images, the build workflows
-# get the cache hit themselves.
 #
 # How it works:
 # 1. Detects current version from pom.xml or package.json
@@ -25,12 +15,28 @@
 # 5. Commits and signs changes with GPG
 # 6. Pushes changes back to repository
 #
+# Security controls:
+# - GPG signing of commits for authenticity
+# - Uses bot token with limited permissions
+# - Validates version format before updating
+#
 # Required Secrets:
 #   GITHUB_TOKEN: For repository operations (or custom bot token)
-#   RELEASE_GPG_PRIVATE_KEY / RELEASE_GPG_PASSPHRASE: GPG key for signing commits
+#   GPG_SECRET_KEY: GPG key for signing commits (optional)
+#   GPG_PASSPHRASE: Passphrase for GPG key (optional)
 #
 # Required Permissions:
 #   contents: write  # Update version files and push commits
+#
+# Changelog Formats:
+#   - keepachangelog: Standard Keep a Changelog format
+#   - minimal: Simplified format for quick reading
+#   - conventional: Based on conventional commits
+#
+# Version Strategies:
+#   - SemVer for stable releases (1.0.0)
+#   - Pre-release for beta/rc (1.0.0-beta.1)
+#   - SNAPSHOT for development (1.0.0-SNAPSHOT)
 name: Bump Version
 on:
   workflow_call: # yamllint disable-line rule:truthy
@@ -48,6 +54,16 @@ on:
         description: "Project type: maven, npm, gradle, gradle-android, xcode-ios, cargo"
         required: true
         type: string
+      java-version:
+        description: "Java version for Maven projects (default: 25)"
+        required: false
+        default: '25'
+        type: string
+      node-version:
+        description: "Node.js version for NPM projects (default: 24)"
+        required: false
+        default: '24'
+        type: string
       gradle-version-file:
         description: "Path to Gradle version file (default: gradle.properties)"
         required: false
@@ -63,29 +79,26 @@ on:
         required: false
         default: '.'
         type: string
+      minimal-changelog-config:
+        description: "Configuration for the minimal changelog (default: minimal)"
+        required: false
+        default: ".github-templates/templates/gitcliff/minimal.toml"
+        type: string
       file-pattern:
         description: 'Files to commit during version bump (auto-detected based on project-type if not provided)'
         required: false
         type: string
         default: ""
-      runtime-image:
-        description: "reusable-ci runtime image to run inside. Caller picks based on project-type — runtime-java-25 for maven/gradle/gradle-android, runtime-node-24 for npm, runtime-rust-stable for cargo, runtime-base for xcode-ios. Default works for the sed-only bumps."
+      egress-policy:
+        description: "Egress policy for the Harden Runner step (e.g., audit, block)"
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+        default: "audit"
         type: string
-    # All `required: false` — callers using `secrets: inherit`
-    # continue to work. Declarations exist for discoverability +
-    # tooling validation.
-    secrets:
-      RELEASE_GPG_PRIVATE_KEY:
-        description: "Armored OpenPGP private key for signing the version-bump commit"
+      reusable-ci-ref:
+        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
         required: false
-      RELEASE_GPG_PASSPHRASE:
-        description: "Passphrase for RELEASE_GPG_PRIVATE_KEY"
-        required: false
-      RELEASE_TOKEN:
-        description: "Token with contents:write permission for pushing the version-bump commit"
-        required: false
+        default: "main"
+        type: string
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
@@ -97,12 +110,12 @@ jobs:
     uses: ./.github/workflows/generate-changelog.yml
     with:
       branch: ${{ inputs.branch }}
-      runtime-image: ${{ inputs['runtime-image'] }}
       upload-as-artifact: true
-      changelog-config: "/opt/reusable-ci/templates/gitcliff/keepachangelog.toml"
+      changelog-config: ".github-templates/templates/gitcliff/keepachangelog.toml"
       git-cliff-args: "" # Empty means full history
       output-file: "CHANGELOG.md"
       artifact-name: "full-changelog"
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   # Generate minimal changelog for commit message
   generate-minimal-changelog:
     name: Generate Minimal Commit Changelog
@@ -111,105 +124,204 @@ jobs:
     uses: ./.github/workflows/generate-changelog.yml
     with:
       branch: ${{ inputs.branch }}
-      runtime-image: ${{ inputs['runtime-image'] }}
       upload-as-artifact: true
-      changelog-config: "/opt/reusable-ci/templates/gitcliff/minimal.toml"
+      changelog-config: ".github-templates/templates/gitcliff/minimal.toml"
       git-cliff-args: "--latest --strip header"
       output-file: "minimal-changelog.txt"
       artifact-name: "minimal-changelog"
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   bump-version:
     name: Bump Version and Commit
     needs: [generate-full-changelog, generate-minimal-changelog]
-    runs-on: ubuntu-24.04
-    container:
-      image: ${{ inputs['runtime-image'] }}
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
-      release-sha: ${{ steps.tag-release.outputs.release-sha }}
+      release-sha: ${{ steps.move-tag.outputs.release-sha }}
     steps:
-      # Defense-in-depth: refuse PR-context triggers. RELEASE_TOKEN and
-      # RELEASE_GPG_PRIVATE_KEY are consumed by this job; must never run
-      # with PR-HEAD code. reusable-ci is pre-baked in the runtime image.
-      - name: Refuse PR-context trigger (publish/release secrets in scope)
-        run: reusable-ci validate event-context
+      - name: Harden GitHub runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        with:
+          egress-policy: ${{ inputs.egress-policy }}
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           ref: ${{ inputs.branch }}
-          token: ${{ secrets.RELEASE_TOKEN }}
-      - name: Derive release context from request tag
-        id: relctx
-        # The human pushed a signed `release-request/vX.Y.Z` tag (the
-        # immutable, allowlist-verified anchor). The CLI derives the final
-        # release tag/version and the original-tagger commit trailers — no ref
-        # parsing in bash. The request tag is never moved or deleted.
-        run: reusable-ci version release-context
+          token: ${{ secrets.RELEASE_BOT_TOKEN }}
+      - name: Checkout .github repository for scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
       - name: Import GPG key
         id: import-gpg
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
+        with:
+          gpg_private_key: ${{ secrets.OSPO_BOT_GPG_PRIV }}
+          passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+          git_config_global: true
+      - name: Set project type
+        id: project-type
         env:
-          GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
-          GIT_USER_SIGNINGKEY: "true"
-          GIT_COMMIT_GPGSIGN: "true"
-          GIT_CONFIG_GLOBAL: "true"
-        run: reusable-ci release gpg import
-      - name: Bump project version
-        env:
-          PROJECT_TYPE: ${{ inputs['project-type'] }}
-          MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
-          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
-          GRADLE_VERSION_FILE: ${{ inputs['gradle-version-file'] }}
-          XCODE_VERSION_FILE: ${{ inputs['xcode-version-file'] }}
+          PROJECT_TYPE_INPUT: ${{ inputs['project-type'] }}
         run: |
-          VERSION="${{ steps.relctx.outputs.version }}" reusable-ci version bump
-      - name: Download Full Changelog
+          PROJECT_TYPE="$PROJECT_TYPE_INPUT"
+          echo "Project type: ${PROJECT_TYPE}"
+          echo "type=${PROJECT_TYPE}" >> "$GITHUB_OUTPUT"
+      - name: Set up JDK for Maven
+        if: &if_maven_project ${{ steps.project-type.outputs.type == 'maven' }}
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          java-version: ${{ inputs['java-version'] }}
+          distribution: 'temurin'
+          # No cache here - we'll cache after version update
+      - name: Update Maven version
+        if: *if_maven_project
         env:
-          GH_TOKEN: ${{ github.token }}
-          ARTIFACT_NAME: full-changelog
-          ARTIFACT_DIR: ${{ inputs['working-directory'] }}
-        run: reusable-ci artifact download
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
+          WORKING_DIRECTORY_INPUT: ${{ inputs['working-directory'] }}
+        run: |
+          bash .github-shared/scripts/version/bump-version.sh \
+            maven \
+            "${GITHUB_REF_NAME#v}" \
+            "$WORKING_DIRECTORY_INPUT"
+      - name: Setup Java again with cache after version update
+        if: *if_maven_project
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          java-version: ${{ inputs['java-version'] }}
+          distribution: 'temurin'
+          cache: maven
+          cache-dependency-path: ${{ inputs['working-directory'] }}/pom.xml
+      - name: Pre-download dependencies with new version
+        if: *if_maven_project
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
+        run: |
+          echo "Pre-downloading dependencies with updated pom.xml..."
+          # shellcheck disable=SC2086
+          mvn $MAVEN_CLI_OPTS dependency:resolve || true
+          # shellcheck disable=SC2086
+          mvn $MAVEN_CLI_OPTS dependency:resolve-plugins || true
+      - name: Set up Node.js for NPM
+        if: &if_npm_project ${{ steps.project-type.outputs.type == 'npm' }}
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: ${{ inputs['node-version'] }}
+          # No cache here - we'll cache after version update
+      - name: Update NPM version
+        if: *if_npm_project
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          WORKING_DIRECTORY_INPUT: ${{ inputs['working-directory'] }}
+        run: |
+          bash .github-shared/scripts/version/bump-version.sh \
+            npm \
+            "${GITHUB_REF_NAME#v}" \
+            "$WORKING_DIRECTORY_INPUT"
+
+          echo "Pre-installing dependencies..."
+          npm ci --ignore-scripts || npm install --ignore-scripts || true
+      - name: Save NPM cache
+        if: *if_npm_project
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', inputs['working-directory'])) }}
+      - name: Set up JDK for Gradle
+        if: &if_gradle_project ${{ steps.project-type.outputs.type == 'gradle' || steps.project-type.outputs.type == 'gradle-android' }}
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          java-version: ${{ inputs['java-version'] }}
+          distribution: 'temurin'
+          cache: 'gradle'
+      - name: Update Gradle version
+        if: *if_gradle_project
+        env:
+          PROJECT_TYPE_OUTPUT: ${{ steps.project-type.outputs.type }}
+          WORKING_DIRECTORY_INPUT: ${{ inputs['working-directory'] }}
+          GRADLE_VERSION_FILE_INPUT: ${{ inputs['gradle-version-file'] }}
+        run: |
+          echo "::group::Update Gradle version"
+          bash .github-shared/scripts/version/bump-version.sh \
+            "$PROJECT_TYPE_OUTPUT" \
+            "${GITHUB_REF_NAME#v}" \
+            "$WORKING_DIRECTORY_INPUT" \
+            "$GRADLE_VERSION_FILE_INPUT"
+          echo "::endgroup::"
+      - name: Update Xcode version
+        if: ${{ steps.project-type.outputs.type == 'xcode-ios' }}
+        env:
+          XCODE_VERSION_FILE: ${{ inputs['xcode-version-file'] }}
+          WORKING_DIRECTORY_INPUT: ${{ inputs['working-directory'] }}
+        run: |
+          echo "::group::Update Xcode version"
+          bash .github-shared/scripts/version/bump-version.sh \
+            xcode-ios \
+            "${GITHUB_REF_NAME#v}" \
+            "$WORKING_DIRECTORY_INPUT"
+          echo "::endgroup::"
+      - name: Update Rust version
+        # cargo is pre-installed on ubuntu-latest GHA runners (rustup-managed).
+        # bump-version.sh handles both Cargo.toml editing and Cargo.lock refresh
+        # via `cargo update --workspace`.
+        if: ${{ steps.project-type.outputs.type == 'cargo' }}
+        env:
+          WORKING_DIRECTORY_INPUT: ${{ inputs['working-directory'] }}
+        run: |
+          echo "::group::Update Rust version"
+          bash .github-shared/scripts/version/bump-version.sh \
+            cargo \
+            "${GITHUB_REF_NAME#v}" \
+            "$WORKING_DIRECTORY_INPUT"
+          echo "::endgroup::"
+      - name: Download Full Changelog
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: full-changelog
+          path: ${{ inputs['working-directory'] }}
       - name: Verify Full Changelog
         working-directory: ${{ inputs['working-directory'] }}
-        run: reusable-ci validate changelog --path CHANGELOG.md --required
+        run: bash .github-shared/scripts/version/validate-full-changelog.sh CHANGELOG.md
       - name: Download Minimal Changelog
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARTIFACT_NAME: minimal-changelog
-          ARTIFACT_DIR: ${{ inputs['working-directory'] }}
-        run: reusable-ci artifact download
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: minimal-changelog
+          path: ${{ inputs['working-directory'] }}
       - name: Read Minimal Changelog
         id: minimal-changelog
         working-directory: ${{ inputs['working-directory'] }}
-        run: reusable-ci validate changelog --path minimal-changelog.txt
+        run: bash .github-shared/scripts/version/read-minimal-changelog.sh minimal-changelog.txt
       - name: Determine file pattern
         id: file-pattern
         env:
           EXPLICIT_FILE_PATTERN: ${{ inputs['file-pattern'] }}
           PROJECT_TYPE: ${{ inputs['project-type'] }}
-        run: reusable-ci plan file-pattern
+        run: bash .github-shared/scripts/config/get-file-pattern.sh
       - name: Commit and Push Changes
-        env:
-          BRANCH: ${{ inputs.branch }}
-          COMMIT_AUTHOR_NAME: ${{ steps.import-gpg.outputs.name }}
-          COMMIT_AUTHOR_EMAIL: ${{ steps.import-gpg.outputs.email }}
-          COMMIT_MESSAGE: |
-            chore(release): ${{ steps.relctx.outputs.release-tag }}
+        uses: stefanzweifel/git-auto-commit-action@04702edda442b2e678b25b537cec683a1493fcb9 # v7.1.0
+        with:
+          commit_message: |
+            chore(release): ${{ github.ref_name }}
 
             ${{ steps.minimal-changelog.outputs.content }}
 
-            ${{ steps.relctx.outputs.commit-trailers }}
             [skip ci]
-          FILE_PATTERN: ${{ steps.file-pattern.outputs.pattern }}
-        run: reusable-ci version commit-push
-      - name: Create release tag (create-once, no force)
-        id: tag-release
-        env:
-          RELEASE_TAG: ${{ steps.relctx.outputs.release-tag }}
-        run: reusable-ci version tag-release
-      - name: Cleanup GPG key
-        if: always()
-        env:
-          GPG_FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
-        run: reusable-ci release gpg cleanup
+          file_pattern: ${{ steps.file-pattern.outputs.pattern }}
+          commit_author: "${{ steps.import-gpg.outputs.name }} <${{ steps.import-gpg.outputs.email }}>"
+          commit_user_name: ${{ steps.import-gpg.outputs.name }}
+          commit_user_email: ${{ steps.import-gpg.outputs.email }}
+          commit_options: " --signoff"
+      - name: Move tag to current commit
+        id: move-tag
+        run: bash .github-shared/scripts/version/move-tag.sh

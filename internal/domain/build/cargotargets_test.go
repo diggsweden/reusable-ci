@@ -6,7 +6,7 @@ package build_test
 import (
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/build"
 )
 
 func TestCargoTargetTriple(t *testing.T) {
