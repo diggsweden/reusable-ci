@@ -33,27 +33,31 @@ type ValidateContainerfileInput struct {
 //
 // On success, emits `containerfile=<path>` via OutputSink.
 //
-// Mirrors scripts/container/validate-containerfile.sh.
-func ValidateContainerfile(ctx context.Context, sink ci.OutputSink, stdout io.Writer, in ValidateContainerfileInput) error {
+// ValidateContainerfile checks the configured Containerfile exists.
+func ValidateContainerfile(ctx context.Context, sink ci.OutputSink, w io.Writer, in ValidateContainerfileInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if in.Path == "" {
-		return fmt.Errorf("Usage: validate-containerfile <containerfile>: %w", errs.ErrUsage)
+		return fmt.Errorf("containerfile path is required: pass --path <file> or set $CONTAINERFILE: %w", errs.ErrUsage)
 	}
+
 	if info, err := os.Stat(in.Path); err == nil && !info.IsDir() {
-		fmt.Fprintf(stdout, "Using containerfile: %s\n", in.Path)
+		_, _ = fmt.Fprintf(w, "Using containerfile: %s\n", in.Path)
+
 		return sink.Set(ctx, "containerfile", in.Path)
 	}
 
 	dir := filepath.Dir(in.Path)
+
 	matches := findContainerfileCandidates(dir)
 	switch len(matches) {
 	case 0:
-		return fmt.Errorf("Containerfile '%s' not found and no Dockerfile*/Containerfile* match found in '%s'", in.Path, dir)
+		return fmt.Errorf("containerfile %q not found and no Dockerfile*/Containerfile* match found in %q: %w", in.Path, dir, errs.ErrMissingInput)
 	case 1:
-		fmt.Fprintf(stdout, "Using containerfile: %s\n", matches[0])
+		_, _ = fmt.Fprintf(w, "Using containerfile: %s\n", matches[0])
+
 		return sink.Set(ctx, "containerfile", matches[0])
 	default:
-		return fmt.Errorf("Multiple containerfiles found in '%s', please specify an exact path:\n  %s",
-			dir, strings.Join(matches, "\n  "))
+		return fmt.Errorf("multiple containerfiles found in %q, please specify an exact path:\n  %s: %w",
+			dir, strings.Join(matches, "\n  "), errs.ErrValidation)
 	}
 }
 
@@ -64,16 +68,21 @@ func findContainerfileCandidates(dir string) []string {
 	if err != nil {
 		return nil
 	}
+
 	var out []string
+
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
+
 		name := e.Name()
 		if strings.HasPrefix(name, "Dockerfile") || strings.HasPrefix(name, "Containerfile") {
 			out = append(out, filepath.Join(dir, name))
 		}
 	}
+
 	sort.Strings(out)
+
 	return out
 }

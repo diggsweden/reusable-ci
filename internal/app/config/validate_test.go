@@ -5,6 +5,7 @@ package config_test
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 
@@ -21,10 +22,12 @@ artifacts:
   - name: my-app
     project-type: maven
 `))
+
 	var warnings bytes.Buffer
 	if err := appconfig.Validate(path, &warnings); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
+
 	if warnings.Len() != 0 {
 		t.Errorf("unexpected warnings: %q", warnings.String())
 	}
@@ -32,6 +35,7 @@ artifacts:
 
 func TestValidate_FileNotFound(t *testing.T) {
 	t.Parallel()
+
 	err := appconfig.Validate("/does/not/exist.yml", nil)
 	if err == nil {
 		t.Fatal("expected error")
@@ -47,7 +51,9 @@ artifacts:
     project-type: rust
 `))
 	err := appconfig.Validate(path, nil)
-	if !config.IsValidationError(err) {
+
+	var ve *config.ValidationError
+	if !errors.As(err, &ve) {
 		t.Errorf("err = %v, want ValidationError", err)
 	}
 }
@@ -62,10 +68,12 @@ artifacts:
     build-type: application
     publish-to: [github-packages]
 `))
+
 	var warnings bytes.Buffer
 	if err := appconfig.Validate(path, &warnings); err != nil {
 		t.Errorf("Validate: %v", err)
 	}
+
 	if !strings.Contains(warnings.String(), "Maven application") {
 		t.Errorf("expected maven-app warning, got: %q", warnings.String())
 	}

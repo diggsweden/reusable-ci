@@ -244,18 +244,6 @@ func TestCatFileTag_BodyContainsMessage(t *testing.T) {
 	}
 }
 
-func TestVerifyTag_FailsWithoutSignature(t *testing.T) {
-	r, ig := newRepo(t)
-	ig.AddTag("v1.0.0", "annotated, but unsigned")
-	out, ok, err := r.VerifyTag(context.Background(), "v1.0.0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok {
-		t.Errorf("unsigned tag should not verify; output:\n%s", out)
-	}
-}
-
 func TestTaggerInfo(t *testing.T) {
 	r, ig := newRepo(t)
 	ig.AddTag("v1.0.0", "release")
@@ -285,5 +273,41 @@ func TestTagMessage_StripsLeadingTagColumn(t *testing.T) {
 	// verify the leading "<tag>" column is gone.
 	if strings.HasPrefix(msg, "v1.0.0 ") {
 		t.Errorf("tag column not stripped: %q", msg)
+	}
+}
+
+func TestVerifyTagSignature_NoArmorReturnsNotOk(t *testing.T) {
+	r, ig := newRepo(t)
+	ig.AddTag("v1.0.0", "annotated, unsigned")
+	signer, fingerprint, ok, err := r.VerifyTagSignature(context.Background(), "v1.0.0", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || signer != "" || fingerprint != "" {
+		t.Errorf("expected (ok=false, signer=\"\", fp=\"\") with no armor, got (%v, %q, %q)", ok, signer, fingerprint)
+	}
+}
+
+func TestVerifyTagSignature_UnsignedTagReturnsNotOk(t *testing.T) {
+	r, ig := newRepo(t)
+	ig.AddTag("v1.0.0", "annotated, unsigned")
+	armor := []byte(`-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+xj0EZGZGZBYJKwYBBAHaRw8BAQdAv/` + `/junk
+-----END PGP PUBLIC KEY BLOCK-----`)
+	_, _, ok, err := r.VerifyTagSignature(context.Background(), "v1.0.0", armor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Errorf("unsigned tag should not verify; got ok=true")
+	}
+}
+
+func TestVerifyTagSignature_NonExistentTagErrors(t *testing.T) {
+	r, _ := newRepo(t)
+	_, _, _, err := r.VerifyTagSignature(context.Background(), "nope", []byte("anything"))
+	if err == nil {
+		t.Error("expected error for missing tag")
 	}
 }

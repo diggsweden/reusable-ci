@@ -25,10 +25,12 @@ func TestNew(t *testing.T) {
 func stubGradlew(t *testing.T, body string) string {
 	t.Helper()
 	fsys := testfs.NewReal(t)
+
 	path := fsys.Path("gradlew")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil { //nolint:gosec // test fixture; must be exec'able.
 		t.Fatal(err)
 	}
+
 	return path
 }
 
@@ -40,9 +42,11 @@ func TestRunInherit_PassesArgsAndStreamsOutput(t *testing.T) {
 	if err := a.RunInherit(context.Background(), &stdout, &stderr, "build", "-x", "test"); err != nil {
 		t.Fatalf("RunInherit: %v", err)
 	}
+
 	if got := strings.TrimSpace(stdout.String()); got != "gradle running build -x test" {
 		t.Errorf("stdout = %q", got)
 	}
+
 	if got := strings.TrimSpace(stderr.String()); got != "warn" {
 		t.Errorf("stderr = %q", got)
 	}
@@ -51,10 +55,12 @@ func TestRunInherit_PassesArgsAndStreamsOutput(t *testing.T) {
 func TestRunInherit_NonZeroExitWraps(t *testing.T) {
 	bin := stubGradlew(t, `printf 'oops\n' >&2; exit 7`)
 	a := &gradle.Adapter{Bin: bin}
+
 	err := a.RunInherit(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, "cyclonedxBom")
 	if err == nil {
 		t.Fatal("expected error from exit 7")
 	}
+
 	if !strings.Contains(err.Error(), "cyclonedxBom") {
 		t.Errorf("error missing args: %v", err)
 	}

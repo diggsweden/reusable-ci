@@ -19,12 +19,13 @@ func TestWorkflowInputDefaults_Success(t *testing.T) {
 	mem.WriteFile(".github/workflows/ok.yml", []byte("name: test\non:\n  workflow_call:\n    inputs:\n      foo:\n        default: literal\n"))
 	mem.WriteFile(".github/workflows/nested/ignored.yml", []byte("      default: ${{ secrets.BAD }}\n"))
 
-	var stdout bytes.Buffer
-	if err := appvalidate.WorkflowInputDefaults(&stdout, appvalidate.WorkflowInputDefaultsInput{Root: ".", FS: mem.FS()}); err != nil {
+	var out bytes.Buffer
+	if err := appvalidate.WorkflowInputDefaults(&out, appvalidate.WorkflowInputDefaultsInput{Root: ".", FS: mem.FS()}); err != nil {
 		t.Fatalf("WorkflowInputDefaults: %v", err)
 	}
-	if got := stdout.String(); got != "Workflow input defaults look valid.\n" {
-		t.Errorf("stdout = %q", got)
+
+	if got := out.String(); got != "Workflow input defaults look valid.\n" {
+		t.Errorf("out = %q", got)
 	}
 }
 
@@ -40,16 +41,19 @@ func TestWorkflowInputDefaults_ReportsExpressions(t *testing.T) {
 	}, "\n") + "\n"
 	mem.WriteFile(".github/workflows/bad.yml", []byte(body))
 
-	var stdout bytes.Buffer
-	err := appvalidate.WorkflowInputDefaults(&stdout, appvalidate.WorkflowInputDefaultsInput{Root: ".", FS: mem.FS()})
+	var out bytes.Buffer
+
+	err := appvalidate.WorkflowInputDefaults(&out, appvalidate.WorkflowInputDefaultsInput{Root: ".", FS: mem.FS()})
 	if !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("err = %v, want ErrValidation", err)
 	}
-	out := stdout.String()
-	if !strings.Contains(out, "::error file=.github/workflows/bad.yml,line=6::workflow_call input defaults must be literal values") {
-		t.Errorf("missing annotation in:\n%s", out)
+
+	text := out.String()
+	if !strings.Contains(text, "::error file=.github/workflows/bad.yml,line=6::workflow_call input defaults must be literal values") {
+		t.Errorf("missing annotation in:\n%s", text)
 	}
-	if !strings.Contains(out, "default: ${{ github.ref_name }}") {
-		t.Errorf("missing offending line in:\n%s", out)
+
+	if !strings.Contains(text, "default: ${{ github.ref_name }}") {
+		t.Errorf("missing offending line in:\n%s", text)
 	}
 }

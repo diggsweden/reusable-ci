@@ -11,7 +11,7 @@
 #   - lib: Library with sources and javadoc JARs (required for Maven Central)
 #
 # Outputs:
-#   - Artifacts uploaded as 'maven-build-artifacts' for use by publish-* workflows
+#   - Artifacts uploaded as '<artifact-name>-build-artifacts' or 'maven-build-artifacts' for use by publish-* workflows
 #
 # Required Permissions:
 #   contents: read  # Checkout code
@@ -44,15 +44,20 @@ on:
         required: false
         default: ""
         type: string
+      artifact-name:
+        description: "Logical artifact name for upload naming (defaults to 'maven-build-artifacts' when empty)"
+        required: false
+        default: ""
+        type: string
       enable-build-sbom:
         description: "Run the cyclonedx plugin step (false skips Build SBOM generation entirely; derived from per-artefact 'sboms' when called from release-build-stage)"
         required: false
         default: true
         type: boolean
       runtime-image:
-        description: "reusable-ci runtime image carrying JDK + Maven. Pin to a digest or version tag; default tracks main."
+        description: "reusable-ci runtime image carrying JDK + Maven. Optional override; default uses the matching v3.0.0 runtime image."
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
         type: string
 permissions:
   contents: read
@@ -61,7 +66,7 @@ env:
 jobs:
   build-maven:
     name: Build Maven Project
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     container:
       image: ${{ inputs['runtime-image'] }}
@@ -94,14 +99,7 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         env:
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
-        run: |
-          printf "Building Maven application...\n"
-          # shellcheck disable=SC2086
-          if [ "$SKIP_TESTS" = "true" ]; then
-            mvn $MAVEN_CLI_OPTS clean package -DskipTests
-          else
-            mvn $MAVEN_CLI_OPTS clean package
-          fi
+        run: reusable-ci build maven application
       - name: Build library with sources and javadoc
         if: ${{ inputs['build-type'] == 'lib' }}
         working-directory: ${{ inputs['working-directory'] }}
@@ -112,7 +110,6 @@ jobs:
       - name: Generate Build SBOM
         id: sbom
         if: ${{ inputs['enable-build-sbom'] }}
-        continue-on-error: true
         working-directory: ${{ inputs['working-directory'] }}
         env:
           # renovate: datasource=maven depName=org.cyclonedx:cyclonedx-maven-plugin
@@ -123,36 +120,14 @@ jobs:
       - name: Write SBOM status to step summary
         if: always()
         env:
+          ECOSYSTEM: maven
           SBOM_OUTCOME: ${{ steps.sbom.outcome }}
-          WORKDIR: ${{ inputs['working-directory'] }}
-        run: |
-          # shellcheck disable=SC2016  # backticks inside single quotes are intentional markdown
-          {
-            printf '### Build SBOM\n'
-            if [[ "$SBOM_OUTCOME" == "success" ]]; then
-              bom=$(find "$WORKDIR" -path '*/target/bom.json' 2>/dev/null | sort | head -1)
-              if [[ -n "$bom" ]]; then
-                printf -- '- ✅ CycloneDX (aggregate): `%s`\n' "$bom"
-              else
-                printf -- '- ⚠️ Plugin ran but no bom.json was written\n'
-              fi
-            else
-              printf -- '- ⚠️ Generation step did not succeed (continued as advisory)\n'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: List built artifacts
-        working-directory: ${{ inputs['working-directory'] }}
-        run: |
-          printf "Built artifacts:\n"
-          ls -lh target/*.jar 2>/dev/null || printf "No JAR files in root target/\n"
-          ls -lh target/*.war 2>/dev/null || printf "No WAR files in root target/\n"
-
-          printf "Checking for multi-module artifacts:\n"
-          find . -type f -name "*.jar" -path "*/target/*" ! -name "original-*.jar" -exec ls -lh {} \; 2>/dev/null || printf "No JAR files found in sub-modules\n"
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: reusable-ci report status build-sbom
       - name: Upload Maven artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: maven-build-artifacts
+          name: ${{ inputs['artifact-name'] && format('{0}-build-artifacts', inputs['artifact-name']) || 'maven-build-artifacts' }}
           path: |
             ${{ inputs['working-directory'] }}/target/*.jar
             ${{ inputs['working-directory'] }}/target/*.war
@@ -163,7 +138,7 @@ jobs:
             !${{ inputs['working-directory'] }}/target/original-*.jar
             !${{ inputs['working-directory'] }}/**/target/original-*.jar
           retention-days: 7
-          if-no-files-found: warn
+          if-no-files-found: error
       # Build SBOM is a separate compliance deliverable; keeping it in its
       # own artifact means a broken SBOM plugin can't take down the code
       # artifact and downstream consumers can fetch just what they need.
@@ -171,7 +146,7 @@ jobs:
         if: steps.sbom.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: maven-build-sbom
+          name: ${{ inputs['artifact-name'] && format('{0}-build-sbom', inputs['artifact-name']) || 'maven-build-sbom' }}
           path: |
             ${{ inputs['working-directory'] }}/target/bom.json
             ${{ inputs['working-directory'] }}/**/target/bom.json
@@ -180,10 +155,10 @@ jobs:
       - name: Generate build summary
         env:
           BUILD_TYPE: ${{ inputs['build-type'] }}
-          GROUP_ID: ${{ steps.version-info.outputs.GROUP_ID }}
-          ARTIFACT_ID: ${{ steps.version-info.outputs.ARTIFACT_ID }}
-          VERSION: ${{ steps.version-info.outputs.VERSION }}
+          GROUP_ID: ${{ steps.version-info.outputs.group-id }}
+          ARTIFACT_ID: ${{ steps.version-info.outputs.artifact-id }}
+          VERSION: ${{ steps.version-info.outputs.version }}
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
-          IS_SNAPSHOT: ${{ steps.version-info.outputs.IS_SNAPSHOT }}
+          IS_SNAPSHOT: ${{ steps.version-info.outputs.is-snapshot }}
           JAVA_VERSION: "25"
-        run: reusable-ci summary maven-build
+        run: reusable-ci report build maven

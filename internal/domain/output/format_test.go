@@ -4,7 +4,6 @@
 package output_test
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -24,16 +23,9 @@ func TestAll_IncludesAutoAndConcrete(t *testing.T) {
 	)
 }
 
-func TestAllStrings_FlattensAll(t *testing.T) {
-	t.Parallel()
-	require.ElementsMatch(t,
-		[]string{"auto", "text", "json", "github", "gitlab"},
-		output.AllStrings(),
-	)
-}
-
 func TestParse_RoundTripsEveryAccepted(t *testing.T) {
 	t.Parallel()
+
 	for _, f := range output.All() {
 		got, err := output.Parse(string(f))
 		require.NoError(t, err)
@@ -43,6 +35,7 @@ func TestParse_RoundTripsEveryAccepted(t *testing.T) {
 
 func TestParse_IsCaseInsensitiveAndTrimsSpace(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		in   string
 		want output.Format
@@ -55,6 +48,7 @@ func TestParse_IsCaseInsensitiveAndTrimsSpace(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.in, func(t *testing.T) {
 			t.Parallel()
+
 			got, err := output.Parse(tc.in)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, got)
@@ -64,6 +58,7 @@ func TestParse_IsCaseInsensitiveAndTrimsSpace(t *testing.T) {
 
 func TestParse_RejectsUnknown(t *testing.T) {
 	t.Parallel()
+
 	_, err := output.Parse("yaml")
 	require.ErrorIs(t, err, output.ErrUnknownFormat)
 	require.Contains(t, err.Error(), `"yaml"`)
@@ -73,6 +68,7 @@ func TestParse_RejectsUnknown(t *testing.T) {
 
 func TestParse_RejectsEmpty(t *testing.T) {
 	t.Parallel()
+
 	_, err := output.Parse("")
 	require.ErrorIs(t, err, output.ErrUnknownFormat)
 	require.Contains(t, err.Error(), "empty")
@@ -80,6 +76,7 @@ func TestParse_RejectsEmpty(t *testing.T) {
 
 func TestResolve(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name     string
 		format   output.Format
@@ -105,6 +102,7 @@ func TestResolve(t *testing.T) {
 
 func TestParseAndResolve_ResolvesAuto(t *testing.T) {
 	t.Parallel()
+
 	got, err := output.ParseAndResolve("auto", provider.PlatformGitHub)
 	require.NoError(t, err)
 	require.Equal(t, output.FormatGitHub, got)
@@ -112,12 +110,14 @@ func TestParseAndResolve_ResolvesAuto(t *testing.T) {
 
 func TestParseAndResolve_PropagatesParseError(t *testing.T) {
 	t.Parallel()
+
 	_, err := output.ParseAndResolve("yaml", provider.PlatformLocal)
 	require.ErrorIs(t, err, output.ErrUnknownFormat)
 }
 
 func TestErrUnknownFormat_IsSentinel(t *testing.T) {
 	t.Parallel()
+
 	_, err := output.Parse("xml")
-	require.True(t, errors.Is(err, output.ErrUnknownFormat))
+	require.ErrorIs(t, err, output.ErrUnknownFormat)
 }

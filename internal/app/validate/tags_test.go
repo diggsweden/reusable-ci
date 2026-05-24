@@ -153,7 +153,7 @@ func TestTagSignature_EmptyTagUsage(t *testing.T) {
 func TestGPGPublicKey_Empty(t *testing.T) {
 	t.Parallel()
 	err := appvalidate.GPGPublicKey(&bytes.Buffer{}, "")
-	if err == nil || !strings.Contains(err.Error(), "Missing RELEASE_GPG_PUBLIC_KEY") {
+	if err == nil || !strings.Contains(err.Error(), "missing RELEASE_GPG_PUBLIC_KEY") {
 		t.Errorf("err = %v", err)
 	}
 	for _, want := range []string{"Settings", "Actions"} {

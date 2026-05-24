@@ -43,7 +43,7 @@ func NewRepo(t *testing.T) *Repo {
 	env := testenv.New(t)
 	home := env.Home
 
-	r := &Repo{t: t, Dir: dir, Home: home}
+	r := &Repo{t: t, Dir: dir, Home: home} //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 
 	// Repoint the global gitconfig at $HOME/.gitconfig (isolatedenv
 	// blackholes it to /dev/null by default; tests that want repo-local
@@ -58,6 +58,7 @@ func NewRepo(t *testing.T) *Repo {
 	r.gitInWorkdir("config", "tag.gpgsign", "false")
 
 	r.AddCommit("initial commit")
+
 	return r
 }
 
@@ -65,40 +66,34 @@ func NewRepo(t *testing.T) *Repo {
 // On failure the test fatals with a clear error.
 func (r *Repo) Git(args ...string) string {
 	r.t.Helper()
-	return r.gitInWorkdir(args...)
-}
 
-func (r *Repo) gitInWorkdir(args ...string) string {
-	r.t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = r.Dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		r.t.Fatalf("git %s\nin %s\noutput:\n%s\nerr: %v",
-			strings.Join(args, " "), r.Dir, out, err)
-	}
-	return strings.TrimRight(string(out), "\n")
+	return r.gitInWorkdir(args...)
 }
 
 // AddCommit creates a commit (allow-empty) with the given message and returns the SHA.
 func (r *Repo) AddCommit(msg string) string {
 	r.t.Helper()
 	r.gitInWorkdir("commit", "--allow-empty", "-q", "-m", msg)
+
 	return r.gitInWorkdir("rev-parse", "HEAD")
 }
 
 // AddFile writes a file at relPath, stages it, and creates a commit.
 func (r *Repo) AddFile(relPath, contents, commitMsg string) string {
 	r.t.Helper()
+
 	full := filepath.Join(r.Dir, relPath)
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil { //nolint:gosec // test infra; r.Dir is t.TempDir().
 		r.t.Fatalf("mkdir %q: %v", filepath.Dir(full), err)
 	}
-	if err := os.WriteFile(full, []byte(contents), 0o644); err != nil {
+
+	if err := os.WriteFile(full, []byte(contents), 0o644); err != nil { //nolint:gosec // test infra; full is r.Dir-rooted.
 		r.t.Fatalf("write %q: %v", full, err)
 	}
+
 	r.gitInWorkdir("add", relPath)
 	r.gitInWorkdir("commit", "-q", "-m", commitMsg)
+
 	return r.gitInWorkdir("rev-parse", "HEAD")
 }
 
@@ -113,17 +108,37 @@ func (r *Repo) AddTag(name, msg string) {
 func (r *Repo) AddBareRemote() string {
 	r.t.Helper()
 	remote := r.t.TempDir()
+
+	//nolint:gosec,noctx // test infra; remote is t.TempDir().
 	cmd := exec.Command("git", "init", "--bare", "-q", "-b", "main", remote)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		r.t.Fatalf("init bare remote: %v\n%s", err, out)
 	}
+
 	r.gitInWorkdir("remote", "add", "origin", remote)
 	r.gitInWorkdir("push", "-q", "-u", "origin", "main")
 	r.Remote = remote
+
 	return remote
 }
 
 // HeadSHA returns the current HEAD commit SHA.
 func (r *Repo) HeadSHA() string {
 	return r.gitInWorkdir("rev-parse", "HEAD")
+}
+
+func (r *Repo) gitInWorkdir(args ...string) string {
+	r.t.Helper()
+
+	//nolint:gosec,noctx // test infra; args are caller-supplied within tests.
+	cmd := exec.Command("git", args...)
+	cmd.Dir = r.Dir
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		r.t.Fatalf("git %s\nin %s\noutput:\n%s\nerr: %v",
+			strings.Join(args, " "), r.Dir, out, err)
+	}
+
+	return strings.TrimRight(string(out), "\n")
 }

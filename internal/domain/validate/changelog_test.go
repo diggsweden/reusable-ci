@@ -13,6 +13,7 @@ import (
 
 func TestCountLines_Cases(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name  string
 		given string

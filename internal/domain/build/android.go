@@ -12,7 +12,6 @@ import (
 )
 
 // AndroidArtifactNamesInput drives ResolveAndroidArtifactNames. Mirrors
-// scripts/android/generate-artifact-names.sh.
 //
 // When Override is non-empty, the override-mode names are emitted (the
 // canonical artifact name from artifacts.yml drives them). Otherwise
@@ -58,15 +57,19 @@ func ResolveAndroidArtifactNames(in AndroidArtifactNamesInput) (AndroidArtifactN
 	if in.IncludeDate {
 		dateStamp = in.Today.UTC().Format("2006-01-02") + " - "
 	}
+
 	prefix := ""
 	if in.Prefix != "" {
 		prefix = in.Prefix + " - "
 	}
+
 	flavorSuffix := ""
 	if in.Flavor != "" {
 		flavorSuffix = " - " + in.Flavor
 	}
+
 	base := dateStamp + prefix + in.RepoName + flavorSuffix
+
 	return AndroidArtifactNames{
 		DebugName:   base + " - APK debug",
 		ReleaseName: base + " - APK release",
@@ -83,25 +86,28 @@ type ResolveAndroidBuildTasksInput struct {
 	BuildModule string // empty → "app"
 }
 
-// ResolveAndroidBuildTasks computes the gradle task list. Pure mirror
-// of scripts/android/resolve-build-tasks.sh.
+// ResolveAndroidBuildTasks computes the gradle task list. Pure mirror.
 func ResolveAndroidBuildTasks(in ResolveAndroidBuildTasksInput) string {
 	module := in.BuildModule
 	if module == "" {
 		module = "app"
 	}
+
 	flavorCap := capitalizeFirst(in.Flavor)
 
 	var parts []string
 	if strings.Contains(in.BuildTypes, "debug") {
 		parts = append(parts, "assemble"+flavorCap+"Debug")
 	}
+
 	if strings.Contains(in.BuildTypes, "release") {
 		parts = append(parts, "assemble"+flavorCap+"Release")
 	}
+
 	if in.IncludeAAB && strings.Contains(in.BuildTypes, "release") {
 		parts = append(parts, module+":bundle"+flavorCap+"Release")
 	}
+
 	return strings.Join(parts, " ")
 }
 
@@ -112,15 +118,17 @@ func capitalizeFirst(s string) string {
 	if s == "" {
 		return ""
 	}
+
 	return strings.ToUpper(s[:1]) + strings.ToLower(s[1:])
 }
 
 // ParseGradleVersionFromProperties extracts versionName and versionCode
 // from a gradle.properties text body. Missing lines yield "unknown",
 // matching the bash fallback.
-func ParseGradleVersionFromProperties(body string) (versionName, versionCode string) {
-	versionName = "unknown"
-	versionCode = "unknown"
+func ParseGradleVersionFromProperties(body string) (string, string) {
+	versionName := "unknown" //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+	versionCode := "unknown"
+
 	for _, line := range strings.Split(body, "\n") {
 		switch {
 		case strings.HasPrefix(line, "versionName="):
@@ -129,6 +137,7 @@ func ParseGradleVersionFromProperties(body string) (versionName, versionCode str
 			versionCode = strings.TrimPrefix(line, "versionCode=")
 		}
 	}
+
 	return versionName, versionCode
 }
 
@@ -149,46 +158,54 @@ type AndroidSummaryInput struct {
 	AABName     string
 }
 
-// RenderAndroidSummary is the pure markdown body of
-// scripts/summary/write-android-build-summary.sh.
+// RenderAndroidSummary is the pure markdown body of.
 func RenderAndroidSummary(in AndroidSummaryInput, now time.Time) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "## Android Variants Build Summary 📱\n\n")
+	var b strings.Builder //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 
-	fmt.Fprintf(&b, "### Configuration\n")
-	fmt.Fprintf(&b, "| Setting | Value |\n")
-	fmt.Fprintf(&b, "|---------|-------|\n")
-	fmt.Fprintf(&b, "| **Java** | %s (%s) |\n", in.JavaVersion, in.JDKDist)
-	fmt.Fprintf(&b, "| **Module** | %s |\n", in.BuildModule)
+	_, _ = fmt.Fprintf(&b, "## Android Variants Build Summary 📱\n\n")
+
+	_, _ = fmt.Fprintf(&b, "### Configuration\n")
+	_, _ = fmt.Fprintf(&b, "| Setting | Value |\n")
+	_, _ = fmt.Fprintf(&b, "|---------|-------|\n")
+	_, _ = fmt.Fprintf(&b, "| **Java** | %s (%s) |\n", in.JavaVersion, in.JDKDist)
+	_, _ = fmt.Fprintf(&b, "| **Module** | %s |\n", in.BuildModule)
+
 	flavor := in.Flavor
 	if flavor == "" {
 		flavor = "default"
 	}
-	fmt.Fprintf(&b, "| **Flavor** | %s |\n", flavor)
-	fmt.Fprintf(&b, "| **Build Types** | %s |\n", in.BuildTypes)
-	fmt.Fprintf(&b, "| **Include AAB** | %s |\n", checkmark(in.IncludeAAB))
-	fmt.Fprintf(&b, "| **Signing** | %s |\n", boolStatus(in.Signing))
+
+	_, _ = fmt.Fprintf(&b, "| **Flavor** | %s |\n", flavor)
+	_, _ = fmt.Fprintf(&b, "| **Build Types** | %s |\n", in.BuildTypes)
+	_, _ = fmt.Fprintf(&b, "| **Include AAB** | %s |\n", checkmark(in.IncludeAAB))
+	_, _ = fmt.Fprintf(&b, "| **Signing** | %s |\n", boolStatus(in.Signing))
+
 	if in.SkipTests {
-		fmt.Fprintf(&b, "| **Tests** | ⊘ Skipped |\n")
+		_, _ = fmt.Fprintf(&b, "| **Tests** | ⊘ Skipped |\n")
 	} else {
-		fmt.Fprintf(&b, "| **Tests** | ✓ Executed |\n")
+		_, _ = fmt.Fprintf(&b, "| **Tests** | ✓ Executed |\n")
 	}
 
 	if in.Version != "" && in.Version != "unknown" {
-		fmt.Fprintf(&b, "| **Version** | %s (%s) |\n", in.Version, in.VersionCode)
+		_, _ = fmt.Fprintf(&b, "| **Version** | %s (%s) |\n", in.Version, in.VersionCode)
 	}
 
-	fmt.Fprintf(&b, "\n### Artifacts Generated\n")
+	_, _ = fmt.Fprintf(&b, "\n### Artifacts Generated\n")
+
 	if strings.Contains(in.BuildTypes, "debug") {
-		fmt.Fprintf(&b, "✓ Debug APK: `%s`\n", in.DebugName)
+		_, _ = fmt.Fprintf(&b, "✓ Debug APK: `%s`\n", in.DebugName)
 	}
+
 	if strings.Contains(in.BuildTypes, "release") {
-		fmt.Fprintf(&b, "✓ Release APK: `%s`\n", in.ReleaseName)
+		_, _ = fmt.Fprintf(&b, "✓ Release APK: `%s`\n", in.ReleaseName)
 	}
+
 	if in.IncludeAAB && strings.Contains(in.BuildTypes, "release") {
-		fmt.Fprintf(&b, "✓ Release AAB: `%s`\n", in.AABName)
+		_, _ = fmt.Fprintf(&b, "✓ Release AAB: `%s`\n", in.AABName)
 	}
-	fmt.Fprintf(&b, "\n*Build completed at %s*\n", now.UTC().Format("2006-01-02 15:04:05 UTC"))
+
+	_, _ = fmt.Fprintf(&b, "\n*Build completed at %s*\n", now.UTC().Format("2006-01-02 15:04:05 UTC"))
+
 	return b.String()
 }
 
@@ -196,6 +213,7 @@ func checkmark(b bool) string {
 	if b {
 		return "✓"
 	}
+
 	return "✗"
 }
 
@@ -203,5 +221,6 @@ func boolStatus(b bool) string {
 	if b {
 		return "✓ Enabled"
 	}
+
 	return "⊘ Disabled"
 }

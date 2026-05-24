@@ -58,9 +58,9 @@ filter_unconventional = false
 # regex for parsing and grouping commits
 commit_parsers = [   
     { message = "^chore\\(release\\):", group = "_releases_filtered" },
-    { message = "^[a|A]dd", group = "Added" },
-    { message = "^[s|S]upport", group = "Added" },
-    { message = "^[r|R]emove", group = "Removed" },
+    { message = "^[aA]dd", group = "Added" },
+    { message = "^[sS]upport", group = "Added" },
+    { message = "^[rR]emove", group = "Removed" },
     { message = "^.*: add", group = "Added" },
     { message = "^.*: support", group = "Added" },
     { message = "^.*: remove", group = "Removed" },

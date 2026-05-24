@@ -11,8 +11,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
 )
 
-// AndroidBuildInput drives `summary android-build`. Mirrors
-// scripts/summary/write-android-build-summary.sh.
+// AndroidBuildInput drives `summary android-build`.
 type AndroidBuildInput struct {
 	JavaVersion string
 	JDKDist     string
@@ -40,6 +39,7 @@ func AndroidBuild(ctx context.Context, sink ci.SummarySink, in AndroidBuildInput
 	if now.IsZero() {
 		now = time.Now()
 	}
+
 	md := build.RenderAndroidSummary(build.AndroidSummaryInput{
 		JavaVersion: in.JavaVersion,
 		JDKDist:     in.JDKDist,
@@ -55,5 +55,6 @@ func AndroidBuild(ctx context.Context, sink ci.SummarySink, in AndroidBuildInput
 		ReleaseName: in.ReleaseName,
 		AABName:     in.AABName,
 	}, now)
+
 	return sink.Append(ctx, md)
 }

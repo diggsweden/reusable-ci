@@ -13,11 +13,12 @@ import (
 
 func TestCollectAssets_DedupesByBasename(t *testing.T) {
 	t.Parallel()
+
 	got := release.CollectAssets([]string{
 		"./release-artifacts/my-app-1.0.0.tgz",
 		"my-app-1.0.0.tgz", // duplicate basename — drop
 		"my-app-1.0.0.tgz.asc",
-		"checksums.sha256",
+		"checksums.sha256", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"checksums.sha256", // duplicate — drop
 		"",                 // empty — skip
 	})
@@ -29,7 +30,10 @@ func TestCollectAssets_DedupesByBasename(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
-func TestSignaturePath_AppendsAscSuffix(t *testing.T) {
+func TestSignatureSidecars_IncludesBothGPGAndCosignLayouts(t *testing.T) {
 	t.Parallel()
-	require.Equal(t, "foo.zip.asc", release.SignaturePath("foo.zip"))
+	require.Equal(t,
+		[]string{"foo.zip.asc", "foo.zip.bundle"},
+		release.SignatureSidecars("foo.zip"),
+	)
 }

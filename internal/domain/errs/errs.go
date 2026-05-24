@@ -82,6 +82,12 @@ var (
 	// propagate. Maps to ExitCodeNoInput (66) when it reaches main()
 	// unhandled — the user asked for a release that isn't there.
 	ErrReleaseNotFound = errors.New("release not found")
+
+	// ErrRateLimited marks "the server told us 429 and our retries did
+	// not clear it within the budget." Distinguished from
+	// ErrDependencyUnavailable because the remedy is different (wait
+	// vs investigate). Maps to ExitCodeUnavailable (69).
+	ErrRateLimited = errors.New("rate limited")
 )
 
 // ExitCodeType classifies an error into the process exit code main()
@@ -115,9 +121,12 @@ func FromHTTPStatus(status int) error {
 		return ErrPermissionDenied
 	case status == 404:
 		return ErrMissingInput
+	case status == 429:
+		return ErrRateLimited
 	case status >= 500:
 		return ErrDependencyUnavailable
 	}
+
 	return nil
 }
 
@@ -128,6 +137,7 @@ func FromHTTPStatus(status int) error {
 // matters only insofar as a single err.Is might match multiple
 // sentinels in pathological wraps; in practice each error matches
 // one classification.
+//nolint:cyclop // sysexits dispatch: one case per sentinel, refactoring would obscure the mapping.
 func ExitCodeFromError(err error) ExitCodeType {
 	switch {
 	case err == nil:
@@ -142,7 +152,7 @@ func ExitCodeFromError(err error) ExitCodeType {
 		return ExitCodeDataErr
 	case errors.Is(err, ErrMissingInput), errors.Is(err, ErrReleaseNotFound):
 		return ExitCodeNoInput
-	case errors.Is(err, ErrUnsupported), errors.Is(err, ErrDependencyUnavailable):
+	case errors.Is(err, ErrUnsupported), errors.Is(err, ErrDependencyUnavailable), errors.Is(err, ErrRateLimited):
 		return ExitCodeUnavailable
 	case errors.Is(err, ErrPermissionDenied):
 		return ExitCodeNoPerm

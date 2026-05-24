@@ -10,6 +10,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/domain/container"
 )
 
+//nolint:cyclop // fuzz harness exercising the parser exhaustively.
 func FuzzParseRules(f *testing.F) {
 	seeds := []string{
 		"",
@@ -38,18 +39,21 @@ func FuzzParseRules(f *testing.F) {
 			return
 		}
 
-		for i, rule := range rules {
+		for i, rule := range rules { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 			if rule.Type == "" {
 				t.Fatalf("rules[%d] has empty type for input %q", i, input)
 			}
+
 			switch rule.Type {
 			case container.RuleTypeRaw, container.RuleTypeRef, container.RuleTypeSemver, container.RuleTypeSHA:
 			default:
 				t.Fatalf("rules[%d] has unsupported type %q for input %q", i, rule.Type, input)
 			}
+
 			if rule.Priority() <= 0 {
 				t.Fatalf("rules[%d] has non-positive priority %d", i, rule.Priority())
 			}
+
 			if rule.Event != "" {
 				switch rule.Event {
 				case container.RefEventBranch, container.RefEventTag, container.RefEventPR:
@@ -57,6 +61,7 @@ func FuzzParseRules(f *testing.F) {
 					t.Fatalf("rules[%d] has invalid event %q", i, rule.Event)
 				}
 			}
+
 			for _, value := range []string{rule.Value, rule.Pattern, rule.Prefix} {
 				if value != "" && !utf8.ValidString(value) {
 					t.Fatalf("rule contains invalid UTF-8 string %q", value)

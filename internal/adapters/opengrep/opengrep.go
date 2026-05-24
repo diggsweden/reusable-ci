@@ -8,6 +8,7 @@ package opengrep
 import (
 	"context"
 	"errors"
+	"github.com/diggsweden/reusable-ci/internal/safeexec"
 	"io"
 	"os/exec"
 )
@@ -20,13 +21,6 @@ type Adapter struct {
 // New returns an Adapter using the system opengrep.
 func New() *Adapter { return &Adapter{} }
 
-func (a *Adapter) bin() string {
-	if a.Bin != "" {
-		return a.Bin
-	}
-	return "opengrep"
-}
-
 // RunInherit invokes `opengrep` with args, streaming stdout/stderr to
 // the provided writers. Returns the process exit code (0 on success)
 // and any error from starting/waiting on the process.
@@ -35,18 +29,29 @@ func (a *Adapter) bin() string {
 // RequestsDependencyWarning before invoking opengrep; we do the same
 // via the child's environment.
 func (a *Adapter) RunInherit(ctx context.Context, stdout, stderr io.Writer, args ...string) (int, error) {
-	cmd := exec.CommandContext(ctx, a.bin(), args...)
+	cmd := safeexec.Command(ctx, a.bin(), args...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	// Append rather than replace — preserve whatever the caller had set.
 	cmd.Env = append(cmd.Environ(), "PYTHONWARNINGS=ignore:RequestsDependencyWarning")
+
 	err := cmd.Run()
 	if err == nil {
 		return 0, nil
 	}
+
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		return exitErr.ExitCode(), nil
 	}
+
 	return -1, err
+}
+
+func (a *Adapter) bin() string {
+	if a.Bin != "" {
+		return a.Bin
+	}
+
+	return "opengrep"
 }

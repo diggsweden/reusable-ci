@@ -19,19 +19,23 @@ func TestXcodeListBuiltArtifacts(t *testing.T) {
 	fsys.WriteFile(filepath.Join("build", "export", "Demo.ipa"), []byte("fake-ipa"))
 	fsys.WriteFile(filepath.Join("build", "app.xcarchive"), []byte("fake-arch"))
 	fsys.WriteFile(filepath.Join("build", "junk.txt"), []byte("ignore"))
-	var stdout bytes.Buffer
-	if err := appbuild.XcodeListBuiltArtifacts(&stdout); err != nil {
+
+	var out bytes.Buffer
+	if err := appbuild.XcodeListBuiltArtifacts(&out); err != nil {
 		t.Fatal(err)
 	}
-	got := stdout.String()
+
+	got := out.String()
 	if !strings.Contains(got, "Built artifacts:") {
 		t.Errorf("missing header in:\n%s", got)
 	}
+
 	for _, want := range []string{"Demo.ipa", "app.xcarchive"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
 	}
+
 	if strings.Contains(got, "junk.txt") {
 		t.Errorf("unexpected non-artifact file in listing:\n%s", got)
 	}
@@ -40,11 +44,13 @@ func TestXcodeListBuiltArtifacts(t *testing.T) {
 func TestXcodeListBuiltArtifacts_MissingBuildDir(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.Chdir()
-	var stdout bytes.Buffer
-	if err := appbuild.XcodeListBuiltArtifacts(&stdout); err != nil {
+
+	var out bytes.Buffer
+	if err := appbuild.XcodeListBuiltArtifacts(&out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "No artifacts found") {
-		t.Errorf("missing notice:\n%s", stdout.String())
+
+	if !strings.Contains(out.String(), "No artifacts found") {
+		t.Errorf("missing notice:\n%s", out.String())
 	}
 }

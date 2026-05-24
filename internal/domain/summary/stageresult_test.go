@@ -12,6 +12,7 @@ import (
 
 func TestAggregateResults(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name  string
 		given []summary.Result
@@ -37,6 +38,7 @@ func TestAggregateResults(t *testing.T) {
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
+
 			if got := summary.AggregateResults(testCase.given); got != testCase.want {
 				t.Errorf("got %q, want %q", got, testCase.want)
 			}
@@ -46,6 +48,7 @@ func TestAggregateResults(t *testing.T) {
 
 func TestStageResult(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name  string
 		ran   bool
@@ -58,6 +61,7 @@ func TestStageResult(t *testing.T) {
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
+
 			if got := summary.StageResult(testCase.ran, testCase.given); got != testCase.want {
 				t.Errorf("got %q, want %q", got, testCase.want)
 			}
@@ -65,8 +69,10 @@ func TestStageResult(t *testing.T) {
 	}
 }
 
+//nolint:cyclop // verifies every JSON envelope field on one fixture.
 func TestStageResultEnvelope_JSON(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name         string
 		envelope     summary.StageResultEnvelope
@@ -79,17 +85,17 @@ func TestStageResultEnvelope_JSON(t *testing.T) {
 		{
 			name: "targets",
 			envelope: summary.StageResultEnvelope{
-				Stage:  "build",
+				Stage:  "build", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 				Result: summary.ResultSuccess,
 				Ran:    true,
 				Targets: []summary.Target{
 					{Name: "maven", Result: summary.ResultSuccess},
-					{Name: "npm", Result: summary.ResultSkipped},
+					{Name: "npm", Result: summary.ResultSkipped}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 				},
 			},
-			wantResult:  "success",
+			wantResult:  "success", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			wantRan:     true,
-			wantTargets: map[string]string{"maven": "success", "npm": "skipped"},
+			wantTargets: map[string]string{"maven": "success", "npm": "skipped"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		},
 		{
 			name: "extras",
@@ -116,29 +122,36 @@ func TestStageResultEnvelope_JSON(t *testing.T) {
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			b, err := testCase.envelope.MarshalJSON()
+
+			b, err := testCase.envelope.MarshalJSON() //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			var got map[string]any
 			if err := json.Unmarshal(b, &got); err != nil {
 				t.Fatalf("invalid JSON %s: %v", b, err)
 			}
-			if got["stage"] != "build" || got["result"] != testCase.wantResult || got["ran"] != testCase.wantRan {
+
+			if got["version"] != float64(summary.StageResultEnvelopeVersion) || got["stage"] != "build" || got["result"] != testCase.wantResult || got["ran"] != testCase.wantRan {
 				t.Errorf("base fields = %+v", got)
 			}
+
 			targets, ok := got["targets"].(map[string]any)
 			if !ok {
 				t.Fatalf("targets = %#v", got["targets"])
 			}
+
 			if len(targets) != len(testCase.wantTargets) {
 				t.Fatalf("targets = %#v, want %#v", targets, testCase.wantTargets)
 			}
+
 			for name, want := range testCase.wantTargets {
 				if targets[name] != want {
 					t.Errorf("target %q = %q, want %q", name, targets[name], want)
 				}
 			}
+
 			if testCase.wantExtraKey != "" && got[testCase.wantExtraKey] != testCase.wantExtraVal {
 				t.Errorf("extra %q = %q, want %q", testCase.wantExtraKey, got[testCase.wantExtraKey], testCase.wantExtraVal)
 			}
@@ -146,18 +159,45 @@ func TestStageResultEnvelope_JSON(t *testing.T) {
 	}
 }
 
-func TestSortTargetsByName_ReturnsSortedCopy(t *testing.T) {
+func TestParseStageResultEnvelope(t *testing.T) {
 	t.Parallel()
 
-	in := []summary.Target{
-		{Name: "z", Result: summary.ResultSuccess},
-		{Name: "a", Result: summary.ResultFailure},
+	env, err := summary.ParseStageResultEnvelope(`{"version":1,"stage":"build","result":"failure","ran":true,"targets":{"npm":"success","maven":"failure"}}`)
+	if err != nil {
+		t.Fatal(err)
 	}
-	got := summary.SortTargetsByName(in)
-	if got[0].Name != "a" || got[1].Name != "z" {
-		t.Errorf("sorted targets = %+v", got)
+
+	if env.Version != summary.StageResultEnvelopeVersion || env.Stage != "build" || env.Result != summary.ResultFailure || !env.Ran {
+		t.Errorf("envelope = %+v", env)
 	}
-	if in[0].Name != "z" || in[1].Name != "a" {
-		t.Errorf("input was mutated: %+v", in)
+
+	if got := env.TargetResult("npm"); got != summary.ResultSuccess {
+		t.Errorf("npm = %q", got)
+	}
+
+	if got := env.TargetResult("missing"); got != summary.ResultSkipped {
+		t.Errorf("missing = %q", got)
+	}
+}
+
+func TestParseStageResultEnvelope_RejectsInvalidContracts(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		json string
+	}{
+		{name: "missing version", json: `{"stage":"build","result":"success","targets":{}}`},
+		{name: "bad result", json: `{"version":1,"stage":"build","result":"in_progress","targets":{}}`},
+		{name: "bad target result", json: `{"version":1,"stage":"build","result":"success","targets":{"npm":"in_progress"}}`},
+		{name: "missing stage", json: `{"version":1,"result":"success","targets":{}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := summary.ParseStageResultEnvelope(tc.json); err == nil {
+				t.Fatal("expected invalid contract to fail")
+			}
+		})
 	}
 }

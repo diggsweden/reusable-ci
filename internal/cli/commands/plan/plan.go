@@ -12,197 +12,150 @@ import (
 
 	appplan "github.com/diggsweden/reusable-ci/internal/app/plan"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
-	domainplan "github.com/diggsweden/reusable-ci/internal/domain/plan"
 )
 
 // New returns the `plan` subgroup.
 func New() *cli.Command {
 	return &cli.Command{
 		Name:  "plan",
-		Usage: "release-policy resolution and stage interface composition",
+		Usage: "typed release, dev-release, and pull-request plan composition",
 		Commands: []*cli.Command{
-			resolveReleasePlanCmd(),
-			writeReleaseInterfaceCmd(),
-			writeDevReleaseInterfaceCmd(),
-			writePRInterfaceCmd(),
+			releaseCmd(),
+			devReleaseCmd(),
+			prCmd(),
 			getFilePatternCmd(),
 		},
 	}
 }
 
-func resolveReleasePlanCmd() *cli.Command {
+func prCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "resolve-release-plan",
-		Usage: "compute release-policy booleans + effective SBOMs from inputs",
+		Name:  "pr",
+		Usage: "compose typed pull-request quality plan contracts",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "release-type", Sources: cli.EnvVars("RELEASE_TYPE")},
-			&cli.StringFlag{Name: "release-publisher", Sources: cli.EnvVars("RELEASE_PUBLISHER")},
-			&cli.BoolFlag{Name: "release-check-authorization", Sources: cli.EnvVars("RELEASE_CHECK_AUTHORIZATION")},
-			&cli.BoolFlag{Name: "release-draft", Sources: cli.EnvVars("RELEASE_DRAFT")},
-			&cli.StringFlag{Name: "release-sboms", Value: "all", Sources: cli.EnvVars("RELEASE_SBOMS")},
-			&cli.BoolFlag{Name: "release-sign-artifacts", Sources: cli.EnvVars("RELEASE_SIGN_ARTIFACTS")},
-			&cli.StringFlag{Name: "changelog-creator", Sources: cli.EnvVars("CHANGELOG_CREATOR")},
-			&cli.BoolFlag{Name: "changelog-skip-version-bump", Sources: cli.EnvVars("CHANGELOG_SKIP_VERSION_BUMP")},
-			&cli.StringFlag{Name: "ref-name", Required: true, Sources: cli.EnvVars("CI_REF_NAME", "GITHUB_REF_NAME")},
-			&cli.StringFlag{Name: "pipeline-sboms", Value: "none", Sources: cli.EnvVars("PIPELINE_SBOMS")},
-			&cli.BoolFlag{Name: "any-require-authorization", Sources: cli.EnvVars("ANY_REQUIRE_AUTHORIZATION")},
-			&cli.StringFlag{Name: "containers", Value: "[]", Sources: cli.EnvVars("CONTAINERS")},
+			&cli.StringFlag{Name: "project-type", Sources: cli.EnvVars("PROJECT_TYPE"), Usage: "primary ecosystem of the project (maven/npm/go/cargo/…)"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			&cli.StringFlag{Name: "base-branch", Sources: cli.EnvVars("BASE_BRANCH"), Usage: "base branch the PR targets (used for diff-mode scans)"},
+			&cli.StringFlag{Name: "reusable-ci-binary-ref", Sources: cli.EnvVars("REUSABLE_CI_BINARY_REF"), Usage: "git ref of the reusable-ci binary used in the plan (pinned for reproducibility)"},
+			&cli.StringFlag{Name: "sast-opengrep-rules", Value: "p/default", Sources: cli.EnvVars("SAST_OPENGREP_RULES"), Usage: "comma-separated opengrep rulesets the SAST quality gate uses"},
+			&cli.StringFlag{Name: "sast-opengrep-fail-on-severity", Value: "high", Sources: cli.EnvVars("SAST_OPENGREP_FAIL_ON_SEVERITY"), Usage: "minimum opengrep severity that fails the SAST gate"},
+			&cli.BoolFlag{Name: "linter-dependencyreview", Sources: cli.EnvVars("LINTER_DEPENDENCYREVIEW"), Usage: "include the GitHub dependency-review gate in the plan"},
+			&cli.BoolFlag{Name: "sast-opengrep", Sources: cli.EnvVars("SAST_OPENGREP"), Usage: "include the opengrep SAST gate in the plan"},
+			&cli.BoolFlag{Name: "linter-publiccodelint", Sources: cli.EnvVars("LINTER_PUBLICCODELINT"), Usage: "include the publiccode-yml lint gate in the plan"},
+			&cli.BoolFlag{Name: "linter-devbasecheck", Sources: cli.EnvVars("LINTER_DEVBASECHECK"), Usage: "include the devbase lint gate in the plan"},
+			&cli.BoolFlag{Name: "linter-swiftformat", Sources: cli.EnvVars("LINTER_SWIFTFORMAT"), Usage: "include the swift-format lint gate in the plan"},
+			&cli.BoolFlag{Name: "linter-swiftlint", Sources: cli.EnvVars("LINTER_SWIFTLINT"), Usage: "include the swiftlint lint gate in the plan"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			d, err := deps.Build(ctx)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = d.Close(ctx) }()
-			_, err = appplan.ResolveReleasePlan(ctx, d.OutputSink, d.SummarySink, domainplan.ReleasePlanInputs{
-				ReleaseType:               cmd.String("release-type"),
-				ReleasePublisher:          cmd.String("release-publisher"),
-				ReleaseCheckAuthorization: cmd.Bool("release-check-authorization"),
-				ReleaseDraft:              cmd.Bool("release-draft"),
-				ReleaseSBOMs:              cmd.String("release-sboms"),
-				ReleaseSignArtifacts:      cmd.Bool("release-sign-artifacts"),
-				ChangelogCreator:          cmd.String("changelog-creator"),
-				ChangelogSkipVersionBump:  cmd.Bool("changelog-skip-version-bump"),
-				RefName:                   cmd.String("ref-name"),
-				PipelineSBOMs:             cmd.String("pipeline-sboms"),
-				AnyRequireAuthorization:   cmd.Bool("any-require-authorization"),
-				HasContainers:             cmd.String("containers") != "[]",
-			})
-			return err
-		},
-	}
-}
-
-func writeReleaseInterfaceCmd() *cli.Command {
-	return &cli.Command{
-		Name:  "write-release-interface",
-		Usage: "compose the release-policy-json envelope from pre-resolved booleans",
-		Flags: []cli.Flag{
-			&cli.BoolFlag{Name: "sign-artifacts", Sources: cli.EnvVars("SHOULD_SIGN_ARTIFACTS")},
-			&cli.BoolFlag{Name: "check-authorization", Sources: cli.EnvVars("SHOULD_CHECK_AUTHORIZATION")},
-			&cli.BoolFlag{Name: "run-version-bump", Sources: cli.EnvVars("SHOULD_RUN_VERSION_BUMP")},
-			&cli.BoolFlag{Name: "create-release", Sources: cli.EnvVars("SHOULD_CREATE_RELEASE")},
-			&cli.BoolFlag{Name: "create-draft-release", Sources: cli.EnvVars("SHOULD_CREATE_DRAFT_RELEASE")},
-			&cli.StringFlag{Name: "sboms", Value: "none", Sources: cli.EnvVars("EFFECTIVE_SBOMS")},
-			&cli.BoolFlag{Name: "make-latest", Sources: cli.EnvVars("SHOULD_MAKE_LATEST")},
-			&cli.BoolFlag{Name: "has-containers", Sources: cli.EnvVars("HAS_CONTAINERS")},
-		},
-		Action: func(ctx context.Context, cmd *cli.Command) error {
-			d, err := deps.Build(ctx)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = d.Close(ctx) }()
-			return appplan.WriteReleaseInterface(ctx, d.OutputSink, appplan.WriteReleaseInterfaceInput{
-				SignArtifacts:      cmd.Bool("sign-artifacts"),
-				CheckAuthorization: cmd.Bool("check-authorization"),
-				RunVersionBump:     cmd.Bool("run-version-bump"),
-				CreateRelease:      cmd.Bool("create-release"),
-				CreateDraftRelease: cmd.Bool("create-draft-release"),
-				SBOMs:              cmd.String("sboms"),
-				MakeLatest:         cmd.Bool("make-latest"),
-				HasContainers:      cmd.Bool("has-containers"),
-			})
-		},
-	}
-}
-
-func writeDevReleaseInterfaceCmd() *cli.Command {
-	return &cli.Command{
-		Name:  "write-dev-release-interface",
-		Usage: "compose dev-context-json + dev-policy-json for the dev-release stage",
-		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "project-type", Sources: cli.EnvVars("PROJECT_TYPE")},
-			&cli.StringFlag{Name: "fallback-project-type", Sources: cli.EnvVars("FALLBACK_PROJECT_TYPE")},
-			&cli.StringFlag{Name: "branch", Sources: cli.EnvVars("BRANCH")},
-			&cli.StringFlag{Name: "release-sha", Sources: cli.EnvVars("RELEASE_SHA")},
-			&cli.StringFlag{Name: "release-actor", Sources: cli.EnvVars("RELEASE_ACTOR")},
-			&cli.StringFlag{Name: "release-repository", Sources: cli.EnvVars("RELEASE_REPOSITORY")},
-			&cli.StringFlag{Name: "working-directory", Sources: cli.EnvVars("WORKING_DIRECTORY")},
-			&cli.StringFlag{Name: "java-version", Sources: cli.EnvVars("JAVA_VERSION")},
-			&cli.StringFlag{Name: "node-version", Sources: cli.EnvVars("NODE_VERSION")},
-			&cli.StringFlag{Name: "rust-toolchain", Value: "stable", Sources: cli.EnvVars("RUST_TOOLCHAIN")},
-			&cli.StringFlag{Name: "registry", Sources: cli.EnvVars("REGISTRY")},
-			&cli.StringFlag{Name: "scripts-ref", Sources: cli.EnvVars("SCRIPTS_REF")},
-			&cli.StringFlag{Name: "npm-registry", Sources: cli.EnvVars("NPM_REGISTRY")},
-			&cli.StringFlag{Name: "package-scope", Sources: cli.EnvVars("PACKAGE_SCOPE")},
-			&cli.BoolFlag{Name: "publish-npm", Sources: cli.EnvVars("PUBLISH_NPM")},
-			&cli.BoolFlag{Name: "use-ci-token", Sources: cli.EnvVars("USE_CI_TOKEN")},
-		},
-		Action: func(ctx context.Context, cmd *cli.Command) error {
-			d, err := deps.Build(ctx)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = d.Close(ctx) }()
-			pt := cmd.String("project-type")
-			if pt == "" {
-				pt = cmd.String("fallback-project-type")
-			}
-			return appplan.WriteDevReleaseInterface(ctx, d.OutputSink, appplan.WriteDevReleaseInterfaceInput{
-				DevContext: domainplan.DevContext{
-					ProjectType:       pt,
-					Branch:            cmd.String("branch"),
-					ReleaseSHA:        cmd.String("release-sha"),
-					ReleaseActor:      cmd.String("release-actor"),
-					ReleaseRepository: cmd.String("release-repository"),
-					WorkingDirectory:  cmd.String("working-directory"),
-					JavaVersion:       cmd.String("java-version"),
-					NodeVersion:       cmd.String("node-version"),
-					RustToolchain:     cmd.String("rust-toolchain"),
-					Registry:          cmd.String("registry"),
-					ScriptsRef:        cmd.String("scripts-ref"),
-					NPMRegistry:       cmd.String("npm-registry"),
-					PackageScope:      cmd.String("package-scope"),
-				},
-				DevPolicy: domainplan.DevPolicy{
-					PublishNPM: cmd.Bool("publish-npm"),
-					UseCIToken: cmd.Bool("use-ci-token"),
-				},
-			})
-		},
-	}
-}
-
-func writePRInterfaceCmd() *cli.Command {
-	return &cli.Command{
-		Name:  "write-pr-interface",
-		Usage: "compose pr-context-json + pr-policy-json for the PR stage",
-		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "project-type", Sources: cli.EnvVars("PROJECT_TYPE")},
-			&cli.StringFlag{Name: "base-branch", Sources: cli.EnvVars("BASE_BRANCH")},
-			&cli.StringFlag{Name: "scripts-ref", Sources: cli.EnvVars("SCRIPTS_REF")},
-			&cli.StringFlag{Name: "sast-opengrep-rules", Value: "p/default", Sources: cli.EnvVars("SAST_OPENGREP_RULES")},
-			&cli.StringFlag{Name: "sast-opengrep-fail-on-severity", Value: "high", Sources: cli.EnvVars("SAST_OPENGREP_FAIL_ON_SEVERITY")},
-			&cli.BoolFlag{Name: "linter-dependencyreview", Sources: cli.EnvVars("LINTER_DEPENDENCYREVIEW")},
-			&cli.BoolFlag{Name: "sast-opengrep", Sources: cli.EnvVars("SAST_OPENGREP")},
-			&cli.BoolFlag{Name: "linter-publiccodelint", Sources: cli.EnvVars("LINTER_PUBLICCODELINT")},
-			&cli.BoolFlag{Name: "linter-devbasecheck", Sources: cli.EnvVars("LINTER_DEVBASECHECK")},
-			&cli.BoolFlag{Name: "linter-swiftformat", Sources: cli.EnvVars("LINTER_SWIFTFORMAT")},
-			&cli.BoolFlag{Name: "linter-swiftlint", Sources: cli.EnvVars("LINTER_SWIFTLINT")},
-		},
-		Action: func(ctx context.Context, cmd *cli.Command) error {
-			d, err := deps.Build(ctx)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = d.Close(ctx) }()
-			return appplan.WritePRInterface(ctx, d.OutputSink, appplan.WritePRInterfaceInput{
-				PRContext: domainplan.PRContext{
+			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
+				_, err := appplan.PR(ctx, d.OutputSink, appplan.PRInput{
 					ProjectType:                cmd.String("project-type"),
 					BaseBranch:                 cmd.String("base-branch"),
-					ScriptsRef:                 cmd.String("scripts-ref"),
+					ReusableCIBinaryRef:        cmd.String("reusable-ci-binary-ref"),
 					SASTOpengrepRules:          cmd.String("sast-opengrep-rules"),
 					SASTOpengrepFailOnSeverity: cmd.String("sast-opengrep-fail-on-severity"),
-				},
-				PRPolicy: domainplan.PRPolicy{
-					DependencyReview: cmd.Bool("linter-dependencyreview"),
-					SASTOpengrep:     cmd.Bool("sast-opengrep"),
-					PublicCodeLint:   cmd.Bool("linter-publiccodelint"),
-					DevbaseCheck:     cmd.Bool("linter-devbasecheck"),
-					SwiftFormat:      cmd.Bool("linter-swiftformat"),
-					SwiftLint:        cmd.Bool("linter-swiftlint"),
-				},
+					DependencyReview:           cmd.Bool("linter-dependencyreview"),
+					SASTOpengrep:               cmd.Bool("sast-opengrep"),
+					PublicCodeLint:             cmd.Bool("linter-publiccodelint"),
+					DevbaseCheck:               cmd.Bool("linter-devbasecheck"),
+					SwiftFormat:                cmd.Bool("linter-swiftformat"),
+					SwiftLint:                  cmd.Bool("linter-swiftlint"),
+				})
+
+				return err
+			})
+		},
+	}
+}
+
+func releaseCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "release",
+		Usage: "compose typed release and stage plan contracts",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "config-plan-json", Sources: cli.EnvVars("CONFIG_PLAN_JSON"), Usage: "typed config-plan JSON (output of 'config parse-artifacts')"},
+			&cli.StringFlag{Name: "branch", Sources: cli.EnvVars("BRANCH"), Usage: "git branch the release is being built from"},
+			&cli.StringFlag{Name: "ref-name", Required: true, Sources: cli.EnvVars("CI_REF_NAME", "GITHUB_REF_NAME"), Usage: "release tag (e.g. v1.2.3)"},
+			&cli.StringFlag{Name: "file-pattern", Sources: cli.EnvVars("FILE_PATTERN"), Usage: "git pathspecs the version-bump commit stages"},
+			&cli.StringFlag{Name: "release-type", Sources: cli.EnvVars("RELEASE_TYPE"), Usage: "type override (release/snapshot); auto-detected from the tag when empty"},
+			&cli.StringFlag{Name: "release-publisher", Sources: cli.EnvVars("RELEASE_PUBLISHER"), Usage: "platform that publishes the release (github-cli, gitlab-cli, …)"},
+			&cli.BoolFlag{Name: "release-require-allowlisted-signer", Sources: cli.EnvVars("RELEASE_REQUIRE_ALLOWLISTED_SIGNER"), Usage: "require the tag signer's fingerprint to appear in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_fingerprints (GPG)"},
+			&cli.BoolFlag{Name: "release-draft", Sources: cli.EnvVars("RELEASE_DRAFT"), Usage: "create the GitHub Release as a draft"},
+			&cli.StringFlag{Name: "release-sboms", Value: "all", Sources: cli.EnvVars("RELEASE_SBOMS"), Usage: "sboms enum gating which CISA layers the release attaches"},
+			&cli.BoolFlag{Name: "release-sign-artifacts", Value: true, Sources: cli.EnvVars("RELEASE_SIGN_ARTIFACTS"), Usage: "sign release artifacts with the release GPG key"},
+			&cli.StringFlag{Name: "changelog-creator", Sources: cli.EnvVars("CHANGELOG_CREATOR"), Usage: "tool that generates the changelog (git-cliff, …)"},
+			&cli.BoolFlag{Name: "changelog-skip-version-bump", Sources: cli.EnvVars("CHANGELOG_SKIP_VERSION_BUMP"), Usage: "skip the version-bump commit (caller already committed)"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
+				_, err := appplan.Release(ctx, d.OutputSink, d.SummarySink, appplan.ReleaseInput{
+					ConfigPlanJSON:            cmd.String("config-plan-json"),
+					Branch:                    cmd.String("branch"),
+					RefName:                   cmd.String("ref-name"),
+					FilePattern:               cmd.String("file-pattern"),
+					ReleaseType:               cmd.String("release-type"),
+					ReleasePublisher:          cmd.String("release-publisher"),
+					ReleaseRequireAllowlistedSigner: cmd.Bool("release-require-allowlisted-signer"),
+					ReleaseDraft:              cmd.Bool("release-draft"),
+					ReleaseSBOMs:              cmd.String("release-sboms"),
+					ReleaseSignArtifacts:      cmd.Bool("release-sign-artifacts"),
+					ChangelogCreator:          cmd.String("changelog-creator"),
+					ChangelogSkipVersionBump:  cmd.Bool("changelog-skip-version-bump"),
+				})
+
+				return err
+			})
+		},
+	}
+}
+
+func devReleaseCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "dev-release",
+		Usage: "compose typed dev-release and stage plan contracts",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "config-plan-json", Sources: cli.EnvVars("CONFIG_PLAN_JSON"), Usage: "typed config-plan JSON (output of 'config parse-artifacts')"},
+			&cli.StringFlag{Name: "project-type", Sources: cli.EnvVars("PROJECT_TYPE"), Usage: "primary ecosystem of the project (maven/npm/go/cargo/…)"},
+			&cli.StringFlag{Name: "branch", Sources: cli.EnvVars("BRANCH"), Usage: "git branch the dev-release is being built from"},
+			&cli.StringFlag{Name: "release-sha", Sources: cli.EnvVars("RELEASE_SHA"), Usage: "commit SHA the dev-release is anchored to"},
+			&cli.StringFlag{Name: "release-actor", Sources: cli.EnvVars("RELEASE_ACTOR"), Usage: "user triggering the dev-release"},
+			&cli.StringFlag{Name: "release-repository", Sources: cli.EnvVars("RELEASE_REPOSITORY"), Usage: "\"owner/repo\" the dev-release is published from"},
+			&cli.StringFlag{Name: "working-dir", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "default working directory when no per-artifact override is in the plan"},
+			&cli.StringFlag{Name: "java-version", Sources: cli.EnvVars("JAVA_VERSION"), Usage: "JDK version installed by the publish job (Maven/Gradle paths)"},
+			&cli.StringFlag{Name: "node-version", Sources: cli.EnvVars("NODE_VERSION"), Usage: "Node.js version installed by the publish job (npm path)"},
+			&cli.StringFlag{Name: "rust-toolchain", Value: "stable", Sources: cli.EnvVars("RUST_TOOLCHAIN"), Usage: "Rust toolchain installed by the publish job (cargo path)"},
+			&cli.StringFlag{Name: "registry", Sources: cli.EnvVars("REGISTRY"), Usage: "container registry the dev image is pushed to"},
+			&cli.StringFlag{Name: "reusable-ci-binary-ref", Sources: cli.EnvVars("REUSABLE_CI_BINARY_REF"), Usage: "git ref of the reusable-ci binary used in the plan"},
+			&cli.StringFlag{Name: "npm-registry", Sources: cli.EnvVars("NPM_REGISTRY"), Usage: "npm registry URL the dev tarball is published to"},
+			&cli.StringFlag{Name: "package-scope", Sources: cli.EnvVars("PACKAGE_SCOPE"), Usage: "npm package scope (e.g. @diggsweden) routed to the registry"},
+			&cli.StringFlag{Name: "sboms", Value: "none", Sources: cli.EnvVars("SBOMS"), Usage: "sboms enum gating which CISA layers the dev-release produces"},
+			&cli.BoolFlag{Name: "publish-npm", Value: true, Sources: cli.EnvVars("PUBLISH_NPM"), Usage: "include the npm dev-publish step in the plan"},
+			&cli.BoolFlag{Name: "use-ci-token", Value: true, Sources: cli.EnvVars("USE_CI_TOKEN"), Usage: "use the CI platform token in place of an explicit registry password"},
+			&cli.BoolFlag{Name: "publish-container", Value: true, Sources: cli.EnvVars("PUBLISH_CONTAINER"), Usage: "include the container dev-publish step in the plan"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
+				_, err := appplan.DevRelease(ctx, d.OutputSink, appplan.DevReleaseInput{
+					ConfigPlanJSON:      cmd.String("config-plan-json"),
+					ProjectType:         cmd.String("project-type"),
+					Branch:              cmd.String("branch"),
+					ReleaseSHA:          cmd.String("release-sha"),
+					ReleaseActor:        cmd.String("release-actor"),
+					ReleaseRepository:   cmd.String("release-repository"),
+					WorkingDirectory:    cmd.String("working-directory"),
+					JavaVersion:         cmd.String("java-version"),
+					NodeVersion:         cmd.String("node-version"),
+					RustToolchain:       cmd.String("rust-toolchain"),
+					Registry:            cmd.String("registry"),
+					ReusableCIBinaryRef: cmd.String("reusable-ci-binary-ref"),
+					NPMRegistry:         cmd.String("npm-registry"),
+					PackageScope:        cmd.String("package-scope"),
+					SBOMs:               cmd.String("sboms"),
+					PublishNPM:          cmd.Bool("publish-npm"),
+					UseCIToken:          cmd.Bool("use-ci-token"),
+					PublishContainer:    cmd.Bool("publish-container"),
+				})
+
+				return err
 			})
 		},
 	}
@@ -210,37 +163,36 @@ func writePRInterfaceCmd() *cli.Command {
 
 func getFilePatternCmd() *cli.Command {
 	return &cli.Command{
-		Name:      "get-file-pattern",
-		Usage:     "print the version-bump pathspec for a project type",
-		ArgsUsage: "<project-type> [custom-pattern]",
+		Name:  "file-pattern",
+		Usage: "print the version-bump pathspec for a project type",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "project-type", Sources: cli.EnvVars("PROJECT_TYPE")},
-			&cli.StringFlag{Name: "custom-pattern", Sources: cli.EnvVars("EXPLICIT_FILE_PATTERN")},
+			&cli.StringFlag{
+				Name:    "project-type",
+				Sources: cli.EnvVars("PROJECT_TYPE"),
+				Usage:   "ecosystem whose default pathspec to emit (ignored if --custom-pattern is set)",
+			},
+			&cli.StringFlag{
+				Name:    "custom-pattern",
+				Sources: cli.EnvVars("EXPLICIT_FILE_PATTERN"),
+				Usage:   "verbatim pathspec to emit, overriding the ecosystem default",
+			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			d, err := deps.Build(ctx)
+			format, err := deps.OutputFormat(cmd)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = d.Close(ctx) }()
-			args := cmd.Args().Slice()
-			pt := cmd.String("project-type")
-			cp := cmd.String("custom-pattern")
-			writeOutput := false
-			if len(args) >= 1 {
-				pt = args[0]
-			} else {
-				writeOutput = true
-			}
-			if len(args) >= 2 {
-				cp = args[1]
-			}
-			_, err = appplan.GetFilePattern(ctx, d.OutputSink, os.Stdout, appplan.GetFilePatternInput{
-				ProjectType:   pt,
-				CustomPattern: cp,
-				WriteToOutput: writeOutput,
+
+			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
+				_, err := appplan.GetFilePattern(ctx, d.OutputSink, os.Stderr, appplan.GetFilePatternInput{
+					ProjectType:   cmd.String("project-type"),
+					CustomPattern: cmd.String("custom-pattern"),
+					WriteToOutput: true,
+					Format:        format,
+				})
+
+				return err
 			})
-			return err
 		},
 	}
 }

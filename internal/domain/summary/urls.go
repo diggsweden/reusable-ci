@@ -9,8 +9,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/domain/provider"
 )
 
-// ReleaseURL builds the platform-aware URL to a release page. Mirrors
-// ci_release_url in scripts/ci/output.sh.
+// ReleaseURL builds the platform-aware URL to a release page.
 //
 //	github → <server>/<repo>/releases/tag/<version>
 //	gitlab → <server>/<repo>/-/releases/<version>
@@ -21,8 +20,10 @@ func ReleaseURL(plat provider.Platform, server, repo, version string) string {
 		return fmt.Sprintf("%s/%s/releases/tag/%s", server, repo, version)
 	case provider.PlatformGitLab:
 		return fmt.Sprintf("%s/%s/-/releases/%s", server, repo, version)
+	default:
+		// PlatformLocal: no hosted release page — emit a textual placeholder.
+		return fmt.Sprintf("(release: %s)", version)
 	}
-	return fmt.Sprintf("(release: %s)", version)
 }
 
 // PackagesURL builds the platform-aware URL to a packages page.
@@ -36,6 +37,8 @@ func PackagesURL(plat provider.Platform, server, repo string) string {
 		return fmt.Sprintf("%s/%s/packages", server, repo)
 	case provider.PlatformGitLab:
 		return fmt.Sprintf("%s/%s/-/packages", server, repo)
+	default:
+		// PlatformLocal: no hosted packages page — emit a textual placeholder.
+		return "(packages)"
 	}
-	return "(packages)"
 }

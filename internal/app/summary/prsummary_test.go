@@ -18,20 +18,28 @@ func fixedNow() time.Time {
 
 func TestPRSummary_HappyPath(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
+
 	err := appsummary.PRSummary(context.Background(), sink, appsummary.PRSummaryInput{
-		ProjectType: "npm",
+		ProjectType: "npm", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Branch:      "feat/foo",
 		Commit:      "abcdef0123456789",
 		Actor:       "alice",
-		RunURL:      "https://example.com/run/1",
-		QualityStageResultJSON: `{"targets":{"dependencyreview":"success","sastopengrep":"failure",
-			"publiccodelint":"skipped","devbasecheck":"success","swift":"skipped"}}`,
+		RunURL:      "https://example.com/run/1", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		QualityStageResultJSON: stageResultJSON(t, "pr-quality", map[string]string{
+			"dependency_review": "success", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			"sast_opengrep":     "failure", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			"public_code_lint":  "skipped", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			"devbase_check":     "success",
+			"swift":             "skipped",
+		}),
 		Now: fixedNow(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	body := sink.buf.String()
 	for _, want := range []string{
 		"# Pull Request Summary",
@@ -55,17 +63,20 @@ func TestPRSummary_HappyPath(t *testing.T) {
 
 func TestPRSummary_MissingTargetsDefaultToSkipped(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
+
 	err := appsummary.PRSummary(context.Background(), sink, appsummary.PRSummaryInput{
 		ProjectType: "go",
-		Branch:      "main",
+		Branch:      "main", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Commit:      "abcdef0",
-		Actor:       "bot",
+		Actor:       "bot", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		// Empty JSON → all targets surface as "skipped".
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	body := sink.buf.String()
 	if strings.Count(body, "| ✗ |") != 0 {
 		t.Errorf("no failures expected on empty input: %s", body)
@@ -74,21 +85,41 @@ func TestPRSummary_MissingTargetsDefaultToSkipped(t *testing.T) {
 
 func TestPRSummary_FailureAndSkippedIcons(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
+
 	err := appsummary.PRSummary(context.Background(), sink, appsummary.PRSummaryInput{
-		ProjectType: "maven",
+		ProjectType: "maven", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Branch:      "feat/my-branch",
 		Commit:      "abc1234567890",
 		Actor:       "test-user",
-		QualityStageResultJSON: `{"targets":{"dependencyreview":"skipped","sastopengrep":"failure","publiccodelint":"success","devbasecheck":"failure","swift":"skipped"}}`,
+		QualityStageResultJSON: stageResultJSON(t, "pr-quality", map[string]string{
+			"dependency_review": "skipped",
+			"sast_opengrep":     "failure",
+			"public_code_lint":  "success",
+			"devbase_check":     "failure",
+			"swift":             "skipped",
+		}),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	body := sink.buf.String()
 	for _, want := range []string{"| Devbase Check | ✗ |", "| OpenGrep SAST | ✗ |", "| Dependency Review | − |"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in %s", want, body)
 		}
+	}
+}
+
+func TestPRSummary_RejectsMalformedStageResultJSON(t *testing.T) {
+	t.Parallel()
+
+	err := appsummary.PRSummary(context.Background(), &fakeSummarySink{}, appsummary.PRSummaryInput{
+		QualityStageResultJSON: `{"stage":"pr-quality","targets":{}}`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported version") {
+		t.Fatalf("err = %v", err)
 	}
 }

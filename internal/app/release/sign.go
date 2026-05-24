@@ -11,87 +11,221 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	domain "github.com/diggsweden/reusable-ci/internal/domain/release"
 )
 
-// gpgSigner is the slice of adapter/gpg.Adapter the sign flow needs.
-// Defining a small interface keeps app-layer tests fake-able without
-// importing the adapter or shelling to a real gpg binary.
-type gpgSigner interface {
-	DetachSign(ctx context.Context, keyID, file string) error
+// Signer is the slice of the signing adapter the sign flow needs.
+// internal/adapters/openpgp.Signer and the cosign-backed signer in
+// signer_cosign.go both satisfy it in production; tests pass in-memory
+// fakes.
+//
+// SignFile produces one sidecar file next to <file>; Extensions()
+// lists the file extension(s) the backend writes (GPG: `.asc`;
+// cosign: `.bundle` — a single self-contained v3 Sigstore bundle).
+// The caller uses Extensions() to drive the rename logic when the
+// input path is outside cwd, so per-method sidecar layouts compose
+// with the same asset-walking loop.
+//
+// The interface intentionally hides the key material — backends are
+// constructed once at process start, not per-file. Compare with the
+// previous adapter that exposed (keyID, file) and required gpg-agent
+// to hold the passphrase across multiple invocations.
+type Signer interface {
+	SignFile(ctx context.Context, file string) error
+	Extensions() []string
 }
 
 // SignInput drives `reusable-ci release sign`.
 type SignInput struct {
-	GPGKeyID            string // required
 	ChecksumsFile       string // default: domain.ChecksumsFile
 	ReleaseArtifactsDir string // default: ./release-artifacts; signatures land in cwd as <basename>.asc
+	AttachArtifacts     string // comma-separated glob list; signatures land in cwd as <basename>.asc
 }
 
-// SignArtifacts signs the checksums file in place (if present) and signs
-// each release artefact in ReleaseArtifactsDir, moving the resulting .asc
-// to the working directory under the basename. The CLI wires gpg as
-// adapter/gpg.New(); tests pass an in-memory fake.
-//
-// Mirrors scripts/release/sign-release-artifacts.sh.
-func SignArtifacts(ctx context.Context, gpg gpgSigner, in SignInput, out io.Writer) error {
-	if gpg == nil {
-		return fmt.Errorf("sign: gpg signer is required: %w", errs.ErrUsage)
+// SignArtifacts signs the checksums file in place (if present), each release
+// artefact in ReleaseArtifactsDir, and each AttachArtifacts match. Asset
+// signatures land in the working directory under <basename>.asc. The CLI wires
+// openpgp.NewSignerFromArmor (env-sourced key); tests pass an in-memory fake.
+func SignArtifacts(ctx context.Context, signer Signer, out io.Writer, in SignInput) error {
+	if signer == nil {
+		return fmt.Errorf("sign: signer is required: %w", errs.ErrUsage)
 	}
-	if in.GPGKeyID == "" {
-		return fmt.Errorf("sign: GPG_KEY_ID is required: %w", errs.ErrUsage)
-	}
+
 	if in.ChecksumsFile == "" {
 		in.ChecksumsFile = domain.ChecksumsFile
 	}
+
 	if in.ReleaseArtifactsDir == "" {
 		in.ReleaseArtifactsDir = domain.DefaultReleaseArtifactsDir
 	}
 
-	if info, err := os.Stat(in.ChecksumsFile); err == nil && info.Size() > 0 {
-		fmt.Fprintf(out, "Signing %s with GPG\n", in.ChecksumsFile)
-		if err := gpg.DetachSign(ctx, in.GPGKeyID, in.ChecksumsFile); err != nil {
-			return fmt.Errorf("sign checksums: %w", err)
+	if err := signChecksumsIfPresent(ctx, signer, in.ChecksumsFile, out); err != nil {
+		return err
+	}
+
+	signAsset := newAssetSigner(ctx, signer, out)
+
+	if err := signReleaseArtifactsDir(in.ReleaseArtifactsDir, signAsset, out); err != nil {
+		return err
+	}
+
+	return signAttachArtifacts(in.AttachArtifacts, out, signAsset)
+}
+
+// signChecksumsIfPresent signs the checksums file when it exists and
+// is non-empty. Missing or empty files are silently skipped — the
+// release flow upstream decides whether to create one.
+func signChecksumsIfPresent(ctx context.Context, signer Signer, checksumsFile string, out io.Writer) error {
+	info, err := os.Stat(checksumsFile)
+	if err != nil || info.Size() == 0 {
+		return nil //nolint:nilerr // missing checksums is a valid state.
+	}
+
+	_, _ = fmt.Fprintf(out, "Signing %s\n", checksumsFile)
+
+	if err := signer.SignFile(ctx, checksumsFile); err != nil {
+		return fmt.Errorf("sign checksums: %w", err)
+	}
+
+	return nil
+}
+
+// newAssetSigner returns a closure that signs a single artefact and
+// moves each sidecar file (one or more per method — see
+// Signer.Extensions) next to it (renaming when the source path
+// differs from the cwd-relative target). The closure dedupes by
+// basename so a file matched by both ReleaseArtifactsDir and
+// AttachArtifacts is only signed once.
+func newAssetSigner(ctx context.Context, signer Signer, out io.Writer) func(string) error {
+	signed := map[string]struct{}{}
+
+	return func(path string) error {
+		base := filepath.Base(path)
+		if _, ok := signed[base]; ok {
+			return nil
 		}
-	}
 
-	info, statErr := os.Stat(in.ReleaseArtifactsDir)
-	switch {
-	case errors.Is(statErr, fs.ErrNotExist):
-		// No release-artifacts directory — nothing more to sign.
+		_, _ = fmt.Fprintf(out, "Signing %s\n", base)
+
+		if err := signer.SignFile(ctx, path); err != nil {
+			return fmt.Errorf("sign %q: %w", base, err)
+		}
+
+		for _, ext := range signer.Extensions() {
+			oldSidecar := path + ext
+
+			newSidecar := base + ext
+			if oldSidecar == newSidecar {
+				continue
+			}
+
+			if err := os.Rename(oldSidecar, newSidecar); err != nil {
+				return fmt.Errorf("mv %q -> %q: %w", oldSidecar, newSidecar, err)
+			}
+		}
+
+		signed[base] = struct{}{}
+
 		return nil
-	case statErr != nil:
-		return fmt.Errorf("stat release artifacts dir %s: %w", in.ReleaseArtifactsDir, statErr)
-	case !info.IsDir():
-		return fmt.Errorf("%s: not a directory", in.ReleaseArtifactsDir)
+	}
+}
+
+// signReleaseArtifactsDir signs every regular file in dir that
+// IsReleaseArtifact accepts. A missing directory is a valid state
+// (attach globs may still match) and is silently skipped.
+//nolint:cyclop // stat + branch on dir state + walk + count signed/skipped — phases of one operation.
+func signReleaseArtifactsDir(dir string, signAsset func(string) error, out io.Writer) error {
+	info, err := os.Stat(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
 	}
 
-	fmt.Fprintln(out, "Signing individual artifacts")
-	entries, err := os.ReadDir(in.ReleaseArtifactsDir)
 	if err != nil {
-		return fmt.Errorf("read %q: %w", in.ReleaseArtifactsDir, err)
+		return fmt.Errorf("stat release artifacts dir %s: %w", dir, err)
 	}
+
+	if !info.IsDir() {
+		return fmt.Errorf("%s: not a directory: %w", dir, errs.ErrValidation)
+	}
+
+	_, _ = fmt.Fprintln(out, "Signing individual artifacts")
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read %q: %w", dir, err)
+	}
+
+	signedCount := 0
+	skippedCount := 0
+
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
-		full := filepath.Join(in.ReleaseArtifactsDir, e.Name())
+
+		full := filepath.Join(dir, e.Name())
 		if !domain.IsReleaseArtifact(full) {
+			skippedCount++
+
 			continue
 		}
-		fmt.Fprintf(out, "Signing %s\n", e.Name())
-		if err := gpg.DetachSign(ctx, in.GPGKeyID, full); err != nil {
-			return fmt.Errorf("sign %q: %w", e.Name(), err)
+
+		if err := signAsset(full); err != nil {
+			return err
 		}
-		// `gpg --detach-sign` produces <full>.asc next to the artefact;
-		// move it to cwd under the basename for the GitHub Release upload.
-		oldAsc := full + ".asc"
-		newAsc := e.Name() + ".asc"
-		if err := os.Rename(oldAsc, newAsc); err != nil {
-			return fmt.Errorf("mv %q -> %q: %w", oldAsc, newAsc, err)
+
+		signedCount++
+	}
+
+	// Tell the user what happened when the filter rejected every file:
+	// without this, a typo in --release-artifacts-dir or an unexpected
+	// extension set (`.exe`, plain binaries) silently produced zero
+	// signatures alongside an exit-0 "success" line.
+	if signedCount == 0 && skippedCount > 0 {
+		_, _ = fmt.Fprintf(out,
+			"  no files in %q matched the release-artifact extension filter (%s); "+
+				"use --attach-artifacts for bare binaries or other extensions\n",
+			dir, strings.Join(domain.ReleaseArtifactExtensions, ", "))
+	}
+
+	return nil
+}
+
+// signAttachArtifacts iterates each glob in patterns (comma-separated)
+// and signs every match that exists and is a regular file. No-op when
+// patterns is empty.
+func signAttachArtifacts(patterns string, out io.Writer, sign func(path string) error) error {
+	if patterns == "" {
+		return nil
+	}
+
+	_, _ = fmt.Fprintf(out, "Signing attached artifacts matching: %s\n", patterns)
+
+	for _, raw := range strings.Split(patterns, ",") {
+		pattern := strings.TrimSpace(raw)
+		if pattern == "" {
+			continue
+		}
+
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return fmt.Errorf("glob %q: %w", pattern, err)
+		}
+
+		for _, m := range matches { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+			info, statErr := os.Stat(m)
+			if statErr != nil || info.IsDir() {
+				continue
+			}
+
+			if signErr := sign(m); signErr != nil {
+				return signErr
+			}
 		}
 	}
+
 	return nil
 }

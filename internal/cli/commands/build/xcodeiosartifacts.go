@@ -17,7 +17,7 @@ func xcodeIOSListArtifactsCmd() *cli.Command {
 		Name:  "list-artifacts",
 		Usage: "list *.ipa / *.xcarchive files under build/",
 		Action: func(_ context.Context, _ *cli.Command) error {
-			return appbuild.XcodeListBuiltArtifacts(os.Stdout)
+			return appbuild.XcodeListBuiltArtifacts(os.Stderr)
 		},
 	}
 }

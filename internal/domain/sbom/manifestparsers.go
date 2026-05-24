@@ -17,13 +17,16 @@ func PackageJSONName(body []byte) string {
 	type pkg struct {
 		Name string `json:"name"`
 	}
-	var p pkg
+
+	var p pkg //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if err := json.Unmarshal(body, &p); err != nil {
 		return ""
 	}
+
 	if i := strings.Index(p.Name, "/"); i >= 0 && strings.HasPrefix(p.Name, "@") {
 		return p.Name[i+1:]
 	}
+
 	return p.Name
 }
 
@@ -32,10 +35,12 @@ func PackageJSONVersion(body []byte) string {
 	type pkg struct {
 		Version string `json:"version"`
 	}
+
 	var p pkg
 	if err := json.Unmarshal(body, &p); err != nil {
 		return ""
 	}
+
 	return p.Version
 }
 
@@ -59,6 +64,7 @@ func GradleVersion(body []byte) string {
 	if m == nil {
 		return ""
 	}
+
 	return string(m[1])
 }
 
@@ -69,6 +75,7 @@ func GradleRootProjectName(body []byte) string {
 	if m == nil {
 		return ""
 	}
+
 	return string(m[1])
 }
 
@@ -79,6 +86,7 @@ func GoModuleName(body []byte) string {
 	if m == nil {
 		return ""
 	}
+
 	return filepath.Base(string(m[1]))
 }
 
@@ -90,6 +98,7 @@ func GoModuleMajorVersion(body []byte) string {
 	if m == nil {
 		return ""
 	}
+
 	return string(m[1]) + ".0.0"
 }
 
@@ -99,6 +108,7 @@ func CargoTOMLName(body []byte) string {
 	if m == nil {
 		return ""
 	}
+
 	return string(m[1])
 }
 
@@ -109,6 +119,7 @@ func CargoTOMLVersion(body []byte) string {
 	if m == nil {
 		return ""
 	}
+
 	return string(m[1])
 }
 
@@ -118,6 +129,7 @@ func PyProjectName(body []byte) string {
 	if m == nil {
 		return ""
 	}
+
 	return string(m[1])
 }
 
@@ -128,23 +140,28 @@ func PyProjectVersion(body []byte) string {
 	if m == nil {
 		return ""
 	}
+
 	return string(m[1])
 }
 
 // SetupPyName / SetupPyVersion read the equivalent fields from a
-// classic setup.py body (loose regex, matches the bash grep -oP).
+// classic setup.py body (loose regex, matches grep -oP).
 func SetupPyName(body []byte) string {
 	m := pythonSetupName.FindSubmatch(body)
 	if m == nil {
 		return ""
 	}
+
 	return string(m[1])
 }
 
+// SetupPyVersion extracts version="..." from a setup.py body, returning
+// "" when no match is found.
 func SetupPyVersion(body []byte) string {
 	m := pythonSetupVersion.FindSubmatch(body)
 	if m == nil {
 		return ""
 	}
+
 	return string(m[1])
 }

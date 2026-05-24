@@ -24,6 +24,10 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/testutil/testenv"
 )
 
+// Process-wide GPG keyring lock state — must be package-level because
+// multiple parallel test packages share the same on-disk GNUPGHOME.
+//
+//nolint:gochecknoglobals // process-singleton lock; intentional.
 var (
 	globalLockPath = filepath.Join(os.TempDir(), "reusable-ci-gpgkey.lock")
 	globalLockMu   sync.Mutex
@@ -48,10 +52,12 @@ func New(t *testing.T) *Key {
 	lockGlobalGPG(t)
 
 	env := testenv.New(t)
+
 	dir := filepath.Join(env.Home, ".gnupg")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("gpgkey: mkdir %q: %v", dir, err)
 	}
+
 	env.Setenv("GNUPGHOME", dir)
 
 	name := "Reusable CI Test"
@@ -64,7 +70,8 @@ func New(t *testing.T) *Key {
 
 	// --quick-generate-key creates a key non-interactively. ed25519 + sign-only
 	// is the fastest valid combination for our purposes.
-	cmd := exec.Command("gpg", "--homedir", dir, "--batch", "--quiet", "--pinentry-mode", "loopback",
+	//nolint:gosec // test infra; dir and uid are test-controlled.
+	cmd := exec.CommandContext(t.Context(), "gpg", "--homedir", dir, "--batch", "--quiet", "--pinentry-mode", "loopback",
 		"--passphrase", "", "--quick-generate-key", uid, "ed25519", "sign", "0")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("gpgkey: generate: %v\n%s", err, out)
@@ -72,7 +79,7 @@ func New(t *testing.T) *Key {
 
 	fpr := readFingerprint(t, dir)
 
-	k := &Key{
+	k := &Key{ //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		t:           t,
 		GNUPGHOME:   dir,
 		Name:        name,
@@ -81,6 +88,7 @@ func New(t *testing.T) *Key {
 		Fingerprint: fpr,
 	}
 	t.Cleanup(k.cleanup)
+
 	return k
 }
 
@@ -88,11 +96,14 @@ func New(t *testing.T) *Key {
 // the GPG_PRIVATE_KEY input for adapter/gpg.Import).
 func (k *Key) ArmoredPrivateKey() string {
 	k.t.Helper()
-	cmd := exec.Command("gpg", "--homedir", k.GNUPGHOME, "--batch", "--armor", "--export-secret-keys", k.Fingerprint)
+	//nolint:gosec // test infra; GNUPGHOME is t.TempDir().
+	cmd := exec.CommandContext(k.t.Context(), "gpg", "--homedir", k.GNUPGHOME, "--batch", "--armor", "--export-secret-keys", k.Fingerprint)
+
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		k.t.Fatalf("gpgkey: export armored: %v\n%s", err, out)
 	}
+
 	return string(out)
 }
 
@@ -100,11 +111,14 @@ func (k *Key) ArmoredPrivateKey() string {
 // signature-verification fixtures).
 func (k *Key) ArmoredPublicKey() string {
 	k.t.Helper()
-	cmd := exec.Command("gpg", "--homedir", k.GNUPGHOME, "--batch", "--armor", "--export", k.Fingerprint)
+	//nolint:gosec // test infra; GNUPGHOME is t.TempDir().
+	cmd := exec.CommandContext(k.t.Context(), "gpg", "--homedir", k.GNUPGHOME, "--batch", "--armor", "--export", k.Fingerprint)
+
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		k.t.Fatalf("gpgkey: export armored public: %v\n%s", err, out)
 	}
+
 	return string(out)
 }
 
@@ -113,21 +127,27 @@ func (k *Key) KeyID() string {
 	if len(k.Fingerprint) < 16 {
 		return k.Fingerprint
 	}
+
 	return k.Fingerprint[len(k.Fingerprint)-16:]
 }
 
 func (k *Key) cleanup() {
 	// Best-effort. The temp GNUPGHOME is removed by t.TempDir().
-	_ = exec.Command("gpgconf", "--homedir", k.GNUPGHOME, "--kill", "gpg-agent").Run()
+	//nolint:gosec // test infra; GNUPGHOME is t.TempDir().
+	_ = exec.CommandContext(k.t.Context(), "gpgconf", "--homedir", k.GNUPGHOME, "--kill", "gpg-agent").Run()
 }
 
 func readFingerprint(t *testing.T, homedir string) string {
 	t.Helper()
-	cmd := exec.Command("gpg", "--homedir", homedir, "--batch", "--with-colons", "--list-secret-keys")
+
+	//nolint:gosec // test infra; homedir is test-controlled.
+	cmd := exec.CommandContext(t.Context(), "gpg", "--homedir", homedir, "--batch", "--with-colons", "--list-secret-keys")
+
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("gpgkey: list-secret-keys: %v", err)
 	}
+
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.HasPrefix(line, "fpr:") {
 			f := strings.Split(line, ":")
@@ -136,11 +156,14 @@ func readFingerprint(t *testing.T, homedir string) string {
 			}
 		}
 	}
+
 	t.Fatalf("gpgkey: no fingerprint in:\n%s", out)
+
 	return ""
 }
 
 func chmod700(dir string) error {
+	//nolint:gosec,noctx // best-effort cleanup helper without t.Context().
 	return exec.Command("chmod", "700", dir).Run()
 }
 
@@ -149,18 +172,21 @@ func lockGlobalGPG(t *testing.T) {
 
 	globalLockMu.Lock()
 	if globalLockRefs == 0 {
-		f, err := os.OpenFile(globalLockPath, os.O_CREATE|os.O_RDWR, 0o600)
+		f, err := os.OpenFile(globalLockPath, os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec,varnamelen // test infra global lock; path is a package-internal constant.
 		if err != nil {
 			globalLockMu.Unlock()
 			t.Fatalf("gpgkey: open global lock %q: %v", globalLockPath, err)
 		}
+
 		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 			_ = f.Close()
 			globalLockMu.Unlock()
 			t.Fatalf("gpgkey: lock global lock %q: %v", globalLockPath, err)
 		}
+
 		globalLockFile = f
 	}
+
 	globalLockRefs++
 	globalLockMu.Unlock()
 
@@ -172,9 +198,11 @@ func lockGlobalGPG(t *testing.T) {
 		if globalLockRefs > 0 {
 			return
 		}
+
 		if globalLockFile == nil {
 			return
 		}
+
 		_ = syscall.Flock(int(globalLockFile.Fd()), syscall.LOCK_UN)
 		_ = globalLockFile.Close()
 		globalLockFile = nil

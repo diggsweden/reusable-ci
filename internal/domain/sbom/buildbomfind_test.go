@@ -29,7 +29,7 @@ func TestFindBuildBOM_ExcludesNodeModules(t *testing.T) {
 			"release-artifacts/node_modules/lib/bom.json",
 			"release-artifacts/app/bom.json",
 		},
-		Includes: []string{"*/bom.json"},
+		Includes: []string{"*/bom.json"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Excludes: []string{"*/node_modules/*"},
 	})
 	if got != "release-artifacts/app/bom.json" {

@@ -11,6 +11,7 @@ import (
 
 func TestClassifyBranchPosition(t *testing.T) {
 	t.Parallel()
+
 	cases := []struct {
 		name            string
 		tagInBranch     bool
@@ -31,21 +32,6 @@ func TestClassifyBranchPosition(t *testing.T) {
 		got := validate.ClassifyBranchPosition(c.tagInBranch, c.branchInTag, c.tagEqualsBranch)
 		if got != c.want {
 			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
-		}
-	}
-}
-
-func TestBranchPosition_IsFatal(t *testing.T) {
-	t.Parallel()
-	cases := map[validate.BranchPosition]bool{
-		validate.BranchPositionAtHead:   false,
-		validate.BranchPositionAncestor: false,
-		validate.BranchPositionAhead:    true,
-		validate.BranchPositionDiverged: true,
-	}
-	for pos, fatal := range cases {
-		if got := pos.IsFatal(); got != fatal {
-			t.Errorf("%s.IsFatal() = %v, want %v", pos, got, fatal)
 		}
 	}
 }

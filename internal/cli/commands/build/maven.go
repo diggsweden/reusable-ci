@@ -21,22 +21,42 @@ func mavenCmd() *cli.Command {
 		Usage: "maven build wrappers",
 		Commands: []*cli.Command{
 			mavenMetadataCmd(),
+			mavenApplicationCmd(),
 			mavenLibraryCmd(),
+		},
+	}
+}
+
+func mavenApplicationCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "application", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		Usage: "run `mvn clean package` with optional -DskipTests",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "cli-opts", Sources: cli.EnvVars("MAVEN_CLI_OPTS"), Usage: "extra args forwarded to mvn (whitespace-separated, e.g. \"-B -ntp\")"},
+			&cli.BoolFlag{Name: "skip-tests", Sources: cli.EnvVars("SKIP_TESTS"), Usage: "pass -DskipTests=true to the Maven package phase"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return appbuild.MavenApplication(ctx, maven.New(), os.Stderr, os.Stderr, appbuild.MavenApplicationInput{
+				CLIOpts:   strings.Fields(cmd.String("cli-opts")),
+				SkipTests: cmd.Bool("skip-tests"),
+			})
 		},
 	}
 }
 
 func mavenMetadataCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "metadata",
-		Usage: "extract project.{version,groupId,artifactId} from the POM and emit CI outputs",
-		Action: func(ctx context.Context, _ *cli.Command) error {
-			d, err := deps.Build(ctx)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = d.Close(ctx) }()
-			return appbuild.MavenMetadata(ctx, d.OutputSink, maven.New(), os.Stdout)
+		Name:  "metadata", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		Usage: "parse pom.xml for {version,groupId,artifactId} and emit CI outputs (falls back to `mvn help:evaluate` only for ${property} references)",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "working-dir", Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory containing the pom.xml to parse"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
+				return appbuild.MavenMetadata(ctx, d.OutputSink, maven.New(), os.Stderr, appbuild.MavenMetadataInput{
+					Dir: cmd.String("working-dir"),
+				})
+			})
 		},
 	}
 }
@@ -63,7 +83,7 @@ func mavenLibraryCmd() *cli.Command {
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return appbuild.MavenLibrary(ctx, maven.New(), os.Stdout, os.Stderr, appbuild.MavenLibraryInput{
+			return appbuild.MavenLibrary(ctx, maven.New(), os.Stderr, os.Stderr, appbuild.MavenLibraryInput{
 				CLIOpts:   strings.Fields(cmd.String("cli-opts")),
 				Profile:   cmd.String("profile"),
 				SkipTests: cmd.Bool("skip-tests"),

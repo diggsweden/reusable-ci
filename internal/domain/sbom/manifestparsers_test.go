@@ -13,6 +13,7 @@ import (
 
 func TestPackageJSON_ScopedNameStripped(t *testing.T) {
 	t.Parallel()
+
 	body := []byte(`{"name":"@digg/example","version":"1.2.3"}`)
 	require.Equal(t, "example", sbom.PackageJSONName(body))
 	require.Equal(t, "1.2.3", sbom.PackageJSONVersion(body))
@@ -20,12 +21,14 @@ func TestPackageJSON_ScopedNameStripped(t *testing.T) {
 
 func TestPackageJSON_PlainName(t *testing.T) {
 	t.Parallel()
+
 	plain := []byte(`{"name":"demo","version":"0.1.0"}`)
 	require.Equal(t, "demo", sbom.PackageJSONName(plain))
 }
 
 func TestGradle_VersionAndRootProjectName(t *testing.T) {
 	t.Parallel()
+
 	build := []byte(`plugins { id 'java' }
 version = '0.5.0'
 group = 'se.digg'
@@ -51,6 +54,7 @@ go 1.24
 
 func TestGoMod_V1Module(t *testing.T) {
 	t.Parallel()
+
 	mod := []byte(`module github.com/diggsweden/example
 
 go 1.24
@@ -61,6 +65,7 @@ go 1.24
 
 func TestCargoTOML_NameAndVersion(t *testing.T) {
 	t.Parallel()
+
 	body := []byte(`[package]
 name = "demo"
 version = "1.2.3"
@@ -71,6 +76,7 @@ version = "1.2.3"
 
 func TestPython_PyProjectAndSetupPy(t *testing.T) {
 	t.Parallel()
+
 	py := []byte(`[project]
 name = "demo"
 version = "1.2.3"

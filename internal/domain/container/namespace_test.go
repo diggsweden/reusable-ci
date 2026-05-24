@@ -23,10 +23,10 @@ func TestValidateNamespace(t *testing.T) {
 		{
 			name: "exact prefix",
 			in: container.ValidateNamespaceInput{
-				ImageName:        "ghcr.io/myorg/myrepo",
-				Repository:       "myorg/myrepo",
-				Registry:         "ghcr.io",
-				EnforceNamespace: "myorg",
+				ImageName:        "ghcr.io/myorg/myrepo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+				Repository:       "myorg/myrepo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+				Registry:         "ghcr.io", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+				EnforceNamespace: "myorg", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			},
 		},
 		{
@@ -105,7 +105,7 @@ func TestValidateNamespace(t *testing.T) {
 			in: container.ValidateNamespaceInput{
 				ImageName:        "docker.io/anyone/anything",
 				Repository:       "myorg/myrepo",
-				Registry:         "docker.io",
+				Registry:         "docker.io", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 				EnforceNamespace: "myorg",
 			},
 		},
@@ -114,8 +114,8 @@ func TestValidateNamespace(t *testing.T) {
 			in: container.ValidateNamespaceInput{
 				ImageName:        "registry.gitlab.com/group/project/image",
 				Repository:       "group/project",
-				Registry:         "registry.gitlab.com",
-				EnforceNamespace: "group",
+				Registry:         "registry.gitlab.com", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+				EnforceNamespace: "group", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			},
 		},
 
@@ -132,15 +132,19 @@ func TestValidateNamespace(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			err := container.ValidateNamespace(tc.in)
 			if (err != nil) != tc.wantErr {
 				t.Errorf("err = %v, wantErr = %v", err, tc.wantErr)
 			}
-			if tc.wantViolation && !container.IsNamespaceViolation(err) {
-				t.Errorf("err = %v, want NamespaceViolation", err)
+
+			if tc.wantViolation {
+				var nv *container.NamespaceViolationError
+				if !errors.As(err, &nv) {
+					t.Errorf("err = %v, want NamespaceViolation", err)
+				}
 			}
 		})
 	}
@@ -148,26 +152,19 @@ func TestValidateNamespace(t *testing.T) {
 
 func TestNamespaceViolation_ErrorMessage(t *testing.T) {
 	t.Parallel()
-	v := &container.NamespaceViolation{
+
+	v := &container.NamespaceViolationError{
 		ImageName:      "ghcr.io/evil/payload",
 		ExpectedPrefix: "ghcr.io/myorg/myrepo",
 	}
+
 	msg := v.Error()
 	if !contains(msg, "outside the allowed namespace") {
 		t.Errorf("error message missing key phrase: %q", msg)
 	}
+
 	if !contains(msg, "ghcr.io/myorg/myrepo") {
 		t.Errorf("error message missing expected prefix: %q", msg)
-	}
-}
-
-func TestIsNamespaceViolation_NilSafe(t *testing.T) {
-	t.Parallel()
-	if container.IsNamespaceViolation(nil) {
-		t.Error("IsNamespaceViolation(nil) should be false")
-	}
-	if container.IsNamespaceViolation(errors.New("unrelated")) {
-		t.Error("IsNamespaceViolation(unrelated) should be false")
 	}
 }
 
@@ -182,5 +179,6 @@ func indexOf(haystack, needle string) int {
 			return i
 		}
 	}
+
 	return -1
 }

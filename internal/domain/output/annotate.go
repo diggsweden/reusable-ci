@@ -6,6 +6,7 @@ package output
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/provider"
 )
@@ -43,6 +44,7 @@ func NewAnnotator(w io.Writer, f Format) Annotator {
 // is responsible for rejecting bogus values before we reach here.
 func AnnotatorFromFlag(w io.Writer, formatRaw string, plat provider.Platform) Annotator {
 	f, _ := ParseAndResolve(formatRaw, plat)
+
 	return NewAnnotator(w, f)
 }
 
@@ -73,9 +75,23 @@ func (a Annotator) emit(ghaLevel, plainPrefix, msgFormat string, args ...any) {
 	if a.w == nil {
 		return // zero-value sink: discard
 	}
+
+	msg := fmt.Sprintf(msgFormat, args...)
 	if a.format == FormatGitHub {
-		fmt.Fprintf(a.w, "::"+ghaLevel+"::"+msgFormat+"\n", args...)
+		_, _ = fmt.Fprintf(a.w, "::%s::%s\n", ghaLevel, escapeGitHubWorkflowCommandData(msg))
+
 		return
 	}
-	fmt.Fprintf(a.w, plainPrefix+msgFormat+"\n", args...)
+
+	_, _ = fmt.Fprintf(a.w, "%s%s\n", plainPrefix, msg)
+}
+
+func escapeGitHubWorkflowCommandData(value string) string {
+	replacer := strings.NewReplacer(
+		"%", "%25",
+		"\r", "%0D",
+		"\n", "%0A",
+	)
+
+	return replacer.Replace(value)
 }

@@ -16,18 +16,22 @@ import (
 // RegistryAuth applies the pure auth-decision table from
 // domain/publish.ValidateRegistryAuth, prints warnings to stderr as
 // `::warning::` lines, and returns an error when the configuration is
-// invalid. Mirrors scripts/registry/validate-auth.sh.
-func RegistryAuth(_ context.Context, stdout, stderr io.Writer, annot output.Annotator, in publish.RegistryAuthInput) error {
+// invalid.
+func RegistryAuth(_ context.Context, w, stderr io.Writer, annot output.Annotator, in publish.RegistryAuthInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	res := publish.ValidateRegistryAuth(in)
 	for _, w := range res.Warnings {
 		annot.Warningf("%s", w)
 	}
+
 	if len(res.Errors) > 0 {
 		for _, e := range res.Errors {
 			annot.Errorf("%s", e)
 		}
+
 		return fmt.Errorf("%s: %w", res.Errors[0], errs.ErrPermissionDenied)
 	}
-	fmt.Fprintln(stdout, "✓ Registry authentication configuration is valid")
+
+	_, _ = fmt.Fprintln(w, "✓ Registry authentication configuration is valid")
+
 	return nil
 }

@@ -12,10 +12,10 @@ import (
 
 func TestMapTrivyFailSeverity(t *testing.T) {
 	cases := map[string]string{
-		"critical": "CRITICAL",
-		"HIGH":     "CRITICAL,HIGH",
-		"Moderate": "CRITICAL,HIGH,MEDIUM",
-		"low":      "CRITICAL,HIGH,MEDIUM,LOW",
+		"critical": "CRITICAL", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"HIGH":     "CRITICAL,HIGH", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"Moderate": "CRITICAL,HIGH,MEDIUM", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"low":      "CRITICAL,HIGH,MEDIUM,LOW", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"weird":    "CRITICAL", // default
 	}
 	for in, want := range cases {
@@ -33,7 +33,8 @@ func TestIsKnownTrivyFailSeverity(t *testing.T) {
 			t.Errorf("%q should be known", level)
 		}
 	}
-	for _, level := range []string{"", "medium", "unknown"} {
+
+	for _, level := range []string{"", "medium", "unknown"} { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		if security.IsKnownTrivyFailSeverity(level) {
 			t.Errorf("%q should not be known", level)
 		}
@@ -53,14 +54,17 @@ func TestExtractTrivyVulnIDs(t *testing.T) {
     ]}
   ]
 }`)
+
 	got, err := security.ExtractTrivyVulnIDs(body)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	want := []string{"CVE-2024-1", "CVE-2024-2", "CVE-2024-3"}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
+
 	for i := range got {
 		if got[i] != want[i] {
 			t.Errorf("at %d: %q, want %q", i, got[i], want[i])
@@ -73,15 +77,17 @@ func TestExtractTrivyVulnIDs_EmptyBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(got) != 0 {
 		t.Errorf("got %v", got)
 	}
 }
 
 func TestDiffNewIDs(t *testing.T) {
-	base := []string{"CVE-1", "CVE-2", "CVE-3"}
+	base := []string{"CVE-1", "CVE-2", "CVE-3"} //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	head := []string{"CVE-2", "CVE-3", "CVE-4", "CVE-5"}
 	got := security.DiffNewIDs(base, head)
+
 	want := []string{"CVE-4", "CVE-5"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Errorf("got %v, want %v", got, want)
@@ -105,16 +111,20 @@ func TestFilterVulnRowsByID(t *testing.T) {
     ]
   }]
 }`)
+
 	got, err := security.FilterVulnRowsByID(body, []string{"CVE-1", "CVE-2"})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(got) != 2 {
 		t.Fatalf("got %d rows, want 2", len(got))
 	}
+
 	if got[0].ID != "CVE-1" || got[0].Fixed != "1.1" {
 		t.Errorf("row 0 = %+v", got[0])
 	}
+
 	if got[1].ID != "CVE-2" || got[1].Fixed != "—" {
 		t.Errorf("row 1 = %+v (FixedVersion empty should render as em-dash)", got[1])
 	}
@@ -156,6 +166,7 @@ func TestRenderScanDepsSummary_ClearReport(t *testing.T) {
 	if !strings.Contains(got, "> No new vulnerabilities found.") {
 		t.Errorf("missing clean-report line:\n%s", got)
 	}
+
 	if strings.Contains(got, "### New Vulnerabilities") {
 		t.Errorf("did not expect details table:\n%s", got)
 	}

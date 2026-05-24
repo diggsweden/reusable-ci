@@ -51,10 +51,28 @@ on:
         default: "main"
         type: string
       runtime-image:
-        description: "reusable-ci runtime image carrying JDK + Maven. Pin to a digest or version tag; default tracks main."
+        description: "reusable-ci runtime image carrying JDK + Maven. Optional override; default uses the matching v3.0.0 runtime image."
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
         type: string
+    # All secrets are declared `required: false` so callers using
+    # `secrets: inherit` continue to work unchanged. The declarations
+    # exist for discoverability (downstream adopters can see what
+    # this workflow needs without grepping its body) and to let
+    # actionlint / `reusable-ci doctor` validate caller bindings.
+    secrets:
+      MAVEN_CENTRAL_USERNAME:
+        description: "Sonatype OSSRH portal username"
+        required: false
+      MAVEN_CENTRAL_PASSWORD:
+        description: "Sonatype OSSRH portal token (NOT the account password)"
+        required: false
+      RELEASE_GPG_PRIVATE_KEY:
+        description: "Armored OpenPGP private key used to sign published artefacts"
+        required: false
+      RELEASE_GPG_PASSPHRASE:
+        description: "Passphrase for RELEASE_GPG_PRIVATE_KEY"
+        required: false
 permissions:
   contents: read
 env:
@@ -62,7 +80,7 @@ env:
 jobs:
   publish-maven-central:
     name: Publish to Maven Central
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     container:
       image: ${{ inputs['runtime-image'] }}
@@ -71,6 +89,11 @@ jobs:
       packages: write
       id-token: write
     steps:
+      # Defense-in-depth: refuse PR-context triggers. Maven Central
+      # credentials + GPG signing key live in env on this job and must
+      # never run with PR-HEAD code. reusable-ci is pre-baked.
+      - name: Refuse PR-context trigger (publish/release secrets in scope)
+        run: reusable-ci validate event-context
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -86,7 +109,7 @@ jobs:
         env:
           GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
-        run: reusable-ci release gpg-import
+        run: reusable-ci release gpg import
       - name: Download build artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -98,76 +121,23 @@ jobs:
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs['working-directory'] }}
-        run: |
-          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
-          printf "VERSION=%s\n" "${VERSION}" >> "$GITHUB_OUTPUT"
-
-          if [[ "${VERSION}" == *-SNAPSHOT ]]; then
-            printf "IS_SNAPSHOT=true\n" >> "$GITHUB_OUTPUT"
-          else
-            printf "IS_SNAPSHOT=false\n" >> "$GITHUB_OUTPUT"
-          fi
-
-          printf "Project version: %s\n" "${VERSION}"
+        run: reusable-ci build maven metadata
       - name: Deploy to Maven Central
+        # Deploy with profile (the profile drives GPG signing via maven-gpg-plugin).
         working-directory: ${{ inputs['working-directory'] }}
         env:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           SETTINGS_PATH: ${{ inputs['settings-path'] }}
           MAVEN_PROFILE: ${{ inputs.profile }}
-        run: |
-          printf "Deploying to Maven Central...\n"
-
-          # Use settings file if provided
-          SETTINGS_ARG=""
-          if [ -n "${SETTINGS_PATH}" ]; then
-            if [ -f "${SETTINGS_PATH}" ]; then
-              SETTINGS_ARG="--settings ${SETTINGS_PATH}"
-              printf "Using settings file: %s\n" "${SETTINGS_PATH}"
-            else
-              printf "::error::Settings file specified but not found: %s\n" "${SETTINGS_PATH}"
-              exit 1
-            fi
-          fi
-
-          # Deploy with profile (includes GPG signing via maven-gpg-plugin)
-          # shellcheck disable=SC2086
-          mvn $MAVEN_CLI_OPTS deploy $SETTINGS_ARG -P"$MAVEN_PROFILE" -DskipTests
+        run: reusable-ci publish maven-central deploy
       - name: Generate publish summary
         env:
-          IS_SNAPSHOT: ${{ steps.version-info.outputs.IS_SNAPSHOT }}
-          VERSION: ${{ steps.version-info.outputs.VERSION }}
-        run: |
-          print_release_type() {
-            if [ "$IS_SNAPSHOT" = "true" ]; then
-              printf "%s **Type:** %s\n" "-" "SNAPSHOT"
-            else
-              printf "%s **Type:** %s\n" "-" "Release"
-            fi
-          }
-
-          print_release_notice() {
-            if [ "$IS_SNAPSHOT" = "true" ]; then
-              printf "⚠️ **SNAPSHOT** releases are available immediately in the snapshot repository.\n"
-            else
-              printf "✓ **Release** deployed to staging. Will be published to Central within 30 minutes.\n"
-            fi
-          }
-
-          {
-            printf "## Published to Maven Central 🚀\n"
-            printf "\n"
-            printf "%s **Version:** %s\n" "-" "$VERSION"
-            print_release_type
-            printf "%s **Registry:** [Maven Central](https://central.sonatype.com/)\n" "-"
-            printf "\n"
-            print_release_notice
-            printf "\n"
-            printf "*Published at %s*\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          } >> "$GITHUB_STEP_SUMMARY"
+          IS_SNAPSHOT: ${{ steps.version-info.outputs.is-snapshot }}
+          VERSION: ${{ steps.version-info.outputs.version }}
+        run: reusable-ci report publish maven-central
       - name: Cleanup GPG key
         if: always()
         env:
           GPG_FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
-        run: reusable-ci release gpg-cleanup
+        run: reusable-ci release gpg cleanup

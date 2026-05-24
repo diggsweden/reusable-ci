@@ -11,7 +11,7 @@
 # 2. Sets up App Store Connect API authentication
 # 3. Validates IPA file
 # 4. Uploads to App Store Connect (TestFlight)
-# 5. Optionally submits for external testing or review
+# 5. Records external testing/review intent; manual submission happens in App Store Connect
 #
 # Features:
 #   - TestFlight distribution
@@ -41,6 +41,16 @@ on:
         description: "Name of artifact containing IPA file"
         required: true
         type: string
+      enabled:
+        description: "Run App Store Connect upload. The release orchestrator disables this for unsigned Xcode builds."
+        required: false
+        default: true
+        type: boolean
+      branch:
+        description: "Branch, tag, or SHA to checkout"
+        required: false
+        default: "main"
+        type: string
       # === APP STORE CONFIGURATION ===
       platform:
         description: "Platform (ios, macos, tvos)"
@@ -49,7 +59,7 @@ on:
         type: string
       # === SUBMISSION OPTIONS ===
       submit-for-review:
-        description: "Submit for App Store review (not just TestFlight)"
+        description: "Record App Store review intent in the upload summary. Automatic review submission is not implemented."
         required: false
         default: false
         type: boolean
@@ -64,21 +74,28 @@ on:
         required: false
         default: "macos-26"
         type: string
-      scripts-ref:
-        description: "reusable-ci scripts version to fetch (branch, tag, or SHA). For coherent pinning, set to the same tag value used in `runtime-image:` on Linux jobs."
+      reusable-ci-binary-ref:
+        description: "reusable-ci binary ref/version to install (branch, tag, or SHA). For branch testing, set this to the same reusable-ci revision as runtime image overrides on Linux jobs."
         required: false
-        default: "main"
+        default: "v3.0.0"
         type: string
-      scripts-archive-url:
-        description: "URL template for the scripts source archive. `{ref}` is substituted with `scripts-ref`. Override to point at a mirror (e.g. a GitLab mirror of reusable-ci) for sovereign environments that should not reach github.com."
+    # All `required: false` — `secrets: inherit` callers unchanged.
+    secrets:
+      APP_STORE_CONNECT_API_KEY_ID:
+        description: "App Store Connect API key ID (10-char alphanumeric)"
         required: false
-        default: "https://github.com/diggsweden/reusable-ci/archive/{ref}.tar.gz"
-        type: string
+      APP_STORE_CONNECT_ISSUER_ID:
+        description: "App Store Connect API issuer ID (UUID)"
+        required: false
+      APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64:
+        description: "Base64-encoded App Store Connect API .p8 private key"
+        required: false
 permissions:
   contents: read
 jobs:
   publish:
     name: Publish to App Store Connect
+    if: ${{ inputs.enabled }}
     runs-on: ${{ inputs.macos-version }}
     timeout-minutes: 30
     permissions:
@@ -87,21 +104,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ inputs.branch }}
           fetch-depth: 1
-      - name: Set up Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - name: Checkout reusable-ci bootstrap installers
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          go-version: stable
-          check-latest: true
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+      # Tagged refs (vN.N.N) install from GitHub Releases with SHA-256
+      # verification — no Go toolchain needed. Branch/SHA refs require Go on
+      # the runner; the install script errors with an actionable message if
+      # absent.
       - name: Install reusable-ci binary
         env:
-          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
-        run: |
-          # macOS jobs can't run inside the linux runtime container, so use
-          # `go install` to build the reusable-ci binary at the requested ref.
-          GOBIN="$RUNNER_TEMP/bin" \
-            go install "github.com/diggsweden/reusable-ci/cmd/reusable-ci@${SCRIPTS_REF}"
-          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
+
+      # Defense-in-depth: refuse PR-context triggers — App Store Connect
+      # credentials in env this job uses must never run with PR-HEAD code.
+      - name: Refuse PR-context trigger (publish/release secrets in scope)
+        run: reusable-ci validate event-context
 
       - name: Download IPA artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -111,37 +135,13 @@ jobs:
 
       - name: Find IPA file
         id: find-ipa
-        run: |
-          IPA_FILE=$(find artifacts -name "*.ipa" -type f | head -1)
-
-          if [ -z "$IPA_FILE" ]; then
-            printf "::error::No IPA file found in artifact\n"
-            exit 1
-          fi
-
-          printf "ipa-file=%s\n" "${IPA_FILE}" >> "$GITHUB_OUTPUT"
-          printf "Found IPA: %s\n" "${IPA_FILE}"
-
-          ls -lh "$IPA_FILE"
+        run: reusable-ci publish appstore find-ipa
 
       - name: Setup App Store Connect API
         env:
           APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 }}
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-        run: |
-          if [ -z "$APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64" ]; then
-            printf "::error::APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 secret not found\n"
-            exit 1
-          fi
-          if [ -z "$APP_STORE_CONNECT_API_KEY_ID" ]; then
-            printf "::error::APP_STORE_CONNECT_API_KEY_ID secret not found\n"
-            exit 1
-          fi
-
-          mkdir -p private_keys
-          printf "%s" "$APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64" | base64 --decode -o "private_keys/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
-
-          printf "✓ App Store Connect API configured\n"
+        run: reusable-ci publish appstore prepare-credentials
 
       - name: Validate IPA
         if: ${{ !inputs['skip-validation'] }}
@@ -187,12 +187,7 @@ jobs:
 
       - name: Parse upload results
         id: upload-info
-        run: |
-          if [ -f upload-result.json ]; then
-            REQUEST_ID=$(jq -r '.["product-errors"][]?.requestId // .["success-message"] // "unknown"' upload-result.json)
-            printf "request-id=%s\n" "${REQUEST_ID}" >> "$GITHUB_OUTPUT"
-            printf "Upload Request ID: %s\n" "${REQUEST_ID}"
-          fi
+        run: reusable-ci publish appstore parse-upload-result
 
       - name: Generate upload summary
         env:
@@ -201,7 +196,7 @@ jobs:
           SKIP_VALIDATION: ${{ inputs['skip-validation'] }}
           SUBMIT_REVIEW: ${{ inputs['submit-for-review'] }}
           REQUEST_ID: ${{ steps.upload-info.outputs.request-id }}
-        run: reusable-ci summary appstore-upload
+        run: reusable-ci report publish appstore
 
       - name: Upload result artifact
         if: always()

@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Example: Maven library signed via self-hosted OpenBao (Transit engine).
+#
+# `sign.method: kms` with a `hashivault://` URI tells cosign to send
+# the artefact hash to OpenBao's Transit endpoint. OpenBao signs
+# internally — the private key never leaves the server. The matching
+# public key (committed to the repo under .reusable-ci/release-pubkey.pem)
+# is what downstream verifiers use.
+#
+# Requirements on the caller workflow:
+#   - VAULT_ADDR points at your OpenBao server
+#   - The runner can authenticate to OpenBao (typically via JWT auth
+#     using the GHA OIDC token; alternatively AppRole)
+#
+# Air-gap compatible: no external Sigstore service is contacted.
+#
+# See docs/verification.md#signing-methods-for-release-artefacts.
+artifacts:
+  - name: my-lib
+    project-type: maven
+    working-directory: .
+    publish-to:
+      - maven-central
+    config:
+      java-version: "25"
+      attach-pattern: target/*.jar
+
+sign:
+  method: kms
+  key: hashivault://transit/keys/release-signing

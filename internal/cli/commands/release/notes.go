@@ -18,13 +18,13 @@ func notesCmd() *cli.Command {
 		Name:  "notes",
 		Usage: "prepare release-notes file from changelog artifact, fall back to a stub when missing",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "source-file", Value: "ReleasenotesTmp", Sources: cli.EnvVars("SOURCE_FILE")},
-			&cli.StringFlag{Name: "target-file", Value: domainrelease.DefaultReleaseNotesFile, Sources: cli.EnvVars("TARGET_FILE")},
-			&cli.StringFlag{Name: "release-version", Sources: cli.EnvVars("RELEASE_VERSION")},
-			&cli.StringFlag{Name: "release-commit", Sources: cli.EnvVars("RELEASE_COMMIT")},
+			&cli.StringFlag{Name: "source-file", Value: "ReleasenotesTmp", Sources: cli.EnvVars("SOURCE_FILE"), Usage: "path to the git-cliff–generated changelog used as the source body"},
+			&cli.StringFlag{Name: "target-file", Value: domainrelease.DefaultReleaseNotesFile, Sources: cli.EnvVars("TARGET_FILE"), Usage: "destination path for the assembled release-notes body (\"-\" writes to stdout)"},
+			&cli.StringFlag{Name: "release-version", Sources: cli.EnvVars("RELEASE_VERSION"), Usage: "release version used in the fallback header when no source file is found"},
+			&cli.StringFlag{Name: "release-commit", Sources: cli.EnvVars("RELEASE_COMMIT"), Usage: "release commit SHA used in the fallback body"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return apprelease.PrepareNotes(ctx, os.Stdout, apprelease.PrepareNotesInput{
+			return apprelease.PrepareNotes(ctx, os.Stderr, apprelease.PrepareNotesInput{
 				SourceFile:     cmd.String("source-file"),
 				TargetFile:     cmd.String("target-file"),
 				ReleaseVersion: cmd.String("release-version"),
@@ -34,19 +34,20 @@ func notesCmd() *cli.Command {
 	}
 }
 
-func validateChangelogCmd() *cli.Command {
+func verifyChangelogCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "validate-changelog",
+		Name:  "verify-changelog",
 		Usage: "verify a generated changelog file exists and print a preview",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:     "changelog-file",
 				Required: true,
 				Sources:  cli.EnvVars("CHANGELOG_FILE"),
+				Usage:    "path to the generated changelog file to verify",
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return apprelease.ValidateChangelog(ctx, os.Stdout, apprelease.ValidateChangelogInput{
+			return apprelease.ValidateChangelog(ctx, os.Stderr, apprelease.ValidateChangelogInput{
 				ChangelogFile: cmd.String("changelog-file"),
 			})
 		},

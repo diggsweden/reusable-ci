@@ -71,8 +71,21 @@ on:
       runtime-image:
         description: "reusable-ci runtime image to run inside. Caller picks based on project-type — runtime-java-25 for maven/gradle/gradle-android, runtime-node-24 for npm, runtime-rust-stable for cargo, runtime-base for xcode-ios. Default works for the sed-only bumps."
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
         type: string
+    # All `required: false` — callers using `secrets: inherit`
+    # continue to work. Declarations exist for discoverability +
+    # tooling validation.
+    secrets:
+      RELEASE_GPG_PRIVATE_KEY:
+        description: "Armored OpenPGP private key for signing the version-bump commit"
+        required: false
+      RELEASE_GPG_PASSPHRASE:
+        description: "Passphrase for RELEASE_GPG_PRIVATE_KEY"
+        required: false
+      RELEASE_TOKEN:
+        description: "Token with contents:write permission for pushing the version-bump commit"
+        required: false
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
@@ -84,6 +97,7 @@ jobs:
     uses: ./.github/workflows/generate-changelog.yml
     with:
       branch: ${{ inputs.branch }}
+      runtime-image: ${{ inputs['runtime-image'] }}
       upload-as-artifact: true
       changelog-config: "/opt/reusable-ci/templates/gitcliff/keepachangelog.toml"
       git-cliff-args: "" # Empty means full history
@@ -97,6 +111,7 @@ jobs:
     uses: ./.github/workflows/generate-changelog.yml
     with:
       branch: ${{ inputs.branch }}
+      runtime-image: ${{ inputs['runtime-image'] }}
       upload-as-artifact: true
       changelog-config: "/opt/reusable-ci/templates/gitcliff/minimal.toml"
       git-cliff-args: "--latest --strip header"
@@ -105,7 +120,7 @@ jobs:
   bump-version:
     name: Bump Version and Commit
     needs: [generate-full-changelog, generate-minimal-changelog]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ${{ inputs['runtime-image'] }}
     permissions:
@@ -113,6 +128,11 @@ jobs:
     outputs:
       release-sha: ${{ steps.move-tag.outputs.release-sha }}
     steps:
+      # Defense-in-depth: refuse PR-context triggers. RELEASE_TOKEN and
+      # RELEASE_GPG_PRIVATE_KEY are consumed by this job; must never run
+      # with PR-HEAD code. reusable-ci is pre-baked in the runtime image.
+      - name: Refuse PR-context trigger (publish/release secrets in scope)
+        run: reusable-ci validate event-context
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -127,20 +147,16 @@ jobs:
           GIT_USER_SIGNINGKEY: "true"
           GIT_COMMIT_GPGSIGN: "true"
           GIT_CONFIG_GLOBAL: "true"
-        run: reusable-ci release gpg-import
+        run: reusable-ci release gpg import
       - name: Bump project version
         env:
           PROJECT_TYPE: ${{ inputs['project-type'] }}
           MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
-          WORKING_DIRECTORY_INPUT: ${{ inputs['working-directory'] }}
-          GRADLE_VERSION_FILE_INPUT: ${{ inputs['gradle-version-file'] }}
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+          GRADLE_VERSION_FILE: ${{ inputs['gradle-version-file'] }}
           XCODE_VERSION_FILE: ${{ inputs['xcode-version-file'] }}
         run: |
-          reusable-ci version bump \
-            "$PROJECT_TYPE" \
-            "${GITHUB_REF_NAME#v}" \
-            "$WORKING_DIRECTORY_INPUT" \
-            "$GRADLE_VERSION_FILE_INPUT"
+          VERSION="${GITHUB_REF_NAME#v}" reusable-ci version bump
       - name: Download Full Changelog
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -163,7 +179,7 @@ jobs:
         env:
           EXPLICIT_FILE_PATTERN: ${{ inputs['file-pattern'] }}
           PROJECT_TYPE: ${{ inputs['project-type'] }}
-        run: reusable-ci plan get-file-pattern
+        run: reusable-ci plan file-pattern
       - name: Commit and Push Changes
         env:
           BRANCH: ${{ inputs.branch }}
@@ -184,4 +200,4 @@ jobs:
         if: always()
         env:
           GPG_FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
-        run: reusable-ci release gpg-cleanup
+        run: reusable-ci release gpg cleanup

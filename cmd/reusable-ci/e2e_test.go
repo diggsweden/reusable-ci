@@ -116,12 +116,12 @@ func TestBinary_WorkflowInputDefaults_Success(t *testing.T) {
 	bin := buildBinary(t)
 	fsys := testfs.NewReal(t)
 	fsys.WriteFile(filepath.Join(".github", "workflows", "ok.yml"), []byte("name: ok\non:\n  workflow_call:\n    inputs:\n      foo:\n        default: literal\n"))
-	stdout, _, code := runBinary(t, bin, "validate", "workflow-input-defaults", "--root", fsys.Root)
+	_, stderr, code := runBinary(t, bin, "validate", "workflow-input-defaults", "--root", fsys.Root)
 	if code != 0 {
-		t.Fatalf("exit code = %d, want 0; output=%q", code, stdout)
+		t.Fatalf("exit code = %d, want 0; stderr=%q", code, stderr)
 	}
-	if strings.TrimSpace(stdout) != "Workflow input defaults look valid." {
-		t.Errorf("stdout = %q", stdout)
+	if strings.TrimSpace(stderr) != "Workflow input defaults look valid." {
+		t.Errorf("stderr = %q", stderr)
 	}
 }
 
@@ -137,12 +137,12 @@ func TestBinary_WorkflowInputDefaults_InvalidDefaultExitsWithValidation(t *testi
 		"      foo:",
 		"        default: ${{ github.ref_name }}",
 	}, "\n")+"\n"))
-	stdout, _, code := runBinary(t, bin, "validate", "workflow-input-defaults", "--root", fsys.Root)
+	_, stderr, code := runBinary(t, bin, "validate", "workflow-input-defaults", "--root", fsys.Root)
 	if code != 1 {
-		t.Fatalf("exit code = %d, want 1; output=%q", code, stdout)
+		t.Fatalf("exit code = %d, want 1; stderr=%q", code, stderr)
 	}
-	if !strings.Contains(stdout, "::error file=.github/workflows/bad.yml,line=6::workflow_call input defaults must be literal values") {
-		t.Errorf("stdout = %q", stdout)
+	if !strings.Contains(stderr, "::error file=.github/workflows/bad.yml,line=6::workflow_call input defaults must be literal values") {
+		t.Errorf("stderr = %q", stderr)
 	}
 }
 
@@ -189,15 +189,15 @@ func TestBinary_SummaryQualityCheckStatus_WritesStepSummary(t *testing.T) {
 	}
 }
 
-func TestBinary_PublishValidateAuth_MissingPasswordExitsNoPerm(t *testing.T) {
+func TestBinary_ValidateAuthRegistry_MissingPasswordExitsNoPerm(t *testing.T) {
 	env := testenv.New(t)
 	env.Setenv("USE_CI_TOKEN", "false")
-	env.Setenv("TARGET_REGISTRY", "registry.example.com")
+	env.Setenv("REGISTRY", "registry.example.com")
 	env.Setenv("CI_REGISTRY", "ghcr.io")
 	env.Setenv("REGISTRY_PASSWORD", "")
 
 	bin := buildBinary(t)
-	_, stderr, code := runBinary(t, bin, "publish", "validate-auth")
+	_, stderr, code := runBinary(t, bin, "validate", "auth", "registry")
 	if code != 77 {
 		t.Fatalf("exit code = %d, want 77; stderr=%q", code, stderr)
 	}
@@ -209,7 +209,10 @@ func TestBinary_PublishValidateAuth_MissingPasswordExitsNoPerm(t *testing.T) {
 func TestBinary_ValidateRefType_NonTagExitsValidation(t *testing.T) {
 	_ = testenv.New(t)
 	bin := buildBinary(t)
-	_, stderr, code := runBinary(t, bin, "validate", "ref-type", "branch", "main", "refs/heads/main")
+	_, stderr, code := runBinary(t, bin, "validate", "ref-type",
+		"--ref-type", "branch",
+		"--ref-name", "main",
+		"--ref", "refs/heads/main")
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1; stderr=%q", code, stderr)
 	}
@@ -218,10 +221,101 @@ func TestBinary_ValidateRefType_NonTagExitsValidation(t *testing.T) {
 	}
 }
 
+func TestBinary_Doctor_OKWhenMinimalRepoIsClean(t *testing.T) {
+	_ = testenv.New(t)
+	bin := buildBinary(t)
+	fsys := testfs.NewReal(t)
+
+	// Minimal compliant repo: artifacts.yml with a meta artifact,
+	// no sign block (defaults to gpg, no extra requirements).
+	fsys.WriteFile(filepath.Join(".reusable-ci", "artifacts.yml"), []byte(
+		"artifacts:\n  - name: x\n    project-type: meta\n",
+	))
+
+	stdout, stderr, code := runBinary(t, bin, "doctor", "--root", fsys.Root)
+	if code != 0 {
+		t.Fatalf("exit %d (want 0)\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+
+	if !strings.Contains(stdout, "[OK] artifacts.yml present") {
+		t.Errorf("stdout missing OK marker; got %s", stdout)
+	}
+
+	if strings.Contains(stdout, "[FAIL]") {
+		t.Errorf("clean repo must produce no FAIL checks; got %s", stdout)
+	}
+}
+
+func TestBinary_Doctor_FailWhenSigstoreLacksIDToken(t *testing.T) {
+	_ = testenv.New(t)
+	bin := buildBinary(t)
+	fsys := testfs.NewReal(t)
+
+	// sigstore method but no workflow with id-token: write.
+	fsys.WriteFile(filepath.Join(".reusable-ci", "artifacts.yml"), []byte(
+		"artifacts:\n  - name: x\n    project-type: meta\nsign:\n  method: sigstore\n",
+	))
+
+	stdout, _, code := runBinary(t, bin, "doctor", "--root", fsys.Root)
+
+	// ExitCodeValidation = 1 (POSIX-style rule failure).
+	if code != 1 {
+		t.Errorf("exit = %d, want 1 (ExitCodeValidation)\nstdout: %s", code, stdout)
+	}
+
+	if !strings.Contains(stdout, "[FAIL] workflow id-token permission") {
+		t.Errorf("output missing expected FAIL line; got %s", stdout)
+	}
+
+	if !strings.Contains(stdout, "id-token: write") {
+		t.Errorf("remediation must mention id-token: write; got %s", stdout)
+	}
+}
+
+func TestBinary_Doctor_MissingArtifactsYMLFails(t *testing.T) {
+	_ = testenv.New(t)
+	bin := buildBinary(t)
+	fsys := testfs.NewReal(t)
+	// Don't create .reusable-ci/artifacts.yml — that's the point.
+
+	stdout, _, code := runBinary(t, bin, "doctor", "--root", fsys.Root)
+	if code != 1 {
+		t.Errorf("missing artifacts.yml: exit = %d, want 1 (ExitCodeValidation); got %s", code, stdout)
+	}
+
+	if !strings.Contains(stdout, "[FAIL] artifacts.yml present") {
+		t.Errorf("output missing artifacts-not-found FAIL; got %s", stdout)
+	}
+}
+
+func TestBinary_Doctor_ArtifactsFlagOverride(t *testing.T) {
+	_ = testenv.New(t)
+	bin := buildBinary(t)
+	fsys := testfs.NewReal(t)
+
+	// Put the artifacts.yml in a non-standard location and point
+	// --artifacts at it.
+	customPath := filepath.Join(fsys.Root, "custom-artifacts.yml")
+	if err := os.WriteFile(customPath, []byte(
+		"artifacts:\n  - name: x\n    project-type: meta\n",
+	), 0o644); err != nil { //nolint:gosec // test fixture
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code := runBinary(t, bin, "doctor", "--root", fsys.Root, "--artifacts", customPath)
+	if code != 0 {
+		t.Fatalf("exit %d with --artifacts override\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+
+	if !strings.Contains(stdout, customPath) {
+		t.Errorf("output should reference the custom path %q; got %s", customPath, stdout)
+	}
+}
+
 func TestBinary_ValidateTagFormat_InvalidTagExitsValidation(t *testing.T) {
 	_ = testenv.New(t)
 	bin := buildBinary(t)
-	_, stderr, code := runBinary(t, bin, "validate", "tag-format", "1.0.0")
+	_, stderr, code := runBinary(t, bin, "validate", "tag", "format", "--tag", "1.0.0")
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1; stderr=%q", code, stderr)
 	}

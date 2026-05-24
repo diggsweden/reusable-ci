@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+name: Release Workflow
+on:
+  push:
+    tags:
+      - "v*.*.*"
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  release:
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v3.0.0
+    permissions:
+      contents: write
+      packages: write
+      # id-token: write is required to mint the GHA OIDC token that
+      # OpenBao's JWT auth method consumes for authentication. The
+      # token never leaves the runner — it's exchanged for a short-
+      # lived OpenBao token inside the signing step.
+      id-token: write
+      actions: read
+      attestations: write
+    secrets: inherit
+    with:
+      reusable-ci-binary-ref: v3.0.0
+      artifacts-config: .reusable-ci/artifacts.yml
+      changelog-creator: git-cliff
+      release-publisher: github-cli
+      release.attachartifacts: target/*.jar
+    # VAULT_ADDR must reach the OpenBao instance from the runner.
+    # The signing step does the OIDC → Vault-token exchange itself
+    # (or via a thin wrapper) before invoking cosign with the
+    # hashivault:// key URI from artifacts.yml.
+    #
+    # NOTE: env on `uses:` jobs is not natively supported by GHA;
+    # surface VAULT_ADDR via repository-level Variables instead
+    # (Settings → Secrets and variables → Actions → Variables).

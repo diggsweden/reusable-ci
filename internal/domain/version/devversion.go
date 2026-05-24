@@ -12,7 +12,7 @@ import (
 const DevVersionDefaultBase = "0.0.0"
 
 // DevShortSHALen is how many hex chars of the SHA appear in the dev-version
-// suffix. Matches the bash `git rev-parse --short=7`.
+// suffix. Matches `git rev-parse --short=7`.
 const DevShortSHALen = 7
 
 // ComposeDevVersion produces the canonical dev-version tag:
@@ -25,19 +25,18 @@ const DevShortSHALen = 7
 //
 // branch is sanitised via SanitizePathToken; shortSHA is used verbatim
 // (callers responsible for clamping to 7 chars).
-//
-// Mirrors scripts/version/generate-dev-version.sh.
 func ComposeDevVersion(baseVersion, branch, shortSHA string) string {
 	if baseVersion == "" {
 		baseVersion = DevVersionDefaultBase
 	}
+
 	return fmt.Sprintf("%s-dev-%s-%s",
 		baseVersion, SanitizePathToken(branch), shortSHA)
 }
 
 // semverTagPattern matches strict v-prefixed semver tags (no pre-release
 // suffix). Used internally when picking the "latest stable" tag for the
-// dev-version base. Matches the bash glob `v[0-9]*.[0-9]*.[0-9]*`
+// dev-version base. Matches glob `v[0-9]*.[0-9]*.[0-9]*`
 // interpreted strictly.
 //
 // Unexported: the package-level public "is this a semver tag?" answer
@@ -52,6 +51,7 @@ func StripVPrefix(tag string) string {
 	if len(tag) > 0 && tag[0] == 'v' {
 		return tag[1:]
 	}
+
 	return tag
 }
 
@@ -62,35 +62,46 @@ func StripVPrefix(tag string) string {
 // Pure: callers gather the candidate tags (e.g. via `git tag -l`).
 // adapter/git wraps that side and feeds the result here.
 func LatestSemverTag(tags []string) string {
-	var best string
-	var bestParts [3]int
-	for _, t := range tags {
+	var (
+		best      string
+		bestParts [3]int
+	)
+
+	for _, t := range tags { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		if !semverTagPattern.MatchString(t) {
 			continue
 		}
+
 		parts, ok := parseSemverParts(StripVPrefix(t))
 		if !ok {
 			continue
 		}
+
 		if best == "" || compareSemver(parts, bestParts) > 0 {
 			best = t
 			bestParts = parts
 		}
 	}
+
 	return best
 }
 
 // parseSemverParts splits "1.2.3" into [1,2,3].
-func parseSemverParts(v string) (parts [3]int, ok bool) {
-	var cur int
-	idx := 0
+func parseSemverParts(v string) ([3]int, bool) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	var (
+		parts [3]int
+		cur   int
+		idx   int
+	)
+
 	for i := range len(v) {
-		c := v[i]
+		c := v[i] //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		switch {
 		case c == '.':
 			if idx == 2 {
 				return parts, false
 			}
+
 			parts[idx] = cur
 			idx++
 			cur = 0
@@ -100,10 +111,13 @@ func parseSemverParts(v string) (parts [3]int, ok bool) {
 			return parts, false
 		}
 	}
+
 	if idx != 2 {
 		return parts, false
 	}
+
 	parts[2] = cur
+
 	return parts, true
 }
 
@@ -113,8 +127,10 @@ func compareSemver(a, b [3]int) int {
 			if a[i] > b[i] {
 				return 1
 			}
+
 			return -1
 		}
 	}
+
 	return 0
 }

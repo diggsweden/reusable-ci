@@ -27,57 +27,68 @@ type DebugWorkspaceInput struct {
 
 // DebugWorkspace prints the workspace listing, the .github-shared/
 // listing if present, validate-* script paths, and the github action
-// context. Mirrors scripts/ci/debug-workspace.sh.
-func DebugWorkspace(stdout io.Writer, in DebugWorkspaceInput) error {
+// context.
+func DebugWorkspace(w io.Writer, in DebugWorkspaceInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	root := in.Root
 	if root == "" {
 		var err error
+
 		root, err = os.Getwd()
 		if err != nil {
 			return fmt.Errorf("getwd: %w", err)
 		}
 	}
 
-	fmt.Fprintln(stdout, "=== Workspace structure ===")
-	listDirVerbose(stdout, root)
+	_, _ = fmt.Fprintln(w, "=== Workspace structure ===")
+	listDirVerbose(w, root)
 
-	fmt.Fprintln(stdout, "")
-	fmt.Fprintln(stdout, "=== .github-shared structure ===")
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "=== .github-shared structure ===")
+
 	shared := filepath.Join(root, ".github-shared")
 	if _, err := os.Stat(shared); err == nil {
-		listDirVerbose(stdout, shared)
+		listDirVerbose(w, shared)
 	} else {
-		fmt.Fprintln(stdout, ".github-shared not found")
+		_, _ = fmt.Fprintln(w, ".github-shared not found")
 	}
 
-	fmt.Fprintln(stdout, "")
-	fmt.Fprintln(stdout, "=== Looking for scripts ===")
-	any := false
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "=== Looking for scripts ===")
+
+	found := false
+
 	if _, err := os.Stat(shared); err == nil {
-		_ = filepath.WalkDir(shared, func(path string, d fs.DirEntry, err error) error {
+		_ = filepath.WalkDir(shared, func(path string, d fs.DirEntry, err error) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 			if err != nil {
-				slog.Warn("DebugWorkspace: skipping unreadable entry", "path", path, "err", err)
+				slog.Debug("DebugWorkspace: skipping unreadable entry", "path", path, "err", err)
+
 				return nil
 			}
+
 			if d.IsDir() {
 				return nil
 			}
+
 			name := d.Name()
 			if strings.HasPrefix(name, "validate-") && strings.HasSuffix(name, ".sh") {
-				fmt.Fprintln(stdout, path)
-				any = true
+				_, _ = fmt.Fprintln(w, path)
+
+				found = true
 			}
+
 			return nil
 		})
 	}
-	if !any {
-		fmt.Fprintln(stdout, "No scripts found")
+
+	if !found {
+		_, _ = fmt.Fprintln(w, "No scripts found")
 	}
 
-	fmt.Fprintln(stdout, "")
-	fmt.Fprintln(stdout, "=== GitHub context ===")
-	fmt.Fprintf(stdout, "action_repository: %s\n", in.ActionRepository)
-	fmt.Fprintf(stdout, "action_ref: %s\n", in.ActionRef)
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "=== GitHub context ===")
+	_, _ = fmt.Fprintf(w, "action_repository: %s\n", in.ActionRepository)
+	_, _ = fmt.Fprintf(w, "action_ref: %s\n", in.ActionRef)
+
 	return nil
 }
 
@@ -88,15 +99,19 @@ func DebugWorkspace(stdout io.Writer, in DebugWorkspaceInput) error {
 func listDirVerbose(out io.Writer, dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		fmt.Fprintf(out, "(error reading %s: %v)\n", dir, err)
+		_, _ = fmt.Fprintf(out, "(error reading %s: %v)\n", dir, err)
+
 		return
 	}
-	for _, e := range entries {
+
+	for _, e := range entries { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		info, err := e.Info()
 		if err != nil {
-			fmt.Fprintf(out, "?  %s\n", e.Name())
+			_, _ = fmt.Fprintf(out, "?  %s\n", e.Name())
+
 			continue
 		}
-		fmt.Fprintf(out, "%s %8d %s\n", info.Mode(), info.Size(), e.Name())
+
+		_, _ = fmt.Fprintf(out, "%s %8d %s\n", info.Mode(), info.Size(), e.Name())
 	}
 }

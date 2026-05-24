@@ -14,17 +14,20 @@ import (
 
 func TestGradleBuild_RendersAllFields(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
+
 	err := appsummary.GradleBuild(context.Background(), sink, appsummary.GradleBuildInput{
 		JavaVersion: "25",
 		GradleTasks: "build :app:bundle",
 		SkipTests:   true,
-		Version:     "1.2.3",
+		Version:     "1.2.3", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Now:         time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	got := sink.buf.String()
 	for _, want := range []string{
 		"## Gradle Build Summary 🔨",
@@ -42,7 +45,9 @@ func TestGradleBuild_RendersAllFields(t *testing.T) {
 
 func TestGradleBuild_OmitsVersionWhenEmpty(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
+
 	err := appsummary.GradleBuild(context.Background(), sink, appsummary.GradleBuildInput{
 		JavaVersion: "21", GradleTasks: "build", SkipTests: false,
 		Now: time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC),
@@ -50,6 +55,7 @@ func TestGradleBuild_OmitsVersionWhenEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if strings.Contains(sink.buf.String(), "**Version:**") {
 		t.Errorf("did not expect version line:\n%s", sink.buf.String())
 	}

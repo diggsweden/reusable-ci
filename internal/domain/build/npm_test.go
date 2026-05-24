@@ -15,10 +15,11 @@ import (
 
 func TestRenderNPMSummary_TestsExecuted_FullMatch(t *testing.T) {
 	t.Parallel()
+
 	now := time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC)
 	got := build.RenderNPMSummary(build.NPMSummaryInput{
 		PackageName: "@digg/example",
-		Version:     "1.2.3",
+		Version:     "1.2.3", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		NodeVersion: "24",
 		SkipTests:   false,
 	}, now)
@@ -37,6 +38,7 @@ func TestRenderNPMSummary_TestsExecuted_FullMatch(t *testing.T) {
 
 func TestRenderNPMSummary_SkipTestsFlipsLine(t *testing.T) {
 	t.Parallel()
+
 	got := build.RenderNPMSummary(build.NPMSummaryInput{
 		PackageName: "p", Version: "0.1.0", NodeVersion: "20", SkipTests: true,
 	}, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC))

@@ -9,6 +9,7 @@ package summary
 // Result is a normalised CI result value.
 type Result string
 
+// Recognised Result values.
 const (
 	ResultSuccess   Result = "success"
 	ResultFailure   Result = "failure"
@@ -16,15 +17,24 @@ const (
 	ResultSkipped   Result = "skipped"
 )
 
-// NormalizeResult maps any string to one of the four canonical results.
-// Unknown / empty values fall through to ResultSkipped, matching the
-// ci_normalize_result default in scripts/ci/output.sh.
+// NormalizeResult maps any string to one of the four canonical
+// results. Unknown / empty values fall through to ResultSkipped.
 func NormalizeResult(s string) Result {
 	switch Result(s) {
 	case ResultSuccess, ResultFailure, ResultCancelled, ResultSkipped:
 		return Result(s)
 	default:
 		return ResultSkipped
+	}
+}
+
+// IsResult reports whether r is one of the canonical CI result values.
+func IsResult(r Result) bool {
+	switch r {
+	case ResultSuccess, ResultFailure, ResultCancelled, ResultSkipped:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -40,6 +50,3 @@ func StatusIcon(s string) string {
 		return "✗"
 	}
 }
-
-// IconFor is a typed convenience over StatusIcon.
-func IconFor(r Result) string { return StatusIcon(string(r)) }

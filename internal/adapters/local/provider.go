@@ -1,24 +1,32 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: CC0-1.0
 
-// Package local implements provider.Provider for the dev / test loop.
+// Package local implements the always-available provider port for the
+// dev / test loop.
 //
 // "Local" means: not GitHub Actions, not GitLab CI. Used when running
 // the binary on a developer's machine or in a unit test that wants a
-// real Provider without faking one. Reads from a small set of env vars
+// real provider without faking one. Reads from a small set of env vars
 // the developer can set; everything else returns zero values.
+//
+// The local adapter intentionally does NOT implement TokenValidator,
+// ReleaseCreator, ReleaseAssetUploader, or SARIFUploader — those
+// capabilities require a real CI platform API to be meaningful. CLI
+// commands that need them gate on platform first, so the operator
+// gets a clear "feature X requires GitHub/GitLab CI" at the command
+// boundary rather than a runtime ErrUnsupported deep in the call
+// stack.
 package local
 
 import (
 	"context"
-	"fmt"
 	"os"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/provider"
 )
 
-// Provider satisfies provider.Provider for ad-hoc local invocations.
+// Provider satisfies the always-available provider port for ad-hoc
+// local invocations.
 type Provider struct {
 	Env func(string) string
 }
@@ -37,11 +45,14 @@ func (p *Provider) ResolveContext(_ context.Context) (*provider.EventContext, er
 	if get == nil {
 		get = os.Getenv
 	}
+
 	sha := get("CI_COMMIT")
+
 	short := sha
 	if len(short) > 7 {
 		short = short[:7]
 	}
+
 	return &provider.EventContext{
 		Platform: provider.PlatformLocal,
 		RefName:  get("CI_REF_NAME"),
@@ -53,36 +64,18 @@ func (p *Provider) ResolveContext(_ context.Context) (*provider.EventContext, er
 }
 
 // FetchRepoMetadata returns empty metadata. Local mode has no API to
-// query — operators that want OCI labels in dev runs supply OCI_DESCRIPTION
-// / OCI_LICENSE env overrides on the use case directly.
+// query — operators that want OCI labels in dev runs supply
+// OCI_DESCRIPTION / OCI_LICENSE env overrides on the use case directly.
+// Empty fields are valid output under the RepoMetadataFetcher contract.
 func (p *Provider) FetchRepoMetadata(_ context.Context, _ string) (*provider.RepoMetadata, error) {
 	return &provider.RepoMetadata{}, nil
 }
 
-// ValidateToken returns an error in local mode — token validation has
-// no meaning without a real platform API to probe.
-func (p *Provider) ValidateToken(_ context.Context, _, _ string) error {
-	return fmt.Errorf("token validation requires GitHub Actions or GitLab CI (got local): %w", errs.ErrUnsupported)
-}
-
-// ValidateBotPermissions returns a zero BotPermissions in local mode.
-// Use cases that surface this normally fail validation upstream by
-// checking Provider.Name() first.
-func (p *Provider) ValidateBotPermissions(_ context.Context, _ string) (*provider.BotPermissions, error) {
-	return &provider.BotPermissions{}, nil
-}
-
-// CreateRelease is unsupported in local mode — there's no platform to
-// create a release on.
-func (p *Provider) CreateRelease(_ context.Context, _ string, _ provider.ReleaseSpec) error {
-	return fmt.Errorf("release creation requires GitHub Actions or GitLab CI (got local): %w", errs.ErrUnsupported)
-}
-
-// UploadSARIF is unsupported in local mode — GitHub Code Scanning is
-// the only consumer this method addresses.
-func (p *Provider) UploadSARIF(_ context.Context, _ provider.SARIFUpload) error {
-	return fmt.Errorf("SARIF upload requires GitHub Actions (got local): %w", errs.ErrUnsupported)
-}
-
-// Compile-time conformance check.
-var _ provider.Provider = (*Provider)(nil)
+// Compile-time conformance checks. local.Provider satisfies the
+// always-available base + RepoMetadataFetcher. It deliberately does
+// not satisfy TokenValidator / ReleaseCreator / ReleaseAssetUploader /
+// SARIFUploader — those CLI surfaces gate on platform.
+var (
+	_ provider.Provider            = (*Provider)(nil)
+	_ provider.RepoMetadataFetcher = (*Provider)(nil)
+)

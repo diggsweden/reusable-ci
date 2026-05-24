@@ -5,9 +5,9 @@
 # Runs OpenGrep SAST, emits portable JSON/SARIF/GitLab SAST outputs, and
 # uploads SARIF to GitHub Code Scanning when CODE_SCANNING_TOKEN is configured.
 #
-# Runs inside the reusable-ci runtime container — scripts are baked at
-# /opt/reusable-ci/scripts and `opengrep` is on PATH, so this workflow does
-# not check out reusable-ci itself.
+# Runs inside the reusable-ci runtime container; the reusable-ci binary and
+# `opengrep` are on PATH, so this workflow does not check out reusable-ci
+# itself.
 name: Analyze OpenGrep SAST
 on:
   workflow_call:
@@ -23,16 +23,20 @@ on:
         default: "high"
         type: string
       runtime-image:
-        description: "reusable-ci runtime image. Pin to a digest or version tag for reproducibility; default tracks main."
+        description: "reusable-ci runtime image. Optional override; default uses the matching v3.0.0 runtime image."
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime:main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime:v3.0.0"
         type: string
+    secrets:
+      CODE_SCANNING_TOKEN:
+        description: "Token with security-events:write for SARIF upload"
+        required: false
 permissions:
   contents: read
 jobs:
   analysis:
     name: OpenGrep SAST
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     container:
       image: ${{ inputs['runtime-image'] }}
@@ -48,12 +52,12 @@ jobs:
           OPENGREP_CONFIG: ${{ inputs['opengrep-rules'] }}
           OPENGREP_FAIL_ON_SEVERITY: ${{ inputs['fail-on-severity'] }}
           HAS_CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN != '' }}
-        run: reusable-ci security run-opengrep
+        run: reusable-ci security scan opengrep
       - name: Enrich OpenGrep SARIF for GitHub
         if: always() && hashFiles('opengrep-results.sarif') != ''
         env:
           SARIF_FILE: opengrep-results.sarif
-        run: reusable-ci security enrich-github-sarif
+        run: reusable-ci security report enrich-sarif
       - name: Archive OpenGrep outputs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -82,7 +86,7 @@ jobs:
     name: Upload SARIF to Code Scanning
     needs: [analysis]
     if: always() && needs.analysis.result != 'cancelled' && needs.analysis.result != 'skipped'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 1
     container:
       image: ${{ inputs['runtime-image'] }}
@@ -101,4 +105,4 @@ jobs:
           CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
           SARIF_FILE: opengrep-results.sarif
           SARIF_CATEGORY: opengrep-sast
-        run: reusable-ci security upload-sarif
+        run: reusable-ci security report upload-sarif

@@ -8,10 +8,7 @@ name: Self Release
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
-      - "v[0-9]+.[0-9]+.[0-9]+-alpha*"
-      - "v[0-9]+.[0-9]+.[0-9]+-beta*"
-      - "v[0-9]+.[0-9]+.[0-9]+-rc*"
+      - "v*.*.*"
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -28,8 +25,8 @@ jobs:
       attestations: write
     secrets: inherit
     with:
-      artifacts-config: .github/self-artifacts.yml
-      scripts-ref: ${{ github.ref_name }}
+      artifacts-config: .reusable-ci/artifacts.yml
+      reusable-ci-binary-ref: ${{ github.ref_name }}
       changelog-creator: git-cliff
       changelog.config: templates/gitcliff/default.toml
       release-publisher: github-cli

@@ -79,14 +79,17 @@ Planning logic is for global decisions such as:
 - version-bump gating
 - authorization gating
 - SBOM/signing policy decisions
+- target membership and run gates for stage-level workflows
+- compact matrix item payloads derived from `artifacts.yml`
 
-Planning logic should not absorb matrix-specific implementation details.
+Planning logic should not absorb GitHub Actions topology or ecosystem command
+arguments. It may own matrix item contracts when those items are policy-derived
+or when naming/download contracts must stay consistent across stages.
 
 ## What Should Stay Inline
 
 Keep these inline in workflows:
 
-- matrix-specific defaults
 - per-artifact build defaults
 - per-container publish defaults
 - ecosystem-specific arguments
@@ -102,37 +105,29 @@ Move shell logic into scripts when one or more of these are true:
 
 Do not extract shell just to reduce line count.
 
-## Planned Script Structure
+## Shared Logic Structure
 
-Treat scripts as the real module system for workflow implementation logic.
-
-Preferred domains:
-
-- `scripts/config/`
-- `scripts/plan/`
-- `scripts/release/`
-- `scripts/summary/`
-- `scripts/validate/`
-- `scripts/container/`
-- `scripts/version/`
-
-Optional future domains if the repo grows enough:
-
-- `scripts/build/`
-- `scripts/publish/`
+Treat the `reusable-ci` binary as the real module system for workflow
+implementation logic.
 
 Guideline:
 
 - workflows decide what runs
-- scripts decide how logic is computed or reported
+- `internal/app` decides how logic is computed or reported
+- `internal/domain` holds provider-neutral rules and data shapes
+- `internal/adapters` owns external tools and platform APIs
+- `internal/cli/commands` is the only workflow-facing command surface
 
-## Bash Script Rules
+## Bootstrap Script Rules
+
+The remaining shell scripts are runtime-image build-time installers under
+`scripts/bootstrap/`. For those scripts:
 
 - use `set -euo pipefail`
 - keep scripts single-purpose
 - prefer helper functions plus `main()`
 - keep side effects explicit
-- add tests for new helper scripts when practical
+- add targeted Go black-box tests when practical
 
 ## Anchor Rules
 
@@ -149,6 +144,15 @@ Guideline:
 - prefer explicit job flow over generic abstraction
 - prefer small stage contracts over many per-target cross-stage outputs
 - prefer structured stage payloads when they reduce top-level dependency sprawl
+- when a workflow declares a signing / package / API secret in its
+  `workflow_call.secrets:` block, it MUST run `reusable-ci validate
+  event-context` as the first step of every secret-touching job
+  (right after `Install reusable-ci binary` on plain runners; right
+  after `Harden runner` on container-runtime jobs). The
+  `TestPrivilegedWorkflowsHaveEventContextGuard` test enforces this
+  invariant — a forwarder-only workflow whose secret-using jobs are
+  all delegated `uses:` calls may be added to the test's
+  `forwarderWorkflows` allowlist with an explanatory commit message.
 
 ## Third-Party Action Rules
 
@@ -157,14 +161,12 @@ area: a compromised release, an unreviewed transitive dependency, or an
 opaque shell step running with the workflow's secrets and `GITHUB_TOKEN`.
 Treat each one as an explicit risk decision, not a convenience.
 
-- prefer a direct CLI call or a `scripts/bootstrap/install-<tool>.sh` helper over
-  a Marketplace action that wraps the same binary
+- prefer a direct `reusable-ci` command or a `scripts/bootstrap/install-<tool>.sh`
+  helper over a Marketplace action that wraps the same binary
 - prefer baking tools into the runtime container over installing them per
   job — fewer downloads, one audit point
 - when an action **must** be used, pin to a full commit SHA with a version
   comment, never a floating tag or `@main`
-  (the one exception is `slsa-framework/slsa-github-generator`, which
-  requires tag-based pinning for the provenance to be valid)
 - before adding a new action, check if it duplicates something already
   available via a runtime-container binary, a `scripts/bootstrap/install-*.sh`
   helper, or a few lines of bash
@@ -176,8 +178,9 @@ Treat each one as an explicit risk decision, not a convenience.
 
 The exceptions worth keeping are actions that wrap a GitHub-platform
 feature with no CLI equivalent (`actions/checkout`, `actions/{up,down}load-artifact`,
-`actions/cache`, `actions/attest-sbom`), or a build-system primitive that
-would be substantially more code inline (`docker/build-push-action`).
+`actions/cache`, `actions/attest-sbom`, `actions/attest-build-provenance`),
+or a build-system primitive that would be substantially more code inline
+(`docker/build-push-action`).
 Everything else should justify its own existence on each review.
 
 ## Validation Expectations
@@ -187,8 +190,8 @@ For workflow refactors, run at least:
 - `actionlint .github/workflows/*.yml`
 - YAML parsing of all workflows
 - reusable-workflow input compatibility checks
-- `bash -n` for touched helper scripts
-- relevant Bats tests when scripts are added or changed
+- `bash -n` for touched bootstrap scripts
+- relevant Go tests when binary behavior is added or changed
 
 ## Stop Rule
 

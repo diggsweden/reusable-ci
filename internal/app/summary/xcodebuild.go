@@ -11,8 +11,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
 )
 
-// XcodeBuildInput drives `summary xcode-build`. Mirrors
-// scripts/summary/write-xcode-build-summary.sh.
+// XcodeBuildInput drives `summary xcode-build`.
 type XcodeBuildInput struct {
 	XcodeVersion  string
 	Scheme        string
@@ -34,18 +33,22 @@ func XcodeBuild(ctx context.Context, sink ci.SummarySink, in XcodeBuildInput) er
 	if now.IsZero() {
 		now = time.Now()
 	}
+
 	configuration := in.Configuration
 	if configuration == "" {
 		configuration = "Release"
 	}
+
 	destination := in.Destination
 	if destination == "" {
 		destination = "generic/platform=iOS"
 	}
+
 	version := in.Version
 	if version == "" {
 		version = "unknown"
 	}
+
 	md := build.RenderXcodeSummary(build.XcodeSummaryInput{
 		XcodeVersion:  in.XcodeVersion,
 		Scheme:        in.Scheme,
@@ -56,5 +59,6 @@ func XcodeBuild(ctx context.Context, sink ci.SummarySink, in XcodeBuildInput) er
 		BuildNumber:   in.BuildNumber,
 		IPAName:       in.IPAName,
 	}, now)
+
 	return sink.Append(ctx, md)
 }

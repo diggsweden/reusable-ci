@@ -8,9 +8,9 @@ import (
 )
 
 // ValidateNamespace returns nil when the image lives in the allowed
-// namespace, or a *container.NamespaceViolation describing the violation
-// when it doesn't. Non-ghcr.io registries are silently accepted —
-// validation is registry-specific by design.
+// namespace, or a *container.NamespaceViolationError describing the
+// violation when it doesn't. Non-ghcr.io registries are silently
+// accepted — validation is registry-specific by design.
 func ValidateNamespace(in container.ValidateNamespaceInput) error {
 	return container.ValidateNamespace(in)
 }

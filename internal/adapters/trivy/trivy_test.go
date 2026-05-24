@@ -20,18 +20,21 @@ func TestNew(t *testing.T) {
 }
 
 func TestAdapter_RunInheritPassesArgs(t *testing.T) {
-	m := mockbinary.New(t)
+	m := mockbinary.New(t) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	m.Add("trivy", `printf 'trivy %s\n' "$*"`)
 	a := &trivy.Adapter{Bin: m.Path("trivy")}
 
 	var stdout bytes.Buffer
+
 	code, err := a.RunInherit(context.Background(), &stdout, &bytes.Buffer{}, "image", "alpine")
 	if err != nil || code != 0 {
 		t.Fatalf("code=%d err=%v", code, err)
 	}
+
 	if !strings.Contains(stdout.String(), "trivy image alpine") {
 		t.Errorf("stdout = %q", stdout.String())
 	}
+
 	if got := m.Invocations("trivy")[0].Args; len(got) != 2 || got[0] != "image" || got[1] != "alpine" {
 		t.Errorf("args = %v", got)
 	}

@@ -5,8 +5,8 @@
 # Generate Changelog
 #
 # Reusable workflow that wraps git-cliff. Runs inside the reusable-ci runtime
-# container — `git-cliff` is on PATH and `validate-changelog.sh` lives at
-# /opt/reusable-ci/scripts/release/.
+# container; `git-cliff` is on PATH and changelog validation lives in the
+# reusable-ci binary.
 #
 # Common use cases:
 #   - Full history: git-cliff-args=""
@@ -47,16 +47,16 @@ on:
         default: "release-changelog"
         type: string
       runtime-image:
-        description: "reusable-ci runtime image. Pin to a digest or version tag; default tracks main."
+        description: "reusable-ci runtime image. Optional override; default uses the matching v3.0.0 runtime image."
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
         type: string
 permissions:
   contents: read
 jobs:
   generate-changelog:
     name: Generate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     container:
       image: ${{ inputs['runtime-image'] }}
@@ -80,7 +80,7 @@ jobs:
       - name: Verify Changelog Generation
         env:
           CHANGELOG_FILE: ${{ inputs['output-file'] }}
-        run: reusable-ci release validate-changelog
+        run: reusable-ci release verify-changelog
       - name: Upload Changelog Artifact
         if: ${{ inputs['upload-as-artifact'] }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

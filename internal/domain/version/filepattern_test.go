@@ -13,6 +13,7 @@ import (
 
 func TestFilePattern_KnownTypes(t *testing.T) {
 	t.Parallel()
+
 	cases := map[projecttype.Type]string{
 		projecttype.Maven:         "CHANGELOG.md :(glob)**/pom.xml",
 		projecttype.NPM:           "CHANGELOG.md package.json package-lock.json",
@@ -20,7 +21,7 @@ func TestFilePattern_KnownTypes(t *testing.T) {
 		projecttype.GradleAndroid: "CHANGELOG.md gradle.properties build.gradle.kts settings.gradle.kts build.gradle settings.gradle",
 		projecttype.XcodeIOS:      "CHANGELOG.md versions.xcconfig :(glob)**/*.xcconfig",
 		projecttype.Python:        "CHANGELOG.md pyproject.toml",
-		projecttype.Go:            "CHANGELOG.md go.mod",
+		projecttype.Go:            "CHANGELOG.md", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		projecttype.Cargo:         "CHANGELOG.md Cargo.toml Cargo.lock",
 		projecttype.Meta:          "CHANGELOG.md",
 	}
@@ -34,6 +35,7 @@ func TestFilePattern_KnownTypes(t *testing.T) {
 
 func TestFilePattern_UnknownDefaultsToChangelog(t *testing.T) {
 	t.Parallel()
+
 	for _, typ := range []projecttype.Type{"", "rust", projecttype.Unknown, "foo", projecttype.Meta} {
 		got := version.FilePattern(typ)
 		if got != "CHANGELOG.md" {
@@ -44,6 +46,7 @@ func TestFilePattern_UnknownDefaultsToChangelog(t *testing.T) {
 
 func TestFilePattern_AlwaysContainsChangelog(t *testing.T) {
 	t.Parallel()
+
 	for _, typ := range []projecttype.Type{projecttype.Maven, projecttype.NPM, projecttype.Gradle, projecttype.Go, projecttype.Cargo, ""} {
 		if !strings.Contains(version.FilePattern(typ), "CHANGELOG.md") {
 			t.Errorf("FilePattern(%q) lacks CHANGELOG.md", typ)

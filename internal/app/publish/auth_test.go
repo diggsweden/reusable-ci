@@ -17,18 +17,22 @@ import (
 
 func TestRegistryAuth_OK(t *testing.T) {
 	t.Parallel()
-	var stdout, stderr bytes.Buffer
-	err := apppublish.RegistryAuth(context.Background(), &stdout, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), publish.RegistryAuthInput{
+
+	var out, stderr bytes.Buffer
+
+	err := apppublish.RegistryAuth(context.Background(), &out, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), publish.RegistryAuthInput{
 		UseCIToken: true,
-		Registry:   "ghcr.io",
+		Registry:   "ghcr.io", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	})
 	require.NoError(t, err)
-	require.Contains(t, stdout.String(), "✓ Registry authentication")
+	require.Contains(t, out.String(), "✓ Registry authentication")
 }
 
 func TestRegistryAuth_ErrorWhenNoPasswordAndCustomAuth(t *testing.T) {
 	t.Parallel()
+
 	var stderr bytes.Buffer
+
 	err := apppublish.RegistryAuth(context.Background(), &bytes.Buffer{}, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), publish.RegistryAuthInput{
 		UseCIToken:  false,
 		Registry:    "ghcr.io",
@@ -40,13 +44,15 @@ func TestRegistryAuth_ErrorWhenNoPasswordAndCustomAuth(t *testing.T) {
 
 func TestRegistryAuth_WarningsOnCITokenWithCustomRegistry(t *testing.T) {
 	t.Parallel()
-	var stdout, stderr bytes.Buffer
-	err := apppublish.RegistryAuth(context.Background(), &stdout, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), publish.RegistryAuthInput{
+
+	var out, stderr bytes.Buffer
+
+	err := apppublish.RegistryAuth(context.Background(), &out, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), publish.RegistryAuthInput{
 		UseCIToken:       true,
 		Registry:         "https://npm.pkg.github.com",
 		ExpectedRegistry: "ghcr.io",
 	})
 	require.NoError(t, err)
 	require.Contains(t, stderr.String(), "::warning::Using CI token")
-	require.Contains(t, stdout.String(), "✓ Registry authentication")
+	require.Contains(t, out.String(), "✓ Registry authentication")
 }

@@ -9,8 +9,7 @@ package publish
 import "fmt"
 
 // RegistryAuthInput describes the auth configuration the workflow wants
-// to use. Mirrors the four positional / env inputs of
-// scripts/registry/validate-auth.sh.
+// to use. Mirrors the four positional / env inputs of.
 type RegistryAuthInput struct {
 	UseCIToken       bool
 	Registry         string
@@ -40,15 +39,18 @@ func ValidateRegistryAuth(in RegistryAuthInput) RegistryAuthResult {
 	if expected == "" {
 		expected = "ghcr.io"
 	}
+
 	var res RegistryAuthResult
 	if !in.UseCIToken && !in.HasPassword {
 		res.Errors = append(res.Errors, "registry-password secret is required when use-ci-token=false")
 	}
+
 	if in.Registry != expected && in.UseCIToken {
 		res.Warnings = append(res.Warnings,
 			fmt.Sprintf("Using CI token with non-%s registry (%s)", expected, in.Registry))
 		res.Warnings = append(res.Warnings,
 			"This will likely fail. Set use-ci-token=false and provide registry-password secret")
 	}
+
 	return res
 }

@@ -18,21 +18,27 @@ type MavenCentralCredentialsInput struct {
 }
 
 // MavenCentralCredentials checks both Maven Central secrets are
-// present and prints a confirmation line. Mirrors
-// scripts/validate/mavencentral-credentials.sh exactly: missing values
-// report which secret was missing, error message follows with the
-// "Required for publishing to Maven Central" note.
-func MavenCentralCredentials(stdout, stderr io.Writer, annot output.Annotator, in MavenCentralCredentialsInput) error {
+// present and prints a confirmation line. Missing values report which
+// secret was missing; the error message includes the "Required for
+// publishing to Maven Central" hint.
+func MavenCentralCredentials(w, stderr io.Writer, annot output.Annotator, in MavenCentralCredentialsInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if in.Username == "" {
 		annot.Errorf("Missing MAVEN_CENTRAL_USERNAME secret")
-		fmt.Fprintln(stdout, "Required for publishing to Maven Central")
+
+		_, _ = fmt.Fprintln(w, "Required for publishing to Maven Central")
+
 		return fmt.Errorf("missing MAVEN_CENTRAL_USERNAME secret: %w", errs.ErrPermissionDenied)
 	}
+
 	if in.Password == "" {
 		annot.Errorf("Missing MAVEN_CENTRAL_PASSWORD secret")
-		fmt.Fprintln(stdout, "Required for publishing to Maven Central")
+
+		_, _ = fmt.Fprintln(w, "Required for publishing to Maven Central")
+
 		return fmt.Errorf("missing MAVEN_CENTRAL_PASSWORD secret: %w", errs.ErrPermissionDenied)
 	}
-	fmt.Fprintln(stdout, "✓ Maven Central credentials configured")
+
+	_, _ = fmt.Fprintln(w, "✓ Maven Central credentials configured")
+
 	return nil
 }

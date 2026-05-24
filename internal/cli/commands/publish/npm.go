@@ -9,9 +9,10 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/diggsweden/reusable-ci/internal/adapters/npm"
 	apppublish "github.com/diggsweden/reusable-ci/internal/app/publish"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
-	"github.com/diggsweden/reusable-ci/internal/domain/publish"
+	"github.com/diggsweden/reusable-ci/internal/cliio"
 )
 
 func npmCmd() *cli.Command {
@@ -20,6 +21,88 @@ func npmCmd() *cli.Command {
 		Usage: "npm publish pre-flight checks",
 		Commands: []*cli.Command{
 			npmValidateTarballCmd(),
+			npmValidateVersionCmd(),
+			npmFindTarballCmd(),
+			npmWriteNPMRCCmd(),
+		},
+	}
+}
+
+func npmWriteNPMRCCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "write-npmrc",
+		Usage: "compose a .npmrc with registry + scope, emitting the literal ${NODE_AUTH_TOKEN} placeholder",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "registry", Required: true, Sources: cli.EnvVars("REGISTRY", "NPM_REGISTRY"), Usage: "npm registry URL written into the .npmrc"},
+			&cli.StringFlag{Name: "scope", Sources: cli.EnvVars("SCOPE", "PACKAGE_SCOPE"), Usage: "package scope (e.g. @diggsweden) routed to the registry"},
+			&cli.StringFlag{Name: "output", Usage: "destination path; '-' writes to stdout (default: stdout)"},
+		},
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			path := cmd.String("output")
+			if path == "" {
+				path = cliio.StdSentinel
+			}
+
+			w, err := cliio.CreateWriter(path, 0o600) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+			if err != nil {
+				return err
+			}
+
+			defer func() { _ = w.Close() }()
+
+			return apppublish.WriteNPMRC(apppublish.NPMRCInput{
+				Registry: cmd.String("registry"),
+				Scope:    cmd.String("scope"),
+				Output:   w,
+			})
+		},
+	}
+}
+
+func npmFindTarballCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "find-tarball",
+		Usage: "find a top-level npm tarball and emit tarball",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "dir", Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory scanned for the npm tarball (where 'npm pack' ran)"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
+				annot := deps.Annotator(cmd)
+				_, err := apppublish.FindArtifact(ctx, d.OutputSink, os.Stderr, annot, apppublish.FindArtifactInput{
+					Dir:       cmd.String("dir"),
+					Exts:      []string{".tgz", ".tar.gz"},
+					OutputKey: "tarball",
+					Label:     "npm tarball",
+				})
+
+				return err
+			})
+		},
+	}
+}
+
+func npmValidateVersionCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "validate-version",
+		Usage: "validate that package@version is unpublished (fails if the version already exists in the registry)",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "working-dir", Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory containing package.json (used when --name is omitted)"},
+			&cli.StringFlag{Name: "name", Sources: cli.EnvVars("PACKAGE_NAME"), Usage: "package name (defaults to the value in package.json)"},
+			&cli.StringFlag{Name: "version", Sources: cli.EnvVars("VERSION"), Usage: "package version to check against the registry"},
+			&cli.StringFlag{Name: "registry", Sources: cli.EnvVars("NPM_REGISTRY"), Usage: "npm registry to query"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
+				annot := deps.Annotator(cmd)
+
+				return apppublish.NPMCheckVersion(ctx, npm.New(), d.OutputSink, os.Stderr, annot, apppublish.NPMCheckVersionInput{
+					Dir:      cmd.String("working-dir"),
+					Name:     cmd.String("name"),
+					Version:  cmd.String("version"),
+					Registry: cmd.String("registry"),
+				})
+			})
 		},
 	}
 }
@@ -30,31 +113,8 @@ func npmValidateTarballCmd() *cli.Command {
 		Usage: "extract the npm tarball produced by `npm pack`, verify dist/cli.js is present",
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			annot := deps.Annotator(cmd)
-			return apppublish.NPMValidateTarball(ctx, os.Stdout, os.Stderr, annot, apppublish.NPMValidateTarballInput{})
-		},
-	}
-}
 
-func validateAuthCmd() *cli.Command {
-	return &cli.Command{
-		Name:  "validate-auth",
-		Usage: "validate registry authentication configuration before publishing",
-		Flags: []cli.Flag{
-			&cli.BoolFlag{Name: "use-ci-token", Sources: cli.EnvVars("USE_CI_TOKEN")},
-			&cli.StringFlag{Name: "registry", Sources: cli.EnvVars("TARGET_REGISTRY")},
-			&cli.StringFlag{Name: "expected-registry", Value: "ghcr.io", Sources: cli.EnvVars("CI_REGISTRY")},
-		},
-		Action: func(ctx context.Context, cmd *cli.Command) error {
-			annot := deps.Annotator(cmd)
-			// Match the bash: presence-check on $REGISTRY_PASSWORD via env
-			// (the value never reaches argv).
-			hasPassword := os.Getenv("REGISTRY_PASSWORD") != ""
-			return apppublish.RegistryAuth(ctx, os.Stdout, os.Stderr, annot, publish.RegistryAuthInput{
-				UseCIToken:       cmd.Bool("use-ci-token"),
-				Registry:         cmd.String("registry"),
-				ExpectedRegistry: cmd.String("expected-registry"),
-				HasPassword:      hasPassword,
-			})
+			return apppublish.NPMValidateTarball(ctx, os.Stderr, os.Stderr, annot, apppublish.NPMValidateTarballInput{})
 		},
 	}
 }

@@ -6,7 +6,6 @@ package version
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strings"
 
@@ -18,10 +17,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/adapters/npm"
 	appversion "github.com/diggsweden/reusable-ci/internal/app/version"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	"github.com/diggsweden/reusable-ci/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
-	"github.com/diggsweden/reusable-ci/internal/platform"
 )
 
 // New returns the `version` subgroup command tree.
@@ -43,72 +39,92 @@ func commitPushCmd() *cli.Command {
 		Name:  "commit-push",
 		Usage: "stage a file pattern, commit with --signoff, push to a branch (no-op when nothing changed)",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "branch", Required: true, Sources: cli.EnvVars("BRANCH")},
-			&cli.StringFlag{Name: "author-name", Required: true, Sources: cli.EnvVars("COMMIT_AUTHOR_NAME")},
-			&cli.StringFlag{Name: "author-email", Required: true, Sources: cli.EnvVars("COMMIT_AUTHOR_EMAIL")},
-			&cli.StringFlag{Name: "message", Required: true, Sources: cli.EnvVars("COMMIT_MESSAGE")},
-			&cli.StringFlag{Name: "file-pattern", Required: true, Sources: cli.EnvVars("FILE_PATTERN")},
+			&cli.StringFlag{Name: "branch", Required: true, Sources: cli.EnvVars("BRANCH"), Usage: "remote branch to push the commit to"},
+			&cli.StringFlag{Name: "author-name", Required: true, Sources: cli.EnvVars("COMMIT_AUTHOR_NAME"), Usage: "git author name written to the commit"},
+			&cli.StringFlag{Name: "author-email", Required: true, Sources: cli.EnvVars("COMMIT_AUTHOR_EMAIL"), Usage: "git author email written to the commit"},
+			&cli.StringFlag{Name: "message", Required: true, Sources: cli.EnvVars("COMMIT_MESSAGE"), Usage: "commit message subject (signoff is appended automatically)"},
+			&cli.StringFlag{Name: "file-pattern", Required: true, Sources: cli.EnvVars("FILE_PATTERN"), Usage: "whitespace-separated git pathspecs to stage"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return appversion.CommitPush(ctx, git.New(), appversion.CommitPushInput{
+			return appversion.CommitPush(ctx, git.New(), os.Stderr, appversion.CommitPushInput{
 				Branch:      cmd.String("branch"),
 				AuthorName:  cmd.String("author-name"),
 				AuthorEmail: cmd.String("author-email"),
 				Message:     cmd.String("message"),
 				FilePattern: cmd.String("file-pattern"),
-			}, os.Stdout)
+			})
 		},
 	}
 }
 
 func bumpCmd() *cli.Command {
 	return &cli.Command{
-		Name:      "bump",
-		Usage:     "rewrite the version-of-record (Maven POM / package.json / gradle.properties / .xcconfig / Cargo.toml)",
-		ArgsUsage: "<project-type> <version> [working-dir] [version-file]",
+		Name:  "bump",
+		Usage: "rewrite the version-of-record (Maven POM / package.json / gradle.properties / .xcconfig / Cargo.toml)",
+		Description: `EXAMPLES:
+   # Bump a Maven project to 1.2.3 (updates pom.xml and every child)
+   reusable-ci version bump --project-type=maven --version=1.2.3
+
+   # Bump an NPM package; --working-dir locates the project root
+   reusable-ci version bump --project-type=npm --version=2.0.0 --working-dir=./app
+
+   # Bump a Cargo workspace (the [workspace.package].version field)
+   reusable-ci version bump --project-type=cargo --version=0.5.0`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
+				Name:     "project-type",
+				Required: true,
+				Sources:  cli.EnvVars("PROJECT_TYPE"),
+				Usage:    "ecosystem driving the bump (maven/gradle/npm/cargo/xcode-ios)",
+			},
+			&cli.StringFlag{
+				Name:     "version",
+				Required: true,
+				Sources:  cli.EnvVars("VERSION"),
+				Usage:    "new version-of-record (without a leading 'v')",
+			},
+			&cli.StringFlag{
+				Name:    "working-dir",
+				Value:   ".",
+				Sources: cli.EnvVars("WORKING_DIRECTORY"),
+				Usage:   "directory containing the project root",
+			},
+			&cli.StringFlag{
+				Name:    "gradle-version-file",
+				Sources: cli.EnvVars("GRADLE_VERSION_FILE"),
+				Usage:   "path to the gradle.properties file holding the version key (gradle only)",
+			},
+			&cli.StringFlag{
 				Name:    "xcode-version-file",
-				Usage:   "path to the xcconfig file holding MARKETING_VERSION (xcode-ios only)",
 				Sources: cli.EnvVars("XCODE_VERSION_FILE"),
+				Usage:   "path to the xcconfig file holding MARKETING_VERSION (xcode-ios only)",
 			},
 			&cli.StringFlag{
 				Name:    "maven-cli-opts",
-				Usage:   "extra args forwarded to mvn (whitespace-separated, e.g. \"-B -ntp\")",
 				Sources: cli.EnvVars("MAVEN_CLI_OPTS"),
+				Usage:   "extra args forwarded to mvn (whitespace-separated, e.g. \"-B -ntp\")",
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			args := cmd.Args().Slice()
-			if len(args) < 2 {
-				return fmt.Errorf("Usage: bump <project-type> <version> [working-dir] [version-file]: %w", errs.ErrUsage)
-			}
 			in := appversion.BumpInput{
-				ProjectType: projecttype.Type(args[0]),
-				Version:     args[1],
-			}
-			if len(args) >= 3 {
-				in.WorkingDir = args[2]
-			}
-			if len(args) >= 4 {
-				// Bash treats arg-4 as gradle-properties path; xcode-ios uses
-				// --xcode-version-file (or XCODE_VERSION_FILE env). The Go port
-				// honours both shapes.
-				in.GradleVersionFile = args[3]
-			}
-			if v := cmd.String("xcode-version-file"); v != "" {
-				in.XcconfigFile = v
+				ProjectType:       projecttype.Type(cmd.String("project-type")),
+				Version:           cmd.String("version"),
+				WorkingDir:        cmd.String("working-dir"),
+				GradleVersionFile: cmd.String("gradle-version-file"),
+				XcconfigFile:      cmd.String("xcode-version-file"),
 			}
 			if opts := cmd.String("maven-cli-opts"); opts != "" {
 				in.MavenCLIOpts = strings.Fields(opts)
 			}
+
 			ops := appversion.BumpOps{
 				Maven: maven.New(),
 				NPM:   npm.New(),
 				Cargo: cargo.New(),
 			}
 			annot := deps.Annotator(cmd)
-			return appversion.Bump(ctx, ops, os.Stdout, os.Stderr, annot, in)
+
+			return appversion.Bump(ctx, ops, os.Stderr, os.Stderr, annot, in)
 		},
 	}
 }
@@ -125,13 +141,20 @@ func generateDevCmd() *cli.Command {
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			format, err := output.ParseAndResolve(cmd.Root().String("output"), platform.Detect())
+			format, err := deps.OutputFormat(cmd)
 			if err != nil {
 				return err
 			}
-			return appversion.GenerateDevVersion(ctx, git.New(), os.Stdout, appversion.GenerateDevVersionInput{
-				RefName: cmd.String("ref-name"),
-				Format:  format,
+
+			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+				// generate-dev's primary output is the dev version string —
+				// designed to be captured via $(...) or piped. Per clig.dev
+				// the value goes to stdout; progress/errors go to stderr.
+				return appversion.GenerateDevVersion(ctx, git.New(), os.Stdout, appversion.GenerateDevVersionInput{
+					RefName: cmd.String("ref-name"),
+					Format:  format,
+					Sink:    d.OutputSink,
+				})
 			})
 		},
 	}
@@ -148,15 +171,13 @@ func moveTagCmd() *cli.Command {
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			d, err := deps.Build(ctx)
-			if err != nil {
+			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
+				_, err := appversion.MoveTag(ctx, git.New(),
+					appversion.MoveTagInput{Signed: !cmd.Bool("no-sign")},
+					d.OutputSink, os.Stderr)
+
 				return err
-			}
-			defer func() { _ = d.Close(ctx) }()
-			_, err = appversion.MoveTag(ctx, git.New(),
-				appversion.MoveTagInput{Signed: !cmd.Bool("no-sign")},
-				d.OutputSink, os.Stdout)
-			return err
+			})
 		},
 	}
 }

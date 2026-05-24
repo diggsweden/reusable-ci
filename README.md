@@ -8,55 +8,65 @@ SPDX-License-Identifier: CC0-1.0
 
 [![Tag](https://img.shields.io/github/v/tag/diggsweden/reusable-ci?style=for-the-badge&color=green)](https://github.com/diggsweden/reusable-ci/tags)
 
-[![License: CC0-1.0](https://img.shields.io/badge/License-CC0--1.0-blue?style=for-the-badge)](LICENSE)
+[![License: CC0-1.0](https://img.shields.io/badge/License-CC0--1.0-blue?style=for-the-badge)](LICENSES/CC0-1.0.txt)
 [![REUSE](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.reuse.software%2Fstatus%2Fgithub.com%2Fdiggsweden%2Freusable-ci&query=status&style=for-the-badge&label=REUSE&color=lightblue)](https://api.reuse.software/info/github.com/diggsweden/reusable-ci)
 
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/diggsweden/reusable-ci/badge?style=for-the-badge)](https://scorecard.dev/viewer/?uri=github.com/diggsweden/reusable-ci)
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/diggsweden/reusable-ci?label=openssf+scorecard&style=for-the-badge)](https://scorecard.dev/viewer/?uri=github.com/diggsweden/reusable-ci)
 
-Reusable CI/CD workflows and scripts.
-Implements best Open Source workflows, compliance, security best practices, automated releases, and quality checks.
+Reusable GitHub Actions workflows for build, publish, release, and PR
+quality, backed by the `reusable-ci` Go CLI. Targets adopters who want
+SBOMs, signing, SLSA provenance, and pinned third-party actions
+without rebuilding each piece per project.
+
+The examples below target the v3.0.0 workflow contract. Before that
+release tag and its matching runtime images exist, use the
+branch-testing flow in [Runtime Images](docs/runtime-images.md).
 
 ## Documentation
 
-**Getting Started:**
-- [Workflow Guide](docs/workflows.md) - Workflow architecture and patterns
-- [Artifacts Reference](docs/artifacts-reference.md) - `artifacts.yml` documentation with examples
+Start with the [Documentation Index](docs/README.md) for the full Diataxis map.
 
-**Customizing:**
-- [Publishing Guide](docs/publishing.md) - Maven Central, NPM, and registry setup
-- [Components Reference](docs/components.md) - Individual workflow components
+**Tutorials and examples:**
+- [Examples](examples/README.md) - Choose a ready-made workflow for your ecosystem
 
-**Advanced:**
-- [Reference Guide](docs/reference.md) - Permissions, secrets, and validation matrices
-- [Artifact Verification](docs/verification.md) - Security and verification
-- [Scripts Reference](docs/scripts.md) - Validation scripts
+**How-to guides:**
+- [Publishing Guide](docs/publishing.md) - Maven Central, NPM, registries, App Store, and Google Play
+- [Runtime Images](docs/runtime-images.md) - Optional runtime image overrides, mirroring, and branch testing
+- [Artifact Verification](docs/verification.md) - Verify release assets, signatures, attestations, and SBOMs
+
+**Reference:**
+- [Artifacts Reference](docs/artifacts-reference.md) - `artifacts.yml` schema, defaults, and constraints
+- [Components Reference](docs/components.md) - Reusable workflow components and direct-use caveats
+- [CLI Reference](docs/cli-reference.md) - Generated `reusable-ci` command reference
+- [Secrets and Permissions](docs/reference.md) - Required secrets, permissions, and validation matrices
+
+**Explanation:**
+- [Workflow Architecture](docs/workflows.md) - Control-plane architecture and stage contracts
+- [Ecosystems](docs/ecosystems.md) - Ecosystem patterns and support status
+- [SBOM Guide](docs/sbom.md) - SBOM layer model and defaults
 
 ---
 
 ## Introduction
 
-There are two main workflow (and a dev-release flow):
+Three top-level chains, each invoked from the adopter's repo as a
+single `workflow_call:` entry:
 
-1. **The Pull Request Chain** - Run on PR and push
-   - Linting and code quality checks
-   - Security scanning
-   - License compliance
-   - Build verification
-   - Optional testing (project-specific)
+1. **Pull Request** (`pullrequest-orchestrator.yml`) — runs on PR and
+   push: linters, license / REUSE compliance, dependency review,
+   OpenGrep SAST. The adopter's own tests are wired separately.
 
-2. **Release Chain** - Runs when you create and push version tag
-   - Version validation (including tag requirements)
-   - Artifact building and publishing
-   - Container image creation
-   - Security features (SBOM, signing, attestation)
-   - Changelog generation
-   - GitHub release creation
-   - Dependency caching between jobs
-   - Enhanced build summaries
+2. **Release** (`release-orchestrator.yml`) — runs on signed tag push:
+   parse `.reusable-ci/artifacts.yml`, validate release prerequisites,
+   build the declared artefacts, publish them to their declared
+   targets (Maven Central / GitHub Packages / npm / Google Play / App
+   Store Connect), build and push containers, generate SBOMs at the
+   three CISA layers, sign with GPG or cosign, create the GitHub
+   release with changelog and checksums.
 
-The workflows handle multi-platform container builds, security scanning and attestation, artifact signing and checksums, version management, and changelog generation.
-
-Most components are configurable.
+3. **Dev Release** (`release-dev-orchestrator.yml`) — same shape on
+   branch pushes, with no signing / no SLSA / no permanent release;
+   produces a branch-suffixed image tag for preview deploys.
 
 ---
 
@@ -66,50 +76,58 @@ Most projects require two or three files:
 
 1. `.github/workflows/pullrequest-workflow.yml` - For PR checks
 2. `.github/workflows/release-workflow.yml` - For production releases
-3. `.github/workflows/release-workflow-dev.yml` - (Optional) For dev/feature branch releases
+3. `.github/workflows/release-dev-workflow.yml` - (Optional) For dev/feature branch releases
 
-### How It Works
+### How it works
 
-1. Push code → PR workflow runs checks
-2. Create version tag → Release workflow builds and publishes
-3. Workflow failures → Detailed error messages
+- Push code → PR workflow runs checks.
+- Sign and push a tag → release workflow validates, builds, publishes.
+- A failed step prints an actionable message; the orchestrator's
+  step-summary block names which leaf failed and why.
 
-### Customization Levels
+### Two ways to call it
 
-#### Example 1: Just Use Flows As Is
+#### A) Use the orchestrator as-is
 ```yaml
-uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v3.0.0
 with:
-  scripts-ref: v2.7.0
-  artifacts-config: .github/artifacts.yml
+  reusable-ci-binary-ref: v3.0.0
+  artifacts-config: .reusable-ci/artifacts.yml
   release-publisher: github-cli
 ```
 
-#### Example 2: Build Your Own Flow From The Components
+#### B) Compose leaves yourself
 ```yaml
 jobs:
-  build-maven:
-    uses: diggsweden/reusable-ci/.github/workflows/build-maven.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+  build-npm:
+    uses: diggsweden/reusable-ci/.github/workflows/build-npm.yml@v3.0.0
     with:
-      scripts-ref: v2.7.0
-      build-type: app
-      java-version: "21"
+      working-directory: .
 
   publish-github:
-    needs: build-maven
-    uses: diggsweden/reusable-ci/.github/workflows/publish-maven-github.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+    needs: build-npm
+    uses: diggsweden/reusable-ci/.github/workflows/publish-maven-github.yml@v3.0.0
+    permissions:
+      contents: write
+      packages: write
     with:
-      scripts-ref: v2.7.0
-      package-type: maven
-      artifact-source: maven-build-artifacts
+      package-type: npm
+      artifact-source: npm-build-artifacts
 
   build-container:
-    needs: build-maven
-    uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+    needs: build-npm
+    uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@v3.0.0
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      actions: read
+    secrets: inherit
     with:
-      scripts-ref: v2.7.0
+      reusable-ci-binary-ref: v3.0.0
       container-file: Containerfile
-      artifact-source: maven-build-artifacts
+      artifact-types: npm
 ```
 
 ## Quick Start
@@ -118,13 +136,16 @@ jobs:
 
 1. **Create artifacts configuration** - Define what to build:
    ```yaml
-   # .github/artifacts.yml
+   # .reusable-ci/artifacts.yml
    artifacts:
      - name: my-app
-       project-type: maven  # or npm, gradle, gradle-android, xcode-ios
+       project-type: maven  # or npm, gradle, gradle-android, xcode-ios, cargo, go
        working-directory: .
        config:
-         java-version: 21  # or node-version for npm, xcode-version for xcode-ios
+         java-version: 25  # or node-version for npm, xcode-version for xcode-ios
+         # For project-type: go OR cargo, set:
+         # build-mode: artifact-first   # standalone CLI binaries
+         # build-mode: container-first  # Containerfile owns the compile
    ```
 
 2. **Create pull request workflow** - Run checks on PRs:
@@ -137,24 +158,24 @@ jobs:
    permissions:
      contents: read
    jobs:
-      pr-checks:
-        uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
-        permissions:
-          contents: read
-          packages: read
-        secrets: inherit  # Pass CODE_SCANNING_TOKEN if you want Security / Code Scanning upload
-        with:
-          scripts-ref: v2.7.0
-          project-type: maven  # or npm, gradle, gradle-android, xcode-ios
-          # Recommended: Use devbase-check (lightweight, just+mise-based)
-          linters.devbasecheck: true
-          # Optional linters:
-          # linters.dependencyreview: true  # Dependency vulnerability scan
-          # security.sast-opengrep: false   # Opt out of OpenGrep SAST
-          # security.sast-opengrep-rules: p/default
-          # security.sast-opengrep-fail-on-severity: high
-          # linters.publiccodelint: false   # publiccode.yml validation
-          # linters.swiftlint: false        # Swift linting for iOS/macOS
+     pr-checks:
+       uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@v3.0.0
+       permissions:
+         contents: read
+         packages: read
+       secrets: inherit  # Pass CODE_SCANNING_TOKEN if you want Security / Code Scanning upload
+       with:
+         reusable-ci-binary-ref: v3.0.0
+         project-type: maven  # or npm, gradle, gradle-android, xcode-ios, cargo, go
+         # Recommended: Use devbase-check (lightweight, just+mise-based)
+         linters.devbasecheck: true
+         # Optional linters:
+         # linters.dependencyreview: true  # Dependency vulnerability scan
+         # security.sast-opengrep: false   # Opt out of OpenGrep SAST
+         # security.sast-opengrep-rules: p/default
+         # security.sast-opengrep-fail-on-severity: high
+         # linters.publiccodelint: false   # publiccode.yml validation
+         # linters.swiftlint: false        # Swift linting for iOS/macOS
    ```
 
 3. **Create release workflow** - Trigger builds on tags:
@@ -163,12 +184,12 @@ jobs:
    name: Release
    on:
      push:
-       tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+       tags: ["v*.*.*"]
    permissions:
      contents: read
    jobs:
      release:
-       uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+       uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v3.0.0
        permissions:
          contents: write
          packages: write
@@ -177,7 +198,9 @@ jobs:
          attestations: write
        secrets: inherit
        with:
-         artifacts-config: .github/artifacts.yml
+         reusable-ci-binary-ref: v3.0.0
+         artifacts-config: .reusable-ci/artifacts.yml
+         release-publisher: github-cli
    ```
 
 4. **(Optional) Create dev release workflow** - Fast dev builds:
@@ -189,19 +212,27 @@ jobs:
        branches: ['dev/**', 'feat/**']
    permissions:
      contents: read
-    jobs:
-      dev-release:
-        uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
-        permissions:
-          contents: write
-          packages: write
-        secrets: inherit
-        with:
-          scripts-ref: v2.7.0
-          artifacts-config: .github/artifacts.yml
-    ```
+   jobs:
+     dev-release:
+       uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@v3.0.0
+       permissions:
+         contents: write
+         packages: write
+       secrets: inherit
+       with:
+         reusable-ci-binary-ref: v3.0.0
+         artifacts-config: .reusable-ci/artifacts.yml
+   ```
 
-5. **Create your first release**:
+5. **Configure release secrets**:
+   Production releases validate release credentials before building. Configure
+   these repository or organization secrets before pushing the first release tag:
+   `RELEASE_TOKEN`, `RELEASE_GPG_PRIVATE_KEY`, `RELEASE_GPG_PASSPHRASE`, and
+   `RELEASE_GPG_PUBLIC_KEY`. Add target-specific secrets such as Maven Central,
+   App Store Connect, or Google Play credentials only when those publishers are
+   enabled.
+
+6. **Create your first release**:
    ```bash
    git tag -s v1.0.0 -m "Release v1.0.0"
    git push origin v1.0.0
@@ -211,101 +242,130 @@ jobs:
 
 ## Conceptual View
 
-### Pull Request Flow Diagram
+### Pull Request flow
+
+`pullrequest-orchestrator.yml` composes one Setup job that plans the
+PR-stage matrix, then a Quality stage running each enabled check on
+its own runner. Project tests are caller-owned and run from the
+adopter's own workflow (the orchestrator doesn't invoke them).
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    Pull Request Created/Updated                     │
+│                       Pull Request push                             │
 └────────────────────────────────┬────────────────────────────────────┘
                                  │
                     ┌────────────▼────────────┐
-                    │      Devbase Check      │
-                    │  (commits, SPDX/license,│
-                    │   filesystem linters)   │
+                    │      Setup (plan)       │
+                    │  read PR inputs, emit   │
+                    │   quality-stage matrix  │
                     └────────────┬────────────┘
                                  │
-                    ┌────────────▼────────────┐
-                    │  Dependency Review      │
-                    │  (vulnerability scan)   │
-                    └────────────┬────────────┘
+        ┌───────────────┬────────┴────────┬────────────────┐
+        │               │                 │                │
+┌───────▼──────┐ ┌──────▼───────┐ ┌───────▼──────┐ ┌───────▼──────┐
+│ lint-devbase │ │ dependency-  │ │   opengrep   │ │ lint-misc /  │
+│ (commits,    │ │   review     │ │     SAST     │ │ publiccode   │
+│ SPDX, REUSE) │ │ (PR scope)   │ │ (PR diff)    │ │ (optional)   │
+└───────┬──────┘ └──────┬───────┘ └───────┬──────┘ └───────┬──────┘
+        │               │                 │                │
+        └───────────────┴────────┬────────┴────────────────┘
                                  │
                     ┌────────────▼────────────┐
-                    │    Build & Verify       │
-                    │  (Maven/NPM/Gradle)     │
-                    └────────────┬────────────┘
-                                 │
-                    ┌────────────▼────────────┐
-                    │   PR Checks Complete    │
-                    │   ✓ Ready to merge      │
+                    │       PR Summary        │
+                    │  aggregated step-summary│
+                    │  + SARIF if configured  │
                     └─────────────────────────┘
 ```
 
-### Release Flow Diagram
+### Release flow
+
+`release-orchestrator.yml` parses `artifacts.yml`, validates every
+release prerequisite up front, then dispatches a build stage (one
+job per declared artefact) and a publish stage (one job per declared
+target), and finally creates the GitHub release. Container builds
+happen in the publish stage; SBOMs are attested per-artefact and
+per-image.
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        Tag Push (v1.0.0)                            │
+│                       Signed tag push (v*.*.*)                      │
 └────────────────────────────────┬────────────────────────────────────┘
                                  │
                     ┌────────────▼────────────┐
-                    │  Parse artifacts.yml    │
-                    │  Validate configuration │
-                    └────────────┬────────────┘
-                                 │
-           ┌─────────────────────┼─────────────────────┐
-           │                     │                     │
-   ┌───────▼────────┐   ┌───────▼────────┐   ┌───────▼────────┐
-   │  Build Maven   │   │   Build NPM    │   │  Build Gradle  │
-   │  Artifact 1    │   │   Artifact 2   │   │   Artifact 3   │
-   └───────┬────────┘   └───────┬────────┘   └───────┬────────┘
-           │                     │                     │
-           └─────────────────────┼─────────────────────┘
-                                 │
-                    ┌────────────▼────────────┐
-                    │  Publish to Registries  │
-                    │  - GitHub Packages      │
-                    │  - Maven Central        │
-                    │  - npmjs.org            │
+                    │   Setup + Validate      │
+                    │  parse artifacts.yml,   │
+                    │  validate prerequisites │
+                    │  (GPG, tokens, lockfiles│
+                    │   tag format, signer)   │
                     └────────────┬────────────┘
                                  │
                     ┌────────────▼────────────┐
-                    │   Build Containers      │
-                    │   (from artifacts)      │
-                    │   - Multi-platform      │
-                    │   - SLSA + SBOM + Scan  │
+                    │      Prepare stage      │
+                    │   version-bump commit   │
+                    │   (signed by GPG key)   │
                     └────────────┬────────────┘
                                  │
-                    ┌────────────▼────────────┐
-                    │  Create GitHub Release  │
-                    │  - Changelog            │
-                    │  - Checksums            │
-                    │  - Signatures           │
-                    └─────────────────────────┘
+         ┌───────────────────────┴────────────────────────┐
+         │                                                │
+┌────────▼────────┐                              ┌────────▼────────┐
+│   Build stage   │                              │  (parallel per  │
+│  one job per    │                              │   declared      │
+│  artefact:      │                              │   artefact)     │
+│  build-maven,   │                              │                 │
+│  build-npm,     │                              │                 │
+│  build-gradle-*,│                              │                 │
+│  build-go,      │                              │                 │
+│  build-cargo,   │                              │                 │
+│  build-xcode-ios│                              │                 │
+└────────┬────────┘                              └────────┬────────┘
+         │                                                │
+         └────────────────────────┬───────────────────────┘
+                                  │
+                     ┌────────────▼────────────┐
+                     │     Publish stage       │
+                     │  one job per target:    │
+                     │  Maven Central, GitHub  │
+                     │  Packages, App Store    │
+                     │  Connect, Google Play,  │
+                     │  publish-container      │
+                     │  (multi-arch, SLSA,     │
+                     │  SBOM, Trivy gate)      │
+                     └────────────┬────────────┘
+                                  │
+                     ┌────────────▼────────────┐
+                     │   Create GitHub Release │
+                     │  changelog, checksums,  │
+                     │  signatures, attached   │
+                     │  SBOM ZIP, attestations │
+                     └─────────────────────────┘
 ```
 
-### Core Concepts
+### Core concepts
 
-**Build Stage** - Language-specific builders create artifacts:
-- `build-maven` - Builds Maven projects (apps or libs)
-- `build-npm` - Builds NPM projects
-- `build-gradle-app` - Builds Gradle projects (JVM or Android apps)
-- `build-gradle-android` - Builds Android apps with flavors/variants (APK/AAB)
-- `build-xcode-ios` - Builds iOS/macOS apps (IPA)
+**Build stage** — one job per declared artefact, dispatched by
+`release-build-stage.yml`. Builders today: `build-maven`, `build-npm`,
+`build-gradle-app`, `build-gradle-android`, `build-go`,
+`build-cargo`, `build-xcode-ios`. Each produces a typed artefact
+uploaded for the publish stage to consume.
 
-**Publish Stage** - Target-specific workflows publish artifacts:
-- `publish-github` - Publishes Maven/NPM/Gradle → GitHub Packages
-- `publish-maven-central` - Publishes Maven libs → Maven Central
-- `publish-apple-appstore` - Publishes iOS/macOS apps → TestFlight/Apple App Store
+**Publish stage** — one job per declared target, dispatched by
+`release-publish-stage.yml`: `publish-maven-github`,
+`publish-maven-central`, `publish-google-play`,
+`publish-apple-appstore`, plus `publish-container` for every entry
+in `containers[]`. SBOM-only jobs (`sbom-cargo`, `sbom-go`) run
+alongside for container-first ecosystems.
 
-**Container Stage** - Separate containers section references artifacts:
-- Containers defined in `containers[]` section
-- Reference artifacts by name via `from: [artifact-name]`
-- Built after all artifact builds complete
-- Support multi-artifact containers (combine multiple artifacts into one image)
+**Containers** — declared separately under `containers[]` in
+`artifacts.yml`, referencing one or more artefacts via
+`from: [artefact-name]`. Built multi-arch (linux/amd64 +
+linux/arm64), signed (cosign), scanned (Trivy gate), and attached to
+SLSA provenance + analyzed-container SBOM attestations.
 
-**Development builds (NOT from tags):**
-- Branch pushes create branch-aware tags: `0.5.9-dev-feat-feature-abc1234`
-- Tags like `v1.0.0-dev` are explicitly excluded from releases
+**Dev releases** — branch pushes go through
+`release-dev-orchestrator.yml`. They produce a branch-suffixed image
+tag (`0.5.9-dev-<branch>-<sha>`); no signing, no SLSA, no GitHub
+Release. Tags like `v1.0.0-dev` are excluded from the production
+release path.
 
 ---
 

@@ -26,6 +26,7 @@ type fakeMavenOps struct {
 func (f *fakeMavenOps) RunInheritIn(_ context.Context, dir string, _, _ io.Writer, args ...string) error {
 	f.dir = dir
 	f.args = args
+
 	return f.err
 }
 
@@ -38,6 +39,7 @@ type fakeNPMOps struct {
 func (f *fakeNPMOps) RunInherit(_ context.Context, dir string, _, _ io.Writer, args ...string) error {
 	f.dir = dir
 	f.args = args
+
 	return f.err
 }
 
@@ -52,8 +54,9 @@ func (f *fakeCargoOps) Available() bool { return f.avail }
 func (f *fakeCargoOps) RunInherit(_ context.Context, _ string, _, _ io.Writer, args ...string) error {
 	f.calls = append(f.calls, args)
 	if f.failOne && len(f.calls) == 1 {
-		return errors.New("offline failed")
+		return errors.New("offline failed") //nolint:err113 // test mock error
 	}
+
 	return f.err
 }
 
@@ -61,18 +64,21 @@ func TestBump_Maven(t *testing.T) {
 	t.Parallel()
 	fsys := testfs.NewReal(t)
 	dir := fsys.Root
+
 	mvn := &fakeMavenOps{}
 	if err := appversion.Bump(context.Background(), appversion.BumpOps{Maven: mvn}, io.Discard, io.Discard, output.Annotator{}, appversion.BumpInput{
 		ProjectType:  projecttype.Maven,
-		Version:      "1.2.3",
+		Version:      "1.2.3", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		WorkingDir:   dir,
 		MavenCLIOpts: []string{"--batch-mode"},
 	}); err != nil {
 		t.Fatalf("Bump: %v", err)
 	}
+
 	if mvn.dir != dir {
 		t.Errorf("dir = %q, want %q", mvn.dir, dir)
 	}
+
 	want := []string{"--batch-mode", "versions:set", "-DnewVersion=1.2.3",
 		"-DgenerateBackupPoms=false", "-DprocessAllModules=true", "-DskipTests"}
 	if !equalStrings(mvn.args, want) {
@@ -84,6 +90,7 @@ func TestBump_NPM(t *testing.T) {
 	t.Parallel()
 	fsys := testfs.NewReal(t)
 	dir := fsys.Root
+
 	npm := &fakeNPMOps{}
 	if err := appversion.Bump(context.Background(), appversion.BumpOps{NPM: npm}, io.Discard, io.Discard, output.Annotator{}, appversion.BumpInput{
 		ProjectType: projecttype.NPM,
@@ -92,9 +99,11 @@ func TestBump_NPM(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Bump: %v", err)
 	}
+
 	if npm.dir != dir {
 		t.Errorf("dir = %q", npm.dir)
 	}
+
 	want := []string{"version", "1.2.3", "--no-git-tag-version", "--allow-same-version"}
 	if !equalStrings(npm.args, want) {
 		t.Errorf("args = %v, want %v", npm.args, want)
@@ -106,17 +115,20 @@ func TestBump_GradleJVM_RewritesFile(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	dir := fsys.Root
 	fsys.WriteFile("gradle.properties", []byte("versionName=ignore\nversion=0.1.0\n"))
+
 	if err := appversion.Bump(context.Background(), appversion.BumpOps{}, io.Discard, io.Discard, output.Annotator{}, appversion.BumpInput{
 		ProjectType: projecttype.Gradle,
-		Version:     "1.0.0",
+		Version:     "1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		WorkingDir:  dir,
 	}); err != nil {
 		t.Fatalf("Bump: %v", err)
 	}
+
 	body := fsys.ReadFile("gradle.properties")
 	if !strings.Contains(string(body), "version=1.0.0") {
 		t.Errorf("body = %q", body)
 	}
+
 	if !strings.Contains(string(body), "versionName=ignore") {
 		t.Errorf("must not touch versionName: %q", body)
 	}
@@ -127,23 +139,27 @@ func TestBump_GradleAndroid_RewritesFile(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	dir := fsys.Root
 	fsys.WriteFile("gradle.properties", []byte("versionName=0.1.0\nversionCode=42\n"))
-	var stdout bytes.Buffer
-	if err := appversion.Bump(context.Background(), appversion.BumpOps{}, &stdout, io.Discard, output.Annotator{}, appversion.BumpInput{
+
+	var out bytes.Buffer
+	if err := appversion.Bump(context.Background(), appversion.BumpOps{}, &out, io.Discard, output.Annotator{}, appversion.BumpInput{
 		ProjectType: projecttype.GradleAndroid,
 		Version:     "1.0.0",
 		WorkingDir:  dir,
 	}); err != nil {
 		t.Fatalf("Bump: %v", err)
 	}
+
 	body := fsys.ReadFile("gradle.properties")
 	if !strings.Contains(string(body), "versionName=1.0.0") {
 		t.Errorf("missing versionName=1.0.0: %q", body)
 	}
+
 	if !strings.Contains(string(body), "versionCode=43") {
 		t.Errorf("missing versionCode=43: %q", body)
 	}
-	if !strings.Contains(stdout.String(), "Incremented versionCode: 42 → 43") {
-		t.Errorf("missing log: %s", stdout.String())
+
+	if !strings.Contains(out.String(), "Incremented versionCode: 42 → 43") {
+		t.Errorf("missing log: %s", out.String())
 	}
 }
 
@@ -152,6 +168,7 @@ func TestBump_GradleAndroid_NoVersionCodeAddsOne(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	dir := fsys.Root
 	fsys.WriteFile("gradle.properties", []byte(""))
+
 	if err := appversion.Bump(context.Background(), appversion.BumpOps{}, io.Discard, io.Discard, output.Annotator{}, appversion.BumpInput{
 		ProjectType: projecttype.GradleAndroid,
 		Version:     "1.0.0",
@@ -159,6 +176,7 @@ func TestBump_GradleAndroid_NoVersionCodeAddsOne(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Bump: %v", err)
 	}
+
 	body := fsys.ReadFile("gradle.properties")
 	for _, want := range []string{"versionName=1.0.0", "versionCode=1"} {
 		if !strings.Contains(string(body), want) {
@@ -170,7 +188,9 @@ func TestBump_GradleAndroid_NoVersionCodeAddsOne(t *testing.T) {
 func TestBump_GradleJVM_FileMissingErrors(t *testing.T) {
 	t.Parallel()
 	fsys := testfs.NewReal(t)
+
 	var stderr bytes.Buffer
+
 	err := appversion.Bump(context.Background(), appversion.BumpOps{}, io.Discard, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), appversion.BumpInput{
 		ProjectType: projecttype.Gradle,
 		Version:     "1.0.0",
@@ -179,6 +199,7 @@ func TestBump_GradleJVM_FileMissingErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
+
 	if !strings.Contains(stderr.String(), "::error::Gradle version file not found") {
 		t.Errorf("expected ::error:: line, got: %s", stderr.String())
 	}
@@ -186,6 +207,7 @@ func TestBump_GradleJVM_FileMissingErrors(t *testing.T) {
 
 func TestBump_XcodeIOS_CreatesFileWhenMissing(t *testing.T) {
 	t.Parallel()
+
 	fsys := testfs.NewReal(t)
 	if err := appversion.Bump(context.Background(), appversion.BumpOps{}, io.Discard, io.Discard, output.Annotator{}, appversion.BumpInput{
 		ProjectType:  projecttype.XcodeIOS,
@@ -195,6 +217,7 @@ func TestBump_XcodeIOS_CreatesFileWhenMissing(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Bump: %v", err)
 	}
+
 	body := fsys.ReadFile("versions.xcconfig")
 	if string(body) != "MARKETING_VERSION = 1.2.3\n" {
 		t.Errorf("body = %q", body)
@@ -205,6 +228,7 @@ func TestBump_XcodeIOS_UpdatesExisting(t *testing.T) {
 	t.Parallel()
 	fsys := testfs.NewReal(t)
 	fsys.WriteFile("versions.xcconfig", []byte("MARKETING_VERSION = 0.0.1\nFOO = bar\n"))
+
 	if err := appversion.Bump(context.Background(), appversion.BumpOps{}, io.Discard, io.Discard, output.Annotator{}, appversion.BumpInput{
 		ProjectType: projecttype.XcodeIOS,
 		Version:     "1.2.3",
@@ -212,10 +236,12 @@ func TestBump_XcodeIOS_UpdatesExisting(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Bump: %v", err)
 	}
+
 	body := fsys.ReadFile("versions.xcconfig")
 	if !strings.Contains(string(body), "MARKETING_VERSION = 1.2.3") {
 		t.Errorf("body = %q", body)
 	}
+
 	if !strings.Contains(string(body), "FOO = bar") {
 		t.Errorf("must not touch other keys: %q", body)
 	}
@@ -233,6 +259,7 @@ edition = "2024"
 serde = "1"
 `
 	fsys.WriteFile("Cargo.toml", []byte(cargo))
+
 	ops := &fakeCargoOps{avail: true}
 	if err := appversion.Bump(context.Background(), appversion.BumpOps{Cargo: ops}, io.Discard, io.Discard, output.Annotator{}, appversion.BumpInput{
 		ProjectType: projecttype.Cargo,
@@ -241,6 +268,7 @@ serde = "1"
 	}); err != nil {
 		t.Fatalf("Bump: %v", err)
 	}
+
 	body := fsys.ReadFile("Cargo.toml")
 	if !strings.Contains(string(body), `version = "1.0.0"`) {
 		t.Errorf("body = %s", body)
@@ -257,6 +285,7 @@ version = "0.0.1"
 `
 	fsys.WriteFile("Cargo.toml", []byte(cargoToml))
 	fsys.WriteFile("Cargo.lock", []byte("# stub"))
+
 	ops := &fakeCargoOps{avail: true}
 	if err := appversion.Bump(context.Background(), appversion.BumpOps{Cargo: ops}, io.Discard, io.Discard, output.Annotator{}, appversion.BumpInput{
 		ProjectType: projecttype.Cargo,
@@ -265,9 +294,11 @@ version = "0.0.1"
 	}); err != nil {
 		t.Fatalf("Bump: %v", err)
 	}
+
 	if len(ops.calls) == 0 {
 		t.Fatal("expected cargo update to be invoked")
 	}
+
 	want := []string{"update", "--workspace", "--offline"}
 	if !equalStrings(ops.calls[0], want) {
 		t.Errorf("first cargo call = %v, want %v", ops.calls[0], want)
@@ -280,6 +311,7 @@ func TestBump_Cargo_OfflineFailureFallsBackToOnline(t *testing.T) {
 	dir := fsys.Root
 	fsys.WriteFile("Cargo.toml", []byte("[package]\nname = \"x\"\nversion = \"0.0.1\"\n"))
 	fsys.WriteFile("Cargo.lock", []byte("# stub"))
+
 	ops := &fakeCargoOps{avail: true, failOne: true}
 	if err := appversion.Bump(context.Background(), appversion.BumpOps{Cargo: ops}, io.Discard, io.Discard, output.Annotator{}, appversion.BumpInput{
 		ProjectType: projecttype.Cargo,
@@ -288,6 +320,7 @@ func TestBump_Cargo_OfflineFailureFallsBackToOnline(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Bump: %v", err)
 	}
+
 	if len(ops.calls) != 2 {
 		t.Errorf("expected 2 cargo calls (offline then online), got %d", len(ops.calls))
 	}
@@ -298,6 +331,7 @@ func TestBump_Cargo_NoLockSkipsRefresh(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	dir := fsys.Root
 	fsys.WriteFile("Cargo.toml", []byte("[package]\nname = \"x\"\nversion = \"0.0.1\"\n"))
+
 	ops := &fakeCargoOps{avail: true}
 	if err := appversion.Bump(context.Background(), appversion.BumpOps{Cargo: ops}, io.Discard, io.Discard, output.Annotator{}, appversion.BumpInput{
 		ProjectType: projecttype.Cargo,
@@ -306,6 +340,7 @@ func TestBump_Cargo_NoLockSkipsRefresh(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Bump: %v", err)
 	}
+
 	if len(ops.calls) != 0 {
 		t.Errorf("expected no cargo calls when Cargo.lock missing, got %d", len(ops.calls))
 	}
@@ -317,47 +352,70 @@ func TestBump_Cargo_NotInstalledWarnsButSucceeds(t *testing.T) {
 	dir := fsys.Root
 	fsys.WriteFile("Cargo.toml", []byte("[package]\nname = \"x\"\nversion = \"0.0.1\"\n"))
 	fsys.WriteFile("Cargo.lock", []byte("# stub"))
+
 	ops := &fakeCargoOps{avail: false}
-	var stdout bytes.Buffer
-	if err := appversion.Bump(context.Background(), appversion.BumpOps{Cargo: ops}, &stdout, io.Discard, output.Annotator{}, appversion.BumpInput{
+
+	var out bytes.Buffer
+	if err := appversion.Bump(context.Background(), appversion.BumpOps{Cargo: ops}, &out, io.Discard, output.Annotator{}, appversion.BumpInput{
 		ProjectType: projecttype.Cargo,
 		Version:     "1.0.0",
 		WorkingDir:  dir,
 	}); err != nil {
 		t.Fatalf("Bump: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "Warning: cargo not found") {
-		t.Errorf("expected warning, got: %s", stdout.String())
+
+	if !strings.Contains(out.String(), "Warning: cargo not found") {
+		t.Errorf("expected warning, got: %s", out.String())
 	}
 }
 
 func TestBump_Meta_NoOp(t *testing.T) {
 	t.Parallel()
-	var stdout bytes.Buffer
-	if err := appversion.Bump(context.Background(), appversion.BumpOps{}, &stdout, io.Discard, output.Annotator{}, appversion.BumpInput{
+
+	var out bytes.Buffer
+	if err := appversion.Bump(context.Background(), appversion.BumpOps{}, &out, io.Discard, output.Annotator{}, appversion.BumpInput{
 		ProjectType: projecttype.Meta,
 		Version:     "1.2.3",
 	}); err != nil {
 		t.Fatalf("Bump: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "Meta project type") {
-		t.Errorf("expected meta message:\n%s", stdout.String())
+
+	if !strings.Contains(out.String(), "Meta project type") {
+		t.Errorf("expected meta message:\n%s", out.String())
+	}
+}
+
+func TestBump_Go_NoOp(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	if err := appversion.Bump(context.Background(), appversion.BumpOps{}, &out, io.Discard, output.Annotator{}, appversion.BumpInput{
+		ProjectType: projecttype.Go,
+		Version:     "1.2.3",
+	}); err != nil {
+		t.Fatalf("Bump: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "Go project type") || !strings.Contains(out.String(), "1.2.3") {
+		t.Errorf("expected go no-op message:\n%s", out.String())
 	}
 }
 
 func TestBump_UnknownTypeErrors(t *testing.T) {
 	t.Parallel()
+
 	err := appversion.Bump(context.Background(), appversion.BumpOps{}, io.Discard, io.Discard, output.Annotator{}, appversion.BumpInput{
 		ProjectType: "java",
 		Version:     "1.0.0",
 	})
-	if err == nil || !strings.Contains(err.Error(), "Unknown project type") {
+	if err == nil || !strings.Contains(err.Error(), "unknown project type") {
 		t.Errorf("expected unknown-type error, got: %v", err)
 	}
 }
 
 func TestBump_RequiresVersion(t *testing.T) {
 	t.Parallel()
+
 	if err := appversion.Bump(context.Background(), appversion.BumpOps{}, io.Discard, io.Discard, output.Annotator{}, appversion.BumpInput{
 		ProjectType: projecttype.Maven,
 	}); err == nil {
@@ -365,14 +423,16 @@ func TestBump_RequiresVersion(t *testing.T) {
 	}
 }
 
-func equalStrings(a, b []string) bool {
+func equalStrings(a, b []string) bool { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if len(a) != len(b) {
 		return false
 	}
+
 	for i := range a {
 		if a[i] != b[i] {
 			return false
 		}
 	}
+
 	return true
 }

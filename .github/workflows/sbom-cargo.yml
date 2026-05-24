@@ -6,16 +6,20 @@
 #
 # Generates a CycloneDX Build SBOM for a Rust project or workspace using
 # cargo-cyclonedx, and uploads it as `cargo-build-sbom` by default.
-# Workspaces get one bom.json per crate; the aggregator in
-# scripts/sbom/generate-sboms.sh picks the aggregate (root crate) BOM — the
-# one with the smallest path depth — when consolidating.
+# Workspaces get one bom.json per crate; reusable-ci sbom generate artifacts
+# picks the aggregate (root crate) BOM, the one with the smallest path depth,
+# when consolidating.
 #
-# This workflow handles the platform-agnostic concerns for cargo artefacts.
-# It deliberately does not invoke `cargo build` or `cargo test`: rust binaries
-# are platform-specific and are produced inside the Containerfile during
-# publish-container.yml's matrix dispatch (see docs/sbom.md for the artefact-first
-# vs container-first framing). cargo-cyclonedx resolves the dependency graph from
-# Cargo.lock, so the SBOM is accurate without compiling.
+# This workflow targets container-first cargo artefacts (build-mode:
+# container-first). It deliberately does not invoke `cargo build` or
+# `cargo test`: in container-first the compile happens inside the
+# Containerfile during publish-container.yml's matrix dispatch.
+# cargo-cyclonedx resolves the dependency graph from Cargo.lock, so the
+# SBOM is accurate without compiling.
+#
+# Artefact-first cargo (build-mode: artifact-first) does not use this
+# workflow — `build-cargo.yml` runs `cargo cyclonedx` inline alongside
+# the cross-compile, mirroring `build-go.yml`'s shape. See docs/sbom.md.
 #
 # Runs inside the reusable-ci-runtime-rust image — Rust toolchain and
 # cargo-cyclonedx are baked in, so no `cargo install` happens per run.
@@ -45,16 +49,16 @@ on:
         default: true
         type: boolean
       runtime-image:
-        description: "reusable-ci runtime image carrying the Rust toolchain. Pin to a digest or version tag; default tracks main."
+        description: "reusable-ci runtime image carrying the Rust toolchain. Optional override; default uses the matching v3.0.0 runtime image."
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-rust-stable:main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-rust-stable:v3.0.0"
         type: string
 permissions:
   contents: read
 jobs:
   sbom-cargo:
     name: Cargo SBOM
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     container:
       image: ${{ inputs['runtime-image'] }}
@@ -82,7 +86,6 @@ jobs:
       - name: Generate Build SBOM
         id: sbom
         if: ${{ inputs['enable-build-sbom'] }}
-        continue-on-error: true
         working-directory: ${{ inputs['working-directory'] }}
         run: |
           # cargo-cyclonedx is baked into the runtime image. --all covers every
@@ -109,19 +112,7 @@ jobs:
       - name: Write SBOM status to step summary
         if: always()
         env:
+          SBOM_KIND: cargo
           SBOM_OUTCOME: ${{ steps.sbom.outcome }}
-          WORKDIR: ${{ inputs['working-directory'] }}
-        run: |
-          {
-            printf '### Build SBOM\n'
-            if [[ "$SBOM_OUTCOME" == "success" ]]; then
-              count=$(find "$WORKDIR" -name bom.json -not -path '*/target/*' 2>/dev/null | wc -l)
-              if (( count > 0 )); then
-                printf -- '- ✅ CycloneDX: %s bom.json file(s)\n' "$count"
-              else
-                printf -- '- ⚠️ cargo-cyclonedx reported success but produced no bom.json\n'
-              fi
-            else
-              printf -- '- ⚠️ Generation step did not succeed (continued as advisory)\n'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: reusable-ci report status sbom-count

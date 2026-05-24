@@ -12,7 +12,7 @@ import (
 
 func TestValidateRegistryAuth_OKWithCITokenAndDefaultRegistry(t *testing.T) {
 	res := publish.ValidateRegistryAuth(publish.RegistryAuthInput{
-		UseCIToken: true, Registry: "ghcr.io",
+		UseCIToken: true, Registry: "ghcr.io", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	})
 	if len(res.Errors) != 0 || len(res.Warnings) != 0 {
 		t.Errorf("expected clean, got %+v", res)
@@ -26,6 +26,7 @@ func TestValidateRegistryAuth_ErrorsWhenCustomAuthNoPassword(t *testing.T) {
 	if len(res.Errors) == 0 {
 		t.Fatal("expected error when use-ci-token=false and no password")
 	}
+
 	if !strings.Contains(res.Errors[0], "registry-password") {
 		t.Errorf("error message = %q", res.Errors[0])
 	}
@@ -39,6 +40,7 @@ func TestValidateRegistryAuth_WarnsOnCITokenWithCustomRegistry(t *testing.T) {
 	if len(res.Errors) != 0 {
 		t.Errorf("did not expect errors: %+v", res.Errors)
 	}
+
 	if len(res.Warnings) != 2 {
 		t.Errorf("expected 2 warnings, got %d", len(res.Warnings))
 	}
@@ -77,7 +79,7 @@ func TestValidateRegistryAuth_OKWithCustomAuthAndPasswordForCommonRegistries(t *
 func TestValidateRegistryAuth_CustomExpectedRegistryCases(t *testing.T) {
 	ok := publish.ValidateRegistryAuth(publish.RegistryAuthInput{
 		UseCIToken:       true,
-		Registry:         "custom.registry.io",
+		Registry:         "custom.registry.io", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		ExpectedRegistry: "custom.registry.io",
 	})
 	if len(ok.Errors) != 0 || len(ok.Warnings) != 0 {
@@ -92,6 +94,7 @@ func TestValidateRegistryAuth_CustomExpectedRegistryCases(t *testing.T) {
 	if len(warn.Errors) != 0 {
 		t.Errorf("did not expect errors: %+v", warn.Errors)
 	}
+
 	if len(warn.Warnings) == 0 || !strings.Contains(warn.Warnings[0], "non-custom.registry.io") {
 		t.Errorf("expected custom expected-registry warning, got %+v", warn.Warnings)
 	}

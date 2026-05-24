@@ -29,21 +29,26 @@ type fakeTrivy struct {
 
 func (f *fakeTrivy) RunInherit(_ context.Context, _, _ io.Writer, args ...string) (int, error) {
 	idx := len(f.calls)
+
 	f.calls = append(f.calls, args)
 	if f.err != nil {
 		return -1, f.err
 	}
+
 	if idx < len(f.writePerCall) && f.writePerCall[idx] != "" {
 		for i, a := range args {
 			if a == "--output" && i+1 < len(args) {
-				_ = os.WriteFile(args[i+1], []byte(f.writePerCall[idx]), 0o644)
+				_ = os.WriteFile(args[i+1], []byte(f.writePerCall[idx]), 0o644) //nolint:gosec // test fixture
+
 				break
 			}
 		}
 	}
+
 	if idx < len(f.exitCodes) {
 		return f.exitCodes[idx], nil
 	}
+
 	return 0, nil
 }
 
@@ -59,8 +64,10 @@ func (g *fakeGit) Run(_ context.Context, args ...string) (string, error) {
 		if g.allow[ref] {
 			return "", nil
 		}
-		return "", errors.New("worktree add failed")
+
+		return "", errors.New("worktree add failed") //nolint:err113 // test mock error
 	}
+
 	return "", nil
 }
 
@@ -80,6 +87,7 @@ func TestScanDependencies_DiffModeFindsNew(t *testing.T) {
 	sink := &appSummaryBuf{}
 
 	fsys := testfs.NewReal(t)
+
 	err := appsecurity.ScanDependencies(context.Background(), trivy, git, sink, io.Discard, io.Discard, output.Annotator{}, appsecurity.ScanDependenciesInput{
 		FailOnSeverity: "high",
 		ScanMode:       security.ScanModeDiff,
@@ -90,9 +98,11 @@ func TestScanDependencies_DiffModeFindsNew(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from new vulnerability")
 	}
+
 	if !strings.Contains(err.Error(), "1 new vulnerability") {
 		t.Errorf("error = %v", err)
 	}
+
 	body := sink.buf.String()
 	for _, want := range []string{
 		"| Mode | diff |",
@@ -111,8 +121,11 @@ func TestScanDependencies_DiffModeNoBaseRefFallsBackToFull(t *testing.T) {
 		writePerCall: []string{headJSON, ""},
 	}
 	sink := &appSummaryBuf{}
+
 	var stderr bytes.Buffer
+
 	fsys := testfs.NewReal(t)
+
 	err := appsecurity.ScanDependencies(context.Background(), trivy, &fakeGit{}, sink, io.Discard, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), appsecurity.ScanDependenciesInput{
 		ScanMode:      security.ScanModeDiff,
 		BaseRef:       "",
@@ -122,9 +135,11 @@ func TestScanDependencies_DiffModeNoBaseRefFallsBackToFull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScanDependencies: %v", err)
 	}
+
 	if !strings.Contains(stderr.String(), "::warning::Diff mode requested but no base ref") {
 		t.Errorf("missing fallback warning:\n%s", stderr.String())
 	}
+
 	if !strings.Contains(sink.buf.String(), "| Mode | full (no base ref) |") {
 		t.Errorf("summary mode wrong:\n%s", sink.buf.String())
 	}
@@ -135,8 +150,11 @@ func TestScanDependencies_WorktreeFailureFallsBackToFull(t *testing.T) {
 	trivy := &fakeTrivy{writePerCall: []string{headJSON, ""}}
 	// Git refuses both worktree add attempts.
 	sink := &appSummaryBuf{}
+
 	var stderr bytes.Buffer
+
 	fsys := testfs.NewReal(t)
+
 	err := appsecurity.ScanDependencies(context.Background(), trivy, &fakeGit{}, sink, io.Discard, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), appsecurity.ScanDependenciesInput{
 		ScanMode:      security.ScanModeDiff,
 		BaseRef:       "main",
@@ -146,9 +164,11 @@ func TestScanDependencies_WorktreeFailureFallsBackToFull(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !strings.Contains(stderr.String(), "Could not create worktree") {
 		t.Errorf("missing worktree warning:\n%s", stderr.String())
 	}
+
 	if !strings.Contains(sink.buf.String(), "| Mode | full (worktree fallback) |") {
 		t.Errorf("summary mode wrong:\n%s", sink.buf.String())
 	}
@@ -159,6 +179,7 @@ func TestScanDependencies_FullModeUsesAllHeadIDs(t *testing.T) {
 	trivy := &fakeTrivy{writePerCall: []string{headJSON, ""}}
 	sink := &appSummaryBuf{}
 	fsys := testfs.NewReal(t)
+
 	err := appsecurity.ScanDependencies(context.Background(), trivy, &fakeGit{}, sink, io.Discard, io.Discard, output.Annotator{}, appsecurity.ScanDependenciesInput{
 		ScanMode:      security.ScanModeFull,
 		SARIFFile:     fsys.Path("trivy-dependency-results.sarif"),
@@ -170,12 +191,15 @@ func TestScanDependencies_FullModeUsesAllHeadIDs(t *testing.T) {
 }
 
 func TestScanDependencies_CleanResult(t *testing.T) {
-	headJSON := `{"Results":[]}`
+	headJSON := `{"Results":[]}` //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	trivy := &fakeTrivy{writePerCall: []string{headJSON, ""}}
 	sink := &appSummaryBuf{}
-	var stdout bytes.Buffer
+
+	var out bytes.Buffer
+
 	fsys := testfs.NewReal(t)
-	err := appsecurity.ScanDependencies(context.Background(), trivy, &fakeGit{}, sink, &stdout, io.Discard, output.Annotator{}, appsecurity.ScanDependenciesInput{
+
+	err := appsecurity.ScanDependencies(context.Background(), trivy, &fakeGit{}, sink, &out, io.Discard, output.Annotator{}, appsecurity.ScanDependenciesInput{
 		ScanMode:      security.ScanModeFull,
 		SARIFFile:     fsys.Path("trivy-dependency-results.sarif"),
 		GitLabDepFile: fsys.Path("gl-dependency-scanning-report.json"),
@@ -183,12 +207,14 @@ func TestScanDependencies_CleanResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !strings.Contains(sink.buf.String(), "> No new vulnerabilities found.") {
 		t.Errorf("missing clean line:\n%s", sink.buf.String())
 	}
+
 	for _, want := range []string{"Severity threshold: critical", "Scan mode: full", "Scan path: ."} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Errorf("stdout missing %q:\n%s", want, stdout.String())
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("out missing %q:\n%s", want, out.String())
 		}
 	}
 }
@@ -197,8 +223,11 @@ func TestScanDependencies_UnknownSeverityWarnsAndDefaultsToCritical(t *testing.T
 	headJSON := `{"Results":[]}`
 	trivy := &fakeTrivy{writePerCall: []string{headJSON, ""}}
 	sink := &appSummaryBuf{}
+
 	var stderr bytes.Buffer
+
 	fsys := testfs.NewReal(t)
+
 	err := appsecurity.ScanDependencies(context.Background(), trivy, &fakeGit{}, sink, io.Discard, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), appsecurity.ScanDependenciesInput{
 		FailOnSeverity: "unknown",
 		ScanMode:       security.ScanModeFull,
@@ -208,9 +237,11 @@ func TestScanDependencies_UnknownSeverityWarnsAndDefaultsToCritical(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !strings.Contains(stderr.String(), "::warning::Unknown severity") {
 		t.Errorf("missing warning:\n%s", stderr.String())
 	}
+
 	if !strings.Contains(sink.buf.String(), "| Severity filter | CRITICAL |") {
 		t.Errorf("summary should default to CRITICAL:\n%s", sink.buf.String())
 	}
@@ -220,10 +251,13 @@ func TestScanDependencies_CustomScanPathShown(t *testing.T) {
 	headJSON := `{"Results":[]}`
 	trivy := &fakeTrivy{writePerCall: []string{headJSON, ""}}
 	sink := &appSummaryBuf{}
-	var stdout bytes.Buffer
+
+	var out bytes.Buffer
+
 	fsys := testfs.NewReal(t)
 	custom := fsys.MkdirAll("custom-project")
-	err := appsecurity.ScanDependencies(context.Background(), trivy, &fakeGit{}, sink, &stdout, io.Discard, output.Annotator{}, appsecurity.ScanDependenciesInput{
+
+	err := appsecurity.ScanDependencies(context.Background(), trivy, &fakeGit{}, sink, &out, io.Discard, output.Annotator{}, appsecurity.ScanDependenciesInput{
 		ScanMode:      security.ScanModeFull,
 		ScanPath:      custom,
 		SARIFFile:     fsys.Path("trivy-dependency-results.sarif"),
@@ -232,7 +266,8 @@ func TestScanDependencies_CustomScanPathShown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "Scan path: "+custom) {
-		t.Errorf("stdout = %s", stdout.String())
+
+	if !strings.Contains(out.String(), "Scan path: "+custom) {
+		t.Errorf("out = %s", out.String())
 	}
 }

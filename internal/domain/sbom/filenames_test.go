@@ -13,18 +13,20 @@ import (
 
 func TestSBOMFilename_FromNameVersionLayer(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name   string
-		format sbom.SBOMFormat
+		format sbom.Format
 		want   string
 	}{
-		{"spdx_format", sbom.SBOMFormatSPDX, "demo-1.2.3-build-sbom.spdx.json"},
-		{"cyclonedx_format", sbom.SBOMFormatCycloneDX, "demo-1.2.3-build-sbom.cyclonedx.json"},
+		{"spdx_format", sbom.FormatSPDX, "demo-1.2.3-build-sbom.spdx.json"},
+		{"cyclonedx_format", sbom.FormatCycloneDX, "demo-1.2.3-build-sbom.cyclonedx.json"},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			got := sbom.SBOMFilename("", "demo", "1.2.3", "build", testCase.format)
+
+			got := sbom.Filename("", "demo", "1.2.3", "build", testCase.format)
 			require.Equal(t, testCase.want, got)
 		})
 	}
@@ -32,10 +34,11 @@ func TestSBOMFilename_FromNameVersionLayer(t *testing.T) {
 
 func TestSBOMFilename_FromCustomBasename(t *testing.T) {
 	t.Parallel()
-	got := sbom.SBOMFilename(
+
+	got := sbom.Filename(
 		"demo-1.2.3-abc1234-analyzed-jar",
 		"ignored", "ignored", "analyzed-jar",
-		sbom.SBOMFormatCycloneDX,
+		sbom.FormatCycloneDX,
 	)
 	require.Equal(t, "demo-1.2.3-abc1234-analyzed-jar-sbom.cyclonedx.json", got)
 }

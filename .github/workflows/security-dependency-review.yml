@@ -7,8 +7,8 @@
 # failure. Emits SARIF (uploaded to Code Scanning) and the GitLab dependency-
 # scanning report alongside.
 #
-# Runs inside the reusable-ci runtime container — scripts are baked at
-# /opt/reusable-ci/scripts and `trivy` is on PATH.
+# Runs inside the reusable-ci runtime container; the reusable-ci binary and
+# `trivy` are on PATH.
 #
 # Usage:
 # 1. Add the following to your workflow file:
@@ -31,10 +31,14 @@ on:
         default: "critical"
         type: string
       runtime-image:
-        description: "reusable-ci runtime image. Pin to a digest or version tag for reproducibility; default tracks main."
+        description: "reusable-ci runtime image. Optional override; default uses the matching v3.0.0 runtime image."
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime:main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime:v3.0.0"
         type: string
+    secrets:
+      CODE_SCANNING_TOKEN:
+        description: "Token with security-events:write for SARIF upload"
+        required: false
 permissions:
   contents: read
 jobs:
@@ -43,7 +47,7 @@ jobs:
   # analysis job focused on one concern.
   dependency-review:
     name: Dependency Review Analysis
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     if: github.event_name == 'pull_request'
     container:
@@ -57,7 +61,7 @@ jobs:
         env:
           FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
           SCAN_MODE: diff
-        run: reusable-ci security scan-dependencies
+        run: reusable-ci security scan dependencies
       - name: Save dependency review SARIF artifact
         if: always() && hashFiles('trivy-dependency-results.sarif') != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -82,7 +86,7 @@ jobs:
     name: Upload SARIF to Code Scanning
     needs: [dependency-review]
     if: always() && needs.dependency-review.result != 'cancelled' && needs.dependency-review.result != 'skipped'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 1
     container:
       image: ${{ inputs['runtime-image'] }}
@@ -101,4 +105,4 @@ jobs:
           CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
           SARIF_FILE: trivy-dependency-results.sarif
           SARIF_CATEGORY: dependency-review
-        run: reusable-ci security upload-sarif
+        run: reusable-ci security report upload-sarif

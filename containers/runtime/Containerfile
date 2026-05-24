@@ -15,6 +15,8 @@
 #   full    — base + opengrep + syft + trivy. Used by security and SBOM jobs.
 #   rust    — base + Rust stable toolchain + cargo-cyclonedx. Used by
 #             sbom-cargo and any future cargo-driven workflow.
+#   go      — base + Go 1.26 toolchain + cyclonedx-gomod. Used by build-go
+#             and sbom-go.
 #   node    — base + Node 24 LTS + npm + corepack. Used by build-npm,
 #             publish-dev-npm.
 #   java    — base + Eclipse Temurin JDK 25 LTS + Maven + Gradle. Used by
@@ -35,7 +37,7 @@
 # =============================================================================
 
 # renovate: datasource=docker depName=golang versioning=docker
-ARG GO_BUILDER_TAG=1.26-alpine
+ARG GO_BUILDER_TAG=1.26.3-alpine
 
 FROM golang:${GO_BUILDER_TAG} AS gobuilder
 
@@ -49,9 +51,23 @@ COPY internal/ internal/
 ARG REUSABLE_CI_VERSION=dev
 ARG REUSABLE_CI_COMMIT=unknown
 ARG REUSABLE_CI_DATE=unknown
+# SOURCE_DATE_EPOCH (RFC 5785-style reproducible-builds env) makes
+# the `go build` output byte-identical across rebuilds of the same
+# commit. The default `0` is intentional: when an external caller
+# runs `docker build` without passing this, they get the canonical
+# Unix epoch, not the runner's wall-clock. Self-runtime-container.yml
+# passes the git-commit timestamp here.
+ARG SOURCE_DATE_EPOCH=0
 
+# BuildKit go-build + module caches: the Containerfile compiles the
+# same binary 14× per CI cycle (7 targets × 2 archs). Cache mounts
+# cut all but the first invocation to milliseconds. The mounts
+# survive across runs via `cache-to: type=gha,mode=max`.
 ENV CGO_ENABLED=0
-RUN go build \
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+    go build \
       -trimpath \
       -ldflags="-s -w \
         -X main.version=${REUSABLE_CI_VERSION} \
@@ -64,7 +80,17 @@ RUN go build \
 # Base stage
 # =============================================================================
 
-FROM debian:13-slim AS base
+# Pinned by tag here; Renovate digest-pins on first run to convert
+# `debian:13-slim` into `debian:13-slim@sha256:<hash>`. Tag-only
+# pinning lets a malicious upstream republish the same tag with new
+# content — the SHA pin closes that window. The renovate comment
+# below opts the line into the docker datasource so Renovate keeps
+# both the tag and the digest current.
+#
+# renovate: datasource=docker depName=debian versioning=docker
+ARG DEBIAN_VERSION=13-slim
+
+FROM debian:${DEBIAN_VERSION} AS base
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -114,14 +140,17 @@ RUN bash -c 'set -euo pipefail \
   && source /opt/reusable-ci/scripts/bootstrap/install-mise.sh && install_mise \
   && install -m 0755 "$(command -v mise)" /usr/local/bin/mise \
   && source /opt/reusable-ci/scripts/bootstrap/install-publiccode-parser.sh && install_publiccode_parser \
-  && install -m 0755 "$(command -v publiccode-parser)" /usr/local/bin/publiccode-parser' \
-  && rm -rf /tmp/yq-bin /tmp/git-cliff-bin /tmp/gh-bin /tmp/glab-bin /tmp/mise-bin /tmp/publiccode-parser-bin \
+  && install -m 0755 "$(command -v publiccode-parser)" /usr/local/bin/publiccode-parser \
+  && source /opt/reusable-ci/scripts/bootstrap/install-cosign.sh && install_cosign \
+  && install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign' \
+  && rm -rf /tmp/yq-bin /tmp/git-cliff-bin /tmp/gh-bin /tmp/glab-bin /tmp/mise-bin /tmp/publiccode-parser-bin /tmp/cosign-bin \
   && yq --version \
   && git-cliff --version \
   && gh --version \
   && glab --version \
   && mise --version \
   && publiccode-parser --version \
+  && cosign version \
   && reusable-ci --version
 
 WORKDIR /workspace
@@ -157,19 +186,62 @@ ARG RUST_VERSION=1.90.0
 ARG CARGO_CYCLONEDX_VERSION=0.5.9
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# Install rustup + the linkers needed for the artifact-first cross-compile
+# matrix the build-cargo.yml workflow defaults to (linux/amd64 + linux/arm64).
+# Adopters wanting darwin/windows must extend this image or run the build
+# on a host that already carries the matching cross-linker — cargo will
+# error with a clear `linker not found for target …` message otherwise.
 # hadolint ignore=DL3008
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends gcc libc6-dev \
+  && apt-get install -y --no-install-recommends gcc libc6-dev gcc-aarch64-linux-gnu \
   && rm -rf /var/lib/apt/lists/* \
   && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
        | sh -s -- -y --no-modify-path \
             --default-toolchain "${RUST_VERSION}" \
             --profile minimal \
+  && rustup target add aarch64-unknown-linux-gnu \
   && cargo install --locked cargo-cyclonedx --version "${CARGO_CYCLONEDX_VERSION}" \
   && rm -rf "${CARGO_HOME}/registry" "${CARGO_HOME}/git" \
   && rustc --version \
   && cargo --version \
   && cargo-cyclonedx --version
+
+# Point cargo at the cross-linker for aarch64. Without this the
+# x86_64 default linker is used and aarch64 compiles fail with
+# "wrong architecture" link errors.
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+
+# =============================================================================
+# Go toolchain (build-go, sbom-go)
+# =============================================================================
+
+FROM base AS go
+
+# renovate: datasource=golang-version depName=go
+ARG GO_VERSION=1.26.3
+# renovate: datasource=github-releases depName=CycloneDX/cyclonedx-gomod
+ARG CYCLONEDX_GOMOD_VERSION=v1.10.0
+
+ENV GOROOT=/usr/local/go \
+    GOPATH=/go \
+    PATH=/usr/local/go/bin:/go/bin:$PATH
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+RUN arch="$(dpkg --print-architecture)" \
+  && case "$arch" in \
+       amd64) go_arch=amd64 ;; \
+       arm64) go_arch=arm64 ;; \
+       *) printf 'unsupported arch: %s\n' "$arch" >&2; exit 1 ;; \
+     esac \
+  && curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${go_arch}.tar.gz" \
+       -o /tmp/go.tar.gz \
+  && tar -C /usr/local -xzf /tmp/go.tar.gz \
+  && rm -f /tmp/go.tar.gz \
+  && mkdir -p "$GOPATH" \
+  && GOBIN=/usr/local/bin go install "github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@${CYCLONEDX_GOMOD_VERSION}" \
+  && rm -rf "$GOPATH/pkg/mod" "$GOPATH/pkg/sumdb" /root/.cache/go-build \
+  && go version \
+  && cyclonedx-gomod version
 
 # =============================================================================
 # Node toolchain (build-npm, publish-dev-npm)

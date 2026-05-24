@@ -11,8 +11,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
 )
 
-// MavenBuildInput drives `summary maven-build`. Mirrors
-// scripts/summary/write-maven-build-summary.sh.
+// MavenBuildInput drives `summary maven-build`.
 type MavenBuildInput struct {
 	BuildType   string
 	GroupID     string
@@ -33,6 +32,7 @@ func MavenBuild(ctx context.Context, sink ci.SummarySink, in MavenBuildInput) er
 	if now.IsZero() {
 		now = time.Now()
 	}
+
 	md := build.RenderMavenSummary(build.MavenSummaryInput{
 		BuildType:   in.BuildType,
 		GroupID:     in.GroupID,
@@ -42,5 +42,6 @@ func MavenBuild(ctx context.Context, sink ci.SummarySink, in MavenBuildInput) er
 		SkipTests:   in.SkipTests,
 		IsSnapshot:  in.IsSnapshot,
 	}, now)
+
 	return sink.Append(ctx, md)
 }

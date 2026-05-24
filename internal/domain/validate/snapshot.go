@@ -8,8 +8,6 @@ import "strings"
 // IsSnapshot reports whether ref ends with "-snapshot" (case-insensitive).
 // SNAPSHOT releases bypass authorization checks — they're meant for
 // pre-release iteration, not production tagging.
-//
-// Mirrors ci_is_snapshot in scripts/ci/output.sh.
 func IsSnapshot(ref string) bool {
 	return strings.HasSuffix(strings.ToLower(ref), "-snapshot")
 }

@@ -16,41 +16,48 @@ import (
 
 func TestSuffixExtractedBinaries_AllFilesWhenNoExpected(t *testing.T) {
 	fsys := testfs.NewReal(t)
+
 	dir := fsys.Root
 	for _, name := range []string{"hsm-worker", "digg-hsm-keytool"} {
 		fsys.WriteFile(name, []byte("ELF"))
 	}
-	var stdout bytes.Buffer
-	err := appcontainer.SuffixExtractedBinaries(&stdout, appcontainer.SuffixExtractedBinariesInput{
+
+	var out bytes.Buffer
+
+	err := appcontainer.SuffixExtractedBinaries(&out, appcontainer.SuffixExtractedBinariesInput{
 		Dir:  dir,
-		Arch: "amd64",
+		Arch: "amd64", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	})
 	if err != nil {
 		t.Fatalf("SuffixExtractedBinaries: %v", err)
 	}
+
 	for _, want := range []string{"hsm-worker-linux-amd64", "digg-hsm-keytool-linux-amd64"} {
 		if _, err := os.Stat(fsys.Path(want)); err != nil {
 			t.Errorf("missing %s: %v", want, err)
 		}
 	}
-	if !strings.Contains(stdout.String(), "renamed hsm-worker -> hsm-worker-linux-amd64") {
-		t.Errorf("missing log line:\n%s", stdout.String())
+
+	if !strings.Contains(out.String(), "renamed hsm-worker -> hsm-worker-linux-amd64") {
+		t.Errorf("missing log line:\n%s", out.String())
 	}
 }
 
 func TestSuffixExtractedBinaries_ExpectedNamesOnly(t *testing.T) {
 	fsys := testfs.NewReal(t)
+
 	dir := fsys.Root
 	for _, name := range []string{"hsm-worker", "extra-tool"} {
 		fsys.WriteFile(name, []byte("ELF"))
 	}
+
 	err := appcontainer.SuffixExtractedBinaries(io.Discard, appcontainer.SuffixExtractedBinariesInput{
-		Dir: dir, Arch: "arm64", ExpectedNames: " hsm-worker , digg-missing ",
+		Dir: dir, Arch: "arm64", ExpectedNames: " hsm-worker ", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// hsm-worker renamed; digg-missing silently skipped.
+	// hsm-worker renamed.
 	if _, err := os.Stat(fsys.Path("hsm-worker-linux-arm64")); err != nil {
 		t.Errorf("missing rename: %v", err)
 	}
@@ -58,8 +65,21 @@ func TestSuffixExtractedBinaries_ExpectedNamesOnly(t *testing.T) {
 	if _, err := os.Stat(fsys.Path("extra-tool")); err != nil {
 		t.Errorf("extra-tool should still exist: %v", err)
 	}
+
 	if _, err := os.Stat(fsys.Path("extra-tool-linux-arm64")); !os.IsNotExist(err) {
 		t.Errorf("extra-tool should NOT be renamed (not in ExpectedNames): %v", err)
+	}
+}
+
+func TestSuffixExtractedBinaries_MissingExpectedNameErrors(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile("hsm-worker", []byte("ELF"))
+
+	err := appcontainer.SuffixExtractedBinaries(io.Discard, appcontainer.SuffixExtractedBinariesInput{
+		Dir: fsys.Root, Arch: "arm64", ExpectedNames: " hsm-worker , digg-missing ",
+	})
+	if err == nil || !strings.Contains(err.Error(), "digg-missing") {
+		t.Fatalf("expected missing binary error, got %v", err)
 	}
 }
 
@@ -86,6 +106,7 @@ func TestSuffixExtractedBinaries_NestedFilesUntouched(t *testing.T) {
 	fsys.MkdirAll("nested")
 	fsys.WriteFile("nested/keepme", []byte("deep"))
 	fsys.WriteFile("hsm-worker", []byte("ELF"))
+
 	err := appcontainer.SuffixExtractedBinaries(io.Discard, appcontainer.SuffixExtractedBinariesInput{
 		Dir:  dir,
 		Arch: "amd64",
@@ -93,12 +114,15 @@ func TestSuffixExtractedBinaries_NestedFilesUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := os.Stat(fsys.Path("hsm-worker-linux-amd64")); err != nil {
 		t.Errorf("missing renamed top-level binary: %v", err)
 	}
+
 	if _, err := os.Stat(fsys.Path("nested", "keepme")); err != nil {
 		t.Errorf("nested file should remain: %v", err)
 	}
+
 	if _, err := os.Stat(fsys.Path("nested", "keepme-linux-amd64")); !os.IsNotExist(err) {
 		t.Errorf("nested file should not be renamed: %v", err)
 	}

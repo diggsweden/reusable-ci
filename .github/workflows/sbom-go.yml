@@ -1,0 +1,97 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# Go SBOM
+#
+# Generates a CycloneDX Build SBOM for container-first Go projects. It does not
+# compile or test; the service binary is built inside the project's Containerfile.
+name: Go SBOM
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      branch:
+        description: "Branch to checkout"
+        required: false
+        default: "main"
+        type: string
+      artifact-name:
+        description: "Artifact name for uploads (defaults to 'go-build-sbom')"
+        required: false
+        default: ""
+        type: string
+      enable-build-sbom:
+        description: "Generate CycloneDX Build SBOM with cyclonedx-gomod"
+        required: false
+        default: true
+        type: boolean
+      runtime-image:
+        description: "reusable-ci runtime image carrying Go + cyclonedx-gomod. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-go-1.26:v3.0.0"
+        type: string
+permissions:
+  contents: read
+jobs:
+  sbom-go:
+    name: Go SBOM
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+      - name: Cache Go modules
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            /go/pkg/mod
+            ~/.cache/go-build
+          key: go-sbom-${{ runner.os }}-${{ hashFiles(format('{0}/go.sum', inputs['working-directory']), format('{0}/go.mod', inputs['working-directory'])) }}
+          restore-keys: |
+            go-sbom-${{ runner.os }}-
+      - name: Download dependencies
+        if: ${{ inputs['enable-build-sbom'] }}
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: reusable-ci build go download
+      - name: Resolve Go SBOM metadata
+        id: metadata
+        if: ${{ inputs['enable-build-sbom'] }}
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+          ARTIFACT_NAME: ${{ inputs['artifact-name'] }}
+        run: reusable-ci build go metadata
+      - name: Generate Build SBOM
+        id: sbom
+        if: ${{ inputs['enable-build-sbom'] }}
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+          ARTIFACT_NAME: ${{ inputs['artifact-name'] }}
+          BINARY_NAME: ${{ steps.metadata.outputs.binary-name }}
+        run: reusable-ci build go sbom
+      - name: Upload Go SBOM
+        if: steps.sbom.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs['artifact-name'] != '' && format('{0}-go-build-sbom', inputs['artifact-name']) || 'go-build-sbom' }}
+          path: ${{ inputs['working-directory'] }}/.reusable-ci/go-build-sbom/**/bom.json
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Write SBOM status to step summary
+        if: always()
+        env:
+          SBOM_KIND: go
+          SBOM_OUTCOME: ${{ steps.sbom.outcome }}
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: reusable-ci report status sbom-count

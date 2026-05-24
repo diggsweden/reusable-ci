@@ -23,7 +23,8 @@ import (
 func main() {
 	body := cli.Render(cli.New(cli.BuildInfo{Version: "dev"}))
 	if _, err := fmt.Fprint(os.Stdout, body); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
+		_, _ = fmt.Fprintln(os.Stderr, "Error:", err)
+
 		os.Exit(1)
 	}
 }

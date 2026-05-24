@@ -34,16 +34,18 @@ type Mock struct {
 func New(t *testing.T) *Mock {
 	t.Helper()
 	dir := t.TempDir()
+
 	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
+	if err := os.MkdirAll(binDir, 0o755); err != nil { //nolint:gosec // test infra; binDir is t.TempDir()-based.
 		t.Fatalf("mockbinary: mkdir: %v", err)
 	}
+
 	recPath := filepath.Join(dir, "invocations.jsonl")
-	if err := os.WriteFile(recPath, nil, 0o644); err != nil {
+	if err := os.WriteFile(recPath, nil, 0o644); err != nil { //nolint:gosec // test infra; recPath is t.TempDir()-based.
 		t.Fatalf("mockbinary: create recordings: %v", err)
 	}
 
-	m := &Mock{
+	m := &Mock{ //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		t:        t,
 		binDir:   binDir,
 		recPath:  recPath,
@@ -52,6 +54,7 @@ func New(t *testing.T) *Mock {
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+m.prevPath)
 	t.Setenv("MOCKBINARY_RECPATH", recPath)
 	t.Cleanup(m.cleanup)
+
 	return m
 }
 
@@ -93,7 +96,7 @@ else
 fi
 `, name, name, script)
 
-	if err := os.WriteFile(path, []byte(stub), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(stub), 0o755); err != nil { //nolint:gosec // test infra; stub must be exec'able.
 		m.t.Fatalf("mockbinary: write %q: %v", path, err)
 	}
 }
@@ -116,19 +119,24 @@ func (m *Mock) Invocations(name string) []Invocation {
 	if err != nil {
 		m.t.Fatalf("mockbinary: read recordings: %v", err)
 	}
+
 	var out []Invocation
-	for i, line := range strings.Split(string(data), "\n") {
+
+	for i, line := range strings.Split(string(data), "\n") { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		if line == "" {
 			continue
 		}
+
 		var inv Invocation
 		if err := json.Unmarshal([]byte(line), &inv); err != nil {
 			m.t.Fatalf("mockbinary: parse line %d: %v\nline: %s", i+1, err, line)
 		}
+
 		if inv.Name == name {
 			out = append(out, inv)
 		}
 	}
+
 	return out
 }
 
@@ -137,22 +145,28 @@ func (m *Mock) AllNames() []string {
 	m.t.Helper()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	data, _ := os.ReadFile(m.recPath)
 	seen := map[string]struct{}{}
+
 	for _, line := range strings.Split(string(data), "\n") {
 		if line == "" {
 			continue
 		}
+
 		var inv Invocation
 		if json.Unmarshal([]byte(line), &inv) == nil {
 			seen[inv.Name] = struct{}{}
 		}
 	}
+
 	out := make([]string, 0, len(seen))
 	for n := range seen {
 		out = append(out, n)
 	}
+
 	sort.Strings(out)
+
 	return out
 }
 

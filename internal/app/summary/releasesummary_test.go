@@ -14,25 +14,40 @@ import (
 
 func TestReleaseSummary_HappyPath(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
+
 	err := appsummary.ReleaseSummary(context.Background(), sink, appsummary.ReleaseSummaryInput{
 		ReleaseVersion:      "v1.2.3",
-		ReleaseBranch:       "main",
-		ReleaseCommit:       "abcdef0123",
-		ReleaseActor:        "bot",
+		ReleaseBranch:       "main", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		ReleaseCommit:       "abcdef0123", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		ReleaseActor:        "bot", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		RunURL:              "https://example.com/run/42",
-		CreateReleaseResult: "success",
-		PrepareStageJSON:    `{"targets":{"version-bump":"success"}}`,
-		BuildStageJSON:      `{"targets":{"maven":"success","npm":"failure","gradle":"skipped"}}`,
-		PublishStageJSON:    `{"targets":{"githubpackages":"success","containers":"success"}}`,
-		Platform:            provider.PlatformGitHub,
-		ServerURL:           "https://github.com",
-		Repository:          "owner/repo",
-		Now:                 fixedNow(),
+		CreateReleaseResult: "success", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		PrepareStageJSON:    stageResultJSON(t, "prepare", map[string]string{"version_bump": "success"}),
+		BuildStageJSON: stageResultJSON(t, "build", map[string]string{
+			"maven":  "success", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			"npm":    "failure", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			"gradle": "skipped", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			"go":     "success",
+			"cargo":  "skipped", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		}),
+		PublishStageJSON: stageResultJSON(t, "publish", map[string]string{
+			"github_packages":       "success",
+			"xcode_ios":             "success",
+			"containers":            "success",                                                                                                            //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			"cargo_container_first": "success",
+			"go_container_first":    "failure",
+		}),
+		Platform:   provider.PlatformGitHub,
+		ServerURL:  "https://github.com", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		Repository: "owner/repo",
+		Now:        fixedNow(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	body := sink.buf.String()
 	for _, want := range []string{
 		"# Release Summary",
@@ -45,8 +60,13 @@ func TestReleaseSummary_HappyPath(t *testing.T) {
 		"| Build Maven | ✓ |",
 		"| Build NPM | ✗ |",
 		"| Build Gradle | − |",
+		"| Build Go | ✓ |",
+		"| Build Cargo | − |",
 		"| Publish GitHub | ✓ |",
+		"| Publish Apple App Store | ✓ |",
 		"| Containers | ✓ |",
+		"| Cargo SBOM | ✓ |",
+		"| Go SBOM | ✗ |",
 		"| GitHub Release | ✓ |",
 		"- [Release](https://github.com/owner/repo/releases/tag/v1.2.3)",
 		"- [Packages](https://github.com/owner/repo/packages)",
@@ -58,11 +78,24 @@ func TestReleaseSummary_HappyPath(t *testing.T) {
 	}
 }
 
+func TestReleaseSummary_RejectsMalformedStageResultJSON(t *testing.T) {
+	t.Parallel()
+
+	err := appsummary.ReleaseSummary(context.Background(), &fakeSummarySink{}, appsummary.ReleaseSummaryInput{
+		PrepareStageJSON: `{"stage":"prepare","targets":{}}`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "prepare-stage result-json") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestReleaseSummary_GitLabURLs(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
+
 	err := appsummary.ReleaseSummary(context.Background(), sink, appsummary.ReleaseSummaryInput{
-		ReleaseVersion: "v1.0.0",
+		ReleaseVersion: "v1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Platform:       provider.PlatformGitLab,
 		ServerURL:      "https://gitlab.com",
 		Repository:     "group/proj",
@@ -71,10 +104,12 @@ func TestReleaseSummary_GitLabURLs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	body := sink.buf.String()
 	if !strings.Contains(body, "[Release](https://gitlab.com/group/proj/-/releases/v1.0.0)") {
 		t.Errorf("gitlab release URL wrong: %s", body)
 	}
+
 	if !strings.Contains(body, "[Packages](https://gitlab.com/group/proj/-/packages)") {
 		t.Errorf("gitlab packages URL wrong: %s", body)
 	}
@@ -82,7 +117,9 @@ func TestReleaseSummary_GitLabURLs(t *testing.T) {
 
 func TestReleaseSummary_MissingStageJSONsDefaultToSkipped(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
+
 	err := appsummary.ReleaseSummary(context.Background(), sink, appsummary.ReleaseSummaryInput{
 		ReleaseVersion:      "v1.0.0",
 		CreateReleaseResult: "skipped",
@@ -94,8 +131,8 @@ func TestReleaseSummary_MissingStageJSONsDefaultToSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// All twelve rows render as − (skipped) when no stage JSONs and the
-	// release row is also "skipped".
+	// All rows render as − (skipped) when no stage JSONs and the release row
+	// is also "skipped".
 	if strings.Contains(sink.buf.String(), "| ✗ |") {
 		t.Errorf("no failures expected when all results are skipped: %s", sink.buf.String())
 	}

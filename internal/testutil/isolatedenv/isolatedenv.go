@@ -106,6 +106,7 @@ func Isolate(t *testing.T) string {
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		t.Fatalf("isolatedenv: mkdir TMPDIR %q: %v", tmp, err)
 	}
+
 	t.Setenv("TMPDIR", tmp)
 
 	// Output stability: disable colour, force a terminal type that no

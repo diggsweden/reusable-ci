@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Example: Go CLI signed with Sigstore keyless (no long-lived key).
+#
+# `sign.method: sigstore` tells `release sign` (and container image
+# signing) to use cosign with the runner's OIDC token. There is no
+# private key to manage — Fulcio issues a 10-minute certificate
+# bound to the workflow identity for each release.
+#
+# Requirements on the caller workflow:
+#   permissions:
+#     id-token: write   # required to request the OIDC token
+#     contents: write   # required to create the release
+#
+# See docs/verification.md#signing-methods-for-release-artefacts.
+artifacts:
+  - name: my-cli
+    project-type: go
+    working-directory: .
+    config:
+      build-mode: artifact-first
+      main-package: ./cmd/my-cli
+      binary-name: my-cli
+      platforms: linux/amd64,linux/arm64,darwin/amd64,darwin/arm64
+
+sign:
+  method: sigstore
+  # oidc-issuer is auto-detected from the runner (GitHub Actions →
+  # https://token.actions.githubusercontent.com). Set it explicitly
+  # only for self-hosted Fulcio or non-default platforms.

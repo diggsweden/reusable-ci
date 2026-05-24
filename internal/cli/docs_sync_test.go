@@ -28,7 +28,7 @@ func TestDocsCLIReferenceInSync(t *testing.T) {
 	want := cli.Render(cli.New(cli.BuildInfo{Version: "dev"}))
 
 	path := filepath.Join(repoRoot(t), "docs", "cli-reference.md")
-	got, err := os.ReadFile(path)
+	got, err := os.ReadFile(path) //nolint:gosec // test reads repo-local docs file.
 	require.NoErrorf(t, err, "read %s", path)
 
 	require.Equalf(t, want, string(got),
@@ -42,6 +42,7 @@ func TestDocsCLIReferenceInSync(t *testing.T) {
 // relative to the module root.
 func repoRoot(t *testing.T) string {
 	t.Helper()
+
 	_, here, _, ok := runtime.Caller(0)
 	require.True(t, ok, "runtime.Caller(0) returned !ok")
 	// here = .../internal/cli/docs_sync_test.go

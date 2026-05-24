@@ -20,7 +20,6 @@ type fakeGitInfo struct {
 	taggerDate string
 	tagMessage string
 	tagBody    string
-	verifyOK   bool
 	commit     git.CommitInfo
 }
 
@@ -33,21 +32,19 @@ func (f *fakeGitInfo) TagMessage(_ context.Context, _ string) (string, error) {
 func (f *fakeGitInfo) CatFileTag(_ context.Context, _ string) (string, error) {
 	return f.tagBody, nil
 }
-func (f *fakeGitInfo) VerifyTag(_ context.Context, _ string) (string, bool, error) {
-	return "", f.verifyOK, nil
-}
 func (f *fakeGitInfo) CommitInfo(_ context.Context, _ string) (git.CommitInfo, error) {
 	return f.commit, nil
 }
 
 func TestPrerequisites_TagSection(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
 	gitr := &fakeGitInfo{
 		taggerName: "Bot <bot@example.invalid>",
 		taggerDate: "2026-05-10",
 		tagMessage: "Release v1.0.0\nbody",
-		verifyOK:   true,
+		tagBody:    "-----BEGIN PGP SIGNATURE-----\n…\n",
 		commit: git.CommitInfo{
 			Author:  "Alice <alice@example.invalid>",
 			Date:    "2026-05-09",
@@ -55,9 +52,10 @@ func TestPrerequisites_TagSection(t *testing.T) {
 			Body:    "tree abc\nparent def\nauthor Alice\n",
 		},
 	}
-	err := appsummary.Prerequisites(context.Background(), sink, gitr, appsummary.PrerequisitesInput{
-		TagName:         "v1.0.0",
-		CommitSHA:       "abcdef0123",
+
+	err := appsummary.Prerequisites(context.Background(), sink, gitr, appsummary.PrerequisitesSummaryInput{
+		TagName:         "v1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		CommitSHA:       "abcdef0123", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		RefType:         provider.RefTypeTag,
 		HasReleaseToken: true,
 		JobStatus:       domainsummary.ResultSuccess,
@@ -66,6 +64,7 @@ func TestPrerequisites_TagSection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	body := sink.buf.String()
 	for _, want := range []string{
 		"# 📋 Release Prerequisites Validation Report",
@@ -92,6 +91,7 @@ func TestPrerequisites_TagSection(t *testing.T) {
 
 func TestPrerequisites_PrereleaseTags(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name string
 		tag  string
@@ -103,8 +103,10 @@ func TestPrerequisites_PrereleaseTags(t *testing.T) {
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
+
 			sink := &fakeSummarySink{}
-			err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesInput{
+
+			err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesSummaryInput{
 				TagName: testCase.tag,
 				RefType: provider.RefTypeTag,
 				Now:     fixedNow(),
@@ -112,6 +114,7 @@ func TestPrerequisites_PrereleaseTags(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			if !strings.Contains(sink.buf.String(), testCase.want) {
 				t.Errorf("expected prerelease row %q:\n%s", testCase.want, sink.buf.String())
 			}
@@ -119,27 +122,32 @@ func TestPrerequisites_PrereleaseTags(t *testing.T) {
 	}
 }
 
-func TestPrerequisites_SnapshotSkipsAuthorization(t *testing.T) {
+func TestPrerequisites_SnapshotSkipsSignerAllowlist(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
-	err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesInput{
-		TagName:            "v1.0.0-SNAPSHOT",
-		RefType:            provider.RefTypeTag,
-		CheckAuthorization: false,
-		Now:                fixedNow(),
+
+	err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesSummaryInput{
+		TagName:                  "v1.0.0-SNAPSHOT",
+		RefType:                  provider.RefTypeTag,
+		RequireAllowlistedSigner: true,
+		Now:                      fixedNow(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(sink.buf.String(), "| User Authorization | − Skip | SNAPSHOT release |") {
+
+	if !strings.Contains(sink.buf.String(), "| Signer Allowlist | − Skip | SNAPSHOT release (bypasses gate) |") {
 		t.Errorf("expected SNAPSHOT skip row:\n%s", sink.buf.String())
 	}
 }
 
 func TestPrerequisites_GPGSecretsGatedByFlag(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
-	err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesInput{
+
+	err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesSummaryInput{
 		TagName:                 "v1.0.0",
 		RefType:                 provider.RefTypeTag,
 		SignArtifacts:           true,
@@ -151,6 +159,7 @@ func TestPrerequisites_GPGSecretsGatedByFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	body := sink.buf.String()
 	for _, want := range []string{
 		"| RELEASE_GPG_PRIVATE_KEY | Sign commits/artifacts | ✓ Available |",
@@ -166,8 +175,10 @@ func TestPrerequisites_GPGSecretsGatedByFlag(t *testing.T) {
 
 func TestPrerequisites_SignArtifactsFalseHidesGPG(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
-	err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesInput{
+
+	err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesSummaryInput{
 		TagName:       "v1.0.0",
 		RefType:       provider.RefTypeTag,
 		SignArtifacts: false,
@@ -176,6 +187,7 @@ func TestPrerequisites_SignArtifactsFalseHidesGPG(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if strings.Contains(sink.buf.String(), "RELEASE_GPG_PRIVATE_KEY") {
 		t.Errorf("GPG secrets should be hidden when SignArtifacts=false: %s", sink.buf.String())
 	}
@@ -183,8 +195,10 @@ func TestPrerequisites_SignArtifactsFalseHidesGPG(t *testing.T) {
 
 func TestPrerequisites_PublishToTargets(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
-	err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesInput{
+
+	err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesSummaryInput{
 		TagName:                 "v1.0.0",
 		RefType:                 provider.RefTypeTag,
 		PublishTo:               "maven-central,github-packages",
@@ -195,6 +209,7 @@ func TestPrerequisites_PublishToTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	body := sink.buf.String()
 	for _, want := range []string{
 		"| MAVEN_CENTRAL_USERNAME | Maven Central auth | ✓ Available |",
@@ -212,21 +227,55 @@ func TestPrerequisites_PublishToTargets(t *testing.T) {
 	}
 }
 
+func TestPrerequisites_ConfigPlanDerivesConfiguration(t *testing.T) {
+	t.Parallel()
+
+	sink := &fakeSummarySink{}
+
+	err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesSummaryInput{
+		TagName:                 "v1.0.0",
+		RefType:                 provider.RefTypeTag,
+		ConfigPlanJSON:          `{"version":1,"artifacts":{"all":[{"name":"lib","project_type":"maven","build_type":"library","publish_to":["maven-central"]},{"name":"pkg","project_type":"npm","build_type":"application","publish_to":["github-packages"]}]},"containers":{"all":[],"has_containers":false}}`,
+		HasMavenCentralUsername: true,
+		HasMavenCentralPassword: true,
+		Now:                     fixedNow(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := sink.buf.String()
+	for _, want := range []string{
+		"| **Project Types** | maven,npm |",
+		"| **Build Types** | application,library |",
+		"| MAVEN_CENTRAL_USERNAME | Maven Central auth | ✓ Available |",
+		"| GitHub Packages | ✓ Pass | Using GITHUB_TOKEN |",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q\nfull:\n%s", want, body)
+		}
+	}
+}
+
 func TestPrerequisites_BranchRefSkipsTagSections(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
-	err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesInput{
-		TagName: "main",
+
+	err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesSummaryInput{
+		TagName: "main", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		RefType: provider.RefTypeBranch,
 		Now:     fixedNow(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	body := sink.buf.String()
 	if strings.Contains(body, "Tagger:") {
 		t.Errorf("branch ref should not show tagger line: %s", body)
 	}
+
 	if strings.Contains(body, "Semantic Version") {
 		t.Errorf("branch ref should not validate semver: %s", body)
 	}
@@ -234,8 +283,10 @@ func TestPrerequisites_BranchRefSkipsTagSections(t *testing.T) {
 
 func TestPrerequisites_FailedJobStatus(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
-	err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesInput{
+
+	err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesSummaryInput{
 		TagName:   "v1.0.0",
 		RefType:   provider.RefTypeTag,
 		JobStatus: domainsummary.ResultFailure,
@@ -244,6 +295,7 @@ func TestPrerequisites_FailedJobStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !strings.Contains(sink.buf.String(), "### ❌ Prerequisites validation failed") {
 		t.Errorf("expected failure header: %s", sink.buf.String())
 	}
@@ -251,8 +303,10 @@ func TestPrerequisites_FailedJobStatus(t *testing.T) {
 
 func TestPrerequisites_MissingReleaseTokenShown(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
-	err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesInput{
+
+	err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesSummaryInput{
 		TagName:         "v1.0.0",
 		RefType:         provider.RefTypeTag,
 		HasReleaseToken: false,
@@ -261,6 +315,7 @@ func TestPrerequisites_MissingReleaseTokenShown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	body := sink.buf.String()
 	if !strings.Contains(body, "| Release Token | ✗ Fail | Missing RELEASE_TOKEN |") {
 		t.Errorf("missing release token row: %s", body)

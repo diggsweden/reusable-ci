@@ -17,8 +17,9 @@ func TestDebugWorkspace_PrintsAllSections(t *testing.T) {
 	fsys.WriteFile("README.md", []byte("hi"))
 	fsys.WriteFile(".github-shared/scripts/validate/validate-x.sh", []byte("#!/bin/sh"))
 
-	var stdout bytes.Buffer
-	err := appci.DebugWorkspace(&stdout, appci.DebugWorkspaceInput{
+	var out bytes.Buffer
+
+	err := appci.DebugWorkspace(&out, appci.DebugWorkspaceInput{
 		Root:             fsys.Root,
 		ActionRepository: "diggsweden/reusable-ci",
 		ActionRef:        "main",
@@ -27,7 +28,7 @@ func TestDebugWorkspace_PrintsAllSections(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := stdout.String()
+	body := out.String()
 	for _, want := range []string{
 		"=== Workspace structure ===",
 		"=== .github-shared structure ===",
@@ -37,18 +38,19 @@ func TestDebugWorkspace_PrintsAllSections(t *testing.T) {
 		"action_repository: diggsweden/reusable-ci",
 		"action_ref: main",
 	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in:\n%s", want, out)
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in:\n%s", want, body)
 		}
 	}
 }
 
 func TestDebugWorkspace_AnnouncesMissingShared(t *testing.T) {
-	var stdout bytes.Buffer
-	if err := appci.DebugWorkspace(&stdout, appci.DebugWorkspaceInput{Root: testfs.NewReal(t).Root}); err != nil {
+	var out bytes.Buffer
+	if err := appci.DebugWorkspace(&out, appci.DebugWorkspaceInput{Root: testfs.NewReal(t).Root}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), ".github-shared not found") {
-		t.Errorf("expected missing-shared notice:\n%s", stdout.String())
+
+	if !strings.Contains(out.String(), ".github-shared not found") {
+		t.Errorf("expected missing-shared notice:\n%s", out.String())
 	}
 }

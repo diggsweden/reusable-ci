@@ -14,8 +14,8 @@ func FuzzDetectFromEntries(f *testing.F) {
 	seeds := []string{
 		"",
 		"pom.xml",
-		"package.json",
-		"build.gradle",
+		"package.json", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"build.gradle", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"build.gradle.kts",
 		"go.mod",
 		"Cargo.toml",
@@ -34,6 +34,7 @@ func FuzzDetectFromEntries(f *testing.F) {
 		if raw != "" {
 			entries = strings.Split(raw, "\n")
 		}
+
 		got := projecttype.DetectFromEntries(entries)
 		switch got {
 		case projecttype.Maven, projecttype.NPM, projecttype.Gradle, projecttype.Go, projecttype.Cargo, projecttype.Python, projecttype.Unknown:

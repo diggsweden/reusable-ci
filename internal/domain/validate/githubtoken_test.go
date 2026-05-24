@@ -13,6 +13,7 @@ import (
 
 func TestClassifyGitHubToken_KnownPrefixes(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name  string
 		given string

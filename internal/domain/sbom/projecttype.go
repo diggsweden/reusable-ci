@@ -8,12 +8,15 @@ import (
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 )
 
 // ValidProjectTypes is the SBOM-context valid list — accepted by the
 // `sbom generate --project-type` flag, in argv order from the bash for
 // consistent diagnostics. Includes Auto (request detection) and
 // excludes Meta (not a buildable type for SBOM purposes).
+//
+//nolint:gochecknoglobals // schema enumeration — read-only and ordered.
 var ValidProjectTypes = []projecttype.Type{
 	projecttype.Auto, projecttype.Maven, projecttype.NPM, projecttype.Gradle,
 	projecttype.GradleAndroid, projecttype.XcodeIOS, projecttype.Python,
@@ -40,20 +43,24 @@ func DetectProjectType(dirEntries []string) projecttype.Type {
 // to error or skip.
 func ParseLayerCSV(s string) []string {
 	parts := strings.Split(s, ",")
+
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
 		t := strings.TrimSpace(p)
 		if t == "" {
 			continue
 		}
+
 		out = append(out, t)
 	}
+
 	return out
 }
 
 // LayerName is one of the three canonical layer identifiers.
 type LayerName string
 
+// Recognised LayerName values.
 const (
 	LayerBuild             LayerName = "build"
 	LayerAnalyzedArtifact  LayerName = "analyzed-artifact"
@@ -66,11 +73,12 @@ func IsValidLayer(s string) bool {
 	case LayerBuild, LayerAnalyzedArtifact, LayerAnalyzedContainer:
 		return true
 	}
+
 	return false
 }
 
 // UnknownLayerError is returned by callers that want to surface an
 // invalid layer name with a consistent message.
 func UnknownLayerError(layer string) error {
-	return fmt.Errorf("Unknown layer: %s (valid: build, analyzed-artifact, analyzed-container)", layer)
+	return fmt.Errorf("unknown layer: %s (valid: build, analyzed-artifact, analyzed-container): %w", layer, errs.ErrValidation)
 }

@@ -15,6 +15,7 @@ import (
 
 func TestGooglePlayUpload_RendersStagedRolloutTable(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
 	err := appsummary.GooglePlayUpload(context.Background(), sink, appsummary.GooglePlayUploadInput{
 		AABFile:         "Demo.aab",
@@ -35,12 +36,13 @@ func TestGooglePlayUpload_RendersStagedRolloutTable(t *testing.T) {
 		"| **Update Priority** | 5 |",
 		"2. Staged rollout to 25% of users will begin after review",
 	} {
-			require.Contains(t, got, want)
-		}
+		require.Contains(t, got, want)
+	}
 }
 
 func TestGooglePlayUpload_DraftGuidance(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
 	err := appsummary.GooglePlayUpload(context.Background(), sink, appsummary.GooglePlayUploadInput{
 		AABFile:         "app-release.aab",
@@ -54,6 +56,7 @@ func TestGooglePlayUpload_DraftGuidance(t *testing.T) {
 		Now:             time.Date(2026, 5, 10, 14, 0, 0, 0, time.UTC),
 	})
 	require.NoError(t, err)
+
 	got := sink.buf.String()
 	for _, want := range []string{"app-release.aab", "Staged rollout to 25% of users will begin after review", "Release is saved as draft"} {
 		require.Contains(t, got, want)

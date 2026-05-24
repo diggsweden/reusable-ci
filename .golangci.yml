@@ -1,10 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 # SPDX-License-Identifier: CC0-1.0
 #
-# Linter config adapted from gommitlint's set, trimmed to what this
-# repo's layout supports. Adding a linter requires an explanation in
-# the comment column; removing one too. Tighten over time.
-version: 2
+# golangci-lint v2 config. See https://golangci-lint.run/usage/configuration/.
+version: "2"
 
 run:
   timeout: 5m
@@ -23,124 +21,146 @@ issues:
 
 linters:
   default: none
+  exclusions:
+    paths:
+      - generated
+    rules:
+      # Tests use fixture strings, short loop / mock vars, and
+      # naturally branching table-driven cases. The corresponding
+      # production-code findings still surface; this only quiets the
+      # patterns that are by-design in test code.
+      - path: "_test\\.go$"
+        linters:
+          - cyclop # table-driven tests have many subcases
+          - dupl # parallel happy/sad-path blocks mirror each other
+          - goconst # repeated fixture strings, often one-off
+          - varnamelen # short locals / loop vars / mock receivers
+          - paralleltest # many tests mutate env / stdin
+          - ireturn # mocks return interfaces
+      # redact_test.go's whole point is to assert that PEM markers
+      # get redacted from subprocess output. The literal PEM blocks
+      # in the fixtures are the test contract.
+      - path: "internal/safeexec/redact_test\\.go$"
+        linters:
+          - gosec
+      # The GPG import-via-stdin test ships a throwaway PGP private
+      # key fixture so it can exercise the real `gpg --import` path
+      # end-to-end. The key is generated for that test and not used
+      # anywhere else.
+      - path: "internal/adapters/gpg/import_stdin_test\\.go$"
+        linters:
+          - gosec
+      # Test-only directory perms (0755 fixtures via os.MkdirAll) are
+      # acceptable for ephemeral t.TempDir() roots.
+      - path: "_test\\.go$"
+        text: "G301"
+        linters:
+          - gosec
+      # Test files read fixture paths from t.TempDir() and friends;
+      # the G304 "file inclusion via variable" pattern is unavoidable.
+      - path: "_test\\.go$"
+        text: "G304"
+        linters:
+          - gosec
   enable:
-    # Correctness
-    - asasalint            # `...` mistakes
-    - asciicheck           # non-ASCII identifiers
-    - bidichk              # bidirectional unicode chars
-    - bodyclose            # http response body close
-    - containedctx         # context stored in struct
-    - contextcheck         # ctx not propagated
-    - copyloopvar          # loop var copies (Go 1.22+)
-    - durationcheck        # time.Duration math
-    - errcheck             # unchecked errors
-    - errchkjson           # JSON err handling
-    - errname              # error variable naming
-    - errorlint            # errors.Is/As usage
-    - exhaustive           # exhaustive switches
-    - exptostd             # experimental stdlib
-    - fatcontext           # nested context.WithValue
-    - forcetypeassert      # safe type assertion
-    - ginkgolinter         # (no ginkgo here, harmless)
+    - asasalint
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - containedctx
+    - contextcheck
+    - copyloopvar
+    - cyclop
+    - decorder
+    - dogsled
+    - dupl
+    - durationcheck
+    - errcheck
+    - err113
+    - errchkjson
+    - errname
+    - errorlint
+    - exhaustive
+    - exptostd
+    - fatcontext
+    - forcetypeassert
+    - funcorder
+    - ginkgolinter
     - gocheckcompilerdirectives
-    - gochecknoinits       # init() — explicit setup
-    - gochecksumtype       # sumtype completeness
-    - gosec                # security
-    - govet                # std vet
-    - ineffassign          # unused assignments
-    - intrange             # range over int (Go 1.22+)
-    - loggercheck          # slog/zap key-value pairs
-    - makezero             # make() with zero len + append
-    - mirror               # bytes/strings mismatches
-    - misspell             # typos
-    - nakedret             # naked returns
-    - nilerr               # returning nil after err
-    - noctx                # net/http without ctx
-    - perfsprint           # cheaper alternatives to Sprintf
-    - prealloc             # slice prealloc
-    - predeclared          # shadow builtins
-    - reassign             # global mutation
-    - rowserrcheck         # sql.Rows
-    - sqlclosecheck        # sql close
-    - staticcheck          # main static analysis suite
-    - testifylint          # testify usage (no-op until we adopt it)
-    - testableexamples     # examples that don't compile
-    - thelper              # t.Helper() in test helpers
-    - unconvert            # unnecessary conversions
-    - unparam              # unused params
-    - unused               # unused code
-    - usestdlibvars        # http.MethodGet over "GET" etc.
-    - usetesting           # testing.T over os
-    - wastedassign         # dead assignments
-    - zerologlint          # (no zerolog, harmless)
-
-    # Style — opted in deliberately, smaller set than gommitlint to
-    # respect the codebase's existing shape.
-    - decorder             # declaration ordering
-    - dogsled              # too many blank identifiers
-    - errname              # ErrFoo / FooError naming
-    - gocritic             # opinionated checks
-    - godot                # comment terminator
-    - goprintffuncname     # Print-like funcs end in f
-    - importas             # alias enforcement (config below)
-    - misspell             # comments
+    - gochecknoglobals
+    - gochecknoinits
+    - gochecksumtype
+    - gocognit
+    - goconst
+    - gocritic
+    - gocyclo
+    - godot
+    - godox
+    - goheader
+    - gomoddirectives
+    - goprintffuncname
+    - gosec
+    - govet
+    - grouper
+    - iface
+    - importas
+    - inamedparam
+    - ineffassign
+    - interfacebloat
+    - intrange
+    - loggercheck
+    - maintidx
+    - makezero
+    - mirror
+    - misspell
+    - musttag
+    - nakedret
+    - nestif
+    - nilerr
+    - nilnil
+    - nlreturn
+    - noctx
+    - nonamedreturns
+    - nosprintfhostport
     - perfsprint
-    - protogetter          # (no proto here)
-    - revive               # configurable golint
+    - prealloc
+    - predeclared
+    - promlinter
+    - protogetter
+    - reassign
+    - revive
+    - rowserrcheck
+    - sloglint
+    - sqlclosecheck
+    - staticcheck
+    - tagalign
+    - testableexamples
+    - testifylint
+    - thelper
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - usetesting
+    - varnamelen
+    - wastedassign
+    - zerologlint
 
   settings:
     exhaustive:
       default-signifies-exhaustive: true
-
-    go-vet:
-      enable:
-        - shadow
-
-    gosec:
-      # G304 (file inclusion) — we deliberately take paths from
-      # user-controlled inputs in many subcommands; reviewed in code.
-      excludes:
-        - G304
-
     govet:
       enable:
         - shadow
-
-    perfsprint:
-      strconcat: false   # %s+%s composition stays readable in builders
-
+    varnamelen:
+      min-name-length: 2
+    paralleltest:
+      ignore-missing: false
+      ignore-missing-subtests: true
     revive:
-      ignore-generated-header: true
       severity: warning
       confidence: 0.8
       rules:
         - name: exported
           disabled: false
-          exclude:
-            # Name() methods on rule structs are obvious — skip.
-            - Name
-
-  exclusions:
-    presets:
-      - common-false-positives
-    rules:
-      # Test files: don't enforce dupl / paralleltest / ireturn.
-      - path: '_test\.go'
-        linters:
-          - dupl
-          - forcetypeassert    # tests cast type-checked fakes
-          - gosec              # test fixtures contain literal secrets
-      # The generated CLI-reference command is short and obvious.
-      - path: 'cmd/gen-cli-reference/'
-        linters:
-          - gochecknoglobals
-      # Sentinel error vars predate the fluent builder; keep them.
-      - path: 'internal/domain/errs/errs\.go'
-        linters:
-          - gochecknoglobals
-      # The composition root necessarily has slightly higher cognitive
-      # complexity than typical use-case code.
-      - path: 'internal/cli/deps/deps\.go'
-        linters:
-          - cyclop
-          - funlen
+          exclude: ["Name"]

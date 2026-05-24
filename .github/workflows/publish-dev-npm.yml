@@ -5,9 +5,9 @@
 #
 # Purpose: Publishes pre-built npm packages for development and testing.
 #
-# Runs inside reusable-ci-runtime-node — Node + npm + corepack baked in,
-# scripts at /opt/reusable-ci/scripts/. The .npmrc is configured inline
-# (the runtime image has no setup-node action wiring it for us).
+# Runs inside reusable-ci-runtime-node; Node, npm, corepack, and the
+# reusable-ci binary are baked in. The .npmrc is configured inline because the
+# runtime image has no setup-node action wiring it for us.
 #
 # Supported Registries:
 # - GitHub Packages (npm.pkg.github.com) - Default, uses GITHUB_TOKEN
@@ -31,7 +31,7 @@
 #
 # Dependencies:
 # - Requires build-npm.yml to have run first
-# - Downloads npm-build-artifacts
+# - Downloads artifact-source (defaults to npm-build-artifacts)
 #
 # Registry Authentication:
 #   GitHub Packages (default): Uses GITHUB_TOKEN (no secrets needed)
@@ -57,15 +57,25 @@ on:
         required: false
         default: "."
         type: string
+      branch:
+        description: "Branch, tag, or SHA to checkout. Empty preserves actions/checkout's event default."
+        required: false
+        default: ""
+        type: string
       registry:
         description: "NPM registry URL"
         required: false
         default: "https://npm.pkg.github.com"
         type: string
       package-scope:
-        description: "Required package scope (e.g., @diggsweden). Leave empty to skip validation."
+        description: "Required package scope, e.g. @<github-repository-owner> (@diggsweden for DiggSweden repositories). Leave empty to skip validation."
         required: false
         default: ""
+        type: string
+      artifact-source:
+        description: "Name of the NPM build artifact to download"
+        required: false
+        default: "npm-build-artifacts"
         type: string
       use-ci-token:
         description: "Use GITHUB_TOKEN for authentication (GitHub Packages only)"
@@ -73,9 +83,19 @@ on:
         default: true
         type: boolean
       runtime-image:
-        description: "reusable-ci runtime image carrying Node. Pin to a digest or version tag; default tracks main."
+        description: "reusable-ci runtime image carrying Node. Optional override; default uses the matching v3.0.0 runtime image."
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-node-24:main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-node-24:v3.0.0"
+        type: string
+      egress-policy:
+        description: "Egress policy for the Harden Runner step. Default `audit` (visibility-only). Promote to `block` for strict posture — pair with `egress-allowed-endpoints` covering at minimum: github.com:443, api.github.com:443, objects.githubusercontent.com:443, *.actions.githubusercontent.com:443, plus the registry host this caller publishes to (e.g. npm.pkg.github.com:443, registry.npmjs.org:443, or a private registry)."
+        required: false
+        default: "audit"
+        type: string
+      egress-allowed-endpoints:
+        description: "Multi-line space/newline-separated list of `host:port` endpoints permitted under `egress-policy: block`. Ignored when policy is `audit`."
+        required: false
+        default: ""
         type: string
     secrets:
       registry-password:
@@ -99,7 +119,7 @@ permissions:
 jobs:
   build-and-publish:
     name: Build & Publish Dev NPM Package
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     container:
       image: ${{ inputs['runtime-image'] }}
@@ -108,61 +128,43 @@ jobs:
       packages: write
     outputs:
       package-name: ${{ steps.meta.outputs.name }}
-      package-version: ${{ steps.tags.outputs.dev_version }}
+      package-version: ${{ steps.tags.outputs.dev-version }}
       tarball: ${{ steps.pack.outputs.tarball }}
-      publish-status: ${{ steps.check-registry.outputs.already_published == 'true' && 'already-exists' || 'published' }}
+      publish-status: ${{ steps.check-registry.outputs['already-published'] == 'true' && 'already-exists' || 'published' }}
     steps:
+      - name: Harden GitHub runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        with:
+          egress-policy: ${{ inputs['egress-policy'] }}
+          allowed-endpoints: ${{ inputs['egress-allowed-endpoints'] }}
+      # Defense-in-depth: refuse PR-context triggers. NPM_TOKEN lives
+      # in env on this job and must never run with PR-HEAD code.
+      # reusable-ci is pre-baked in the runtime image.
+      - name: Refuse PR-context trigger (publish/release secrets in scope)
+        run: reusable-ci validate event-context
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ inputs.branch || github.ref }}
           fetch-depth: 0
-      # Configure ~/.npmrc the way actions/setup-node would. The literal
-      # ${NODE_AUTH_TOKEN} placeholder is expanded by npm at publish time
-      # from the env var on the publish step. Scoped registries get a
-      # @scope:registry= line; non-scoped get plain registry=.
+      # Compose ~/.npmrc with the literal ${NODE_AUTH_TOKEN} placeholder so
+      # npm expands it at publish time from the env var on the publish step.
+      # Validates the registry URL (must be http/https) and scope name format.
       - name: Configure npm registry
         env:
           REGISTRY: ${{ inputs.registry }}
           SCOPE: ${{ inputs['package-scope'] }}
-        run: |
-          set -euo pipefail
-          host="${REGISTRY#https://}"
-          host="${host#http://}"
-          host="${host%/}"
-          {
-            # shellcheck disable=SC2016 # ${NODE_AUTH_TOKEN} is expanded by npm at publish time, not by shell
-            printf '//%s/:_authToken=${NODE_AUTH_TOKEN}\n' "$host"
-            if [[ -n "$SCOPE" ]]; then
-              printf '%s:registry=%s\n' "$SCOPE" "$REGISTRY"
-            else
-              printf 'registry=%s\n' "$REGISTRY"
-            fi
-            printf 'always-auth=true\n'
-          } > ~/.npmrc
+        run: reusable-ci publish npm write-npmrc --output ~/.npmrc
       - name: Read package metadata
         id: meta
         working-directory: ${{ inputs.working-directory }}
-        run: |
-          NAME=$(node -p "require('./package.json').name")
-          printf "name=%s\n" "$NAME" >> "$GITHUB_OUTPUT"
-          printf "Package name: %s\n" "$NAME"
-      - name: Validate package scope
-        if: ${{ inputs.package-scope != '' }}
-        working-directory: ${{ inputs.working-directory }}
         env:
           PACKAGE_SCOPE: ${{ inputs.package-scope }}
-        run: |
-          NAME=$(node -p "require('./package.json').name")
-          SCOPE="$PACKAGE_SCOPE"
-          if [[ "$NAME" != "${SCOPE}"/* ]]; then
-            printf "::error::package.json name must be scoped as %s/<pkg>\n" "${SCOPE}"
-            printf "Found: %s\n" "$NAME"
-            exit 1
-          fi
+        run: reusable-ci build npm metadata
       - name: Download NPM build artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: npm-build-artifacts
+          name: ${{ inputs['artifact-source'] }}
           path: ${{ inputs.working-directory }}/
       - name: Extract tarball contents
         working-directory: ${{ inputs.working-directory }}
@@ -170,66 +172,50 @@ jobs:
       - name: Check registry authentication configuration
         env:
           USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
-          TARGET_REGISTRY: ${{ inputs.registry }}
+          REGISTRY: ${{ inputs.registry }}
           CI_REGISTRY: "https://npm.pkg.github.com"
           REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
-        run: reusable-ci publish validate-auth
+        run: reusable-ci validate auth registry
       - name: Generate dev version tag
         id: tags
-        run: |
-          DEV_VERSION=$(reusable-ci version generate-dev)
-          printf "dev_version=%s\n" "${DEV_VERSION}" >> "$GITHUB_OUTPUT"
-          printf "📦 Dev version: %s\n" "${DEV_VERSION}"
+        run: reusable-ci version generate-dev
       - name: Check if version already published
         id: check-registry
         working-directory: ${{ inputs.working-directory }}
         env:
           NODE_AUTH_TOKEN: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
-          DEV_VERSION: ${{ steps.tags.outputs.dev_version }}
-          TARGET_REGISTRY: ${{ inputs.registry }}
-        run: |
-          PKG_NAME=$(node -p "require('./package.json').name")
-          if npm view "${PKG_NAME}@${DEV_VERSION}" version --registry "$TARGET_REGISTRY" 2>/dev/null; then
-            printf "::warning::Package %s@%s already exists in registry — skipping publish (same commit SHA)\n" \
-              "${PKG_NAME}" "${DEV_VERSION}"
-            printf "already_published=true\n" >> "$GITHUB_OUTPUT"
-          else
-            printf "Version %s not found in registry — will publish\n" "${DEV_VERSION}"
-            printf "already_published=false\n" >> "$GITHUB_OUTPUT"
-          fi
+          VERSION: ${{ steps.tags.outputs.dev-version }}
+          NPM_REGISTRY: ${{ inputs.registry }}
+        run: reusable-ci publish npm validate-version
       - name: Apply dev version to package.json
-        if: steps.check-registry.outputs.already_published != 'true'
+        if: steps.check-registry.outputs['already-published'] != 'true'
         working-directory: ${{ inputs.working-directory }}
         env:
-          DEV_VERSION: ${{ steps.tags.outputs.dev_version }}
+          DEV_VERSION: ${{ steps.tags.outputs.dev-version }}
         run: |
           npm version "$DEV_VERSION" --no-git-tag-version --allow-same-version
-          printf "Applied version: %s\n" "$(node -p "require('./package.json').version")"
+          printf "Applied version: %s\n" "$DEV_VERSION"
       - name: Pack tarball
-        if: steps.check-registry.outputs.already_published != 'true'
+        if: steps.check-registry.outputs['already-published'] != 'true'
         id: pack
         working-directory: ${{ inputs.working-directory }}
-        run: |
-          printf "Running npm pack...\n"
-          FILE=$(npm pack 2>&1 | tail -n 1)
-          printf "tarball=%s\n" "$FILE" >> "$GITHUB_OUTPUT"
-          printf "Created: %s\n" "$FILE"
+        run: reusable-ci build npm pack
       - name: Upload tarball as artifact
-        if: steps.check-registry.outputs.already_published != 'true'
+        if: steps.check-registry.outputs['already-published'] != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: npm-dev-package-${{ github.run_id }}
           path: ${{ inputs.working-directory }}/${{ steps.pack.outputs.tarball }}
           retention-days: 7
       - name: Publish to NPM registry
-        if: steps.check-registry.outputs.already_published != 'true'
+        if: steps.check-registry.outputs['already-published'] != 'true'
         working-directory: ${{ inputs.working-directory }}
         env:
           NODE_AUTH_TOKEN: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
-          TARGET_REGISTRY: ${{ inputs.registry }}
+          NPM_REGISTRY: ${{ inputs.registry }}
+          PACKAGE_NAME: ${{ steps.meta.outputs.name }}
+          DEV_VERSION: ${{ steps.tags.outputs.dev-version }}
         run: |
-          PKG_NAME=$(node -p "require('./package.json').name")
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          printf "Publishing %s@%s to %s with tag 'dev'\n" "${PKG_NAME}" "${PKG_VERSION}" "$TARGET_REGISTRY"
+          printf "Publishing %s@%s to %s with tag 'dev'\n" "$PACKAGE_NAME" "$DEV_VERSION" "$NPM_REGISTRY"
           npm publish --tag dev
           printf "✅ Published successfully\n"

@@ -11,8 +11,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/domain/publish"
 )
 
-// AppStoreUploadInput drives `summary appstore-upload`. Mirrors
-// scripts/summary/write-appstore-summary.sh.
+// AppStoreUploadInput drives `summary appstore-upload`.
 type AppStoreUploadInput struct {
 	IPAFile        string
 	Platform       string
@@ -32,6 +31,7 @@ func AppStoreUpload(ctx context.Context, sink ci.SummarySink, in AppStoreUploadI
 	if now.IsZero() {
 		now = time.Now()
 	}
+
 	return sink.Append(ctx, publish.RenderAppStoreUploadSummary(publish.AppStoreUploadInput{
 		IPAFile:        in.IPAFile,
 		Platform:       in.Platform,

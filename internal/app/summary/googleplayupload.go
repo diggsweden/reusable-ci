@@ -11,8 +11,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/domain/publish"
 )
 
-// GooglePlayUploadInput drives `summary google-play-upload`. Mirrors
-// scripts/summary/write-google-play-summary.sh.
+// GooglePlayUploadInput drives `summary google-play-upload`.
 type GooglePlayUploadInput struct {
 	AABFile         string
 	PackageName     string
@@ -35,6 +34,7 @@ func GooglePlayUpload(ctx context.Context, sink ci.SummarySink, in GooglePlayUpl
 	if now.IsZero() {
 		now = time.Now()
 	}
+
 	return sink.Append(ctx, publish.RenderGooglePlayUploadSummary(publish.GooglePlayUploadInput{
 		AABFile:         in.AABFile,
 		PackageName:     in.PackageName,

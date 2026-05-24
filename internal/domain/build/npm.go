@@ -17,20 +17,23 @@ type NPMSummaryInput struct {
 	SkipTests   bool
 }
 
-// RenderNPMSummary returns the markdown block written by
-// scripts/summary/write-npm-build-summary.sh, byte-for-byte.
+// RenderNPMSummary returns the markdown block written by.
 func RenderNPMSummary(in NPMSummaryInput, now time.Time) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "## NPM Build Summary 🔨\n")
-	fmt.Fprintf(&b, "\n")
-	fmt.Fprintf(&b, "- **Package:** `%s@%s`\n", in.PackageName, in.Version)
-	fmt.Fprintf(&b, "- **Node.js:** %s\n", in.NodeVersion)
+	var b strings.Builder //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+
+	_, _ = fmt.Fprintf(&b, "## NPM Build Summary 🔨\n")
+	_, _ = fmt.Fprintf(&b, "\n")
+	_, _ = fmt.Fprintf(&b, "- **Package:** `%s@%s`\n", in.PackageName, in.Version)
+	_, _ = fmt.Fprintf(&b, "- **Node.js:** %s\n", in.NodeVersion)
+
 	if in.SkipTests {
-		fmt.Fprintf(&b, "- **Tests:** ⊘ Skipped\n")
+		_, _ = fmt.Fprintf(&b, "- **Tests:** ⊘ Skipped\n")
 	} else {
-		fmt.Fprintf(&b, "- **Tests:** ✓ Executed\n")
+		_, _ = fmt.Fprintf(&b, "- **Tests:** ✓ Executed\n")
 	}
-	fmt.Fprintf(&b, "\n")
-	fmt.Fprintf(&b, "*Build completed at %s*\n", now.UTC().Format("2006-01-02 15:04:05 UTC"))
+
+	_, _ = fmt.Fprintf(&b, "\n")
+	_, _ = fmt.Fprintf(&b, "*Build completed at %s*\n", now.UTC().Format("2006-01-02 15:04:05 UTC"))
+
 	return b.String()
 }

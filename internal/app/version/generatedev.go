@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/diggsweden/reusable-ci/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/internal/domain/version"
@@ -25,35 +26,37 @@ type GenerateDevOps interface {
 // GenerateDevVersionInput drives GenerateDevVersion.
 type GenerateDevVersionInput struct {
 	// RefName is the source branch / ref to sanitise into the dev-version
-	// suffix. Mirrors $CI_REF_NAME in scripts/version/generate-dev-version.sh.
+	// suffix.
 	RefName string
 
 	// Format is the output encoding. Zero-value (FormatText / empty)
-	// preserves the historical "one bare version line on stdout" shape;
+	// preserves the historical "one bare version line on w" shape;
 	// FormatJSON emits {"version":"<dev>"}; CI-platform formats reuse
-	// FormatText since the dev version is consumed via stdout capture.
+	// the bare w shape and additionally emit a named CI output when a
+	// sink is supplied.
 	Format output.Format
+	Sink   ci.OutputSink
 }
 
 // GenerateDevVersion prints `<base>-dev-<sanitised-branch>-<short-sha>`
-// to stdout. Mirrors scripts/version/generate-dev-version.sh.
-//
-// Best-effort `git fetch --tags` is attempted; failures are ignored
-// (matches the bash `|| true`) so the function still works on a shallow
-// checkout that already has the tags it needs.
-func GenerateDevVersion(ctx context.Context, ops GenerateDevOps, stdout io.Writer, in GenerateDevVersionInput) error {
+// to w. Best-effort `git fetch --tags` is attempted; failures are
+// ignored so the function still works on a shallow checkout that
+// already has the tags it needs.
+func GenerateDevVersion(ctx context.Context, ops GenerateDevOps, w io.Writer, in GenerateDevVersionInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if in.RefName == "" {
 		return fmt.Errorf("ref-name is required: %w", errs.ErrUsage)
 	}
 
-	// Best-effort tag fetch. The bash also uses `|| true` here.
+	// Best-effort tag fetch — ignored on failure (shallow checkout).
 	_, _ = ops.Run(ctx, "fetch", "--tags")
 
 	tags, err := ops.ListTags(ctx, "v[0-9]*.[0-9]*.[0-9]*")
 	if err != nil {
 		return fmt.Errorf("list tags: %w", err)
 	}
+
 	latest := version.LatestSemverTag(tags)
+
 	base := version.DevVersionDefaultBase
 	if latest != "" {
 		base = version.StripVPrefix(latest)
@@ -65,13 +68,19 @@ func GenerateDevVersion(ctx context.Context, ops GenerateDevOps, stdout io.Write
 	}
 
 	dev := version.ComposeDevVersion(base, in.RefName, shortSHA)
-	return writeDevVersion(stdout, dev, in.Format)
+	if in.Sink != nil && (in.Format == output.FormatGitHub || in.Format == output.FormatGitLab) {
+		if err := in.Sink.Set(ctx, "dev-version", dev); err != nil {
+			return err
+		}
+	}
+
+	return writeDevVersion(w, dev, in.Format)
 }
 
 // writeDevVersion renders dev according to format. The historical
-// shape is a bare line on stdout; FormatJSON wraps in a one-key
+// shape is a bare line on w; FormatJSON wraps in a one-key
 // object. Unknown formats fall back to the bare line.
-func writeDevVersion(w io.Writer, dev string, format output.Format) error {
+func writeDevVersion(w io.Writer, dev string, format output.Format) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if format == output.FormatJSON {
 		body, err := json.Marshal(struct {
 			Version string `json:"version"`
@@ -79,9 +88,13 @@ func writeDevVersion(w io.Writer, dev string, format output.Format) error {
 		if err != nil {
 			return fmt.Errorf("encode dev version json: %w", err)
 		}
-		fmt.Fprintln(w, string(body))
+
+		_, _ = fmt.Fprintln(w, string(body))
+
 		return nil
 	}
-	fmt.Fprintln(w, dev)
+
+	_, _ = fmt.Fprintln(w, dev)
+
 	return nil
 }

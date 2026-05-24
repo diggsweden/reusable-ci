@@ -1,0 +1,70 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# nanolinter verify plan.
+#
+# Generated via `nanolinter init --profile strict`. Strict means every
+# check listed in [verify].checks also appears in [policy].block — any
+# failure fails `nanolinter verify` (and therefore `just verify`).
+#
+# Re-derive with: `nanolinter init --profile strict --print`
+# Inspect plan:   `nanolinter dry-run-plan`
+# Tool health:    `nanolinter doctor`
+
+[detect]
+auto = true
+
+[verify]
+checks = [
+  "version-control",
+  "commits",
+  "secrets",
+  "osv",
+  "sast",
+  "typos",
+  "toml",
+  "links",
+  "yaml",
+  "markdown",
+  "license",
+  "container",
+  "xml",
+  "go-vet",
+  "go-staticcheck",
+  "go-vulncheck",
+  "go-golangci",
+  "go-wsl",
+  "shell",
+  "shell-format",
+  "actions",
+  "trivy-fs",
+  "security-scorecard",
+]
+
+[policy]
+block = [
+  "version-control",
+  "commits",
+  "secrets",
+  "osv",
+  "sast",
+  "typos",
+  "toml",
+  "links",
+  "yaml",
+  "markdown",
+  "license",
+  "container",
+  "xml",
+  "go-vet",
+  "go-staticcheck",
+  "go-vulncheck",
+  "go-golangci",
+  "go-wsl",
+  "shell",
+  "shell-format",
+  "actions",
+  "trivy-fs",
+  "security-scorecard",
+]

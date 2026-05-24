@@ -42,7 +42,9 @@ func BuildLabels(in LabelInputs) []Label {
 	if i := strings.LastIndex(title, "/"); i != -1 {
 		title = title[i+1:]
 	}
+
 	created := in.CreatedAt.UTC().Format("2006-01-02T15:04:05Z")
+
 	return []Label{
 		{Key: "org.opencontainers.image.title", Value: title},
 		{Key: "org.opencontainers.image.description", Value: in.Description},
@@ -68,6 +70,7 @@ func PrimaryVersion(applied []AppliedTag) string {
 	sort.SliceStable(sorted, func(i, j int) bool {
 		return sorted[i].Priority > sorted[j].Priority
 	})
+
 	return sorted[0].Tag
 }
 
@@ -79,6 +82,7 @@ func FormatTags(image string, applied []AppliedTag) []string {
 	for _, a := range applied {
 		out = append(out, image+":"+a.Tag)
 	}
+
 	return out
 }
 
@@ -96,15 +100,18 @@ func BuildJSONOutput(tags []string, labels []Label) JSONOutput {
 	if out.Tags == nil {
 		out.Tags = []string{}
 	}
+
 	out.Labels = make(map[string]string, len(labels))
 	for _, l := range labels {
 		out.Labels[l.Key] = l.Value
 	}
+
 	return out
 }
 
 // MarshalJSON returns the canonical JSON encoding of o.
 func (o JSONOutput) MarshalJSON() ([]byte, error) {
 	type alias JSONOutput
+
 	return json.Marshal(alias(o))
 }

@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 )
 
+//nolint:gochecknoglobals // flag.Bool requires package-level storage.
 var update = flag.Bool("update", false, "refresh golden files (test-only)")
 
 // T is the slice of *testing.T that golden uses. Defining it as an interface
@@ -33,27 +34,33 @@ type T interface {
 //
 // name is treated as a path relative to testdata/golden/ in the package's
 // test directory.
-func Equal(t T, name string, got []byte) {
+func Equal(t T, name string, got []byte) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	t.Helper()
 
 	path := filepath.Join("testdata", "golden", name)
 
 	if *update {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // test infra; path is testdata/.
 			t.Fatalf("golden: mkdir %q: %v", filepath.Dir(path), err)
+
 			return
 		}
-		if err := os.WriteFile(path, got, 0o644); err != nil {
+
+		if err := os.WriteFile(path, got, 0o644); err != nil { //nolint:gosec // test infra; path is testdata/.
 			t.Fatalf("golden: write %q: %v", path, err)
+
 			return
 		}
+
 		t.Logf("golden: updated %q (%d bytes)", path, len(got))
+
 		return
 	}
 
-	want, err := os.ReadFile(path)
+	want, err := os.ReadFile(path) //nolint:gosec // test infra; path is testdata/.
 	if err != nil {
 		t.Errorf("golden: read %q: %v (run 'go test -update ./...' to create it)", path, err)
+
 		return
 	}
 

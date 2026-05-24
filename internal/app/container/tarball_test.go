@@ -16,12 +16,15 @@ import (
 
 func makeTarball(t *testing.T, path string, files map[string]string) {
 	t.Helper()
-	out, err := os.Create(path)
+
+	out, err := os.Create(path) //nolint:gosec // test fixture
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	gz := gzip.NewWriter(out)
 	tw := tar.NewWriter(gz)
+
 	for rel, body := range files {
 		full := "package/" + rel
 		if err := tw.WriteHeader(&tar.Header{
@@ -29,16 +32,20 @@ func makeTarball(t *testing.T, path string, files map[string]string) {
 		}); err != nil {
 			t.Fatal(err)
 		}
+
 		if _, err := tw.Write([]byte(body)); err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	if err := tw.Close(); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := gz.Close(); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := out.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -50,13 +57,16 @@ func TestExtractNPMTarball_HappyPath(t *testing.T) {
 		"package.json": `{"name":"demo"}`,
 		"dist/cli.js":  "ok",
 	})
+
 	if err := appcontainer.ExtractNPMTarball(io.Discard, appcontainer.ExtractNPMTarballInput{Dir: fsys.Root}); err != nil {
 		t.Fatalf("ExtractNPMTarball: %v", err)
 	}
+
 	body := fsys.ReadFile("package.json")
 	if string(body) != `{"name":"demo"}` {
 		t.Errorf("package.json = %q", body)
 	}
+
 	if _, err := os.Stat(fsys.Path("demo-1.0.0.tgz")); !os.IsNotExist(err) {
 		t.Errorf("tarball should be removed: %v", err)
 	}
@@ -75,9 +85,11 @@ func TestExtractNPMTarball_StripsPackagePrefixIntoWorkingDir(t *testing.T) {
 	makeTarball(t, fsys.Path("package.tgz"), map[string]string{
 		"file.txt": "hello\n",
 	})
+
 	if err := appcontainer.ExtractNPMTarball(io.Discard, appcontainer.ExtractNPMTarballInput{Dir: fsys.Root}); err != nil {
 		t.Fatalf("ExtractNPMTarball: %v", err)
 	}
+
 	body := fsys.ReadFile("file.txt")
 	if string(body) != "hello\n" {
 		t.Errorf("file.txt = %q", body)

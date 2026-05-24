@@ -13,6 +13,7 @@ import (
 
 func TestIsPrereleaseTag_KnownIdentifiers(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name  string
 		given string

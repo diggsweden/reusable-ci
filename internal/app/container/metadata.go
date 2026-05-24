@@ -17,7 +17,7 @@ import (
 )
 
 // ComputeMetadataInput drives `reusable-ci container metadata`. Mirrors
-// the env-var contract of scripts/container/compute-image-metadata.sh.
+// the workflow env-var contract.
 //
 // Description and License act as overrides for the OCI labels: when
 // non-empty, the use case skips the Provider.FetchRepoMetadata call.
@@ -46,18 +46,26 @@ type ComputeMetadataOutput struct {
 
 // ComputeMetadata is the full use case orchestrator. Pure-domain logic
 // (parsing, applying rules, label assembly, JSON shape) lives in
-// internal/domain/container; this layer drives those steps, talks to the
-// Provider for repo metadata when needed, and writes the four canonical
-// outputs (tags, labels, version, json) to sink.
+// internal/domain/container; this layer drives those steps, talks to
+// the provider for the build context and OCI-label repo metadata, and
+// writes the four canonical outputs (tags, labels, version, json) to
+// sink.
+//
+// All three platform adapters satisfy both interfaces — local returns
+// empty RepoMetadata, which the OCI label assembly degrades to blank
+// fields gracefully.
+//nolint:cyclop // emits one output per metadata field (image, tag, labels).
 func ComputeMetadata(
 	ctx context.Context,
 	prov provider.Provider,
+	meta provider.RepoMetadataFetcher,
 	sink ci.OutputSink,
 	in ComputeMetadataInput,
 ) (*ComputeMetadataOutput, error) {
 	if in.ImageName == "" {
-		return nil, fmt.Errorf("IMAGE_NAME is required: %w", errs.ErrUsage)
+		return nil, fmt.Errorf("image name is required: pass --image-name <ref> or set $IMAGE_NAME: %w", errs.ErrUsage)
 	}
+
 	if err := container.ValidateFlavor(in.Flavor); err != nil {
 		return nil, err
 	}
@@ -71,17 +79,21 @@ func ComputeMetadata(
 	if err != nil {
 		return nil, fmt.Errorf("resolve event context: %w", err)
 	}
+
 	mctx := container.FromEventContext(evt)
 
 	var applied []container.AppliedTag
+
 	for _, r := range rules {
-		a, ok, err := container.Apply(r, mctx)
+		a, ok, err := container.Apply(r, mctx) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		if err != nil {
 			return nil, err
 		}
+
 		if !ok {
 			continue
 		}
+
 		applied = append(applied, a)
 	}
 
@@ -89,15 +101,15 @@ func ComputeMetadata(
 	primary := container.PrimaryVersion(applied)
 
 	var labels []container.Label
+
 	if in.EmitLabels {
-		desc, license, err := resolveOCIFields(ctx, prov, evt, in.Description, in.License)
-		if err != nil {
-			return nil, err
-		}
+		desc, license := resolveOCIFields(ctx, meta, evt, in.Description, in.License)
+
 		now := in.Now
 		if now.IsZero() {
 			now = time.Now()
 		}
+
 		labels = container.BuildLabels(container.LabelInputs{
 			ImageName:   in.ImageName,
 			RepoURL:     evt.RepoURL,
@@ -126,18 +138,21 @@ func ComputeMetadata(
 // non-fatal: labels just stay empty (best-effort).
 func resolveOCIFields(
 	ctx context.Context,
-	prov provider.Provider,
+	prov provider.RepoMetadataFetcher,
 	evt *provider.EventContext,
 	descOverride, licOverride string,
-) (description, license string, err error) {
-	description = descOverride
-	license = licOverride
+) (string, string) {
+	description := descOverride
+	license := licOverride
+
 	if description != "" && license != "" {
-		return description, license, nil
+		return description, license
 	}
+
 	if evt.Repo == "" {
-		return description, license, nil
+		return description, license
 	}
+
 	md, err := prov.FetchRepoMetadata(ctx, evt.Repo)
 	if err != nil {
 		// Network / auth errors are not fatal — labels are best-effort —
@@ -145,15 +160,19 @@ func resolveOCIFields(
 		// labels with a real failure. The build proceeds.
 		slog.Warn("container metadata: FetchRepoMetadata failed; labels left blank",
 			"repo", evt.Repo, "err", err)
-		return description, license, nil
+
+		return description, license
 	}
+
 	if description == "" {
 		description = md.Description
 	}
+
 	if license == "" {
 		license = md.LicenseSPDX
 	}
-	return description, license, nil
+
+	return description, license
 }
 
 func writeOutputs(
@@ -168,6 +187,7 @@ func writeOutputs(
 	if err := sink.Set(ctx, "version", primary); err != nil {
 		return err
 	}
+
 	if len(tags) > 0 {
 		if err := sink.SetMultiline(ctx, "tags", tags); err != nil {
 			return err
@@ -177,19 +197,23 @@ func writeOutputs(
 			return err
 		}
 	}
+
 	if emitLabels {
 		lines := make([]string, 0, len(labels))
 		for _, l := range labels {
 			lines = append(lines, l.String())
 		}
+
 		if err := sink.SetMultiline(ctx, "labels", lines); err != nil {
 			return err
 		}
 	}
+
 	jsonStr, err := marshalJSONCompact(jsonOut)
 	if err != nil {
 		return err
 	}
+
 	return sink.Set(ctx, "json", jsonStr)
 }
 

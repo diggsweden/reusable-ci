@@ -21,15 +21,15 @@ func TestIsReleaseArtifact(t *testing.T) {
 		"webapp.war":                           true,
 		"original-app.jar":                     false,
 		"./release-artifacts/original-foo.jar": false,
-		"checksums.sha256":                     false,
+		"checksums.sha256":                     false, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"README.md":                            false,
 		"app.jar.asc":                          false,
 		"":                                     false,
 	}
 	for path, want := range tests {
-		path, want := path, want
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()
+
 			if got := release.IsReleaseArtifact(path); got != want {
 				t.Errorf("IsReleaseArtifact(%q) = %v, want %v", path, got, want)
 			}
@@ -39,10 +39,12 @@ func TestIsReleaseArtifact(t *testing.T) {
 
 func TestSBOMFilePatterns_HasExpectedShape(t *testing.T) {
 	t.Parallel()
+
 	want := []string{"*-sbom.spdx.json", "*-sbom.cyclonedx.json"}
 	if len(release.SBOMFilePatterns) != len(want) {
 		t.Fatalf("got %d patterns, want %d", len(release.SBOMFilePatterns), len(want))
 	}
+
 	for i, p := range release.SBOMFilePatterns {
 		if p != want[i] {
 			t.Errorf("pattern[%d] = %q, want %q", i, p, want[i])
@@ -52,6 +54,7 @@ func TestSBOMFilePatterns_HasExpectedShape(t *testing.T) {
 
 func TestChecksumsFile_Constant(t *testing.T) {
 	t.Parallel()
+
 	if release.ChecksumsFile != "checksums.sha256" {
 		t.Errorf("ChecksumsFile = %q", release.ChecksumsFile)
 	}

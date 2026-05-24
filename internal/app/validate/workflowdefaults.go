@@ -36,40 +36,47 @@ type workflowInputDefaultsFSInput struct {
 	fsys         fs.FS
 }
 
-// WorkflowInputDefaults verifies that reusable workflow_call input defaults are
-// literal values, not GitHub expression blocks. Mirrors the old
-// scripts/validate/workflow-input-defaults.sh contract.
-func WorkflowInputDefaults(stdout io.Writer, in WorkflowInputDefaultsInput) error {
+// WorkflowInputDefaults verifies that reusable workflow_call input
+// defaults are literal values, not GitHub expression blocks (which
+// silently degrade to the empty string when callers don't override
+// them).
+func WorkflowInputDefaults(w io.Writer, in WorkflowInputDefaultsInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	root := in.Root
 	if root == "" {
 		var err error
+
 		root, err = os.Getwd()
 		if err != nil {
 			return fmt.Errorf("getwd: %w", err)
 		}
 	}
+
 	workflowsDir := in.WorkflowsDir
 	if workflowsDir == "" {
 		workflowsDir = filepath.Join(root, ".github", "workflows")
 	}
+
 	if in.FS != nil {
 		workflowsDir = filepath.ToSlash(filepath.Clean(workflowsDir))
-		return workflowInputDefaultsInFS(stdout, workflowInputDefaultsFSInput{
+
+		return workflowInputDefaultsInFS(w, workflowInputDefaultsFSInput{
 			workflowsDir: workflowDirForFS(workflowsDir),
 			fsys:         in.FS,
 		})
 	}
+
 	relDir, err := filepath.Rel(root, workflowsDir)
 	if err != nil {
 		return fmt.Errorf("relative workflows dir %s from %s: %w", workflowsDir, root, err)
 	}
-	return workflowInputDefaultsInFS(stdout, workflowInputDefaultsFSInput{
+
+	return workflowInputDefaultsInFS(w, workflowInputDefaultsFSInput{
 		workflowsDir: filepath.ToSlash(relDir),
 		fsys:         os.DirFS(root),
 	})
 }
 
-func workflowInputDefaultsInFS(stdout io.Writer, in workflowInputDefaultsFSInput) error {
+func workflowInputDefaultsInFS(w io.Writer, in workflowInputDefaultsFSInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	entries, err := fs.ReadDir(in.fsys, in.workflowsDir)
 	if err != nil {
 		return fmt.Errorf("read workflows dir %s: %w", in.workflowsDir, err)
@@ -80,49 +87,62 @@ func workflowInputDefaultsInFS(stdout io.Writer, in workflowInputDefaultsFSInput
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yml" {
 			continue
 		}
+
 		files = append(files, path.Join(in.workflowsDir, entry.Name()))
 	}
+
 	sort.Strings(files)
 
 	failures := 0
+
 	for _, path := range files {
-		count, err := scanWorkflowInputDefaults(stdout, in.fsys, path)
+		count, err := scanWorkflowInputDefaults(w, in.fsys, path)
 		if err != nil {
 			return err
 		}
+
 		failures += count
 	}
+
 	if failures > 0 {
 		return fmt.Errorf("workflow input defaults validation failed: %w", errs.ErrValidation)
 	}
-	_, _ = fmt.Fprintln(stdout, "Workflow input defaults look valid.")
+
+	_, _ = fmt.Fprintln(w, "Workflow input defaults look valid.")
+
 	return nil
 }
 
-func scanWorkflowInputDefaults(stdout io.Writer, fsys fs.FS, path string) (int, error) {
+func scanWorkflowInputDefaults(w io.Writer, fsys fs.FS, path string) (int, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	file, err := fsys.Open(path)
 	if err != nil {
 		return 0, fmt.Errorf("open %s: %w", path, err)
 	}
+
 	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	lineNo := 0
 	failures := 0
+
 	for scanner.Scan() {
 		lineNo++
+
 		line := scanner.Text()
 		if !workflowInputDefaultPattern.MatchString(line) {
 			continue
 		}
-		_, _ = fmt.Fprintf(stdout,
+
+		_, _ = fmt.Fprintf(w,
 			"::error file=%s,line=%d::workflow_call input defaults must be literal values, found expression: %s\n",
 			path, lineNo, line)
 		failures++
 	}
+
 	if err := scanner.Err(); err != nil {
 		return 0, fmt.Errorf("scan %s: %w", path, err)
 	}
+
 	return failures, nil
 }
 
@@ -130,5 +150,6 @@ func workflowDirForFS(dir string) string {
 	if dir == "" || dir == "." {
 		return "."
 	}
+
 	return strings.TrimPrefix(dir, "./")
 }

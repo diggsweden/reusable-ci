@@ -19,12 +19,6 @@ const (
 	BranchPositionDiverged BranchPosition = "diverged"
 )
 
-// IsFatal reports whether this position should fail validation. Ahead
-// and Diverged both block the workflow; AtHead and Ancestor pass.
-func (p BranchPosition) IsFatal() bool {
-	return p == BranchPositionAhead || p == BranchPositionDiverged
-}
-
 // ClassifyBranchPosition resolves the relationship from the two
 // is-ancestor probes. The arguments mirror what the bash makes:
 //

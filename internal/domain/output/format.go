@@ -50,6 +50,8 @@ const (
 )
 
 // concrete is the resolved (post-Resolve) format set, in display order.
+//
+//nolint:gochecknoglobals // resolved-format enumeration — read-only.
 var concrete = []Format{FormatText, FormatJSON, FormatGitHub, FormatGitLab}
 
 // All returns every accepted flag value including "auto". Used for the
@@ -58,17 +60,7 @@ func All() []Format {
 	out := make([]Format, 0, 1+len(concrete))
 	out = append(out, FormatAuto)
 	out = append(out, concrete...)
-	return out
-}
 
-// AllStrings is All() flattened to strings. Convenient for urfave's
-// flag definition.
-func AllStrings() []string {
-	all := All()
-	out := make([]string, len(all))
-	for i, f := range all {
-		out[i] = string(f)
-	}
 	return out
 }
 
@@ -79,16 +71,18 @@ var ErrUnknownFormat = errors.New("unknown output format")
 // Parse parses a user-supplied string into a Format. Case-insensitive.
 // Empty input is rejected — callers should pass FormatAuto explicitly
 // rather than relying on zero-value behaviour.
-func Parse(s string) (Format, error) {
+func Parse(s string) (Format, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	lower := strings.ToLower(strings.TrimSpace(s))
 	if lower == "" {
 		return "", fmt.Errorf("%w: empty (want one of %s)", ErrUnknownFormat, joinFormats(All()))
 	}
+
 	for _, f := range All() {
 		if string(f) == lower {
 			return f, nil
 		}
 	}
+
 	return "", fmt.Errorf("%w: %q (want one of %s)", ErrUnknownFormat, s, joinFormats(All()))
 }
 
@@ -100,6 +94,7 @@ func ParseAndResolve(s string, plat provider.Platform) (Format, error) {
 	if err != nil {
 		return "", err
 	}
+
 	return Resolve(f, plat), nil
 }
 
@@ -118,6 +113,7 @@ func Resolve(f Format, plat provider.Platform) Format {
 	if f != FormatAuto {
 		return f
 	}
+
 	switch plat {
 	case provider.PlatformGitHub:
 		return FormatGitHub
@@ -129,10 +125,12 @@ func Resolve(f Format, plat provider.Platform) Format {
 }
 
 func joinFormats(fs []Format) string {
-	s := make([]string, len(fs))
+	s := make([]string, len(fs)) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	for i, f := range fs {
 		s[i] = string(f)
 	}
+
 	sort.Strings(s)
+
 	return strings.Join(s, ", ")
 }

@@ -11,8 +11,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
 )
 
-// NPMBuildInput drives `summary npm-build`. Mirrors
-// scripts/summary/write-npm-build-summary.sh.
+// NPMBuildInput drives `summary npm-build`.
 type NPMBuildInput struct {
 	PackageName string
 	Version     string
@@ -29,11 +28,13 @@ func NPMBuild(ctx context.Context, sink ci.SummarySink, in NPMBuildInput) error 
 	if now.IsZero() {
 		now = time.Now()
 	}
+
 	md := build.RenderNPMSummary(build.NPMSummaryInput{
 		PackageName: in.PackageName,
 		Version:     in.Version,
 		NodeVersion: in.NodeVersion,
 		SkipTests:   in.SkipTests,
 	}, now)
+
 	return sink.Append(ctx, md)
 }

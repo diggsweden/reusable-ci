@@ -20,23 +20,27 @@ func TestNew(t *testing.T) {
 }
 
 func TestAdapter_RunInheritAndAvailable(t *testing.T) {
-	m := mockbinary.New(t)
+	m := mockbinary.New(t) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	m.Add("cargo", `printf 'cargo %s\n' "$*"; printf 'warn\n' >&2`)
-	a := &cargo.Adapter{Bin: m.Path("cargo")}
+	a := &cargo.Adapter{Bin: m.Path("cargo")} //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 
 	if !a.Available() {
 		t.Fatal("expected mocked cargo to be available")
 	}
+
 	var stdout, stderr bytes.Buffer
 	if err := a.RunInherit(context.Background(), "", &stdout, &stderr, "update", "--workspace"); err != nil {
 		t.Fatal(err)
 	}
+
 	if !strings.Contains(stdout.String(), "cargo update --workspace") {
 		t.Errorf("stdout = %q", stdout.String())
 	}
+
 	if strings.TrimSpace(stderr.String()) != "warn" {
 		t.Errorf("stderr = %q", stderr.String())
 	}
+
 	if got := m.Invocations("cargo")[0].Args; len(got) != 2 || got[0] != "update" || got[1] != "--workspace" {
 		t.Errorf("args = %v", got)
 	}
@@ -44,6 +48,7 @@ func TestAdapter_RunInheritAndAvailable(t *testing.T) {
 
 func TestAdapter_AvailableFalseForMissingBinary(t *testing.T) {
 	m := mockbinary.New(t)
+
 	a := &cargo.Adapter{Bin: m.Path("missing")}
 	if a.Available() {
 		t.Fatal("missing binary should not be available")

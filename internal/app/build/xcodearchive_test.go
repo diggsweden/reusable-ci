@@ -27,6 +27,7 @@ func (f *fakeXcodeBuild) RunInherit(_ context.Context, _, _ io.Writer, args ...s
 	if f.err != nil {
 		return -1, f.err
 	}
+
 	return f.exitCode, nil
 }
 
@@ -36,37 +37,43 @@ func TestXcodeArchive_WorkspaceArgComposition(t *testing.T) {
 	fsys.Chdir()
 
 	ops := &fakeXcodeBuild{}
-	var stdout bytes.Buffer
-	if err := appbuild.XcodeArchive(context.Background(), ops, &stdout, io.Discard, appbuild.XcodeArchiveInput{
+
+	var out bytes.Buffer
+	if err := appbuild.XcodeArchive(context.Background(), ops, &out, io.Discard, appbuild.XcodeArchiveInput{
 		Workspace:     "App.xcworkspace",
-		Scheme:        "App",
-		Configuration: "Release",
-		Destination:   "generic/platform=iOS",
+		Scheme:        "App", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		Configuration: "Release", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		Destination:   "generic/platform=iOS", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		XcconfigPath:  "Config.xcconfig",
 		BuildNumber:   "42",
 	}); err != nil {
 		t.Fatal(err)
 	}
+
 	if len(ops.calls) != 1 {
 		t.Fatalf("expected 1 xcodebuild call, got %d", len(ops.calls))
 	}
+
 	args := ops.calls[0]
 	if args[0] != "archive" {
 		t.Errorf("first arg = %q", args[0])
 	}
+
 	if !contains(args, "-workspace") || !contains(args, "App.xcworkspace") {
 		t.Errorf("missing -workspace arg pair: %v", args)
 	}
+
 	if !contains(args, "CURRENT_PROJECT_VERSION=42") {
 		t.Errorf("missing build-number override: %v", args)
 	}
+
 	for _, want := range []string{
 		"Running: xcodebuild archive -workspace App.xcworkspace",
 		"-xcconfig Config.xcconfig",
 		"CURRENT_PROJECT_VERSION=42",
 	} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Errorf("stdout missing %q:\n%s", want, stdout.String())
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("out missing %q:\n%s", want, out.String())
 		}
 	}
 	// build/ created.
@@ -78,23 +85,28 @@ func TestXcodeArchive_WorkspaceArgComposition(t *testing.T) {
 func TestXcodeArchive_ProjectFallback(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.Chdir()
+
 	ops := &fakeXcodeBuild{}
-	var stdout bytes.Buffer
-	if err := appbuild.XcodeArchive(context.Background(), ops, &stdout, io.Discard, appbuild.XcodeArchiveInput{
+
+	var out bytes.Buffer
+	if err := appbuild.XcodeArchive(context.Background(), ops, &out, io.Discard, appbuild.XcodeArchiveInput{
 		Project: "App.xcodeproj", Scheme: "App",
 		Configuration: "Release", Destination: "generic/platform=iOS",
 	}); err != nil {
 		t.Fatal(err)
 	}
+
 	args := ops.calls[0]
 	if !contains(args, "-project") || !contains(args, "App.xcodeproj") {
 		t.Errorf("missing -project: %v", args)
 	}
+
 	if contains(args, "-workspace") {
 		t.Errorf("workspace should not be set: %v", args)
 	}
-	if !strings.Contains(stdout.String(), "Running: xcodebuild archive -project App.xcodeproj") {
-		t.Errorf("stdout = %q", stdout.String())
+
+	if !strings.Contains(out.String(), "Running: xcodebuild archive -project App.xcodeproj") {
+		t.Errorf("out = %q", out.String())
 	}
 }
 

@@ -18,6 +18,7 @@ func TestResolveAndroidArtifactNames_Override(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	want := build.AndroidArtifactNames{
 		DebugName:   "myapp-1.2.3-debug",
 		ReleaseName: "myapp-1.2.3-release",
@@ -34,18 +35,21 @@ func TestResolveAndroidArtifactNames_DateAndPrefixAndFlavor(t *testing.T) {
 		IncludeDate: true,
 		Prefix:      "Nightly",
 		RepoName:    "demo-app",
-		Flavor:      "fdroid",
+		Flavor:      "fdroid", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Today:       time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if got.DebugName != "2026-05-10 - Nightly - demo-app - fdroid - APK debug" {
 		t.Errorf("debug = %q", got.DebugName)
 	}
+
 	if got.AABName != "2026-05-10 - Nightly - demo-app - fdroid - AAB release" {
 		t.Errorf("aab = %q", got.AABName)
 	}
+
 	if got.SBOMName != "2026-05-10 - Nightly - demo-app - fdroid - build SBOM" {
 		t.Errorf("sbom = %q", got.SBOMName)
 	}
@@ -58,6 +62,7 @@ func TestResolveAndroidArtifactNames_NoDateNoPrefixNoFlavor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if got.ReleaseName != "demo-app - APK release" {
 		t.Errorf("release = %q", got.ReleaseName)
 	}
@@ -78,12 +83,12 @@ func TestResolveAndroidBuildTasks(t *testing.T) {
 	}{
 		{
 			name: "debug+release+aab/no-flavor",
-			in:   build.ResolveAndroidBuildTasksInput{BuildTypes: "debug,release", IncludeAAB: true, BuildModule: "app"},
+			in:   build.ResolveAndroidBuildTasksInput{BuildTypes: "debug,release", IncludeAAB: true, BuildModule: "app"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			want: "assembleDebug assembleRelease app:bundleRelease",
 		},
 		{
 			name: "release-only with flavor and AAB",
-			in:   build.ResolveAndroidBuildTasksInput{Flavor: "fdroid", BuildTypes: "release", IncludeAAB: true, BuildModule: "app"},
+			in:   build.ResolveAndroidBuildTasksInput{Flavor: "fdroid", BuildTypes: "release", IncludeAAB: true, BuildModule: "app"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			want: "assembleFdroidRelease app:bundleFdroidRelease",
 		},
 		{
@@ -118,24 +123,26 @@ func TestResolveAndroidBuildTasks(t *testing.T) {
 
 func TestParseGradleVersionFromProperties(t *testing.T) {
 	body := "android.useAndroidX=true\nversionName=1.2.3\nversionCode=42\n"
+
 	v, c := build.ParseGradleVersionFromProperties(body)
-	if v != "1.2.3" || c != "42" {
+	if v != "1.2.3" || c != "42" { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		t.Errorf("got (%q, %q), want (\"1.2.3\", \"42\")", v, c)
 	}
 }
 
 func TestParseGradleVersionFromProperties_DefaultsToUnknown(t *testing.T) {
 	v, c := build.ParseGradleVersionFromProperties("# nothing useful\n")
-	if v != "unknown" || c != "unknown" {
+	if v != "unknown" || c != "unknown" { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		t.Errorf("got (%q, %q), want (\"unknown\", \"unknown\")", v, c)
 	}
 }
 
 func TestRenderAndroidSummary_FullVariant(t *testing.T) {
 	now := time.Date(2026, 5, 10, 14, 0, 0, 0, time.UTC)
+
 	got := build.RenderAndroidSummary(build.AndroidSummaryInput{
 		JavaVersion: "25",
-		JDKDist:     "Temurin",
+		JDKDist:     "Temurin", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		BuildModule: "app",
 		Flavor:      "fdroid",
 		BuildTypes:  "debug,release",
@@ -172,6 +179,7 @@ func TestRenderAndroidSummary_FullVariant(t *testing.T) {
 
 func TestRenderAndroidSummary_OmitsVersionWhenUnknown(t *testing.T) {
 	now := time.Date(2026, 5, 10, 14, 0, 0, 0, time.UTC)
+
 	got := build.RenderAndroidSummary(build.AndroidSummaryInput{
 		JavaVersion: "25", JDKDist: "Temurin", BuildModule: "app",
 		BuildTypes: "debug", Version: "unknown",
@@ -179,6 +187,7 @@ func TestRenderAndroidSummary_OmitsVersionWhenUnknown(t *testing.T) {
 	if strings.Contains(got, "**Version**") {
 		t.Errorf("expected no version row:\n%s", got)
 	}
+
 	if strings.Contains(got, "Release APK") {
 		t.Errorf("did not expect release APK row in debug-only build:\n%s", got)
 	}

@@ -20,8 +20,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/domain/output"
 )
 
-// AndroidArtifactNamesInput drives AndroidArtifactNames. Mirrors the
-// positional/env contract of scripts/android/generate-artifact-names.sh.
+// AndroidArtifactNamesInput drives AndroidArtifactNames.
 type AndroidArtifactNamesInput struct {
 	IncludeDate bool
 	Prefix      string
@@ -42,6 +41,7 @@ func AndroidArtifactNames(ctx context.Context, sink ci.OutputSink, stderr io.Wri
 	if today.IsZero() {
 		today = time.Now()
 	}
+
 	names, err := build.ResolveAndroidArtifactNames(build.AndroidArtifactNamesInput{
 		IncludeDate: in.IncludeDate,
 		Prefix:      in.Prefix,
@@ -55,7 +55,7 @@ func AndroidArtifactNames(ctx context.Context, sink ci.OutputSink, stderr io.Wri
 	}
 
 	type kv struct{ k, v string }
-	for _, p := range []kv{
+	for _, p := range []kv{ //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		{"debug-name", names.DebugName},
 		{"release-name", names.ReleaseName},
 		{"aab-name", names.AABName},
@@ -65,10 +65,12 @@ func AndroidArtifactNames(ctx context.Context, sink ci.OutputSink, stderr io.Wri
 			return fmt.Errorf("set %s: %w", p.k, err)
 		}
 	}
-	fmt.Fprintf(stderr, "Debug artifact: %s\n", names.DebugName)
-	fmt.Fprintf(stderr, "Release artifact: %s\n", names.ReleaseName)
-	fmt.Fprintf(stderr, "AAB artifact: %s\n", names.AABName)
-	fmt.Fprintf(stderr, "SBOM artifact: %s\n", names.SBOMName)
+
+	_, _ = fmt.Fprintf(stderr, "Debug artifact: %s\n", names.DebugName)
+	_, _ = fmt.Fprintf(stderr, "Release artifact: %s\n", names.ReleaseName)
+	_, _ = fmt.Fprintf(stderr, "AAB artifact: %s\n", names.AABName)
+	_, _ = fmt.Fprintf(stderr, "SBOM artifact: %s\n", names.SBOMName)
+
 	return nil
 }
 
@@ -79,35 +81,43 @@ type AndroidVersionInfoInput struct {
 }
 
 // AndroidVersionInfo reads gradle.properties (if present) and writes
-// `version` and `version-code` outputs. Matches the
-// scripts/android/get-version-info.sh fall-through to "unknown" when
-// gradle.properties is missing.
+// `version` and `version-code` outputs. Falls through to "unknown" for
+// either field when gradle.properties is missing.
 func AndroidVersionInfo(ctx context.Context, sink ci.OutputSink, stderr io.Writer, annot output.Annotator, in AndroidVersionInfoInput) error {
 	dir := in.Dir
 	if dir == "" {
 		var err error
+
 		dir, err = os.Getwd()
 		if err != nil {
 			return fmt.Errorf("getwd: %w", err)
 		}
 	}
+
 	path := filepath.Join(dir, "gradle.properties")
-	data, err := os.ReadFile(path)
+
+	data, err := os.ReadFile(path) //nolint:gosec // path is CLI-flag-derived; filename component is hardcoded.
 	if err != nil {
 		annot.Warningf("gradle.properties not found, version info unavailable")
+
 		if err := sink.Set(ctx, "version", "unknown"); err != nil {
 			return err
 		}
+
 		return sink.Set(ctx, "version-code", "unknown")
 	}
-	v, c := build.ParseGradleVersionFromProperties(string(data))
+
+	v, c := build.ParseGradleVersionFromProperties(string(data)) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if err := sink.Set(ctx, "version", v); err != nil {
 		return err
 	}
+
 	if err := sink.Set(ctx, "version-code", c); err != nil {
 		return err
 	}
-	fmt.Fprintf(stderr, "Version: %s (%s)\n", v, c)
+
+	_, _ = fmt.Fprintf(stderr, "Version: %s (%s)\n", v, c)
+
 	return nil
 }
 
@@ -116,42 +126,136 @@ type AndroidDecodeKeystoreInput struct {
 	// Base64 is the base64-encoded keystore body (typically from the
 	// $ANDROID_KEYSTORE_BASE64 secret).
 	Base64 string
-	// Dir is the directory the keystore is decoded into. Empty → cwd.
+	// Dir is the directory the keystore is decoded into. Empty →
+	// $RUNNER_TEMP when set (the GitHub Actions runner-scoped temp
+	// path, cleaned between jobs), else os.MkdirTemp. Never the
+	// project working dir — that would let any later `path: .`
+	// upload-artifact glob pick the keystore up by accident.
 	Dir string
 }
 
 // AndroidDecodeKeystore base64-decodes Base64 into <Dir>/release.keystore
 // (mode 0600) and prints `ANDROID_KEYSTORE_PATH=<absolute path>` to
-// stdout. Mirrors scripts/android/decode-keystore.sh — the workflow
-// redirects stdout to $GITHUB_ENV so the path is exposed as a process
-// env var to subsequent steps (gradle reads it via System.getenv).
-func AndroidDecodeKeystore(stdout, stderr io.Writer, in AndroidDecodeKeystoreInput) error {
+// w. The workflow redirects w to $GITHUB_ENV so the path is
+// exposed as a process env var to subsequent steps (gradle reads it
+// via System.getenv).
+//
+// The output path lives OUTSIDE the project working directory by
+// default — see Dir's doc-comment. This is the v4 hardening: the
+// pre-v4 default of cwd meant a misconfigured `path: .` upload-artifact
+// could ship the keystore; the runner-temp default closes that gap.
+func AndroidDecodeKeystore(w, stderr io.Writer, in AndroidDecodeKeystoreInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if in.Base64 == "" {
 		return fmt.Errorf("ANDROID_KEYSTORE secret not found but enable-signing is true: %w", errs.ErrPermissionDenied)
 	}
+
+	dir, err := resolveKeystoreDir(in.Dir)
+	if err != nil {
+		return err
+	}
+
+	body, err := base64.StdEncoding.DecodeString(strings.TrimSpace(in.Base64))
+	if err != nil {
+		return fmt.Errorf("decode keystore base64: %w: %w", err, errs.ErrMalformedInput)
+	}
+
+	path := filepath.Join(dir, "release.keystore")
+	if writeErr := os.WriteFile(path, body, 0o600); writeErr != nil {
+		return fmt.Errorf("write keystore: %w", writeErr)
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve keystore path: %w", err)
+	}
+
+	_, _ = fmt.Fprintf(stderr, "✓ Android keystore decoded successfully\n")
+	_, _ = fmt.Fprintf(w, "ANDROID_KEYSTORE_PATH=%s\n", absPath)
+
+	return nil
+}
+
+// resolveKeystoreDir applies the runner-temp-first default. Explicit
+// Dir wins (callers know what they're doing); $RUNNER_TEMP wins next
+// (the standard GHA scratch path, cleaned between jobs); a fresh
+// os.MkdirTemp is the last fallback so the keystore never lands in
+// cwd, no matter what the runner is.
+func resolveKeystoreDir(explicit string) (string, error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+
+	if runnerTemp := os.Getenv("RUNNER_TEMP"); runnerTemp != "" {
+		return runnerTemp, nil
+	}
+
+	dir, err := os.MkdirTemp("", "reusable-ci-keystore-")
+	if err != nil {
+		return "", fmt.Errorf("mktemp keystore dir: %w", err)
+	}
+
+	return dir, nil
+}
+
+// AndroidWriteSecretsPropertiesInput drives AndroidWriteSecretsProperties.
+//
+// Mirrors AndroidDecodeKeystore's shape: secret arrives via env (Base64), the
+// command writes a sensitive file at mode 0600 in the working directory.
+type AndroidWriteSecretsPropertiesInput struct {
+	// Base64 is the base64-encoded secrets.properties body. Empty input is a
+	// no-op (the standard Android pattern: secrets.properties is optional).
+	Base64 string
+	// Dir is the destination directory. Defaults to the current working directory.
+	Dir string
+}
+
+// AndroidWriteSecretsProperties base64-decodes Base64 into
+// <Dir>/secrets.properties (mode 0600). Gradle's
+// secrets-gradle-plugin reads this file at configuration time.
+//
+// Empty Base64 is treated as "no secrets configured" and returns nil
+// — the AndroidGradleBuild step works fine when secrets.properties
+// is absent.
+func AndroidWriteSecretsProperties(w io.Writer, in AndroidWriteSecretsPropertiesInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	if strings.TrimSpace(in.Base64) == "" {
+		_, _ = fmt.Fprintln(w, "No SECRETS_PROPERTIES_BASE64 configured; skipping secrets.properties write")
+
+		return nil
+	}
+
 	dir := in.Dir
 	if dir == "" {
 		var err error
+
 		dir, err = os.Getwd()
 		if err != nil {
 			return fmt.Errorf("getwd: %w", err)
 		}
 	}
-	body, err := base64.StdEncoding.DecodeString(strings.TrimSpace(in.Base64))
+	// Allow whitespace in the base64 payload (multi-line secrets pasted via
+	// GitHub's secret UI sometimes carry trailing newlines).
+	body, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(in.Base64), ""))
 	if err != nil {
-		return fmt.Errorf("decode keystore base64: %w: %w", err, errs.ErrMalformedInput)
+		return fmt.Errorf("decode secrets.properties base64: %w: %w", err, errs.ErrMalformedInput)
 	}
-	path := filepath.Join(dir, "release.keystore")
+
+	if len(body) == 0 {
+		return fmt.Errorf("SECRETS_PROPERTIES_BASE64 decoded to zero bytes: %w", errs.ErrValidation)
+	}
+
+	path := filepath.Join(dir, "secrets.properties")
 	if err := os.WriteFile(path, body, 0o600); err != nil {
-		return fmt.Errorf("write keystore: %w", err)
+		return fmt.Errorf("write secrets.properties: %w", err)
 	}
-	fmt.Fprintf(stderr, "✓ Android keystore decoded successfully\n")
-	fmt.Fprintf(stdout, "ANDROID_KEYSTORE_PATH=%s\n", path)
+
+	_, _ = fmt.Fprintln(w, "✓ secrets.properties decoded successfully")
+
 	return nil
 }
 
 // AndroidResolveBuildTasksInput drives AndroidResolveBuildTasks.
 type AndroidResolveBuildTasksInput struct {
+	Override    string
 	Flavor      string
 	BuildTypes  string
 	IncludeAAB  bool
@@ -159,9 +263,19 @@ type AndroidResolveBuildTasksInput struct {
 }
 
 // AndroidResolveBuildTasks computes the gradle task list and writes
-// it to the OutputSink under `tasks`. Mirrors
-// scripts/android/resolve-build-tasks.sh.
+// it to the OutputSink under `tasks`. Mirrors.
 func AndroidResolveBuildTasks(ctx context.Context, sink ci.OutputSink, stderr io.Writer, in AndroidResolveBuildTasksInput) error {
+	if strings.TrimSpace(in.Override) != "" {
+		tasks := strings.TrimSpace(in.Override)
+		if err := sink.Set(ctx, "tasks", tasks); err != nil {
+			return err
+		}
+
+		_, _ = fmt.Fprintf(stderr, "Building with explicit tasks: %s\n", tasks)
+
+		return nil
+	}
+
 	tasks := build.ResolveAndroidBuildTasks(build.ResolveAndroidBuildTasksInput{
 		Flavor:      in.Flavor,
 		BuildTypes:  in.BuildTypes,
@@ -171,7 +285,9 @@ func AndroidResolveBuildTasks(ctx context.Context, sink ci.OutputSink, stderr io
 	if err := sink.Set(ctx, "tasks", tasks); err != nil {
 		return err
 	}
-	fmt.Fprintf(stderr, "Building with tasks: %s\n", tasks)
+
+	_, _ = fmt.Fprintf(stderr, "Building with tasks: %s\n", tasks)
+
 	return nil
 }
 
@@ -184,18 +300,20 @@ type AndroidGradleBuildInput struct {
 	SkipTests bool
 }
 
-// AndroidGradleBuild runs `./gradlew <tasks> [-x test]`. Mirrors
-// scripts/android/build-gradle.sh.
-func AndroidGradleBuild(ctx context.Context, ops GradleOps, stdout, stderr io.Writer, in AndroidGradleBuildInput) error {
+// AndroidGradleBuild runs `./gradlew <tasks> [-x test]`. Mirrors.
+func AndroidGradleBuild(ctx context.Context, ops GradleOps, w, stderr io.Writer, in AndroidGradleBuildInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if strings.TrimSpace(in.Tasks) == "" {
-		return fmt.Errorf("GRADLE_TASKS is required: %w", errs.ErrUsage)
+		return fmt.Errorf("gradle tasks are required: pass --tasks <list> or set $GRADLE_TASKS: %w", errs.ErrUsage)
 	}
-	fmt.Fprintf(stdout, "Running Gradle tasks: %s\n", in.Tasks)
+
+	_, _ = fmt.Fprintf(w, "Running Gradle tasks: %s\n", in.Tasks)
+
 	args := strings.Fields(in.Tasks)
 	if in.SkipTests {
 		args = append(args, "-x", "test")
 	}
-	return ops.RunInherit(ctx, stdout, stderr, args...)
+
+	return ops.RunInherit(ctx, w, stderr, args...)
 }
 
 // AndroidListArtifactsInput drives AndroidListArtifacts.
@@ -208,48 +326,59 @@ type AndroidListArtifactsInput struct {
 }
 
 // AndroidListArtifacts walks <BuildModule>/build/outputs for *.apk and
-// *.aab files and prints their paths to stdout. Mirrors
-// scripts/android/list-built-artifacts.sh — the bash uses `find … -ls`
-// for ls-style output; this Go version just prints the absolute path
-// per line, which is what downstream readers consume.
-func AndroidListArtifacts(stdout io.Writer, in AndroidListArtifactsInput) error {
+// *.aab files and prints their absolute paths to w, one per line.
+//nolint:cyclop // lists APK+AAB by build-type with conditional include/skip per pattern.
+func AndroidListArtifacts(w io.Writer, in AndroidListArtifactsInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if in.BuildModule == "" {
-		return fmt.Errorf("BUILD_MODULE is required: %w", errs.ErrUsage)
+		return fmt.Errorf("build module is required: pass --build-module <name> or set $BUILD_MODULE: %w", errs.ErrUsage)
 	}
+
 	root := in.Root
 	if root == "" {
 		var err error
+
 		root, err = os.Getwd()
 		if err != nil {
 			return fmt.Errorf("getwd: %w", err)
 		}
 	}
+
 	outputs := filepath.Join(root, in.BuildModule, "build", "outputs")
-	fmt.Fprintf(stdout, "Built artifacts:\n")
-	any := false
-	walkErr := filepath.WalkDir(outputs, func(path string, d fs.DirEntry, err error) error {
+
+	_, _ = fmt.Fprintf(w, "Built artifacts:\n")
+
+	found := false
+
+	walkErr := filepath.WalkDir(outputs, func(path string, d fs.DirEntry, err error) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		if err != nil {
 			// Treat "outputs/" missing as "no artifacts" rather than a hard error.
 			if os.IsNotExist(err) {
 				return filepath.SkipAll
 			}
+
 			return err
 		}
+
 		if d.IsDir() {
 			return nil
 		}
+
 		ext := filepath.Ext(path)
 		if ext == ".apk" || ext == ".aab" {
-			fmt.Fprintln(stdout, path)
-			any = true
+			_, _ = fmt.Fprintln(w, path)
+
+			found = true
 		}
+
 		return nil
 	})
 	if walkErr != nil {
 		return walkErr
 	}
-	if !any {
-		fmt.Fprintln(stdout, "No artifacts found")
+
+	if !found {
+		_, _ = fmt.Fprintln(w, "No artifacts found")
 	}
+
 	return nil
 }

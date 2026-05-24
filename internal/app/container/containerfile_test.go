@@ -19,10 +19,12 @@ func TestValidateContainerfile_ExactPathExists(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	path := fsys.WriteFile("Containerfile", []byte("FROM alpine"))
 	sink := fakeoutputsink.New(t)
-	var stdout bytes.Buffer
-	if err := appcontainer.ValidateContainerfile(context.Background(), sink, &stdout, appcontainer.ValidateContainerfileInput{Path: path}); err != nil {
+
+	var out bytes.Buffer
+	if err := appcontainer.ValidateContainerfile(context.Background(), sink, &out, appcontainer.ValidateContainerfileInput{Path: path}); err != nil {
 		t.Fatalf("ValidateContainerfile: %v", err)
 	}
+
 	if sink.Single("containerfile") != path {
 		t.Errorf("containerfile = %q", sink.Single("containerfile"))
 	}
@@ -31,13 +33,16 @@ func TestValidateContainerfile_ExactPathExists(t *testing.T) {
 func TestValidateContainerfile_SingleGlobMatch(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.WriteFile("Containerfile.builder", []byte("FROM alpine"))
+
 	sink := fakeoutputsink.New(t)
-	var stdout bytes.Buffer
-	if err := appcontainer.ValidateContainerfile(context.Background(), sink, &stdout, appcontainer.ValidateContainerfileInput{
+
+	var out bytes.Buffer
+	if err := appcontainer.ValidateContainerfile(context.Background(), sink, &out, appcontainer.ValidateContainerfileInput{
 		Path: fsys.Path("Containerfile"), // does not exist; glob picks up .builder
 	}); err != nil {
 		t.Fatalf("ValidateContainerfile: %v", err)
 	}
+
 	if !strings.HasSuffix(sink.Single("containerfile"), "Containerfile.builder") {
 		t.Errorf("containerfile = %q", sink.Single("containerfile"))
 	}
@@ -48,16 +53,18 @@ func TestValidateContainerfile_MultipleMatchesErrors(t *testing.T) {
 	for _, name := range []string{"Containerfile.builder", "Dockerfile.runner"} {
 		fsys.WriteFile(name, []byte("FROM alpine"))
 	}
+
 	err := appcontainer.ValidateContainerfile(context.Background(), fakeoutputsink.New(t), io.Discard, appcontainer.ValidateContainerfileInput{
 		Path: fsys.Path("Containerfile"),
 	})
-	if err == nil || !strings.Contains(err.Error(), "Multiple containerfiles") {
+	if err == nil || !strings.Contains(err.Error(), "multiple containerfiles") {
 		t.Errorf("expected multi-match error, got: %v", err)
 	}
 }
 
 func TestValidateContainerfile_NoMatchErrors(t *testing.T) {
 	fsys := testfs.NewReal(t)
+
 	err := appcontainer.ValidateContainerfile(context.Background(), fakeoutputsink.New(t), io.Discard, appcontainer.ValidateContainerfileInput{
 		Path: fsys.Path("Containerfile"),
 	})

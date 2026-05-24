@@ -33,13 +33,13 @@ type fsOps interface {
 	FindReleaseArtifacts(dir string) []string
 	// Glob expands a shell-style pattern (matches filepath.Glob).
 	Glob(pattern string) []string
-	// ListASCFiles returns every *.asc file in the cwd (or empty when
-	// none).
-	ListASCFiles() []string
+	// ListSignatureSidecars returns every signature sidecar in the
+	// cwd across all supported methods (*.asc for GPG, *.bundle for
+	// cosign). Empty when none exist.
+	ListSignatureSidecars() []string
 }
 
-// CreateReleaseInput drives `release create`. Mirrors the env contract
-// of scripts/release/providers/github.sh.
+// CreateReleaseInput drives `release create`. Mirrors the env contract.
 type CreateReleaseInput struct {
 	Tag              string
 	Repository       string
@@ -53,28 +53,34 @@ type CreateReleaseInput struct {
 	ReleaseDir       string // default release.DefaultReleaseArtifactsDir
 }
 
-// CreateRelease delegates to Provider.CreateRelease after assembling
-// the asset list from globs / release-artifacts dir / SBOM zip /
-// checksums + remaining .asc signatures, deduped by basename.
+// CreateRelease delegates to the ReleaseCreator after assembling the
+// asset list from globs / release-artifacts dir / SBOM zip / checksums
+// + remaining .asc signatures, deduped by basename. The local provider
+// does not satisfy ReleaseCreator — the CLI gates on platform before
+// reaching this use case.
+//nolint:cyclop // release flow: notes → assets → provider call → summary.
 func CreateRelease(
 	ctx context.Context,
-	prov provider.Provider,
+	prov provider.ReleaseCreator,
 	fs fsOps,
 	out io.Writer,
 	in CreateReleaseInput,
 ) error {
 	if in.Tag == "" {
-		return fmt.Errorf("TAG_NAME is required: %w", errs.ErrUsage)
+		return fmt.Errorf("tag is required: pass --tag <name> or set $TAG_NAME: %w", errs.ErrUsage)
 	}
+
 	if in.Repository == "" {
-		return fmt.Errorf("REPOSITORY is required: %w", errs.ErrUsage)
+		return fmt.Errorf("repository is required: pass --repository <owner/repo> or set $REPOSITORY: %w", errs.ErrUsage)
 	}
+
 	notesFile := cmp.Or(in.ReleaseNotesFile, release.DefaultReleaseNotesFile)
 	releaseName := cmp.Or(in.ReleaseName, in.Tag)
 	releaseDir := cmp.Or(in.ReleaseDir, release.DefaultReleaseArtifactsDir)
 	checksums := cmp.Or(in.ChecksumsFile, release.ChecksumsFile)
 	artifactName := cmp.Or(in.ArtifactName, path.Base(in.Repository))
 	version := strings.TrimPrefix(in.Tag, "v")
+
 	specNotesFile := ""
 	if fs.FileNonEmpty(notesFile) {
 		specNotesFile = notesFile
@@ -89,6 +95,7 @@ func CreateRelease(
 			if pat == "" {
 				continue
 			}
+
 			matches := fs.Glob(pat)
 			sort.Strings(matches) // stable order across runs
 			candidates = append(candidates, matches...)
@@ -98,30 +105,37 @@ func CreateRelease(
 	// 2. Release-artifacts directory (recursive, recognised extensions).
 	for _, p := range fs.FindReleaseArtifacts(releaseDir) {
 		candidates = append(candidates, p)
-		// Add the .asc when colocated.
-		if fs.FileExists(release.SignaturePath(filepath.Base(p))) {
-			candidates = append(candidates, release.SignaturePath(filepath.Base(p)))
+		// Add every possible sidecar (.asc, .bundle) when colocated.
+		// Only one will exist in practice — the producer chose one
+		// method per repo via artifacts.yml's sign.method.
+		for _, sidecar := range release.SignatureSidecars(filepath.Base(p)) {
+			if fs.FileExists(sidecar) {
+				candidates = append(candidates, sidecar)
+			}
 		}
 	}
 
-	// 3. SBOM zip + signature.
+	// 3. SBOM zip + signature sidecars.
 	sbomZip := sbom.ZipName(artifactName, version)
 	if fs.FileExists(sbomZip) {
-		fmt.Fprintf(out, "Adding SBOM ZIP: %s\n", sbomZip)
-		candidates = append(candidates, sbomZip, release.SignaturePath(sbomZip))
+		_, _ = fmt.Fprintf(out, "Adding SBOM ZIP: %s\n", sbomZip)
+		candidates = append(candidates, sbomZip)
+		candidates = append(candidates, release.SignatureSidecars(sbomZip)...)
 	} else {
-		fmt.Fprintf(out, "⚠️  SBOM ZIP not found: %s\n", sbomZip)
+		_, _ = fmt.Fprintf(out, "⚠️  SBOM ZIP not found: %s\n", sbomZip)
 	}
 
-	// 4. Checksums + signature.
+	// 4. Checksums + signature sidecars.
 	if fs.FileNonEmpty(checksums) {
-		candidates = append(candidates, checksums, release.SignaturePath(checksums))
+		candidates = append(candidates, checksums)
+		candidates = append(candidates, release.SignatureSidecars(checksums)...)
 	} else {
-		fmt.Fprintf(out, "⚠️  No %s or file is empty - skipping\n", checksums)
+		_, _ = fmt.Fprintf(out, "⚠️  No %s or file is empty - skipping\n", checksums)
 	}
 
-	// 5. Any remaining .asc signatures the bash sweeps up.
-	candidates = append(candidates, fs.ListASCFiles()...)
+	// 5. Any remaining signature sidecars the bash sweep picks up
+	// (.asc for GPG, .bundle for cosign).
+	candidates = append(candidates, fs.ListSignatureSidecars()...)
 
 	// Filter to only paths that actually exist on disk (the bash skips
 	// missing files silently via `[[ -f $file ]]`).
@@ -131,6 +145,7 @@ func CreateRelease(
 			keep = append(keep, p)
 		}
 	}
+
 	assets := release.CollectAssets(keep)
 
 	spec := provider.ReleaseSpec{
@@ -142,6 +157,7 @@ func CreateRelease(
 		MakeLatest: in.MakeLatest,
 		Assets:     assets,
 	}
-	fmt.Fprintf(out, "Creating release %s with %d asset(s)\n", in.Tag, len(assets))
+	_, _ = fmt.Fprintf(out, "Creating release %s with %d asset(s)\n", in.Tag, len(assets))
+
 	return prov.CreateRelease(ctx, in.Repository, spec)
 }

@@ -74,12 +74,14 @@ func (t TagFormat) IsStable() bool { return t.Prerelease == "" }
 // surface as PrereleaseStandard=false on the returned TagFormat.
 func ParseTagFormat(tag string) (*TagFormat, error) {
 	if tag == "" {
-		return nil, fmt.Errorf("Usage: validate tag-format <tag-name>: %w", errs.ErrUsage)
+		return nil, fmt.Errorf("usage: validate tag-format <tag-name>: %w", errs.ErrUsage)
 	}
-	m := SemverTagPattern.FindStringSubmatch(tag)
+
+	m := SemverTagPattern.FindStringSubmatch(tag) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if m == nil {
-		return nil, fmt.Errorf("Invalid tag format: %q: %w", tag, errs.ErrValidation)
+		return nil, fmt.Errorf("invalid tag format: %q: %w", tag, errs.ErrValidation)
 	}
+
 	tf := &TagFormat{
 		Tag:        tag,
 		Major:      m[1],
@@ -93,5 +95,6 @@ func ParseTagFormat(tag string) (*TagFormat, error) {
 	} else {
 		tf.PrereleaseStandard = PrereleaseSuffixPattern.MatchString(tf.Prerelease)
 	}
+
 	return tf, nil
 }

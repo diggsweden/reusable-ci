@@ -23,6 +23,7 @@ func TestSet_WritesScalar(t *testing.T) {
 	if err := s.Set(context.Background(), "version", "1.2.3"); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := s.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -33,17 +34,20 @@ func TestSet_WritesScalar(t *testing.T) {
 	}
 }
 
+//nolint:cyclop // exercises 11 EOF/heredoc invariants in one writer round-trip.
 func TestSetMultiline_HeredocShape(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	path := fsys.WriteFile("out", nil)
 
-	s := ghaoutput.New(path)
+	s := ghaoutput.New(path) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+
 	err := s.SetMultiline(context.Background(), "tags", []string{
 		"ghcr.io/x/y:1.2.3", "ghcr.io/x/y:1.2", "ghcr.io/x/y:1",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := s.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -54,6 +58,7 @@ func TestSetMultiline_HeredocShape(t *testing.T) {
 	if !strings.HasPrefix(got, "tags<<EOF_") {
 		t.Errorf("output does not start with heredoc opener: %q", got)
 	}
+
 	if !strings.Contains(got, "ghcr.io/x/y:1.2.3\nghcr.io/x/y:1.2\nghcr.io/x/y:1\n") {
 		t.Errorf("output missing tag lines: %q", got)
 	}
@@ -62,19 +67,48 @@ func TestSetMultiline_HeredocShape(t *testing.T) {
 	if len(lines) < 2 {
 		t.Fatalf("not enough lines: %d", len(lines))
 	}
+
 	delim := strings.TrimPrefix(lines[0], "tags<<")
 	if delim == "" || !strings.HasPrefix(delim, "EOF_") {
 		t.Errorf("delimiter missing or malformed: %q", delim)
 	}
+
 	closingFound := false
+
 	for _, l := range lines[1:] {
 		if l == delim {
 			closingFound = true
+
 			break
 		}
 	}
+
 	if !closingFound {
 		t.Errorf("closing delimiter not found in output: %q", got)
+	}
+}
+
+func TestSet_RejectsNewlineValue(t *testing.T) {
+	fsys := testfs.NewReal(t)
+
+	s := ghaoutput.New(fsys.WriteFile("out", nil))
+	if err := s.Set(context.Background(), "bad", "one\ntwo"); err == nil {
+		t.Fatal("expected newline value to be rejected")
+	}
+}
+
+func TestSet_RejectsInvalidOutputKey(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	s := ghaoutput.New(fsys.WriteFile("out", nil)) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+
+	for _, key := range []string{"", "1bad", "bad key", "bad=value", "bad\nkey"} {
+		if err := s.Set(context.Background(), key, "value"); err == nil {
+			t.Fatalf("expected key %q to be rejected", key)
+		}
+
+		if err := s.SetMultiline(context.Background(), key, []string{"value"}); err == nil {
+			t.Fatalf("expected multiline key %q to be rejected", key)
+		}
 	}
 }
 
@@ -82,11 +116,13 @@ func TestSetAfterClose_Errors(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	path := fsys.WriteFile("out", nil)
 
-	s := ghaoutput.New(path)
+	s := ghaoutput.New(path) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	require.NoError(t, s.Close(context.Background()))
+
 	if err := s.Set(context.Background(), "k", "v"); err == nil {
 		t.Errorf("Set after Close did not error")
 	}
+
 	if err := s.SetMultiline(context.Background(), "k", []string{"x"}); err == nil {
 		t.Errorf("SetMultiline after Close did not error")
 	}
@@ -100,19 +136,21 @@ func TestNewFromEnv(t *testing.T) {
 		wantFile   string
 		wantEmpty  string
 	}{
-		{name: "prefers_github_output", githubPath: "gh", ciPath: "ci", wantFile: "gh", wantEmpty: "ci"},
-		{name: "falls_back_to_ci_output", ciPath: "ci", wantFile: "ci"},
+		{name: "uses_github_output", githubPath: "gh", ciPath: "ci", wantFile: "gh", wantEmpty: "ci"},
+		{name: "ignores_ci_output", ciPath: "ci", wantEmpty: "ci"},
 		{name: "devnull_when_neither"},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
 			fsys := testfs.NewReal(t)
+
 			env := testenv.New(t)
 			if testCase.githubPath != "" {
 				env.Setenv("GITHUB_OUTPUT", fsys.WriteFile(testCase.githubPath, nil))
 			} else {
 				env.Setenv("GITHUB_OUTPUT", "")
 			}
+
 			if testCase.ciPath != "" {
 				env.Setenv("CI_OUTPUT", fsys.WriteFile(testCase.ciPath, nil))
 			} else {
@@ -128,6 +166,7 @@ func TestNewFromEnv(t *testing.T) {
 					t.Errorf("%s not used: %q", testCase.wantFile, data)
 				}
 			}
+
 			if testCase.wantEmpty != "" {
 				if data := fsys.ReadFile(testCase.wantEmpty); strings.Contains(string(data), "k=v") {
 					t.Errorf("%s was used unexpectedly: %q", testCase.wantEmpty, data)

@@ -15,6 +15,7 @@ import (
 
 func TestAppStoreUpload_RendersHeaderAndTimestamp(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
 	err := appsummary.AppStoreUpload(context.Background(), sink, appsummary.AppStoreUploadInput{
 		IPAFile:      "Demo.ipa",
@@ -31,6 +32,7 @@ func TestAppStoreUpload_RendersHeaderAndTimestamp(t *testing.T) {
 
 func TestAppStoreUpload_ValidationAndManualGuidance(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
 	err := appsummary.AppStoreUpload(context.Background(), sink, appsummary.AppStoreUploadInput{
 		IPAFile:        "app.ipa",
@@ -41,6 +43,7 @@ func TestAppStoreUpload_ValidationAndManualGuidance(t *testing.T) {
 		Now:            time.Date(2026, 5, 10, 14, 0, 0, 0, time.UTC),
 	})
 	require.NoError(t, err)
+
 	got := sink.buf.String()
 	for _, want := range []string{"app.ipa", "⊘ Skipped", "request-123", "Manually submit for external testing or App Store review"} {
 		require.Contains(t, got, want)

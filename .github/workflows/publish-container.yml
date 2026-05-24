@@ -15,9 +15,8 @@
 # - Any OCI-compatible registry - No SLSA support
 #
 # How it works:
-# 1. prep: compute image coordinate, tags, and labels once via the shared
-#    scripts/container/compute-image-metadata.sh helper. Validate namespace
-#    early.
+# 1. prep: compute image coordinate, tags, and labels once via reusable-ci.
+#    Validate namespace early.
 # 2. build-arch (matrix, fail-fast: false): per-platform native runner
 #    (linux/amd64 -> ubuntu-24.04, linux/arm64 -> ubuntu-24.04-arm).
 #    Each leg builds and pushes by digest only — no tag is applied yet.
@@ -26,8 +25,8 @@
 #    against the per-arch digest, per-arch extract-binary. Buildkit
 #    provenance attaches to each platform digest via `provenance: mode=max`.
 # 3. merge: assembles the per-arch digests into a single manifest list
-#    via `docker buildx imagetools create`, applying all tags from
-#    metadata-action. Single-arch inputs go through the same pipeline
+#    via `reusable-ci container manifest merge`, applying all tags from
+#    `reusable-ci container metadata`. Single-arch inputs go through the same pipeline
 #    (matrix-of-1 + one-entry manifest list).
 # 4. provenance (separate workflow_call): SLSA L3 generator attests the
 #    manifest list digest. Same as today's behaviour, just consuming
@@ -50,22 +49,20 @@
 #
 # Registry Authentication:
 #   GHCR (default): Uses GITHUB_TOKEN (no secrets needed)
-#   Other registries: Set useGithubToken=false and provide registryPassword secret
+#   Other registries: Set use-ci-token=false and provide registry-password secret
 #
 # Required Secrets:
-#   registryPassword: Required when useGithubToken=false (for Docker Hub, Quay, etc)
-#   CODE_SCANNING_TOKEN: Optional — uploads Trivy scan results to Code Scanning
+#   registry-password: Required when use-ci-token=false (for Docker Hub, Quay, etc)
+#   CODE_SCANNING_TOKEN: Optional — uploads Trivy scan results to Code Scanning;
+#                        without it, the SARIF artifact is still saved
+#   secrets: inherit: Pass CODE_SCANNING_TOKEN for Code Scanning upload
 #
 # Required Permissions:
 #   contents: read         # Read Containerfile and context
 #   packages: write        # Push images to registry
 #   id-token: write        # Generate OIDC token for SLSA (GHCR only)
-#   secrets: inherit       # Pass CODE_SCANNING_TOKEN for Code Scanning upload
 #   attestations: write    # Attach SBOM attestation
 #   actions: read          # Read workflow for provenance
-#   security-events: write # Upload SARIF (only required when running without
-#                            CODE_SCANNING_TOKEN; the script falls back to the
-#                            github/codeql-action upload path)
 #
 # Outputs:
 #   image: Full image name with primary tag
@@ -101,11 +98,36 @@ on:
         default: "linux/amd64"
         type: string
       artifact-types:
-        description: "Comma-separated artifact types (maven,npm,gradle)"
+        description: "Comma-separated artifact types (maven,npm,gradle,cargo,go)"
         required: true
         type: string
+      artifact-types-json:
+        description: "JSON array of artifact types. Prefer this over artifact-types for exact membership checks."
+        required: false
+        default: "[]"
+        type: string
       gradle-artifact-name:
-        description: "Name of the uploaded gradle build artifact to download. Default `gradle-build-artifacts`. Override to match a matrix-named gradle artifact (build-gradle-app.yml's `artifact-name` input). Maven and npm builders currently have no such override; thread-through for those stacks is tracked for a follow-up PR."
+        description: "Name of the uploaded Gradle build artifact to download. Default `gradle-build-artifacts`."
+        required: false
+        default: ""
+        type: string
+      maven-artifact-name:
+        description: "Name of the uploaded Maven build artifact to download. Default `maven-build-artifacts`."
+        required: false
+        default: ""
+        type: string
+      npm-artifact-name:
+        description: "Name of the uploaded NPM build artifact to download. Default `npm-build-artifacts`."
+        required: false
+        default: ""
+        type: string
+      go-artifact-name:
+        description: "Name of the artifact-first Go build artifact to download. Empty means container-first Go, where the Containerfile compiles the binary."
+        required: false
+        default: ""
+        type: string
+      cargo-artifact-name:
+        description: "Name of the artifact-first Cargo build artifact to download. Empty means container-first Cargo, where the Containerfile compiles the binary."
         required: false
         default: ""
         type: string
@@ -120,10 +142,15 @@ on:
         default: true
         type: boolean
       enable-scan:
-        description: "Enable vulnerability scanning"
+        description: "Enable vulnerability scanning (gates the publish on finding count — set to false to skip both scan and gate)"
         required: false
         default: true
         type: boolean
+      scan-severity:
+        description: "Trivy --severity filter; any finding at this level or above fails the publish. Narrow the filter to relax the gate (e.g. 'CRITICAL'); set enable-scan=false to skip entirely. Default 'CRITICAL,HIGH'."
+        required: false
+        default: "CRITICAL,HIGH"
+        type: string
       registry:
         description: "Container registry"
         required: false
@@ -158,8 +185,15 @@ on:
         default: ""
         type: string
       build-secrets:
-        description: "Build secrets to pass (KEY=VALUE format, one per line)"
+        description: |
+          Newline/comma/space-separated list of BuildKit secret NAMES
+          declared in containers[].build-secrets. The values are pulled
+          from the REUSABLE_CI_BUILD_SECRETS_JSON envelope secret and
+          materialized as tmpfile mounts at build time so they never
+          appear in SLSA provenance, workflow logs, or step inputs.
+          Pass NAMES only, never KEY=VALUE pairs.
         required: false
+        default: ""
         type: string
       push-image:
         description: "Push image to registry"
@@ -194,10 +228,30 @@ on:
         description: "Enforce namespace validation (defaults to repository owner)"
         required: false
         type: string
-      scripts-ref:
-        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+      reusable-ci-binary-ref:
+        description: "reusable-ci ref/version to install on plain-runner jobs (defaults to v3.0.0)"
         required: false
-        default: "main"
+        default: "v3.0.0"
+        type: string
+      sign-image:
+        description: "Sign the pushed image with cosign. Method controlled by sign-method (sigstore | kms). false skips the signing step entirely; gpg method is rejected (OpenPGP cannot sign OCI manifests)."
+        required: false
+        default: false
+        type: boolean
+      sign-method:
+        description: "Cosign backend for image signing: sigstore (keyless OIDC) or kms (cosign + sign-key). Required when sign-image=true. gpg is not a valid choice for image signing."
+        required: false
+        default: ""
+        type: string
+      sign-key:
+        description: "cosign --key URI for sign-method=kms (awskms://, gcpkms://, hashivault://, pkcs11:, file:). Forbidden for sign-method=sigstore."
+        required: false
+        default: ""
+        type: string
+      sign-oidc-issuer:
+        description: "OIDC issuer URL for sign-method=sigstore (default: cosign auto-detect). Forbidden for sign-method=kms."
+        required: false
+        default: ""
         type: string
     secrets:
       registry-password:
@@ -205,6 +259,18 @@ on:
         required: false
       CODE_SCANNING_TOKEN:
         description: "Token with code_scanning_alerts:write for uploading SARIF to Code Scanning"
+        required: false
+      REUSABLE_CI_BUILD_SECRETS_JSON:
+        description: |
+          JSON object of {name: value} for every entry in
+          containers[].build-secrets. Stored as a single pre-packed
+          repo/org secret by the adopter (see
+          docs/artifacts-reference.md `build-secrets` for the recipe)
+          so the value stays inside the secrets channel end-to-end.
+          Unpacked into per-secret mode-0600 tmpfiles by `reusable-ci
+          container materialize-build-secrets` and mounted into
+          BuildKit via --mount=type=secret so values stay out of
+          provenance attestations and step inputs.
         required: false
     outputs:
       image:
@@ -221,7 +287,7 @@ permissions:
 jobs:
   prep:
     name: Prepare Build${{ inputs.name && format(' ({0})', inputs.name) || '' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -230,7 +296,14 @@ jobs:
       tags: ${{ steps.metadata.outputs.tags }}
       labels: ${{ steps.metadata.outputs.labels }}
       metadata: ${{ steps.metadata.outputs.json }}
-      platforms-json: ${{ steps.platforms.outputs.json }}
+      platforms-json: ${{ steps.platforms.outputs.platforms-json }}
+      # Unix-epoch seconds of the resolved HEAD commit. Propagated to
+      # the build job as SOURCE_DATE_EPOCH (reproducible-builds.org
+      # convention) so BuildKit pins the image-config `created`
+      # field and every layer entry's mtime. Without this, two
+      # builds of the same source produce different image-config
+      # digests — verifiers comparing tag re-issues would see drift.
+      source-date-epoch: ${{ steps.source-date.outputs.epoch }}
     steps:
       - name: Harden GitHub runner
         uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
@@ -240,25 +313,33 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.branch }}
-      - name: Set up Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - name: Checkout reusable-ci bootstrap installers
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          go-version: stable
-          check-latest: true
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+      # Tagged refs (vN.N.N) install from GitHub Releases with SHA-256
+      # verification — no Go toolchain needed. Branch/SHA refs require Go on
+      # the runner; the install script errors with an actionable message if
+      # absent.
       - name: Install reusable-ci binary
         env:
-          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
-        run: |
-          # publish-container runs on plain ubuntu (no runtime container), so
-          # install the reusable-ci binary directly with `go install`.
-          GOBIN="$RUNNER_TEMP/bin" \
-            go install "github.com/diggsweden/reusable-ci/cmd/reusable-ci@${SCRIPTS_REF}"
-          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
+      # Defense-in-depth gate: refuse to run when the workflow trigger
+      # exposes adopter-controlled commit context to signing/package
+      # secrets (most importantly pull_request*). All downstream jobs
+      # depend on this prep job via `needs:`, so a refusal here skips
+      # the entire publish.
+      - name: Refuse PR-context trigger (publish/release secrets in scope)
+        run: reusable-ci validate event-context
       - name: Determine Image Name
         id: image-name
         env:
-          TARGET_REGISTRY: ${{ inputs.registry }}
-          IMAGE_NAME_INPUT: ${{ inputs['image-name'] }}
+          CONTAINER_REGISTRY: ${{ inputs.registry }}
+          IMAGE_NAME: ${{ inputs['image-name'] }}
           REPOSITORY: ${{ github.repository }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
           NAME: ${{ inputs.name }}
@@ -268,9 +349,9 @@ jobs:
         env:
           IMAGE_NAME: ${{ steps.image-name.outputs.name }}
           REPOSITORY: ${{ github.repository }}
-          TARGET_REGISTRY: ${{ inputs.registry }}
+          CONTAINER_REGISTRY: ${{ inputs.registry }}
           ENFORCE_NAMESPACE: ${{ inputs['enforce-namespace'] || github.repository_owner }}
-        run: reusable-ci container validate-namespace
+        run: reusable-ci container validate namespace
       - name: Extract Image Metadata
         id: metadata
         env:
@@ -296,14 +377,26 @@ jobs:
       - name: Compute platforms JSON
         id: platforms
         env:
-          NAME: ${{ inputs.name }}
           PLATFORMS: ${{ inputs.platforms }}
+        run: reusable-ci container platform-plan
+      # Reproducible-builds anchor. `git log -1 --format=%ct` returns
+      # the committer-date of HEAD as Unix epoch seconds. Passed to
+      # BuildKit on the build step as SOURCE_DATE_EPOCH; BuildKit
+      # then writes that value into the image-config `created`
+      # timestamp AND clamps every layer-tar entry's mtime to it. A
+      # rebuild of the same tag therefore produces the same
+      # image-config digest. Reference:
+      # https://docs.docker.com/build/ci/github-actions/reproducible-builds/
+      - name: Compute SOURCE_DATE_EPOCH
+        id: source-date
+        env:
+          # Avoid GitHub's masking on output: `git log` is a local
+          # filesystem read, no secrets involved.
+          GIT_PAGER: cat
         run: |
-          # Convert "linux/amd64,linux/arm64" -> JSON array for matrix consumption.
-          JSON=$(printf '%s\n' "${PLATFORMS//,/$'\n'}" | jq -R . | jq -s -c .)
-          printf "json=%s\n" "${JSON}" >> "$GITHUB_OUTPUT"
-          printf "→ Container: %s\n" "${NAME:-(unnamed)}"
-          printf "→ Platforms: %s\n" "${PLATFORMS}"
+          epoch="$(git log -1 --format=%ct HEAD)"
+          printf 'epoch=%s\n' "$epoch" >> "$GITHUB_OUTPUT"
+          printf '::notice::SOURCE_DATE_EPOCH=%s (commit %s)\n' "$epoch" "$(git rev-parse --short HEAD)"
 
   build-arch:
     name: Build${{ inputs.name && format(' ({0})({1})', inputs.name, matrix.platform) || format(' ({0})', matrix.platform) }}
@@ -337,50 +430,36 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ inputs['scripts-ref'] }}
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
           path: .github-shared
           sparse-checkout: scripts/bootstrap
-      - name: Set up Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        with:
-          go-version: stable
-          check-latest: true
+      # Tagged refs (vN.N.N) install from GitHub Releases with SHA-256
+      # verification — no Go toolchain needed. Branch/SHA refs require Go on
+      # the runner; the install script errors with an actionable message if
+      # absent.
       - name: Install reusable-ci binary
         env:
-          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
-        run: |
-          # publish-container runs on plain ubuntu (no runtime container), so
-          # install the reusable-ci binary directly with `go install`.
-          GOBIN="$RUNNER_TEMP/bin" \
-            go install "github.com/diggsweden/reusable-ci/cmd/reusable-ci@${SCRIPTS_REF}"
-          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
       - name: Derive arch suffix
         id: arch
         env:
           PLATFORM: ${{ matrix.platform }}
-        run: |
-          # linux/amd64 -> amd64, linux/arm64 -> arm64. Used for cache,
-          # artefact, and SARIF-category scoping so the matrix legs don't
-          # collide with each other.
-          SUFFIX="${PLATFORM#linux/}"
-          SUFFIX="${SUFFIX//\//-}"
-          printf "suffix=%s\n" "$SUFFIX" >> "$GITHUB_OUTPUT"
+        run: reusable-ci container platform-plan
       - name: Download Maven artifacts
-        if: &if_has_maven_artifacts ${{ contains(inputs['artifact-types'], 'maven') }}
+        if: &if_has_maven_artifacts ${{ contains(fromJson(inputs['artifact-types-json']), 'maven') || contains(format(',{0},', inputs['artifact-types']), ',maven,') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        continue-on-error: true
         with:
-          name: maven-build-artifacts
+          name: ${{ inputs['maven-artifact-name'] || 'maven-build-artifacts' }}
           path: ./
       - name: Verify Maven artifacts
         if: *if_has_maven_artifacts
-        run: reusable-ci container validate-artifacts maven target
+        run: reusable-ci container validate artifacts --project-type maven --artifact-dir target
       - name: Download NPM artifacts
-        if: &if_has_npm_artifacts ${{ contains(inputs['artifact-types'], 'npm') }}
+        if: &if_has_npm_artifacts ${{ contains(fromJson(inputs['artifact-types-json']), 'npm') || contains(format(',{0},', inputs['artifact-types']), ',npm,') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        continue-on-error: true
         with:
-          name: npm-build-artifacts
+          name: ${{ inputs['npm-artifact-name'] || 'npm-build-artifacts' }}
           path: ./
       - name: Extract NPM tarball
         if: *if_has_npm_artifacts
@@ -390,22 +469,45 @@ jobs:
         env:
           CONTAINER_CONTEXT: ${{ inputs.context }}
           CONTAINER_FILE: ${{ inputs['container-file'] }}
-        run: reusable-ci container validate-artifacts npm dist "$CONTAINER_CONTEXT/$CONTAINER_FILE"
+        run: reusable-ci container validate artifacts --project-type npm --artifact-dir dist --containerfile "$CONTAINER_CONTEXT/$CONTAINER_FILE"
       - name: Download Gradle artifacts
-        if: &if_has_gradle_artifacts ${{ contains(inputs['artifact-types'], 'gradle') }}
+        if: &if_has_gradle_artifacts ${{ contains(fromJson(inputs['artifact-types-json']), 'gradle') || contains(format(',{0},', inputs['artifact-types']), ',gradle,') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        continue-on-error: true
         with:
           name: ${{ inputs['gradle-artifact-name'] || 'gradle-build-artifacts' }}
           path: build/libs/
       - name: Verify Gradle artifacts
         if: *if_has_gradle_artifacts
-        run: reusable-ci container validate-artifacts gradle build/libs
+        run: reusable-ci container validate artifacts --project-type gradle --artifact-dir build/libs
+      - name: Download Go artifacts
+        if: &if_has_go_artifacts ${{ (contains(fromJson(inputs['artifact-types-json']), 'go') || contains(format(',{0},', inputs['artifact-types']), ',go,')) && inputs['go-artifact-name'] != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ format('{0}-go-build-artifacts', inputs['go-artifact-name']) }}
+          path: ${{ inputs.context }}/dist/
+      - name: Verify Go artifacts
+        if: *if_has_go_artifacts
+        env:
+          CONTAINER_CONTEXT: ${{ inputs.context }}
+          CONTAINER_FILE: ${{ inputs['container-file'] }}
+        run: reusable-ci container validate artifacts --project-type go --artifact-dir "$CONTAINER_CONTEXT/dist" --containerfile "$CONTAINER_CONTEXT/$CONTAINER_FILE"
+      - name: Download Cargo artifacts
+        if: &if_has_cargo_artifacts ${{ (contains(fromJson(inputs['artifact-types-json']), 'cargo') || contains(format(',{0},', inputs['artifact-types']), ',cargo,')) && inputs['cargo-artifact-name'] != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ format('{0}-cargo-build-artifacts', inputs['cargo-artifact-name']) }}
+          path: ${{ inputs.context }}/dist/
+      - name: Verify Cargo artifacts
+        if: *if_has_cargo_artifacts
+        env:
+          CONTAINER_CONTEXT: ${{ inputs.context }}
+          CONTAINER_FILE: ${{ inputs['container-file'] }}
+        run: reusable-ci container validate artifacts --project-type cargo --artifact-dir "$CONTAINER_CONTEXT/dist" --containerfile "$CONTAINER_CONTEXT/$CONTAINER_FILE"
       - name: Verify Containerfile
         id: containerfile
         env:
           CONTAINER_FILE: ${{ inputs['container-file'] }}
-        run: reusable-ci container validate-containerfile "$CONTAINER_FILE"
+        run: reusable-ci container validate containerfile --path "$CONTAINER_FILE"
       - name: Set up Buildx
         id: buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
@@ -413,10 +515,10 @@ jobs:
         if: &if_push_image ${{ inputs['push-image'] }}
         env:
           USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
-          TARGET_REGISTRY: ${{ inputs.registry }}
+          REGISTRY: ${{ inputs.registry }}
           CI_REGISTRY: ghcr.io
           REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
-        run: reusable-ci publish validate-auth
+        run: reusable-ci validate auth registry
       - name: Log in to Container Registry
         if: *if_push_image
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
@@ -424,16 +526,34 @@ jobs:
           registry: ${{ inputs.registry }}
           username: ${{ inputs['registry-username'] || github.actor }}
           password: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+      # Unpacks the REUSABLE_CI_BUILD_SECRETS_JSON envelope into per-secret
+      # mode-0600 tmpfiles under $RUNNER_TEMP/buildkit-secrets and emits
+      # the `secrets:` payload for docker/build-push-action below. Values
+      # never enter the workflow log, step inputs, or SLSA provenance —
+      # BuildKit mounts them as tmpfs into the RUN steps that opt in via
+      # `--mount=type=secret,id=<name>`.
+      - name: Materialize build secrets
+        id: build-secrets
+        env:
+          BUILD_SECRET_NAMES: ${{ inputs['build-secrets'] }}
+          REUSABLE_CI_BUILD_SECRETS_JSON: ${{ secrets.REUSABLE_CI_BUILD_SECRETS_JSON }}
+        run: reusable-ci container materialize-build-secrets
       - name: Build by digest
         id: build
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        env:
+          # BuildKit reads SOURCE_DATE_EPOCH from the runner env and
+          # clamps the image-config `created` timestamp plus every
+          # layer-tar mtime to this value. Computed once in `prep`
+          # from `git log -1 --format=%ct` of the resolved HEAD.
+          SOURCE_DATE_EPOCH: ${{ needs.prep.outputs.source-date-epoch }}
         with:
           context: ${{ inputs.context }}
           file: ${{ steps.containerfile.outputs.containerfile }}
           target: ${{ inputs.target }}
           platforms: ${{ matrix.platform }}
           # No tag at this stage. The merge job applies all tags from
-          # metadata-action via `docker buildx imagetools create` once both
+          # `reusable-ci container metadata` via `reusable-ci container manifest merge` once both
           # arches' digests exist. push-by-digest pushes the image without
           # tagging; name-canonical=true ensures the digest reference uses
           # the canonical image name.
@@ -445,26 +565,23 @@ jobs:
           cache-from: type=gha,scope=build-${{ steps.arch.outputs.suffix }}
           cache-to: type=gha,mode=max,scope=build-${{ steps.arch.outputs.suffix }}
           build-args: ${{ inputs['build-args'] }}
-          secrets: ${{ inputs['build-secrets'] }}
+          secrets: ${{ steps['build-secrets'].outputs['buildx-secrets'] }}
           provenance: ${{ inputs['enable-slsa'] && 'mode=max' || 'false' }}
           sbom: ${{ inputs['enable-analyzed-container-sbom'] }}
       - name: Check SLSA compatibility
         if: ${{ inputs['push-image'] && inputs['enable-slsa'] && inputs.registry != 'ghcr.io' }}
         env:
-          TARGET_REGISTRY: ${{ inputs.registry }}
+          CONTAINER_REGISTRY: ${{ inputs.registry }}
         run: |
           printf "::notice::SLSA provenance generation only supports ghcr.io registry\n"
-          printf "::notice::Current registry: %s\n" "$TARGET_REGISTRY"
+          printf "::notice::Current registry: %s\n" "$CONTAINER_REGISTRY"
           printf "::notice::SLSA provenance attestation will be skipped\n"
           printf "::notice::To enable SLSA: Use registry: ghcr.io or set enable-slsa: false\n"
       - name: Export digest
         if: *if_push_image
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: |
-          mkdir -p /tmp/digests
-          # Filename is the bare hash; the merge step rebuilds <name>@sha256:<hash>.
-          touch "/tmp/digests/${DIGEST#sha256:}"
+        run: reusable-ci container write-digest-marker
       # Artefact names MUST be unique across the entire workflow run, not
       # just within this workflow_call invocation: when multiple containers
       # are matrix-dispatched (release-publish-stage's per-container
@@ -481,8 +598,14 @@ jobs:
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
-      - name: Scan container image and derive reports${{ inputs.name && format(' ({0})', inputs.name) || '' }}
+      - name: Install trivy
         if: &if_scan_enabled ${{ inputs['enable-scan'] && inputs['push-image'] }}
+        run: |
+          # shellcheck disable=SC1091
+          source .github-shared/scripts/bootstrap/install-trivy.sh
+          install_trivy
+      - name: Scan container image and derive reports${{ inputs.name && format(' ({0})', inputs.name) || '' }}
+        if: *if_scan_enabled
         env:
           # The image was pushed by digest only — never loaded into the local
           # docker daemon — so trivy falls through to remote pull. In remote
@@ -494,24 +617,8 @@ jobs:
           # each scan resolves to its own child manifest.
           TRIVY_PLATFORM: ${{ matrix.platform }}
           IMAGE_REF: ${{ needs.prep.outputs.image-name }}@${{ steps.build.outputs.digest }}
-        run: |
-          # shellcheck disable=SC1091
-          source .github-shared/scripts/bootstrap/install-trivy.sh
-          install_trivy
-          # Scan once in JSON; SARIF and the GitLab container-scanning report
-          # are derived from this file via `trivy convert` and the transform
-          # script below. Avoids a redundant second full image scan.
-          trivy image \
-            --format json \
-            --output trivy-results.json \
-            --severity CRITICAL,HIGH \
-            --vuln-type os,library \
-            --exit-code 0 \
-            "${IMAGE_REF}"
-          if [ -s trivy-results.json ]; then
-            trivy convert --format sarif --output trivy-results.sarif trivy-results.json
-            reusable-ci security trivy-to-gitlab-container trivy-results.json gl-container-scanning-report.json
-          fi
+          SCAN_SEVERITY: ${{ inputs['scan-severity'] }}
+        run: reusable-ci security scan container --severity "$SCAN_SEVERITY"
       - name: Save container scan SARIF artifact
         if: *if_scan_enabled
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -537,7 +644,7 @@ jobs:
           # per-container scoping, two containers' amd64 scans share a
           # category and one silently overwrites the other.
           SARIF_CATEGORY: container-scan-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
-        run: reusable-ci security upload-sarif
+        run: reusable-ci security report upload-sarif
       - name: Generate Container SBOMs${{ inputs.name && format(' — {0}', inputs.name) || '' }} (SPDX + CycloneDX)
         if: &if_sbom_enabled ${{ inputs['enable-analyzed-container-sbom'] && inputs['push-image'] }}
         env:
@@ -546,7 +653,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           IMAGE_NAME: ${{ needs.prep.outputs.image-name }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-        run: reusable-ci sbom generate-container
+        run: reusable-ci sbom generate container
       - name: Upload Analyzed-Container SBOMs
         if: *if_sbom_enabled
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -562,7 +669,7 @@ jobs:
       - name: Find Container SBOM file
         if: &if_sbom_and_slsa_enabled ${{ inputs['enable-analyzed-container-sbom'] && inputs['push-image'] && inputs['enable-slsa'] }}
         id: find-sbom
-        run: reusable-ci sbom find-container-sbom
+        run: reusable-ci sbom find container
       - name: Attest Container SBOM${{ inputs.name && format(' — {0}', inputs.name) || '' }}
         if: *if_sbom_and_slsa_enabled
         uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3.0.0
@@ -580,6 +687,11 @@ jobs:
       - name: Extract binaries${{ inputs.name && format(' ({0})', inputs.name) || '' }}
         if: ${{ inputs['extract-binary-target'] != '' }}
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        env:
+          # Match the main build step. The binary extracted here is
+          # used as a release asset; pinning the build timestamp
+          # makes its SHA stable across rebuilds of the same tag.
+          SOURCE_DATE_EPOCH: ${{ needs.prep.outputs.source-date-epoch }}
         with:
           context: ${{ inputs.context }}
           file: ${{ steps.containerfile.outputs.containerfile }}
@@ -589,7 +701,7 @@ jobs:
           outputs: type=local,dest=./extracted-binaries
           cache-from: type=gha,scope=build-${{ steps.arch.outputs.suffix }}
           build-args: ${{ inputs['build-args'] }}
-          secrets: ${{ inputs['build-secrets'] }}
+          secrets: ${{ steps['build-secrets'].outputs['buildx-secrets'] }}
       # Suffix each extracted binary's basename with -linux-${arch} so that
       # when the GitHub Release attach step pulls per-arch artefacts together,
       # they don't collide on the same basename. Convention matches Go's
@@ -602,9 +714,9 @@ jobs:
           EXPECTED_NAMES: ${{ inputs['extract-binary-names'] }}
         run: |
           reusable-ci container suffix-extracted-binaries \
-            ./extracted-binaries \
-            "$SUFFIX" \
-            "$EXPECTED_NAMES"
+            --dir ./extracted-binaries \
+            --arch "$SUFFIX" \
+            --expected-names "$EXPECTED_NAMES"
       - name: Upload extracted binaries${{ inputs.name && format(' ({0})', inputs.name) || '' }}
         if: ${{ inputs['extract-binary-target'] != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -616,34 +728,28 @@ jobs:
       - name: Write binary extraction summary
         if: ${{ inputs['extract-binary-target'] != '' }}
         env:
-          ARTEFACT_NAME: ${{ inputs.name != '' && format('{0}-binaries-{1}', inputs.name, steps.arch.outputs.suffix) || format('container-binaries-{0}', steps.arch.outputs.suffix) }}
+          ARTIFACT_NAME: ${{ inputs.name != '' && format('{0}-binaries-{1}', inputs.name, steps.arch.outputs.suffix) || format('container-binaries-{0}', steps.arch.outputs.suffix) }}
           DISPLAY_NAME: ${{ inputs.name || 'container' }}
           EXTRACT_TARGET: ${{ inputs['extract-binary-target'] }}
           EXPECTED_NAMES: ${{ inputs['extract-binary-names'] }}
           PLATFORM: ${{ matrix.platform }}
-        run: |
-          {
-            printf '### Extracted Binaries — %s (%s)\n\n' "$DISPLAY_NAME" "$PLATFORM"
-            printf -- '- **Stage:** %s\n' "$EXTRACT_TARGET"
-            printf -- '- **Artefact:** %s\n' "$ARTEFACT_NAME"
-            printf -- '- **Platform:** %s\n' "$PLATFORM"
-            if [[ -n "$EXPECTED_NAMES" ]]; then
-              printf -- '- **Binaries:** %s\n' "$EXPECTED_NAMES"
-            fi
-            printf '\n'
-            printf 'Files in extracted-binaries/:\n\n'
-            find ./extracted-binaries -type f 2>/dev/null | sort | head -50 || true
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: reusable-ci report extracted-binaries
 
   merge:
     name: Merge Manifest${{ inputs.name && format(' ({0})', inputs.name) || '' }}
     needs: [prep, build-arch]
     if: ${{ inputs['push-image'] }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
       packages: write
+      # id-token is required only for the keyless Sigstore signing
+      # step below (--method=sigstore). Granting it here doesn't
+      # leak — the token is only minted when an OIDC-requesting step
+      # actually runs, and the only such step is gated on
+      # sign-image + sign-method == sigstore.
+      id-token: write
     outputs:
       image: ${{ steps.outputs.outputs.image }}
       digest: ${{ steps.outputs.outputs.digest }}
@@ -652,20 +758,21 @@ jobs:
         uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
         with:
           egress-policy: ${{ inputs.egress-policy }}
-      - name: Set up Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - name: Checkout reusable-ci bootstrap installers
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          go-version: stable
-          check-latest: true
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+      # Tagged refs (vN.N.N) install from GitHub Releases with SHA-256
+      # verification — no Go toolchain needed. Branch/SHA refs require Go on
+      # the runner; the install script errors with an actionable message if
+      # absent.
       - name: Install reusable-ci binary
         env:
-          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
-        run: |
-          # publish-container runs on plain ubuntu (no runtime container), so
-          # install the reusable-ci binary directly with `go install`.
-          GOBIN="$RUNNER_TEMP/bin" \
-            go install "github.com/diggsweden/reusable-ci/cmd/reusable-ci@${SCRIPTS_REF}"
-          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -677,10 +784,10 @@ jobs:
       - name: Check registry authentication configuration
         env:
           USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
-          TARGET_REGISTRY: ${{ inputs.registry }}
+          REGISTRY: ${{ inputs.registry }}
           CI_REGISTRY: ghcr.io
           REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
-        run: reusable-ci publish validate-auth
+        run: reusable-ci validate auth registry
       - name: Log in to Container Registry
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
@@ -691,50 +798,61 @@ jobs:
         env:
           IMAGE_NAME: ${{ needs.prep.outputs.image-name }}
           TAGS: ${{ needs.prep.outputs.tags }}
-        working-directory: /tmp/digests
-        run: |
-          # Each file in /tmp/digests is named after a per-arch digest hash.
-          # Reconstruct ${IMAGE_NAME}@sha256:<hash> references and feed them
-          # to imagetools, which assembles a multi-arch manifest list and
-          # pushes it under each tag from metadata-action. Single-arch
-          # inputs degenerate to a one-entry manifest list — same code path.
-          refs=()
-          for f in *; do
-            refs+=("${IMAGE_NAME}@sha256:${f}")
-          done
-          tag_args=()
-          while IFS= read -r tag; do
-            [[ -z "$tag" ]] && continue
-            tag_args+=("-t" "$tag")
-          done <<<"$TAGS"
-
-          docker buildx imagetools create "${tag_args[@]}" "${refs[@]}"
+          DIGESTS_DIR: /tmp/digests
+        run: reusable-ci container manifest merge
       - name: Inspect manifest and emit outputs
         id: outputs
         env:
           TAGS: ${{ needs.prep.outputs.tags }}
+        run: reusable-ci container manifest inspect
+      - name: Sign image (cosign)
+        # Image signing runs against the manifest list digest produced
+        # by the merge step above. --recursive (default true) walks
+        # the manifest list and signs each per-arch child digest too,
+        # so consumers pulling for any single platform get a verified
+        # signature.
+        #
+        # gpg method is rejected by `container sign` — OpenPGP signs
+        # blobs, not OCI manifests. Use sigstore or kms.
+        if: ${{ inputs['sign-image'] && inputs['sign-method'] != '' && inputs['sign-method'] != 'gpg' }}
+        env:
+          SIGN_METHOD: ${{ inputs['sign-method'] }}
+          SIGN_KEY: ${{ inputs['sign-key'] }}
+          SIGN_OIDC_ISSUER: ${{ inputs['sign-oidc-issuer'] }}
         run: |
-          PRIMARY_TAG=$(printf "%s\n" "$TAGS" | head -n1)
-          docker buildx imagetools inspect "${PRIMARY_TAG}"
-          DIGEST=$(docker buildx imagetools inspect "${PRIMARY_TAG}" --format '{{json .Manifest}}' | jq -r '.digest')
-          printf "image=%s\n" "${PRIMARY_TAG}" >> "$GITHUB_OUTPUT"
-          printf "digest=%s\n" "${DIGEST}" >> "$GITHUB_OUTPUT"
+          reusable-ci container sign "${{ steps.outputs.outputs.image-digest-ref }}"
 
   # SLSA L3 provenance attestation against the manifest list digest.
-  # Stays as a separate workflow_call to slsa-framework/slsa-github-generator;
-  # the per-platform buildkit provenance attached by build-push-action covers
-  # platform-level attestation.
+  # actions/attest-build-provenance is a SHA-pinnable first-party
+  # action producing the SLSA v1.0 predicate. Per-platform buildkit
+  # provenance attached by build-push-action covers the platform-
+  # level attestation; this job attests the manifest list itself.
   provenance:
-    needs: merge
-    if: ${{ inputs['push-image'] && inputs['enable-slsa'] && startsWith(github.ref, 'refs/tags/') && inputs.registry == 'ghcr.io' }}
+    needs: [prep, merge]
+    if: ${{ inputs['push-image'] && inputs['enable-slsa'] && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-24.04
     permissions:
-      actions: read
-      id-token: write
-      packages: write
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
-    with:
-      image: ${{ needs.merge.outputs.image }}
-      digest: ${{ needs.merge.outputs.digest }}
-      registry-username: ${{ github.actor }}
-    secrets:
-      registry-password: ${{ secrets.GITHUB_TOKEN }}
+      id-token: write # Sigstore keyless OIDC for the attestation
+      packages: write # push-to-registry uploads the attestation
+      attestations: write # GitHub attestation store record
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        with:
+          egress-policy: ${{ inputs.egress-policy }}
+      - name: Log in to Container Registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ inputs['registry-username'] || github.actor }}
+          password: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+      - name: Attest manifest-list build provenance
+        # subject-name uses prep.outputs.image-name (the bare ref,
+        # no tag) because attest-build-provenance binds attestations
+        # to immutable refs — combining a bare image with the
+        # manifest-list digest is the canonical form.
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-name: ${{ needs.prep.outputs.image-name }}
+          subject-digest: ${{ needs.merge.outputs.digest }}
+          push-to-registry: true

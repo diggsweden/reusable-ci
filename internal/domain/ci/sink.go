@@ -3,9 +3,8 @@
 
 // Package ci defines the platform-portable output ports.
 //
-// The current implementation is adapter/ghaoutput, which writes the
-// GitHub-style heredoc format used by the workflows' scalar and multiline
-// outputs. Use cases never know which sink they're writing to.
+// GitHub uses a $GITHUB_OUTPUT adapter, GitLab uses a dotenv report adapter,
+// and use cases never know which sink they're writing to.
 package ci
 
 import "context"
@@ -19,6 +18,12 @@ import "context"
 type OutputSink interface {
 	// Set writes a single scalar output: key=value.
 	Set(ctx context.Context, key, value string) error
+
+	// SetBool writes a typed boolean output. String-formatted sinks
+	// (GHA, GitLab dotenv) emit "true" / "false" via strconv.FormatBool;
+	// structured sinks (JSON) preserve the boolean type so consumers
+	// can branch with `value === true` instead of string comparison.
+	SetBool(ctx context.Context, key string, value bool) error
 
 	// SetMultiline writes a multi-line value. On GitLab the implementation
 	// returns ErrUnsupported and callers should switch to a manifest file.

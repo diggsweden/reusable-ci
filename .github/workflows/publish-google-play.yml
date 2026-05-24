@@ -39,6 +39,11 @@ on:
         description: "Name of artifact containing AAB file"
         required: true
         type: string
+      branch:
+        description: "Branch, tag, or SHA to checkout"
+        required: false
+        default: "main"
+        type: string
       # === GOOGLE PLAY CONFIGURATION ===
       package-name:
         description: "Android package name (e.g., com.example.app)"
@@ -93,25 +98,36 @@ on:
         type: string
       # === SYSTEM ===
       runtime-image:
-        description: "reusable-ci runtime image. Pin to a digest or version tag; default tracks main. (publish-google-play only needs base — the upload action is a JS action that doesn't need Android tooling.)"
+        description: "reusable-ci runtime image. Optional override; default uses the matching v3.0.0 runtime image. (publish-google-play only needs base — the upload action is a JS action that doesn't need Android tooling.)"
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
         type: string
+    # All `required: false` — `secrets: inherit` callers unchanged.
+    secrets:
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:
+        description: "Google Play Console service-account JSON (full contents, not base64)"
+        required: false
 permissions:
   contents: read
 jobs:
   publish:
     name: Publish to Google Play
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     container:
       image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     steps:
+      # Defense-in-depth: refuse PR-context triggers. The Google Play
+      # service-account JSON lives in env on this job and must never
+      # run with PR-HEAD code. reusable-ci is pre-baked.
+      - name: Refuse PR-context trigger (publish/release secrets in scope)
+        run: reusable-ci validate event-context
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ inputs.branch }}
           fetch-depth: 1
 
       - name: Download AAB artifact
@@ -122,30 +138,12 @@ jobs:
 
       - name: Find AAB file
         id: find-aab
-        run: |
-          AAB_FILE=$(find artifacts -name "*.aab" -type f | head -1)
-
-          if [ -z "$AAB_FILE" ]; then
-            printf "::error::No AAB file found in artifact\n"
-            exit 1
-          fi
-
-          printf "aab-file=%s\n" "${AAB_FILE}" >> "$GITHUB_OUTPUT"
-          printf "Found AAB: %s\n" "${AAB_FILE}"
-
-          ls -lh "$AAB_FILE"
+        run: reusable-ci publish google-play find-aab
 
       - name: Validate service account secret
         env:
-          SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-        run: |
-          if [ -z "$SERVICE_ACCOUNT_JSON" ]; then
-            printf "::error::GOOGLE_PLAY_SERVICE_ACCOUNT_JSON secret not found\n"
-            printf "::error::Please add a service account JSON key with Google Play publishing permissions\n"
-            exit 1
-          fi
-
-          printf "Service account secret is configured\n"
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: reusable-ci publish google-play validate-credentials
 
       - name: Upload to Google Play
         uses: r0adkll/upload-google-play@935ef9c68bb393a8e6116b1575626a7f5be3a7fb # v1.1.3
@@ -172,4 +170,4 @@ jobs:
           RELEASE_NAME: ${{ inputs['release-name'] }}
           USER_FRACTION: ${{ inputs['user-fraction'] }}
           PRIORITY: ${{ inputs['in-app-update-priority'] }}
-        run: reusable-ci summary google-play-upload
+        run: reusable-ci report publish google-play

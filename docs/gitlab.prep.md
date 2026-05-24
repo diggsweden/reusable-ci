@@ -6,11 +6,12 @@ SPDX-License-Identifier: CC0-1.0
 
 # GitLab CI Catalog — Remaining Prep
 
-A short, current list of what is still missing before a first GitLab
-CI/CD Catalog component can ship. Live status, not history.
-
-For what's already delivered, see [`gitlab-completed.md`](gitlab-completed.md).
-For architecture and design rules, see [`gitlabsupportplan.md`](gitlabsupportplan.md).
+A short list of what is still missing before a first GitLab CI/CD
+Catalog component can ship. The shared-core groundwork (provider
+adapter, dual-emit security tools, runtime images, manifest sink) is
+in place; this file tracks the YAML adapter work that's not yet done.
+For architecture and design rules, see
+[`gitlabsupportplan.md`](gitlabsupportplan.md).
 
 ## Remaining prep
 
@@ -24,31 +25,28 @@ runners with a hard reason — none of them block GitLab prep.
   a Docker daemon for `docker buildx`. A `container:` job can't compose
   with the daemon it would need to talk to.
 - **`self-runtime-container.yml`** — builds the runtime image itself.
-  Its `publish-merge` job sparse-checks-out `scripts/` so the in-script
-  metadata helper (`compute-image-metadata.sh`) is available.
+  Its merge job builds and invokes the current `reusable-ci` binary because
+  the runtime image being tested is the output of the workflow.
 - **`security-openssf-scorecard.yml`** — uses the third-party
   `ossf/scorecard-action` Docker action, which doesn't compose with a
   `container:` parent. Scorecard is GitHub-only by design (the score is
   a GitHub-repo measure), so this isn't a porting candidate either —
   it stays on GHA and is skipped on GitLab.
 - **macOS workflows** (`build-xcode-ios.yml`, `publish-apple-appstore.yml`)
-  — Linux runtime image not applicable. They use the
-  `scripts-ref` + `scripts-archive-url` pattern; see
-  [`gitlab-completed.md`](gitlab-completed.md) for details.
+  — Linux runtime image not applicable. They install the Go binary on the
+  macOS VM from `reusable-ci-binary-ref`.
 
-### 2. Implement the GitLab provider stubs
+### 2. Finish GitLab provider depth when components need it
 
-Provider dispatch is wired up. Three stub call sites still error
-cleanly when `CI_PLATFORM=gitlab`. The first GitLab Catalog component
-that needs each will replace its stub with a real `glab` / GitLab REST
-API implementation:
+Provider adapters are wired into the Go binary. Some GitLab behavior is still
+minimal and should be completed when a Catalog component depends on it:
 
-- `scripts/release/providers/gitlab.sh` — `create_release`
-- `scripts/validate/providers/gitlab.sh` — `validate_token`,
-  `validate_bot_permissions`
-- `scripts/container/compute-image-metadata.sh` — the `gitlab` branch in
-  `resolve_context()` (read `CI_COMMIT_TAG` / `CI_COMMIT_BRANCH` /
-  `CI_MERGE_REQUEST_IID` / `CI_COMMIT_SHA` / `CI_PROJECT_PATH`).
+- GitLab job-token auth should use `JOB-TOKEN`; PAT/project/group tokens use
+  `PRIVATE-TOKEN`.
+- GitLab release asset handling needs real upload/link semantics, likely via
+  the Generic Package Registry plus release asset links.
+- Registry/package validation should be verified against real GitLab runners
+  before promising it as a Catalog contract.
 
 ### 3. Catalog structure
 
@@ -73,9 +71,9 @@ Smallest useful first component. Minimum input contract:
 - `opengrep_config` (rules)
 - `fail_on_severity`
 
-Outputs: portable SARIF + `opengrep-results.gitlab-sast.json` published
-via `artifacts:reports:sast`. The producer script already emits both
-files.
+Outputs: portable SARIF + `opengrep-results.gitlab-sast.json` published via
+`artifacts:reports:sast`. `reusable-ci security scan opengrep` already emits
+both files.
 
 ### 6. GitLab consumer example
 
@@ -87,8 +85,8 @@ At least one example under `examples/` showing:
 
 ## Immediate next step
 
-Implement `security-opengrep` as the first Catalog component. The
-producer script already runs in the runtime image and emits both SARIF
-and the GitLab-native report; the YAML adapter just needs to wire input
-variables to the script and surface `gitlab-sast.json` via
+Implement `security-opengrep` as the first Catalog component. The producer
+command already runs in the runtime image and emits both SARIF and the
+GitLab-native report; the YAML adapter just needs to wire input variables to
+`reusable-ci security scan opengrep` and surface `gitlab-sast.json` via
 `artifacts:reports:sast`.

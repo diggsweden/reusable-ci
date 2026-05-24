@@ -23,29 +23,32 @@ type QualityCheck struct {
 // step summary. Always exits successfully — the underlying job is a
 // summary-only collector that surfaces the matrix outcome but never
 // fails the pipeline.
-//
-// Mirrors scripts/summary/write-quality-check-status.sh.
 func QualityCheckStatus(ctx context.Context, sink ci.SummarySink, checks []QualityCheck) error {
-	var b strings.Builder
+	var b strings.Builder //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	b.WriteString("## Pull Request Check Status\n\n")
 	b.WriteString("### Quality Check Results\n")
 	b.WriteString("| Check | Status |\n")
 	b.WriteString("|-------|--------|\n")
+
 	failed := false
-	for _, c := range checks {
+
+	for _, c := range checks { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		switch {
 		case !c.Enabled:
-			fmt.Fprintf(&b, "| %s | 🔸 Disabled |\n", c.Name)
+			_, _ = fmt.Fprintf(&b, "| %s | 🔸 Disabled |\n", c.Name)
 		case c.Result == domainsummary.ResultSuccess:
-			fmt.Fprintf(&b, "| %s | ✓ Pass |\n", c.Name)
+			_, _ = fmt.Fprintf(&b, "| %s | ✓ Pass |\n", c.Name)
 		case c.Result == domainsummary.ResultSkipped:
-			fmt.Fprintf(&b, "| %s | − Skipped |\n", c.Name)
+			_, _ = fmt.Fprintf(&b, "| %s | − Skipped |\n", c.Name)
 		default:
-			fmt.Fprintf(&b, "| %s | ✗ Fail |\n", c.Name)
+			_, _ = fmt.Fprintf(&b, "| %s | ✗ Fail |\n", c.Name)
+
 			failed = true
 		}
 	}
+
 	b.WriteString("\n")
+
 	if failed {
 		b.WriteString("### ✗ Some checks failed\n")
 		b.WriteString("Please review the failures above and fix any issues.\n")
@@ -53,11 +56,12 @@ func QualityCheckStatus(ctx context.Context, sink ci.SummarySink, checks []Quali
 	} else {
 		b.WriteString("### ✓ All enabled checks passed\n")
 	}
+
 	return sink.Append(ctx, b.String())
 }
 
 // ParseQualityChecks splits "Name|enabled|result" lines into checks.
-// Mirrors the bash CLI signature.
+// Mirrors CLI signature.
 func ParseQualityChecks(args []string) []QualityCheck {
 	out := make([]QualityCheck, 0, len(args))
 	for _, raw := range args {
@@ -65,11 +69,13 @@ func ParseQualityChecks(args []string) []QualityCheck {
 		if len(parts) < 3 {
 			continue
 		}
+
 		out = append(out, QualityCheck{
 			Name:    parts[0],
 			Enabled: parts[1] == "true",
 			Result:  domainsummary.NormalizeResult(parts[2]),
 		})
 	}
+
 	return out
 }

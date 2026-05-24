@@ -32,23 +32,54 @@ func TestTrivyToGitLabDep_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TrivyToGitLabDep: %v", err)
 	}
+
 	if count != 1 {
 		t.Errorf("count = %d, want 1", count)
 	}
 
 	var report domainsecurity.GitLabReport
+
 	data := fsys.ReadFile("gl.json")
 	require.NoError(t, json.Unmarshal(data, &report))
 
 	if report.Scan.Type != "dependency_scanning" {
 		t.Errorf("scan.type = %q, want dependency_scanning", report.Scan.Type)
 	}
+
 	vuln := report.Vulnerabilities[0]
 	if vuln.Name != "CVE-X" || vuln.Severity != "High" || vuln.Location.File != "package-lock.json" {
 		t.Errorf("vulnerability mapping = %+v", vuln)
 	}
+
 	if vuln.Location.Dependency.Package.Name != "p" || vuln.Location.Dependency.Version != "1" {
 		t.Errorf("dependency mapping = %+v", vuln.Location.Dependency)
+	}
+}
+
+// TestTrivyToGitLab_SourceDateEpochPinsTimestamp guards the
+// reproducibility invariant for security-report metadata: when
+// SOURCE_DATE_EPOCH is set, two transforms over the same trivy input
+// produce byte-identical scan timestamps. Without this, deterministic
+// pipeline runs would still differ on the security-report output.
+func TestTrivyToGitLab_SourceDateEpochPinsTimestamp(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	in := fsys.WriteFile("trivy.json", []byte(sampleTrivyJSON))
+	out := fsys.Path("gl.json")
+
+	t.Setenv("SOURCE_DATE_EPOCH", "1700000000")
+
+	if _, err := appsecurity.TrivyToGitLabDep(appsecurity.TransformInput{
+		InputPath: in, OutputPath: out, TrivyVersion: "0.50.0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var report domainsecurity.GitLabReport
+	require.NoError(t, json.Unmarshal(fsys.ReadFile("gl.json"), &report))
+
+	// 2023-11-14T22:13:20Z is `date -u -d @1700000000`.
+	if got := report.Scan.StartTime; got != "2023-11-14T22:13:20" {
+		t.Errorf("scan.start_time = %q, want %q (SOURCE_DATE_EPOCH not honoured)", got, "2023-11-14T22:13:20")
 	}
 }
 
@@ -71,23 +102,29 @@ func TestTrivyToGitLabContainer_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TrivyToGitLabContainer: %v", err)
 	}
+
 	if count != 1 {
 		t.Errorf("count = %d, want 1", count)
 	}
 
 	var report domainsecurity.GitLabReport
+
 	data := fsys.ReadFile("gl.json")
 	require.NoError(t, json.Unmarshal(data, &report))
+
 	if report.Scan.Type != "container_scanning" {
 		t.Errorf("scan.type = %q, want container_scanning", report.Scan.Type)
 	}
+
 	vuln := report.Vulnerabilities[0]
 	if vuln.Name != "CVE-Y" || vuln.Severity != "Critical" {
 		t.Errorf("vulnerability mapping = %+v", vuln)
 	}
+
 	if vuln.Location.Image != "ghcr.io/owner/img@sha256:abc" || vuln.Location.OperatingSystem != "alpine 3.19" {
 		t.Errorf("container location = %+v", vuln.Location)
 	}
+
 	if vuln.Location.Dependency.Package.Name != "musl" || vuln.Location.Dependency.Version != "1.2.4" {
 		t.Errorf("dependency mapping = %+v", vuln.Location.Dependency)
 	}
@@ -95,6 +132,7 @@ func TestTrivyToGitLabContainer_RoundTrip(t *testing.T) {
 
 func TestTrivyToGitLab_BadInputErrors(t *testing.T) {
 	t.Parallel()
+
 	_, err := appsecurity.TrivyToGitLabDep(appsecurity.TransformInput{
 		InputPath: "/does/not/exist", OutputPath: testfs.NewReal(t).Path("out.json"),
 	})

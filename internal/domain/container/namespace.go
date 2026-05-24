@@ -4,7 +4,6 @@
 package container
 
 import (
-	"errors"
 	"fmt"
 	"regexp"
 )
@@ -26,7 +25,7 @@ type ValidateNamespaceInput struct {
 // Non-ghcr.io registries are skipped (returns nil) — this is deliberately
 // registry-specific; other registries enforce their own policies.
 //
-// Mirrors scripts/container/validate-namespace.sh exactly.
+// ValidateNamespace enforces the supported ghcr.io namespace policy.
 func ValidateNamespace(in ValidateNamespaceInput) error {
 	if in.Registry != "ghcr.io" {
 		return nil
@@ -40,50 +39,30 @@ func ValidateNamespace(in ValidateNamespaceInput) error {
 	if err != nil {
 		return fmt.Errorf("validate namespace: build regex: %w", err)
 	}
+
 	if !matched {
-		return &NamespaceViolation{
+		return &NamespaceViolationError{
 			ImageName:      in.ImageName,
 			ExpectedPrefix: expectedPrefix,
 		}
 	}
+
 	return nil
 }
 
-// NamespaceViolation is returned when an image lands outside the allowed
+// NamespaceViolationError is returned when an image lands outside the allowed
 // ghcr.io namespace.
-type NamespaceViolation struct {
+type NamespaceViolationError struct {
 	ImageName      string
 	ExpectedPrefix string
 }
 
-func (e *NamespaceViolation) Error() string {
+func (e *NamespaceViolationError) Error() string {
 	return fmt.Sprintf(
 		"image %q is outside the allowed namespace; allowed: %q, %q-<suffix>, or %q/<subpath>",
 		e.ImageName, e.ExpectedPrefix, e.ExpectedPrefix, e.ExpectedPrefix,
 	)
 }
 
-// IsNamespaceViolation reports whether err (or anything it wraps) is a
-// NamespaceViolation. Convenience wrapper for callers that need to branch.
-func IsNamespaceViolation(err error) bool {
-	if err == nil {
-		return false
-	}
-	// Avoid importing errors for one Is check; do the unwrap by hand to keep
-	// the package's import surface minimal.
-	for err != nil {
-		namespaceViolation := &NamespaceViolation{}
-		if errors.As(err, &namespaceViolation) {
-			return true
-		}
-		u, ok := err.(interface{ Unwrap() error })
-		if !ok {
-			return false
-		}
-		err = u.Unwrap()
-	}
-	return false
-}
-
 // Compile-time check.
-var _ error = (*NamespaceViolation)(nil)
+var _ error = (*NamespaceViolationError)(nil)

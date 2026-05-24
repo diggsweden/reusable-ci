@@ -32,14 +32,15 @@ func FuzzEnrichGitHubSARIF(f *testing.F) {
 		}
 
 		var doc any
-		if err := json.Unmarshal(out, &doc); err != nil {
-			t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+		if jsonErr := json.Unmarshal(out, &doc); jsonErr != nil {
+			t.Fatalf("output is not valid JSON: %v\n%s", jsonErr, out)
 		}
 
 		out2, err := security.EnrichGitHubSARIF(out)
 		if err != nil {
 			t.Fatalf("second enrich failed: %v\n%s", err, out)
 		}
+
 		if !bytes.Equal(out, out2) {
 			t.Fatalf("enrich not idempotent\nfirst:  %s\nsecond: %s", out, out2)
 		}

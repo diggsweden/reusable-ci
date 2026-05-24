@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: CC0-1.0
 
 // Package platform detects which CI platform the binary is running on
-// based on environment variables. Replaces the old scripts/ci/env.sh
-// platform-detection branch.
-//
-// This is a thin lookup; no business logic, no I/O beyond os.Getenv.
+// based on environment variables. Thin lookup — no business logic, no
+// I/O beyond os.Getenv.
 package platform
 
 import (

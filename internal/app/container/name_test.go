@@ -16,7 +16,7 @@ func TestResolveName_WritesNameOutput(t *testing.T) {
 	sink := fakeoutputsink.New(t)
 
 	err := appcontainer.ResolveName(context.Background(), sink, appcontainer.ResolveNameInput{
-		Registry:        "ghcr.io",
+		Registry:        "ghcr.io", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		ImageName:       "",
 		Repository:      "owner/repo",
 		RepositoryOwner: "owner",
@@ -24,6 +24,7 @@ func TestResolveName_WritesNameOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveName: %v", err)
 	}
+
 	if got := sink.Single("name"); got != "ghcr.io/owner/repo" {
 		t.Errorf("Single(name) = %q, want %q", got, "ghcr.io/owner/repo")
 	}
@@ -43,6 +44,7 @@ func TestResolveName_MultiContainerNameSuffix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveName: %v", err)
 	}
+
 	if got := sink.Single("name"); got != "ghcr.io/owner/repo/frontend" {
 		t.Errorf("Single(name) = %q, want %q", got, "ghcr.io/owner/repo/frontend")
 	}

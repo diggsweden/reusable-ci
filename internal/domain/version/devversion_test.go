@@ -4,6 +4,7 @@
 package version_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/version"
@@ -16,8 +17,8 @@ func TestSanitizePathToken(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"main", "main"},
-		{"feat/awesome", "feat-awesome"},
+		{"main", "main"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		{"feat/awesome", "feat-awesome"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{"feat/awesome/sub", "feat-awesome-sub"},
 		{"release/2026.05", "release-2026.05"},
 		{"42/merge", "42-merge"},
@@ -34,28 +35,31 @@ func TestSanitizePathToken(t *testing.T) {
 		{"-", ""},
 		{"--", ""},
 		{"////", ""},
-		{"v1.2.3", "v1.2.3"},
-		{"0.5.9-dev-feat-x-abc1234", "0.5.9-dev-feat-x-abc1234"},
+		{"v1.2.3", "v1.2.3"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		{"0.5.9-dev-feat-x-abc1234", "0.5.9-dev-feat-x-abc1234"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}
 
 	for _, tc := range tests {
-
 		t.Run(tc.in, func(t *testing.T) {
 			t.Parallel()
+
 			got := version.SanitizePathToken(tc.in)
 			// Special case for the unicode test: the bash sed treats each byte of
 			// the multi-byte UTF-8 sequence as a separate non-matching character.
 			// We emit a "-" per byte too. Just check the prefix doesn't include
 			// the unicode bytes and the result isn't empty.
 			if tc.in == "unicode-åäö" {
-				// 6 unicode bytes (åäö = 2 bytes each = 6) + 1 already-present "-"
-				// = 7 dashes after "unicode". But trim end-dashes.
-				if got != "unicode------" && got != "unicode-----" {
-					// Allow either; the exact count depends on byte vs rune handling.
-					// What matters is the prefix is right.
+				// Byte-vs-rune handling makes the exact dash count
+				// vary across implementations; the invariant under
+				// test is the "unicode" prefix and that nothing
+				// unicode-y survived.
+				if !strings.HasPrefix(got, "unicode") {
+					t.Errorf("SanitizePathToken(%q) = %q, want unicode-prefixed", tc.in, got)
 				}
+
 				return
 			}
+
 			if got != tc.want {
 				t.Errorf("SanitizePathToken(%q) = %q, want %q", tc.in, got, tc.want)
 			}
@@ -65,11 +69,13 @@ func TestSanitizePathToken(t *testing.T) {
 
 func TestSanitizePathToken_Idempotent(t *testing.T) {
 	t.Parallel()
+
 	for _, in := range []string{"feat/x", "0.5.9-dev-feat-x-abc1234", "////"} {
-		in := in
 		t.Run(in, func(t *testing.T) {
 			t.Parallel()
+
 			first := version.SanitizePathToken(in)
+
 			second := version.SanitizePathToken(first)
 			if first != second {
 				t.Errorf("SanitizePathToken not idempotent for %q: first=%q second=%q", in, first, second)
@@ -95,9 +101,9 @@ func TestComposeDevVersion(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			got := version.ComposeDevVersion(tc.baseVersion, tc.branch, tc.shortSHA)
 			if got != tc.want {
 				t.Errorf("ComposeDevVersion = %q, want %q", got, tc.want)
@@ -121,13 +127,13 @@ func TestLatestSemverTag(t *testing.T) {
 		{name: "ignores prerelease", tags: []string{"v1.2.3", "v1.2.4-rc.1"}, want: "v1.2.3"},
 		{name: "ignores non-semver", tags: []string{"latest", "stable", "v1.2.3"}, want: "v1.2.3"},
 		{name: "all non-semver", tags: []string{"latest", "main"}, want: ""},
-		{name: "matches strict v-prefix", tags: []string{"1.2.3", "v1.2.3"}, want: "v1.2.3"},
+		{name: "matches strict v-prefix", tags: []string{"1.2.3", "v1.2.3"}, want: "v1.2.3"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}
 
 	for _, tc := range tests {
-
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			if got := version.LatestSemverTag(tc.tags); got != tc.want {
 				t.Errorf("LatestSemverTag = %q, want %q", got, tc.want)
 			}
@@ -137,6 +143,7 @@ func TestLatestSemverTag(t *testing.T) {
 
 func TestStripVPrefix(t *testing.T) {
 	t.Parallel()
+
 	tests := map[string]string{
 		"v1.2.3": "1.2.3",
 		"1.2.3":  "1.2.3",
@@ -144,9 +151,9 @@ func TestStripVPrefix(t *testing.T) {
 		"v":      "",
 	}
 	for in, want := range tests {
-		in, want := in, want
 		t.Run(in, func(t *testing.T) {
 			t.Parallel()
+
 			if got := version.StripVPrefix(in); got != want {
 				t.Errorf("StripVPrefix(%q) = %q, want %q", in, got, want)
 			}

@@ -5,75 +5,92 @@ name: Pull Request Quality Stage
 on:
   workflow_call:
     inputs:
-      pr-context-json:
+      pr-plan-json:
         required: true
         type: string
-      pr-policy-json:
+      quality-stage-plan-json:
         required: true
         type: string
       runtime-image:
         description: "reusable-ci runtime image for the status/summary jobs (base is sufficient)"
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
         type: string
+      runtime-image-security:
+        description: "reusable-ci runtime image for dependency review and OpenGrep jobs (full image carries trivy/opengrep)"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime:v3.0.0"
+        type: string
+    # Aggregator: forwards to security-{dependency-review,opengrep}
+    # (CODE_SCANNING_TOKEN) and lint-* (auto GITHUB_TOKEN only).
+    secrets:
+      CODE_SCANNING_TOKEN:
+        description: "Token with security-events:write for SARIF upload"
+        required: false
 permissions:
   contents: read
 jobs:
   dependency-review:
     name: Dependency Review
-    if: ${{ fromJson(inputs['pr-policy-json']).dependencyreview }}
+    if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.dependency_review.runs }}
     permissions:
       contents: read
-    secrets: inherit
+    secrets:
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
     uses: ./.github/workflows/security-dependency-review.yml
+    with:
+      runtime-image: ${{ inputs['runtime-image-security'] }}
   sast-opengrep:
     name: OpenGrep SAST
-    if: ${{ fromJson(inputs['pr-policy-json']).sastopengrep }}
+    if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.sast_opengrep.runs }}
     permissions:
       contents: read
-    secrets: inherit
+    secrets:
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
     uses: ./.github/workflows/security-opengrep.yml
     with:
-      opengrep-rules: ${{ fromJson(inputs['pr-context-json']).sast_opengrep_rules }}
-      fail-on-severity: ${{ fromJson(inputs['pr-context-json']).sast_opengrep_fail_on_severity }}
-  publiccode-lint:
+      runtime-image: ${{ inputs['runtime-image-security'] }}
+      opengrep-rules: ${{ fromJson(inputs['pr-plan-json']).context.sast_opengrep_rules }}
+      fail-on-severity: ${{ fromJson(inputs['pr-plan-json']).context.sast_opengrep_fail_on_severity }}
+  public-code-lint:
     name: Publiccode Lint
-    if: ${{ fromJson(inputs['pr-policy-json']).publiccodelint }}
+    if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.public_code_lint.runs }}
     uses: ./.github/workflows/lint-publiccode.yml
     with:
       runtime-image: ${{ inputs['runtime-image'] }}
-  devbase-check-lint:
+  devbase-check:
     name: Devbase Check
-    if: ${{ fromJson(inputs['pr-policy-json']).devbasecheck }}
+    if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.devbase_check.runs }}
     permissions:
       contents: read
     uses: ./.github/workflows/lint-devbase.yml
-  swift-lint:
+  swift:
     name: Swift Lint
-    if: ${{ fromJson(inputs['pr-policy-json']).swift }}
+    if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.swift.runs }}
     permissions:
       contents: read
     uses: ./.github/workflows/lint-swift.yml
     with:
-      enable-swiftformat: ${{ fromJson(inputs['pr-policy-json']).swiftformat }}
-      enable-swiftlint: ${{ fromJson(inputs['pr-policy-json']).swiftlint }}
+      enable-swiftformat: ${{ fromJson(inputs['pr-plan-json']).policy.swift_format }}
+      enable-swiftlint: ${{ fromJson(inputs['pr-plan-json']).policy.swift_lint }}
+      runtime-image: ${{ inputs['runtime-image'] }}
   quality-status:
     name: Status
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ${{ inputs['runtime-image'] }}
     if: always()
-    needs: [dependency-review, sast-opengrep, publiccode-lint, devbase-check-lint, swift-lint]
+    needs: [dependency-review, sast-opengrep, public-code-lint, devbase-check, swift]
     steps:
       - name: Check quality results
         env:
-          CHECK_DEPENDENCYREVIEW: Dependency Review|${{ fromJson(inputs['pr-policy-json']).dependencyreview }}|${{ needs.dependency-review.result }}
-          CHECK_SASTOPENGREP: OpenGrep SAST|${{ fromJson(inputs['pr-policy-json']).sastopengrep }}|${{ needs.sast-opengrep.result }}
-          CHECK_PUBLICCODELINT: Publiccode Lint|${{ fromJson(inputs['pr-policy-json']).publiccodelint }}|${{ needs.publiccode-lint.result }}
-          CHECK_DEVBASECHECK: Devbase Check|${{ fromJson(inputs['pr-policy-json']).devbasecheck }}|${{ needs.devbase-check-lint.result }}
-          CHECK_SWIFT: Swift Lint|${{ fromJson(inputs['pr-policy-json']).swift }}|${{ needs.swift-lint.result }}
+          CHECK_DEPENDENCYREVIEW: Dependency Review|${{ fromJson(inputs['quality-stage-plan-json']).targets.dependency_review.runs }}|${{ needs.dependency-review.result }}
+          CHECK_SASTOPENGREP: OpenGrep SAST|${{ fromJson(inputs['quality-stage-plan-json']).targets.sast_opengrep.runs }}|${{ needs.sast-opengrep.result }}
+          CHECK_PUBLICCODELINT: Publiccode Lint|${{ fromJson(inputs['quality-stage-plan-json']).targets.public_code_lint.runs }}|${{ needs.public-code-lint.result }}
+          CHECK_DEVBASECHECK: Devbase Check|${{ fromJson(inputs['quality-stage-plan-json']).targets.devbase_check.runs }}|${{ needs.devbase-check.result }}
+          CHECK_SWIFT: Swift Lint|${{ fromJson(inputs['quality-stage-plan-json']).targets.swift.runs }}|${{ needs.swift.result }}
         run: |
-          reusable-ci summary quality-check-status \
+          reusable-ci report status quality-check \
             "$CHECK_DEPENDENCYREVIEW" \
             "$CHECK_SASTOPENGREP" \
             "$CHECK_PUBLICCODELINT" \
@@ -81,9 +98,9 @@ jobs:
             "$CHECK_SWIFT"
   summarize-quality-stage:
     name: Summary
-    needs: [dependency-review, sast-opengrep, publiccode-lint, devbase-check-lint, swift-lint, quality-status]
+    needs: [dependency-review, sast-opengrep, public-code-lint, devbase-check, swift, quality-status]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ${{ inputs['runtime-image'] }}
     permissions:
@@ -92,17 +109,9 @@ jobs:
       - name: Normalize PR quality stage result
         id: summary
         env:
-          DEPENDENCYREVIEW_ENABLED: ${{ fromJson(inputs['pr-policy-json']).dependencyreview }}
-          SASTOPENGREP_ENABLED: ${{ fromJson(inputs['pr-policy-json']).sastopengrep }}
-          PUBLICCODELINT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).publiccodelint }}
-          DEVBASECHECK_ENABLED: ${{ fromJson(inputs['pr-policy-json']).devbasecheck }}
-          SWIFT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).swift }}
-          DEPENDENCYREVIEW_RESULT: ${{ needs.dependency-review.result }}
-          SASTOPENGREP_RESULT: ${{ needs.sast-opengrep.result }}
-          PUBLICCODELINT_RESULT: ${{ needs.publiccode-lint.result }}
-          DEVBASECHECK_RESULT: ${{ needs.devbase-check-lint.result }}
-          SWIFT_RESULT: ${{ needs.swift-lint.result }}
-        run: reusable-ci summary pr-quality-stage-result
+          STAGE_PLAN_JSON: ${{ inputs['quality-stage-plan-json'] }}
+          NEEDS_JSON: ${{ toJson(needs) }}
+        run: reusable-ci report status stage
       - name: Upload quality stage manifests
         if: always() && hashFiles('.ci-results/*.json') != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

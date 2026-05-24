@@ -19,35 +19,44 @@ func createCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "create",
 		Usage: "create a release on the detected platform with assembled assets",
+		Description: `EXAMPLES:
+   # Create a stable release from a tag (assets from ./release-artifacts and checksums.sha256)
+   reusable-ci release create --tag=v1.2.3 --repository=diggsweden/reusable-ci
+
+   # Create a draft with custom release notes and extra attachments
+   reusable-ci release create --tag=v1.2.3 --repository=diggsweden/reusable-ci \
+       --draft --release-notes-file=NOTES.md --attach-artifacts="dist/*.tar.gz,dist/*.bundle"`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "tag", Required: true, Sources: cli.EnvVars("TAG_NAME")},
-			&cli.StringFlag{Name: "repository", Required: true, Sources: cli.EnvVars("REPOSITORY")},
-			&cli.StringFlag{Name: "release-name", Sources: cli.EnvVars("RELEASE_NAME")},
-			&cli.BoolFlag{Name: "draft", Sources: cli.EnvVars("DRAFT")},
-			&cli.BoolFlag{Name: "make-latest", Value: true, Sources: cli.EnvVars("MAKE_LATEST")},
-			&cli.StringFlag{Name: "attach-artifacts", Sources: cli.EnvVars("ATTACH_ARTIFACTS")},
-			&cli.StringFlag{Name: "release-notes-file", Value: domainrelease.DefaultReleaseNotesFile, Sources: cli.EnvVars("RELEASE_NOTES_FILE")},
-			&cli.StringFlag{Name: "artifact-name", Sources: cli.EnvVars("ARTIFACT_NAME")},
-			&cli.StringFlag{Name: "checksums-file", Value: domainrelease.ChecksumsFile, Sources: cli.EnvVars("CI_CHECKSUMS_FILE")},
-			&cli.StringFlag{Name: "release-dir", Value: domainrelease.DefaultReleaseArtifactsDir, Sources: cli.EnvVars("RELEASE_DIR")},
+			&cli.StringFlag{Name: "tag", Required: true, Sources: cli.EnvVars("TAG_NAME"), Usage: "tag the release is created from (e.g. v1.2.3)"},
+			&cli.StringFlag{Name: "repository", Required: true, Sources: cli.EnvVars("REPOSITORY"), Usage: "\"owner/repo\" on GitHub; \"group/project[/sub]\" on GitLab"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			&cli.StringFlag{Name: "release-name", Sources: cli.EnvVars("RELEASE_NAME"), Usage: "human-readable release title (defaults to the tag)"},
+			&cli.BoolFlag{Name: "draft", Sources: cli.EnvVars("DRAFT"), Usage: "create the release as a draft (not published until edited)"},
+			&cli.BoolFlag{Name: "make-latest", Value: true, Sources: cli.EnvVars("MAKE_LATEST"), Usage: "mark this release as 'latest' on the platform"},
+			&cli.StringFlag{Name: "attach-artifacts", Sources: cli.EnvVars("ATTACH_ARTIFACTS"), Usage: "comma-separated globs of extra files to attach beyond release-dir"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			&cli.StringFlag{Name: "release-notes-file", Value: domainrelease.DefaultReleaseNotesFile, Sources: cli.EnvVars("RELEASE_NOTES_FILE"), Usage: "path to the release-notes markdown body"},
+			&cli.StringFlag{Name: "artifact-name", Sources: cli.EnvVars("ARTIFACT_NAME"), Usage: "project slug used in computed asset names (defaults to repo basename)"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			&cli.StringFlag{Name: "checksums-file", Value: domainrelease.ChecksumsFile, Sources: cli.EnvVars("CI_CHECKSUMS_FILE"), Usage: "path to the SHA256 manifest to attach"},
+			&cli.StringFlag{Name: "release-dir", Value: domainrelease.DefaultReleaseArtifactsDir, Sources: cli.EnvVars("RELEASE_DIR"), Usage: "directory whose files are attached as release assets"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			d, err := deps.Build(ctx)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = d.Close(ctx) }()
-			return apprelease.CreateRelease(ctx, d.Provider, localfs.New(), os.Stdout, apprelease.CreateReleaseInput{
-				Tag:              cmd.String("tag"),
-				Repository:       cmd.String("repository"),
-				ReleaseName:      cmd.String("release-name"),
-				Draft:            cmd.Bool("draft"),
-				MakeLatest:       cmd.Bool("make-latest"),
-				AttachArtifacts:  cmd.String("attach-artifacts"),
-				ReleaseNotesFile: cmd.String("release-notes-file"),
-				ArtifactName:     cmd.String("artifact-name"),
-				ChecksumsFile:    cmd.String("checksums-file"),
-				ReleaseDir:       cmd.String("release-dir"),
+			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
+				rc, err := d.RequireReleaseCreator()
+				if err != nil {
+					return err
+				}
+
+				return apprelease.CreateRelease(ctx, rc, localfs.New(), os.Stderr, apprelease.CreateReleaseInput{
+					Tag:              cmd.String("tag"),
+					Repository:       cmd.String("repository"),
+					ReleaseName:      cmd.String("release-name"),
+					Draft:            cmd.Bool("draft"),
+					MakeLatest:       cmd.Bool("make-latest"),
+					AttachArtifacts:  cmd.String("attach-artifacts"),
+					ReleaseNotesFile: cmd.String("release-notes-file"),
+					ArtifactName:     cmd.String("artifact-name"),
+					ChecksumsFile:    cmd.String("checksums-file"),
+					ReleaseDir:       cmd.String("release-dir"),
+				})
 			})
 		},
 	}

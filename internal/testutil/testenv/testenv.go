@@ -26,10 +26,12 @@ type Env struct {
 func New(t *testing.T) *Env {
 	t.Helper()
 	home := isolatedenv.Isolate(t)
+
 	tmp := filepath.Join(home, "tmp")
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		t.Fatalf("testenv: mkdir temp dir %q: %v", tmp, err)
 	}
+
 	return &Env{t: t, Home: home, Temp: tmp}
 }
 
@@ -42,15 +44,18 @@ func (e *Env) Setenv(key, value string) {
 // Path returns a path under the isolated temp directory.
 func (e *Env) Path(parts ...string) string {
 	all := append([]string{e.Temp}, parts...)
+
 	return filepath.Join(all...)
 }
 
 // MkdirAll creates a directory under the isolated temp directory and returns it.
 func (e *Env) MkdirAll(parts ...string) string {
 	e.t.Helper()
+
 	p := e.Path(parts...)
 	if err := os.MkdirAll(p, 0o700); err != nil {
 		e.t.Fatalf("testenv: mkdir %q: %v", p, err)
 	}
+
 	return p
 }

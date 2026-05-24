@@ -14,10 +14,17 @@ type ResolveImageNameInput struct {
 	Repository      string // "owner/repo" (the source repo's full path)
 	RepositoryOwner string // "owner" (used to prefix bare names on docker.io)
 	Name            string // optional sub-name from artifacts.yml; collapsed when == repo short name
+
+	// NameSuffix appends to the repository segment of the derived
+	// image name (no effect when ImageName is set explicitly).
+	// Used by the dev-release flow to push to a namespace
+	// distinguishable from production releases: production goes to
+	// `ghcr.io/owner/repo`, dev goes to `ghcr.io/owner/repo-dev`.
+	// Empty suffix → no change.
+	NameSuffix string
 }
 
-// ResolveImageName produces the canonical image reference for a build,
-// reproducing scripts/container/resolve-image-name.sh exactly.
+// ResolveImageName produces the canonical image reference for a build.
 //
 // Rules:
 //
@@ -25,18 +32,23 @@ type ResolveImageNameInput struct {
 //     with Name. The /<name> suffix is collapsed when Name equals the repo's
 //     short name — the resulting <repo>/<repo> would be redundant nesting.
 //
-//  2. If the resulting name lacks a "/" or "." (a bare image like "myapp"),
+//  2. NameSuffix (when non-empty) appends to the repository segment BEFORE
+//     the optional /<name>. Used by the dev-release flow.
+//
+//  3. If the resulting name lacks a "/" or "." (a bare image like "myapp"),
 //     prefix it with the registry. docker.io is special: bare names on Docker
 //     Hub take the owner as a prefix instead, since "docker.io/myapp" would
 //     resolve to the official-images namespace.
 func ResolveImageName(in ResolveImageNameInput) string {
 	imageName := in.ImageName
 	if imageName == "" {
+		repo := in.Repository + in.NameSuffix
 		repoShort := repoShortName(in.Repository)
+
 		if in.Name != "" && in.Name != repoShort {
-			imageName = in.Repository + "/" + in.Name
+			imageName = repo + "/" + in.Name
 		} else {
-			imageName = in.Repository
+			imageName = repo
 		}
 	}
 
@@ -56,5 +68,6 @@ func repoShortName(repository string) string {
 	if i := strings.LastIndex(repository, "/"); i >= 0 {
 		return repository[i+1:]
 	}
+
 	return repository
 }

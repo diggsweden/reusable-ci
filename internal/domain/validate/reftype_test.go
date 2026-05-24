@@ -14,9 +14,10 @@ import (
 
 func TestRequireTagRefType_EmptyTypeUsage(t *testing.T) {
 	t.Parallel()
+
 	err := validate.RequireTagRefType("", "")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Usage")
+	require.Contains(t, err.Error(), "usage")
 }
 
 func TestRequireTagRefType_TagSucceeds(t *testing.T) {
@@ -26,6 +27,7 @@ func TestRequireTagRefType_TagSucceeds(t *testing.T) {
 
 func TestRequireTagRefType_BranchFails(t *testing.T) {
 	t.Parallel()
+
 	err := validate.RequireTagRefType(provider.RefTypeBranch, "refs/heads/main")
 	require.Error(t, err)
 

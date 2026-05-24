@@ -15,6 +15,7 @@ import (
 
 	appversion "github.com/diggsweden/reusable-ci/internal/app/version"
 	"github.com/diggsweden/reusable-ci/internal/domain/output"
+	"github.com/diggsweden/reusable-ci/internal/testutil/fakeoutputsink"
 )
 
 type fakeGit struct {
@@ -32,31 +33,36 @@ type fakeGit struct {
 
 func (f *fakeGit) Run(_ context.Context, args ...string) (string, error) {
 	f.runArgs = append(f.runArgs, args)
+
 	return "", f.runErr
 }
 
 func (f *fakeGit) ListTags(_ context.Context, pattern string) ([]string, error) {
 	f.listTagsAt = append(f.listTagsAt, pattern)
+
 	return f.tags, f.tagsErr
 }
 
 func (f *fakeGit) ShortSHA(_ context.Context, ref string, _ int) (string, error) {
 	f.shortRefs = append(f.shortRefs, ref)
+
 	return f.shortSHAOut, f.shortSHAErr
 }
 
 func TestGenerateDevVersion_HappyPath(t *testing.T) {
 	ops := &fakeGit{
 		tags:        []string{"v0.4.0", "v0.5.9", "v0.5.0"},
-		shortSHAOut: "abc1234",
+		shortSHAOut: "abc1234", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}
-	var stdout bytes.Buffer
-	if err := appversion.GenerateDevVersion(context.Background(), ops, &stdout, appversion.GenerateDevVersionInput{
+
+	var out bytes.Buffer
+	if err := appversion.GenerateDevVersion(context.Background(), ops, &out, appversion.GenerateDevVersionInput{
 		RefName: "feat/awesome",
 	}); err != nil {
 		t.Fatalf("GenerateDevVersion: %v", err)
 	}
-	got := strings.TrimSpace(stdout.String())
+
+	got := strings.TrimSpace(out.String())
 	if got != "0.5.9-dev-feat-awesome-abc1234" {
 		t.Errorf("got %q", got)
 	}
@@ -66,13 +72,15 @@ func TestGenerateDevVersion_NoTagsFallsBackToZero(t *testing.T) {
 	ops := &fakeGit{
 		shortSHAOut: "deadbee",
 	}
-	var stdout bytes.Buffer
-	if err := appversion.GenerateDevVersion(context.Background(), ops, &stdout, appversion.GenerateDevVersionInput{
-		RefName: "main",
+
+	var out bytes.Buffer
+	if err := appversion.GenerateDevVersion(context.Background(), ops, &out, appversion.GenerateDevVersionInput{
+		RefName: "main", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}); err != nil {
 		t.Fatalf("GenerateDevVersion: %v", err)
 	}
-	got := strings.TrimSpace(stdout.String())
+
+	got := strings.TrimSpace(out.String())
 	if got != "0.0.0-dev-main-deadbee" {
 		t.Errorf("got %q", got)
 	}
@@ -80,25 +88,27 @@ func TestGenerateDevVersion_NoTagsFallsBackToZero(t *testing.T) {
 
 func TestGenerateDevVersion_FetchFailureIgnored(t *testing.T) {
 	ops := &fakeGit{
-		runErr:      errors.New("offline"),
+		runErr:      errors.New("offline"), //nolint:err113 // test mock error
 		tags:        []string{"v1.0.0"},
 		shortSHAOut: "1234567",
 	}
-	var stdout bytes.Buffer
-	if err := appversion.GenerateDevVersion(context.Background(), ops, &stdout, appversion.GenerateDevVersionInput{
+
+	var out bytes.Buffer
+	if err := appversion.GenerateDevVersion(context.Background(), ops, &out, appversion.GenerateDevVersionInput{
 		RefName: "main",
 	}); err != nil {
 		t.Fatalf("expected fetch failure to be ignored: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "1.0.0-dev-main-1234567") {
-		t.Errorf("output = %q", stdout.String())
+
+	if !strings.Contains(out.String(), "1.0.0-dev-main-1234567") {
+		t.Errorf("output = %q", out.String())
 	}
 }
 
 func TestGenerateDevVersion_ShortSHAErrorBubbles(t *testing.T) {
 	ops := &fakeGit{
 		tags:        []string{"v1.0.0"},
-		shortSHAErr: errors.New("not a git repo"),
+		shortSHAErr: errors.New("not a git repo"), //nolint:err113 // test mock error
 	}
 	if err := appversion.GenerateDevVersion(context.Background(), ops, &bytes.Buffer{}, appversion.GenerateDevVersionInput{
 		RefName: "main",
@@ -115,12 +125,15 @@ func TestGenerateDevVersion_RequiresRefName(t *testing.T) {
 
 func TestGenerateDevVersion_JSONFormat_EmitsObject(t *testing.T) {
 	t.Parallel()
+
 	ops := &fakeGit{
 		tags:        []string{"v1.2.3"},
 		shortSHAOut: "abc1234",
 	}
-	var stdout bytes.Buffer
-	err := appversion.GenerateDevVersion(context.Background(), ops, &stdout, appversion.GenerateDevVersionInput{
+
+	var out bytes.Buffer
+
+	err := appversion.GenerateDevVersion(context.Background(), ops, &out, appversion.GenerateDevVersionInput{
 		RefName: "main",
 		Format:  output.FormatJSON,
 	})
@@ -129,18 +142,39 @@ func TestGenerateDevVersion_JSONFormat_EmitsObject(t *testing.T) {
 	var decoded struct {
 		Version string `json:"version"`
 	}
-	require.NoError(t, json.Unmarshal(stdout.Bytes(), &decoded))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &decoded))
 	require.Equal(t, "1.2.3-dev-main-abc1234", decoded.Version)
 }
 
 func TestGenerateDevVersion_TextFormat_PreservesBareLine(t *testing.T) {
 	t.Parallel()
+
 	ops := &fakeGit{tags: []string{"v0.1.0"}, shortSHAOut: "deadbee"}
-	var stdout bytes.Buffer
-	err := appversion.GenerateDevVersion(context.Background(), ops, &stdout, appversion.GenerateDevVersionInput{
+
+	var out bytes.Buffer
+
+	err := appversion.GenerateDevVersion(context.Background(), ops, &out, appversion.GenerateDevVersionInput{
 		RefName: "main",
 		Format:  output.FormatText,
 	})
 	require.NoError(t, err)
-	require.Equal(t, "0.1.0-dev-main-deadbee\n", stdout.String())
+	require.Equal(t, "0.1.0-dev-main-deadbee\n", out.String())
+}
+
+func TestGenerateDevVersion_GitHubFormatEmitsOutput(t *testing.T) {
+	t.Parallel()
+
+	ops := &fakeGit{tags: []string{"v0.2.0"}, shortSHAOut: "abc1234"}
+	sink := fakeoutputsink.New(t)
+
+	var out bytes.Buffer
+
+	err := appversion.GenerateDevVersion(context.Background(), ops, &out, appversion.GenerateDevVersionInput{
+		RefName: "feature/demo",
+		Format:  output.FormatGitHub,
+		Sink:    sink,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "0.2.0-dev-feature-demo-abc1234", sink.Single("dev-version"))
+	require.Equal(t, "0.2.0-dev-feature-demo-abc1234\n", out.String())
 }

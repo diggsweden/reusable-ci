@@ -11,8 +11,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
 )
 
-// GradleBuildInput drives `summary gradle-build`. Mirrors
-// scripts/summary/write-gradle-build-summary.sh.
+// GradleBuildInput drives `summary gradle-build`.
 type GradleBuildInput struct {
 	JavaVersion string
 	GradleTasks string
@@ -30,11 +29,13 @@ func GradleBuild(ctx context.Context, sink ci.SummarySink, in GradleBuildInput) 
 	if now.IsZero() {
 		now = time.Now()
 	}
+
 	md := build.RenderGradleSummary(build.GradleSummaryInput{
 		JavaVersion: in.JavaVersion,
 		GradleTasks: in.GradleTasks,
 		SkipTests:   in.SkipTests,
 		Version:     in.Version,
 	}, now)
+
 	return sink.Append(ctx, md)
 }

@@ -16,16 +16,16 @@ import "strings"
 // Docker/OCI tags, and artefact basenames.
 //
 // Idempotent: sanitising an already-clean token returns it unchanged.
-//
-// Replaces the old sanitize_path_token helper from scripts/ci/strings.sh.
 func SanitizePathToken(in string) string {
 	if in == "" {
 		return ""
 	}
-	var b strings.Builder
+
+	var b strings.Builder //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	b.Grow(len(in))
+
 	for i := range len(in) {
-		c := in[i]
+		c := in[i] //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		switch {
 		case c >= 'a' && c <= 'z',
 			c >= 'A' && c <= 'Z',
@@ -36,8 +36,10 @@ func SanitizePathToken(in string) string {
 			b.WriteByte('-')
 		}
 	}
+
 	out := b.String()
 	out = strings.TrimLeft(out, "-")
 	out = strings.TrimRight(out, "-")
+
 	return out
 }

@@ -12,6 +12,7 @@ import (
 
 func TestValidateFlavor_Empty(t *testing.T) {
 	t.Parallel()
+
 	if err := container.ValidateFlavor(""); err != nil {
 		t.Errorf("empty flavor should be valid: %v", err)
 	}
@@ -19,6 +20,7 @@ func TestValidateFlavor_Empty(t *testing.T) {
 
 func TestValidateFlavor_LatestFalse(t *testing.T) {
 	t.Parallel()
+
 	if err := container.ValidateFlavor("latest=false"); err != nil {
 		t.Errorf("latest=false should be valid: %v", err)
 	}
@@ -26,6 +28,7 @@ func TestValidateFlavor_LatestFalse(t *testing.T) {
 
 func TestValidateFlavor_LatestTrueRefused(t *testing.T) {
 	t.Parallel()
+
 	for _, in := range []string{"latest=true", "latest=auto"} {
 		err := container.ValidateFlavor(in)
 		if err == nil || !strings.Contains(err.Error(), "latest=auto/true is not supported") {
@@ -36,6 +39,7 @@ func TestValidateFlavor_LatestTrueRefused(t *testing.T) {
 
 func TestValidateFlavor_PrefixSuffixOnlatest(t *testing.T) {
 	t.Parallel()
+
 	cases := map[string]string{
 		"prefix=v":   "FLAVOR prefix is not supported",
 		"suffix=-rc": "FLAVOR suffix is not supported",
@@ -51,6 +55,7 @@ func TestValidateFlavor_PrefixSuffixOnlatest(t *testing.T) {
 
 func TestValidateFlavor_UnknownEntry(t *testing.T) {
 	t.Parallel()
+
 	err := container.ValidateFlavor("nonsense")
 	if err == nil || !strings.Contains(err.Error(), "unknown FLAVOR entry") {
 		t.Errorf("err = %v", err)

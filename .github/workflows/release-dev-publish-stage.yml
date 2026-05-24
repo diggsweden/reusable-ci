@@ -5,49 +5,64 @@ name: Dev Release Publish Stage
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
-      dev-context-json:
+      dev-release-plan-json:
         required: true
         type: string
-      dev-policy-json:
+      dev-publish-stage-plan-json:
+        required: true
+        type: string
+      artifact-transfer-plan-json:
         required: true
         type: string
       build-result-json:
         required: true
         type: string
-      scripts-ref:
+      reusable-ci-binary-ref:
         required: false
-        default: "main"
+        default: "v3.0.0"
         type: string
       runtime-image:
         description: "reusable-ci runtime image (full — generate-dev-sboms needs syft)"
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime:main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime:v3.0.0"
+        type: string
+      runtime-image-node:
+        description: "reusable-ci runtime image for dev NPM publish jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-node-24:v3.0.0"
+        type: string
+      runtime-image-rust:
+        description: "reusable-ci runtime image for Cargo SBOM jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-rust-stable:v3.0.0"
+        type: string
+      runtime-image-go:
+        description: "reusable-ci runtime image for Go SBOM jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-go-1.26:v3.0.0"
         type: string
       sboms:
         required: false
         default: "none"
         type: string
-      publish-container:
+      registry-username:
+        description: "Container registry username passed to publish-dev-container.yml"
+        required: false
+        default: ""
+        type: string
+      use-ci-token:
+        description: "Use GITHUB_TOKEN for container registry authentication (GHCR only)"
         required: false
         default: true
         type: boolean
-      containers:
-        description: "JSON array of containers from artifacts.yml. Each entry becomes a parallel matrix job."
-        required: false
-        default: "[]"
-        type: string
-      npm-artifacts:
-        description: "Per-ecosystem npm artifacts. publish-npm-dev fires when this array is non-empty."
-        required: false
-        default: "[]"
-        type: string
-      cargo-artifacts:
-        description: "Per-ecosystem cargo artifacts. sbom-cargo-dev fires when this array is non-empty."
-        required: false
-        default: "[]"
-        type: string
     secrets:
       registry-password:
+        required: false
+      REUSABLE_CI_BUILD_SECRETS_JSON:
+        description: |
+          JSON envelope of {name: value} for every name listed in
+          containers[].build-secrets; forwarded to
+          publish-dev-container.yml. Mirrors release-publish-stage.yml.
         required: false
     outputs:
       stage-ran:
@@ -69,146 +84,145 @@ jobs:
   # declared in artifacts.yml. Each leg is its own GHA job (visible separately
   # in the UI) and runs in parallel.
   # fail-fast: false — one container's build failure doesn't kill the others.
-  build-dev-container-matrix:
+  containers:
     name: Build Container Dev - ${{ matrix.container.name }}
     # Build-stage is allowed to be 'skipped' for container-first ecosystems
-    # (e.g., cargo): no artefact-first build runs, but the container itself
-    # can still be built here.
-    if: ${{ inputs.containers != '[]' && inputs['publish-container'] && (fromJson(inputs['build-result-json']).result == 'success' || fromJson(inputs['build-result-json']).result == 'skipped') }}
+    # (cargo/go container-first): no artefact-first build runs, but the
+    # container itself can still be built here.
+    if: ${{ fromJson(inputs['dev-publish-stage-plan-json']).targets.containers.runs && (fromJson(inputs['build-result-json']).result == 'success' || fromJson(inputs['build-result-json']).result == 'skipped') }}
     strategy:
       matrix:
-        container: ${{ fromJson(inputs.containers) }}
+        container: ${{ fromJson(inputs['dev-publish-stage-plan-json']).targets.containers.items }}
       fail-fast: false
     permissions:
       contents: read
       packages: write
-    secrets: inherit
+    # publish-dev-container uses the auto-provided GITHUB_TOKEN for
+    # registry auth; the only adopter-controlled secret it consumes is
+    # REUSABLE_CI_BUILD_SECRETS_JSON when containers[].build-secrets is
+    # non-empty.
+    secrets:
+      REUSABLE_CI_BUILD_SECRETS_JSON: ${{ secrets.REUSABLE_CI_BUILD_SECRETS_JSON }}
     uses: ./.github/workflows/publish-dev-container.yml
     with:
       working-directory: ${{ matrix.container.context || '.' }}
-      container-file: ${{ matrix.container['container-file'] }}
-      registry: ${{ matrix.container.registry || fromJson(inputs['dev-context-json']).registry }}
-      artifact-types: ${{ join(matrix.container['artifact-types'], ',') }}
+      branch: ${{ fromJson(inputs['dev-release-plan-json']).context.branch }}
+      container-file: ${{ matrix.container.container_file }}
+      registry: ${{ fromJson(inputs['dev-release-plan-json']).context.registry }}
+      artifact-types: ${{ join(matrix.container.artifact_types, ',') }}
+      artifact-types-json: ${{ toJson(matrix.container.artifact_types) }}
+      maven-artifact-name: ${{ matrix.container.maven_artifact_name || '' }}
+      npm-artifact-name: ${{ matrix.container.npm_artifact_name || '' }}
+      gradle-artifact-name: ${{ matrix.container.gradle_artifact_name || '' }}
+      go-artifact-name: ${{ matrix.container.go_artifact_name || '' }}
+      cargo-artifact-name: ${{ matrix.container.cargo_artifact_name || '' }}
       target: ${{ matrix.container.target || '' }}
       name: ${{ matrix.container.name }}
       platforms: ${{ matrix.container.platforms || 'linux/amd64' }}
-      extract-binary-target: ${{ matrix.container.extract.binary.target || '' }}
-      extract-binary-names: ${{ matrix.container.extract.binary.names && join(matrix.container.extract.binary.names, ',') || '' }}
+      extract-binary-target: ${{ matrix.container.extract_binary_target || '' }}
+      extract-binary-names: ${{ matrix.container.extract_binary_names && join(matrix.container.extract_binary_names, ',') || '' }}
+      build-args: ${{ matrix.container.build_args_string || '' }}
+      # NAMES list; values come via the workflow secret packed at the
+      # adopter's top-level dev-release caller.
+      build-secrets: ${{ matrix.container.build_secrets && join(matrix.container.build_secrets, ' ') || '' }}
       # AND of per-container artifacts.yml flag (mirrors prod) AND the
       # orchestrator's dev-only sboms opt-in. Dev keeps `sboms: none` as a
       # fast path even when artifacts.yml would normally produce SBOMs.
-      enable-analyzed-container-sbom: ${{ matrix.container['enable-analyzed-container-sbom'] && (contains(inputs.sboms, 'analyzed-container') || inputs.sboms == 'all') }}
-      scripts-ref: ${{ inputs['scripts-ref'] }}
-  publish-npm-dev:
+      enable-analyzed-container-sbom: ${{ matrix.container.enable_analyzed_container_sbom && (contains(inputs.sboms, 'analyzed-container') || inputs.sboms == 'all') }}
+      registry-username: ${{ inputs['registry-username'] }}
+      use-ci-token: ${{ inputs['use-ci-token'] }}
+      reusable-ci-binary-ref: ${{ inputs['reusable-ci-binary-ref'] }}
+  npm:
     name: Publish Dev NPM Package
-    if: ${{ inputs['npm-artifacts'] != '[]' && fromJson(inputs['dev-policy-json']).publish_npm && fromJson(inputs['build-result-json']).targets.npm == 'success' }}
+    if: ${{ fromJson(inputs['dev-publish-stage-plan-json']).targets.npm.runs && fromJson(inputs['build-result-json']).targets.npm == 'success' }}
     permissions:
       contents: read
       packages: write
     uses: ./.github/workflows/publish-dev-npm.yml
     with:
-      working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
-      registry: ${{ fromJson(inputs['dev-context-json']).npm_registry }}
-      package-scope: ${{ fromJson(inputs['dev-context-json']).package_scope }}
-      use-ci-token: ${{ fromJson(inputs['dev-policy-json']).use_ci_token }}
+      working-directory: ${{ fromJson(inputs['dev-publish-stage-plan-json']).inputs.npm_working_directory }}
+      artifact-source: ${{ fromJson(inputs['dev-publish-stage-plan-json']).inputs.npm_build_artifact_name || 'npm-build-artifacts' }}
+      branch: ${{ fromJson(inputs['dev-release-plan-json']).context.branch }}
+      registry: ${{ fromJson(inputs['dev-release-plan-json']).context.npm_registry }}
+      package-scope: ${{ fromJson(inputs['dev-release-plan-json']).context.package_scope }}
+      use-ci-token: ${{ fromJson(inputs['dev-release-plan-json']).policy.use_ci_token }}
+      runtime-image: ${{ inputs['runtime-image-node'] }}
     secrets:
       registry-password: ${{ secrets.registry-password }}
-  # Cargo's lockfile-derived "build" SBOM. container-first means cargo has
-  # no build-stage; the SBOM and its corresponding container ship together,
-  # so the SBOM lives in publish-stage alongside the container build.
-  # Mirrors release-publish-stage.yml's `sbom-cargo` shape but without the
-  # cargo-artifacts matrix (dev runs single-project, not multi-cargo).
-  # Gated on sboms != 'none' so dev's default fast path doesn't pay for
-  # SBOM generation it won't consume.
-  sbom-cargo-dev:
+  # Container-first cargo's lockfile-derived "build" SBOM. Artefact-first
+  # cargo emits its Build SBOM inline in build-cargo.yml at dev-build-stage,
+  # so this job only fires for cargo artefacts with build-mode:
+  # container-first — same split as the prod release-publish-stage.
+  # Gated on the Build layer so dev's default fast path, and dev runs that
+  # request only analyzed layers, don't pay for an unused Build SBOM.
+  cargo-container-first:
     name: Cargo SBOM Dev
-    if: ${{ inputs['cargo-artifacts'] != '[]' && inputs.sboms != 'none' }}
+    if: ${{ fromJson(inputs['dev-publish-stage-plan-json']).targets.cargo_container_first.runs }}
     permissions:
       contents: read
-    secrets: inherit
+    # sbom-cargo uses only auto-provided GITHUB_TOKEN.
     uses: ./.github/workflows/sbom-cargo.yml
     with:
-      working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
-      branch: ${{ fromJson(inputs['dev-context-json']).branch }}
-  generate-dev-sboms:
+      working-directory: ${{ fromJson(inputs['dev-publish-stage-plan-json']).inputs.cargo_working_directory }}
+      branch: ${{ fromJson(inputs['dev-release-plan-json']).context.branch }}
+      runtime-image: ${{ inputs['runtime-image-rust'] }}
+  go-container-first:
+    name: Go SBOM Dev
+    # Dev SBOM aggregation follows the same single-project contract as
+    # sbom-cargo-dev above. Multi-artifact release SBOM packaging is handled by
+    # the production release orchestrator.
+    if: ${{ fromJson(inputs['dev-publish-stage-plan-json']).targets.go_container_first.runs }}
+    permissions:
+      contents: read
+    # sbom-go uses only auto-provided GITHUB_TOKEN.
+    uses: ./.github/workflows/sbom-go.yml
+    with:
+      working-directory: ${{ fromJson(inputs['dev-publish-stage-plan-json']).inputs.go_sbom_working_directory }}
+      branch: ${{ fromJson(inputs['dev-release-plan-json']).context.branch }}
+      artifact-name: ${{ fromJson(inputs['dev-publish-stage-plan-json']).inputs.go_sbom_artifact_name }}
+      runtime-image: ${{ inputs['runtime-image-go'] }}
+  sbom:
     name: Generate Dev SBOMs
-    needs: [sbom-cargo-dev]
-    # Wait for cargo's build SBOM (when applicable) to upload before
-    # downloading and aggregating. needs[].result == 'skipped' means the
-    # cargo job was gated off (non-cargo project or sboms=none); that's
-    # fine — generate-dev-sboms then aggregates whatever artefact-first
-    # builders produced.
-    if: ${{ inputs.sboms != 'none' && (fromJson(inputs['build-result-json']).result == 'success' || fromJson(inputs['build-result-json']).result == 'skipped') && !cancelled() && needs.sbom-cargo-dev.result != 'failure' }}
-    runs-on: ubuntu-latest
+    needs: [containers, cargo-container-first, go-container-first]
+    # Wait for the container matrix so container-first extracted binaries are
+    # available before analyzed-artifact aggregation. Container-first Build
+    # SBOM jobs are also listed in needs; needs[].result == 'skipped' means
+    # the job was gated off (non-container-first project or no Build layer
+    # requested), which is fine.
+    if: ${{ inputs.sboms != 'none' && (fromJson(inputs['build-result-json']).result == 'success' || fromJson(inputs['build-result-json']).result == 'skipped') && !cancelled() && needs.containers.result != 'failure' && needs.cargo-container-first.result != 'failure' && needs.go-container-first.result != 'failure' }}
+    runs-on: ubuntu-24.04
     container:
       image: ${{ inputs['runtime-image'] }}
     permissions:
+      actions: read
       contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ fromJson(inputs['dev-release-plan-json']).context.branch }}
           fetch-depth: 0
-      # Resolve upload names via the same script prod uses
-      # (release-create-github.yml). Single source of truth for
-      # ecosystem -> upload-name mapping; new ecosystems extend
-      # resolve-artifact-name.sh and dev/prod both pick them up.
-      - name: Determine artefact upload names
-        id: artefact-names
+      - name: Download planned dev artifacts
         env:
-          PROJECT_TYPE: ${{ fromJson(inputs['dev-context-json']).project_type }}
-        run: reusable-ci release resolve-artifact-name "$PROJECT_TYPE" >> "$GITHUB_OUTPUT"
-      # Download by exact name (mirrors prod). Avoids pulling
-      # multi-arch noise (per-arch digests, .dockerbuild auto-uploads,
-      # per-arch container SBOMs) that an unfiltered download would
-      # try to pull.
-      - name: Download build artefact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        continue-on-error: true
-        with:
-          name: ${{ steps.artefact-names.outputs.name }}
-          path: ./release-artifacts
-      # Skip the second download for cargo (name == sbom-name) and
-      # when the build layer wasn't requested.
-      - name: Download Build SBOM
-        if: ${{ (contains(inputs.sboms, 'build') || inputs.sboms == 'all') && steps.artefact-names.outputs.sbom-name != steps.artefact-names.outputs.name }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        continue-on-error: true
-        with:
-          name: ${{ steps.artefact-names.outputs.sbom-name }}
-          path: ./release-artifacts
-      # Pull container-extracted binaries (cargo, go) so the analyzed-artifact
-      # layer can scan the actual produced binaries. publish-dev-container.yml
-      # uploads these as ${name}-binaries-${arch}; pattern-match to grab every
-      # leg without enumerating containers/arches here.
-      - name: Download extracted container binaries
-        if: ${{ contains(inputs.sboms, 'analyzed-artifact') || inputs.sboms == 'all' }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        continue-on-error: true
-        with:
-          pattern: "*-binaries*"
-          path: ./release-artifacts/binaries
-          merge-multiple: true
+          ARTIFACT_TRANSFER_PLAN_JSON: ${{ inputs['artifact-transfer-plan-json'] }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: reusable-ci release download-artifacts
+      - name: Resolve artifact SBOM layers
+        id: artifact-sbom-layers
+        env:
+          SBOMS: ${{ inputs.sboms }}
+        run: reusable-ci config expand-sboms --format comma --exclude analyzed-container "$SBOMS"
       - name: Generate CISA-layer SBOMs (dev)
+        if: ${{ steps.artifact-sbom-layers.outputs.has-layers == 'true' }}
         env:
-          PROJECT_TYPE: ${{ fromJson(inputs['dev-context-json']).project_type }}
+          PROJECT_TYPE: ${{ fromJson(inputs['dev-release-plan-json']).context.project_type }}
           PROJECT_NAME: ${{ github.event.repository.name }}
           DEV_VERSION: dev-${{ github.sha }}
-          SBOMS: ${{ inputs.sboms }}
-        run: |
-          # analyzed-container is scanned at container-publish time, not here —
-          # feed generate-sboms.sh only the artifact-level layers.
-          layers=$(reusable-ci config expand-sboms \
-            --format comma --exclude analyzed-container "$SBOMS")
-          if [[ -n "$layers" ]]; then
-            reusable-ci sbom generate \
-              --project-type "$PROJECT_TYPE" \
-              --layers "$layers" \
-              --version "$DEV_VERSION" \
-              --name "$PROJECT_NAME"
-          else
-            printf "No artifact-level SBOM layers requested (sboms=%s).\n" "$SBOMS"
-          fi
+          LAYERS: ${{ steps.artifact-sbom-layers.outputs.layers }}
+        run: >-
+          reusable-ci sbom generate all --project-type "$PROJECT_TYPE" --layers "$LAYERS" --version "$DEV_VERSION" --name "$PROJECT_NAME"
       - name: Upload Dev SBOMs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -220,9 +234,9 @@ jobs:
           if-no-files-found: warn
   summarize-dev-publish-stage:
     name: Summarize Dev Publish Stage
-    needs: [build-dev-container-matrix, publish-npm-dev, sbom-cargo-dev, generate-dev-sboms]
+    needs: [containers, npm, cargo-container-first, go-container-first, sbom]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ${{ inputs['runtime-image'] }}
     permissions:
@@ -236,16 +250,16 @@ jobs:
       - name: Normalize dev publish stage result
         id: summary
         env:
-          PROJECT_TYPE: ${{ fromJson(inputs['dev-context-json']).project_type }}
-          PUBLISH_NPM: ${{ fromJson(inputs['dev-policy-json']).publish_npm }}
-          BUILD_DEV_CONTAINER_RESULT: ${{ needs.build-dev-container-matrix.result }}
-          PUBLISH_NPM_DEV_RESULT: ${{ needs.publish-npm-dev.result }}
-          CARGO_SBOM_DEV_RESULT: ${{ needs.sbom-cargo-dev.result }}
-          GENERATE_DEV_SBOMS_RESULT: ${{ needs.generate-dev-sboms.result }}
-          NPM_PACKAGE_NAME: ${{ needs.publish-npm-dev.outputs.package-name }}
-          NPM_PACKAGE_VERSION: ${{ needs.publish-npm-dev.outputs.package-version }}
-          NPM_PUBLISH_STATUS: ${{ needs.publish-npm-dev.outputs.publish-status }}
-        run: reusable-ci summary dev-publish-stage-result
+          STAGE_PLAN_JSON: ${{ inputs['dev-publish-stage-plan-json'] }}
+          NEEDS_JSON: ${{ toJson(needs) }}
+          # Materialise every dynamic field via env so the shell never
+          # interpolates an attacker-controlled JSON value directly.
+          PROJECT_TYPE: ${{ fromJson(inputs['dev-release-plan-json']).context.project_type }}
+          NPM_PACKAGE_NAME: ${{ needs.npm.outputs.package-name }}
+          NPM_PACKAGE_VERSION: ${{ needs.npm.outputs.package-version }}
+          NPM_PUBLISH_STATUS: ${{ fromJson(inputs['dev-publish-stage-plan-json']).targets.npm.runs && (needs.npm.outputs.publish-status || 'published') || 'skipped' }}
+        run: >-
+          reusable-ci report status stage --extra "project_type=${PROJECT_TYPE}" --json-output-key artifacts-json --json-field "npm_package_name=${NPM_PACKAGE_NAME}" --json-field "npm_package_version=${NPM_PACKAGE_VERSION}" --json-field "npm_publish_status=${NPM_PUBLISH_STATUS}"
       - name: Upload dev publish stage manifests
         if: always() && hashFiles('.ci-results/*.json') != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

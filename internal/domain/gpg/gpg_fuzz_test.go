@@ -6,7 +6,6 @@ package gpg_test
 import (
 	"encoding/base64"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/gpg"
 )
@@ -28,17 +27,17 @@ func FuzzDecodeKey(f *testing.F) {
 		if err != nil {
 			return
 		}
+
 		if gpg.IsArmored(input) && string(out) != input {
 			t.Fatalf("armored input modified: %q -> %q", input, out)
 		}
 	})
 }
 
-func FuzzParseColonsOutput(f *testing.F) {
+func FuzzParseKeygrips(f *testing.F) {
 	for _, seed := range []string{
 		sampleColons,
-		`uid:::::::HASH::Some Person <person@example.com>:`,
-		`fpr:::::::::FPR:\nuid:::::::HASH::No Email Person:`,
+		`grp:::::::::FEDCBA0987654321FEDCBA0987654321FEDCBA09:`,
 		"",
 		"not:colons:format",
 	} {
@@ -46,12 +45,6 @@ func FuzzParseColonsOutput(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, input string) {
-		md := gpg.ParseColonsOutput(input)
-		for _, field := range []string{md.Fingerprint, md.KeyID, md.Name, md.Email} {
-			if field != "" && !utf8.ValidString(field) {
-				t.Fatalf("invalid UTF-8 field %q from input %q", field, input)
-			}
-		}
 		for _, grip := range gpg.ParseKeygrips(input) {
 			if grip == "" {
 				t.Fatalf("empty keygrip parsed from %q", input)

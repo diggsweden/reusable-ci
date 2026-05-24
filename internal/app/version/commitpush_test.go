@@ -28,13 +28,13 @@ func TestCommitPush_HappyPath(t *testing.T) {
 
 	repo := &git.Repo{Dir: r.Dir}
 	var out bytes.Buffer
-	err := appversion.CommitPush(context.Background(), repo, appversion.CommitPushInput{
+	err := appversion.CommitPush(context.Background(), repo, &out, appversion.CommitPushInput{
 		Branch:      "main",
 		AuthorName:  "Test Bot",
 		AuthorEmail: "bot@example.invalid",
 		Message:     "chore(release): v1.0.0",
 		FilePattern: "CHANGELOG.md",
-	}, &out)
+	})
 	if err != nil {
 		t.Fatalf("CommitPush: %v", err)
 	}
@@ -52,10 +52,10 @@ func TestCommitPush_NoChangesIsNoOp(t *testing.T) {
 	repo := &git.Repo{Dir: r.Dir}
 
 	var out bytes.Buffer
-	err := appversion.CommitPush(context.Background(), repo, appversion.CommitPushInput{
+	err := appversion.CommitPush(context.Background(), repo, &out, appversion.CommitPushInput{
 		Branch: "main", AuthorName: "Test Bot", AuthorEmail: "bot@example.invalid",
 		Message: "noop", FilePattern: "CHANGELOG.md",
-	}, &out)
+	})
 	if err != nil {
 		t.Fatalf("CommitPush: %v", err)
 	}
@@ -72,10 +72,10 @@ func TestCommitPush_MultiFilePattern(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(r.Dir, "package.json"), []byte("p"), 0o644))
 
 	repo := &git.Repo{Dir: r.Dir}
-	err := appversion.CommitPush(context.Background(), repo, appversion.CommitPushInput{
+	err := appversion.CommitPush(context.Background(), repo, &bytes.Buffer{}, appversion.CommitPushInput{
 		Branch: "main", AuthorName: "Test Bot", AuthorEmail: "bot@example.invalid",
 		Message: "chore: bump", FilePattern: "CHANGELOG.md package.json",
-	}, &bytes.Buffer{})
+	})
 	if err != nil {
 		t.Fatalf("CommitPush: %v", err)
 	}
@@ -94,13 +94,13 @@ func TestCommitPush_MultiLineCommitMessagePreserved(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(r.Dir, "CHANGELOG.md"), []byte("# v1\n"), 0o644))
 
 	repo := &git.Repo{Dir: r.Dir}
-	err := appversion.CommitPush(context.Background(), repo, appversion.CommitPushInput{
+	err := appversion.CommitPush(context.Background(), repo, &bytes.Buffer{}, appversion.CommitPushInput{
 		Branch:      "main",
 		AuthorName:  "Test Bot",
 		AuthorEmail: "bot@example.invalid",
 		Message:     "chore(release): v1.0.0\n\nbody line\n\n[skip ci]",
 		FilePattern: "CHANGELOG.md",
-	}, &bytes.Buffer{})
+	})
 	if err != nil {
 		t.Fatalf("CommitPush: %v", err)
 	}
@@ -122,13 +122,13 @@ func TestCommitPush_GlobPathspec(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(r.Dir, "sub", "deeper", "pom.xml"), []byte("<project/>\n"), 0o644))
 
 	repo := &git.Repo{Dir: r.Dir}
-	err := appversion.CommitPush(context.Background(), repo, appversion.CommitPushInput{
+	err := appversion.CommitPush(context.Background(), repo, &bytes.Buffer{}, appversion.CommitPushInput{
 		Branch:      "main",
 		AuthorName:  "Test Bot",
 		AuthorEmail: "bot@example.invalid",
 		Message:     "chore(release): v1.0.0",
 		FilePattern: "CHANGELOG.md :(glob)**/pom.xml",
-	}, &bytes.Buffer{})
+	})
 	if err != nil {
 		t.Fatalf("CommitPush: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestCommitPush_RequiredFieldErrors(t *testing.T) {
 		missing, in := missing, in
 		t.Run("missing-"+missing, func(t *testing.T) {
 			t.Parallel()
-			err := appversion.CommitPush(context.Background(), &git.Repo{}, in, &bytes.Buffer{})
+			err := appversion.CommitPush(context.Background(), &git.Repo{}, &bytes.Buffer{}, in)
 			if err == nil || !strings.Contains(err.Error(), missing) {
 				t.Errorf("err = %v, want substring %q", err, missing)
 			}

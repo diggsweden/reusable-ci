@@ -15,10 +15,11 @@ import (
 
 func TestNPMBuild_RendersAllFields(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
 	err := appsummary.NPMBuild(context.Background(), sink, appsummary.NPMBuildInput{
 		PackageName: "@digg/example",
-		Version:     "1.2.3",
+		Version:     "1.2.3", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		NodeVersion: "24",
 		SkipTests:   false,
 		Now:         time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC),

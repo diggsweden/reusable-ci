@@ -5,14 +5,12 @@ package container
 
 import "regexp"
 
-// RebuildPatterns is the list of regex patterns the bash uses to
-// detect "Containerfile rebuilds from source" warnings. Any match
-// triggers an advisory warning that pre-built artifacts will be
-// ignored.
-//
-// Mirrors the patterns in scripts/container/validate-artifacts.sh
+// RebuildPatterns detects "Containerfile rebuilds from source" warnings. Any
+// match triggers an advisory warning that pre-built artifacts will be ignored.
 // (`mvn package`, `mvn install`, `mvnw package/install`, `gradle build`,
-// `gradle assemble`, `npm run build`, `npm ... build run`).
+// `gradle assemble`, `npm run build`, `npm ... build run`, `go build`).
+//
+//nolint:gochecknoglobals // precompiled regex table — read-only.
 var RebuildPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`mvn.*package`),
 	regexp.MustCompile(`mvn.*install`),
@@ -22,6 +20,7 @@ var RebuildPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`gradle.*assemble`),
 	regexp.MustCompile(`npm run build`),
 	regexp.MustCompile(`npm.*build.*run`),
+	regexp.MustCompile(`go build`),
 }
 
 // ContainerfileRebuildsFromSource returns true when the given
@@ -33,5 +32,6 @@ func ContainerfileRebuildsFromSource(body string) bool {
 			return true
 		}
 	}
+
 	return false
 }

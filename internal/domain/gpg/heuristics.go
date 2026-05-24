@@ -25,6 +25,7 @@ allow-preset-passphrase
 // action uses: anything else is treated as base64.
 func IsArmored(key string) bool {
 	trimmed := strings.TrimLeft(key, "\n")
+
 	return strings.HasPrefix(trimmed, "-----")
 }
 
@@ -37,33 +38,39 @@ func DecodeKey(key string) ([]byte, error) {
 	}
 	// Tolerate whitespace in the base64 (some workflow callers wrap their
 	// secrets across multiple lines).
-	cleaned := strings.Map(func(r rune) rune {
+	cleaned := strings.Map(func(r rune) rune { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		switch r {
 		case ' ', '\t', '\n', '\r':
 			return -1
 		}
+
 		return r
 	}, key)
+
 	out, err := base64.StdEncoding.DecodeString(cleaned)
 	if err != nil {
 		return nil, fmt.Errorf("decode base64 key: %w: %w", err, errs.ErrMalformedInput)
 	}
+
 	return out, nil
 }
 
 // HexEncodePassphrase returns the uppercase-hex byte representation of
-// the input. UTF-8-faithful: matches the bash `od -An -tx1 | tr -d ' \n'
+// the input. UTF-8-faithful: matches `od -An -tx1 | tr -d ' \n'
 // | tr 'a-f' 'A-F'` exactly. Used as the PRESET_PASSPHRASE argument to
 // gpg-connect-agent (sent via stdin so the value never appears in `ps`).
 func HexEncodePassphrase(passphrase string) string {
 	if passphrase == "" {
 		return ""
 	}
+
 	const hex = "0123456789ABCDEF"
+
 	out := make([]byte, 0, len(passphrase)*2)
 	for i := range len(passphrase) {
 		c := passphrase[i]
 		out = append(out, hex[c>>4], hex[c&0x0F])
 	}
+
 	return string(out)
 }

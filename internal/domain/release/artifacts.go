@@ -12,8 +12,9 @@ import (
 )
 
 // ReleaseArtifactExtensions is the set of file extensions considered
-// release artefacts. Mirrors `ci_find_release_artifacts` in
-// scripts/ci/output.sh.
+// release artefacts. Mirrors `ci_find_release_artifacts` in.
+//
+//nolint:gochecknoglobals // canonical extension list — read-only.
 var ReleaseArtifactExtensions = []string{
 	".jar", ".tgz", ".tar.gz", ".zip", ".war",
 }
@@ -27,16 +28,20 @@ func IsReleaseArtifact(path string) bool {
 	if strings.HasPrefix(base, "original-") && strings.HasSuffix(base, ".jar") {
 		return false
 	}
+
 	for _, ext := range ReleaseArtifactExtensions {
 		if strings.HasSuffix(base, ext) {
 			return true
 		}
 	}
+
 	return false
 }
 
 // SBOMFilePatterns is the list of glob patterns the SBOM zip + checksum
 // flows look for in the working directory.
+//
+//nolint:gochecknoglobals // canonical pattern list — read-only.
 var SBOMFilePatterns = []string{
 	"*-sbom.spdx.json",
 	"*-sbom.cyclonedx.json",
@@ -50,8 +55,7 @@ const AnalyzedContainerSBOMPattern = "*-analyzed-container-sbom.*.json"
 const ChecksumsFile = "checksums.sha256"
 
 // DefaultReleaseArtifactsDir is the cwd-relative directory release-flow
-// commands scan for build outputs by default. Mirrors the bash
-// $RELEASE_ARTIFACTS_DIR fallback. Keep callers using this constant
+// commands scan for build outputs by default. Mirrors // $RELEASE_ARTIFACTS_DIR fallback. Keep callers using this constant
 // rather than the literal string so the convention has one home.
 const DefaultReleaseArtifactsDir = "./release-artifacts"
 
@@ -65,3 +69,16 @@ const DefaultSBOMArtifactsDir = "./sbom-artifacts"
 // defaults and app-layer empty-string fallbacks both reference this
 // constant so the value has one home.
 const DefaultReleaseNotesFile = "release-notes.md"
+
+// DefaultReleaseBinariesDir is the cwd-relative directory where
+// per-arch extracted binaries land during the release flow (one file
+// per platform, named via `container suffix-extracted-binaries`).
+// CLI flag defaults and app-layer empty-string fallbacks reference
+// this constant.
+const DefaultReleaseBinariesDir = "release-artifacts/binaries"
+
+// DefaultReleaseBinariesGlob is the glob auto-attached when
+// DefaultReleaseBinariesDir is non-empty. Kept as a separate constant
+// (not derived from DefaultReleaseBinariesDir) so the glob syntax is
+// explicit and reviewable in one place.
+const DefaultReleaseBinariesGlob = "release-artifacts/binaries/**"

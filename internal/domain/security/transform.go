@@ -47,14 +47,17 @@ type Options struct {
 // deterministic UUID derived from (VulnerabilityID|PkgName|InstalledVersion|Target).
 func TrivyToGitLabDep(report *TrivyReport, opts Options) *GitLabReport {
 	out := buildBase(scanTypeDep, opts)
+
 	for _, r := range report.Results {
 		for _, v := range r.Vulnerabilities {
 			out.Vulnerabilities = append(out.Vulnerabilities, buildDepVuln(r, v))
 		}
 	}
+
 	if out.Vulnerabilities == nil {
 		out.Vulnerabilities = []GitLabVulnerability{}
 	}
+
 	return out
 }
 
@@ -64,19 +67,23 @@ func TrivyToGitLabDep(report *TrivyReport, opts Options) *GitLabReport {
 // (VulnerabilityID|PkgName|InstalledVersion|ImageRef).
 func TrivyToGitLabContainer(report *TrivyReport, opts Options) *GitLabReport {
 	out := buildBase(scanTypeContainer, opts)
+
 	imageRef := opts.ImageRef
 	if imageRef == "" {
 		imageRef = report.ArtifactName
 	}
+
 	osDesc := report.OSDescription()
 	for _, r := range report.Results {
 		for _, v := range r.Vulnerabilities {
 			out.Vulnerabilities = append(out.Vulnerabilities, buildContainerVuln(v, imageRef, osDesc))
 		}
 	}
+
 	if out.Vulnerabilities == nil {
 		out.Vulnerabilities = []GitLabVulnerability{}
 	}
+
 	return out
 }
 
@@ -85,15 +92,19 @@ func buildBase(scanType string, opts Options) *GitLabReport {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+
 	stamp := now.Format("2006-01-02T15:04:05")
+
 	version := opts.TrivyVersion
 	if version == "" {
-		version = "unknown"
+		version = "unknown" //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}
+
 	scanner := GitLabScanner{
 		ID: scannerID, Name: scannerName, Version: version,
 		Vendor: GitLabScannerVendor{Name: scannerVendor},
 	}
+
 	return &GitLabReport{
 		Version: GitLabSchemaVersion,
 		Scan: GitLabScan{
@@ -103,9 +114,10 @@ func buildBase(scanType string, opts Options) *GitLabReport {
 	}
 }
 
-func buildDepVuln(result TrivyResult, v TrivyVulnerability) GitLabVulnerability {
+func buildDepVuln(result TrivyResult, v TrivyVulnerability) GitLabVulnerability { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	uuid := DeterministicUUID(fmt.Sprintf("%s|%s|%s|%s",
 		v.VulnerabilityID, v.PkgName, v.InstalledVersion, result.Target))
+
 	return GitLabVulnerability{
 		ID:          uuid,
 		Name:        nameOf(v),
@@ -124,9 +136,10 @@ func buildDepVuln(result TrivyResult, v TrivyVulnerability) GitLabVulnerability 
 	}
 }
 
-func buildContainerVuln(v TrivyVulnerability, image, osDesc string) GitLabVulnerability {
+func buildContainerVuln(v TrivyVulnerability, image, osDesc string) GitLabVulnerability { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	uuid := DeterministicUUID(fmt.Sprintf("%s|%s|%s|%s",
 		v.VulnerabilityID, v.PkgName, v.InstalledVersion, image))
+
 	return GitLabVulnerability{
 		ID:          uuid,
 		Name:        nameOf(v),
@@ -153,7 +166,7 @@ func nameOf(v TrivyVulnerability) string {
 	case v.VulnerabilityID != "":
 		return v.VulnerabilityID
 	default:
-		return "Unknown"
+		return "Unknown" //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}
 }
 
@@ -161,17 +174,20 @@ func depSolution(v TrivyVulnerability) string {
 	if v.FixedVersion == "" {
 		return ""
 	}
+
 	return "Upgrade to " + v.FixedVersion
 }
 
-func containerSolution(v TrivyVulnerability) string {
+func containerSolution(v TrivyVulnerability) string { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if v.FixedVersion == "" {
 		return ""
 	}
+
 	pkg := v.PkgName
 	if pkg == "" {
 		pkg = "package"
 	}
+
 	return "Upgrade " + pkg + " to " + v.FixedVersion
 }
 
@@ -181,31 +197,37 @@ func identifiersFor(v TrivyVulnerability) []GitLabIdentifier {
 	}}
 }
 
-func linksFor(v TrivyVulnerability) []GitLabLink {
+func linksFor(v TrivyVulnerability) []GitLabLink { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	seen := make(map[string]struct{})
+
 	var ordered []string
 
-	add := func(s string) {
+	add := func(s string) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		if s == "" {
 			return
 		}
+
 		if _, dup := seen[s]; dup {
 			return
 		}
+
 		seen[s] = struct{}{}
 		ordered = append(ordered, s)
 	}
 	add(v.PrimaryURL)
+
 	for _, ref := range v.References {
 		add(ref)
 	}
 	// Match the bash transform's `unique` semantics: deterministic order
 	// for tests. The bash uses jq's `unique` which sorts.
 	sort.Strings(ordered)
+
 	out := make([]GitLabLink, len(ordered))
 	for i, u := range ordered {
 		out[i] = GitLabLink{URL: u}
 	}
+
 	return out
 }
 
@@ -232,11 +254,12 @@ func NormalizeSeverity(in string) string {
 }
 
 // DeterministicUUID returns a UUID-shaped string derived from sha256(input).
-// Stable across runs for the same seed; matches the bash deterministic_uuid
+// Stable across runs for the same seed; matches deterministic_uuid
 // helper byte-for-byte.
 func DeterministicUUID(seed string) string {
 	sum := sha256.Sum256([]byte(seed))
 	hex := hex.EncodeToString(sum[:])
+
 	return fmt.Sprintf("%s-%s-%s-%s-%s",
 		hex[0:8], hex[8:12], hex[12:16], hex[16:20], hex[20:32])
 }

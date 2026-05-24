@@ -18,11 +18,13 @@ func ValidateFlavor(flavor string) error {
 	if flavor == "" {
 		return nil
 	}
+
 	for _, raw := range strings.Split(flavor, "\n") {
 		entry := strings.TrimSpace(raw)
 		if entry == "" {
 			continue
 		}
+
 		switch entry {
 		case "latest=false":
 			// the only flavor we accept
@@ -33,6 +35,7 @@ func ValidateFlavor(flavor string) error {
 			if !ok {
 				return fmt.Errorf("unknown FLAVOR entry: %s: %w", entry, errs.ErrUsage)
 			}
+
 			switch key {
 			case "prefix", "suffix", "onlatest":
 				return fmt.Errorf("FLAVOR %s is not supported by this script: %w", key, errs.ErrUnsupported)
@@ -41,5 +44,6 @@ func ValidateFlavor(flavor string) error {
 			}
 		}
 	}
+
 	return nil
 }

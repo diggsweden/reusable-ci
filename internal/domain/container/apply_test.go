@@ -14,11 +14,13 @@ import (
 func TestApply_RawValue(t *testing.T) {
 	t.Parallel()
 	r := mustRule(t, "type=raw,value=main,enable=true")
+
 	got, ok, err := container.Apply(r, container.MetadataContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || got.Tag != "main" || got.Priority != 200 {
+
+	if !ok || got.Tag != "main" || got.Priority != 200 { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		t.Errorf("got=%+v ok=%v", got, ok)
 	}
 }
@@ -26,10 +28,12 @@ func TestApply_RawValue(t *testing.T) {
 func TestApply_DisabledRuleSkipped(t *testing.T) {
 	t.Parallel()
 	r := mustRule(t, "type=raw,value=main,enable=false")
+
 	_, ok, err := container.Apply(r, container.MetadataContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if ok {
 		t.Error("disabled rule should not fire")
 	}
@@ -37,7 +41,8 @@ func TestApply_DisabledRuleSkipped(t *testing.T) {
 
 func TestApply_RefEventBranch(t *testing.T) {
 	t.Parallel()
-	r := mustRule(t, "type=ref,event=branch")
+	r := mustRule(t, "type=ref,event=branch") //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+
 	got, ok, _ := container.Apply(r, container.MetadataContext{
 		RefName: "develop",
 		RefType: provider.RefTypeBranch,
@@ -47,7 +52,7 @@ func TestApply_RefEventBranch(t *testing.T) {
 	}
 	// On a tag ref: silent skip.
 	_, ok, _ = container.Apply(r, container.MetadataContext{
-		RefName: "v1.0.0",
+		RefName: "v1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		RefType: provider.RefTypeTag,
 	})
 	if ok {
@@ -58,8 +63,9 @@ func TestApply_RefEventBranch(t *testing.T) {
 func TestApply_RefEventTag(t *testing.T) {
 	t.Parallel()
 	r := mustRule(t, "type=ref,event=tag")
+
 	got, ok, _ := container.Apply(r, container.MetadataContext{
-		RefName: "v1.2.3",
+		RefName: "v1.2.3", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		RefType: provider.RefTypeTag,
 	})
 	if !ok || got.Tag != "v1.2.3" {
@@ -69,13 +75,15 @@ func TestApply_RefEventTag(t *testing.T) {
 
 func TestApply_RefEventPR(t *testing.T) {
 	t.Parallel()
-	r := mustRule(t, "type=ref,event=pr")
+	r := mustRule(t, "type=ref,event=pr") //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+
 	got, ok, _ := container.Apply(r, container.MetadataContext{
 		PRNumber: "42",
 	})
 	if !ok || got.Tag != "pr-42" {
 		t.Errorf("got=%+v ok=%v", got, ok)
 	}
+
 	_, ok, _ = container.Apply(r, container.MetadataContext{})
 	if ok {
 		t.Error("ref,event=pr should skip when PRNumber empty")
@@ -84,6 +92,7 @@ func TestApply_RefEventPR(t *testing.T) {
 
 func TestApply_SemverPatterns(t *testing.T) {
 	t.Parallel()
+
 	cases := []struct {
 		pattern string
 		ref     string
@@ -95,8 +104,9 @@ func TestApply_SemverPatterns(t *testing.T) {
 		// no leading v — still works.
 		{"{{version}}", "0.1.0", "0.1.0"},
 	}
-	for _, c := range cases {
+	for _, c := range cases { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		r := mustRule(t, "type=semver,pattern="+c.pattern)
+
 		got, ok, _ := container.Apply(r, container.MetadataContext{
 			RefName: c.ref,
 			RefType: provider.RefTypeTag,
@@ -111,6 +121,7 @@ func TestApply_SemverPatterns(t *testing.T) {
 func TestApply_SemverSilentOnNonTag(t *testing.T) {
 	t.Parallel()
 	r := mustRule(t, "type=semver,pattern={{version}}")
+
 	_, ok, _ := container.Apply(r, container.MetadataContext{
 		RefName: "main",
 		RefType: provider.RefTypeBranch,
@@ -123,6 +134,7 @@ func TestApply_SemverSilentOnNonTag(t *testing.T) {
 func TestApply_SemverUnsupportedPattern(t *testing.T) {
 	t.Parallel()
 	r := mustRule(t, "type=semver,pattern={{patch}}")
+
 	_, _, err := container.Apply(r, container.MetadataContext{
 		RefName: "v1.0.0",
 		RefType: provider.RefTypeTag,
@@ -135,6 +147,7 @@ func TestApply_SemverUnsupportedPattern(t *testing.T) {
 func TestApply_SHAWithBranchTemplate(t *testing.T) {
 	t.Parallel()
 	r := mustRule(t, "type=sha,prefix={{branch}}-")
+
 	got, ok, _ := container.Apply(r, container.MetadataContext{
 		BranchName: "feat-x",
 		ShortSHA:   "abcdef0",
@@ -147,6 +160,7 @@ func TestApply_SHAWithBranchTemplate(t *testing.T) {
 func TestApply_SHASkipWithoutShortSHA(t *testing.T) {
 	t.Parallel()
 	r := mustRule(t, "type=sha,prefix=sha-")
+
 	_, ok, _ := container.Apply(r, container.MetadataContext{})
 	if ok {
 		t.Error("sha rule should skip without ShortSHA")
@@ -155,10 +169,12 @@ func TestApply_SHASkipWithoutShortSHA(t *testing.T) {
 
 func TestFromEventContext_BranchFallsBackToRefName(t *testing.T) {
 	t.Parallel()
+
 	evt := &provider.EventContext{
 		RefName: "v1.0.0",
 		RefType: provider.RefTypeTag,
 	}
+
 	mc := container.FromEventContext(evt)
 	if mc.BranchName != "v1.0.0" {
 		t.Errorf("BranchName fallback = %q, want v1.0.0", mc.BranchName)
@@ -167,9 +183,11 @@ func TestFromEventContext_BranchFallsBackToRefName(t *testing.T) {
 
 func mustRule(t *testing.T, line string) container.Rule {
 	t.Helper()
+
 	rs, err := container.ParseRules(line)
 	if err != nil {
 		t.Fatalf("parse %q: %v", line, err)
 	}
+
 	return rs[0]
 }

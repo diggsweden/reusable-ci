@@ -14,12 +14,14 @@ import (
 
 func TestXcodeBuild_Signed(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
+
 	err := appsummary.XcodeBuild(context.Background(), sink, appsummary.XcodeBuildInput{
 		XcodeVersion: "16.4",
 		Scheme:       "App",
 		Signing:      true,
-		Version:      "1.2.3",
+		Version:      "1.2.3", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		BuildNumber:  "42",
 		IPAName:      "demo-1.2.3",
 		Now:          time.Date(2026, 5, 10, 14, 0, 0, 0, time.UTC),
@@ -27,6 +29,7 @@ func TestXcodeBuild_Signed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	got := sink.buf.String()
 	for _, want := range []string{
 		"## Xcode Build Summary 📱",
@@ -47,13 +50,15 @@ func TestXcodeBuild_Signed(t *testing.T) {
 
 func TestXcodeBuild_UnsignedFallsBackToArchive(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
 	if err := appsummary.XcodeBuild(context.Background(), sink, appsummary.XcodeBuildInput{
-		XcodeVersion: "16.4", Scheme: "App", Signing: false, IPAName: "demo",
+		XcodeVersion: "16.4", Scheme: "App", Signing: false, IPAName: "demo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Now: time.Date(2026, 5, 10, 14, 0, 0, 0, time.UTC),
 	}); err != nil {
 		t.Fatal(err)
 	}
+
 	if !strings.Contains(sink.buf.String(), "✓ Archive: `demo-archive`") {
 		t.Errorf("missing archive marker:\n%s", sink.buf.String())
 	}

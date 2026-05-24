@@ -1,0 +1,233 @@
+{
+  "version": 1,
+  "context": {
+    "project_type": "maven",
+    "branch": "feature/demo",
+    "release_sha": "abc1234",
+    "release_actor": "octocat",
+    "release_repository": "org/repo",
+    "working_directory": ".",
+    "java_version": "",
+    "node_version": "",
+    "rust_toolchain": "stable",
+    "registry": "ghcr.io",
+    "reusable_ci_binary_ref": "v3.0.0",
+    "npm_registry": "https://npm.pkg.github.com",
+    "package_scope": "@org"
+  },
+  "policy": {
+    "publish_npm": true,
+    "use_ci_token": true,
+    "publish_container": true,
+    "sboms": "build"
+  },
+  "has_containers": true,
+  "stages": {
+    "build": {
+      "version": 1,
+      "stage": "dev-build",
+      "targets": {
+        "maven": {
+          "runs": true,
+          "items": [
+            {
+              "name": "lib",
+              "project_type": "maven",
+              "working_directory": "services/lib",
+              "build_type": "library",
+              "publish_to": [
+                "maven-central"
+              ],
+              "sboms": "all",
+              "effective_sboms": [
+                "build",
+                "analyzed-artifact",
+                "analyzed-container"
+              ],
+              "require_authorization": true,
+              "build_artifact_name": "lib-build-artifacts",
+              "build_sbom_artifact_name": "lib-build-sbom",
+              "maven": {
+                "java_version": "25",
+                "settings_path": "settings.xml"
+              }
+            }
+          ]
+        },
+        "npm": {
+          "runs": true,
+          "items": [
+            {
+              "name": "web",
+              "project_type": "npm",
+              "working_directory": "apps/web",
+              "publish_to": [
+                "github-packages",
+                "npmjs"
+              ],
+              "sboms": "all",
+              "effective_sboms": [
+                "build",
+                "analyzed-artifact",
+                "analyzed-container"
+              ],
+              "build_artifact_name": "web-build-artifacts",
+              "build_sbom_artifact_name": "web-build-sbom",
+              "npm": {
+                "node_version": "24"
+              }
+            }
+          ]
+        },
+        "gradle": {
+          "runs": false,
+          "items": []
+        },
+        "gradle_android": {
+          "runs": false,
+          "items": []
+        },
+        "xcode_ios": {
+          "runs": false,
+          "items": []
+        },
+        "go": {
+          "runs": false,
+          "items": []
+        },
+        "cargo": {
+          "runs": false,
+          "items": []
+        }
+      }
+    },
+    "publish": {
+      "version": 1,
+      "stage": "dev-publish",
+      "inputs": {
+        "npm_working_directory": "apps/web",
+        "npm_build_artifact_name": "web-build-artifacts",
+        "go_sbom_working_directory": "cmd/api",
+        "go_sbom_artifact_name": "api",
+        "artifact_name": "lib"
+      },
+      "targets": {
+        "containers": {
+          "runs": true,
+          "items": [
+            {
+              "name": "api",
+              "from": [
+                "api"
+              ],
+              "artifact_types": [
+                "go"
+              ],
+              "container_file": "Containerfile",
+              "context": ".",
+              "platforms": "linux/amd64,linux/arm64",
+              "enable_analyzed_container_sbom": true,
+              "enable_slsa": true,
+              "enable_scan": true,
+              "build_args": {
+                "VERSION": "${VERSION}"
+              },
+              "build_args_string": "VERSION=${VERSION}",
+              "extract_binary_target": "export",
+              "extract_binary_names": [
+                "api"
+              ]
+            }
+          ]
+        },
+        "npm": {
+          "runs": true,
+          "items": [
+            {
+              "name": "web",
+              "project_type": "npm",
+              "working_directory": "apps/web",
+              "publish_to": [
+                "github-packages",
+                "npmjs"
+              ],
+              "sboms": "all",
+              "effective_sboms": [
+                "build",
+                "analyzed-artifact",
+                "analyzed-container"
+              ],
+              "build_artifact_name": "web-build-artifacts",
+              "build_sbom_artifact_name": "web-build-sbom",
+              "npm": {
+                "node_version": "24"
+              }
+            }
+          ]
+        },
+        "cargo_container_first": {
+          "runs": false,
+          "items": []
+        },
+        "go_container_first": {
+          "runs": true,
+          "items": [
+            {
+              "name": "api",
+              "project_type": "go",
+              "working_directory": "cmd/api",
+              "sboms": "all",
+              "effective_sboms": [
+                "build",
+                "analyzed-artifact",
+                "analyzed-container"
+              ],
+              "go_build_mode": "container-first",
+              "build_sbom_artifact_name": "api-go-build-sbom",
+              "go": {
+                "build_mode": "container-first"
+              }
+            }
+          ]
+        },
+        "go_artifact_first": {
+          "runs": false,
+          "items": []
+        },
+        "cargo_artifact_first": {
+          "runs": false,
+          "items": []
+        },
+        "sbom": {
+          "runs": true,
+          "items": [
+            "dev-sboms"
+          ]
+        }
+      }
+    }
+  },
+  "artifact_transfers": {
+    "version": 1,
+    "items": [
+      {
+        "kind": "build_sbom",
+        "name": "lib-build-sbom",
+        "path": "./release-artifacts/",
+        "required": false
+      },
+      {
+        "kind": "build_sbom",
+        "name": "web-build-sbom",
+        "path": "./release-artifacts/",
+        "required": false
+      },
+      {
+        "kind": "build_sbom",
+        "name": "api-go-build-sbom",
+        "path": "./release-artifacts/",
+        "required": false
+      }
+    ]
+  }
+}

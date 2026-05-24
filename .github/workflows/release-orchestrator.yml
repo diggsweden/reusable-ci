@@ -23,11 +23,13 @@
 #
 # Required Secrets (depending on configuration):
 #   GITHUB_TOKEN: Automatically provided for GitHub operations
-#   GPG_SECRET_KEY: For artifact signing (if signatures enabled)
-#   GPG_PASSPHRASE: For artifact signing (if signatures enabled)
+#   RELEASE_TOKEN: For version bump, tag move, and GitHub release creation
+#   RELEASE_GPG_PRIVATE_KEY: For release validation, version bump signing, and artifact signing
+#   RELEASE_GPG_PASSPHRASE: For release GPG key use
+#   RELEASE_GPG_PUBLIC_KEY: For tag/signature verification
 #   MAVEN_CENTRAL_USERNAME: For Maven Central publishing (when publish-to includes maven-central)
 #   MAVEN_CENTRAL_PASSWORD: For Maven Central publishing (when publish-to includes maven-central)
-#   NPM_TOKEN: For NPM registry publishing (npm packages)
+#   NPM_TOKEN: Reserved for future npmjs.org support; current NPM publishing uses GITHUB_TOKEN
 #   CODE_SCANNING_TOKEN: Optional — uploads scan results to Code Scanning
 #                      (requires code_scanning_alerts:write — GitHub App or fine-grained PAT)
 #
@@ -41,7 +43,7 @@
 #
 # v3 Design
 # - Removed single-artifact inline mode
-# - Only supports artifactsConfig file
+# - Only supports artifacts-config file
 # - Separate artifacts[] and containers[] sections
 # - Container configuration moved to containers[] section
 #
@@ -52,10 +54,11 @@ name: Orchestrate Release
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
-      # === REQUIRED: artifacts.yml FILE ===
+      # === artifacts.yml LOCATION ===
       artifacts-config:
-        description: "Path to artifacts config file (required, e.g., .github/artifacts.yml)"
-        required: true
+        description: "Path to the artifacts config file. Defaults to .reusable-ci/artifacts.yml. If the file is absent AND the repo has exactly one ecosystem manifest at root (pom.xml, package.json, Cargo.toml, go.mod), reusable-ci auto-derives the equivalent plan in-memory."
+        required: false
+        default: ".reusable-ci/artifacts.yml"
         type: string
       # === SHARED CONFIGURATION ===
       release-type:
@@ -103,12 +106,11 @@ on:
         required: false
         default: true
         type: boolean
-      release.checkauthorization:
-        description: "Check if user is authorized for non-SNAPSHOT releases"
+      release.requireallowlistedsigner:
+        description: "Require the tag signer's fingerprint to appear in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_fingerprints (GPG). Typically true for public libraries publishing to Maven Central."
         required: false
         default: false
         type: boolean
-        # Note: Typically set to true for public libraries publishing to Maven Central
       release.draft:
         description: "Create as draft release (default: false)"
         required: false
@@ -126,16 +128,140 @@ on:
         # - Gradle: CHANGELOG.md build.gradle settings.gradle
         # - Gradle Android: CHANGELOG.md build.gradle settings.gradle gradle.properties
         # - Xcode iOS: CHANGELOG.md project.pbxproj
-      scripts-ref:
-        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+      reusable-ci-binary-ref:
+        description: "reusable-ci ref/version passed to downstream plain-runner jobs (defaults to v3.0.0)"
         required: false
-        default: "main"
+        default: "v3.0.0"
         type: string
       runtime-image:
-        description: "reusable-ci runtime image. Pin to a digest or version tag; default tracks main."
+        description: "reusable-ci base runtime image for control-plane jobs. Optional override; default uses the matching v3.0.0 runtime image."
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
         type: string
+      runtime-image-full:
+        description: "reusable-ci full runtime image for SBOM/security-capable release jobs. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime:v3.0.0"
+        type: string
+      runtime-image-java:
+        description: "reusable-ci Java runtime image for Maven/Gradle jobs. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
+        type: string
+      runtime-image-node:
+        description: "reusable-ci Node runtime image for NPM jobs. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-node-24:v3.0.0"
+        type: string
+      runtime-image-rust:
+        description: "reusable-ci Rust runtime image for Cargo build + SBOM jobs (build-cargo.yml for artefact-first, sbom-cargo.yml for container-first). Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-rust-stable:v3.0.0"
+        type: string
+      runtime-image-go:
+        description: "reusable-ci Go runtime image for Go build/SBOM jobs. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-go-1.26:v3.0.0"
+        type: string
+      runtime-image-android:
+        description: "reusable-ci Android runtime image for Gradle Android jobs. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-android-35:v3.0.0"
+        type: string
+    # Top-level orchestrator: the canonical union of every secret any
+    # downstream stage may need. All `required: false` — callers
+    # using `secrets: inherit` (the common case for org-scoped
+    # secrets) continue to work without per-caller setup. The
+    # declaration exists for adopters outside the org and for
+    # `reusable-ci doctor`-style tooling that validates contracts.
+    secrets:
+      # Release-time signing + tag pushing
+      RELEASE_GPG_PRIVATE_KEY:
+        description: "Armored OpenPGP private key (sign.method=gpg path)"
+        required: false
+      RELEASE_GPG_PASSPHRASE:
+        description: "Passphrase for RELEASE_GPG_PRIVATE_KEY"
+        required: false
+      RELEASE_GPG_PUBLIC_KEY:
+        description: "Public half of RELEASE_GPG_PRIVATE_KEY (validation only)"
+        required: false
+      RELEASE_TOKEN:
+        description: "Token with contents:write for release creation + version-bump push"
+        required: false
+      # Maven Central publishing
+      MAVEN_CENTRAL_USERNAME:
+        description: "Sonatype OSSRH portal username"
+        required: false
+      MAVEN_CENTRAL_PASSWORD:
+        description: "Sonatype OSSRH portal token"
+        required: false
+      # npm publishing
+      NPM_TOKEN:
+        description: "npm registry publish token"
+        required: false
+      # Container security scanning (SARIF upload)
+      CODE_SCANNING_TOKEN:
+        description: "Token with security-events:write for SARIF upload"
+        required: false
+      # Android signing + secrets injection
+      ANDROID_KEYSTORE:
+        description: "Base64-encoded Android signing keystore (.jks/.keystore)"
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        description: "Password for ANDROID_KEYSTORE"
+        required: false
+      ANDROID_KEY_ALIAS:
+        description: "Alias of the signing key inside ANDROID_KEYSTORE"
+        required: false
+      ANDROID_KEY_PASSWORD:
+        description: "Password for the key referenced by ANDROID_KEY_ALIAS"
+        required: false
+      SECRETS_PROPERTIES_BASE64:
+        description: "Base64-encoded Android secrets.properties"
+        required: false
+      # Google Play publishing
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:
+        description: "Google Play Console service-account JSON"
+        required: false
+      # iOS signing + provisioning
+      IOS_SIGNING_CERTIFICATE_BASE64:
+        description: "Base64-encoded .p12 code-signing certificate"
+        required: false
+      IOS_SIGNING_CERTIFICATE_PASSPHRASE:
+        description: "Passphrase for IOS_SIGNING_CERTIFICATE_BASE64"
+        required: false
+      PROVISIONING_PROFILE_BASE64:
+        description: "Base64-encoded provisioning profile (.mobileprovision)"
+        required: false
+      KEYCHAIN_PASSWORD:
+        description: "Ephemeral macOS keychain password generated for the build"
+        required: false
+      XCCONFIG_BASE64:
+        description: "Base64-encoded xcconfig file"
+        required: false
+      # App Store Connect publishing
+      APP_STORE_CONNECT_API_KEY_ID:
+        description: "App Store Connect API key ID"
+        required: false
+      APP_STORE_CONNECT_ISSUER_ID:
+        description: "App Store Connect API issuer ID"
+        required: false
+      APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64:
+        description: "Base64-encoded App Store Connect API .p8 private key"
+        required: false
+      # Container build-time secret envelope
+      REUSABLE_CI_BUILD_SECRETS_JSON:
+        description: |
+          JSON envelope of {name: value} for every name listed in
+          containers[].build-secrets across the repo's artifacts.yml.
+          Stored as a single pre-packed repo/org secret by the
+          adopter so the value stays inside the secrets channel
+          end-to-end. Forwarded to publish-container.yml where it
+          is unpacked into mode-0600 tmpfiles and mounted via
+          BuildKit --mount=type=secret — never recorded in SLSA
+          provenance, step inputs, or workflow logs. Recipe:
+          docs/artifacts-reference.md `build-secrets`.
+        required: false
 concurrency:
   group: release-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: false # Queue releases, don't cancel partial releases
@@ -145,57 +271,34 @@ jobs:
   # ===== Stage 0: Configuration And Policy =====
   parse-config:
     name: Setup
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     outputs:
-      # Parsed release inputs.
-      artifacts: ${{ steps.parse.outputs.artifacts }}
-      containers: ${{ steps.parse.outputs.containers }}
+      # Typed setup contracts used by the next escape-bash stages.
+      config-plan-json: ${{ steps.parse.outputs.config-plan-json }}
+      release-plan-json: ${{ steps.plan.outputs.release-plan-json }}
+      prepare-stage-plan-json: ${{ steps.plan.outputs.prepare-stage-plan-json }}
+      build-stage-plan-json: ${{ steps.plan.outputs.build-stage-plan-json }}
+      publish-stage-plan-json: ${{ steps.plan.outputs.publish-stage-plan-json }}
+      artifact-transfer-plan-json: ${{ steps.plan.outputs.artifact-transfer-plan-json }}
 
-      # Aggregate authorization flag — true iff any artifact opts into
-      # the release-authorization gate. Replaces the per-artifact
-      # 'first-require-authorization' assumption.
-      any-require-authorization: ${{ steps.parse.outputs.any-require-authorization }}
-
-      # Ecosystem artifact groups consumed by build / publish stages.
-      maven-artifacts: ${{ steps.parse.outputs.maven-artifacts }}
-      npm-artifacts: ${{ steps.parse.outputs.npm-artifacts }}
-      gradle-artifacts: ${{ steps.parse.outputs.gradle-artifacts }}
-      gradleandroid-artifacts: ${{ steps.parse.outputs.gradleandroid-artifacts }}
-      xcodeios-artifacts: ${{ steps.parse.outputs.xcodeios-artifacts }}
-      cargo-artifacts: ${{ steps.parse.outputs.cargo-artifacts }}
-
-      # Publish-target artifact groups consumed by the publish stage.
-      mavencentral-artifacts: ${{ steps.parse.outputs.mavencentral-artifacts }}
-      githubpackages-artifacts: ${{ steps.parse.outputs.githubpackages-artifacts }}
-      googleplay-artifacts: ${{ steps.parse.outputs.googleplay-artifacts }}
-
-      # Parsed SBOM settings.
-      pipeline-sboms: ${{ steps.parse.outputs.pipeline-sboms }}
-
-      # Flow-level policy envelope; stages take per-artifact context
-      # directly from the artifacts array.
-      release-policy-json: ${{ steps.interface.outputs.release-policy-json }}
-
-      # Normalized release-policy decisions retained for stage-internal routing.
-      should-make-latest: ${{ steps.plan.outputs.should-make-latest }}
-      has-containers: ${{ steps.plan.outputs.has-containers }}
-      effective-sboms: ${{ steps.plan.outputs.effective-sboms }}
-      should-sign-artifacts: ${{ steps.plan.outputs.should-sign-artifacts }}
-      should-create-release: ${{ steps.plan.outputs.should-create-release }}
-      should-check-authorization: ${{ steps.plan.outputs.should-check-authorization }}
-      should-run-version-bump: ${{ steps.plan.outputs.should-run-version-bump }}
-      should-create-draft-release: ${{ steps.plan.outputs.should-create-draft-release }}
-
-      # Commit SHA for scripts-ref, resolved against the remote before
-      # any tag movement. Still-on-script-checkout downstream stages
-      # (build-*, publish-*, etc.) use this so they pin the same commit
-      # the runtime image was built from, surviving version-bump tag moves.
-      scripts-ref: ${{ steps.resolve-ref.outputs.sha }}
+      # Commit SHA for reusable-ci-binary-ref, resolved against the remote
+      # before any tag movement. Downstream plain-runner jobs use this so
+      # they install the same reusable-ci commit the runtime image was built
+      # from, surviving version-bump tag moves.
+      reusable-ci-binary-ref: ${{ steps.resolve-ref.outputs.sha }}
     steps:
+      # Defense-in-depth gate at the top of the release pipeline:
+      # refuse triggers that would attach signing/package/API secrets
+      # to PR-HEAD code. Every downstream job depends on parse-config
+      # via `needs:`, so refusal here aborts the whole release.
+      # reusable-ci is pre-baked in the runtime image; no install
+      # step needed.
+      - name: Refuse PR-context trigger (publish/release secrets in scope)
+        run: reusable-ci validate event-context
       - name: Checkout caller repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -203,67 +306,63 @@ jobs:
       - name: Resolve reusable-ci ref to commit SHA
         id: resolve-ref
         env:
-          REF: ${{ inputs['scripts-ref'] }}
-        run: |
-          # ls-remote against the remote — no full checkout needed. The SHA
-          # is captured before any tag movement so downstream stages pin a
-          # stable commit even if version-bump rewrites the tag.
-          sha="$(git ls-remote https://github.com/diggsweden/reusable-ci "$REF" | awk 'NR==1 {print $1}')"
-          if [[ -z "$sha" ]]; then
-            sha="$REF"  # Already a SHA, or a ref the remote doesn't know
-          fi
-          printf "sha=%s\n" "$sha" >>"$GITHUB_OUTPUT"
+          REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: reusable-ci platform resolve-ref
       - name: Parse artifacts.yml
         id: parse
         run: reusable-ci config parse-artifacts
         env:
           ARTIFACTS_CONFIG: ${{ inputs['artifacts-config'] }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
-      - name: Normalize release-policy decisions
+      - name: Plan release
         id: plan
         env:
+          CONFIG_PLAN_JSON: ${{ steps.parse.outputs.config-plan-json }}
+
           # Explicit workflow-call inputs.
+          BRANCH: ${{ inputs.branch }}
+          FILE_PATTERN: ${{ inputs['file-pattern'] }}
           RELEASE_TYPE: ${{ inputs['release-type'] }}
           RELEASE_PUBLISHER: ${{ inputs['release-publisher'] }}
-          RELEASE_CHECK_AUTHORIZATION: ${{ inputs['release.checkauthorization'] }}
+          RELEASE_REQUIRE_ALLOWLISTED_SIGNER: ${{ inputs['release.requireallowlistedsigner'] }}
           RELEASE_DRAFT: ${{ inputs['release.draft'] }}
           RELEASE_SBOMS: ${{ inputs['release.sboms'] }}
           RELEASE_SIGN_ARTIFACTS: ${{ inputs['release.signartifacts'] }}
           CHANGELOG_CREATOR: ${{ inputs['changelog-creator'] }}
           CHANGELOG_SKIP_VERSION_BUMP: ${{ inputs['changelog.skipversionbump'] }}
 
-          # Parsed config inputs needed for policy normalization.
+          # Provider context.
           GITHUB_REF_NAME: ${{ github.ref_name }}
-          PIPELINE_SBOMS: ${{ steps.parse.outputs.pipeline-sboms }}
-          ANY_REQUIRE_AUTHORIZATION: ${{ steps.parse.outputs.any-require-authorization }}
-          CONTAINERS: ${{ steps.parse.outputs.containers }}
-        run: reusable-ci plan resolve-release-plan
-      - name: Compose release control-plane interface
-        id: interface
-        env:
-          SHOULD_SIGN_ARTIFACTS: ${{ steps.plan.outputs.should-sign-artifacts }}
-          SHOULD_CHECK_AUTHORIZATION: ${{ steps.plan.outputs.should-check-authorization }}
-          SHOULD_RUN_VERSION_BUMP: ${{ steps.plan.outputs.should-run-version-bump }}
-          SHOULD_CREATE_RELEASE: ${{ steps.plan.outputs.should-create-release }}
-          SHOULD_CREATE_DRAFT_RELEASE: ${{ steps.plan.outputs.should-create-draft-release }}
-          EFFECTIVE_SBOMS: ${{ steps.plan.outputs.effective-sboms }}
-          SHOULD_MAKE_LATEST: ${{ steps.plan.outputs.should-make-latest }}
-          HAS_CONTAINERS: ${{ steps.plan.outputs.has-containers }}
-        run: reusable-ci plan write-release-interface
+        run: reusable-ci plan release
   # ===== Stage 1: Validation =====
   validate-prerequisites:
     name: Validate Prerequisites
     needs: [parse-config]
-    secrets: inherit
+    secrets:
+      MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+      MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+      RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+      RELEASE_GPG_PUBLIC_KEY: ${{ secrets.RELEASE_GPG_PUBLIC_KEY }}
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
     uses: ./.github/workflows/validate-release-prerequisites.yml
     with:
-      artifacts: ${{ needs.parse-config.outputs.artifacts }}
-      cargo-artifacts: ${{ needs.parse-config.outputs.cargo-artifacts }}
-      mavencentral-artifacts: ${{ needs.parse-config.outputs.mavencentral-artifacts }}
+      config-plan-json: ${{ needs.parse-config.outputs.config-plan-json }}
+      has-cargo-publish-target: ${{ fromJson(needs.parse-config.outputs['publish-stage-plan-json']).targets.cargo_container_first.runs || fromJson(needs.parse-config.outputs['build-stage-plan-json']).targets.cargo.runs }}
+      publish-stage-plan-json: ${{ needs.parse-config.outputs.publish-stage-plan-json }}
+      has-maven-central-publish-target: ${{ fromJson(needs.parse-config.outputs['publish-stage-plan-json']).targets.maven_central.runs }}
+      # Enable the JVM reproducibility validator when any Maven/Gradle/
+      # Gradle-Android artefact is planned in the build stage.
+      has-jvm-artefact: ${{ fromJson(needs.parse-config.outputs['build-stage-plan-json']).targets.maven.runs || fromJson(needs.parse-config.outputs['build-stage-plan-json']).targets.gradle.runs || fromJson(needs.parse-config.outputs['build-stage-plan-json']).targets.gradle_android.runs }}
       container-registry: ghcr.io
-      sign-artifacts: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).sign_artifacts }}
-      check-authorization: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).check_authorization }}
+      sign-artifacts: ${{ fromJson(needs.parse-config.outputs['release-plan-json']).policy.sign_artifacts }}
+      require-allowlisted-signer: ${{ fromJson(needs.parse-config.outputs['release-plan-json']).policy.require_allowlisted_signer }}
       branch: ${{ inputs.branch }}
+      # Cargo prerequisite validation checks Cargo.lock and `cargo --version`,
+      # so use the Rust runtime whenever Cargo artifacts (either mode) are present.
+      runtime-image: ${{ (fromJson(needs.parse-config.outputs['publish-stage-plan-json']).targets.cargo_container_first.runs || fromJson(needs.parse-config.outputs['build-stage-plan-json']).targets.cargo.runs) && inputs['runtime-image-rust'] || inputs['runtime-image'] }}
   # ===== Stage 2: Release Preparation =====
   # Release preparation now lives below this control-plane stage call.
   execute-prepare-stage:
@@ -273,13 +372,18 @@ jobs:
     permissions:
       contents: write
       packages: read
-    secrets: inherit
+    secrets:
+      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+      RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
     uses: ./.github/workflows/release-prepare-stage.yml
     with:
       branch: ${{ inputs.branch }}
-      artifacts: ${{ needs.parse-config.outputs.artifacts }}
-      should-run-version-bump: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).run_version_bump }}
-      file-pattern: ${{ inputs['file-pattern'] }}
+      prepare-stage-plan-json: ${{ needs.parse-config.outputs.prepare-stage-plan-json }}
+      runtime-image: ${{ inputs['runtime-image'] }}
+      runtime-image-java: ${{ inputs['runtime-image-java'] }}
+      runtime-image-node: ${{ inputs['runtime-image-node'] }}
+      runtime-image-rust: ${{ inputs['runtime-image-rust'] }}
   # ===== Stage 3: Build =====
   # Build fanout now lives below this control-plane stage call.
   execute-build-stage:
@@ -288,22 +392,35 @@ jobs:
     if: ${{ !failure() && !cancelled() }}
     permissions:
       contents: read
-    secrets: inherit
+    secrets:
+      ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      SECRETS_PROPERTIES_BASE64: ${{ secrets.SECRETS_PROPERTIES_BASE64 }}
+      IOS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.IOS_SIGNING_CERTIFICATE_BASE64 }}
+      IOS_SIGNING_CERTIFICATE_PASSPHRASE: ${{ secrets.IOS_SIGNING_CERTIFICATE_PASSPHRASE }}
+      PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      XCCONFIG_BASE64: ${{ secrets.XCCONFIG_BASE64 }}
     uses: ./.github/workflows/release-build-stage.yml
     with:
       branch: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
-      scripts-ref: ${{ needs.parse-config.outputs.scripts-ref }}
-      maven-artifacts: ${{ needs.parse-config.outputs.maven-artifacts }}
-      npm-artifacts: ${{ needs.parse-config.outputs.npm-artifacts }}
-      gradle-artifacts: ${{ needs.parse-config.outputs.gradle-artifacts }}
-      gradleandroid-artifacts: ${{ needs.parse-config.outputs.gradleandroid-artifacts }}
-      xcodeios-artifacts: ${{ needs.parse-config.outputs.xcodeios-artifacts }}
+      build-stage-plan-json: ${{ needs.parse-config.outputs.build-stage-plan-json }}
+      reusable-ci-binary-ref: ${{ needs.parse-config.outputs.reusable-ci-binary-ref }}
+      runtime-image: ${{ inputs['runtime-image'] }}
+      runtime-image-java: ${{ inputs['runtime-image-java'] }}
+      runtime-image-node: ${{ inputs['runtime-image-node'] }}
+      runtime-image-go: ${{ inputs['runtime-image-go'] }}
+      runtime-image-android: ${{ inputs['runtime-image-android'] }}
+      runtime-image-rust: ${{ inputs['runtime-image-rust'] }}
   # ===== Stage 4: Publish =====
   # Publish fanout now lives below this control-plane stage call.
-  # cargo-artifacts is wired here (not in build-stage) because cargo is
-  # container-first: its lockfile-derived SBOM and the actual container
-  # build (which is where cargo compiles) both belong with the publish-
-  # stage's sibling jobs, not before them.
+  # Container-first cargo publishes here: lockfile-derived SBOM and the
+  # actual container build (which is where cargo compiles) belong with
+  # publish-stage's sibling jobs. Artefact-first cargo has already run
+  # in execute-build-stage above and lands in publish via the same
+  # release-artifact transfer plumbing the Go path uses.
   execute-publish-stage:
     name: Publish
     needs: [parse-config, execute-prepare-stage, execute-build-stage]
@@ -314,42 +431,61 @@ jobs:
       id-token: write
       attestations: write
       actions: read
-    secrets: inherit
+    secrets:
+      MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+      MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+      RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 }}
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
+      REUSABLE_CI_BUILD_SECRETS_JSON: ${{ secrets.REUSABLE_CI_BUILD_SECRETS_JSON }}
     uses: ./.github/workflows/release-publish-stage.yml
     with:
       branch: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
-      scripts-ref: ${{ needs.parse-config.outputs.scripts-ref }}
-      xcodeios-artifacts: ${{ needs.parse-config.outputs.xcodeios-artifacts }}
-      githubpackages-artifacts: ${{ needs.parse-config.outputs.githubpackages-artifacts }}
-      mavencentral-artifacts: ${{ needs.parse-config.outputs.mavencentral-artifacts }}
-      googleplay-artifacts: ${{ needs.parse-config.outputs.googleplay-artifacts }}
-      containers: ${{ needs.parse-config.outputs.containers }}
-      cargo-artifacts: ${{ needs.parse-config.outputs.cargo-artifacts }}
+      publish-stage-plan-json: ${{ needs.parse-config.outputs.publish-stage-plan-json }}
+      reusable-ci-binary-ref: ${{ needs.parse-config.outputs.reusable-ci-binary-ref }}
+      runtime-image: ${{ inputs['runtime-image'] }}
+      runtime-image-java: ${{ inputs['runtime-image-java'] }}
+      runtime-image-rust: ${{ inputs['runtime-image-rust'] }}
+      runtime-image-go: ${{ inputs['runtime-image-go'] }}
       build-result-json: ${{ needs.execute-build-stage.outputs.result-json }}
+      # Carry the config-plan + sign-artifacts policy through so the
+      # publish stage can dispatch container image signing per
+      # sign.method (sigstore | kms; gpg is skipped).
+      config-plan-json: ${{ needs.parse-config.outputs.config-plan-json }}
+      sign-artifacts: ${{ fromJson(needs.parse-config.outputs['release-plan-json']).policy.sign_artifacts }}
   # ===== Stage 5: Release =====
   # Release creation stays top-level because it is the public end of the pipeline.
   create-release:
     name: Create GitHub Release
     needs: [parse-config, execute-prepare-stage, execute-publish-stage]
     # Run even if previous jobs were skipped but at least one succeeded
-    if: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).create_release }}
+    if: ${{ fromJson(needs.parse-config.outputs['release-plan-json']).policy.create_release }}
     permissions:
+      actions: read
       contents: write
       packages: read
       id-token: write
-    secrets: inherit
+    secrets:
+      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+      RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
     uses: ./.github/workflows/release-create-github.yml
     with:
       release-name: "${{ github.ref_name }}"
       checkout-ref: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
       attach-artifacts: ${{ inputs['release.attachartifacts'] }}
-      sboms: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).sboms }}
-      sign-artifacts: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).sign_artifacts }}
-      draft: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).create_draft_release }}
-      artifacts: ${{ needs.parse-config.outputs.artifacts }}
+      sboms: ${{ fromJson(needs.parse-config.outputs['release-plan-json']).policy.sboms }}
+      sign-artifacts: ${{ fromJson(needs.parse-config.outputs['release-plan-json']).policy.sign_artifacts }}
+      draft: ${{ fromJson(needs.parse-config.outputs['release-plan-json']).policy.create_draft_release }}
+      config-plan-json: ${{ needs.parse-config.outputs.config-plan-json }}
+      artifact-transfer-plan-json: ${{ needs.parse-config.outputs.artifact-transfer-plan-json }}
       changelog-config: ${{ inputs['changelog.config'] }}
-      make-latest: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).make_latest }}
-      has-containers: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).has_containers }}
+      make-latest: ${{ fromJson(needs.parse-config.outputs['release-plan-json']).policy.make_latest }}
+      runtime-image: ${{ inputs['runtime-image-full'] }}
   # ===== Stage 6: Summary =====
   release-summary:
     name: Release Summary
@@ -360,7 +496,7 @@ jobs:
       - execute-publish-stage
       - create-release
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ${{ inputs['runtime-image'] }}
     permissions:
@@ -386,4 +522,4 @@ jobs:
 
           # Release-stage result.
           CREATE_RELEASE_RESULT: ${{ needs.create-release.result }}
-        run: reusable-ci summary release
+        run: reusable-ci report release

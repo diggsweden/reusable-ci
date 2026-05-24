@@ -54,6 +54,7 @@ func (r *TrivyReport) OSDescription() string {
 	if r == nil || r.Metadata == nil || r.Metadata.OS == nil {
 		return ""
 	}
+
 	os := r.Metadata.OS
 	switch {
 	case os.Family != "" && os.Name != "":

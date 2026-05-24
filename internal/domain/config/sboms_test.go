@@ -23,7 +23,7 @@ func TestExpandSBOMs(t *testing.T) {
 		{name: "all expands to all three layers", in: "all", want: []config.SBOMLayer{
 			config.SBOMLayerBuild, config.SBOMLayerAnalyzedArtifact, config.SBOMLayerAnalyzedContainer,
 		}},
-		{name: "none expands to empty", in: "none", want: []config.SBOMLayer{}},
+		{name: "none expands to empty", in: "none", want: []config.SBOMLayer{}}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{name: "single layer build", in: "build", want: []config.SBOMLayer{config.SBOMLayerBuild}},
 		{name: "single analyzed-container", in: "analyzed-container", want: []config.SBOMLayer{config.SBOMLayerAnalyzedContainer}},
 		{name: "comma list", in: "build,analyzed-artifact", want: []config.SBOMLayer{
@@ -37,7 +37,7 @@ func TestExpandSBOMs(t *testing.T) {
 			config.SBOMLayerBuild, config.SBOMLayerAnalyzedArtifact,
 		}},
 		{name: "empty value rejected", in: "", wantErr: "value required"},
-		{name: "leading comma rejected", in: ",build", wantErr: "empty token"},
+		{name: "leading comma rejected", in: ",build", wantErr: "empty token"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{name: "trailing comma rejected", in: "build,", wantErr: "empty token"},
 		{name: "duplicate comma rejected", in: "build,,analyzed-artifact", wantErr: "empty token"},
 		{name: "all with extra rejected", in: "all,build", wantErr: "shortcut and cannot be combined"},
@@ -46,19 +46,22 @@ func TestExpandSBOMs(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			got, err := config.ExpandSBOMs(tc.in)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Errorf("err = %v, want substring %q", err, tc.wantErr)
 				}
+
 				return
 			}
+
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
+
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("got %v, want %v", got, tc.want)
 			}
@@ -92,9 +95,9 @@ func TestPipelineSBOMs(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			if got := config.PipelineSBOMs(tc.arts); got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}

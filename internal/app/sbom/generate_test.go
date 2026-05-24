@@ -37,16 +37,19 @@ func (f *fakeSyft) Generate(_ context.Context, target string, outputs map[string
 	for k, v := range outputs {
 		recorded[k] = v
 	}
+
 	f.calls = append(f.calls, syftCall{target: target, outputs: recorded})
 	if f.err != nil {
 		return f.err
 	}
+
 	for format, outputFile := range outputs {
 		body := []byte(`{"target":"` + target + `","format":"` + format + `"}`)
-		if err := os.WriteFile(outputFile, body, 0o644); err != nil {
+		if err := os.WriteFile(outputFile, body, 0o644); err != nil { //nolint:gosec // test fixture
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -56,12 +59,14 @@ type fakeMaven struct {
 
 func (f *fakeMaven) EvalExpression(_ context.Context, expr string) (string, error) {
 	if f.answers == nil {
-		return "", errors.New("no answers configured")
+		return "", errors.New("no answers configured") //nolint:err113 // test mock error
 	}
+
 	v, ok := f.answers[expr]
 	if !ok {
-		return "", errors.New("unknown expr")
+		return "", errors.New("unknown expr") //nolint:err113 // test mock error
 	}
+
 	return v, nil
 }
 
@@ -72,10 +77,12 @@ type fakeGit struct {
 func (g *fakeGit) Run(_ context.Context, args ...string) (string, error) {
 	if len(args) >= 2 && args[0] == "rev-parse" && args[1] == "--short" {
 		if g.sha == "" {
-			return "", errors.New("not a git repo")
+			return "", errors.New("not a git repo") //nolint:err113 // test mock error
 		}
+
 		return g.sha, nil
 	}
+
 	return "", nil
 }
 
@@ -86,20 +93,22 @@ func TestGenerate_NPM_BuildLayer_HappyPath(t *testing.T) {
 	fsys.WriteFile("bom.json", []byte(`{"bomFormat":"CycloneDX"}`))
 	fsys.Chdir()
 
-	var stdout bytes.Buffer
-	err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{sha: "abc1234"}, &stdout, io.Discard, appsbom.GenerateInput{
-		Layers: "build",
+	var out bytes.Buffer
+
+	err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{sha: "abc1234"}, &out, io.Discard, appsbom.GenerateInput{ //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		Layers: "build", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	})
 	if err != nil {
-		t.Fatalf("Generate: %v\nstdout: %s", err, stdout.String())
+		t.Fatalf("Generate: %v\nstdout: %s", err, out.String())
 	}
 
 	wantFile := "demo-1.2.3-abc1234-build-sbom.cyclonedx.json"
 	if _, err := os.Stat(fsys.Path(wantFile)); err != nil {
 		t.Errorf("expected %s, got: %v", wantFile, err)
 	}
-	if !strings.Contains(stdout.String(), "✅ "+wantFile) {
-		t.Errorf("missing success line:\n%s", stdout.String())
+
+	if !strings.Contains(out.String(), "✅ "+wantFile) {
+		t.Errorf("missing success line:\n%s", out.String())
 	}
 }
 
@@ -111,8 +120,9 @@ func TestGenerate_NPM_AnalyzedArtifact_TGZ(t *testing.T) {
 	fsys.Chdir()
 
 	syft := &fakeSyft{}
+
 	err := appsbom.Generate(context.Background(), syft, nil, &fakeGit{}, io.Discard, io.Discard, appsbom.GenerateInput{
-		Layers: "analyzed-artifact",
+		Layers: "analyzed-artifact", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -121,6 +131,7 @@ func TestGenerate_NPM_AnalyzedArtifact_TGZ(t *testing.T) {
 	if len(syft.calls) != 1 {
 		t.Errorf("expected 1 syft call, got %d: %+v", len(syft.calls), syft.calls)
 	}
+
 	if got := len(syft.calls[0].outputs); got != 2 {
 		t.Errorf("expected 2 output formats in the single call, got %d: %+v", got, syft.calls[0].outputs)
 	}
@@ -129,6 +140,7 @@ func TestGenerate_NPM_AnalyzedArtifact_TGZ(t *testing.T) {
 	if _, err := os.Stat(fsys.Path(want)); err != nil {
 		t.Errorf("expected %s, got: %v", want, err)
 	}
+
 	if _, err := os.Stat(fsys.Path("demo-1.2.3-sboms.zip")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("expected no default zip archive, got err=%v", err)
 	}
@@ -136,10 +148,41 @@ func TestGenerate_NPM_AnalyzedArtifact_TGZ(t *testing.T) {
 
 func TestGenerate_GoArtifactLayer_ScansExecutableFromReleaseArtifacts(t *testing.T) {
 	fsys := testfs.NewReal(t)
+
 	bin := fsys.WriteFile(filepath.Join("release-artifacts", "demo"), []byte("binary"))
-	if err := os.Chmod(bin, 0o755); err != nil {
+	if err := os.Chmod(bin, 0o755); err != nil { //nolint:gosec // test fixture
 		t.Fatal(err)
 	}
+
+	fsys.Chdir()
+
+	syft := &fakeSyft{}
+	if err := appsbom.Generate(context.Background(), syft, nil, &fakeGit{}, io.Discard, io.Discard, appsbom.GenerateInput{
+		ProjectType: "go",
+		Name:        "demo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		Version:     "1.2.3", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		Layers:      "analyzed-artifact",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(syft.calls) != 1 || syft.calls[0].target != filepath.Join("release-artifacts", "demo") {
+		t.Fatalf("syft calls = %+v", syft.calls)
+	}
+
+	for _, want := range []string{
+		"demo-analyzed-binary-sbom.spdx.json",
+		"demo-analyzed-binary-sbom.cyclonedx.json",
+	} {
+		if _, err := os.Stat(fsys.Path(want)); err != nil {
+			t.Errorf("missing %s: %v", want, err)
+		}
+	}
+}
+
+func TestGenerate_GoArtifactLayer_ScansDownloadedArtifactWithoutExecutableBit(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile(filepath.Join("release-artifacts", "linux-amd64", "demo-linux-amd64"), []byte("binary"))
 	fsys.Chdir()
 
 	syft := &fakeSyft{}
@@ -151,28 +194,68 @@ func TestGenerate_GoArtifactLayer_ScansExecutableFromReleaseArtifacts(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(syft.calls) != 1 || syft.calls[0].target != filepath.Join("release-artifacts", "demo") {
+
+	if len(syft.calls) != 1 || syft.calls[0].target != filepath.Join("release-artifacts", "linux-amd64", "demo-linux-amd64") {
 		t.Fatalf("syft calls = %+v", syft.calls)
 	}
-	for _, want := range []string{
-		"demo-analyzed-binary-sbom.spdx.json",
-		"demo-analyzed-binary-sbom.cyclonedx.json",
-	} {
-		if _, err := os.Stat(fsys.Path(want)); err != nil {
-			t.Errorf("missing %s: %v", want, err)
-		}
+}
+
+func TestGenerate_GoArtifactLayer_ScansExtractedBinaryWithoutExecutableBit(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile(filepath.Join("release-artifacts", "binaries", "demo-binaries-amd64", "demo-linux-amd64"), []byte("binary"))
+	fsys.Chdir()
+
+	syft := &fakeSyft{}
+	if err := appsbom.Generate(context.Background(), syft, nil, &fakeGit{}, io.Discard, io.Discard, appsbom.GenerateInput{
+		ProjectType: "go",
+		Name:        "demo",
+		Version:     "1.2.3",
+		Layers:      "analyzed-artifact",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(syft.calls) != 1 || syft.calls[0].target != filepath.Join("release-artifacts", "binaries", "demo-binaries-amd64", "demo-linux-amd64") {
+		t.Fatalf("syft calls = %+v", syft.calls)
+	}
+}
+
+func TestGenerate_GoBuildLayer_PrefersNamedBOM(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile(filepath.Join("release-artifacts", "aaa", "bom.json"), []byte(`{"name":"wrong"}`))
+	fsys.WriteFile(filepath.Join("release-artifacts", "demo", "bom.json"), []byte(`{"name":"demo"}`))
+	fsys.Chdir()
+
+	if err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{}, io.Discard, io.Discard, appsbom.GenerateInput{
+		ProjectType: "go",
+		Name:        "demo",
+		Version:     "1.2.3",
+		Layers:      "build",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := os.ReadFile(fsys.Path("demo-1.2.3-build-sbom.cyclonedx.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(body), `"name":"demo"`) {
+		t.Fatalf("selected wrong Go BOM: %s", string(body))
 	}
 }
 
 func TestGenerate_CargoArtifactLayer_FallsBackToTargetReleaseAndSkipsDebugInfo(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	bin := fsys.WriteFile(filepath.Join("target", "release", "demo"), []byte("binary"))
+
 	debugInfo := fsys.WriteFile(filepath.Join("target", "release", "demo.d"), []byte("debug info"))
 	for _, path := range []string{bin, debugInfo} {
-		if err := os.Chmod(path, 0o755); err != nil {
+		if err := os.Chmod(path, 0o755); err != nil { //nolint:gosec // test fixture
 			t.Fatal(err)
 		}
 	}
+
 	fsys.Chdir()
 
 	syft := &fakeSyft{}
@@ -184,6 +267,7 @@ func TestGenerate_CargoArtifactLayer_FallsBackToTargetReleaseAndSkipsDebugInfo(t
 	}); err != nil {
 		t.Fatal(err)
 	}
+
 	if len(syft.calls) != 1 || syft.calls[0].target != filepath.Join("target", "release", "demo") {
 		t.Fatalf("syft calls = %+v", syft.calls)
 	}
@@ -205,6 +289,7 @@ func TestGenerate_GradleArtifactLayer_FiltersClassifierJars(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
 	if len(syft.calls) != 1 || syft.calls[0].target != filepath.Join("build", "libs", "demo-1.2.3.jar") {
 		t.Fatalf("syft calls = %+v", syft.calls)
 	}
@@ -225,9 +310,11 @@ func TestGenerate_PythonArtifactLayer_TrimsWheelAndSdistNames(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
 	if len(syft.calls) != 2 {
 		t.Fatalf("syft calls = %+v", syft.calls)
 	}
+
 	for _, want := range []string{
 		"demo-1.2.3-py3-none-any-analyzed-wheel-sbom.cyclonedx.json",
 		"demo-1.2.3-analyzed-wheel-sbom.cyclonedx.json",
@@ -243,15 +330,17 @@ func TestGenerate_NPM_BuildLayer_MissingBOMWarns(t *testing.T) {
 	fsys.WriteFile("package.json", []byte(`{"name":"demo","version":"1.2.3"}`))
 	fsys.Chdir()
 
-	var stdout bytes.Buffer
-	err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{}, &stdout, io.Discard, appsbom.GenerateInput{
+	var out bytes.Buffer
+
+	err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{}, &out, io.Discard, appsbom.GenerateInput{
 		Layers: "build",
 	})
 	if err == nil {
 		t.Fatal("expected error when no SBOMs generated")
 	}
-	if !strings.Contains(stdout.String(), "No npm Build SBOM found") {
-		t.Errorf("missing warn line:\n%s", stdout.String())
+
+	if !strings.Contains(out.String(), "No npm Build SBOM found") {
+		t.Errorf("missing warn line:\n%s", out.String())
 	}
 }
 
@@ -263,15 +352,17 @@ func TestGenerate_Maven_BuildAndArtifactLayers(t *testing.T) {
 	fsys.Chdir()
 
 	mvn := &fakeMaven{answers: map[string]string{
-		"project.version":    "1.0.0",
-		"project.artifactId": "demo",
+		"project.version":    "1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"project.artifactId": "demo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}}
+
 	err := appsbom.Generate(context.Background(), &fakeSyft{}, mvn, &fakeGit{sha: "abc1234"}, io.Discard, io.Discard, appsbom.GenerateInput{
-		Layers: "build,analyzed-artifact",
+		Layers: "build,analyzed-artifact", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
+
 	for _, want := range []string{
 		"demo-1.0.0-abc1234-build-sbom.cyclonedx.json",
 		"demo-1.0.0-abc1234-analyzed-jar-sbom.spdx.json",
@@ -290,18 +381,20 @@ func TestGenerate_ExplicitProjectTypeSkipsAutoDetect(t *testing.T) {
 	fsys.WriteFile("bom.json", []byte(`{}`))
 	fsys.Chdir()
 
-	var stdout bytes.Buffer
-	if err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{}, &stdout, io.Discard, appsbom.GenerateInput{
+	var out bytes.Buffer
+	if err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{}, &out, io.Discard, appsbom.GenerateInput{
 		ProjectType: "npm",
 		Layers:      "build",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(stdout.String(), "Auto-detected project type") {
-		t.Errorf("expected explicit project type to skip auto-detect:\n%s", stdout.String())
+
+	if strings.Contains(out.String(), "Auto-detected project type") {
+		t.Errorf("expected explicit project type to skip auto-detect:\n%s", out.String())
 	}
-	if !strings.Contains(stdout.String(), "Project type: npm") {
-		t.Errorf("missing explicit project type line:\n%s", stdout.String())
+
+	if !strings.Contains(out.String(), "Project type: npm") {
+		t.Errorf("missing explicit project type line:\n%s", out.String())
 	}
 }
 
@@ -312,6 +405,7 @@ func TestGenerate_InvalidExplicitProjectTypeErrors(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `invalid --project-type "unknown"`) {
 		t.Fatalf("err = %v", err)
 	}
+
 	if !strings.Contains(err.Error(), "valid:") {
 		t.Errorf("expected valid-type list, got: %v", err)
 	}
@@ -323,19 +417,22 @@ func TestGenerate_MissingBuildLayerDoesNotBlockArtifactLayer(t *testing.T) {
 	fsys.WriteFile(filepath.Join("release-artifacts", "demo-1.0.0.jar"), []byte("fake-jar"))
 	fsys.Chdir()
 
-	var stdout bytes.Buffer
+	var out bytes.Buffer
+
 	err := appsbom.Generate(context.Background(), &fakeSyft{}, &fakeMaven{answers: map[string]string{
 		"project.version":    "1.0.0",
 		"project.artifactId": "demo",
-	}}, &fakeGit{}, &stdout, io.Discard, appsbom.GenerateInput{
+	}}, &fakeGit{}, &out, io.Discard, appsbom.GenerateInput{
 		Layers: "build,analyzed-artifact",
 	})
 	if err != nil {
-		t.Fatalf("Generate: %v\nstdout: %s", err, stdout.String())
+		t.Fatalf("Generate: %v\nstdout: %s", err, out.String())
 	}
-	if !strings.Contains(stdout.String(), "No Maven Build SBOM found") {
-		t.Errorf("missing build warning:\n%s", stdout.String())
+
+	if !strings.Contains(out.String(), "No Maven Build SBOM found") {
+		t.Errorf("missing build warning:\n%s", out.String())
 	}
+
 	for _, want := range []string{
 		"demo-1.0.0-analyzed-jar-sbom.spdx.json",
 		"demo-1.0.0-analyzed-jar-sbom.cyclonedx.json",
@@ -358,6 +455,7 @@ func TestGenerate_MavenArtifactLayer_AcceptsFinalNameJar(t *testing.T) {
 	}}, &fakeGit{}, io.Discard, io.Discard, appsbom.GenerateInput{Layers: "analyzed-artifact"}); err != nil {
 		t.Fatal(err)
 	}
+
 	for _, want := range []string{
 		"demo-analyzed-jar-sbom.spdx.json",
 		"demo-analyzed-jar-sbom.cyclonedx.json",
@@ -374,16 +472,16 @@ func TestGenerate_NPMScopedNameStripped(t *testing.T) {
 	fsys.WriteFile("bom.json", []byte(`{}`))
 	fsys.Chdir()
 
-	var stdout bytes.Buffer
-	if err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{}, &stdout, io.Discard, appsbom.GenerateInput{
+	var out bytes.Buffer
+	if err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{}, &out, io.Discard, appsbom.GenerateInput{
 		Layers: "build",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// Scoped names are stripped — file should start with "example-".
-	out := stdout.String()
-	if !strings.Contains(out, "example-0.1.0-build-sbom.cyclonedx.json") {
-		t.Errorf("expected scope-stripped filename, got:\n%s", out)
+	body := out.String()
+	if !strings.Contains(body, "example-0.1.0-build-sbom.cyclonedx.json") {
+		t.Errorf("expected scope-stripped filename, got:\n%s", body)
 	}
 }
 
@@ -392,10 +490,11 @@ func TestGenerate_UnknownLayerErrors(t *testing.T) {
 	fsys.WriteFile("package.json", []byte(`{"name":"demo","version":"1"}`))
 	fsys.WriteFile("bom.json", []byte("{}"))
 	fsys.Chdir()
+
 	err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{}, io.Discard, io.Discard, appsbom.GenerateInput{
 		Layers: "build,bogus",
 	})
-	if err == nil || !strings.Contains(err.Error(), "Unknown layer") {
+	if err == nil || !strings.Contains(err.Error(), "unknown layer") {
 		t.Errorf("expected unknown-layer error, got: %v", err)
 	}
 }
@@ -413,6 +512,7 @@ func TestGenerate_CreateZipBundlesSBOMs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := os.Stat(fsys.Path("demo-1.2.3-sboms.zip")); err != nil {
 		t.Errorf("expected zip: %v", err)
 	}
@@ -424,15 +524,16 @@ func TestGenerate_AutoDetectsProjectType(t *testing.T) {
 	fsys.WriteFile("bom.json", []byte("{}"))
 	fsys.Chdir()
 
-	var stdout bytes.Buffer
-	if err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{}, &stdout, io.Discard, appsbom.GenerateInput{
+	var out bytes.Buffer
+	if err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{}, &out, io.Discard, appsbom.GenerateInput{
 		Layers: "build",
 		// ProjectType empty → auto
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "Auto-detected project type: cargo") {
-		t.Errorf("missing auto-detect line:\n%s", stdout.String())
+
+	if !strings.Contains(out.String(), "Auto-detected project type: cargo") {
+		t.Errorf("missing auto-detect line:\n%s", out.String())
 	}
 }
 
@@ -449,6 +550,7 @@ func TestGenerate_WorkingDirSubproject(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := os.Stat(filepath.Join(subdir, "demo-1.2.3-build-sbom.cyclonedx.json")); err != nil {
 		t.Errorf("expected SBOM in subproject: %v", err)
 	}
@@ -459,25 +561,29 @@ func TestGenerate_ReadsProjectMetadataFromFSWithoutChangingCwd(t *testing.T) {
 	input := testfs.NewMemory(t)
 	input.WriteFile("package.json", []byte(`{"name":"mem-demo","version":"2.0.0"}`))
 	input.WriteFile("bom.json", []byte(`{"bomFormat":"CycloneDX"}`))
+
 	before, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{}, io.Discard, io.Discard, appsbom.GenerateInput{
+	if genErr := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{}, io.Discard, io.Discard, appsbom.GenerateInput{
 		WorkingDir: output.Root,
 		FS:         input.FS(),
 		Layers:     "build",
-	}); err != nil {
-		t.Fatal(err)
+	}); genErr != nil {
+		t.Fatal(genErr)
 	}
+
 	after, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if after != before {
 		t.Fatalf("cwd changed from %q to %q", before, after)
 	}
+
 	if _, err := os.Stat(output.Path("mem-demo-2.0.0-build-sbom.cyclonedx.json")); err != nil {
 		t.Errorf("expected SBOM in output dir: %v", err)
 	}
@@ -485,6 +591,7 @@ func TestGenerate_ReadsProjectMetadataFromFSWithoutChangingCwd(t *testing.T) {
 
 func TestGenerate_InvalidWorkingDirErrors(t *testing.T) {
 	fsys := testfs.NewReal(t)
+
 	err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{}, io.Discard, io.Discard, appsbom.GenerateInput{
 		WorkingDir: fsys.Path("missing"),
 	})
@@ -497,8 +604,9 @@ func TestGenerate_ContainerLayer_NoImageFailsSummary(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.Chdir()
 
-	var stdout bytes.Buffer
-	err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{}, &stdout, io.Discard, appsbom.GenerateInput{
+	var out bytes.Buffer
+
+	err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{}, &out, io.Discard, appsbom.GenerateInput{
 		ProjectType: "maven",
 		Layers:      "analyzed-container",
 		Version:     "1.0.0",
@@ -507,11 +615,13 @@ func TestGenerate_ContainerLayer_NoImageFailsSummary(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when container image is missing")
 	}
-	if !strings.Contains(stdout.String(), "No container image specified") {
-		t.Errorf("missing container warning:\n%s", stdout.String())
+
+	if !strings.Contains(out.String(), "No container image specified") {
+		t.Errorf("missing container warning:\n%s", out.String())
 	}
-	if !strings.Contains(stdout.String(), "No SBOM files generated") {
-		t.Errorf("missing summary error:\n%s", stdout.String())
+
+	if err == nil || !strings.Contains(err.Error(), "no SBOM files generated") {
+		t.Errorf("missing summary error in err: %v", err)
 	}
 }
 
@@ -521,15 +631,15 @@ func TestGenerate_SanitisesBranchNameInFilenames(t *testing.T) {
 	fsys.WriteFile("bom.json", []byte("{}"))
 	fsys.Chdir()
 
-	var stdout bytes.Buffer
-	if err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{}, &stdout, io.Discard, appsbom.GenerateInput{
+	var out bytes.Buffer
+	if err := appsbom.Generate(context.Background(), &fakeSyft{}, nil, &fakeGit{}, &out, io.Discard, appsbom.GenerateInput{
 		Layers: "build",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// The `/` in feat/awesome must become `-` per sanitize_path_token.
-	if !strings.Contains(stdout.String(), "demo-feat-awesome-build-sbom.cyclonedx.json") {
-		t.Errorf("missing sanitised filename:\n%s", stdout.String())
+	if !strings.Contains(out.String(), "demo-feat-awesome-build-sbom.cyclonedx.json") {
+		t.Errorf("missing sanitised filename:\n%s", out.String())
 	}
 }
 
@@ -546,6 +656,7 @@ func TestGenerate_ContainerLayer_SanitisesSlashedVersion(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
 	for _, want := range []string{
 		"myapp-feat-x-analyzed-container-sbom.spdx.json",
 		"myapp-feat-x-analyzed-container-sbom.cyclonedx.json",
@@ -554,6 +665,7 @@ func TestGenerate_ContainerLayer_SanitisesSlashedVersion(t *testing.T) {
 			t.Errorf("missing %s: %v", want, err)
 		}
 	}
+
 	if _, err := os.Stat(fsys.Path("myapp-feat")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("unexpected subdirectory from unsanitised version, err=%v", err)
 	}

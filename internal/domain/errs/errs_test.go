@@ -16,6 +16,7 @@ import (
 
 func TestExitCodeFromError(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name  string
 		err   error
@@ -33,12 +34,13 @@ func TestExitCodeFromError(t *testing.T) {
 		{name: "malformed_input", err: errs.ErrMalformedInput, want: errs.ExitCodeDataErr, wraps: true},
 		{name: "permission_denied", err: errs.ErrPermissionDenied, want: errs.ExitCodeNoPerm, wraps: true},
 		{name: "dependency_unavailable", err: errs.ErrDependencyUnavailable, want: errs.ExitCodeUnavailable, wraps: true},
-		{name: "plain_error", err: errors.New("boom"), want: errs.ExitCodeSoftware},
+		{name: "plain_error", err: errors.New("boom"), want: errs.ExitCodeSoftware}, //nolint:err113 // test mock error
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 			require.Equal(t, testCase.want, errs.ExitCodeFromError(testCase.err))
+
 			if testCase.wraps {
 				require.Equal(t, testCase.want, errs.ExitCodeFromError(fmt.Errorf("wrapped: %w", testCase.err)))
 			}
@@ -48,6 +50,7 @@ func TestExitCodeFromError(t *testing.T) {
 
 func TestFromHTTPStatus_MapsKnownClasses(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name   string
 		status int
@@ -59,13 +62,14 @@ func TestFromHTTPStatus_MapsKnownClasses(t *testing.T) {
 		{"401_unauthorized_is_perm", 401, errs.ErrPermissionDenied},
 		{"403_forbidden_is_perm", 403, errs.ErrPermissionDenied},
 		{"404_not_found_is_missing", 404, errs.ErrMissingInput},
-		{"429_rate_limit_no_sentinel", 429, nil},
+		{"429_rate_limit_is_rate_limited", 429, errs.ErrRateLimited},
 		{"500_server_err_is_dep_unavail", 500, errs.ErrDependencyUnavailable},
 		{"503_service_unavail_is_dep_unavail", 503, errs.ErrDependencyUnavailable},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			got := errs.FromHTTPStatus(tc.status)
 			if tc.want == nil {
 				require.NoError(t, got)
@@ -78,12 +82,14 @@ func TestFromHTTPStatus_MapsKnownClasses(t *testing.T) {
 
 func TestErrReleaseNotFound_IsSentinel(t *testing.T) {
 	t.Parallel()
+
 	wrapped := fmt.Errorf("check tag v1.0.0: %w", errs.ErrReleaseNotFound)
 	require.ErrorIs(t, wrapped, errs.ErrReleaseNotFound)
 }
 
 func TestExitCodeConstants_AlignToBSDSysexits(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name string
 		got  errs.ExitCodeType

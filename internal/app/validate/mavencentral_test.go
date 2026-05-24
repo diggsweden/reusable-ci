@@ -15,34 +15,40 @@ import (
 
 func TestMavenCentralCredentials_OK(t *testing.T) {
 	t.Parallel()
-	var stdout, stderr bytes.Buffer
-	err := appvalidate.MavenCentralCredentials(&stdout, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), appvalidate.MavenCentralCredentialsInput{
+
+	var out, stderr bytes.Buffer
+
+	err := appvalidate.MavenCentralCredentials(&out, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), appvalidate.MavenCentralCredentialsInput{
 		Username: "u",
 		Password: "p",
 	})
 	require.NoError(t, err)
-	require.Contains(t, stdout.String(), "✓ Maven Central credentials configured")
+	require.Contains(t, out.String(), "✓ Maven Central credentials configured")
 }
 
 func TestMavenCentralCredentials_MissingUsername(t *testing.T) {
 	t.Parallel()
-	var stdout, stderr bytes.Buffer
-	err := appvalidate.MavenCentralCredentials(&stdout, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), appvalidate.MavenCentralCredentialsInput{
+
+	var out, stderr bytes.Buffer
+
+	err := appvalidate.MavenCentralCredentials(&out, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), appvalidate.MavenCentralCredentialsInput{
 		Password: "p",
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "USERNAME")
 	require.Contains(t, stderr.String(), "::error::Missing MAVEN_CENTRAL_USERNAME")
-	require.Contains(t, stdout.String(), "Required for publishing to Maven Central")
+	require.Contains(t, out.String(), "Required for publishing to Maven Central")
 }
 
 func TestMavenCentralCredentials_MissingPassword(t *testing.T) {
 	t.Parallel()
-	var stdout, stderr bytes.Buffer
-	err := appvalidate.MavenCentralCredentials(&stdout, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), appvalidate.MavenCentralCredentialsInput{
+
+	var out, stderr bytes.Buffer
+
+	err := appvalidate.MavenCentralCredentials(&out, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), appvalidate.MavenCentralCredentialsInput{
 		Username: "u",
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "PASSWORD")
-	require.Contains(t, stdout.String(), "Required for publishing to Maven Central")
+	require.Contains(t, out.String(), "Required for publishing to Maven Central")
 }

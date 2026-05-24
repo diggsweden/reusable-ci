@@ -15,27 +15,53 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/testutil/testfs"
 )
 
+//nolint:cyclop // round-trips and checks every enriched SARIF field.
 func TestEnrichGitHubSARIFFile_WritesBack(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	body := `{"runs":[{"results":[{"ruleId":"R","fingerprints":{"matchBasedId/v1":"m"}}]}]}`
 	path := fsys.WriteFile("results.sarif", []byte(body))
 
-	var stdout bytes.Buffer
-	if err := appsecurity.EnrichGitHubSARIFFile(&stdout, io.Discard, output.Annotator{}, appsecurity.EnrichGitHubSARIFInput{Path: path}); err != nil {
+	var out bytes.Buffer
+	if err := appsecurity.EnrichGitHubSARIFFile(&out, io.Discard, output.Annotator{}, appsecurity.EnrichGitHubSARIFInput{Path: path}); err != nil {
 		t.Fatalf("EnrichGitHubSARIFFile: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "Enriched SARIF") {
-		t.Errorf("missing status line:\n%s", stdout.String())
+
+	if !strings.Contains(out.String(), "Enriched SARIF") {
+		t.Errorf("missing status line:\n%s", out.String())
 	}
 
-	out := fsys.ReadFile("results.sarif")
+	data := fsys.ReadFile("results.sarif")
+
 	var doc map[string]any
-	if err := json.Unmarshal(out, &doc); err != nil {
+	if err := json.Unmarshal(data, &doc); err != nil {
 		t.Fatal(err)
 	}
-	runs := doc["runs"].([]any)
-	res := runs[0].(map[string]any)["results"].([]any)[0].(map[string]any)
-	fp := res["partialFingerprints"].(map[string]any)
+
+	runs, ok := doc["runs"].([]any)
+	if !ok || len(runs) == 0 {
+		t.Fatal("doc.runs is not a non-empty array")
+	}
+
+	run0, ok := runs[0].(map[string]any)
+	if !ok {
+		t.Fatal("doc.runs[0] is not an object")
+	}
+
+	results, ok := run0["results"].([]any)
+	if !ok || len(results) == 0 {
+		t.Fatal("doc.runs[0].results is not a non-empty array")
+	}
+
+	res, ok := results[0].(map[string]any)
+	if !ok {
+		t.Fatal("doc.runs[0].results[0] is not an object")
+	}
+
+	fp, ok := res["partialFingerprints"].(map[string]any)
+	if !ok {
+		t.Fatal("partialFingerprints missing or wrong shape")
+	}
+
 	if fp["primaryLocationLineHash"] != "m" {
 		t.Errorf("hash = %v", fp["primaryLocationLineHash"])
 	}
@@ -43,12 +69,14 @@ func TestEnrichGitHubSARIFFile_WritesBack(t *testing.T) {
 
 func TestEnrichGitHubSARIFFile_MissingFileSkips(t *testing.T) {
 	var stderr bytes.Buffer
+
 	err := appsecurity.EnrichGitHubSARIFFile(io.Discard, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), appsecurity.EnrichGitHubSARIFInput{
 		Path: "/nonexistent/path.sarif",
 	})
 	if err != nil {
 		t.Errorf("expected nil error on missing file, got: %v", err)
 	}
+
 	if !strings.Contains(stderr.String(), "::warning::SARIF file not found") {
 		t.Errorf("missing warning:\n%s", stderr.String())
 	}

@@ -21,8 +21,8 @@ func TestResolveImageName(t *testing.T) {
 		{
 			name: "ghcr.io: explicit bare name gets registry prefix",
 			in: container.ResolveImageNameInput{
-				Registry: "ghcr.io", ImageName: "myapp",
-				Repository: "owner/repo", RepositoryOwner: "owner",
+				Registry: "ghcr.io", ImageName: "myapp", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+				Repository: "owner/repo", RepositoryOwner: "owner", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			},
 			want: "ghcr.io/myapp",
 		},
@@ -30,9 +30,9 @@ func TestResolveImageName(t *testing.T) {
 			name: "ghcr.io: empty image name uses repository",
 			in: container.ResolveImageNameInput{
 				Registry: "ghcr.io", ImageName: "",
-				Repository: "myorg/myrepo", RepositoryOwner: "myorg",
+				Repository: "myorg/myrepo", RepositoryOwner: "myorg", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			},
-			want: "ghcr.io/myorg/myrepo",
+			want: "ghcr.io/myorg/myrepo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		},
 		{
 			name: "ghcr.io: explicit bare name overrides repository",
@@ -47,7 +47,7 @@ func TestResolveImageName(t *testing.T) {
 		{
 			name: "docker.io: bare name takes owner prefix",
 			in: container.ResolveImageNameInput{
-				Registry: "docker.io", ImageName: "myapp",
+				Registry: "docker.io", ImageName: "myapp", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 				Repository: "owner/repo", RepositoryOwner: "owner",
 			},
 			want: "owner/myapp",
@@ -72,7 +72,7 @@ func TestResolveImageName(t *testing.T) {
 				Repository: "owner/repo", RepositoryOwner: "owner",
 				Name: "repo",
 			},
-			want: "ghcr.io/owner/repo",
+			want: "ghcr.io/owner/repo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		},
 		{
 			name: "Name distinct from repo → repository/name suffix",
@@ -106,8 +106,8 @@ func TestResolveImageName(t *testing.T) {
 		{
 			name: "custom registry: bare name gets prefix",
 			in: container.ResolveImageNameInput{
-				Registry: "registry.gitlab.com", ImageName: "myapp",
-				Repository: "group/project", RepositoryOwner: "group",
+				Registry: "registry.gitlab.com", ImageName: "myapp", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+				Repository: "group/project", RepositoryOwner: "group", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			},
 			want: "registry.gitlab.com/myapp",
 		},
@@ -119,12 +119,51 @@ func TestResolveImageName(t *testing.T) {
 			},
 			want: "registry.gitlab.com/group/sub/project",
 		},
+
+		// === NameSuffix (dev-release path separation) ===
+		{
+			name: "NameSuffix appends to repository segment",
+			in: container.ResolveImageNameInput{
+				Registry: "ghcr.io", ImageName: "",
+				Repository: "owner/repo", RepositoryOwner: "owner",
+				NameSuffix: "-dev",
+			},
+			want: "ghcr.io/owner/repo-dev",
+		},
+		{
+			name: "NameSuffix combined with Name → repo-dev/name",
+			in: container.ResolveImageNameInput{
+				Registry: "ghcr.io", ImageName: "",
+				Repository: "owner/repo", RepositoryOwner: "owner",
+				Name:       "backend",
+				NameSuffix: "-dev",
+			},
+			want: "ghcr.io/owner/repo-dev/backend",
+		},
+		{
+			name: "NameSuffix ignored when ImageName is explicit",
+			in: container.ResolveImageNameInput{
+				Registry: "ghcr.io", ImageName: "myapp",
+				Repository: "owner/repo", RepositoryOwner: "owner",
+				NameSuffix: "-dev",
+			},
+			want: "ghcr.io/myapp",
+		},
+		{
+			name: "empty NameSuffix is a no-op",
+			in: container.ResolveImageNameInput{
+				Registry: "ghcr.io", ImageName: "",
+				Repository: "owner/repo", RepositoryOwner: "owner",
+				NameSuffix: "",
+			},
+			want: "ghcr.io/owner/repo",
+		},
 	}
 
 	for _, tc := range tests {
-
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			got := container.ResolveImageName(tc.in)
 			if got != tc.want {
 				t.Errorf("ResolveImageName(%+v) = %q, want %q", tc.in, got, tc.want)

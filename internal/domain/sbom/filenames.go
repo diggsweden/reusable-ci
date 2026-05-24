@@ -5,28 +5,31 @@ package sbom
 
 import "fmt"
 
-// SBOMFormat is one of the two SBOM document formats syft emits.
-type SBOMFormat string
+// Format is one of the two SBOM document formats syft emits.
+type Format string
 
+// Recognised Format values.
 const (
-	SBOMFormatSPDX      SBOMFormat = "spdx-json"
-	SBOMFormatCycloneDX SBOMFormat = "cyclonedx-json"
+	FormatSPDX      Format = "spdx-json"
+	FormatCycloneDX Format = "cyclonedx-json"
 )
 
-// SBOMFilename returns the canonical SBOM filename for a layer.
+// Filename returns the canonical SBOM filename for a layer.
 // When customBasename is non-empty, the file is named
 // "<customBasename>-sbom.<format-suffix>"; otherwise
 // "<name>-<version>-<layer>-sbom.<format-suffix>" is used.
 //
 // Mirrors the file-naming logic in generate_dual_sboms.
-func SBOMFilename(customBasename, name, version, layer string, format SBOMFormat) string {
+func Filename(customBasename, name, version, layer string, format Format) string {
 	suffix := "spdx.json"
-	if format == SBOMFormatCycloneDX {
+	if format == FormatCycloneDX {
 		suffix = "cyclonedx.json"
 	}
+
 	if customBasename != "" {
 		return fmt.Sprintf("%s-sbom.%s", customBasename, suffix)
 	}
+
 	return fmt.Sprintf("%s-%s-%s-sbom.%s", name, version, layer, suffix)
 }
 
@@ -40,6 +43,7 @@ func AnalyzedBasename(fileBasename, layer, sha string) string {
 	if sha != "" {
 		return fmt.Sprintf("%s-%s-%s", fileBasename, sha, layer)
 	}
+
 	return fmt.Sprintf("%s-%s", fileBasename, layer)
 }
 
@@ -52,5 +56,6 @@ func BuildLayerFilename(name, version, sha string) string {
 	if sha != "" {
 		return fmt.Sprintf("%s-%s-%s-build-sbom.cyclonedx.json", name, version, sha)
 	}
+
 	return fmt.Sprintf("%s-%s-build-sbom.cyclonedx.json", name, version)
 }

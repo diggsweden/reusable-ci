@@ -14,11 +14,13 @@ import (
 
 func TestMavenBuild_RendersAllFields(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
+
 	err := appsummary.MavenBuild(context.Background(), sink, appsummary.MavenBuildInput{
 		BuildType:   "lib",
 		GroupID:     "se.digg.example",
-		ArtifactID:  "demo",
+		ArtifactID:  "demo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Version:     "1.2.3-SNAPSHOT",
 		JavaVersion: "25",
 		SkipTests:   false,
@@ -28,6 +30,7 @@ func TestMavenBuild_RendersAllFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	got := sink.buf.String()
 	for _, want := range []string{
 		"## Maven Build Summary 🔨",
@@ -46,19 +49,23 @@ func TestMavenBuild_RendersAllFields(t *testing.T) {
 
 func TestMavenBuild_SkipTestsFlipsTestLine(t *testing.T) {
 	t.Parallel()
+
 	sink := &fakeSummarySink{}
+
 	err := appsummary.MavenBuild(context.Background(), sink, appsummary.MavenBuildInput{
-		BuildType: "app", GroupID: "g", ArtifactID: "a", Version: "1.0", JavaVersion: "21",
+		BuildType: "app", GroupID: "g", ArtifactID: "a", Version: "1.0", JavaVersion: "21", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		SkipTests: true, IsSnapshot: false,
 		Now: time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	got := sink.buf.String()
 	if !strings.Contains(got, "- **Tests:** ⊘ Skipped") {
 		t.Errorf("missing skipped marker:\n%s", got)
 	}
+
 	if strings.Contains(got, "- **Tests:** ✓ Executed") {
 		t.Errorf("unexpected executed marker:\n%s", got)
 	}

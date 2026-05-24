@@ -10,24 +10,50 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/domain/release"
 )
 
-func TestResolveArtifactNames_FixedNamesIgnoreOverride(t *testing.T) {
+func TestResolveArtifactNames_PackageOverridesUseBuildSuffix(t *testing.T) {
 	t.Parallel()
-	for _, projType := range []projecttype.Type{projecttype.Maven, projecttype.NPM, projecttype.Python, projecttype.Go} {
-		// Override should be IGNORED for these types (they have fixed
-		// upload names baked into their build workflows).
-		got := release.ResolveArtifactNames(projType, "ignored-by-design")
-		if got.BuildArtifact == "ignored-by-design" {
-			t.Errorf("%s should not honour override, got %+v", projType, got)
+
+	for _, tc := range []struct {
+		projType projecttype.Type
+		prefix   string
+	}{
+		{projecttype.Maven, "maven-lib"},
+		{projecttype.NPM, "web"},
+	} {
+		got := release.ResolveArtifactNames(tc.projType, tc.prefix)
+
+		want := release.ArtifactNamePair{
+			BuildArtifact: tc.prefix + "-build-artifacts",
+			SBOMArtifact:  tc.prefix + "-build-sbom",
 		}
+		if got != want {
+			t.Errorf("%s override -> %+v, want %+v", tc.projType, got, want)
+		}
+	}
+}
+
+func TestResolveArtifactNames_GoWithOverride(t *testing.T) {
+	t.Parallel()
+
+	got := release.ResolveArtifactNames(projecttype.Go, "go-cli")
+
+	want := release.ArtifactNamePair{
+		BuildArtifact: "go-cli-go-build-artifacts",
+		SBOMArtifact:  "go-cli-go-build-sbom",
+	}
+	if got != want {
+		t.Errorf("go override -> %+v, want %+v", got, want)
 	}
 }
 
 func TestResolveArtifactNames_GradleWithOverride(t *testing.T) {
 	t.Parallel()
+
 	got := release.ResolveArtifactNames(projecttype.Gradle, "my-component")
+
 	want := release.ArtifactNamePair{
-		BuildArtifact: "my-component",
-		SBOMArtifact:  "my-component-sbom",
+		BuildArtifact: "my-component-build-artifacts",
+		SBOMArtifact:  "my-component-build-sbom",
 	}
 	if got != want {
 		t.Errorf("gradle override → %+v, want %+v", got, want)
@@ -36,7 +62,9 @@ func TestResolveArtifactNames_GradleWithOverride(t *testing.T) {
 
 func TestResolveArtifactNames_GradleDefault(t *testing.T) {
 	t.Parallel()
+
 	got := release.ResolveArtifactNames(projecttype.Gradle, "")
+
 	want := release.ArtifactNamePair{
 		BuildArtifact: "gradle-build-artifacts",
 		SBOMArtifact:  "gradle-build-sbom",
@@ -46,25 +74,37 @@ func TestResolveArtifactNames_GradleDefault(t *testing.T) {
 	}
 }
 
-func TestResolveArtifactNames_CargoSBOMOnly(t *testing.T) {
+func TestResolveArtifactNames_CargoArtefactFirstShape(t *testing.T) {
 	t.Parallel()
-	// cargo emits SBOM only — both names equal.
+	// Cargo mirrors Go: artefact-first cargo uploads a real
+	// `<name>-cargo-build-artifacts` plus a separate `<name>-cargo-build-sbom`.
+	// Container-first cargo still uses the SBOM name (via sbom-cargo.yml);
+	// its BuildArtifact slot is gated to "" by buildArtifactName in the
+	// planner, so the value here is only consulted when artefact-first.
 	got := release.ResolveArtifactNames(projecttype.Cargo, "")
-	if got.BuildArtifact != got.SBOMArtifact {
-		t.Errorf("cargo: build/sbom should match, got %+v", got)
+	if got.BuildArtifact != "cargo-build-artifacts" {
+		t.Errorf("cargo default build-artifact = %q, want %q", got.BuildArtifact, "cargo-build-artifacts")
 	}
-	if got.BuildArtifact != "cargo-build-sbom" {
-		t.Errorf("cargo default = %+v", got)
+
+	if got.SBOMArtifact != "cargo-build-sbom" {
+		t.Errorf("cargo default sbom-artifact = %q, want %q", got.SBOMArtifact, "cargo-build-sbom")
 	}
+
 	got = release.ResolveArtifactNames(projecttype.Cargo, "core")
-	if got.BuildArtifact != "core-cargo-build-sbom" {
-		t.Errorf("cargo override = %+v", got)
+	if got.BuildArtifact != "core-cargo-build-artifacts" {
+		t.Errorf("cargo override build-artifact = %q, want %q", got.BuildArtifact, "core-cargo-build-artifacts")
+	}
+
+	if got.SBOMArtifact != "core-cargo-build-sbom" {
+		t.Errorf("cargo override sbom-artifact = %q, want %q", got.SBOMArtifact, "core-cargo-build-sbom")
 	}
 }
 
 func TestResolveArtifactNames_UnknownProjectFallback(t *testing.T) {
 	t.Parallel()
+
 	got := release.ResolveArtifactNames(projecttype.Unknown, "")
+
 	want := release.ArtifactNamePair{"build-artifacts", "build-sbom"}
 	if got != want {
 		t.Errorf("got %+v, want %+v", got, want)
@@ -73,6 +113,7 @@ func TestResolveArtifactNames_UnknownProjectFallback(t *testing.T) {
 
 func TestProjectNameFromRepo_OverrideWins(t *testing.T) {
 	t.Parallel()
+
 	if got := release.ProjectNameFromRepo("custom-name", "owner/different"); got != "custom-name" {
 		t.Errorf("got %q", got)
 	}
@@ -80,8 +121,9 @@ func TestProjectNameFromRepo_OverrideWins(t *testing.T) {
 
 func TestProjectNameFromRepo_DerivesBasename(t *testing.T) {
 	t.Parallel()
+
 	cases := map[string]string{
-		"owner/repo":        "repo",
+		"owner/repo":        "repo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"group/sub/project": "project",
 		"repo":              "repo",
 		"":                  ".",

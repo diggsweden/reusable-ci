@@ -13,6 +13,7 @@ import (
 
 func TestPlatform_IsValid(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name  string
 		given provider.Platform

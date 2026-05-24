@@ -23,11 +23,43 @@ jobs:
       packages: read
     with:
       project-type: npm
-      scripts-ref: ${{ github.head_ref }}
-      linters.devbasecheck: true
+      reusable-ci-binary-ref: ${{ github.head_ref }}
+      # This repo dogfoods nanolinter via the dedicated `lint` job below;
+      # the orchestrator's devbase-check route would call `just lint`
+      # without nanolinter on PATH and fail. Consumer projects keep using
+      # devbase-check unchanged via `linters.devbasecheck: true`.
+      linters.devbasecheck: false
       linters.dependencyreview: true
+  lint:
+    name: Lint (nanolinter verify)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # gitleaks and commits checks walk full history; default
+          # shallow checkout would yield false negatives.
+          fetch-depth: 0
+      - name: Install mise and project tools
+        run: |
+          source ./scripts/bootstrap/install-mise.sh
+          install_mise
+          mise install
+          # Expose mise-managed binaries to subsequent steps.
+          printf '%s\n' "${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims" >>"$GITHUB_PATH"
+          dirname "$(command -v mise)" >>"$GITHUB_PATH"
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: nanolinter doctor (tool health)
+        run: nanolinter doctor
+      - name: nanolinter verify (full plan from nanolinter.toml)
+        run: just lint
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Install mise and project tools
@@ -44,12 +76,12 @@ jobs:
           go-version-file: go.mod
           check-latest: true
       - name: Validate reusable workflow input defaults
-        run: go run ./cmd/reusable-ci validate workflow-input-defaults
+        run: go run ./cmd/reusable-ci validate workflow input-defaults
       - name: Run tests
         run: just test
   go:
     name: Go (build, test, lint)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:

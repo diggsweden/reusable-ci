@@ -25,30 +25,35 @@ type SuffixExtractedBinariesInput struct {
 }
 
 // SuffixExtractedBinaries renames each binary in Dir to
-// `<name>-linux-<arch>`. Mirrors
-// scripts/container/suffix-extracted-binaries.sh.
+// `<name>-linux-<arch>` using the workflow binary-extraction artifact naming
+// contract.
 //
 // Files that don't exist (when ExpectedNames is set) are silently
-// skipped — matches the bash `[[ -f ... ]]` guard.
-func SuffixExtractedBinaries(stdout io.Writer, in SuffixExtractedBinariesInput) error {
+// skipped.
+//nolint:cyclop // renames per (variant, ext, platform) combination.
+func SuffixExtractedBinaries(w io.Writer, in SuffixExtractedBinariesInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if in.Dir == "" {
-		return fmt.Errorf("DIR is required: %w", errs.ErrUsage)
+		return fmt.Errorf("directory is required: pass --dir <path> or set $EXTRACTED_BINARIES_DIR: %w", errs.ErrUsage)
 	}
+
 	if in.Arch == "" {
-		return fmt.Errorf("ARCH is required: %w", errs.ErrUsage)
+		return fmt.Errorf("architecture is required: pass --arch <amd64|arm64|…> or set $ARCH: %w", errs.ErrUsage)
 	}
+
 	info, err := os.Stat(in.Dir)
 	if err != nil || !info.IsDir() {
-		return fmt.Errorf("directory not found: %s", in.Dir)
+		return fmt.Errorf("directory not found: %s: %w", in.Dir, errs.ErrMissingInput)
 	}
 
 	var names []string
+
 	if in.ExpectedNames != "" {
 		for _, n := range strings.Split(in.ExpectedNames, ",") {
 			t := strings.TrimSpace(n)
 			if t == "" {
 				continue
 			}
+
 			names = append(names, t)
 		}
 	} else {
@@ -56,25 +61,41 @@ func SuffixExtractedBinaries(stdout io.Writer, in SuffixExtractedBinariesInput) 
 		if err != nil {
 			return fmt.Errorf("read %s: %w", in.Dir, err)
 		}
+
 		for _, e := range entries {
 			if e.IsDir() {
 				continue
 			}
+
 			names = append(names, e.Name())
 		}
 	}
 
+	var missing []string
+
 	for _, name := range names {
 		old := filepath.Join(in.Dir, name)
 		if _, err := os.Stat(old); err != nil {
+			if in.ExpectedNames != "" && os.IsNotExist(err) {
+				missing = append(missing, name)
+			}
+
 			continue
 		}
+
 		newName := name + "-linux-" + in.Arch
+
 		newPath := filepath.Join(in.Dir, newName)
 		if err := os.Rename(old, newPath); err != nil {
 			return fmt.Errorf("rename %s → %s: %w", old, newPath, err)
 		}
-		fmt.Fprintf(stdout, "renamed %s -> %s\n", name, newName)
+
+		_, _ = fmt.Fprintf(w, "renamed %s -> %s\n", name, newName)
 	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("expected extracted binaries missing: %s: %w", strings.Join(missing, ", "), errs.ErrMissingInput)
+	}
+
 	return nil
 }

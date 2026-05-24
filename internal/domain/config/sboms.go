@@ -4,9 +4,9 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"strings"
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 )
 
 // ExpandSBOMs translates an `sboms` enum value to the deduped list of
@@ -19,81 +19,93 @@ import (
 //
 // "all" and "none" cannot be combined with other tokens.
 //
-// Mirrors scripts/config/expand-sboms.sh exactly. Returns an error with
-// a clear message on invalid input.
+// Returns an error with a clear message on invalid input.
+//nolint:cyclop // expands per layer × format permutation.
 func ExpandSBOMs(value string) ([]SBOMLayer, error) {
 	cleaned := stripWhitespace(value)
 	if cleaned == "" {
-		return nil, errors.New("sboms: value required (expected: all | none | comma-list of build,analyzed-artifact,analyzed-container)")
+		return nil, fmt.Errorf("sboms: value required (expected: all | none | comma-list of build,analyzed-artifact,analyzed-container)" + ": %w", errs.ErrValidation)
 	}
+
 	if strings.HasPrefix(cleaned, ",") || strings.HasSuffix(cleaned, ",") || strings.Contains(cleaned, ",,") {
-		return nil, fmt.Errorf("sboms: empty token in %q (check for leading, trailing or duplicate commas)", value)
+		return nil, fmt.Errorf("sboms: empty token in %q (check for leading, trailing or duplicate commas): %w", value, errs.ErrValidation)
 	}
 
 	switch cleaned {
-	case "all":
+	case "all": //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		// Return a copy so callers can't mutate ValidSBOMLayers.
 		out := make([]SBOMLayer, len(ValidSBOMLayers))
 		copy(out, ValidSBOMLayers)
+
 		return out, nil
-	case "none":
+	case "none": //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		return []SBOMLayer{}, nil
 	}
 
 	parts := strings.Split(cleaned, ",")
 	seen := make(map[SBOMLayer]struct{}, len(parts))
+
 	out := make([]SBOMLayer, 0, len(parts))
-	for _, p := range parts {
+	for _, p := range parts { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		switch SBOMLayer(p) {
 		case SBOMLayerBuild, SBOMLayerAnalyzedArtifact, SBOMLayerAnalyzedContainer:
 			layer := SBOMLayer(p)
 			if _, dup := seen[layer]; dup {
 				continue
 			}
+
 			seen[layer] = struct{}{}
 			out = append(out, layer)
 		case "all", "none":
-			return nil, fmt.Errorf("sboms: %q is a shortcut and cannot be combined with other values", p)
+			return nil, fmt.Errorf("sboms: %q is a shortcut and cannot be combined with other values: %w", p, errs.ErrValidation)
 		default:
-			return nil, fmt.Errorf("sboms: unknown token %q (valid: build, analyzed-artifact, analyzed-container, or shortcuts all|none)", p)
+			return nil, fmt.Errorf("sboms: unknown token %q (valid: build, analyzed-artifact, analyzed-container, or shortcuts all|none): %w", p, errs.ErrValidation)
 		}
 	}
+
 	return out, nil
 }
 
 // PipelineSBOMs is the union of every artefact's effective layers, returned
-// in canonical order (build, analyzed-artifact, analyzed-container). Used to
-// emit the pipeline-sboms output consumed by stage workflows.
+// in canonical order (build, analyzed-artifact, analyzed-container). The typed
+// config plan carries this value for later release planning.
 //
-// Returns "none" when the union is empty (matches the bash literal).
+// Returns "none" when the union is empty.
 func PipelineSBOMs(artifacts []Artifact) string {
 	seen := make(map[SBOMLayer]struct{})
+
 	for _, a := range artifacts {
 		for _, l := range a.EffectiveSBOMs {
 			seen[l] = struct{}{}
 		}
 	}
+
 	parts := make([]string, 0, len(ValidSBOMLayers))
 	for _, l := range ValidSBOMLayers {
 		if _, ok := seen[l]; ok {
 			parts = append(parts, string(l))
 		}
 	}
+
 	if len(parts) == 0 {
 		return "none"
 	}
+
 	return strings.Join(parts, ",")
 }
 
 func stripWhitespace(s string) string {
-	var b strings.Builder
+	var b strings.Builder //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	b.Grow(len(s))
+
 	for i := range len(s) {
 		c := s[i]
 		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
 			continue
 		}
+
 		b.WriteByte(c)
 	}
+
 	return b.String()
 }

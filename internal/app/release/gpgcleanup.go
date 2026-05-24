@@ -22,20 +22,24 @@ type gpgCleaner interface {
 // passing an empty fingerprint is a successful no-op (the import step
 // never ran or was skipped). Errors during delete are intentionally
 // swallowed — this is post-step cleanup wired as `if: always()`.
-//
-// Mirrors scripts/release/cleanup-gpg-key.sh.
 func GPGCleanup(ctx context.Context, gpg gpgCleaner, fingerprint string, out io.Writer) {
 	if fingerprint == "" {
-		fmt.Fprintln(out, "No fingerprint supplied — nothing to clean up.")
+		_, _ = fmt.Fprintln(out, "No fingerprint supplied — nothing to clean up.")
+
 		return
 	}
+
 	if gpg == nil {
-		fmt.Fprintln(out, "No gpg cleaner supplied — nothing to clean up.")
+		_, _ = fmt.Fprintln(out, "No gpg cleaner supplied — nothing to clean up.")
+
 		return
 	}
-	fmt.Fprintf(out, "Removing GPG key %s\n", fingerprint)
+
+	_, _ = fmt.Fprintf(out, "Removing GPG key %s\n", fingerprint)
 	gpg.DeleteSecretKey(ctx, fingerprint)
 	gpg.DeleteKey(ctx, fingerprint)
-	fmt.Fprintln(out, "Killing gpg-agent")
+
+	_, _ = fmt.Fprintln(out, "Killing gpg-agent")
+
 	gpg.KillAgent(ctx)
 }

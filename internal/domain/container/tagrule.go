@@ -14,6 +14,7 @@ import (
 // Everything outside this set is rejected at parse time.
 type RuleType string
 
+// Supported RuleType values.
 const (
 	RuleTypeRaw    RuleType = "raw"
 	RuleTypeRef    RuleType = "ref"
@@ -24,6 +25,7 @@ const (
 // RefEvent is the event= attribute on a type=ref rule.
 type RefEvent string
 
+// Recognised RefEvent values.
 const (
 	RefEventBranch RefEvent = "branch"
 	RefEventTag    RefEvent = "tag"
@@ -56,6 +58,7 @@ func priorityFor(t RuleType) int {
 	case RuleTypeSHA:
 		return 100
 	}
+
 	return 0
 }
 
@@ -65,39 +68,49 @@ func priorityFor(t RuleType) int {
 // returns an error mentioning the offending value.
 func ParseRules(input string) ([]Rule, error) {
 	var rules []Rule
-	for i, raw := range strings.Split(input, "\n") {
+
+	for i, raw := range strings.Split(input, "\n") { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+
 		r, err := parseRule(line)
 		if err != nil {
 			return nil, fmt.Errorf("rule %d: %w", i+1, err)
 		}
+
 		rules = append(rules, r)
 	}
+
 	return rules, nil
 }
 
+//nolint:cyclop // tag-rule parser: one branch per known docker/metadata-action attribute.
 func parseRule(line string) (Rule, error) {
-	r := Rule{Enable: true}
+	r := Rule{Enable: true} //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+
 	for _, field := range strings.Split(line, ",") {
 		field = strings.TrimSpace(field)
 		if field == "" {
 			continue
 		}
+
 		key, val, ok := strings.Cut(field, "=")
 		if !ok {
-			return r, fmt.Errorf("malformed attribute %q in rule: %s", field, line)
+			return r, fmt.Errorf("malformed attribute %q in rule: %s: %w", field, line, errs.ErrValidation)
 		}
+
 		key = strings.TrimSpace(key)
 		val = strings.TrimSpace(val)
+
 		switch key {
 		case "type":
 			t, err := parseRuleType(val, line)
 			if err != nil {
 				return r, err
 			}
+
 			r.Type = t
 		case "enable":
 			r.Enable = val == "true"
@@ -110,18 +123,21 @@ func parseRule(line string) (Rule, error) {
 			if err != nil {
 				return r, err
 			}
+
 			r.Event = e
 		case "prefix":
 			r.Prefix = val
 		case "priority":
 			// accepted for compatibility but ignored — defaults are authoritative
 		default:
-			return r, fmt.Errorf("unsupported attribute %q in rule: %s", key, line)
+			return r, fmt.Errorf("unsupported attribute %q in rule: %s: %w", key, line, errs.ErrValidation)
 		}
 	}
+
 	if r.Type == "" {
-		return r, fmt.Errorf("rule has no type attribute: %s", line)
+		return r, fmt.Errorf("rule has no type attribute: %s: %w", line, errs.ErrValidation)
 	}
+
 	return r, nil
 }
 
@@ -151,6 +167,6 @@ func parseRefEvent(val, line string) (RefEvent, error) {
 	case "pr":
 		return RefEventPR, nil
 	default:
-		return "", fmt.Errorf("unsupported ref event %q in rule: %s", val, line)
+		return "", fmt.Errorf("unsupported ref event %q in rule: %s: %w", val, line, errs.ErrValidation)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 )
 
 // MetadataContext is the slice of provider.EventContext that tag-rule
@@ -30,6 +31,7 @@ func FromEventContext(evt *provider.EventContext) MetadataContext {
 	if branch == "" {
 		branch = evt.RefName
 	}
+
 	return MetadataContext{
 		RefName:    evt.RefName,
 		RefType:    evt.RefType,
@@ -55,7 +57,7 @@ type AppliedTag struct {
 //
 // Skip semantics mirror the bash: callers that produce a final tag list
 // just drop empty results.
-func Apply(r Rule, ctx MetadataContext) (AppliedTag, bool, error) {
+func Apply(r Rule, ctx MetadataContext) (AppliedTag, bool, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if !r.Enable {
 		return AppliedTag{}, false, nil
 	}
@@ -64,13 +66,15 @@ func Apply(r Rule, ctx MetadataContext) (AppliedTag, bool, error) {
 	if err != nil {
 		return AppliedTag{}, false, err
 	}
+
 	if !ok || tag == "" {
 		return AppliedTag{}, false, nil
 	}
+
 	return AppliedTag{Tag: tag, Priority: r.Priority()}, true, nil
 }
 
-func tagFor(r Rule, ctx MetadataContext) (string, bool, error) {
+func tagFor(r Rule, ctx MetadataContext) (string, bool, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	switch r.Type {
 	case RuleTypeRaw:
 		return r.Value, r.Value != "", nil
@@ -82,10 +86,13 @@ func tagFor(r Rule, ctx MetadataContext) (string, bool, error) {
 		if ctx.ShortSHA == "" {
 			return "", false, nil
 		}
+
 		resolved := strings.ReplaceAll(r.Prefix, "{{branch}}", ctx.BranchName)
+
 		return resolved + ctx.ShortSHA, true, nil
 	}
-	return "", false, fmt.Errorf("unhandled rule type %q", r.Type)
+
+	return "", false, fmt.Errorf("unhandled rule type %q: %w", r.Type, errs.ErrValidation)
 }
 
 func refTag(event RefEvent, ctx MetadataContext) (string, bool, error) {
@@ -94,19 +101,23 @@ func refTag(event RefEvent, ctx MetadataContext) (string, bool, error) {
 		if ctx.RefType != provider.RefTypeBranch {
 			return "", false, nil
 		}
+
 		return ctx.RefName, ctx.RefName != "", nil
 	case RefEventTag:
 		if ctx.RefType != provider.RefTypeTag {
 			return "", false, nil
 		}
+
 		return ctx.RefName, ctx.RefName != "", nil
 	case RefEventPR:
 		if ctx.PRNumber == "" {
 			return "", false, nil
 		}
+
 		return "pr-" + ctx.PRNumber, true, nil
 	}
-	return "", false, fmt.Errorf("unsupported ref event %q", event)
+
+	return "", false, fmt.Errorf("unsupported ref event %q: %w", event, errs.ErrValidation)
 }
 
 var semverMajorMinor = regexp.MustCompile(`^([0-9]+)\.([0-9]+)`)
@@ -116,7 +127,9 @@ func semverTag(pattern string, ctx MetadataContext) (string, bool, error) {
 	if ctx.RefType != provider.RefTypeTag {
 		return "", false, nil
 	}
+
 	stripped := strings.TrimPrefix(ctx.RefName, "v")
+
 	switch pattern {
 	case "{{version}}":
 		return stripped, stripped != "", nil
@@ -125,13 +138,16 @@ func semverTag(pattern string, ctx MetadataContext) (string, bool, error) {
 		if m == nil {
 			return "", false, nil
 		}
+
 		return m[1] + "." + m[2], true, nil
 	case "{{major}}":
 		m := semverMajor.FindStringSubmatch(stripped)
 		if m == nil {
 			return "", false, nil
 		}
+
 		return m[1], true, nil
 	}
-	return "", false, fmt.Errorf("unsupported semver pattern %q", pattern)
+
+	return "", false, fmt.Errorf("unsupported semver pattern %q: %w", pattern, errs.ErrValidation)
 }

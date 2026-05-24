@@ -12,11 +12,12 @@ package manifest
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
 )
@@ -38,6 +39,7 @@ func NewFromEnv() *Sink {
 	if dir == "" {
 		dir = ".ci-results"
 	}
+
 	return &Sink{Dir: dir}
 }
 
@@ -51,21 +53,26 @@ func New(dir string) *Sink { return &Sink{Dir: dir} }
 // summary.StageResultEnvelope.
 func (s *Sink) Write(_ context.Context, stage string, result map[string]any) error {
 	if stage == "" {
-		return errors.New("manifest stage name is empty")
+		return fmt.Errorf("manifest stage name is empty: %w", errs.ErrUsage)
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
+
+	if err := os.MkdirAll(s.Dir, 0o755); err != nil { //nolint:gosec // manifest dir read by downstream workflow steps.
 		return fmt.Errorf("mkdir %q: %w", s.Dir, err)
 	}
+
 	body, err := json.Marshal(result)
 	if err != nil {
 		return fmt.Errorf("marshal manifest %q: %w", stage, err)
 	}
+
 	path := filepath.Join(s.Dir, stage+"-result.json")
-	if err := os.WriteFile(path, append(body, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(path, append(body, '\n'), 0o644); err != nil { //nolint:gosec // manifest file read by workflow; 0644 expected.
 		return fmt.Errorf("write %q: %w", path, err)
 	}
+
 	return nil
 }
 
@@ -77,21 +84,26 @@ func (s *Sink) WriteJSON(_ context.Context, stage string, body interface {
 	MarshalJSON() ([]byte, error)
 }) error {
 	if stage == "" {
-		return errors.New("manifest stage name is empty")
+		return fmt.Errorf("manifest stage name is empty: %w", errs.ErrUsage)
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
+
+	if err := os.MkdirAll(s.Dir, 0o755); err != nil { //nolint:gosec // manifest dir read by downstream workflow steps.
 		return fmt.Errorf("mkdir %q: %w", s.Dir, err)
 	}
+
 	raw, err := body.MarshalJSON()
 	if err != nil {
 		return fmt.Errorf("marshal manifest %q: %w", stage, err)
 	}
+
 	path := filepath.Join(s.Dir, stage+"-result.json")
-	if err := os.WriteFile(path, append(raw, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(path, append(raw, '\n'), 0o644); err != nil { //nolint:gosec // manifest file read by workflow; 0644 expected.
 		return fmt.Errorf("write %q: %w", path, err)
 	}
+
 	return nil
 }
 

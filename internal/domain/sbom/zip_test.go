@@ -13,6 +13,7 @@ import (
 
 func TestZipName_CanonicalShape(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name    string
 		project string

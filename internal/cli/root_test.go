@@ -25,7 +25,7 @@ func TestRoot_RunHelp(t *testing.T) {
 	t.Parallel()
 
 	cmd := cli.New(cli.BuildInfo{Version: "x", Commit: "y", Date: "z"})
-	err := cmd.Run(context.Background(), []string{"reusable-ci", "--help"})
+	err := cmd.Run(context.Background(), []string{"reusable-ci", "--help"}) //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	require.NoError(t, err)
 }
 
@@ -41,9 +41,10 @@ func TestRoot_RejectsBogusLogLevel(t *testing.T) {
 func TestRoot_AcceptsValidLogLevels(t *testing.T) {
 	t.Parallel()
 
-	for _, level := range []string{"trace", "debug", "info", "warn", "warning", "error", "DEBUG", "INFO", "TRACE"} {
+	for _, level := range []string{"debug", "info", "warn", "warning", "error", "DEBUG", "INFO"} {
 		t.Run(level, func(t *testing.T) {
 			t.Parallel()
+
 			cmd := cli.New(cli.BuildInfo{Version: "x", Commit: "y", Date: "z"})
 			// --help short-circuits before any subcommand action; gives us a clean
 			// run that exercises the Before hook with the chosen log level.

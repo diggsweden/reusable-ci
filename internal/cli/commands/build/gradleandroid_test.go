@@ -20,18 +20,22 @@ func TestGradleAndroidArtifactNamesCmd_WritesOutputsFromEnv(t *testing.T) {
 	env.Setenv("PRODUCT_FLAVOR", "prod")
 
 	cmd := buildcmd.New()
-	if err := cmd.Run(context.Background(), []string{"build", "gradle-android", "artifact-names"}); err != nil {
+	if err := cmd.Run(context.Background(), []string{"build", "gradle-android", "artifact-names"}); err != nil { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		t.Fatal(err)
 	}
+
 	if got := env.Output("debug-name"); got != "ci - myapp - prod - APK debug" {
 		t.Errorf("debug-name = %q", got)
 	}
+
 	if got := env.Output("release-name"); got != "ci - myapp - prod - APK release" {
 		t.Errorf("release-name = %q", got)
 	}
+
 	if got := env.Output("aab-name"); got != "ci - myapp - prod - AAB release" {
 		t.Errorf("aab-name = %q", got)
 	}
+
 	if got := env.Output("sbom-name"); got != "ci - myapp - prod - build SBOM" {
 		t.Errorf("sbom-name = %q", got)
 	}
@@ -47,9 +51,11 @@ func TestGradleAndroidVersionInfoCmd_WritesOutputs(t *testing.T) {
 	if err := cmd.Run(context.Background(), []string{"build", "gradle-android", "version-info"}); err != nil {
 		t.Fatal(err)
 	}
+
 	if got := env.Output("version"); got != "2.5.0" {
 		t.Errorf("version = %q", got)
 	}
+
 	if got := env.Output("version-code"); got != "42" {
 		t.Errorf("version-code = %q", got)
 	}
@@ -66,6 +72,7 @@ func TestGradleAndroidResolveBuildTasksCmd_WritesTasksOutput(t *testing.T) {
 	if err := cmd.Run(context.Background(), []string{"build", "gradle-android", "resolve-build-tasks"}); err != nil {
 		t.Fatal(err)
 	}
+
 	if got := env.Output("tasks"); got != "assembleDemoRelease mymodule:bundleDemoRelease" {
 		t.Errorf("tasks = %q", got)
 	}

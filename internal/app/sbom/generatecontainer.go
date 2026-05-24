@@ -32,34 +32,36 @@ type GenerateContainerInput struct {
 
 // GenerateContainer is the thin wrapper around the SBOM generator for
 // `analyzed-container` layer SBOMs produced after a multi-artifact
-// container is published. Mirrors
-// scripts/sbom/generate-container-sbom-artifacts.sh +
-// scripts/sbom/generate-container-sbom.sh end-to-end.
+// container is published.
 //
-// Faithful note: when ArtifactTypes contains multiple comma-separated
-// entries, the inner SBOM generator is invoked once per entry. Each
-// invocation produces the same filename (the loop is vestigial in the
-// bash; the layer doesn't consult artifact type) — the last write
-// wins. Preserved for byte-compat with the bash.
+// When ArtifactTypes contains multiple comma-separated entries the
+// inner generator runs once per entry, but every invocation writes to
+// the same output filename — the analyzed-container layer is
+// artefact-type-agnostic, so the loop is functionally a single write.
+// The last entry's run wins; in practice every entry produces
+// identical output, so the loop is observationally idempotent.
 func GenerateContainer(
 	ctx context.Context,
 	syft SyftOps,
 	mvn MavenOps,
 	gitRepo GitOps,
-	stdout, stderr io.Writer,
+	w, stderr io.Writer, //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	in GenerateContainerInput,
 ) error {
 	if in.RefName == "" {
-		return fmt.Errorf("CI_REF_NAME is required: %w", errs.ErrUsage)
+		return fmt.Errorf("ref name is required: pass --ref-name <tag> or set $CI_REF_NAME (or $GITHUB_REF_NAME): %w", errs.ErrUsage)
 	}
+
 	if in.Repo == "" {
-		return fmt.Errorf("CI_REPO is required: %w", errs.ErrUsage)
+		return fmt.Errorf("repository is required: pass --repository <owner/repo> or set $CI_REPO (or $GITHUB_REPOSITORY): %w", errs.ErrUsage)
 	}
+
 	if in.ImageName == "" {
-		return fmt.Errorf("IMAGE_NAME is required: %w", errs.ErrUsage)
+		return fmt.Errorf("image name is required: pass --image-name <ref> or set $IMAGE_NAME: %w", errs.ErrUsage)
 	}
+
 	if in.ImageDigest == "" {
-		return fmt.Errorf("IMAGE_DIGEST is required: %w", errs.ErrUsage)
+		return fmt.Errorf("image digest is required: pass --image-digest <sha256:…> or set $IMAGE_DIGEST: %w", errs.ErrUsage)
 	}
 
 	version := strings.TrimPrefix(in.RefName, "v")
@@ -74,23 +76,31 @@ func GenerateContainer(
 	}
 
 	if in.ArtifactTypes == "" {
-		fmt.Fprintln(stdout, "No artifact dependencies - generating SBOM from container image only")
-		if err := Generate(ctx, syft, mvn, gitRepo, stdout, stderr, gen); err != nil {
+		_, _ = fmt.Fprintln(w, "No artifact dependencies - generating SBOM from container image only")
+
+		if err := Generate(ctx, syft, mvn, gitRepo, w, stderr, gen); err != nil {
 			return err
 		}
-		fmt.Fprintln(stdout, "✓ Container SBOM generation completed")
+
+		_, _ = fmt.Fprintln(w, "✓ Container SBOM generation completed")
+
 		return nil
 	}
-	for _, t := range strings.Split(in.ArtifactTypes, ",") {
+
+	for _, t := range strings.Split(in.ArtifactTypes, ",") { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		t = strings.TrimSpace(t)
 		if t == "" {
 			continue
 		}
-		fmt.Fprintf(stdout, "Generating SBOM for artifact type: %s\n", t)
-		if err := Generate(ctx, syft, mvn, gitRepo, stdout, stderr, gen); err != nil {
+
+		_, _ = fmt.Fprintf(w, "Generating SBOM for artifact type: %s\n", t)
+
+		if err := Generate(ctx, syft, mvn, gitRepo, w, stderr, gen); err != nil {
 			return err
 		}
 	}
-	fmt.Fprintln(stdout, "✓ Container SBOM generation completed")
+
+	_, _ = fmt.Fprintln(w, "✓ Container SBOM generation completed")
+
 	return nil
 }

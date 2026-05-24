@@ -17,7 +17,7 @@ func FuzzFindBuildBOM(f *testing.F) {
 	seeds := []struct{ files, includes, excludes string }{
 		{"target/bom.json", "*/target/bom.json", ""},
 		{"build/reports/bom.json\nbuild/reports/cyclonedx/bom.json", "*/build/reports/bom.json,*/build/reports/cyclonedx/bom.json", ""},
-		{"node_modules/lib/bom.json\napp/bom.json", "*/bom.json", "*/node_modules/*"},
+		{"node_modules/lib/bom.json\napp/bom.json", "*/bom.json", "*/node_modules/*"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{"", "*/bom.json", ""},
 		{strings.Repeat("a/", 100) + "bom.json", "*/bom.json", ""},
 	}

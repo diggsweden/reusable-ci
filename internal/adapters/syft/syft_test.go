@@ -21,11 +21,12 @@ func TestNew(t *testing.T) {
 }
 
 func TestAdapter_GenerateUsesSortedOutputArgs(t *testing.T) {
-	m := mockbinary.New(t)
+	m := mockbinary.New(t) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	m.Add("syft", `printf 'ok\n' >&2`)
 	a := &syft.Adapter{Bin: m.Path("syft")}
 
 	var stderr bytes.Buffer
+
 	err := a.Generate(context.Background(), "./target", map[string]string{
 		"spdx-json":      "out.spdx.json",
 		"cyclonedx-json": "out.cyclonedx.json",
@@ -33,10 +34,12 @@ func TestAdapter_GenerateUsesSortedOutputArgs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	wantArgs := []string{"./target", "-o", "cyclonedx-json=out.cyclonedx.json", "-o", "spdx-json=out.spdx.json"}
 	if got := m.Invocations("syft")[0].Args; !reflect.DeepEqual(got, wantArgs) {
 		t.Errorf("args = %v, want %v", got, wantArgs)
 	}
+
 	if strings.TrimSpace(stderr.String()) != "ok" {
 		t.Errorf("stderr = %q", stderr.String())
 	}
@@ -44,6 +47,7 @@ func TestAdapter_GenerateUsesSortedOutputArgs(t *testing.T) {
 
 func TestAdapter_GenerateRequiresOutputs(t *testing.T) {
 	a := &syft.Adapter{Bin: "syft"}
+
 	err := a.Generate(context.Background(), "./target", nil, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "no outputs requested") {
 		t.Fatalf("err = %v", err)
@@ -59,6 +63,7 @@ func TestAdapter_RunInherit(t *testing.T) {
 	if err := a.RunInherit(context.Background(), &stdout, &bytes.Buffer{}, "--version"); err != nil {
 		t.Fatal(err)
 	}
+
 	if !strings.Contains(stdout.String(), "syft --version") {
 		t.Errorf("stdout = %q", stdout.String())
 	}

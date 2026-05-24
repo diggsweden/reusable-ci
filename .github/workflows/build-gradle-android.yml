@@ -18,7 +18,7 @@
 #   - AAB (Android App Bundle) generation
 #   - Date-stamped artifact names
 #   - Custom artifact naming (playstore names, prefixes)
-#   - Configurable JDK distribution (temurin, zulu, adopt, corretto)
+#   - Runtime image with pinned JDK, Gradle, and Android SDK tooling
 #   - Android app signing
 #
 # Outputs:
@@ -60,7 +60,7 @@ on:
         default: true
         type: boolean
       gradle-tasks:
-        description: "Override the derived gradle task list (e.g., 'assembleDemoRelease bundleDemoRelease'). When set, takes precedence over product-flavor/build-types/include-aab. Leave empty to derive tasks from those inputs."
+        description: "Override the derived gradle task list (e.g., 'assembleDemoRelease app:bundleDemoRelease'). When set, takes precedence over product-flavor/build-types/include-aab. Leave empty to derive tasks from those inputs."
         required: false
         default: ""
         type: string
@@ -107,10 +107,27 @@ on:
         default: true
         type: boolean
       runtime-image:
-        description: "reusable-ci runtime image carrying JDK + Gradle + Android SDK. Pin to a digest or version tag; default tracks main."
+        description: "reusable-ci runtime image carrying JDK + Gradle + Android SDK. Optional override; default uses the matching v3.0.0 runtime image."
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-android-35:main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-android-35:v3.0.0"
         type: string
+    # All `required: false` — `secrets: inherit` callers unchanged.
+    secrets:
+      ANDROID_KEYSTORE:
+        description: "Base64-encoded Android signing keystore (.jks/.keystore)"
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        description: "Password for ANDROID_KEYSTORE"
+        required: false
+      ANDROID_KEY_ALIAS:
+        description: "Alias of the signing key inside ANDROID_KEYSTORE"
+        required: false
+      ANDROID_KEY_PASSWORD:
+        description: "Password for the key referenced by ANDROID_KEY_ALIAS"
+        required: false
+      SECRETS_PROPERTIES_BASE64:
+        description: "Base64-encoded secrets.properties file (Google Maps API keys, etc.)"
+        required: false
     outputs:
       debug-name:
         description: "Uploaded artefact name for the debug APK"
@@ -129,7 +146,7 @@ permissions:
 jobs:
   build-variants:
     name: Build Gradle Android
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     container:
       image: ${{ inputs['runtime-image'] }}
@@ -141,6 +158,11 @@ jobs:
       aab-name: ${{ steps.artifact-names.outputs.aab-name }}
       sbom-name: ${{ steps.artifact-names.outputs.sbom-name }}
     steps:
+      # Defense-in-depth: refuse PR-context triggers. ANDROID_KEYSTORE +
+      # SECRETS_PROPERTIES_BASE64 land in env for this job; must never
+      # run with PR-HEAD code. reusable-ci is pre-baked.
+      - name: Refuse PR-context trigger (publish/release secrets in scope)
+        run: reusable-ci validate event-context
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -187,24 +209,15 @@ jobs:
           BUILD_TYPES: ${{ inputs['build-types'] }}
           INCLUDE_AAB: ${{ inputs['include-aab'] }}
           BUILD_MODULE: ${{ inputs['build-module'] }}
-        run: |
-          if [[ -n "$GRADLE_TASKS_OVERRIDE" ]]; then
-            printf "tasks=%s\n" "$GRADLE_TASKS_OVERRIDE" >> "$GITHUB_OUTPUT"
-            printf "Building with explicit tasks: %s\n" "$GRADLE_TASKS_OVERRIDE"
-          else
-            reusable-ci build gradle-android resolve-build-tasks
-          fi
+        run: reusable-ci build gradle-android resolve-build-tasks
       - name: Decode secrets properties
         # Standard Android pattern: gradle scripts read secrets.properties for
-        # build-time secrets (API keys, signing config, etc.). Mirrors the
-        # pre-split build-gradle-app.yml step.
+        # build-time secrets (API keys, signing config, etc.). Empty secret
+        # is treated as "no secrets configured".
         working-directory: ${{ inputs['working-directory'] }}
         env:
-          SECRETS_PROPERTIES: ${{ secrets.SECRETS_PROPERTIES_BASE64 }}
-        run: |
-          if [ -n "$SECRETS_PROPERTIES" ]; then
-            printf "%s" "$SECRETS_PROPERTIES" | base64 -d > secrets.properties
-          fi
+          SECRETS_PROPERTIES_BASE64: ${{ secrets.SECRETS_PROPERTIES_BASE64 }}
+        run: reusable-ci build gradle-android write-secrets-properties
       - name: Run Gradle build
         working-directory: ${{ inputs['working-directory'] }}
         env:
@@ -213,11 +226,10 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
           GRADLE_TASKS: ${{ steps.build-tasks.outputs.tasks }}
-        run: reusable-ci build gradle-android build
+        run: reusable-ci build gradle-android compile
       - name: Generate Build SBOM
         id: sbom
         if: ${{ inputs['enable-build-sbom'] }}
-        continue-on-error: true
         working-directory: ${{ inputs['working-directory'] }}
         env:
           # renovate: datasource=maven depName=org.cyclonedx:cyclonedx-gradle-plugin
@@ -240,23 +252,10 @@ jobs:
       - name: Write SBOM status to step summary
         if: always()
         env:
+          ECOSYSTEM: gradle-android
           SBOM_OUTCOME: ${{ steps.sbom.outcome }}
-          WORKDIR: ${{ inputs['working-directory'] }}
-        run: |
-          # shellcheck disable=SC2016  # backticks inside single quotes are intentional markdown
-          {
-            printf '### Build SBOM\n'
-            if [[ "$SBOM_OUTCOME" == "success" ]]; then
-              bom=$(find "$WORKDIR" -path '*/build/reports/bom.json' 2>/dev/null | sort | head -1)
-              if [[ -n "$bom" ]]; then
-                printf -- '- ✅ CycloneDX: `%s`\n' "$bom"
-              else
-                printf -- '- ⚠️ Generated but file not located — check plugin output path\n'
-              fi
-            else
-              printf -- '- ⚠️ Generation step did not succeed (continued as advisory)\n'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: reusable-ci report status build-sbom
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         env:
@@ -286,6 +285,7 @@ jobs:
           path: |
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/bundle/**/*.aab
           retention-days: 7
+          if-no-files-found: error
       - name: Generate build summary
         env:
           BUILD_MODULE: ${{ inputs['build-module'] }}
@@ -301,4 +301,4 @@ jobs:
           AAB_NAME: ${{ steps.artifact-names.outputs.aab-name }}
           JAVA_VERSION: "25"
           JDK_DIST: "Temurin"
-        run: reusable-ci summary android-build
+        run: reusable-ci report build android

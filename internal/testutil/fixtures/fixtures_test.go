@@ -19,6 +19,7 @@ func TestRead_FoundFile(t *testing.T) {
 
 func TestArtifactsYAMLEmpty_Matches(t *testing.T) {
 	got := fixtures.ArtifactsYAMLEmpty()
+
 	want := fixtures.Read(t, "artifacts/empty.yml")
 	if string(got) != string(want) {
 		t.Errorf("getter and Read() returned different bytes")
@@ -37,6 +38,7 @@ func TestList_FindsFiles(t *testing.T) {
 	if len(files) == 0 {
 		t.Errorf("List(artifacts) returned no entries")
 	}
+
 	for _, f := range files {
 		if strings.HasPrefix(f, "/") {
 			t.Errorf("List returned absolute path: %q", f)
@@ -50,5 +52,6 @@ func TestMustRead_PanicsOnMiss(t *testing.T) {
 			t.Errorf("MustRead did not panic on missing file")
 		}
 	}()
+
 	_ = fixtures.MustRead("does/not/exist.yml")
 }

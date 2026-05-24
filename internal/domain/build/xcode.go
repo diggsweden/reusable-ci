@@ -30,14 +30,17 @@ var xcodePbxKeyValue = regexp.MustCompile(`^\s*([A-Z_][A-Z0-9_]*)\s*=\s*([^;]+);
 // extraction works in practice; this helper preserves the bash shape
 // while typing the result.
 func ParseXcodeVersionFromPbxproj(body string) XcodeVersionInfo {
-	out := XcodeVersionInfo{Version: "unknown", Build: "unknown"}
+	out := XcodeVersionInfo{Version: "unknown", Build: "unknown"} //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+
 	for _, line := range strings.Split(body, "\n") {
-		m := xcodePbxKeyValue.FindStringSubmatch(line)
+		m := xcodePbxKeyValue.FindStringSubmatch(line) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		if m == nil {
 			continue
 		}
+
 		key := m[1]
 		val := strings.TrimSpace(strings.Trim(m[2], `"`))
+
 		switch key {
 		case "MARKETING_VERSION":
 			if out.Version == "unknown" {
@@ -48,10 +51,12 @@ func ParseXcodeVersionFromPbxproj(body string) XcodeVersionInfo {
 				out.Build = val
 			}
 		}
+
 		if out.Version != "unknown" && out.Build != "unknown" {
 			return out
 		}
 	}
+
 	return out
 }
 
@@ -67,30 +72,33 @@ type XcodeSummaryInput struct {
 	IPAName       string
 }
 
-// RenderXcodeSummary returns the markdown block written by
-// scripts/summary/write-xcode-build-summary.sh, byte-for-byte.
+// RenderXcodeSummary returns the markdown block written by.
 func RenderXcodeSummary(in XcodeSummaryInput, now time.Time) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "## Xcode Build Summary 📱\n\n")
-	fmt.Fprintf(&b, "### Configuration\n")
-	fmt.Fprintf(&b, "| Setting | Value |\n")
-	fmt.Fprintf(&b, "|---------|-------|\n")
-	fmt.Fprintf(&b, "| **Xcode** | %s |\n", in.XcodeVersion)
-	fmt.Fprintf(&b, "| **Scheme** | %s |\n", in.Scheme)
-	fmt.Fprintf(&b, "| **Configuration** | %s |\n", in.Configuration)
-	fmt.Fprintf(&b, "| **Destination** | %s |\n", in.Destination)
-	fmt.Fprintf(&b, "| **Signing** | %s |\n", boolStatus(in.Signing))
+	var b strings.Builder //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+
+	_, _ = fmt.Fprintf(&b, "## Xcode Build Summary 📱\n\n")
+	_, _ = fmt.Fprintf(&b, "### Configuration\n")
+	_, _ = fmt.Fprintf(&b, "| Setting | Value |\n")
+	_, _ = fmt.Fprintf(&b, "|---------|-------|\n")
+	_, _ = fmt.Fprintf(&b, "| **Xcode** | %s |\n", in.XcodeVersion)
+	_, _ = fmt.Fprintf(&b, "| **Scheme** | %s |\n", in.Scheme)
+	_, _ = fmt.Fprintf(&b, "| **Configuration** | %s |\n", in.Configuration)
+	_, _ = fmt.Fprintf(&b, "| **Destination** | %s |\n", in.Destination)
+	_, _ = fmt.Fprintf(&b, "| **Signing** | %s |\n", boolStatus(in.Signing))
 
 	if in.Version != "" && in.Version != "unknown" {
-		fmt.Fprintf(&b, "| **Version** | %s (%s) |\n", in.Version, in.BuildNumber)
+		_, _ = fmt.Fprintf(&b, "| **Version** | %s (%s) |\n", in.Version, in.BuildNumber)
 	}
 
-	fmt.Fprintf(&b, "\n### Artifacts Generated\n")
+	_, _ = fmt.Fprintf(&b, "\n### Artifacts Generated\n")
+
 	if in.Signing {
-		fmt.Fprintf(&b, "✓ IPA: `%s`\n", in.IPAName)
+		_, _ = fmt.Fprintf(&b, "✓ IPA: `%s`\n", in.IPAName)
 	} else {
-		fmt.Fprintf(&b, "✓ Archive: `%s-archive`\n", in.IPAName)
+		_, _ = fmt.Fprintf(&b, "✓ Archive: `%s-archive`\n", in.IPAName)
 	}
-	fmt.Fprintf(&b, "\n*Build completed at %s*\n", now.UTC().Format("2006-01-02 15:04:05 UTC"))
+
+	_, _ = fmt.Fprintf(&b, "\n*Build completed at %s*\n", now.UTC().Format("2006-01-02 15:04:05 UTC"))
+
 	return b.String()
 }

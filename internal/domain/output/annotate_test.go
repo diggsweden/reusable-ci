@@ -15,7 +15,9 @@ import (
 
 func TestAnnotator_GitHubFormat_EmitsWorkflowCommands(t *testing.T) {
 	t.Parallel()
+
 	var buf bytes.Buffer
+
 	a := output.NewAnnotator(&buf, output.FormatGitHub)
 
 	a.Errorf("missing %s", "X")
@@ -30,12 +32,15 @@ func TestAnnotator_GitHubFormat_EmitsWorkflowCommands(t *testing.T) {
 
 func TestAnnotator_NonGitHubFormats_EmitPlainPrefix(t *testing.T) {
 	t.Parallel()
-	for _, f := range []output.Format{
+
+	for _, f := range []output.Format{ //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		output.FormatText, output.FormatJSON, output.FormatGitLab, output.FormatAuto,
 	} {
 		t.Run(string(f), func(t *testing.T) {
 			t.Parallel()
+
 			var buf bytes.Buffer
+
 			a := output.NewAnnotator(&buf, f)
 			a.Errorf("boom")
 			a.Warningf("careful")
@@ -56,17 +61,32 @@ func TestAnnotator_ZeroValue_DiscardsWrites(t *testing.T) {
 
 func TestAnnotator_FormatString_PassedThrough(t *testing.T) {
 	t.Parallel()
+
 	var buf bytes.Buffer
+
 	a := output.NewAnnotator(&buf, output.FormatGitHub)
 	a.Errorf("HTTP %d: %s", 500, "bad gateway")
 	require.Equal(t, "::error::HTTP 500: bad gateway\n", buf.String())
+}
+
+func TestAnnotator_GitHubFormat_EscapesWorkflowCommandData(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	a := output.NewAnnotator(&buf, output.FormatGitHub)
+
+	a.Warningf("first line\n100%% done\rnext")
+
+	require.Equal(t, "::warning::first line%0A100%25 done%0Dnext\n", buf.String())
 }
 
 func TestAnnotatorFromFlag_ResolvesFormat(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	a := output.AnnotatorFromFlag(&buf, "auto", provider.PlatformGitHub)
+
+	a := output.AnnotatorFromFlag(&buf, "auto", provider.PlatformGitHub) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	a.Warningf("watch out")
 	require.Equal(t, "::warning::watch out\n", buf.String())
 

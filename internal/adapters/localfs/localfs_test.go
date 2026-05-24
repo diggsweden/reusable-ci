@@ -12,6 +12,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/testutil/testfs"
 )
 
+//nolint:cyclop // exercises every Stat/Exists/IsDir predicate on one fixture.
 func TestFS_FileChecks(t *testing.T) {
 	t.Parallel()
 
@@ -24,15 +25,19 @@ func TestFS_FileChecks(t *testing.T) {
 	if !adapter.FileExists(empty) || !adapter.FileExists(nonEmpty) {
 		t.Fatal("expected regular files to exist")
 	}
+
 	if adapter.FileExists(dir) || adapter.FileExists(fsys.Path("missing")) || adapter.FileExists("") {
 		t.Fatal("directories, missing paths, and empty paths should not be regular files")
 	}
+
 	if adapter.FileNonEmpty(empty) {
 		t.Fatal("empty file should not be non-empty")
 	}
+
 	if !adapter.FileNonEmpty(nonEmpty) {
 		t.Fatal("non-empty file should be non-empty")
 	}
+
 	if adapter.FileNonEmpty(dir) || adapter.FileNonEmpty(fsys.Path("missing")) || adapter.FileNonEmpty("") {
 		t.Fatal("directories, missing paths, and empty paths should not be non-empty files")
 	}
@@ -50,6 +55,7 @@ func TestFS_FindReleaseArtifactsAndGlobs(t *testing.T) {
 
 	adapter := localfs.New()
 	got := adapter.FindReleaseArtifacts(fsys.Path("release-artifacts"))
+
 	want := []string{
 		fsys.Path("release-artifacts", "app.jar"),
 		fsys.Path("release-artifacts", "archive.tar.gz"),
@@ -57,13 +63,16 @@ func TestFS_FindReleaseArtifactsAndGlobs(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("release artifacts = %v, want %v", got, want)
 	}
+
 	if got := adapter.FindReleaseArtifacts(fsys.Path("missing")); got != nil {
 		t.Errorf("missing dir artifacts = %v, want nil", got)
 	}
+
 	if got := adapter.Glob(filepath.Join(fsys.Root, "*.asc")); !reflect.DeepEqual(got, []string{fsys.Path("a.asc"), fsys.Path("b.asc")}) {
 		t.Errorf("glob = %v", got)
 	}
-	if got := adapter.ListASCFiles(); !reflect.DeepEqual(got, []string{"a.asc", "b.asc"}) {
-		t.Errorf("asc files = %v", got)
+
+	if got := adapter.ListSignatureSidecars(); !reflect.DeepEqual(got, []string{"a.asc", "b.asc"}) {
+		t.Errorf("signature sidecars = %v", got)
 	}
 }

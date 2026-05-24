@@ -9,6 +9,7 @@ import (
 	"io"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 )
 
 // moveTagOps is the slice of adapter/git.Repo this use case needs.
@@ -41,17 +42,19 @@ type MoveTagInput struct {
 // message when the tag is at any other commit (operator's release flow
 // has diverged).
 //
-// Mirrors scripts/version/move-tag.sh exactly. The release-sha output is
-// written through sink so both GHA (heredoc) and GitLab (dotenv) work.
-func MoveTag(ctx context.Context, repo moveTagOps, in MoveTagInput, sink ci.OutputSink, w io.Writer) (*MoveTagOutput, error) {
+// The release-sha output is written through sink so both GHA (heredoc)
+// and GitLab (dotenv) work.
+func MoveTag(ctx context.Context, repo moveTagOps, in MoveTagInput, sink ci.OutputSink, w io.Writer) (*MoveTagOutput, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	tag, err := repo.DescribeLatestTag(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("describe latest tag: %w", err)
 	}
+
 	prevSHA, err := repo.RevParse(ctx, "HEAD~1")
 	if err != nil {
 		return nil, fmt.Errorf("rev-parse HEAD~1: %w", err)
 	}
+
 	tagSHA, err := repo.TagSHA(ctx, tag)
 	if err != nil {
 		return nil, fmt.Errorf("rev-list -n 1 %s: %w", tag, err)
@@ -59,27 +62,30 @@ func MoveTag(ctx context.Context, repo moveTagOps, in MoveTagInput, sink ci.Outp
 
 	if tagSHA != prevSHA {
 		return nil, fmt.Errorf(
-			"tag %s points to unexpected commit\n  expected: %s (HEAD~1)\n  found:    %s",
-			tag, prevSHA, tagSHA)
+			"tag %s points to unexpected commit\n  expected: %s (HEAD~1)\n  found:    %s: %w",
+			tag, prevSHA, tagSHA, errs.ErrValidation)
 	}
 
-	fmt.Fprintf(w, "Moving tag %s from previous commit to current\n", tag)
+	_, _ = fmt.Fprintf(w, "Moving tag %s from previous commit to current\n", tag)
 
-	if err := repo.MoveTag(ctx, tag, in.Signed); err != nil {
-		return nil, fmt.Errorf("move tag: %w", err)
+	if moveErr := repo.MoveTag(ctx, tag, in.Signed); moveErr != nil {
+		return nil, fmt.Errorf("move tag: %w", moveErr)
 	}
-	if err := repo.PushTag(ctx, tag); err != nil {
-		return nil, fmt.Errorf("push tag: %w", err)
+
+	if pushErr := repo.PushTag(ctx, tag); pushErr != nil {
+		return nil, fmt.Errorf("push tag: %w", pushErr)
 	}
 
 	releaseSHA, err := repo.RevParse(ctx, "HEAD")
 	if err != nil {
 		return nil, fmt.Errorf("rev-parse HEAD: %w", err)
 	}
+
 	if sink != nil {
 		if err := sink.Set(ctx, "release-sha", releaseSHA); err != nil {
 			return nil, fmt.Errorf("emit release-sha: %w", err)
 		}
 	}
+
 	return &MoveTagOutput{Tag: tag, ReleaseSHA: releaseSHA}, nil
 }

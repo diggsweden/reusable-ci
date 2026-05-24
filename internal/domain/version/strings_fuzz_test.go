@@ -22,14 +22,15 @@ import (
 //   - output contains only [a-zA-Z0-9._-]
 //   - output is valid UTF-8 (input may be invalid)
 //   - idempotent on already-clean input
+//nolint:cyclop // fuzz harness exercising the sanitizer exhaustively.
 func FuzzSanitizePathToken(f *testing.F) {
 	// Seed corpus with shapes we've seen in the wild.
 	seeds := []string{
 		"",
-		"main",
-		"feat/awesome",
+		"main", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"feat/awesome", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"release/2026.05",
-		"v1.2.3",
+		"v1.2.3", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"v1.2.3-SNAPSHOT",
 		"feat/foo bar baz",
 		"hotfix/CVE-2024-1234",
@@ -49,7 +50,7 @@ func FuzzSanitizePathToken(f *testing.F) {
 		}
 
 		// Output must contain only path-safe ASCII.
-		for i, r := range got {
+		for i, r := range got { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 			switch {
 			case r >= 'a' && r <= 'z':
 			case r >= 'A' && r <= 'Z':
@@ -58,6 +59,7 @@ func FuzzSanitizePathToken(f *testing.F) {
 			default:
 				t.Errorf("byte %d (%U %q) violates [a-zA-Z0-9._-]; full output: %q",
 					i, r, r, got)
+
 				return
 			}
 		}

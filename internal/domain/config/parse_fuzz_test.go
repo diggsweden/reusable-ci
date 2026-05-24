@@ -30,8 +30,10 @@ func FuzzParseConfig(f *testing.F) {
 			if !errors.Is(err, errs.ErrInvalidConfig) {
 				t.Fatalf("err = %v, want ErrInvalidConfig", err)
 			}
+
 			return
 		}
+
 		if cfg == nil {
 			t.Fatalf("nil config for successful parse of %q", string(data))
 		}

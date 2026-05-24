@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: CC0-1.0
 
 // Package build wires `reusable-ci build <toolchain> <subcmd>` using
-// urfave/cli v3. Each toolchain (maven, gradle, gradle-android,
-// xcode-ios) is its own subgroup.
+// urfave/cli v3. Each toolchain (go, cargo, maven, npm, gradle,
+// gradle-android, xcode-ios, swift) is its own subgroup.
 package build
 
 import "github.com/urfave/cli/v3"
@@ -12,12 +12,16 @@ import "github.com/urfave/cli/v3"
 func New() *cli.Command {
 	return &cli.Command{
 		Name:  "build",
-		Usage: "toolchain build wrappers (maven, gradle, gradle-android, xcode-ios)",
+		Usage: "toolchain build wrappers (go, cargo, maven, npm, gradle, gradle-android, xcode-ios, swift)",
 		Commands: []*cli.Command{
+			goCmd(),
+			cargoCmd(),
 			mavenCmd(),
+			npmCmd(),
 			gradleCmd(),
 			gradleAndroidCmd(),
 			xcodeIOSCmd(),
+			swiftCmd(),
 		},
 	}
 }

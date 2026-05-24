@@ -49,12 +49,13 @@ type Server struct {
 // New starts a server on a random port and registers cleanup.
 func New(t *testing.T) *Server {
 	t.Helper()
-	s := &Server{
+	s := &Server{ //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		t:      t,
 		routes: map[string]Handler{},
 	}
 	s.srv = httptest.NewServer(http.HandlerFunc(s.handle))
 	t.Cleanup(s.srv.Close)
+
 	return s
 }
 
@@ -80,12 +81,14 @@ func (s *Server) OnPost(path string, h Handler) { s.On("POST", path, h) }
 func (s *Server) Requests() []Request {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	cp := make([]Request, len(s.requests))
 	copy(cp, s.requests)
+
 	return cp
 }
 
-func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handle(w http.ResponseWriter, r *http.Request) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	body, _ := io.ReadAll(r.Body)
 	_ = r.Body.Close()
 
@@ -103,11 +106,12 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	s.requests = append(s.requests, req)
-	h, ok := s.routes[key(r.Method, path)]
+	h, ok := s.routes[key(r.Method, path)] //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	s.mu.Unlock()
 
 	if !ok {
 		http.Error(w, "no route registered for "+r.Method+" "+path, http.StatusNotFound)
+
 		return
 	}
 
@@ -117,11 +121,16 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			w.Header().Add(k, v)
 		}
 	}
+
 	if resp.Status == 0 {
 		resp.Status = http.StatusOK
 	}
+
 	w.WriteHeader(resp.Status)
-	_, _ = io.WriteString(w, resp.Body)
+	// Test-only Git smart-HTTP transport fake: responses are pre-canned
+	// fixture bytes (info/refs advertisements, packfiles), not HTML or
+	// user-supplied data. html/template doesn't apply.
+	_, _ = io.WriteString(w, resp.Body) // nosemgrep: go.lang.security.audit.xss.no-io-writestring-to-responsewriter.no-io-writestring-to-responsewriter
 }
 
 func key(method, path string) string {
@@ -130,12 +139,14 @@ func key(method, path string) string {
 
 func upperASCII(s string) string {
 	out := make([]byte, len(s))
-	for i := range len(s) {
+	for i := range len(s) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		c := s[i]
 		if c >= 'a' && c <= 'z' {
 			c -= 32
 		}
+
 		out[i] = c
 	}
+
 	return string(out)
 }

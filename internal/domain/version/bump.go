@@ -4,8 +4,8 @@
 package version
 
 import (
-	"errors"
 	"fmt"
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,6 +16,7 @@ import (
 // distinctly so callers can mirror that.
 type UpdatePropertyResult int
 
+// Recognised UpdatePropertyResult values.
 const (
 	UpdatePropertyUpdated UpdatePropertyResult = iota
 	UpdatePropertyAdded
@@ -23,7 +24,7 @@ const (
 
 // UpdateOrAddProperty rewrites the first line that starts with `key`
 // (case-sensitive, anchored) to `key<sep><value>`, or appends a new
-// line if no match. Mirrors the bash `update_or_add_property` helper.
+// line if no match. Mirrors `update_or_add_property` helper.
 //
 // Returns the new body, a result tag, and whether any change was made
 // (true unless the key already had exactly that value).
@@ -35,6 +36,7 @@ func UpdateOrAddProperty(body, key, value, sep string) (string, UpdatePropertyRe
 			// the key prefix. The bash overwrites the whole line with
 			// `${key}${sep}${value}`.
 			lines[i] = key + sep + value
+
 			return strings.Join(lines, "\n"), UpdatePropertyUpdated
 		}
 	}
@@ -44,6 +46,7 @@ func UpdateOrAddProperty(body, key, value, sep string) (string, UpdatePropertyRe
 	if !strings.HasSuffix(body, "\n") && body != "" {
 		suffix = "\n" + suffix
 	}
+
 	return body + suffix, UpdatePropertyAdded
 }
 
@@ -63,21 +66,24 @@ var versionCodeLine = regexp.MustCompile(`(?m)^versionCode=([^\s]*)`)
 // rewrites it with N+1, and returns the new body. When no
 // `versionCode=` line exists, appends `versionCode=1`.
 //
-// Mirrors the bash `increment_version_code` helper. A non-numeric value
+// Mirrors `increment_version_code` helper. A non-numeric value
 // is treated as 0 (the bash's `tr -d ' '` + arithmetic would fail on
 // non-numerics; this is a stricter, defined behaviour).
 func IncrementVersionCode(body string) IncrementVersionCodeResult {
-	m := versionCodeLine.FindStringSubmatchIndex(body)
+	m := versionCodeLine.FindStringSubmatchIndex(body) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if m == nil {
 		// Append.
 		out, _ := UpdateOrAddProperty(body, "versionCode", "1", "=")
+
 		return IncrementVersionCodeResult{Body: out, Old: 0, New: 1, Added: true}
 	}
+
 	rawValue := body[m[2]:m[3]]
 	cur, _ := strconv.Atoi(strings.TrimSpace(rawValue))
 	next := cur + 1
 
 	out := body[:m[0]] + "versionCode=" + strconv.Itoa(next) + body[m[1]:]
+
 	return IncrementVersionCodeResult{Body: out, Old: cur, New: next}
 }
 
@@ -91,10 +97,12 @@ func UpdateGradleJVMVersion(body, version string) (string, UpdatePropertyResult)
 	if gradleJVMVersionLine.MatchString(body) {
 		return gradleJVMVersionLine.ReplaceAllString(body, "version="+version), UpdatePropertyUpdated
 	}
+
 	suffix := "version=" + version + "\n"
 	if !strings.HasSuffix(body, "\n") && body != "" {
 		suffix = "\n" + suffix
 	}
+
 	return body + suffix, UpdatePropertyAdded
 }
 
@@ -109,17 +117,24 @@ func UpdateXcodeMarketingVersion(body, version string) (string, UpdatePropertyRe
 // Workspaces win when both [workspace.package] and [package] exist.
 type CargoSection int
 
+// Recognised CargoSection values.
 const (
 	CargoSectionNone CargoSection = iota
 	CargoSectionWorkspacePackage
 	CargoSectionPackage
 )
 
-var (
+const (
 	cargoWorkspaceHeader = "[workspace.package]"
 	cargoPackageHeader   = "[package]"
-	cargoVersionLine     = regexp.MustCompile(`(?m)^version[[:space:]]*=.*`)
 )
+
+// cargoVersionLine matches a top-level `version = ...` line in Cargo.toml.
+// Regex pattern stored as a package var rather than rebuilt per call so
+// MustCompile runs once at init; the value is read-only.
+//
+//nolint:gochecknoglobals // precompiled regex is the idiomatic shape.
+var cargoVersionLine = regexp.MustCompile(`(?m)^version[[:space:]]*=.*`)
 
 // UpdateCargoVersion finds the active version section ([workspace.package]
 // preferred, [package] as fallback) and rewrites the first `version =`
@@ -129,14 +144,15 @@ var (
 // Returns the section that was rewritten (NotFound when neither header
 // is present) and the new body.
 func UpdateCargoVersion(body, version string) (string, CargoSection, error) {
-	section := CargoSectionNone
+	var section CargoSection
+
 	switch {
 	case strings.Contains(body, cargoWorkspaceHeader):
 		section = CargoSectionWorkspacePackage
 	case strings.Contains(body, cargoPackageHeader):
 		section = CargoSectionPackage
 	default:
-		return body, CargoSectionNone, errors.New("Cargo.toml has neither [package] nor [workspace.package] sections")
+		return body, CargoSectionNone, fmt.Errorf("cargo manifest has neither [package] nor [workspace.package] sections"+": %w", errs.ErrValidation)
 	}
 
 	header := cargoWorkspaceHeader
@@ -153,18 +169,21 @@ func UpdateCargoVersion(body, version string) (string, CargoSection, error) {
 		headerEnd += nl + 1
 	} else {
 		// Header is the last line — nothing to rewrite.
-		return body, section, fmt.Errorf("section %s has no body", header)
+		return body, section, fmt.Errorf("section %s has no body: %w", header, errs.ErrValidation)
 	}
 
 	// Find the next "[" at line start.
 	rest := body[headerEnd:]
+
 	endOffset := len(rest)
 	for i := range len(rest) {
 		if rest[i] == '\n' && i+1 < len(rest) && rest[i+1] == '[' {
 			endOffset = i + 1
+
 			break
 		}
 	}
+
 	sectionBody := rest[:endOffset]
 	tail := rest[endOffset:]
 

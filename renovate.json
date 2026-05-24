@@ -6,9 +6,23 @@
   "enabledManagers": [
     "github-actions",
     "mise",
+    "dockerfile",
+    "gomod",
     "custom.regex"
   ],
   "packageRules": [
+    {
+      "description": "Pin base image digests for runtime Containerfile FROM lines (debian, golang); the dockerfile manager updates both the tag and the digest each release.",
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "pinDigests": true,
+      "addLabels": [
+        "containers"
+      ],
+      "groupName": "container base images",
+      "groupSlug": "container-base-images"
+    },
     {
       "description": "Group all mise tool dependencies",
       "matchManagers": [
@@ -50,6 +64,34 @@
         "documentation"
       ],
       "groupName": "documentation tools"
+    },
+    {
+      "description": "Group Go module patch bumps so routine x/* and patch-level updates land in one PR per cycle. Major/minor stay individual so they get explicit review.",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchUpdateTypes": [
+        "patch",
+        "digest"
+      ],
+      "addLabels": [
+        "go-deps"
+      ],
+      "groupName": "go module patch updates",
+      "groupSlug": "gomod-patch"
+    },
+    {
+      "description": "Label and surface Go module minor/major bumps individually for review.",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "major"
+      ],
+      "addLabels": [
+        "go-deps"
+      ]
     }
   ],
   "customManagers": [

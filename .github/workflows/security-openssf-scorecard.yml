@@ -9,15 +9,15 @@
 # 1. Add the following to your workflow file:
 #    jobs:
 #      scorecard-analysis:
-#        uses: <orgname>/<reponame>/.github/workflows/<workflowname>.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+#        uses: <orgname>/<reponame>/.github/workflows/<workflowname>.yml@v3.0.0
 #        with:
 #          cron-schedule: "30 1 * * 6" # Optional, default is "30 1 * * 5" (weekly on Fridays at 01:30 UTC)
 #          publish-results: true # Optional, default is true
 #
 # 2. The results will be available as artifacts and in the GitHub Code Scanning dashboard.
 #
-# Note: This workflow is repository-general. The scripts-ref input is only
-#       used for the SARIF upload script checkout.
+# Note: This workflow is repository-general. The reusable-ci-binary-ref input is only
+#       used to install the reusable-ci binary for SARIF upload.
 name: Analyze OpenSSF Scorecard
 on:
   workflow_call: # yamllint disable-line rule:truthy
@@ -37,11 +37,15 @@ on:
         required: false
         default: "audit"
         type: string
-      scripts-ref:
-        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+      reusable-ci-binary-ref:
+        description: "reusable-ci ref/version to install for SARIF upload (defaults to v3.0.0)"
         required: false
-        default: "main"
+        default: "v3.0.0"
         type: string
+    secrets:
+      CODE_SCANNING_TOKEN:
+        description: "Token with security-events:write for SARIF upload"
+        required: false
 permissions:
   contents: read
 jobs:
@@ -51,7 +55,7 @@ jobs:
   # See https://github.com/ossf/scorecard-action#workflow-restrictions
   analysis:
     name: Scorecard Analysis
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -83,12 +87,12 @@ jobs:
 
   # Runs in a separate job so the `analysis` job stays pure-actions (required
   # by the scorecard publish webapp). Downloads the SARIF artifact produced
-  # above and uploads it to Code Scanning via the shared helper script.
+  # above and uploads it to Code Scanning via reusable-ci.
   publish-sarif:
     name: Upload SARIF to Code Scanning
     needs: [analysis]
     if: always() && needs.analysis.result != 'cancelled'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 1
     permissions:
       contents: read
@@ -102,22 +106,23 @@ jobs:
         with:
           name: sarif-scorecard
         continue-on-error: true
-      - name: Set up Go
+      - name: Checkout reusable-ci bootstrap installers
         if: hashFiles('results.sarif') != ''
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          go-version: stable
-          check-latest: true
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+      # Tagged refs (vN.N.N) install from GitHub Releases with SHA-256
+      # verification — no Go toolchain needed. Branch/SHA refs require Go on
+      # the runner; the install script errors with an actionable message if
+      # absent.
       - name: Install reusable-ci binary
         if: hashFiles('results.sarif') != ''
         env:
-          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
-        run: |
-          # Plain ubuntu runner (no runtime container); `go install` is the
-          # pre-release path until release-binary publishes a linux archive.
-          GOBIN="$RUNNER_TEMP/bin" \
-            go install "github.com/diggsweden/reusable-ci/cmd/reusable-ci@${SCRIPTS_REF}"
-          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
       - name: Upload scorecard results to Code Scanning
         if: hashFiles('results.sarif') != ''
         continue-on-error: true
@@ -125,4 +130,4 @@ jobs:
           CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
           SARIF_FILE: results.sarif
           SARIF_CATEGORY: scorecard
-        run: reusable-ci security upload-sarif
+        run: reusable-ci security report upload-sarif

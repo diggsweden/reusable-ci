@@ -4,7 +4,7 @@
 # Internal workflow — builds, smoke-tests, and publishes the shared
 # reusable-ci runtime container image.
 #
-# Two images are produced from the same Containerfile:
+# A family of images is produced from the same Containerfile:
 #   ghcr.io/<owner>/reusable-ci-runtime-base — base stage
 #   ghcr.io/<owner>/reusable-ci-runtime      — full stage (with security/SBOM tools)
 #
@@ -30,6 +30,7 @@ on:
       - scripts/bootstrap/install-glab.sh
       - scripts/bootstrap/install-mise.sh
       - scripts/bootstrap/install-publiccode-parser.sh
+      - scripts/bootstrap/install-reusable-ci.sh
       - cmd/reusable-ci/**
       - internal/**
       - go.mod
@@ -39,10 +40,7 @@ on:
     branches:
       - main
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
-      - "v[0-9]+.[0-9]+.[0-9]+-alpha*"
-      - "v[0-9]+.[0-9]+.[0-9]+-beta*"
-      - "v[0-9]+.[0-9]+.[0-9]+-rc*"
+      - "v*.*.*"
       # No `paths:` filter on push: tag pushes routinely don't touch runtime
       # files, but every release tag must produce a matching image so consumers
       # can pin runtime-image to the version they're using. Branch pushes pay
@@ -64,7 +62,7 @@ permissions:
 jobs:
   verify:
     name: Build And Verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -83,7 +81,7 @@ jobs:
               gh --version
               glab --version
               reusable-ci --version
-              test -d /opt/reusable-ci/scripts
+              test -d /opt/reusable-ci/scripts/bootstrap
               test -f /opt/reusable-ci/templates/gitcliff/default.toml
           - name: reusable-ci-runtime
             target: full
@@ -101,12 +99,12 @@ jobs:
               syft version
               trivy --version
               reusable-ci --version
-              reusable-ci security run-opengrep --help >/dev/null
+              reusable-ci security scan opengrep --help >/dev/null
               test -f /opt/reusable-ci/templates/gitcliff/default.toml
-          # Toolchain images are named with the major version they target
-          # (rust-stable, node-24, java-25, android-35). When the next LTS
-          # rolls over (e.g. Java 28), a sibling image is added alongside —
-          # the old name keeps building patch updates for its line.
+          # Toolchain images are named with the release line they target
+          # (rust-stable, go-1.26, node-24, java-25, android-35). When the next
+          # LTS/line rolls over, a sibling image is added alongside — the old
+          # name keeps building patch updates for its line.
           - name: reusable-ci-runtime-rust-stable
             target: rust
             local-tag: reusable-ci-runtime-rust-stable:verify
@@ -119,7 +117,20 @@ jobs:
               cargo --version
               cargo-cyclonedx --version
               reusable-ci --version
-              test -d /opt/reusable-ci/scripts
+              test -d /opt/reusable-ci/scripts/bootstrap
+          - name: reusable-ci-runtime-go-1.26
+            target: go
+            local-tag: reusable-ci-runtime-go-1.26:verify
+            smoke-test: |
+              bash --version
+              git --version
+              jq --version
+              yq --version
+              go version
+              go env GOROOT GOPATH
+              cyclonedx-gomod version
+              reusable-ci --version
+              test -d /opt/reusable-ci/scripts/bootstrap
           - name: reusable-ci-runtime-node-24
             target: node
             local-tag: reusable-ci-runtime-node-24:verify
@@ -132,7 +143,7 @@ jobs:
               npm --version
               corepack --version
               reusable-ci --version
-              test -d /opt/reusable-ci/scripts
+              test -d /opt/reusable-ci/scripts/bootstrap
           - name: reusable-ci-runtime-java-25
             target: java
             local-tag: reusable-ci-runtime-java-25:verify
@@ -145,7 +156,7 @@ jobs:
               mvn -version
               gradle --version
               reusable-ci --version
-              test -d /opt/reusable-ci/scripts
+              test -d /opt/reusable-ci/scripts/bootstrap
           - name: reusable-ci-runtime-android-35
             target: android
             local-tag: reusable-ci-runtime-android-35:verify
@@ -170,6 +181,20 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Set up Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Compute build metadata
+        id: meta
+        # SOURCE_DATE_EPOCH from the commit timestamp makes the
+        # in-Containerfile go build's embedded date deterministic.
+        # The same value flows into the publish jobs below — every
+        # binary baked into every runtime image carries the commit
+        # date, never a wall-clock that drifts between rebuilds.
+        run: |
+          source_date_epoch="$(git log -1 --format=%ct HEAD)"
+          commit_date="$(date -u -d "@$source_date_epoch" +%Y-%m-%dT%H:%M:%SZ)"
+          {
+            printf 'source-date-epoch=%s\n' "$source_date_epoch"
+            printf 'commit-date=%s\n' "$commit_date"
+          } >> "$GITHUB_OUTPUT"
       - name: Build runtime image
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
@@ -182,6 +207,8 @@ jobs:
           build-args: |
             REUSABLE_CI_VERSION=${{ github.ref_name }}
             REUSABLE_CI_COMMIT=${{ github.sha }}
+            REUSABLE_CI_DATE=${{ steps.meta.outputs.commit-date }}
+            SOURCE_DATE_EPOCH=${{ steps.meta.outputs.source-date-epoch }}
           cache-from: type=gha,scope=self-runtime-container-${{ matrix.runtime.target }}
           cache-to: type=gha,mode=max,scope=self-runtime-container-${{ matrix.runtime.target }}
       - name: Smoke-test runtime image
@@ -190,15 +217,33 @@ jobs:
             set -euo pipefail
             ${{ matrix.runtime.smoke-test }}
           '
+      - name: Verify embedded reusable-ci version matches build-arg
+        # Defence-in-depth assertion: the gobuilder stage's ldflags
+        # embed REUSABLE_CI_VERSION via -X main.version=...; this
+        # asserts the embedded value round-trips through `reusable-ci
+        # --version`. A Containerfile typo, an ldflag-syntax change in
+        # a future Go release, or a build-args drift in this workflow
+        # would all land here as a loud failure instead of producing
+        # an image that reports `version=dev` to consumers.
+        env:
+          EXPECTED_VERSION: ${{ github.ref_name }}
+        run: |
+          actual="$(docker run --rm ${{ matrix.runtime.local-tag }} reusable-ci --version 2>&1)"
+          if ! printf '%s' "$actual" | grep -qF "$EXPECTED_VERSION"; then
+            printf 'FAIL: %s does not contain expected version %s\n  output: %s\n' \
+                   "${{ matrix.runtime.local-tag }}" "$EXPECTED_VERSION" "$actual" >&2
+            exit 1
+          fi
+          printf 'OK: embedded version contains %s\n  output: %s\n' "$EXPECTED_VERSION" "$actual"
   # Publish phase 1: build each (target, arch) leg natively. linux/amd64 ->
   # ubuntu-24.04, linux/arm64 -> ubuntu-24.04-arm. No QEMU emulation. Each
   # leg pushes by digest only; tags are applied later by publish-merge.
   publish-arch:
-    name: Publish (${{ matrix.runtime.name }} - ${{ matrix.platform }})
+    name: Publish (${{ matrix.runtime.name }} - ${{ matrix.platform.os }})
     needs: [verify]
     if: >-
       github.event_name == 'schedule' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    runs-on: ${{ matrix.platform.os == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     strategy:
       fail-fast: false
       matrix:
@@ -209,6 +254,8 @@ jobs:
             target: full
           - name: reusable-ci-runtime-rust-stable
             target: rust
+          - name: reusable-ci-runtime-go-1.26
+            target: go
           - name: reusable-ci-runtime-node-24
             target: node
           - name: reusable-ci-runtime-java-25
@@ -216,11 +263,22 @@ jobs:
           - name: reusable-ci-runtime-android-35
             target: android
         platform:
-          - linux/amd64
-          - linux/arm64
+          - os: linux/amd64
+            suffix: amd64
+          - os: linux/arm64
+            suffix: arm64
     permissions:
       contents: read
       packages: write
+      # id-token + attestations are scoped to the SBOM + provenance
+      # attestation steps below: attest-sbom and attest-build-
+      # provenance both upload registry-attached signed attestations
+      # against the per-arch digest just pushed.
+      id-token: write
+      attestations: write
+      # security-events lets the trivy SARIF upload below land on
+      # the Security tab (per-(target, arch) category).
+      security-events: write
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
@@ -228,19 +286,24 @@ jobs:
           egress-policy: audit
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Derive arch suffix
-        id: arch
-        env:
-          PLATFORM: ${{ matrix.platform }}
-        run: |
-          # linux/amd64 -> amd64, linux/arm64 -> arm64. Used to scope the
-          # cache, the digest artefact, and (later) the manifest merge so
-          # legs do not collide with each other.
-          SUFFIX="${PLATFORM#linux/}"
-          SUFFIX="${SUFFIX//\//-}"
-          printf "suffix=%s\n" "$SUFFIX" >> "$GITHUB_OUTPUT"
       - name: Set up Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Install syft
+        # syft scans the pushed image for the analyzed-container SBOM.
+        # Pin matches the version installed inside the runtime image's
+        # own `full` stage (containers/runtime/Containerfile).
+        uses: anchore/sbom-action/download-syft@f325610c9f50a54015d37c8d16cb3b0e2c8f4de0 # v0.18.0
+        with:
+          syft-version: 'v1.37.0'
+      - name: Compute build metadata
+        id: meta
+        run: |
+          source_date_epoch="$(git log -1 --format=%ct HEAD)"
+          commit_date="$(date -u -d "@$source_date_epoch" +%Y-%m-%dT%H:%M:%SZ)"
+          {
+            printf 'source-date-epoch=%s\n' "$source_date_epoch"
+            printf 'commit-date=%s\n' "$commit_date"
+          } >> "$GITHUB_OUTPUT"
       - name: Log in to GHCR
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
@@ -254,38 +317,98 @@ jobs:
           context: .
           file: containers/runtime/Containerfile
           target: ${{ matrix.runtime.target }}
-          platforms: ${{ matrix.platform }}
+          platforms: ${{ matrix.platform.os }}
           # Push by digest only — no tag at this stage. publish-merge applies
-          # all tags from metadata-action via `docker buildx imagetools create`
+          # all tags from `reusable-ci container metadata` via `reusable-ci container manifest merge`
           # once both arches' digests exist.
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/${{ matrix.runtime.name }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             REUSABLE_CI_VERSION=${{ github.ref_name }}
             REUSABLE_CI_COMMIT=${{ github.sha }}
-          cache-from: type=gha,scope=self-runtime-container-${{ matrix.runtime.target }}-${{ steps.arch.outputs.suffix }}
-          cache-to: type=gha,mode=max,scope=self-runtime-container-${{ matrix.runtime.target }}-${{ steps.arch.outputs.suffix }}
+            REUSABLE_CI_DATE=${{ steps.meta.outputs.commit-date }}
+            SOURCE_DATE_EPOCH=${{ steps.meta.outputs.source-date-epoch }}
+          cache-from: type=gha,scope=self-runtime-container-${{ matrix.runtime.target }}-${{ matrix.platform.suffix }}
+          cache-to: type=gha,mode=max,scope=self-runtime-container-${{ matrix.runtime.target }}-${{ matrix.platform.suffix }}
       - name: Export digest
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: |
-          mkdir -p /tmp/digests
-          touch "/tmp/digests/${DIGEST#sha256:}"
+        run: reusable-ci container write-digest-marker
       - name: Upload digest
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: digests-${{ matrix.runtime.target }}-${{ steps.arch.outputs.suffix }}
+          name: digests-${{ matrix.runtime.target }}-${{ matrix.platform.suffix }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
+      - name: Generate analyzed-container SBOM
+        # Runtime images are tooling, not user-app containers, so we
+        # bypass `reusable-ci sbom generate container` (which is
+        # ecosystem-aware and expects ARTIFACT_TYPES). A direct syft
+        # scan against the digest reference produces an equivalent
+        # CycloneDX document.
+        id: sbom
+        env:
+          IMAGE_REF: ghcr.io/${{ github.repository_owner }}/${{ matrix.runtime.name }}@${{ steps.build.outputs.digest }}
+          OUT: ${{ matrix.runtime.name }}-${{ matrix.platform.suffix }}.cdx.sbom.json
+        run: |
+          syft scan "$IMAGE_REF" -o "cyclonedx-json=$OUT"
+          printf 'sbom-file=%s\n' "$OUT" >> "$GITHUB_OUTPUT"
+      - name: Attest analyzed-container SBOM
+        # Registry-attached signed attestation: cosign verify-
+        # attestation against the per-arch digest discovers and
+        # validates this. The attestation identity matches the
+        # image's cosign signature (same workflow + commit), so
+        # consumers can pin both via the same identity claim.
+        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3.0.0
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/${{ matrix.runtime.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: ${{ steps.sbom.outputs.sbom-file }}
+          push-to-registry: true
+      - name: Attest image build provenance
+        # SLSA v1.0 build provenance for the per-arch image digest.
+        # Registry-attached (push-to-registry: true) so
+        # `cosign verify-attestation --type slsaprovenance1` against
+        # the per-arch digest discovers it; `gh attestation verify`
+        # also works from GitHub's side-channel attestation store.
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/${{ matrix.runtime.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      - name: Scan image for vulnerabilities (trivy)
+        # Runtime images are the most-pulled artefact in this repo —
+        # every consumer that sets `runtime-image:` pulls one of
+        # these. Weekly schedule + SARIF upload gives ongoing CVE
+        # visibility against the security tab. exit-code=0 keeps
+        # this advisory; promote to a non-zero gate once the noise
+        # floor is understood.
+        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
+        with:
+          image-ref: ghcr.io/${{ github.repository_owner }}/${{ matrix.runtime.name }}@${{ steps.build.outputs.digest }}
+          format: sarif
+          output: trivy-results.sarif
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          exit-code: '0'
+      - name: Upload trivy SARIF to Code Scanning
+        # Per-(target, arch) category so amd64 + arm64 don't
+        # overwrite each other in GitHub's dedupe (categorised by
+        # (category, file)). Without this, the second leg silently
+        # replaces the first.
+        uses: github/codeql-action/upload-sarif@fca7ace96b7d713c7035871441bd52efbe39e27e # v3.28.19
+        with:
+          sarif_file: trivy-results.sarif
+          category: runtime-${{ matrix.runtime.target }}-${{ matrix.platform.suffix }}
 
   # Publish phase 2: assemble each target's per-arch digests into a single
-  # multi-arch manifest list and apply tags from metadata-action.
+  # multi-arch manifest list and apply tags from reusable-ci metadata.
   publish-merge:
     name: Publish Manifest (${{ matrix.runtime.name }})
     needs: [publish-arch]
     if: >-
       github.event_name == 'schedule' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -296,6 +419,8 @@ jobs:
             target: full
           - name: reusable-ci-runtime-rust-stable
             target: rust
+          - name: reusable-ci-runtime-go-1.26
+            target: go
           - name: reusable-ci-runtime-node-24
             target: node
           - name: reusable-ci-runtime-java-25
@@ -305,6 +430,11 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # id-token: write required for the Sigstore-keyless image
+      # signing step below. The token is minted only for that step
+      # — granting it here doesn't broaden the surface (other steps
+      # don't request it).
+      id-token: write
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
@@ -317,10 +447,12 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
+      - name: Install cosign
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
+        with:
+          cosign-release: 'v3.0.6'
       - name: Build reusable-ci binary
-        run: |
-          GOBIN="$RUNNER_TEMP/bin" go install ./cmd/reusable-ci
-          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+        run: bash scripts/bootstrap/install-reusable-ci.sh local
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -352,26 +484,24 @@ jobs:
         env:
           IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/${{ matrix.runtime.name }}
           TAGS: ${{ steps.metadata.outputs.tags }}
-        working-directory: /tmp/digests
-        run: |
-          # Each file in /tmp/digests is named after a per-arch digest hash.
-          # Reconstruct ${IMAGE_NAME}@sha256:<hash> references and feed them
-          # to imagetools, which assembles a multi-arch manifest list and
-          # pushes it under each tag from metadata-action.
-          refs=()
-          for f in *; do
-            refs+=("${IMAGE_NAME}@sha256:${f}")
-          done
-          tag_args=()
-          while IFS= read -r tag; do
-            [[ -z "$tag" ]] && continue
-            tag_args+=("-t" "$tag")
-          done <<<"$TAGS"
-
-          docker buildx imagetools create "${tag_args[@]}" "${refs[@]}"
+          DIGESTS_DIR: /tmp/digests
+        run: reusable-ci container manifest merge
       - name: Inspect manifest
+        id: inspect
         env:
           TAGS: ${{ steps.metadata.outputs.tags }}
+        run: reusable-ci container manifest inspect
+      - name: Sign image (cosign keyless)
+        # Sigstore-keyless signing of the runtime image. Signs the
+        # manifest list digest + every per-arch child (--recursive
+        # default). The signature lives in GHCR next to the image;
+        # consumers verify with:
+        #   reusable-ci validate container-signature \
+        #     ghcr.io/diggsweden/reusable-ci-runtime-base@sha256:... \
+        #     --method sigstore \
+        #     --cert-identity-regexp '^https://github.com/diggsweden/reusable-ci/\.github/workflows/self-runtime-container\.yml@.*' \
+        #     --cert-oidc-issuer https://token.actions.githubusercontent.com
+        env:
+          SIGN_METHOD: sigstore
         run: |
-          PRIMARY_TAG=$(printf "%s\n" "$TAGS" | head -n1)
-          docker buildx imagetools inspect "${PRIMARY_TAG}"
+          reusable-ci container sign "${{ steps.inspect.outputs.image-digest-ref }}"

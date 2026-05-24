@@ -17,7 +17,7 @@ func extractNPMTarballCmd() *cli.Command {
 		Name:  "extract-npm-tarball",
 		Usage: "extract a top-level *.tgz / *.tar.gz with --strip-components=1 then remove it (no-op when none present)",
 		Action: func(_ context.Context, _ *cli.Command) error {
-			return appcontainer.ExtractNPMTarball(os.Stdout, appcontainer.ExtractNPMTarballInput{})
+			return appcontainer.ExtractNPMTarball(os.Stderr, appcontainer.ExtractNPMTarballInput{})
 		},
 	}
 }

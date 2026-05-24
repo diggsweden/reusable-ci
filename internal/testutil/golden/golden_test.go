@@ -47,6 +47,7 @@ func TestEqual_Mismatch(t *testing.T) {
 
 	p := &probeT{}
 	golden.Equal(p, "sample.txt", []byte("got\n"))
+
 	if !p.errored {
 		t.Errorf("golden.Equal did not flag a mismatch")
 	}
@@ -57,6 +58,7 @@ func TestEqual_MissingFile(t *testing.T) {
 
 	p := &probeT{}
 	golden.Equal(p, "sample.txt", []byte("anything"))
+
 	if !p.errored {
 		t.Errorf("golden.Equal did not fail on missing golden file")
 	}
@@ -89,8 +91,10 @@ func TestEqual_MatchingContent(t *testing.T) {
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
 			chdirInTempDir(t, testCase.filename, testCase.contents)
+
 			p := &probeT{}
 			testCase.check(p, testCase.filename)
+
 			if p.errored {
 				t.Errorf("golden equality flagged matching content: %v", p.logs)
 			}

@@ -20,11 +20,12 @@ type ResolveNameInput struct {
 	Repository      string
 	RepositoryOwner string
 	Name            string
+	NameSuffix      string // appended to repository segment; empty = no change
 }
 
 // ResolveName computes the canonical image reference and writes it to the
 // output sink as `name=<value>`. Mirrors the
-// scripts/container/resolve-image-name.sh contract.
+// container image naming contract.
 func ResolveName(ctx context.Context, sink ci.OutputSink, in ResolveNameInput) error {
 	resolved := container.ResolveImageName(container.ResolveImageNameInput{
 		Registry:        in.Registry,
@@ -32,6 +33,8 @@ func ResolveName(ctx context.Context, sink ci.OutputSink, in ResolveNameInput) e
 		Repository:      in.Repository,
 		RepositoryOwner: in.RepositoryOwner,
 		Name:            in.Name,
+		NameSuffix:      in.NameSuffix,
 	})
+
 	return sink.Set(ctx, "name", resolved)
 }

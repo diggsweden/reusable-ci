@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: CC0-1.0
 
 // Package publish wires `reusable-ci publish <registry> <subcmd>` for
-// the publish-side pre-flight validators (Maven Central artifacts,
-// npm tarballs, registry auth). The actual `mvn deploy` / `npm publish`
-// invocations remain in the workflow YAML — the binary owns the
-// "is this safe to publish?" gates.
+// publish-side pre-flight validators and output helpers. The actual registry
+// upload invocations remain in workflow YAML; the binary owns the brittle
+// validation, selection, and machine-readable output glue.
+//
+// Registry-auth presence validation lives under `validate auth registry`
+// (alongside the other release-flow auth checks), not here.
 package publish
 
 import "github.com/urfave/cli/v3"
@@ -14,11 +16,12 @@ import "github.com/urfave/cli/v3"
 func New() *cli.Command {
 	return &cli.Command{
 		Name:  "publish",
-		Usage: "publish-side pre-flight validators (maven-central / npm / registry auth)",
+		Usage: "publish-side pre-flight validators and output helpers",
 		Commands: []*cli.Command{
+			appStoreCmd(),
+			googlePlayCmd(),
 			mavenCentralCmd(),
 			npmCmd(),
-			validateAuthCmd(),
 		},
 	}
 }

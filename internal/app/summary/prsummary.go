@@ -10,12 +10,13 @@ import (
 	"time"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
+	"github.com/diggsweden/reusable-ci/internal/domain/pipeline"
 	domainsummary "github.com/diggsweden/reusable-ci/internal/domain/summary"
 )
 
-// PRSummaryInput drives `summary pr`. The QualityStageResultJSON is
-// the result-json output of `summary pr-quality-stage-result`; the
-// use case extracts each linter's result by name.
+// PRSummaryInput drives `summary pr`. The QualityStageResultJSON is the
+// quality stage result-json output; the use case extracts each linter's result
+// by name.
 type PRSummaryInput struct {
 	ProjectType            string
 	Branch                 string
@@ -28,45 +29,52 @@ type PRSummaryInput struct {
 }
 
 // PRSummary appends the PR summary block to the step summary.
-// Mirrors scripts/summary/write-pr-summary.sh.
 func PRSummary(ctx context.Context, sink ci.SummarySink, in PRSummaryInput) error {
 	now := in.Now
 	if now.IsZero() {
 		now = time.Now()
 	}
+
 	short := in.Commit
 	if len(short) > 7 {
 		short = short[:7]
 	}
 
-	get := func(key string) string {
-		return domainsummary.ExtractTargetResult(in.QualityStageResultJSON, key)
+	quality, err := domainsummary.ParseStageResultEnvelope(in.QualityStageResultJSON)
+	if err != nil {
+		return fmt.Errorf("quality-stage result-json: %w", err)
 	}
-	dep := get("dependencyreview")
-	sast := get("sastopengrep")
-	publiccode := get("publiccodelint")
-	devbase := get("devbasecheck")
-	swift := get("swift")
 
-	var b strings.Builder
-	fmt.Fprintf(&b, "# Pull Request Summary\n\n")
-	fmt.Fprintf(&b, "## Overview\n")
-	fmt.Fprintf(&b, "| Property | Value |\n")
-	fmt.Fprintf(&b, "|----------|-------|\n")
-	fmt.Fprintf(&b, "| **Project Type** | `%s` |\n", in.ProjectType)
-	fmt.Fprintf(&b, "| **Branch** | `%s` |\n", in.Branch)
-	fmt.Fprintf(&b, "| **Commit** | `%s` |\n", short)
-	fmt.Fprintf(&b, "| **Checked By** | @%s |\n", in.Actor)
-	fmt.Fprintf(&b, "| **Checked At** | %s |\n", now.UTC().Format("2006-01-02 15:04:05 UTC"))
-	fmt.Fprintf(&b, "\n## Quality Check Status\n")
-	fmt.Fprintf(&b, "| Check | Status |\n")
-	fmt.Fprintf(&b, "|-------|--------|\n")
-	fmt.Fprintf(&b, "| Devbase Check | %s |\n", domainsummary.StatusIcon(devbase))
-	fmt.Fprintf(&b, "| Dependency Review | %s |\n", domainsummary.StatusIcon(dep))
-	fmt.Fprintf(&b, "| OpenGrep SAST | %s |\n", domainsummary.StatusIcon(sast))
-	fmt.Fprintf(&b, "| Publiccode Lint | %s |\n", domainsummary.StatusIcon(publiccode))
-	fmt.Fprintf(&b, "| Swift Lint | %s |\n", domainsummary.StatusIcon(swift))
-	fmt.Fprintf(&b, "\n## Resources\n")
-	fmt.Fprintf(&b, "- [Workflow Run](%s)\n", in.RunURL)
+	get := func(key string) string {
+		return string(quality.TargetResult(key))
+	}
+	dep := get(pipeline.TargetDependencyReview)
+	sast := get(pipeline.TargetSASTOpengrep)
+	publiccode := get(pipeline.TargetPublicCodeLint)
+	devbase := get(pipeline.TargetDevbaseCheck)
+	swift := get(pipeline.TargetSwift)
+
+	var b strings.Builder //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+
+	_, _ = fmt.Fprintf(&b, "# Pull Request Summary\n\n")
+	_, _ = fmt.Fprintf(&b, "## Overview\n")
+	_, _ = fmt.Fprintf(&b, "| Property | Value |\n")
+	_, _ = fmt.Fprintf(&b, "|----------|-------|\n")
+	_, _ = fmt.Fprintf(&b, "| **Project Type** | `%s` |\n", in.ProjectType)
+	_, _ = fmt.Fprintf(&b, "| **Branch** | `%s` |\n", in.Branch)
+	_, _ = fmt.Fprintf(&b, "| **Commit** | `%s` |\n", short)
+	_, _ = fmt.Fprintf(&b, "| **Checked By** | @%s |\n", in.Actor)
+	_, _ = fmt.Fprintf(&b, "| **Checked At** | %s |\n", now.UTC().Format("2006-01-02 15:04:05 UTC"))
+	_, _ = fmt.Fprintf(&b, "\n## Quality Check Status\n")
+	_, _ = fmt.Fprintf(&b, "| Check | Status |\n")
+	_, _ = fmt.Fprintf(&b, "|-------|--------|\n")
+	_, _ = fmt.Fprintf(&b, "| Devbase Check | %s |\n", domainsummary.StatusIcon(devbase))
+	_, _ = fmt.Fprintf(&b, "| Dependency Review | %s |\n", domainsummary.StatusIcon(dep))
+	_, _ = fmt.Fprintf(&b, "| OpenGrep SAST | %s |\n", domainsummary.StatusIcon(sast))
+	_, _ = fmt.Fprintf(&b, "| Publiccode Lint | %s |\n", domainsummary.StatusIcon(publiccode))
+	_, _ = fmt.Fprintf(&b, "| Swift Lint | %s |\n", domainsummary.StatusIcon(swift))
+	_, _ = fmt.Fprintf(&b, "\n## Resources\n")
+	_, _ = fmt.Fprintf(&b, "- [Workflow Run](%s)\n", in.RunURL)
+
 	return sink.Append(ctx, b.String())
 }

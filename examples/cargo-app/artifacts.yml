@@ -9,7 +9,7 @@
 # runtime image is the primary deliverable, and the binary is optionally
 # extracted as a CI artefact via `extract.binary` (see below).
 #
-# sbom-cargo.yml runs alongside in build-stage to emit a CycloneDX SBOM
+# sbom-cargo.yml runs alongside container publishing to emit a CycloneDX SBOM
 # from Cargo.lock — no compile, just dependency-graph analysis.
 #
 # Workspace tests (`cargo test --workspace --features ...`) run from the
@@ -23,9 +23,13 @@ artifacts:
   - name: hsm-worker
     project-type: cargo
     working-directory: ./hsm-worker
+    config:
+      build-mode: container-first
   - name: wallet-bff
     project-type: cargo
     working-directory: ./wallet-bff
+    config:
+      build-mode: container-first
 
 containers:
   - name: hsm-worker
@@ -34,7 +38,6 @@ containers:
     context: .
     target: runtime
     platforms: linux/amd64,linux/arm64
-    registry: ghcr.io
     # Optional: extract the compiled binary as a CI artefact so it can be
     # attached to the GitHub Release alongside the container image.
     # Same Containerfile, same compile (cached) — second buildx invocation
@@ -50,12 +53,7 @@ containers:
     context: .
     target: runtime
     platforms: linux/amd64,linux/arm64
-    registry: ghcr.io
     extract:
       binary:
         target: export-binary
         names: [wallet-bff]
-
-publishers:
-  - type: github-packages
-    artifacts: [hsm-worker, wallet-bff]

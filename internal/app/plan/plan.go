@@ -2,182 +2,329 @@
 // SPDX-License-Identifier: CC0-1.0
 
 // Package plan orchestrates the `reusable-ci plan ...` subcommands.
-// Pure-domain decisions live in internal/domain/plan; this layer drives
-// them, writes outputs, and surfaces SBOM-conflict warnings.
+// Pure-domain plan composition lives in internal/domain/pipeline; this
+// layer drives it, writes outputs, and surfaces SBOM-conflict warnings.
 package plan
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"strconv"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
+	"github.com/diggsweden/reusable-ci/internal/domain/config"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	"github.com/diggsweden/reusable-ci/internal/domain/plan"
+	"github.com/diggsweden/reusable-ci/internal/domain/output"
+	"github.com/diggsweden/reusable-ci/internal/domain/pipeline"
 	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
 	domainversion "github.com/diggsweden/reusable-ci/internal/domain/version"
 )
 
-// ResolveReleasePlan computes and emits the eight scalar outputs +
-// effective-sboms. SBOMConflict (release / pipeline disjoint) produces
-// a stderr warning and a step-summary block.
-func ResolveReleasePlan(
-	ctx context.Context,
-	sink ci.OutputSink,
-	summary ci.SummarySink,
-	in plan.ReleasePlanInputs,
-) (*plan.ReleasePlan, error) {
-	got, err := plan.ResolveReleasePlan(in)
-	if err != nil {
-		return nil, err
-	}
-
-	pairs := []struct {
-		key string
-		val bool
-	}{
-		{"should-make-latest", got.ShouldMakeLatest},
-		{"has-containers", got.HasContainers},
-		{"should-sign-artifacts", got.ShouldSignArtifacts},
-		{"should-create-release", got.ShouldCreateRelease},
-		{"should-check-authorization", got.ShouldCheckAuthorization},
-		{"should-run-version-bump", got.ShouldRunVersionBump},
-		{"should-create-draft-release", got.ShouldCreateDraftRelease},
-	}
-	for _, p := range pairs {
-		if err := sink.Set(ctx, p.key, strconv.FormatBool(p.val)); err != nil {
-			return nil, err
-		}
-	}
-	if err := sink.Set(ctx, "effective-sboms", got.EffectiveSBOMs); err != nil {
-		return nil, err
-	}
-
-	if got.SBOMConflict != nil {
-		slog.Warn("sbom misconfiguration: release cap and artefact config have no overlap — no SBOMs will be generated",
-			"release_sboms", got.SBOMConflict.ReleaseSBOMs,
-			"pipeline_sboms", got.SBOMConflict.PipelineSBOMs,
-		)
-		if summary != nil {
-			block := fmt.Sprintf(
-				"\n### ⚠️ SBOM misconfiguration\nsboms: release cap %q has no overlap with artefact config %q — no SBOMs will be generated.\nSet the release-level `sboms` input and the per-artefact `sboms` field so they share at least one CISA layer, or use `sboms: none` if intentional.\n",
-				got.SBOMConflict.ReleaseSBOMs, got.SBOMConflict.PipelineSBOMs,
-			)
-			_ = summary.Append(ctx, block)
-		}
-	}
-	return got, nil
+// ReleaseInput drives `plan release`.
+type ReleaseInput struct {
+	ConfigPlanJSON            string
+	Branch                    string
+	RefName                   string
+	FilePattern               string
+	ReleaseType               string
+	ReleasePublisher          string
+	ReleaseRequireAllowlistedSigner bool
+	ReleaseDraft              bool
+	ReleaseSBOMs              string
+	ReleaseSignArtifacts      bool
+	ChangelogCreator          string
+	ChangelogSkipVersionBump  bool
 }
 
-// WriteReleaseInterface composes ReleasePolicyEnvelope from the
-// pre-resolved booleans (env-driven, mirroring the bash) and writes the
-// `release-policy-json` output.
-type WriteReleaseInterfaceInput struct {
-	SignArtifacts      bool
-	CheckAuthorization bool
-	RunVersionBump     bool
-	CreateRelease      bool
-	CreateDraftRelease bool
-	SBOMs              string
-	MakeLatest         bool
-	HasContainers      bool
-}
+// Release composes the typed release plan outputs consumed by release workflows.
+func Release(ctx context.Context, sink ci.OutputSink, summary ci.SummarySink, in ReleaseInput) (*pipeline.ReleasePlan, error) {
+	if strings.TrimSpace(in.ConfigPlanJSON) == "" {
+		return nil, fmt.Errorf("config-plan-json is required: %w", errs.ErrUsage)
+	}
 
-// WriteReleaseInterface composes and emits the release-policy-json output.
-func WriteReleaseInterface(ctx context.Context, sink ci.OutputSink, in WriteReleaseInterfaceInput) error {
-	b, err := plan.MarshalReleasePolicy(plan.ReleasePolicyEnvelope{
-		SignArtifacts:      in.SignArtifacts,
-		CheckAuthorization: in.CheckAuthorization,
-		RunVersionBump:     in.RunVersionBump,
-		CreateRelease:      in.CreateRelease,
-		CreateDraftRelease: in.CreateDraftRelease,
-		SBOMs:              in.SBOMs,
-		MakeLatest:         in.MakeLatest,
-		HasContainers:      in.HasContainers,
+	var configPlan pipeline.ConfigPlan
+	if err := json.Unmarshal([]byte(in.ConfigPlanJSON), &configPlan); err != nil {
+		return nil, fmt.Errorf("parse config-plan-json: %w: %w", err, errs.ErrInvalidConfig)
+	}
+
+	releasePlan, err := pipeline.NewReleasePlan(pipeline.ReleasePlanInput{
+		ConfigPlan:                configPlan,
+		Branch:                    in.Branch,
+		RefName:                   in.RefName,
+		FilePattern:               in.FilePattern,
+		ReleaseType:               in.ReleaseType,
+		ReleasePublisher:          in.ReleasePublisher,
+		ReleaseRequireAllowlistedSigner: in.ReleaseRequireAllowlistedSigner,
+		ReleaseDraft:              in.ReleaseDraft,
+		ReleaseSBOMs:              in.ReleaseSBOMs,
+		ReleaseSignArtifacts:      in.ReleaseSignArtifacts,
+		ChangelogCreator:          in.ChangelogCreator,
+		ChangelogSkipVersionBump:  in.ChangelogSkipVersionBump,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return sink.Set(ctx, "release-policy-json", string(b))
+
+	if err := emitJSONOutput(ctx, sink, "release-plan-json", releasePlan); err != nil {
+		return nil, err
+	}
+
+	if err := emitJSONOutput(ctx, sink, "prepare-stage-plan-json", releasePlan.Stages.Prepare); err != nil {
+		return nil, err
+	}
+
+	if err := emitJSONOutput(ctx, sink, "build-stage-plan-json", releasePlan.Stages.Build); err != nil {
+		return nil, err
+	}
+
+	if err := emitJSONOutput(ctx, sink, "publish-stage-plan-json", releasePlan.Stages.Publish); err != nil {
+		return nil, err
+	}
+
+	if err := emitJSONOutput(ctx, sink, "artifact-transfer-plan-json", releasePlan.ArtifactTransfers); err != nil {
+		return nil, err
+	}
+
+	if releasePlan.Policy.SBOMConflict != nil {
+		warnSBOMConflict(ctx, summary, releasePlan.Policy.SBOMConflict.ReleaseSBOMs, releasePlan.Policy.SBOMConflict.PipelineSBOMs)
+	}
+
+	return &releasePlan, nil
 }
 
-// WriteDevReleaseInterfaceInput drives `plan write-dev-release-interface`.
-type WriteDevReleaseInterfaceInput struct {
-	plan.DevContext
-	plan.DevPolicy
+func warnSBOMConflict(ctx context.Context, summary ci.SummarySink, releaseSBOMs, pipelineSBOMs string) {
+	slog.Warn("sbom misconfiguration: release cap and artefact config have no overlap — no SBOMs will be generated",
+		"release_sboms", releaseSBOMs,
+		"pipeline_sboms", pipelineSBOMs,
+	)
+
+	if summary != nil {
+		block := fmt.Sprintf(
+			"\n### ⚠️ SBOM misconfiguration\nsboms: release cap %q has no overlap with artefact config %q — no SBOMs will be generated.\nSet the release-level `sboms` input and the per-artefact `sboms` field so they share at least one CISA layer, or use `sboms: none` if intentional.\n",
+			releaseSBOMs, pipelineSBOMs,
+		)
+		_ = summary.Append(ctx, block)
+	}
 }
 
-// WriteDevReleaseInterface composes and emits dev-context-json + dev-policy-json.
-// ProjectType empty errors loudly — matching the bash's "no fallback" gate.
-func WriteDevReleaseInterface(ctx context.Context, sink ci.OutputSink, in WriteDevReleaseInterfaceInput) error {
-	if in.ProjectType == "" {
-		return fmt.Errorf("project-type is empty and no fallback could be derived from artifacts.yml: %w", errs.ErrInvalidConfig)
+// DevReleaseInput drives `plan dev-release`.
+type DevReleaseInput struct {
+	ConfigPlanJSON      string
+	ProjectType         string
+	Branch              string
+	ReleaseSHA          string
+	ReleaseActor        string
+	ReleaseRepository   string
+	WorkingDirectory    string
+	JavaVersion         string
+	NodeVersion         string
+	RustToolchain       string
+	Registry            string
+	ReusableCIBinaryRef string
+	NPMRegistry         string
+	PackageScope        string
+	SBOMs               string
+	PublishNPM          bool
+	UseCIToken          bool
+	PublishContainer    bool
+}
+
+// DevRelease composes the typed dev-release plan outputs.
+func DevRelease(ctx context.Context, sink ci.OutputSink, in DevReleaseInput) (*pipeline.DevReleasePlan, error) {
+	if strings.TrimSpace(in.ConfigPlanJSON) == "" {
+		return nil, fmt.Errorf("config-plan-json is required: %w", errs.ErrUsage)
 	}
-	if in.RustToolchain == "" {
-		in.RustToolchain = "stable"
+
+	var configPlan pipeline.ConfigPlan
+	if err := json.Unmarshal([]byte(in.ConfigPlanJSON), &configPlan); err != nil {
+		return nil, fmt.Errorf("parse config-plan-json: %w: %w", err, errs.ErrInvalidConfig)
 	}
-	cb, err := plan.MarshalDevContext(in.DevContext)
+
+	devPlan, err := pipeline.NewDevReleasePlan(pipeline.DevReleasePlanInput{
+		ConfigPlan:          configPlan,
+		ProjectType:         projecttype.Type(in.ProjectType),
+		Branch:              in.Branch,
+		ReleaseSHA:          in.ReleaseSHA,
+		ReleaseActor:        in.ReleaseActor,
+		ReleaseRepository:   in.ReleaseRepository,
+		WorkingDirectory:    in.WorkingDirectory,
+		JavaVersion:         in.JavaVersion,
+		NodeVersion:         in.NodeVersion,
+		RustToolchain:       in.RustToolchain,
+		Registry:            in.Registry,
+		ReusableCIBinaryRef: in.ReusableCIBinaryRef,
+		NPMRegistry:         in.NPMRegistry,
+		PackageScope:        in.PackageScope,
+		SBOMs:               in.SBOMs,
+		PublishNPM:          in.PublishNPM,
+		UseCIToken:          in.UseCIToken,
+		PublishContainer:    in.PublishContainer,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := emitJSONOutput(ctx, sink, "dev-release-plan-json", devPlan); err != nil {
+		return nil, err
+	}
+
+	if err := emitJSONOutput(ctx, sink, "dev-build-stage-plan-json", devPlan.Stages.Build); err != nil {
+		return nil, err
+	}
+
+	if err := emitJSONOutput(ctx, sink, "dev-publish-stage-plan-json", devPlan.Stages.Publish); err != nil {
+		return nil, err
+	}
+
+	if err := emitJSONOutput(ctx, sink, "artifact-transfer-plan-json", devPlan.ArtifactTransfers); err != nil {
+		return nil, err
+	}
+
+	return &devPlan, nil
+}
+
+func emitJSONOutput[T any](ctx context.Context, sink ci.OutputSink, key string, value T) error {
+	b, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
-	pb, err := plan.MarshalDevPolicy(in.DevPolicy)
-	if err != nil {
-		return err
-	}
-	if err := sink.Set(ctx, "dev-context-json", string(cb)); err != nil {
-		return err
-	}
-	return sink.Set(ctx, "dev-policy-json", string(pb))
+
+	return sink.Set(ctx, key, string(b))
 }
 
-// WritePRInterfaceInput drives `plan write-pr-interface`.
-type WritePRInterfaceInput struct {
-	plan.PRContext
-	plan.PRPolicy
+// PRInput drives `plan pr`.
+type PRInput struct {
+	ProjectType                string
+	BaseBranch                 string
+	ReusableCIBinaryRef        string
+	SASTOpengrepRules          string
+	SASTOpengrepFailOnSeverity string
+	DependencyReview           bool
+	SASTOpengrep               bool
+	PublicCodeLint             bool
+	DevbaseCheck               bool
+	SwiftFormat                bool
+	SwiftLint                  bool
 }
 
-// WritePRInterface composes and emits pr-context-json + pr-policy-json.
-func WritePRInterface(ctx context.Context, sink ci.OutputSink, in WritePRInterfaceInput) error {
-	policy := plan.BuildPRPolicy(in.PRPolicy)
-	cb, err := plan.MarshalPRContext(in.PRContext)
-	if err != nil {
-		return err
+// PR composes typed pull-request quality plan outputs.
+func PR(ctx context.Context, sink ci.OutputSink, in PRInput) (*pipeline.PRPlan, error) {
+	pt := projecttype.Type(in.ProjectType)
+	if !projecttype.IsIn(pt, config.ValidProjectTypes) {
+		return nil, fmt.Errorf("unknown project-type %q: %w", in.ProjectType, errs.ErrUsage)
 	}
-	pb, err := plan.MarshalPRPolicy(policy)
-	if err != nil {
-		return err
+
+	plan := pipeline.NewPRPlan(pipeline.PRPlanInput{
+		ProjectType:                pt,
+		BaseBranch:                 in.BaseBranch,
+		ReusableCIBinaryRef:        in.ReusableCIBinaryRef,
+		SASTOpengrepRules:          in.SASTOpengrepRules,
+		SASTOpengrepFailOnSeverity: in.SASTOpengrepFailOnSeverity,
+		DependencyReview:           in.DependencyReview,
+		SASTOpengrep:               in.SASTOpengrep,
+		PublicCodeLint:             in.PublicCodeLint,
+		DevbaseCheck:               in.DevbaseCheck,
+		SwiftFormat:                in.SwiftFormat,
+		SwiftLint:                  in.SwiftLint,
+	})
+	if err := emitJSONOutput(ctx, sink, "pr-plan-json", plan); err != nil {
+		return nil, err
 	}
-	if err := sink.Set(ctx, "pr-context-json", string(cb)); err != nil {
-		return err
+
+	if err := emitJSONOutput(ctx, sink, "quality-stage-plan-json", plan.Stages.Quality); err != nil {
+		return nil, err
 	}
-	return sink.Set(ctx, "pr-policy-json", string(pb))
+
+	return &plan, nil
 }
 
-// GetFilePatternInput drives `plan get-file-pattern`.
+// GetFilePatternInput drives `plan file-pattern`.
 type GetFilePatternInput struct {
 	ProjectType   string
 	CustomPattern string // when set, used verbatim (caller override)
 	WriteToOutput bool   // when true, also emits sink["pattern"]
+	Format        output.Format
 }
 
 // GetFilePattern returns the pathspec for the project type's version-bump
 // commit. Custom override wins. Returns the resolved pattern + emits to
-// stdout (caller's writer) and optionally to the OutputSink.
+// w (caller's writer) and optionally to the OutputSink.
 func GetFilePattern(ctx context.Context, sink ci.OutputSink, out io.Writer, in GetFilePatternInput) (string, error) {
-	if in.ProjectType == "" {
-		return "", fmt.Errorf("PROJECT_TYPE is required: %w", errs.ErrUsage)
+	pattern, err := resolveFilePattern(in)
+	if err != nil {
+		return "", err
 	}
-	pattern := in.CustomPattern
-	if pattern == "" {
-		pattern = domainversion.FilePattern(projecttype.Type(in.ProjectType))
+
+	format := in.Format
+	if format == "" || format == output.FormatAuto {
+		format = output.FormatText
 	}
-	fmt.Fprintln(out, pattern)
-	if in.WriteToOutput {
+
+	if err := emitFilePattern(ctx, sink, out, pattern, format); err != nil {
+		return "", err
+	}
+
+	if in.WriteToOutput && format != output.FormatGitHub && format != output.FormatGitLab {
+		if sink == nil {
+			return "", fmt.Errorf("output sink is required: %w", errs.ErrUsage)
+		}
+
 		if err := sink.Set(ctx, "pattern", pattern); err != nil {
 			return "", err
 		}
 	}
+
 	return pattern, nil
+}
+
+func resolveFilePattern(in GetFilePatternInput) (string, error) {
+	if in.ProjectType == "" && in.CustomPattern == "" {
+		return "", fmt.Errorf("project type is required: pass --project-type <type> or set $PROJECT_TYPE: %w", errs.ErrUsage)
+	}
+
+	if in.CustomPattern != "" {
+		return in.CustomPattern, nil
+	}
+
+	pt := projecttype.Type(in.ProjectType)
+	if !projecttype.IsIn(pt, config.ValidProjectTypes) {
+		return "", fmt.Errorf("unknown project-type %q: %w", in.ProjectType, errs.ErrUsage)
+	}
+
+	return domainversion.FilePattern(pt), nil
+}
+
+func emitFilePattern(ctx context.Context, sink ci.OutputSink, out io.Writer, pattern string, format output.Format) error {
+	switch format {
+	case output.FormatJSON:
+		if out == nil {
+			return nil
+		}
+
+		body, err := json.Marshal(struct {
+			Pattern string `json:"pattern"`
+		}{Pattern: pattern})
+		if err != nil {
+			return err
+		}
+
+		_, _ = fmt.Fprintln(out, string(body))
+	case output.FormatGitHub, output.FormatGitLab:
+		if sink == nil {
+			return fmt.Errorf("output sink is required for %s output: %w", format, errs.ErrUsage)
+		}
+
+		if err := sink.Set(ctx, "pattern", pattern); err != nil {
+			return err
+		}
+	default:
+		if out != nil {
+			_, _ = fmt.Fprintln(out, pattern)
+		}
+	}
+
+	return nil
 }

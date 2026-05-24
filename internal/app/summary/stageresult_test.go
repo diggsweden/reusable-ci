@@ -9,332 +9,263 @@ import (
 	"testing"
 
 	appsummary "github.com/diggsweden/reusable-ci/internal/app/summary"
+	domainsummary "github.com/diggsweden/reusable-ci/internal/domain/summary"
 	"github.com/diggsweden/reusable-ci/internal/testutil/fakemanifestsink"
 	"github.com/diggsweden/reusable-ci/internal/testutil/fakeoutputsink"
 )
 
-// --- BuildStage --------------------------------------------------------
-
-func TestBuildStage_RanWithMultipleResults(t *testing.T) {
+func TestStageResult_GenericPlan(t *testing.T) {
 	t.Parallel()
 	out := fakeoutputsink.New(t)
 	mf := fakemanifestsink.New(t)
-	_, err := appsummary.BuildStageResult(context.Background(), out, mf, appsummary.BuildStageInput{
-		MavenResult:    "success",
-		NPMResult:      "failure",
-		MavenArtifacts: "[{\"name\":\"x\"}]",
+
+	_, err := appsummary.StageResult(context.Background(), out, mf, appsummary.StageResultInput{
+		StagePlanJSON: `{"version":1,"stage":"build","targets":{"npm":{"runs":true},"maven":{"runs":false}}}`,
+		Results: []domainsummary.KeyValue{
+			{Key: "npm", Value: "success"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			{Key: "maven", Value: "failure"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		},
+		Extras: []domainsummary.KeyValue{{Key: "project_type", Value: "npm"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Single("stage-ran") != "true" {
-		t.Errorf("stage-ran = %q", out.Single("stage-ran"))
-	}
-	if out.Single("stage-result") != "failure" {
-		t.Errorf("stage-result = %q", out.Single("stage-result"))
-	}
-	body := mf.Body("build")
-	for _, want := range []string{
-		`"stage":"build"`,
-		`"result":"failure"`,
-		`"ran":true`,
-		`"maven":"success"`,
-		`"npm":"failure"`,
-		`"gradle":"skipped"`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("manifest missing %q in:\n%s", want, body)
-		}
-	}
-}
 
-func TestBuildStage_NotRanIsSkipped(t *testing.T) {
-	t.Parallel()
-	out := fakeoutputsink.New(t)
-	mf := fakemanifestsink.New(t)
-	_, err := appsummary.BuildStageResult(context.Background(), out, mf, appsummary.BuildStageInput{
-		MavenResult: "failure", // ignored — stage didn't run
-		// No *_ARTIFACTS set → ran=false.
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out.Single("stage-ran") != "false" {
-		t.Errorf("stage-ran = %q", out.Single("stage-ran"))
-	}
-	if out.Single("stage-result") != "skipped" {
-		t.Errorf("stage-result = %q (failure should not surface when ran=false)", out.Single("stage-result"))
-	}
-}
-
-func TestBuildStage_ProjectTypeExtra(t *testing.T) {
-	t.Parallel()
-	out := fakeoutputsink.New(t)
-	mf := fakemanifestsink.New(t)
-	_, err := appsummary.BuildStageResult(context.Background(), out, mf, appsummary.BuildStageInput{
-		ProjectType:  "npm",
-		NPMArtifacts: "[{}]",
-		NPMResult:    "success",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(mf.Body("build"), `"project_type":"npm"`) {
-		t.Errorf("manifest missing project_type:\n%s", mf.Body("build"))
-	}
-}
-
-func TestBuildStage_DevStageNameOverride(t *testing.T) {
-	t.Parallel()
-	out := fakeoutputsink.New(t)
-	mf := fakemanifestsink.New(t)
-	_, err := appsummary.BuildStageResult(context.Background(), out, mf, appsummary.BuildStageInput{
-		StageName: "dev-build",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(mf.Body("dev-build"), `"stage":"dev-build"`) {
-		t.Errorf("stage name not applied: %s", mf.Body("dev-build"))
-	}
-	if mf.Body("build") != "" {
-		t.Error("default 'build' name should not be written when override given")
-	}
-}
-
-func TestBuildStage_FailurePriority(t *testing.T) {
-	t.Parallel()
-	// failure > cancelled > success
-	cases := []struct {
-		maven, npm, gradle, want string
-	}{
-		{"failure", "cancelled", "success", "failure"},
-		{"cancelled", "success", "success", "cancelled"},
-		{"success", "success", "success", "success"},
-	}
-	for _, c := range cases {
-		out := fakeoutputsink.New(t)
-		mf := fakemanifestsink.New(t)
-		if _, err := appsummary.BuildStageResult(context.Background(), out, mf, appsummary.BuildStageInput{
-			MavenResult:    c.maven,
-			NPMResult:      c.npm,
-			GradleResult:   c.gradle,
-			MavenArtifacts: "[{}]",
-		}); err != nil {
-			t.Fatal(err)
-		}
-		if got := out.Single("stage-result"); got != c.want {
-			t.Errorf("aggregate %v → %q, want %q", c, got, c.want)
-		}
-	}
-}
-
-func TestBuildStage_CargoDoesNotAffectBuildStage(t *testing.T) {
-	t.Parallel()
-	out := fakeoutputsink.New(t)
-	mf := fakemanifestsink.New(t)
-	_, err := appsummary.BuildStageResult(context.Background(), out, mf, appsummary.BuildStageInput{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := out.Single("stage-ran"); got != "false" {
-		t.Errorf("stage-ran = %q", got)
-	}
-	if strings.Contains(mf.Body("build"), `"cargo"`) {
-		t.Errorf("cargo should not appear in build manifest: %s", mf.Body("build"))
-	}
-}
-
-// --- PublishStage ------------------------------------------------------
-
-func TestPublishStage_Targets(t *testing.T) {
-	t.Parallel()
-	out := fakeoutputsink.New(t)
-	mf := fakemanifestsink.New(t)
-	_, err := appsummary.PublishStageResult(context.Background(), out, mf, appsummary.PublishStageInput{
-		ContainersResult: "success",
-		Containers:       "[{}]",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := mf.Body("publish")
-	for _, want := range []string{
-		`"stage":"publish"`,
-		`"containers":"success"`,
-		`"cargo":"skipped"`,
-		`"githubpackages":"skipped"`,
-		`"ran":true`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("missing %q in:\n%s", want, body)
-		}
-	}
-}
-
-func TestPublishStage_CargoTargetAndFailurePriority(t *testing.T) {
-	t.Parallel()
-	out := fakeoutputsink.New(t)
-	mf := fakemanifestsink.New(t)
-	_, err := appsummary.PublishStageResult(context.Background(), out, mf, appsummary.PublishStageInput{
-		GHPackagesResult:    "failure",
-		CargoSBOMResult:     "cancelled",
-		GHPackagesArtifacts: `[{"name":"app.jar"}]`,
-		CargoArtifacts:      `[{"name":"app"}]`,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := out.Single("stage-result"); got != "failure" {
+	if got := out.Single("stage-result"); got != "success" {
 		t.Errorf("stage-result = %q", got)
 	}
-	body := mf.Body("publish")
-	for _, want := range []string{`"githubpackages":"failure"`, `"cargo":"cancelled"`} {
+
+	body := mf.Body("build")
+	for _, want := range []string{`"project_type":"npm"`, `"maven":"skipped"`, `"npm":"success"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in %s", want, body)
 		}
 	}
 }
 
-func TestPublishStage_ResultsWithoutArtifactsStaySkipped(t *testing.T) {
+func TestStageResult_EmitsJSONOutput(t *testing.T) {
 	t.Parallel()
 	out := fakeoutputsink.New(t)
 	mf := fakemanifestsink.New(t)
-	_, err := appsummary.PublishStageResult(context.Background(), out, mf, appsummary.PublishStageInput{
-		GHPackagesResult: "success",
-		ContainersResult: "success",
+
+	_, err := appsummary.StageResult(context.Background(), out, mf, appsummary.StageResultInput{
+		StagePlanJSON: `{"version":1,"stage":"dev-publish","targets":{"npm":{"runs":true}}}`,
+		Results:       []domainsummary.KeyValue{{Key: "npm", Value: "success"}},
+		JSONOutputKey: "artifacts-json",
+		JSONFields: []domainsummary.KeyValue{
+			{Key: "npm_package_name", Value: "pkg"},
+			{Key: "npm_package_version", Value: "1.2.3"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			{Key: "npm_publish_status", Value: "published"},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := out.Single("stage-ran"); got != "false" {
-		t.Errorf("stage-ran = %q", got)
-	}
-	if got := out.Single("stage-result"); got != "skipped" {
-		t.Errorf("stage-result = %q", got)
-	}
-	if !strings.Contains(mf.Body("publish"), `"ran":false`) {
-		t.Errorf("manifest should show ran=false: %s", mf.Body("publish"))
+
+	for _, want := range []string{`"npm_package_name":"pkg"`, `"npm_package_version":"1.2.3"`, `"npm_publish_status":"published"`} {
+		if got := out.Single("artifacts-json"); !strings.Contains(got, want) {
+			t.Errorf("artifacts-json missing %q: %s", want, got)
+		}
 	}
 }
 
-// --- PrepareStage ------------------------------------------------------
-
-func TestPrepareStage_RunsOnlyWhenBumpAndArtifacts(t *testing.T) {
+func TestStageResult_MissingResultForRunningTargetFails(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		bump      bool
-		artifacts string
-		ran       string
-		result    string
+	out := fakeoutputsink.New(t)
+	mf := fakemanifestsink.New(t)
+
+	_, err := appsummary.StageResult(context.Background(), out, mf, appsummary.StageResultInput{
+		StagePlanJSON: `{"version":1,"stage":"build","targets":{"maven":{"runs":true}}}`, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+	})
+	if err == nil || !strings.Contains(err.Error(), `stage target "maven" runs but no result was provided`) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestStageResult_RejectsInvalidRunningResults(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		result string
+		want   string
 	}{
-		{true, "[{}]", "true", "success"},
-		{true, "[]", "false", "skipped"},
-		{false, "[{}]", "false", "skipped"},
-		{false, "", "false", "skipped"},
-	}
-	for _, c := range cases {
-		out := fakeoutputsink.New(t)
-		mf := fakemanifestsink.New(t)
-		_, err := appsummary.PrepareStageResult(context.Background(), out, mf, appsummary.PrepareStageInput{
-			PrepareReleaseResult: "success",
-			ShouldRunVersionBump: c.bump,
-			Artifacts:            c.artifacts,
+		{name: "skipped", result: "skipped", want: "planned target returned skipped"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		{name: "unknown", result: "in_progress", want: `invalid result "in_progress"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out := fakeoutputsink.New(t)
+			mf := fakemanifestsink.New(t)
+
+			_, err := appsummary.StageResult(context.Background(), out, mf, appsummary.StageResultInput{
+				StagePlanJSON: `{"version":1,"stage":"build","targets":{"maven":{"runs":true}}}`,
+				Results:       []domainsummary.KeyValue{{Key: "maven", Value: tc.result}},
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v", err)
+			}
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := out.Single("stage-ran"); got != c.ran {
-			t.Errorf("bump=%v artifacts=%q → ran=%q, want %q", c.bump, c.artifacts, got, c.ran)
-		}
-		if got := out.Single("stage-result"); got != c.result {
-			t.Errorf("bump=%v artifacts=%q → result=%q, want %q", c.bump, c.artifacts, got, c.result)
-		}
 	}
 }
 
-func TestPrepareStage_VersionBumpTargetAlwaysIncluded(t *testing.T) {
+func TestStageResult_RejectsInvalidPlanAndKeys(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		in   appsummary.StageResultInput
+		want string
+	}{
+		{
+			name: "unsupported version",
+			in:   appsummary.StageResultInput{StagePlanJSON: `{"version":2,"stage":"build","targets":{"maven":{"runs":false}}}`},
+			want: "unsupported version 2",
+		},
+		{
+			name: "invalid stage",
+			in:   appsummary.StageResultInput{StagePlanJSON: `{"version":1,"stage":"../build","targets":{"maven":{"runs":false}}}`},
+			want: "invalid stage name",
+		},
+		{
+			name: "duplicate result",
+			in: appsummary.StageResultInput{
+				StagePlanJSON: `{"version":1,"stage":"build","targets":{"maven":{"runs":true}}}`,
+				Results: []domainsummary.KeyValue{
+					{Key: "maven", Value: "success"},
+					{Key: "maven", Value: "failure"},
+				},
+			},
+			want: `duplicate result key "maven"`,
+		},
+		{
+			name: "unknown result target",
+			in: appsummary.StageResultInput{
+				StagePlanJSON: `{"version":1,"stage":"build","targets":{"maven":{"runs":false}}}`,
+				Results:       []domainsummary.KeyValue{{Key: "npm", Value: "success"}},
+			},
+			want: `result provided for unknown stage target "npm"`,
+		},
+		{
+			name: "reserved extra",
+			in: appsummary.StageResultInput{
+				StagePlanJSON: `{"version":1,"stage":"build","targets":{"maven":{"runs":false}}}`,
+				Extras:        []domainsummary.KeyValue{{Key: "result", Value: "success"}},
+			},
+			want: `extra key "result" is reserved`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out := fakeoutputsink.New(t)
+			mf := fakemanifestsink.New(t)
+
+			_, err := appsummary.StageResult(context.Background(), out, mf, tc.in)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+func TestStageResult_NeedsJSON(t *testing.T) {
 	t.Parallel()
 	out := fakeoutputsink.New(t)
 	mf := fakemanifestsink.New(t)
-	_, err := appsummary.PrepareStageResult(context.Background(), out, mf, appsummary.PrepareStageInput{
-		PrepareReleaseResult: "success",
-		ShouldRunVersionBump: true,
-		Artifacts:            "[{}]",
+
+	_, err := appsummary.StageResult(context.Background(), out, mf, appsummary.StageResultInput{
+		StagePlanJSON: `{"version":1,"stage":"build","targets":{"maven":{"runs":true},"gradle_android":{"runs":true},"npm":{"runs":false}}}`,
+		NeedsJSON: `{
+			"maven": {"result": "success", "outputs": {}},
+			"gradle-android": {"result": "failure", "outputs": {}},
+			"npm": {"result": "skipped", "outputs": {}},
+			"some-unrelated-status-job": {"result": "success", "outputs": {}}
+		}`,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(mf.Body("prepare"), `"version-bump":"success"`) {
-		t.Errorf("manifest missing version-bump target: %s", mf.Body("prepare"))
-	}
-}
 
-func TestPrepareStage_UnknownResultNormalizesToSkipped(t *testing.T) {
-	t.Parallel()
-	out := fakeoutputsink.New(t)
-	mf := fakemanifestsink.New(t)
-	_, err := appsummary.PrepareStageResult(context.Background(), out, mf, appsummary.PrepareStageInput{
-		PrepareReleaseResult: "in_progress",
-		ShouldRunVersionBump: true,
-		Artifacts:            `[{"name":"app.jar"}]`,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := out.Single("stage-result"); got != "skipped" {
-		t.Errorf("stage-result = %q", got)
-	}
-}
-
-// --- PRQualityStage ----------------------------------------------------
-
-func TestPRQualityStage_DefaultsAndAlwaysRuns(t *testing.T) {
-	t.Parallel()
-	out := fakeoutputsink.New(t)
-	mf := fakemanifestsink.New(t)
-	_, err := appsummary.PRQualityStageResult(context.Background(), out, mf, appsummary.PRQualityStageInput{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := out.Single("stage-ran"); got != "true" {
-		t.Errorf("stage-ran = %q (pr-quality is always true by design)", got)
-	}
-	if got := out.Single("stage-result"); got != "success" {
-		t.Errorf("stage-result = %q", got)
-	}
-	body := mf.Body("pr-quality")
-	for _, want := range []string{`"dependencyreview":"skipped"`, `"swift":"skipped"`} {
-		if !strings.Contains(body, want) {
-			t.Errorf("missing %q in: %s", want, body)
-		}
-	}
-}
-
-func TestPRQualityStage_DisabledTargetsSkipped(t *testing.T) {
-	t.Parallel()
-	out := fakeoutputsink.New(t)
-	mf := fakemanifestsink.New(t)
-	_, err := appsummary.PRQualityStageResult(context.Background(), out, mf, appsummary.PRQualityStageInput{
-		// real result is success, but enabled=false → display skipped
-		DependencyReviewResult:  "success",
-		DependencyReviewEnabled: "false",
-		// real result is failure AND enabled
-		SASTOpengrepResult:  "failure",
-		SASTOpengrepEnabled: "true",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := mf.Body("pr-quality")
-	if !strings.Contains(body, `"dependencyreview":"skipped"`) {
-		t.Errorf("disabled target should render skipped: %s", body)
-	}
-	if !strings.Contains(body, `"sastopengrep":"failure"`) {
-		t.Errorf("enabled target should render real result: %s", body)
-	}
-	// Stage result aggregates raw values so the failure surfaces.
 	if got := out.Single("stage-result"); got != "failure" {
-		t.Errorf("stage-result = %q (should aggregate raw, not gated)", got)
+		t.Errorf("stage-result = %q", got)
+	}
+
+	body := mf.Body("build")
+	for _, want := range []string{`"maven":"success"`, `"gradle_android":"failure"`, `"npm":"skipped"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in %s", want, body)
+		}
+	}
+}
+
+func TestStageResult_NeedsJSON_RejectsCombinedWithResults(t *testing.T) {
+	t.Parallel()
+	out := fakeoutputsink.New(t)
+	mf := fakemanifestsink.New(t)
+
+	_, err := appsummary.StageResult(context.Background(), out, mf, appsummary.StageResultInput{
+		StagePlanJSON: `{"version":1,"stage":"build","targets":{"maven":{"runs":true}}}`,
+		Results:       []domainsummary.KeyValue{{Key: "maven", Value: "success"}},
+		NeedsJSON:     `{"maven":{"result":"success"}}`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestStageResult_NeedsJSON_MissingResultForRunningTargetFails(t *testing.T) {
+	t.Parallel()
+	out := fakeoutputsink.New(t)
+	mf := fakemanifestsink.New(t)
+
+	_, err := appsummary.StageResult(context.Background(), out, mf, appsummary.StageResultInput{
+		StagePlanJSON: `{"version":1,"stage":"build","targets":{"maven":{"runs":true}}}`,
+		NeedsJSON:     `{"someone-else":{"result":"success"}}`,
+	})
+	if err == nil || !strings.Contains(err.Error(), `stage target "maven" runs but no result was provided`) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestStageResult_NeedsJSON_InvalidPayload(t *testing.T) {
+	t.Parallel()
+	out := fakeoutputsink.New(t)
+	mf := fakemanifestsink.New(t)
+
+	_, err := appsummary.StageResult(context.Background(), out, mf, appsummary.StageResultInput{
+		StagePlanJSON: `{"version":1,"stage":"build","targets":{"maven":{"runs":true}}}`,
+		NeedsJSON:     `not-json`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "parse needs-json") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestStageResult_FailurePriorityAndSkippedTargets(t *testing.T) {
+	t.Parallel()
+	out := fakeoutputsink.New(t)
+	mf := fakemanifestsink.New(t)
+
+	_, err := appsummary.StageResult(context.Background(), out, mf, appsummary.StageResultInput{
+		StagePlanJSON: `{"version":1,"stage":"publish","targets":{"containers":{"runs":true},"cargo":{"runs":true},"npm":{"runs":false}}}`,
+		Results: []domainsummary.KeyValue{
+			{Key: "containers", Value: "cancelled"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			{Key: "cargo", Value: "failure"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			{Key: "npm", Value: "failure"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := out.Single("stage-result"); got != "failure" {
+		t.Errorf("stage-result = %q", got)
+	}
+
+	body := mf.Body("publish")
+	for _, want := range []string{`"cargo":"failure"`, `"containers":"cancelled"`, `"npm":"skipped"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in %s", want, body)
+		}
 	}
 }

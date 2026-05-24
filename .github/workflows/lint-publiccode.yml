@@ -8,14 +8,14 @@ on:
       runtime-image:
         description: "reusable-ci runtime image. Base image is sufficient for publiccode-parser."
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
         type: string
 permissions:
   contents: read
 jobs:
   publiccode_validation:
     name: Publiccode Validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ${{ inputs['runtime-image'] }}
     timeout-minutes: 10

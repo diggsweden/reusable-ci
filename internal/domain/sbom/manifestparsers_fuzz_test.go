@@ -28,6 +28,7 @@ func FuzzPackageJSON(f *testing.F) {
 	for _, s := range seeds {
 		f.Add([]byte(s))
 	}
+
 	f.Fuzz(func(t *testing.T, body []byte) {
 		_ = sbom.PackageJSONName(body)
 		_ = sbom.PackageJSONVersion(body)
@@ -50,6 +51,7 @@ func FuzzGradleHelpers(f *testing.F) {
 	for _, s := range seeds {
 		f.Add([]byte(s))
 	}
+
 	f.Fuzz(func(t *testing.T, body []byte) {
 		_ = sbom.GradleVersion(body)
 		_ = sbom.GradleRootProjectName(body)
@@ -70,6 +72,7 @@ func FuzzGoModHelpers(f *testing.F) {
 	for _, s := range seeds {
 		f.Add([]byte(s))
 	}
+
 	f.Fuzz(func(t *testing.T, body []byte) {
 		_ = sbom.GoModuleName(body)
 		_ = sbom.GoModuleMajorVersion(body)
@@ -89,6 +92,7 @@ func FuzzCargoTOML(f *testing.F) {
 	for _, s := range seeds {
 		f.Add([]byte(s))
 	}
+
 	f.Fuzz(func(t *testing.T, body []byte) {
 		_ = sbom.CargoTOMLName(body)
 		_ = sbom.CargoTOMLVersion(body)
@@ -107,6 +111,7 @@ func FuzzPythonHelpers(f *testing.F) {
 	for _, s := range seeds {
 		f.Add([]byte(s))
 	}
+
 	f.Fuzz(func(t *testing.T, body []byte) {
 		_ = sbom.PyProjectName(body)
 		_ = sbom.PyProjectVersion(body)

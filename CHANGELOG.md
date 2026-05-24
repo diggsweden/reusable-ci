@@ -18,7 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Forward arm to trivy
 - Repair edge case single container naming
 
-
 ## [2.8.1] - 2026-05-04
 
 ### Added
@@ -43,7 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Sanitize path tokens at file-write boundary
 
-
 ## [2.8.0] - 2026-04-27
 
 ### Added
@@ -54,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Correct cisa naming for all artefacts
-- Minor  polish docs rewrite, tooling
+- Minor polish docs rewrite, tooling
 - Derive container scan from artefact sboms
 - Separate JVM and Android build paths
 - Make Build SBOM a first-class compliance artefact
@@ -65,7 +63,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrate generate-sboms.bats to direct flag CLI
 - Surface generate-dev-sbom in publish-stage summary
 
-
 ## [2.7.9] - 2026-04-14
 
 ### Fixed
@@ -73,13 +70,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bump gommitlint
 - Split SARIF upload into its own job
 
-
 ## [2.7.8] - 2026-04-14
 
 ### Fixed
 
 - Move scorecard SARIF token to step env and guard script checkouts
-
 
 ## [2.7.7] - 2026-04-13
 
@@ -100,13 +95,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reset working tree after install to prevent false lint failures
 - Jar SBOM missing for artefacts without version suffix
 
-
 ## [2.7.6] - 2026-04-02
 
 ### Changed
 
 - Improve readme
-
 
 ## [2.7.5] - 2026-04-01
 
@@ -124,13 +117,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix: allow containerfiles starting with Containerfile and Dockerfile
 - Improve feedback in npm release dev flow
 
-
 ## [2.7.4] - 2026-03-26
 
 ### Changed
 
 - Change sarif upload flow
-
 
 ## [2.7.3] - 2026-03-23
 
@@ -139,13 +130,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix lintproblem
 - Workaround the stricter gh 6 action
 
-
 ## [2.7.2] - 2026-03-23
 
 ### Changed
 
 - Update github actions
-- Clearify we dont need ref ci for scorecard
+- Clarify we don't need ref ci for scorecard
 - Replace dependency-review-action with Trivy-based scanner
 - Extract shared CI helpers and consolidate inline workflow logic
 - Update mise tools (#85)
@@ -154,7 +144,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Use available trivy
 - Dont use hardcoded tmp in ci
-
 
 ## [2.7.1] - 2026-03-20
 
@@ -166,7 +155,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Correct path for extra commitlint
 
-
 ## [2.7.0] - 2026-03-18
 
 ### Changed
@@ -176,7 +164,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Clean up after major refactoring
-
 
 ## [2.6.2] - 2026-03-13
 
@@ -197,7 +184,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Failing test
 - Wire xcodegen config through release orchestration
 
-
 ## [2.6.1] - 2026-03-04
 
 ### Changed
@@ -210,13 +196,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bump trivy and other deps
 - Exit if uploading IPA to App Store fails
 
-
 ## [2.6.0] - 2025-12-18
 
 ### Added
 
 - Add devbasecheck support
-
 
 ## [2.5.0] - 2025-12-17
 
@@ -232,7 +216,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update github actions (#62)
 - Minor doc fix
 
-
 ## [2.4.3] - 2025-12-12
 
 ### Added
@@ -246,7 +229,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Dont break on printf
 
-
 ## [2.4.2] - 2025-12-08
 
 ### Added
@@ -259,14 +241,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pass lint
 - Improve justfile
 
-
 ## [2.4.1] - 2025-12-01
 
 ### Changed
 
 - Dont add extra target to mvn artifact
 - Set profile value
-
 
 ## [2.4.0] - 2025-12-01
 
@@ -286,7 +266,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improve bash code
 - Improve bash code
 - Improve headers
-- Improve release maintenace
+- Improve release maintenance
 - Echo to printf
 - Improve inline bash reading
 - Dedupe mvn opts
@@ -311,7 +291,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Separate artifact from container
 - Correct references branch
 - Improve token handling
-- Improve script strucutres
+- Improve script structures
 - Improve sbom generation
 - Upload maven dev artifacts
 - Minor optimizations
@@ -321,10 +301,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - Remove e for debug
-- Remove leading dashs printfs
+- Remove leading dashes printfs
 - Remove token refactor residue
 - Delete existing release draft
-
 
 ## [2.3.8] - 2025-11-25
 
@@ -366,7 +345,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add tag check for relase flow
+- Add tag check for release flow
 - Add ios tool bump agvtool support
 
 ### Changed

@@ -13,6 +13,7 @@ import "context"
 // Platform identifies the CI provider the binary is running under.
 type Platform string
 
+// Recognised Platform values.
 const (
 	PlatformGitHub Platform = "github"
 	PlatformGitLab Platform = "gitlab"
@@ -28,6 +29,7 @@ func (p Platform) IsValid() bool {
 	case PlatformGitHub, PlatformGitLab, PlatformLocal:
 		return true
 	}
+
 	return false
 }
 
@@ -36,6 +38,7 @@ func (p Platform) IsValid() bool {
 // / CI_COMMIT_TAG presence / etc.).
 type RefType string
 
+// Recognised RefType values.
 const (
 	RefTypeBranch RefType = "branch"
 	RefTypeTag    RefType = "tag"
@@ -129,59 +132,73 @@ type SARIFUpload struct {
 	Token string
 }
 
-// Provider is the cross-platform port.
-//
-// Implementations live under internal/adapters/{github,gitlab,local}.
+// Provider is the always-available base: every platform adapter
+// implements it. Use cases that need richer capabilities depend on the
+// role-specific interfaces below — `local.Provider` only implements
+// this base + RepoMetadataFetcher, so use cases that need a missing
+// role surface a typed error at the CLI boundary rather than a runtime
+// "method returns ErrUnsupported" trap deep in the call stack.
 type Provider interface {
-	// Name returns which platform this provider talks to.
-	// Used by use cases that need to gate platform-only features
-	// (e.g. SLSA L3 attestation).
+	// Name returns which platform this provider talks to. Used by
+	// use cases that gate platform-only features (e.g. SLSA L3).
 	Name() Platform
 
 	// ResolveContext extracts the EventContext from the platform's
 	// native environment.
 	ResolveContext(ctx context.Context) (*EventContext, error)
+}
 
-	// FetchRepoMetadata queries the provider's REST API for repo-level
-	// metadata used to populate OCI labels (description, html_url, SPDX
-	// license id). When the API call fails or the relevant field is
-	// missing, a zero-valued field is returned (not an error) — OCI
-	// labels are best-effort, never load-bearing for a release.
-	//
-	// repo is "owner/repo" on GitHub, "group/project/path" on GitLab.
+// RepoMetadataFetcher reads repo-level metadata for OCI label
+// population. All three adapters implement it — `local` returns a
+// zero-valued struct since there is no API to query (best-effort
+// semantics, never load-bearing for a release).
+//
+// repo is "owner/repo" on GitHub, "group/project/path" on GitLab.
+type RepoMetadataFetcher interface {
 	FetchRepoMetadata(ctx context.Context, repo string) (*RepoMetadata, error)
+}
 
-	// ValidateToken does the lowest-cost API call ("repos/<repo>" on
-	// GitHub, "projects/<enc-path>" on GitLab) using the explicit token
-	// passed in (not the adapter's env-stored one). Returns nil when the
-	// API call succeeds, an error otherwise. Format checks (ghp_/ghs_/
-	// github_pat_/glpat_) are caller-side responsibilities — this method
-	// only verifies "the token works against the API right now".
+// TokenValidator probes a release-bot token's API access.
+// Implemented by github and gitlab; not by local (no API to probe).
+//
+// ValidateToken uses the lowest-cost authenticated GET ("repos/<repo>"
+// on GitHub, "projects/<enc-path>" on GitLab) with the explicit token
+// passed in (not the adapter's env-stored one). Token-format checks
+// (ghp_/ghs_/github_pat_/glpat_) are caller-side — this method only
+// verifies "the token works against the API right now".
+//
+// ValidateBotPermissions probes the bot user's API access.
+type TokenValidator interface {
 	ValidateToken(ctx context.Context, token, repo string) error
-
-	// ValidateBotPermissions probes the bot user's API access.
-	// Returns a typed BotPermissions struct that the use case renders.
 	ValidateBotPermissions(ctx context.Context, repo string) (*BotPermissions, error)
+}
 
-	// CreateRelease creates a release on the platform. Implementations:
-	//   - github: shells out to `gh release create`, mirroring the
-	//     existing bash semantics (delete-and-recreate of existing draft
-	//     / prerelease tags, --notes-file forwarding, asset list).
-	//   - gitlab: POST /api/v4/projects/{enc-path}/releases + per-asset
-	//     links via /releases/{tag}/assets/links.
-	//   - local: returns "not supported in local mode".
+// ReleaseCreator creates a release on the platform. Implemented by
+// github and gitlab; not by local.
+//
+//   - github: in-process via go-github (delete-and-recreate of existing
+//     draft / prerelease tags, --notes-file forwarding, asset list).
+//   - gitlab: POST /api/v4/projects/{enc-path}/releases + per-asset
+//     links via /releases/{tag}/assets/links.
+type ReleaseCreator interface {
 	CreateRelease(ctx context.Context, repo string, spec ReleaseSpec) error
+}
 
-	// UploadSARIF posts a SARIF report to the platform's code-scanning
-	// surface. Implementations:
-	//   - github: POSTs gzip+base64-encoded SARIF to
-	//     /repos/{repo}/code-scanning/sarifs.
-	//   - gitlab: returns errs.ErrUnsupported (GitLab has its own
-	//     security-report shape — Trivy/OpenGrep emit it directly
-	//     via the GitLab SAST format).
-	//   - local: returns errs.ErrUnsupported.
-	//
-	// Callers gate fatality: missing token / file → skip without
-	// hitting this method; transport / auth failures → propagate.
+// ReleaseAssetUploader attaches a single file to an existing release,
+// overwriting any existing asset with the same basename. Today only
+// github implements this; the GitLab release-link API will land
+// alongside the rest of GitLab CI support.
+type ReleaseAssetUploader interface {
+	UploadReleaseAsset(ctx context.Context, tag, file string) error
+}
+
+// SARIFUploader posts a SARIF report to the platform's code-scanning
+// surface. Today only github implements this — GitLab has its own
+// security-report shape that Trivy/OpenGrep emit directly via the
+// GitLab SAST format, so no GitLab implementation is needed.
+//
+// Callers gate fatality: missing token / file → skip without hitting
+// this interface; transport / auth failures → propagate.
+type SARIFUploader interface {
 	UploadSARIF(ctx context.Context, up SARIFUpload) error
 }

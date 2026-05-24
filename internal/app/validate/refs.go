@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: CC0-1.0
 
-// Package validate orchestrates `reusable-ci validate ...` subcommands.
-//
-// 5a (this commit): pure-domain validators — ref-type, tag-format,
-// changelog file presence / minimal-changelog read. Subsequent
-// sub-phases add local-tool (git/gpg) and provider (token/permissions)
-// validators.
+// Package validate is the app-layer entry point for the
+// `reusable-ci validate ...` subcommands. It groups three kinds of
+// validator: pure-domain (ref shape, tag format, changelog presence),
+// local-tool (git, gpg state, lockfile presence), and provider
+// (token scopes, allowlisted signers). Each subcommand wires one
+// validator and translates the structured result into a user-facing
+// message + appropriate errs.Err* wrap.
 package validate
 
 import (
@@ -38,16 +39,19 @@ func RefType(out io.Writer, in RefTypeInput) error {
 		var rte *validate.RefTypeError
 		if errors.As(err, &rte) {
 			return fmt.Errorf(
-				"Release workflow must be triggered by pushing a tag\n"+
+				"release workflow must be triggered by pushing a tag\n"+
 					"Current trigger: %s (%s)\n"+
 					"To create a release, push a signed tag:\n"+
 					"  git tag -s v1.0.0 -m 'Release v1.0.0'\n"+
 					"  git push origin v1.0.0: %w",
 				rte.Got, rte.Ref, errs.ErrValidation)
 		}
+
 		return err
 	}
-	fmt.Fprintf(out, "✓ Triggered by tag: %s\n", in.RefName)
+
+	_, _ = fmt.Fprintf(out, "✓ Triggered by tag: %s\n", in.RefName)
+
 	return nil
 }
 
@@ -58,7 +62,7 @@ type TagFormatInput struct {
 
 // TagFormat validates a release tag against the project's permissive
 // semver pattern. Prints the parsed parts on success; returns an error
-// listing the help text on failure (mirrors the bash stdout/stderr split).
+// listing the help text on failure.
 func TagFormat(out io.Writer, in TagFormatInput) error {
 	tf, err := validate.ParseTagFormat(in.Tag)
 	if err != nil {
@@ -68,24 +72,29 @@ func TagFormat(out io.Writer, in TagFormatInput) error {
 			"Learn more: https://semver.org",
 			err)
 	}
-	fmt.Fprintf(out, "## Validating Tag Format\n")
-	fmt.Fprintf(out, "✓ Valid semantic version tag\n")
-	fmt.Fprintf(out, "   Version: %s.%s.%s\n", tf.Major, tf.Minor, tf.Patch)
+
+	_, _ = fmt.Fprintf(out, "## Validating Tag Format\n")
+	_, _ = fmt.Fprintf(out, "✓ Valid semantic version tag\n")
+	_, _ = fmt.Fprintf(out, "   Version: %s.%s.%s\n", tf.Major, tf.Minor, tf.Patch)
+
 	if tf.IsStable() {
-		fmt.Fprintf(out, "   Type: Stable release\n")
+		_, _ = fmt.Fprintf(out, "   Type: Stable release\n")
 	} else {
-		fmt.Fprintf(out, "   Pre-release: %s\n", tf.Prerelease)
+		_, _ = fmt.Fprintf(out, "   Pre-release: %s\n", tf.Prerelease)
+
 		if tf.PrereleaseStandard {
-			fmt.Fprintf(out, "   ✓ Pre-release identifier follows convention\n")
+			_, _ = fmt.Fprintf(out, "   ✓ Pre-release identifier follows convention\n")
 		} else {
-			fmt.Fprintf(out, "   ℹ️ Non-standard pre-release identifier: %s\n", tf.Prerelease)
-			fmt.Fprintf(out, "      Standard identifiers: alpha, beta, rc, snapshot, SNAPSHOT, dev\n")
-			fmt.Fprintf(out, "      (Release will proceed - this is informational only)\n")
+			_, _ = fmt.Fprintf(out, "   ℹ️ Non-standard pre-release identifier: %s\n", tf.Prerelease)
+			_, _ = fmt.Fprintf(out, "      Standard identifiers: alpha, beta, rc, snapshot, SNAPSHOT, dev\n")
+			_, _ = fmt.Fprintf(out, "      (Release will proceed - this is informational only)\n")
 		}
 	}
-	fmt.Fprintf(out, "\n### Tag Format Summary:\n")
-	fmt.Fprintf(out, "✓ Tag follows semantic versioning (vX.Y.Z)\n")
-	fmt.Fprintf(out, "✓ Tag format validation passed\n")
+
+	_, _ = fmt.Fprintf(out, "\n### Tag Format Summary:\n")
+	_, _ = fmt.Fprintf(out, "✓ Tag follows semantic versioning (vX.Y.Z)\n")
+	_, _ = fmt.Fprintf(out, "✓ Tag format validation passed\n")
+
 	return nil
 }
 
@@ -110,21 +119,26 @@ func Changelog(ctx context.Context, sink ci.OutputSink, out io.Writer, in Change
 	if statErr != nil && !os.IsNotExist(statErr) {
 		return fmt.Errorf("read %s: %w", in.Path, statErr)
 	}
+
 	exists := statErr == nil
 
 	if in.Required {
 		if !exists {
-			return fmt.Errorf("Full changelog (%s) not found\nThis file is required for the version bump commit: %w", in.Path, errs.ErrMissingInput)
+			return fmt.Errorf("full changelog (%s) not found\nthis file is required for the version bump commit: %w", in.Path, errs.ErrMissingInput)
 		}
-		fmt.Fprintf(out, "✓ Full changelog found (%d lines)\n", validate.CountLines(data))
+
+		_, _ = fmt.Fprintf(out, "✓ Full changelog found (%d lines)\n", validate.CountLines(data))
+
 		return nil
 	}
+
 	if !exists {
 		return sink.Set(ctx, "content", "No changes for this release")
 	}
 	// Multiline write preserves embedded newlines; the heredoc-based GHA
 	// sink handles them; GitLab dotenv falls back to scalar Set.
 	lines := splitLinesPreservingTrailing(data)
+
 	return sink.SetMultiline(ctx, "content", lines)
 }
 
@@ -135,18 +149,23 @@ func splitLinesPreservingTrailing(raw []byte) []string {
 	if len(raw) == 0 {
 		return nil
 	}
-	s := string(raw)
+
+	s := string(raw) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if s[len(s)-1] == '\n' {
 		s = s[:len(s)-1]
 	}
+
 	out := []string{}
 	start := 0
+
 	for i := range len(s) {
 		if s[i] == '\n' {
 			out = append(out, s[start:i])
 			start = i + 1
 		}
 	}
+
 	out = append(out, s[start:])
+
 	return out
 }

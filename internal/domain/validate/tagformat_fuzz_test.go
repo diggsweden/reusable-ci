@@ -9,16 +9,17 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/domain/validate"
 )
 
+//nolint:cyclop // fuzz harness exercising the parser exhaustively.
 func FuzzParseTagFormat(f *testing.F) {
 	seeds := []string{
 		"",
-		"v1.0.0",
+		"v1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"v0.0.1",
 		"v10.20.30",
 		"v1.0.0-alpha",
 		"v1.0.0-beta.1",
 		"v1.0.0-rc.2",
-		"v1.0.0-SNAPSHOT",
+		"v1.0.0-SNAPSHOT", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"v1.0.0+build.123",
 		"v1.0.0-rc.1+sha.abc123",
 		"v1.0.0-custom.123",
@@ -41,15 +42,19 @@ func FuzzParseTagFormat(f *testing.F) {
 		if tf == nil {
 			t.Fatalf("nil TagFormat for valid tag %q", tag)
 		}
+
 		if tf.Tag != tag {
 			t.Fatalf("Tag = %q, want %q", tf.Tag, tag)
 		}
+
 		if tf.Major == "" || tf.Minor == "" || tf.Patch == "" {
 			t.Fatalf("missing version parts for %q: %+v", tag, tf)
 		}
+
 		if tf.IsStable() != (tf.Prerelease == "") {
 			t.Fatalf("IsStable inconsistent for %q: prerelease=%q", tag, tf.Prerelease)
 		}
+
 		if tf.Prerelease == "" && !tf.PrereleaseStandard {
 			t.Fatalf("stable tag should always be standard: %+v", tf)
 		}
@@ -58,6 +63,7 @@ func FuzzParseTagFormat(f *testing.F) {
 		if tf.Prerelease != "" {
 			reformatted += "-" + tf.Prerelease
 		}
+
 		if tf.Build != "" {
 			reformatted += "+" + tf.Build
 		}
@@ -66,9 +72,11 @@ func FuzzParseTagFormat(f *testing.F) {
 		if err != nil {
 			t.Fatalf("reparse of %q failed: %v", reformatted, err)
 		}
+
 		if reparsed.Major != tf.Major || reparsed.Minor != tf.Minor || reparsed.Patch != tf.Patch {
 			t.Fatalf("reparse changed version parts: before=%+v after=%+v", tf, reparsed)
 		}
+
 		if reparsed.Prerelease != tf.Prerelease || reparsed.Build != tf.Build {
 			t.Fatalf("reparse changed prerelease/build: before=%+v after=%+v", tf, reparsed)
 		}

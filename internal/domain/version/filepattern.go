@@ -8,8 +8,6 @@ import "github.com/diggsweden/reusable-ci/internal/domain/projecttype"
 // FilePattern returns the git-add pathspec for a project type's
 // version-bump commit. The CHANGELOG.md is included for every type;
 // the project file(s) follow the toolchain's idiomatic location(s).
-//
-// Mirrors scripts/config/get-file-pattern.sh.
 func FilePattern(pt projecttype.Type) string {
 	switch pt {
 	case projecttype.Maven:
@@ -23,9 +21,12 @@ func FilePattern(pt projecttype.Type) string {
 	case projecttype.Python:
 		return "CHANGELOG.md pyproject.toml"
 	case projecttype.Go:
-		return "CHANGELOG.md go.mod"
+		return "CHANGELOG.md"
 	case projecttype.Cargo:
 		return "CHANGELOG.md Cargo.toml Cargo.lock"
+	default:
+		// Auto / Meta / Unknown: only the changelog moves on version
+		// bump — meta artifacts have no project file of their own.
+		return "CHANGELOG.md"
 	}
-	return "CHANGELOG.md"
 }

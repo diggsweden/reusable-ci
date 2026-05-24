@@ -6,12 +6,11 @@ SPDX-License-Identifier: CC0-1.0
 
 # Testing conventions
 
-Test architecture for the Go port. Follow these patterns when adding new
+Test architecture for the Go runtime. Follow these patterns when adding new
 code; PR review checks that the layers are respected and the helpers are
 used.
 
-> Companion to [`go-port-plan.md`](go-port-plan.md). The plan defines the
-> phases; this doc defines how the tests in those phases are written.
+> Current testing policy for the Go codebase.
 
 ## Layers
 

@@ -5,8 +5,8 @@ package validate
 
 import "strings"
 
-// GitHubTokenKind classifies a GitHub token by prefix. The release
-// flow's policy is documented in scripts/validate/providers/github.sh:
+// GitHubTokenKind classifies a GitHub token by prefix. The release-bot
+// authorization policy is:
 //
 //   - github_pat_*: fine-grained PAT (preferred for release bot)
 //   - ghs_*:        GitHub App installation token
@@ -35,5 +35,6 @@ func ClassifyGitHubToken(token string) GitHubTokenKind {
 	case strings.HasPrefix(token, "ghp_"):
 		return GitHubTokenClassic
 	}
+
 	return GitHubTokenUnknown
 }

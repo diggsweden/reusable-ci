@@ -27,6 +27,7 @@ func (f *fakeSecurity) Run(_ context.Context, args ...string) (string, error) {
 	if f.err != nil {
 		return "", f.err
 	}
+
 	return "", nil
 }
 
@@ -39,8 +40,9 @@ func TestXcodeSetupCodeSigning_HappyPath(t *testing.T) {
 	pp := base64.StdEncoding.EncodeToString([]byte("fake-pp"))
 
 	sec := &fakeSecurity{}
-	var stdout strings.Builder
-	if err := appbuild.XcodeSetupCodeSigning(context.Background(), sec, &stdout, appbuild.XcodeSetupCodeSigningInput{
+
+	var out strings.Builder
+	if err := appbuild.XcodeSetupCodeSigning(context.Background(), sec, &out, appbuild.XcodeSetupCodeSigningInput{
 		CertBase64:              cert,
 		CertPassphrase:          "secret",
 		PPBase64:                pp,
@@ -68,8 +70,9 @@ func TestXcodeSetupCodeSigning_HappyPath(t *testing.T) {
 	if sec.calls[0][0] != "create-keychain" {
 		t.Errorf("first call = %v", sec.calls[0])
 	}
-	if got := strings.TrimSpace(stdout.String()); got != "✓ Code signing configured successfully" {
-		t.Errorf("stdout = %q", got)
+
+	if got := strings.TrimSpace(out.String()); got != "✓ Code signing configured successfully" {
+		t.Errorf("out = %q", got)
 	}
 }
 
@@ -98,7 +101,8 @@ func TestXcodeSetupCodeSigning_SecurityFailureBubbles(t *testing.T) {
 	tmp := tmpFS.Root
 	cert := base64.StdEncoding.EncodeToString([]byte("c"))
 	pp := base64.StdEncoding.EncodeToString([]byte("p"))
-	sec := &fakeSecurity{err: errors.New("security: keychain in use")}
+	sec := &fakeSecurity{err: errors.New("security: keychain in use")} //nolint:err113 // test mock error
+
 	err := appbuild.XcodeSetupCodeSigning(context.Background(), sec, io.Discard, appbuild.XcodeSetupCodeSigningInput{
 		CertBase64: cert, PPBase64: pp, KeychainPassword: "p", TempDir: tmp,
 		ProvisioningProfilesDir: testfs.NewReal(t).Root,

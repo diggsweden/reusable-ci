@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: CC0-1.0
-# Example artifacts.yml for monorepo support (v2)
-# Place this file in your repository (e.g., .github/artifacts.yml)
-# and reference it in your release workflow with: artifactsConfig: .github/artifacts.yml
+# Example artifacts.yml for monorepo support
+# Place this file in your repository (e.g., .reusable-ci/artifacts.yml)
+# and reference it in your release workflow with: artifacts-config: .reusable-ci/artifacts.yml
 artifacts:
   # Maven backend application
   - name: backend-api
@@ -16,29 +16,19 @@ artifacts:
   - name: frontend-ui
     project-type: npm
     working-directory: packages/frontend
-    config:
-      node-version: 24
-  # Maven shared library (publish to Maven Central)
-  - name: shared-lib
-    project-type: maven
-    working-directory: libs/shared
-    build-type: library
-    require-authorization: true
     publish-to:
       - github-packages
-      - maven-central
     config:
-      java-version: 25
-      settings-path: .mvn/settings.xml
+      node-version: 24
 # Containers are separate - they reference artifacts by name
 containers:
   - name: backend-api
     from: [backend-api]
     container-file: services/backend/Containerfile
-    context: services/backend
+    context: .
     platforms: linux/amd64,linux/arm64
   - name: frontend-ui
     from: [frontend-ui]
     container-file: packages/frontend/Containerfile
-    context: packages/frontend
+    context: .
     platforms: linux/amd64,linux/arm64

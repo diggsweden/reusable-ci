@@ -11,8 +11,6 @@ import "fmt"
 // ZipName returns the canonical SBOM zip filename, e.g.
 //
 //	ZipName("my-app", "1.2.3") = "my-app-1.2.3-sboms.zip"
-//
-// Mirrors ci_sbom_zip_name in scripts/ci/output.sh.
 func ZipName(projectName, version string) string {
 	return fmt.Sprintf("%s-%s-sboms.zip", projectName, version)
 }

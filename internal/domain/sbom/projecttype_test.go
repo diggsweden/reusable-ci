@@ -26,15 +26,18 @@ func TestIsValidProjectType_KnownTypes(t *testing.T) {
 
 func TestParseLayerCSV_TrimsAndDropsEmpty(t *testing.T) {
 	t.Parallel()
+
 	got := sbom.ParseLayerCSV("build, analyzed-artifact ,, analyzed-container ")
 	require.Equal(t, []string{"build", "analyzed-artifact", "analyzed-container"}, got)
 }
 
 func TestIsValidLayer_KnownLayers(t *testing.T) {
 	t.Parallel()
+
 	for _, layer := range []string{"build", "analyzed-artifact", "analyzed-container"} {
 		require.True(t, sbom.IsValidLayer(layer), "%q should be valid", layer)
 	}
+
 	require.False(t, sbom.IsValidLayer("source"))
 }
 
@@ -42,6 +45,6 @@ func TestUnknownLayerError(t *testing.T) {
 	t.Parallel()
 
 	err := sbom.UnknownLayerError("source")
-	require.Contains(t, err.Error(), "Unknown layer: source")
+	require.Contains(t, err.Error(), "unknown layer: source")
 	require.Contains(t, err.Error(), "valid: build, analyzed-artifact, analyzed-container")
 }

@@ -26,6 +26,7 @@ type Sink struct {
 // New returns a fresh Sink.
 func New(t *testing.T) *Sink {
 	t.Helper()
+
 	return &Sink{t: t, writes: map[string]string{}}
 }
 
@@ -37,7 +38,9 @@ func (s *Sink) Write(_ context.Context, stage string, result map[string]any) err
 	if err != nil {
 		return err
 	}
+
 	s.record(stage, string(body))
+
 	return nil
 }
 
@@ -49,23 +52,17 @@ func (s *Sink) WriteJSON(_ context.Context, stage string, body interface {
 	if err != nil {
 		return err
 	}
-	s.record(stage, string(raw))
-	return nil
-}
 
-func (s *Sink) record(stage, body string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.writes[stage]; !ok {
-		s.allKeys = append(s.allKeys, stage)
-	}
-	s.writes[stage] = body
+	s.record(stage, string(raw))
+
+	return nil
 }
 
 // Body returns the most recent JSON body written for stage, or "".
 func (s *Sink) Body(stage string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	return s.writes[stage]
 }
 
@@ -73,9 +70,22 @@ func (s *Sink) Body(stage string) string {
 func (s *Sink) Stages() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	out := make([]string, len(s.allKeys))
 	copy(out, s.allKeys)
+
 	return out
+}
+
+func (s *Sink) record(stage, body string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.writes[stage]; !ok {
+		s.allKeys = append(s.allKeys, stage)
+	}
+
+	s.writes[stage] = body
 }
 
 // Compile-time conformance check.

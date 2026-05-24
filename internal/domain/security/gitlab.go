@@ -36,6 +36,7 @@ type GitLabScanner struct {
 	Vendor  GitLabScannerVendor `json:"vendor"`
 }
 
+// GitLabScannerVendor is the vendor block of a GitLabScanner entry.
 type GitLabScannerVendor struct {
 	Name string `json:"name"`
 }
@@ -52,6 +53,7 @@ type GitLabVulnerability struct {
 	Location    GitLabLocation     `json:"location"`
 }
 
+// GitLabIdentifier is one (type, value) pair in a vulnerability's identifiers list.
 type GitLabIdentifier struct {
 	Type  string `json:"type"`
 	Name  string `json:"name"`
@@ -59,6 +61,7 @@ type GitLabIdentifier struct {
 	URL   string `json:"url"`
 }
 
+// GitLabLink is one URL reference attached to a vulnerability.
 type GitLabLink struct {
 	URL string `json:"url"`
 }
@@ -73,11 +76,13 @@ type GitLabLocation struct {
 	Dependency      GitLabDependency `json:"dependency"`
 }
 
+// GitLabDependency describes the vulnerable dependency at a location.
 type GitLabDependency struct {
 	Package GitLabPackage `json:"package"`
 	Version string        `json:"version"`
 }
 
+// GitLabPackage is the package portion of a GitLabDependency.
 type GitLabPackage struct {
 	Name string `json:"name"`
 }

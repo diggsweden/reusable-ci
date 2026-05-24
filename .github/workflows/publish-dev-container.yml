@@ -9,8 +9,8 @@
 #
 # Supported Registries:
 # - GitHub Container Registry (ghcr.io) - Default, uses GITHUB_TOKEN
-# - Docker Hub (docker.io) - Set useGithubToken=false, provide registryPassword
-# - Quay.io (quay.io) - Set useGithubToken=false, provide registryPassword
+# - Docker Hub (docker.io) - Set use-ci-token=false, provide registry-password
+# - Quay.io (quay.io) - Set use-ci-token=false, provide registry-password
 # - Any OCI-compatible registry
 #
 # How it works:
@@ -19,7 +19,7 @@
 #    (linux/amd64 -> ubuntu-24.04, linux/arm64 -> ubuntu-24.04-arm). Each leg
 #    builds and pushes by digest only — no tag is applied at this stage.
 # 3. merge: assembles the per-arch digests into a single manifest list with
-#    `docker buildx imagetools create`, applying the dev tag. Single-arch
+#    `reusable-ci container manifest merge`, applying the dev tag. Single-arch
 #    inputs go through the same pipeline (matrix-of-1 + 1-digest merge).
 #
 # No QEMU. Each runner builds its own architecture natively.
@@ -29,14 +29,16 @@
 # - Images clearly marked with -dev suffix
 # - Basic authentication to registry
 # - Namespace validation (enforces ghcr.io/OWNER/REPO[/<container>] pattern)
-# - No production features enabled (no SLSA, no SBOM, no vuln scan)
+# - No production trust plane (no SLSA, no vulnerability scan)
+# - SBOM generation is off by default; release-dev-publish-stage can opt into
+#   per-arch analyzed-container SBOMs for wiring tests
 #
 # Registry Authentication:
 #   GHCR (default): Uses GITHUB_TOKEN (no secrets needed)
-#   Other registries: Set useGithubToken=false and provide registryPassword secret
+#   Other registries: Set use-ci-token=false and provide registry-password secret
 #
 # Required Secrets:
-#   registryPassword: Required when useGithubToken=false (for Docker Hub, Quay, etc)
+#   registry-password: Required when use-ci-token=false (for Docker Hub, Quay, etc)
 #
 # Required Permissions:
 #   contents: read   # Read source code and Containerfile
@@ -47,7 +49,7 @@
 #   ----------------------------- | ---------------------------
 #   Version tags (v1.0.0, latest) | Dev tags (0.5.9-dev-feat-name-abc1234)
 #   SLSA attestation              | No attestation
-#   SBOM generation               | No SBOM
+#   SBOM generation               | Off by default; optional analyzed-container
 #   Vulnerability scanning        | No scanning
 #   Multiple tag strategies       | Branch-aware dev tags
 #
@@ -84,11 +86,51 @@ on:
         default: "ghcr.io"
         type: string
       artifact-types:
-        description: "Comma-separated artifact types (maven,npm,gradle)"
+        description: "Comma-separated artifact types (maven,npm,gradle,cargo,go)"
         required: true
         type: string
+      artifact-types-json:
+        description: "JSON array of artifact types. Prefer this over artifact-types for exact membership checks."
+        required: false
+        default: "[]"
+        type: string
       gradle-artifact-name:
-        description: "Name of the uploaded gradle build artifact to download. Default `gradle-build-artifacts`. Override to match a matrix-named gradle artifact (build-gradle-app.yml's `artifact-name` input). Maven and npm builders currently have no such override; thread-through for those stacks is tracked for a follow-up PR."
+        description: "Name of the uploaded Gradle build artifact to download. Default `gradle-build-artifacts`."
+        required: false
+        default: ""
+        type: string
+      maven-artifact-name:
+        description: "Name of the uploaded Maven build artifact to download. Default `maven-build-artifacts`."
+        required: false
+        default: ""
+        type: string
+      npm-artifact-name:
+        description: "Name of the uploaded NPM build artifact to download. Default `npm-build-artifacts`."
+        required: false
+        default: ""
+        type: string
+      go-artifact-name:
+        description: "Name of the artifact-first Go build artifact to download. Empty means container-first Go, where the Containerfile compiles the binary."
+        required: false
+        default: ""
+        type: string
+      cargo-artifact-name:
+        description: "Name of the artifact-first Cargo build artifact to download. Empty means container-first Cargo, where the Containerfile compiles the binary."
+        required: false
+        default: ""
+        type: string
+      build-args:
+        description: "Build arguments (KEY=VALUE format, one per line). Mirrors publish-container.yml and is normally derived from containers[].build-args in artifacts.yml."
+        required: false
+        default: ""
+        type: string
+      build-secrets:
+        description: |
+          Newline/comma/space-separated list of BuildKit secret NAMES
+          declared in containers[].build-secrets. Values come from the
+          REUSABLE_CI_BUILD_SECRETS_JSON envelope secret. Mirrors
+          publish-container.yml — see that workflow's input docs and
+          docs/artifacts-reference.md for the full contract.
         required: false
         default: ""
         type: string
@@ -96,6 +138,11 @@ on:
         description: "Working directory"
         required: false
         default: "."
+        type: string
+      branch:
+        description: "Branch, tag, or SHA to checkout. Empty preserves actions/checkout's event default."
+        required: false
+        default: ""
         type: string
       extract-binary-target:
         description: "Containerfile stage to extract as a binary CI artefact. When set, a second buildx build runs per arch leg with --output type=local and the result is uploaded as ${name}-binaries-${arch}. Mirrors publish-container.yml's input — used by container-first ecosystems (cargo, go) where binaries are byproducts of the container build."
@@ -121,14 +168,23 @@ on:
         required: false
         default: true
         type: boolean
-      scripts-ref:
-        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+      reusable-ci-binary-ref:
+        description: "reusable-ci ref/version to install on plain-runner jobs (defaults to v3.0.0)"
         required: false
-        default: "main"
+        default: "v3.0.0"
         type: string
     secrets:
       registry-password:
         description: "Registry password/token (required when use-ci-token=false)"
+        required: false
+      REUSABLE_CI_BUILD_SECRETS_JSON:
+        description: |
+          JSON object of {name: value} for every entry in
+          containers[].build-secrets. Packed by the caller workflow
+          and unpacked into per-secret tmpfiles by `reusable-ci
+          container materialize-build-secrets`. Mirrors
+          publish-container.yml — see that workflow for the full
+          contract.
         required: false
     outputs:
       image:
@@ -142,74 +198,69 @@ permissions:
 jobs:
   prep:
     name: Prepare Dev Build${{ inputs.name && format(' ({0})', inputs.name) || '' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      image-name: ${{ steps.coord.outputs.image-name }}
-      dev-version: ${{ steps.coord.outputs.dev-version }}
-      platforms-json: ${{ steps.coord.outputs.platforms-json }}
+      image-name: ${{ steps.image.outputs.name }}
+      dev-version: ${{ steps.dev-version.outputs.dev-version }}
+      platforms-json: ${{ steps.platforms.outputs.platforms-json }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ inputs.branch || github.ref }}
           fetch-depth: 0
-      - name: Set up Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - name: Checkout reusable-ci bootstrap installers
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          go-version: stable
-          check-latest: true
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+      # Tagged refs (vN.N.N) install from GitHub Releases with SHA-256
+      # verification — no Go toolchain needed. Branch/SHA refs require Go on
+      # the runner; the install script errors with an actionable message if
+      # absent.
       - name: Install reusable-ci binary
         env:
-          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
-        run: |
-          # publish-dev-container runs on plain ubuntu (no runtime container),
-          # so install the reusable-ci binary directly with `go install`.
-          GOBIN="$RUNNER_TEMP/bin" \
-            go install "github.com/diggsweden/reusable-ci/cmd/reusable-ci@${SCRIPTS_REF}"
-          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - name: Resolve image name + dev version
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
+      # Defense-in-depth: refuse PR-context triggers — the dev publish
+      # path uses GITHUB_TOKEN only, but a future addition of
+      # adopter-controlled secrets (or a misconfigured direct caller)
+      # would otherwise leak. Mirrors publish-container.yml.
+      - name: Refuse PR-context trigger (publish/release secrets in scope)
+        run: reusable-ci validate event-context
+      - name: Resolve image name
         id: image
         env:
-          TARGET_REGISTRY: ${{ inputs.registry }}
+          CONTAINER_REGISTRY: ${{ inputs.registry }}
           REPOSITORY: ${{ github.repository }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
-          NAME: ${{ inputs.name }}
-        # Both binary commands emit to $GITHUB_OUTPUT via OutputSink —
-        # the image name lands as `name=<value>` and the dev version as
-        # `dev-version=<value>`. Subsequent steps reference them via
-        # steps.image.outputs.{name,dev-version}.
-        run: |
-          reusable-ci container resolve-name
-          # `version generate-dev` prints to stdout — wrap into the step output here.
-          {
-            printf 'dev-version=%s\n' "$(reusable-ci version generate-dev)"
-          } >> "$GITHUB_OUTPUT"
-      - name: Compute image coordinate and platforms
-        id: coord
+          CONTAINER_NAME: ${{ inputs.name }}
+          # Dev releases push to `<repo>-dev` (e.g. ghcr.io/owner/repo-dev)
+          # so they can't be mistaken for production releases in the
+          # same GHCR namespace. Dev images carry no cosign signature,
+          # no SBOM attestation, no SLSA provenance — the suffix is
+          # the visual cue that this is the case. See
+          # docs/verification.md#dev-release-trust-model.
+          IMAGE_NAME_SUFFIX: "-dev"
+        run: reusable-ci container resolve-name
+      - name: Generate dev version
+        id: dev-version
+        run: reusable-ci version generate-dev
+      - name: Compute platforms
+        id: platforms
         env:
-          IMAGE_NAME: ${{ steps.image.outputs.name }}
-          DEV_VERSION: ${{ steps.image.outputs.dev-version }}
-          NAME: ${{ inputs.name }}
           PLATFORMS: ${{ inputs.platforms }}
-        run: |
-          # Convert "linux/amd64,linux/arm64" -> JSON array for matrix consumption.
-          PLATFORMS_JSON=$(printf '%s\n' "${PLATFORMS//,/$'\n'}" | jq -R . | jq -s -c .)
-
-          {
-            printf "image-name=%s\n" "${IMAGE_NAME}"
-            printf "dev-version=%s\n" "${DEV_VERSION}"
-            printf "platforms-json=%s\n" "${PLATFORMS_JSON}"
-          } >> "$GITHUB_OUTPUT"
-          printf "→ Container: %s\n" "${NAME:-(unnamed)}"
-          printf "→ Dev tag: %s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}"
-          printf "→ Platforms: %s\n" "${PLATFORMS}"
+        run: reusable-ci container platform-plan
       - name: Validate Image Namespace
         env:
-          IMAGE_NAME: ${{ steps.coord.outputs.image-name }}
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
           REPOSITORY: ${{ github.repository }}
-          TARGET_REGISTRY: ${{ inputs.registry }}
+          CONTAINER_REGISTRY: ${{ inputs.registry }}
           ENFORCE_NAMESPACE: ${{ github.repository_owner }}
-        run: reusable-ci container validate-namespace
+        run: reusable-ci container validate namespace
 
   build-arch:
     name: Build${{ inputs.name && format(' ({0})({1})', inputs.name, matrix.platform) || format(' ({0})', matrix.platform) }}
@@ -229,97 +280,135 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ inputs.branch || github.ref }}
           fetch-depth: 0
-      - name: Set up Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - name: Checkout reusable-ci bootstrap installers
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          go-version: stable
-          check-latest: true
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+      # Tagged refs (vN.N.N) install from GitHub Releases with SHA-256
+      # verification — no Go toolchain needed. Branch/SHA refs require Go on
+      # the runner; the install script errors with an actionable message if
+      # absent.
       - name: Install reusable-ci binary
         env:
-          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
-        run: |
-          # publish-dev-container runs on plain ubuntu (no runtime container),
-          # so install the reusable-ci binary directly with `go install`.
-          GOBIN="$RUNNER_TEMP/bin" \
-            go install "github.com/diggsweden/reusable-ci/cmd/reusable-ci@${SCRIPTS_REF}"
-          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
       - name: Derive arch suffix
         id: arch
         env:
           PLATFORM: ${{ matrix.platform }}
-        run: |
-          # linux/amd64 -> amd64, linux/arm64 -> arm64. Used for cache + artifact
-          # scoping so the matrix legs don't fight each other.
-          SUFFIX="${PLATFORM#linux/}"
-          SUFFIX="${SUFFIX//\//-}"
-          printf "suffix=%s\n" "$SUFFIX" >> "$GITHUB_OUTPUT"
+        run: reusable-ci container platform-plan
       - name: Download Maven artifacts
-        if: ${{ contains(inputs['artifact-types'], 'maven') }}
+        if: &if_has_maven_artifacts ${{ contains(fromJson(inputs['artifact-types-json']), 'maven') || contains(format(',{0},', inputs['artifact-types']), ',maven,') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: maven-build-artifacts
+          name: ${{ inputs['maven-artifact-name'] || 'maven-build-artifacts' }}
           path: ${{ inputs['working-directory'] }}
       - name: Verify Maven artifacts
-        if: ${{ contains(inputs['artifact-types'], 'maven') }}
+        if: *if_has_maven_artifacts
         env:
           WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
           CONTAINER_FILE: ${{ inputs['container-file'] }}
         run: |
-          reusable-ci container validate-artifacts \
-            maven \
-            "$WORKING_DIRECTORY/target" \
-            "$WORKING_DIRECTORY/$CONTAINER_FILE"
+          reusable-ci container validate artifacts \
+            --project-type maven \
+            --artifact-dir "$WORKING_DIRECTORY/target" \
+            --containerfile "$WORKING_DIRECTORY/$CONTAINER_FILE"
       - name: Download NPM artifacts
-        if: ${{ contains(inputs['artifact-types'], 'npm') }}
+        if: &if_has_npm_artifacts ${{ contains(fromJson(inputs['artifact-types-json']), 'npm') || contains(format(',{0},', inputs['artifact-types']), ',npm,') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: npm-build-artifacts
+          name: ${{ inputs['npm-artifact-name'] || 'npm-build-artifacts' }}
           path: ${{ inputs['working-directory'] }}
       - name: Extract NPM tarball
-        if: ${{ contains(inputs['artifact-types'], 'npm') }}
+        if: *if_has_npm_artifacts
         working-directory: ${{ inputs['working-directory'] }}
         run: reusable-ci container extract-npm-tarball
       - name: Verify NPM artifacts
-        if: ${{ contains(inputs['artifact-types'], 'npm') }}
+        if: *if_has_npm_artifacts
         env:
           WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
           CONTAINER_FILE: ${{ inputs['container-file'] }}
         run: |
-          reusable-ci container validate-artifacts \
-            npm \
-            "$WORKING_DIRECTORY/dist" \
-            "$WORKING_DIRECTORY/$CONTAINER_FILE"
+          reusable-ci container validate artifacts \
+            --project-type npm \
+            --artifact-dir "$WORKING_DIRECTORY/dist" \
+            --containerfile "$WORKING_DIRECTORY/$CONTAINER_FILE"
       - name: Download Gradle artifacts
-        if: ${{ contains(inputs['artifact-types'], 'gradle') }}
+        if: &if_has_gradle_artifacts ${{ contains(fromJson(inputs['artifact-types-json']), 'gradle') || contains(format(',{0},', inputs['artifact-types']), ',gradle,') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ inputs['gradle-artifact-name'] || 'gradle-build-artifacts' }}
           path: ${{ inputs['working-directory'] }}
       - name: Verify Gradle artifacts
-        if: ${{ contains(inputs['artifact-types'], 'gradle') }}
+        if: *if_has_gradle_artifacts
         env:
           WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
           CONTAINER_FILE: ${{ inputs['container-file'] }}
         run: |
-          reusable-ci container validate-artifacts \
-            gradle \
-            "$WORKING_DIRECTORY/build/libs" \
-            "$WORKING_DIRECTORY/$CONTAINER_FILE"
+          reusable-ci container validate artifacts \
+            --project-type gradle \
+            --artifact-dir "$WORKING_DIRECTORY/build/libs" \
+            --containerfile "$WORKING_DIRECTORY/$CONTAINER_FILE"
+      - name: Download Go artifacts
+        if: &if_has_go_artifacts ${{ (contains(fromJson(inputs['artifact-types-json']), 'go') || contains(format(',{0},', inputs['artifact-types']), ',go,')) && inputs['go-artifact-name'] != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ format('{0}-go-build-artifacts', inputs['go-artifact-name']) }}
+          path: ${{ inputs['working-directory'] }}/dist
+      - name: Verify Go artifacts
+        if: *if_has_go_artifacts
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+          CONTAINER_FILE: ${{ inputs['container-file'] }}
+        run: |
+          reusable-ci container validate artifacts \
+            --project-type go \
+            --artifact-dir "$WORKING_DIRECTORY/dist" \
+            --containerfile "$WORKING_DIRECTORY/$CONTAINER_FILE"
+      - name: Download Cargo artifacts
+        if: &if_has_cargo_artifacts ${{ (contains(fromJson(inputs['artifact-types-json']), 'cargo') || contains(format(',{0},', inputs['artifact-types']), ',cargo,')) && inputs['cargo-artifact-name'] != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ format('{0}-cargo-build-artifacts', inputs['cargo-artifact-name']) }}
+          path: ${{ inputs['working-directory'] }}/dist
+      - name: Verify Cargo artifacts
+        if: *if_has_cargo_artifacts
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+          CONTAINER_FILE: ${{ inputs['container-file'] }}
+        run: |
+          reusable-ci container validate artifacts \
+            --project-type cargo \
+            --artifact-dir "$WORKING_DIRECTORY/dist" \
+            --containerfile "$WORKING_DIRECTORY/$CONTAINER_FILE"
       - name: Set up Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
       - name: Check registry authentication configuration
         env:
           USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
-          TARGET_REGISTRY: ${{ inputs.registry }}
+          REGISTRY: ${{ inputs.registry }}
           REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
-        run: reusable-ci publish validate-auth
+        run: reusable-ci validate auth registry
       - name: Login to Container Registry
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ${{ inputs.registry }}
           username: ${{ inputs['registry-username'] || github.actor }}
           password: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+      # Mirrors publish-container.yml's materialize step. The dev path
+      # carries no SLSA attestations, but adopter-controlled secrets
+      # must still stay out of step inputs and workflow logs.
+      - name: Materialize build secrets
+        id: build-secrets
+        env:
+          BUILD_SECRET_NAMES: ${{ inputs['build-secrets'] }}
+          REUSABLE_CI_BUILD_SECRETS_JSON: ${{ secrets.REUSABLE_CI_BUILD_SECRETS_JSON }}
+        run: reusable-ci container materialize-build-secrets
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
@@ -329,20 +418,19 @@ jobs:
           target: ${{ inputs.target }}
           platforms: ${{ matrix.platform }}
           # No tag at this stage. The merge job applies the dev tag once both
-          # arches' digests exist, via `docker buildx imagetools create`.
+          # arches' digests exist, via `reusable-ci container manifest merge`.
           outputs: type=image,name=${{ needs.prep.outputs.image-name }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=build-${{ steps.arch.outputs.suffix }}
           cache-to: type=gha,mode=max,scope=build-${{ steps.arch.outputs.suffix }}
+          build-args: ${{ inputs['build-args'] }}
+          secrets: ${{ steps['build-secrets'].outputs['buildx-secrets'] }}
           # Disable all security features for dev builds
           provenance: false
           sbom: false
       - name: Export digest
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: |
-          mkdir -p /tmp/digests
-          # Filename is the bare hash; merge step rebuilds <name>@sha256:<hash>.
-          touch "/tmp/digests/${DIGEST#sha256:}"
+        run: reusable-ci container write-digest-marker
       # Artefact name MUST be unique across the entire workflow run, not
       # just within this workflow_call invocation: when multiple containers
       # are matrix-dispatched (release-dev-publish-stage's artifacts-config
@@ -370,7 +458,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           IMAGE_NAME: ${{ needs.prep.outputs.image-name }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-        run: reusable-ci sbom generate-container
+        run: reusable-ci sbom generate container
       - name: Upload Analyzed-Container SBOMs
         if: *if_sbom_enabled
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -394,6 +482,8 @@ jobs:
           push: false
           outputs: type=local,dest=./extracted-binaries
           cache-from: type=gha,scope=build-${{ steps.arch.outputs.suffix }}
+          build-args: ${{ inputs['build-args'] }}
+          secrets: ${{ steps['build-secrets'].outputs['buildx-secrets'] }}
       - name: Suffix extracted binaries with arch
         if: *if_extract_binary
         env:
@@ -401,9 +491,9 @@ jobs:
           EXPECTED_NAMES: ${{ inputs['extract-binary-names'] }}
         run: |
           reusable-ci container suffix-extracted-binaries \
-            ./extracted-binaries \
-            "$SUFFIX" \
-            "$EXPECTED_NAMES"
+            --dir ./extracted-binaries \
+            --arch "$SUFFIX" \
+            --expected-names "$EXPECTED_NAMES"
       - name: Upload extracted binaries${{ inputs.name && format(' ({0})', inputs.name) || '' }}
         if: *if_extract_binary
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -416,7 +506,7 @@ jobs:
   merge:
     name: Merge Manifest${{ inputs.name && format(' ({0})', inputs.name) || '' }}
     needs: [prep, build-arch]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -425,20 +515,21 @@ jobs:
       image: ${{ steps.outputs.outputs.image }}
       digest: ${{ steps.outputs.outputs.digest }}
     steps:
-      - name: Set up Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - name: Checkout reusable-ci bootstrap installers
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          go-version: stable
-          check-latest: true
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+      # Tagged refs (vN.N.N) install from GitHub Releases with SHA-256
+      # verification — no Go toolchain needed. Branch/SHA refs require Go on
+      # the runner; the install script errors with an actionable message if
+      # absent.
       - name: Install reusable-ci binary
         env:
-          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
-        run: |
-          # publish-dev-container runs on plain ubuntu (no runtime container),
-          # so install the reusable-ci binary directly with `go install`.
-          GOBIN="$RUNNER_TEMP/bin" \
-            go install "github.com/diggsweden/reusable-ci/cmd/reusable-ci@${SCRIPTS_REF}"
-          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -450,9 +541,9 @@ jobs:
       - name: Check registry authentication configuration
         env:
           USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
-          TARGET_REGISTRY: ${{ inputs.registry }}
+          REGISTRY: ${{ inputs.registry }}
           REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
-        run: reusable-ci publish validate-auth
+        run: reusable-ci validate auth registry
       - name: Login to Container Registry
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
@@ -462,28 +553,11 @@ jobs:
       - name: Create manifest list and push
         env:
           IMAGE_NAME: ${{ needs.prep.outputs.image-name }}
-          DEV_VERSION: ${{ needs.prep.outputs.dev-version }}
-        working-directory: /tmp/digests
-        run: |
-          # Each file in /tmp/digests is named after a per-arch digest hash.
-          # Reconstruct ${IMAGE_NAME}@sha256:<hash> references and feed them to
-          # imagetools, which assembles a multi-arch manifest list and pushes
-          # it under the dev tag. Single-arch inputs degenerate to a one-entry
-          # manifest — same code path.
-          refs=()
-          for f in *; do
-            refs+=("${IMAGE_NAME}@sha256:${f}")
-          done
-          docker buildx imagetools create \
-            -t "${IMAGE_NAME}:${DEV_VERSION}" \
-            "${refs[@]}"
+          TAGS: ${{ needs.prep.outputs.image-name }}:${{ needs.prep.outputs.dev-version }}
+          DIGESTS_DIR: /tmp/digests
+        run: reusable-ci container manifest merge
       - name: Inspect manifest
         id: outputs
         env:
-          IMAGE_NAME: ${{ needs.prep.outputs.image-name }}
-          DEV_VERSION: ${{ needs.prep.outputs.dev-version }}
-        run: |
-          docker buildx imagetools inspect "${IMAGE_NAME}:${DEV_VERSION}"
-          DIGEST=$(docker buildx imagetools inspect "${IMAGE_NAME}:${DEV_VERSION}" --format '{{json .Manifest}}' | jq -r '.digest')
-          printf "image=%s:%s\n" "${IMAGE_NAME}" "${DEV_VERSION}" >> "$GITHUB_OUTPUT"
-          printf "digest=%s\n" "${DIGEST}" >> "$GITHUB_OUTPUT"
+          CONTAINER_IMAGE: ${{ needs.prep.outputs.image-name }}:${{ needs.prep.outputs.dev-version }}
+        run: reusable-ci container manifest inspect

@@ -95,37 +95,46 @@ on:
         required: false
         default: "high"
         type: string
-      scripts-ref:
-        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+      reusable-ci-binary-ref:
+        description: "reusable-ci ref/version passed to downstream plain-runner jobs (defaults to v3.0.0)"
         required: false
-        default: "main"
+        default: "v3.0.0"
         type: string
       runtime-image:
-        description: "reusable-ci runtime image. Pin to a digest or version tag; default tracks main."
+        description: "reusable-ci base runtime image for PR control-plane and summary jobs. Optional override; default uses the matching v3.0.0 runtime image."
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
         type: string
+      runtime-image-security:
+        description: "reusable-ci full runtime image for dependency review and OpenGrep jobs. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime:v3.0.0"
+        type: string
+    secrets:
+      CODE_SCANNING_TOKEN:
+        description: "Token with security-events:write for SARIF upload (dependency review + OpenGrep)"
+        required: false
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
-  # ===== Stage 0: PR Interface =====
-  compose-pr-interface:
+  # ===== Stage 0: PR Plan =====
+  compose-pr-plan:
     name: Setup
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     outputs:
-      pr-context-json: ${{ steps.interface.outputs.pr-context-json }}
-      pr-policy-json: ${{ steps.interface.outputs.pr-policy-json }}
+      pr-plan-json: ${{ steps.plan.outputs.pr-plan-json }}
+      quality-stage-plan-json: ${{ steps.plan.outputs.quality-stage-plan-json }}
     steps:
-      - name: Compose PR control-plane interface
-        id: interface
+      - name: Compose PR control-plane plan
+        id: plan
         env:
           PROJECT_TYPE: ${{ inputs['project-type'] }}
           BASE_BRANCH: ${{ inputs['base-branch'] }}
-          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
           LINTER_DEPENDENCYREVIEW: ${{ inputs['linters.dependencyreview'] }}
           LINTER_PUBLICCODELINT: ${{ inputs['linters.publiccodelint'] }}
           LINTER_DEVBASECHECK: ${{ inputs['linters.devbasecheck'] }}
@@ -134,26 +143,29 @@ jobs:
           SAST_OPENGREP: ${{ inputs['security.sast-opengrep'] }}
           SAST_OPENGREP_RULES: ${{ inputs['security.sast-opengrep-rules'] }}
           SAST_OPENGREP_FAIL_ON_SEVERITY: ${{ inputs['security.sast-opengrep-fail-on-severity'] }}
-        run: reusable-ci plan write-pr-interface
+        run: reusable-ci plan pr
 
   # ===== Stage 1: Quality =====
   execute-quality-stage:
     name: Quality
-    needs: [compose-pr-interface]
+    needs: [compose-pr-plan]
     permissions:
       contents: read
-    secrets: inherit
+    secrets:
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
     uses: ./.github/workflows/pullrequest-quality-stage.yml
     with:
-      pr-context-json: ${{ needs.compose-pr-interface.outputs.pr-context-json }}
-      pr-policy-json: ${{ needs.compose-pr-interface.outputs.pr-policy-json }}
+      pr-plan-json: ${{ needs.compose-pr-plan.outputs.pr-plan-json }}
+      quality-stage-plan-json: ${{ needs.compose-pr-plan.outputs.quality-stage-plan-json }}
+      runtime-image: ${{ inputs['runtime-image'] }}
+      runtime-image-security: ${{ inputs['runtime-image-security'] }}
 
   # ===== Summary =====
   pr-summary:
     name: PR Summary
-    needs: [compose-pr-interface, execute-quality-stage]
+    needs: [compose-pr-plan, execute-quality-stage]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ${{ inputs['runtime-image'] }}
     permissions:
@@ -167,7 +179,7 @@ jobs:
           path: .ci-results
       - name: Generate PR summary
         env:
-          PROJECT_TYPE: ${{ inputs['project-type'] }}
+          PROJECT_TYPE: ${{ fromJson(needs.compose-pr-plan.outputs['pr-plan-json']).context.project_type }}
           QUALITY_STAGE_RESULT_PATH: .ci-results/pr-quality-result.json
           HAS_CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN != '' }}
-        run: reusable-ci summary pr
+        run: reusable-ci report pr

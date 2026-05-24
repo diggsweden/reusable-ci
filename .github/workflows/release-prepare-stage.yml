@@ -8,20 +8,43 @@ on:
       branch:
         required: true
         type: string
+      prepare-stage-plan-json:
+        required: true
+        type: string
       runtime-image:
         description: "reusable-ci runtime image for the summarize job (base is sufficient)"
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
         type: string
-      artifacts:
-        required: true
+      runtime-image-java:
+        description: "reusable-ci runtime image for Maven/Gradle version bump jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
         type: string
-      should-run-version-bump:
-        required: true
+      runtime-image-node:
+        description: "reusable-ci runtime image for NPM version bump jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-node-24:v3.0.0"
         type: string
-      file-pattern:
-        required: true
+      runtime-image-rust:
+        description: "reusable-ci runtime image for Cargo version bump jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-rust-stable:v3.0.0"
         type: string
+    # Aggregator: forwards to version-bump.yml. All `required: false`
+    # — `secrets: inherit` at callsites continues to flow org-scoped
+    # secrets through unchanged. The declaration documents the
+    # contract for adopters outside the org.
+    secrets:
+      RELEASE_GPG_PRIVATE_KEY:
+        description: "Armored OpenPGP private key for signing the version-bump commit"
+        required: false
+      RELEASE_GPG_PASSPHRASE:
+        description: "Passphrase for RELEASE_GPG_PRIVATE_KEY"
+        required: false
+      RELEASE_TOKEN:
+        description: "Token with contents:write for pushing the version-bump commit"
+        required: false
     outputs:
       stage-ran:
         description: Prepare stage ran at least one version bump path
@@ -34,39 +57,45 @@ on:
         value: ${{ jobs.summarize-prepare-stage.outputs.result-json }}
       release-sha:
         description: Commit SHA the release tag was moved to
-        value: ${{ jobs.execute-version-bump.outputs.release-sha }}
+        value: ${{ jobs.version-bump.outputs.release-sha }}
 permissions:
   contents: read
 jobs:
-  execute-version-bump:
+  version-bump:
     name: Prepare Release - ${{ matrix.artifact.name }}
-    if: ${{ inputs['should-run-version-bump'] == 'true' && inputs.artifacts != '[]' }}
+    if: ${{ fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
     strategy:
+      # Each matrix leg commits, pushes, and moves the same release tag.
+      # Serialize them so multi-artifact releases cannot race on refs.
+      max-parallel: 1
       matrix:
-        artifact: ${{ fromJson(inputs.artifacts) }}
+        artifact: ${{ fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.items }}
       fail-fast: false
     permissions:
       contents: write
       packages: read
-    secrets: inherit
+    secrets:
+      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+      RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
     uses: ./.github/workflows/version-bump.yml
     with:
       branch: ${{ inputs.branch }}
-      project-type: ${{ matrix.artifact['project-type'] }}
-      file-pattern: ${{ inputs['file-pattern'] }}
-      gradle-version-file: ${{ matrix.artifact.config['gradle-version-file'] }}
-      working-directory: ${{ matrix.artifact['working-directory'] }}
+      project-type: ${{ matrix.artifact.project_type }}
+      file-pattern: ${{ fromJson(inputs['prepare-stage-plan-json']).file_pattern || '' }}
+      gradle-version-file: ${{ matrix.artifact.gradle.gradle_version_file }}
+      working-directory: ${{ matrix.artifact.working_directory }}
       # Pick the runtime image that matches the project-type's bump
       # tooling: maven/gradle/gradle-android need JDK + Maven; npm needs
       # Node; cargo needs cargo for Cargo.lock refresh; xcode-ios is
       # sed-only and uses base.
       runtime-image: >-
-        ${{ (contains(fromJson('["maven","gradle","gradle-android"]'), matrix.artifact['project-type']) && 'ghcr.io/diggsweden/reusable-ci-runtime-java-25:main') || (matrix.artifact['project-type'] == 'npm' && 'ghcr.io/diggsweden/reusable-ci-runtime-node-24:main') || (matrix.artifact['project-type'] == 'cargo' && 'ghcr.io/diggsweden/reusable-ci-runtime-rust-stable:main') || 'ghcr.io/diggsweden/reusable-ci-runtime-base:main' }}
+        ${{ (contains(fromJson('["maven","gradle","gradle-android"]'), matrix.artifact.project_type) && inputs['runtime-image-java']) || (matrix.artifact.project_type == 'npm' && inputs['runtime-image-node']) || (matrix.artifact.project_type == 'cargo' && inputs['runtime-image-rust']) || inputs['runtime-image'] }}
   summarize-prepare-stage:
     name: Summarize Prepare Stage
-    needs: [execute-version-bump]
+    needs: [version-bump]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ${{ inputs['runtime-image'] }}
     permissions:
@@ -79,10 +108,9 @@ jobs:
       - name: Normalize prepare stage result
         id: summary
         env:
-          ARTIFACTS: ${{ inputs.artifacts }}
-          SHOULD_RUN_VERSION_BUMP: ${{ inputs['should-run-version-bump'] }}
-          PREPARE_RELEASE_RESULT: ${{ needs.execute-version-bump.result }}
-        run: reusable-ci summary prepare-stage-result
+          STAGE_PLAN_JSON: ${{ inputs['prepare-stage-plan-json'] }}
+          NEEDS_JSON: ${{ toJson(needs) }}
+        run: reusable-ci report status stage
       - name: Upload prepare stage manifests
         if: always() && hashFiles('.ci-results/*.json') != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

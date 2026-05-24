@@ -13,15 +13,12 @@ permissions:
   contents: read
 jobs:
   build:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@v3.0.0
     permissions:
       contents: read
       packages: write
     secrets: inherit
     with:
-      scripts-ref: v2.7.0
-      java-version: "25"
-      jdk-distribution: "zulu"
       build-module: "app"
       product-flavor: "demo"
       build-types: "debug,release"

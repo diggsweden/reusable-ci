@@ -18,8 +18,9 @@ func TestParseXcodeVersionFromPbxproj_FindsBothKeys(t *testing.T) {
 			CURRENT_PROJECT_VERSION = 42;
 		);
 	`
+
 	got := build.ParseXcodeVersionFromPbxproj(body)
-	if got.Version != "1.2.3" || got.Build != "42" {
+	if got.Version != "1.2.3" || got.Build != "42" { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		t.Errorf("got %+v, want {1.2.3 42}", got)
 	}
 }
@@ -29,6 +30,7 @@ func TestParseXcodeVersionFromPbxproj_TakesFirstOccurrence(t *testing.T) {
 		MARKETING_VERSION = 1.2.3;
 		MARKETING_VERSION = 9.9.9;
 	`
+
 	got := build.ParseXcodeVersionFromPbxproj(body)
 	if got.Version != "1.2.3" {
 		t.Errorf("version = %q, want first match 1.2.3", got.Version)
@@ -37,13 +39,14 @@ func TestParseXcodeVersionFromPbxproj_TakesFirstOccurrence(t *testing.T) {
 
 func TestParseXcodeVersionFromPbxproj_DefaultsUnknownWhenMissing(t *testing.T) {
 	got := build.ParseXcodeVersionFromPbxproj("// nothing useful")
-	if got.Version != "unknown" || got.Build != "unknown" {
+	if got.Version != "unknown" || got.Build != "unknown" { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		t.Errorf("got %+v, want both unknown", got)
 	}
 }
 
 func TestParseXcodeVersionFromPbxproj_StripsQuotedValues(t *testing.T) {
 	body := `MARKETING_VERSION = "1.2.3-beta";`
+
 	got := build.ParseXcodeVersionFromPbxproj(body)
 	if got.Version != "1.2.3-beta" {
 		t.Errorf("version = %q, want 1.2.3-beta", got.Version)
@@ -52,9 +55,10 @@ func TestParseXcodeVersionFromPbxproj_StripsQuotedValues(t *testing.T) {
 
 func TestRenderXcodeSummary_SignedBuild(t *testing.T) {
 	now := time.Date(2026, 5, 10, 14, 0, 0, 0, time.UTC)
+
 	got := build.RenderXcodeSummary(build.XcodeSummaryInput{
-		XcodeVersion:  "16.4",
-		Scheme:        "App",
+		XcodeVersion:  "16.4", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		Scheme:        "App", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Configuration: "Release",
 		Destination:   "generic/platform=iOS",
 		Signing:       true,
@@ -85,6 +89,7 @@ func TestRenderXcodeSummary_UnsignedFallsBackToArchive(t *testing.T) {
 	if !strings.Contains(got, "✓ Archive: `demo-archive`") {
 		t.Errorf("missing archive marker:\n%s", got)
 	}
+
 	if strings.Contains(got, "✓ IPA:") {
 		t.Errorf("did not expect IPA marker:\n%s", got)
 	}

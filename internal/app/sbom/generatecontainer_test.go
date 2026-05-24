@@ -20,32 +20,38 @@ func TestGenerateContainer_NoArtifactTypes_SingleGeneration(t *testing.T) {
 	fsys.Chdir()
 
 	syft := &fakeSyft{}
-	var stdout bytes.Buffer
-	err := appsbom.GenerateContainer(context.Background(), syft, nil, &fakeGit{sha: "abc1234"}, &stdout, io.Discard, appsbom.GenerateContainerInput{
+
+	var out bytes.Buffer
+
+	err := appsbom.GenerateContainer(context.Background(), syft, nil, &fakeGit{sha: "abc1234"}, &out, io.Discard, appsbom.GenerateContainerInput{ //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		RefName:     "v1.2.3",
 		Repo:        "diggsweden/example",
 		ImageName:   "ghcr.io/diggsweden/example",
 		ImageDigest: "sha256:deadbeef",
 	})
 	if err != nil {
-		t.Fatalf("GenerateContainer: %v\nstdout: %s", err, stdout.String())
+		t.Fatalf("GenerateContainer: %v\nstdout: %s", err, out.String())
 	}
 	// One syft call emits both SPDX and CycloneDX for the container target.
 	if len(syft.calls) != 1 {
 		t.Errorf("expected 1 syft call, got %d", len(syft.calls))
 	}
+
 	if got := len(syft.calls[0].outputs); got != 2 {
 		t.Errorf("expected 2 output formats in the single call, got %d", got)
 	}
+
 	expectedImage := "ghcr.io/diggsweden/example@sha256:deadbeef"
 	if syft.calls[0].target != expectedImage {
 		t.Errorf("syft target = %q, want %q", syft.calls[0].target, expectedImage)
 	}
-	if !strings.Contains(stdout.String(), "No artifact dependencies") {
-		t.Errorf("missing notice:\n%s", stdout.String())
+
+	if !strings.Contains(out.String(), "No artifact dependencies") {
+		t.Errorf("missing notice:\n%s", out.String())
 	}
-	if !strings.Contains(stdout.String(), "✓ Container SBOM generation completed") {
-		t.Errorf("missing completion line:\n%s", stdout.String())
+
+	if !strings.Contains(out.String(), "✓ Container SBOM generation completed") {
+		t.Errorf("missing completion line:\n%s", out.String())
 	}
 }
 
@@ -66,14 +72,17 @@ func TestGenerateContainer_VPrefixStripped(t *testing.T) {
 	// The SBOM filenames embed the version — verify the v was stripped.
 	matches, _ := os.ReadDir(dir)
 	found := false
-	for _, e := range matches {
+
+	for _, e := range matches { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		if strings.Contains(e.Name(), "-9.8.7-") {
 			found = true
 		}
+
 		if strings.Contains(e.Name(), "-v9.8.7-") {
 			t.Errorf("expected v-prefix to be stripped, got: %s", e.Name())
 		}
 	}
+
 	if !found {
 		t.Errorf("no file with 9.8.7 found, entries: %v", matches)
 	}
@@ -84,10 +93,11 @@ func TestGenerateContainer_LoopsPerArtifactType(t *testing.T) {
 	fsys.Chdir()
 
 	syft := &fakeSyft{}
-	var stdout bytes.Buffer
-	if err := appsbom.GenerateContainer(context.Background(), syft, nil, &fakeGit{}, &stdout, io.Discard, appsbom.GenerateContainerInput{
+
+	var out bytes.Buffer
+	if err := appsbom.GenerateContainer(context.Background(), syft, nil, &fakeGit{}, &out, io.Discard, appsbom.GenerateContainerInput{
 		ArtifactTypes: " maven , npm ",
-		RefName:       "1.0.0",
+		RefName:       "1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Repo:          "org/repo",
 		ImageName:     "img",
 		ImageDigest:   "sha256:abc",
@@ -98,18 +108,20 @@ func TestGenerateContainer_LoopsPerArtifactType(t *testing.T) {
 	if len(syft.calls) != 2 {
 		t.Errorf("expected 2 syft calls (one per artifact type, each emitting both formats), got %d", len(syft.calls))
 	}
+
 	for i, c := range syft.calls {
 		if got := len(c.outputs); got != 2 {
 			t.Errorf("call %d: expected 2 output formats, got %d", i, got)
 		}
 	}
+
 	for _, want := range []string{
 		"Generating SBOM for artifact type: maven",
 		"Generating SBOM for artifact type: npm",
 		"✓ Container SBOM generation completed",
 	} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Errorf("stdout missing %q:\n%s", want, stdout.String())
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("out missing %q:\n%s", want, out.String())
 		}
 	}
 }

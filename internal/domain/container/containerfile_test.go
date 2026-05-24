@@ -13,6 +13,7 @@ import (
 
 func TestContainerfileRebuildsFromSource_KnownPatterns(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
 		name  string
 		given string
@@ -24,6 +25,7 @@ func TestContainerfileRebuildsFromSource_KnownPatterns(t *testing.T) {
 		{"gradle_build", "RUN gradle build", true},
 		{"gradle_assemble", "RUN gradle assemble", true},
 		{"npm_run_build", "RUN npm run build", true},
+		{"go_build", "RUN go build -o /out/demo ./cmd/demo", true},
 		{"plain_copy_only_build", "FROM alpine\nCOPY app /app\nCMD [\"/app\"]", false},
 		{"empty", "", false},
 		{"comment_with_pattern_still_flagged", "# mvn install will rebuild", true},

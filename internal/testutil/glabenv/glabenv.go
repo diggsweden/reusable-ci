@@ -50,7 +50,7 @@ func Setup(t *testing.T) *Env {
 	dir := env.MkdirAll("glabenv")
 
 	outPath := filepath.Join(dir, "output.env")
-	if err := os.WriteFile(outPath, nil, 0o644); err != nil {
+	if err := os.WriteFile(outPath, nil, 0o644); err != nil { //nolint:gosec // test infra; outPath is t.TempDir()-based.
 		t.Fatalf("glabenv: create output: %v", err)
 	}
 
@@ -83,13 +83,16 @@ func Setup(t *testing.T) *Env {
 // Returns empty string if the key is not present.
 func (e *Env) Output(key string) string {
 	e.t.Helper()
-	f, err := os.Open(e.OutputPath)
+
+	f, err := os.Open(e.OutputPath) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if err != nil {
 		e.t.Fatalf("glabenv: open output: %v", err)
 	}
+
 	defer func() { _ = f.Close() }()
 
 	prefix := key + "="
+
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := sc.Text()
@@ -97,9 +100,11 @@ func (e *Env) Output(key string) string {
 			return strings.TrimPrefix(line, prefix)
 		}
 	}
+
 	if err := sc.Err(); err != nil {
 		e.t.Fatalf("glabenv: scan: %v", err)
 	}
+
 	return ""
 }
 

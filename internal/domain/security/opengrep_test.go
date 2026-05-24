@@ -19,21 +19,22 @@ func TestNormalizeOpengrepFailSeverity(t *testing.T) {
 		{"none", security.OpengrepSeverityNone},
 		{"OFF", security.OpengrepSeverityNone},
 		{"Never", security.OpengrepSeverityNone},
-		{"low", security.OpengrepSeverityLow},
+		{"low", security.OpengrepSeverityLow}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{"INFO", security.OpengrepSeverityLow},
-		{"medium", security.OpengrepSeverityMedium},
-		{"Moderate", security.OpengrepSeverityMedium},
+		{"medium", security.OpengrepSeverityMedium}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		{"Moderate", security.OpengrepSeverityMedium}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{"Warning", security.OpengrepSeverityMedium},
 		{"high", security.OpengrepSeverityHigh},
-		{"CRITICAL", security.OpengrepSeverityHigh},
+		{"CRITICAL", security.OpengrepSeverityHigh}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{"error", security.OpengrepSeverityHigh},
 		{"  high  ", security.OpengrepSeverityHigh},
 	}
-	for _, c := range cases {
+	for _, c := range cases { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		got, err := security.NormalizeOpengrepFailSeverity(c.in)
 		if err != nil {
 			t.Errorf("%q: unexpected error %v", c.in, err)
 		}
+
 		if got != c.want {
 			t.Errorf("%q → %q, want %q", c.in, got, c.want)
 		}
@@ -82,6 +83,7 @@ func TestCountOpengrepFindings(t *testing.T) {
 {"check_id":"c","severity":"INFO"},
 {"check_id":"d","severity":"ERROR"}
 ]}`
+
 	c := security.CountOpengrepFindings(body)
 	if c.FindingsTotal != 4 || c.ErrorTotal != 2 || c.WarningTotal != 1 || c.InfoTotal != 1 {
 		t.Errorf("counts = %+v", c)
@@ -90,7 +92,7 @@ func TestCountOpengrepFindings(t *testing.T) {
 
 func TestRenderOpengrepSummary_BlockedByThreshold(t *testing.T) {
 	md, result := security.RenderOpengrepSummary(security.OpengrepSummaryInput{
-		Config:           "p/default",
+		Config:           "p/default", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		TargetPath:       ".",
 		FailOnSeverity:   security.OpengrepSeverityHigh,
 		Counts:           security.OpengrepCounts{FindingsTotal: 3, ErrorTotal: 2, WarningTotal: 1},
@@ -100,6 +102,7 @@ func TestRenderOpengrepSummary_BlockedByThreshold(t *testing.T) {
 	if result != "failure" {
 		t.Errorf("result = %q", result)
 	}
+
 	for _, want := range []string{
 		"## OpenGrep SAST",
 		"Blocked by findings meeting threshold `high`.",
@@ -123,9 +126,10 @@ func TestRenderOpengrepSummary_PassedWithFindingsBelowThreshold(t *testing.T) {
 		Counts:           security.OpengrepCounts{FindingsTotal: 2, WarningTotal: 1, InfoTotal: 1},
 		ThresholdFailure: false,
 	})
-	if result != "success" {
+	if result != "success" { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		t.Errorf("result = %q", result)
 	}
+
 	if !strings.Contains(md, "Completed with findings below threshold `high`.") {
 		t.Errorf("missing below-threshold line:\n%s", md)
 	}
@@ -139,6 +143,7 @@ func TestRenderOpengrepSummary_CleanPass(t *testing.T) {
 	if result != "success" {
 		t.Errorf("result = %q", result)
 	}
+
 	if !strings.Contains(md, "Passed with `0` findings.") {
 		t.Errorf("missing clean-pass line:\n%s", md)
 	}
@@ -163,6 +168,7 @@ func TestRenderOpengrepSummary_GitHubWithoutCodeScanningToken(t *testing.T) {
 	if result != "success" {
 		t.Errorf("result = %q", result)
 	}
+
 	for _, want := range []string{
 		"Passed with `0` findings.",
 		"SARIF generated, upload not configured",
@@ -210,6 +216,7 @@ func TestParseConfigList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	want := []string{"p/default", "custom-rules.yaml"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Errorf("got %v, want %v", got, want)
@@ -220,6 +227,7 @@ func TestParseConfigList_RejectsEmpty(t *testing.T) {
 	if _, err := security.ParseConfigList(""); err == nil {
 		t.Fatal("expected error")
 	}
+
 	if _, err := security.ParseConfigList(",,  ,"); err == nil {
 		t.Fatal("expected error on whitespace-only entries")
 	}
@@ -230,9 +238,11 @@ func TestHeadN(t *testing.T) {
 	if got := security.HeadN(in, 3); got != "1\n2\n3" {
 		t.Errorf("HeadN(3) = %q", got)
 	}
+
 	if got := security.HeadN(in, 100); got != in {
 		t.Errorf("HeadN(100) should return whole input, got %q", got)
 	}
+
 	if got := security.HeadN(in, 0); got != "" {
 		t.Errorf("HeadN(0) = %q, want empty", got)
 	}

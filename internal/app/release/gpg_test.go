@@ -14,6 +14,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/internal/adapters/git"
 	adaptergpg "github.com/diggsweden/reusable-ci/internal/adapters/gpg"
+	"github.com/diggsweden/reusable-ci/internal/adapters/openpgp"
 	apprelease "github.com/diggsweden/reusable-ci/internal/app/release"
 	"github.com/diggsweden/reusable-ci/internal/testutil/fakeoutputsink"
 	"github.com/diggsweden/reusable-ci/internal/testutil/gpgkey"
@@ -33,7 +34,7 @@ func gpgRoundTrip(t *testing.T, key *gpgkey.Key, sink *fakeoutputsink.Sink, in a
 	a.DeleteKey(ctx, key.Fingerprint)
 
 	var out bytes.Buffer
-	md, err := apprelease.GPGImport(ctx, a, gitRepo, sink, in, &out)
+	md, err := apprelease.GPGImport(ctx, a, openpgp.ReadMetadata, gitRepo, sink, in, &out)
 	if err != nil {
 		t.Fatalf("GPGImport: %v", err)
 	}
@@ -51,7 +52,6 @@ func gpgRoundTrip(t *testing.T, key *gpgkey.Key, sink *fakeoutputsink.Sink, in a
 	}
 	return out.String()
 }
-
 
 func TestGPGImport_EmitsExpectedOutputs(t *testing.T) {
 	k := gpgkey.New(t)
@@ -83,8 +83,8 @@ func TestGPGImport_EmitsExpectedOutputs(t *testing.T) {
 
 func TestGPGImport_RejectsEmptyKey(t *testing.T) {
 	sink := fakeoutputsink.New(t)
-	_, err := apprelease.GPGImport(context.Background(), adaptergpg.New(), nil, sink,
-			apprelease.GPGImportInput{}, &bytes.Buffer{})
+	_, err := apprelease.GPGImport(context.Background(), adaptergpg.New(), openpgp.ReadMetadata, nil, sink,
+		apprelease.GPGImportInput{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "PrivateKey is required") {
 		t.Errorf("err = %v, want PrivateKey-required error", err)
 	}
@@ -175,7 +175,7 @@ func TestGPGImport_IsIdempotentOnReimport(t *testing.T) {
 	a.DeleteKey(ctx, k.Fingerprint)
 	for i := range 2 {
 		sink := fakeoutputsink.New(t)
-		if _, err := apprelease.GPGImport(ctx, a, nil, sink,
+		if _, err := apprelease.GPGImport(ctx, a, openpgp.ReadMetadata, nil, sink,
 			apprelease.GPGImportInput{PrivateKey: armored}, &bytes.Buffer{}); err != nil {
 			t.Fatalf("GPGImport run %d: %v", i+1, err)
 		}
@@ -196,8 +196,10 @@ func TestGPGCleanup_RemovesKeyAndIsIdempotent(t *testing.T) {
 	if !strings.Contains(log.String(), "Removing GPG key") {
 		t.Errorf("log missing 'Removing GPG key': %q", log.String())
 	}
-	if got, err := a.FirstFingerprint(ctx); err == nil {
-		t.Errorf("FirstFingerprint after cleanup = %q, want error", got)
+	// ListKeygrips against a wiped fingerprint must return an error —
+	// gpg exits non-zero when --list-secret-keys can't find a match.
+	if grips, err := a.ListKeygrips(ctx, k.Fingerprint); err == nil {
+		t.Errorf("ListKeygrips after cleanup = %q, want error", grips)
 	}
 
 	// Re-running with the same fingerprint must not panic / error-propagate.

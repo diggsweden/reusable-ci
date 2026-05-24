@@ -23,6 +23,8 @@ import (
 // Type is the canonical project-type enum.
 type Type string
 
+// Recognised Type values. Maven through Cargo are buildable project types
+// detected from manifest files; Auto, Meta and Unknown are sentinels.
 const (
 	// Auto requests filesystem-based detection (DetectFromEntries).
 	// Valid as an input to `sbom generate` only.
@@ -64,6 +66,7 @@ func DetectFromEntries(entries []string) Type {
 	for _, e := range entries {
 		set[e] = struct{}{}
 	}
+
 	switch {
 	case has(set, "pom.xml"):
 		return Maven
@@ -78,11 +81,13 @@ func DetectFromEntries(entries []string) Type {
 	case has(set, "pyproject.toml"), has(set, "requirements.txt"), has(set, "setup.py"):
 		return Python
 	}
+
 	return Unknown
 }
 
 func has(set map[string]struct{}, key string) bool {
 	_, ok := set[key]
+
 	return ok
 }
 
@@ -94,19 +99,21 @@ func IsIn(t Type, list []Type) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
-// ErrUnknown is returned by Parse when the input string isn't a known type.
-type ErrUnknown struct {
+// UnknownTypeError is returned by Parse when the input string isn't a known type.
+type UnknownTypeError struct {
 	Input string
 	Valid []Type
 }
 
-func (e *ErrUnknown) Error() string {
+func (e *UnknownTypeError) Error() string {
 	names := make([]string, len(e.Valid))
 	for i, v := range e.Valid {
 		names[i] = string(v)
 	}
+
 	return fmt.Sprintf("unknown project type %q (valid: %s)", e.Input, strings.Join(names, ", "))
 }

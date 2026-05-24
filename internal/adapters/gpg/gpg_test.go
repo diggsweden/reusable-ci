@@ -17,50 +17,28 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/testutil/gpgkey"
 )
 
+// TestImportKey_RoundTripWithRealGPG covers the on-disk-keyring import
+// path that git's own `tag -s`/`commit -S` depends on. We verify success
+// via ListKeygrips (the agent-integration entry point that actually
+// matters downstream) rather than a separate fingerprint round-trip —
+// the parsing-only `--list-secret-keys` shellout has been retired in
+// favour of in-process metadata extraction via adapters/openpgp.
 func TestImportKey_RoundTripWithRealGPG(t *testing.T) {
-	// gpgkey.New sets GNUPGHOME to a temp dir + generates a throwaway key.
-	// We export it, wipe the keyring, then re-import via the adapter and
-	// verify the fingerprint matches.
 	k := gpgkey.New(t)
 	armored := k.ArmoredPrivateKey()
 
 	a := adaptergpg.New()
 	ctx := context.Background()
 
-	// Wipe so ImportKey actually has work to do.
 	a.DeleteSecretKey(ctx, k.Fingerprint)
 	a.DeleteKey(ctx, k.Fingerprint)
 
 	if err := a.ImportKey(ctx, []byte(armored)); err != nil {
 		t.Fatalf("ImportKey: %v", err)
 	}
-
-	fpr, err := a.FirstFingerprint(ctx)
-	if err != nil {
-		t.Fatalf("FirstFingerprint: %v", err)
-	}
-	if fpr != k.Fingerprint {
-		t.Errorf("imported fingerprint = %q, want %q", fpr, k.Fingerprint)
-	}
-}
-
-func TestListSecretKey_ParseableColons(t *testing.T) {
-	k := gpgkey.New(t)
-	a := adaptergpg.New()
-
-	out, err := a.ListSecretKey(context.Background(), k.Fingerprint)
-	if err != nil {
-		t.Fatalf("ListSecretKey: %v", err)
-	}
-	md := domaingpg.ParseColonsOutput(out)
-	if md.Fingerprint != k.Fingerprint {
-		t.Errorf("Fingerprint = %q, want %q", md.Fingerprint, k.Fingerprint)
-	}
-	if md.Email != k.Email {
-		t.Errorf("Email = %q, want %q", md.Email, k.Email)
-	}
-	if md.Name != k.Name {
-		t.Errorf("Name = %q, want %q", md.Name, k.Name)
+	grips, err := a.ListKeygrips(ctx, k.Fingerprint)
+	if err != nil || !strings.Contains(grips, "grp:") {
+		t.Errorf("post-import ListKeygrips = %q, err = %v; want non-empty grp lines", grips, err)
 	}
 }
 

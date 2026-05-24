@@ -19,23 +19,28 @@ my-maven-app/
 └── .github/
     ├── artifacts.yml
     └── workflows/
+        ├── pullrequest-workflow.yml
         └── release-workflow.yml
 ```
 
 ## Configuration Files
 
-### `.github/artifacts.yml`
+### `.reusable-ci/artifacts.yml`
 
 See [artifacts.yml](artifacts.yml) in this directory.
 
 Key points:
 - Single Maven artifact
-- Publishes to GitHub Packages
+- Publishes the container image to GHCR
 - Builds multi-platform container
 
 ### `.github/workflows/release-workflow.yml`
 
 See [release-workflow.yml](release-workflow.yml) in this directory.
+
+### `.github/workflows/pullrequest-workflow.yml`
+
+See [pullrequest-workflow.yml](pullrequest-workflow.yml) in this directory.
 
 ## How to Use
 
@@ -43,13 +48,16 @@ See [release-workflow.yml](release-workflow.yml) in this directory.
    ```bash
    mkdir -p .github/workflows
    cp examples/maven-app/artifacts.yml .github/
+   cp examples/maven-app/pullrequest-workflow.yml .github/workflows/
    cp examples/maven-app/release-workflow.yml .github/workflows/
    ```
 
 2. **Customize for your project:**
    - Update `name` in artifacts.yml
-   - Adjust `java-version` if needed
+   - Review any `java-version` publishing config
    - Verify `Containerfile` path
+   - Configure release secrets from [Reference Guide](../../docs/reference.md), including `RELEASE_TOKEN` and GPG signing secrets
+   - **Set `<project.build.outputTimestamp>` in `pom.xml` `<properties>`** — required for reproducible jars; `validate jvm-reproducibility` fails the release if missing. See [Reproducible Builds](../../docs/verification.md#reproducible-builds) for the exact snippet.
 
 3. **Create first release:**
    ```bash
@@ -60,7 +68,6 @@ See [release-workflow.yml](release-workflow.yml) in this directory.
 ## What Gets Built
 
 - Maven JAR artifact → `target/*.jar`
-- Published to → GitHub Packages
 - Container image → `ghcr.io/org/repo:v1.0.0`
 - Platforms → `linux/amd64`, `linux/arm64`
 

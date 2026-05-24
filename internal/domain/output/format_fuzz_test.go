@@ -22,12 +22,15 @@ func FuzzParseOutputFormat(f *testing.F) {
 		}
 
 		valid := false
+
 		for _, candidate := range output.All() {
 			if parsed == candidate {
 				valid = true
+
 				break
 			}
 		}
+
 		if !valid {
 			t.Fatalf("Parse returned unknown format %q for %q", parsed, in)
 		}
@@ -36,6 +39,7 @@ func FuzzParseOutputFormat(f *testing.F) {
 		if err != nil {
 			t.Fatalf("reparse of %q failed: %v", parsed, err)
 		}
+
 		if reparsed != parsed {
 			t.Fatalf("roundtrip changed format: %q -> %q", parsed, reparsed)
 		}
@@ -44,6 +48,7 @@ func FuzzParseOutputFormat(f *testing.F) {
 		if err != nil {
 			t.Fatalf("ParseAndResolve failed after Parse succeeded: %v", err)
 		}
+
 		if resolved == output.FormatAuto {
 			t.Fatalf("ParseAndResolve returned auto for input %q", in)
 		}

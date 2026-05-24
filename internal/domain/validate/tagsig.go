@@ -3,10 +3,7 @@
 
 package validate
 
-import (
-	"regexp"
-	"strings"
-)
+import "strings"
 
 // SignaturePresence reports which signature blocks are embedded in an
 // annotated tag's body. Tags can carry GPG, SSH, or both.
@@ -27,22 +24,6 @@ func DetectTagSignatures(body string) SignaturePresence {
 	}
 }
 
-// goodSignaturePattern captures the signer identity from a `git tag -v`
-// output line of the form: `gpg: Good signature from "Name <email>"`.
-var goodSignaturePattern = regexp.MustCompile(`Good signature from "([^"]+)"`)
-
-// ParseGoodSignerFromVerify extracts the signer identity from
-// `git tag -v` combined output. Returns "" when no Good signature line
-// is present (e.g. verification ok but the line is missing, or the
-// signature was not verifiable).
-func ParseGoodSignerFromVerify(verifyOutput string) string {
-	m := goodSignaturePattern.FindStringSubmatch(verifyOutput)
-	if m == nil {
-		return ""
-	}
-	return m[1]
-}
-
 // FilterOutTag returns tags with the named one removed. Used by
 // tag-uniqueness to distinguish "self-referential" matches from genuine
 // collisions.
@@ -52,7 +33,9 @@ func FilterOutTag(tags []string, drop string) []string {
 		if t == drop {
 			continue
 		}
+
 		out = append(out, t)
 	}
+
 	return out
 }

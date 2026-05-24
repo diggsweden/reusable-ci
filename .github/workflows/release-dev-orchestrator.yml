@@ -4,15 +4,16 @@
 # Release Dev Orchestrator
 # 
 # Purpose: Lightweight orchestrator for development builds. Provides fast
-# feedback loops during development by skipping production security features while
-# maintaining basic functionality for testing and development environments.
+# feedback loops by keeping the production control-plane shape while skipping
+# release-only features such as signing and GitHub Release creation.
 #
 # How it works:
 # 1. Triggers on pushes to development branches (develop, feature/*)
-# 2. Builds the project (Maven or NPM)
+# 2. Builds configured artifact-first ecosystems
 # 3. Creates container image with dev tag
 # 4. Optionally publishes NPM package to GitHub Packages (dev tag)
-# 5. Skips all production features (SLSA, SBOM, signing, releases)
+# 5. Optionally generates SBOMs when the `sboms` input opts in
+# 6. Skips release-only features (SLSA, signing, GitHub releases)
 #
 # Security controls:
 # - Minimal - focused on speed over security for development
@@ -33,7 +34,7 @@
 # Differences from Production:
 #   - Dev tags (0.5.9-dev-feat-name-abc1234) vs version tags
 #   - No SLSA attestation
-#   - No SBOM generation
+#   - SBOM generation defaults to none; opt in with `sboms`
 #   - No vulnerability scanning
 #   - No artifact signing
 #   - No GitHub release
@@ -43,8 +44,9 @@ on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
       artifacts-config:
-        description: "Path to artifacts.yml. The dev release reads containers and per-artefact configuration from this file."
-        required: true
+        description: "Path to the artifacts config file. Defaults to .reusable-ci/artifacts.yml. The dev release reads containers and per-artefact configuration from this file; auto-derives when the file is absent and the repo has exactly one root manifest."
+        required: false
+        default: ".reusable-ci/artifacts.yml"
         type: string
       project-type:
         description: "Project type override. Optional — defaults to the first artefact's project-type from artifacts.yml."
@@ -87,24 +89,59 @@ on:
         default: "https://npm.pkg.github.com"
         type: string
       package-scope:
-        description: "Required NPM package scope (e.g., @diggsweden)"
+        description: "Required NPM package scope, e.g. @<github-repository-owner> (@diggsweden for DiggSweden repositories)"
         required: false
         default: ""
         type: string
       use-ci-token:
-        description: "Use GITHUB_TOKEN for NPM authentication (GitHub Packages only)"
+        description: "Use GITHUB_TOKEN for GitHub Packages/GHCR authentication. Set false for external NPM or container registries."
         required: false
         default: true
         type: boolean
-      scripts-ref:
-        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+      registry-username:
+        description: "Container registry username (defaults to github.actor for GHCR)"
         required: false
-        default: "main"
+        default: ""
+        type: string
+      reusable-ci-binary-ref:
+        description: "reusable-ci ref/version passed to downstream plain-runner jobs (defaults to v3.0.0)"
+        required: false
+        default: "v3.0.0"
         type: string
       runtime-image:
-        description: "reusable-ci runtime image. Pin to a digest or version tag; default tracks main."
+        description: "reusable-ci base runtime image for control-plane jobs. Optional override; default uses the matching v3.0.0 runtime image."
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+        type: string
+      runtime-image-full:
+        description: "reusable-ci full runtime image for SBOM-capable dev publish jobs. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime:v3.0.0"
+        type: string
+      runtime-image-java:
+        description: "reusable-ci Java runtime image for Maven/Gradle jobs. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
+        type: string
+      runtime-image-node:
+        description: "reusable-ci Node runtime image for NPM jobs. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-node-24:v3.0.0"
+        type: string
+      runtime-image-rust:
+        description: "reusable-ci Rust runtime image for Cargo build + SBOM jobs (build-cargo.yml for artefact-first, sbom-cargo.yml for container-first). Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-rust-stable:v3.0.0"
+        type: string
+      runtime-image-go:
+        description: "reusable-ci Go runtime image for Go build/SBOM jobs. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-go-1.26:v3.0.0"
+        type: string
+      runtime-image-android:
+        description: "reusable-ci Android runtime image for Gradle Android jobs. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-android-35:v3.0.0"
         type: string
       sboms:
         description: "SBOMs to generate: all | none | comma-list of build,analyzed-artifact,analyzed-container (default: none for dev speed; set to 'all' to test SBOM wiring)"
@@ -116,9 +153,51 @@ on:
         required: false
         default: true
         type: boolean
+    # Dev orchestrator: forwards to release-dev-build-stage (which
+    # may need Android/iOS signing secrets via gradle-android /
+    # xcode-ios leaves) and release-dev-publish-stage (only needs
+    # GITHUB_TOKEN auto-provided + the external registry-password).
+    # All `required: false` — `secrets: inherit` callers unchanged.
     secrets:
       registry-password:
-        description: "NPM registry auth token (required when use-ci-token=false)"
+        description: "External NPM/container registry token (required when use-ci-token=false)"
+        required: false
+      ANDROID_KEYSTORE:
+        description: "Base64-encoded Android signing keystore"
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        description: "Password for ANDROID_KEYSTORE"
+        required: false
+      ANDROID_KEY_ALIAS:
+        description: "Alias of the signing key inside ANDROID_KEYSTORE"
+        required: false
+      ANDROID_KEY_PASSWORD:
+        description: "Password for the key referenced by ANDROID_KEY_ALIAS"
+        required: false
+      SECRETS_PROPERTIES_BASE64:
+        description: "Base64-encoded Android secrets.properties"
+        required: false
+      IOS_SIGNING_CERTIFICATE_BASE64:
+        description: "Base64-encoded .p12 code-signing certificate"
+        required: false
+      IOS_SIGNING_CERTIFICATE_PASSPHRASE:
+        description: "Passphrase for IOS_SIGNING_CERTIFICATE_BASE64"
+        required: false
+      PROVISIONING_PROFILE_BASE64:
+        description: "Base64-encoded provisioning profile"
+        required: false
+      KEYCHAIN_PASSWORD:
+        description: "Ephemeral macOS keychain password"
+        required: false
+      XCCONFIG_BASE64:
+        description: "Base64-encoded xcconfig file"
+        required: false
+      REUSABLE_CI_BUILD_SECRETS_JSON:
+        description: |
+          JSON envelope of {name: value} for every name listed in
+          containers[].build-secrets. Forwarded to
+          release-dev-publish-stage → publish-dev-container. Mirrors
+          the prod release-orchestrator declaration.
         required: false
     outputs:
       npm-package-name:
@@ -137,27 +216,24 @@ jobs:
   # consumed by every later stage.
   setup-dev:
     name: Setup
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     outputs:
-      containers: ${{ steps.parse.outputs.containers || '[]' }}
-      has-containers: ${{ steps.plan.outputs.has-containers || 'false' }}
-      dev-context-json: ${{ steps.interface.outputs.dev-context-json }}
-      dev-policy-json: ${{ steps.interface.outputs.dev-policy-json }}
-      # Per-ecosystem artifact arrays — fed into the dev build stage so the
-      # matrix shape mirrors release-build-stage.yml. cargo is forwarded
-      # to publish-stage (sbom-cargo-dev gate), not build-stage (cargo
-      # is container-first; no build-stage work).
-      maven-artifacts: ${{ steps.parse.outputs.maven-artifacts || '[]' }}
-      npm-artifacts: ${{ steps.parse.outputs.npm-artifacts || '[]' }}
-      gradle-artifacts: ${{ steps.parse.outputs.gradle-artifacts || '[]' }}
-      gradleandroid-artifacts: ${{ steps.parse.outputs.gradleandroid-artifacts || '[]' }}
-      xcodeios-artifacts: ${{ steps.parse.outputs.xcodeios-artifacts || '[]' }}
-      cargo-artifacts: ${{ steps.parse.outputs.cargo-artifacts || '[]' }}
+      config-plan-json: ${{ steps.parse.outputs.config-plan-json }}
+      dev-release-plan-json: ${{ steps.plan.outputs.dev-release-plan-json }}
+      dev-build-stage-plan-json: ${{ steps.plan.outputs.dev-build-stage-plan-json }}
+      dev-publish-stage-plan-json: ${{ steps.plan.outputs.dev-publish-stage-plan-json }}
+      artifact-transfer-plan-json: ${{ steps.plan.outputs.artifact-transfer-plan-json }}
     steps:
+      # Defense-in-depth gate at the top of the dev-release pipeline.
+      # Every downstream job depends on setup-dev via `needs:`, so
+      # refusal here aborts the whole dev release. reusable-ci is
+      # pre-baked in the runtime image; no install step needed.
+      - name: Refuse PR-context trigger (publish/release secrets in scope)
+        run: reusable-ci validate event-context
       - name: Checkout caller repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Parse artifacts.yml
@@ -166,32 +242,11 @@ jobs:
         env:
           ARTIFACTS_CONFIG: ${{ inputs['artifacts-config'] }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
-      - name: Compute has-containers for stage gating
+      - name: Plan dev release
         id: plan
         env:
-          CONTAINERS: ${{ steps.parse.outputs.containers }}
-        run: |
-          if [[ -n "$CONTAINERS" && "$CONTAINERS" != "[]" ]]; then
-            printf 'has-containers=true\n' >> "$GITHUB_OUTPUT"
-          else
-            printf 'has-containers=false\n' >> "$GITHUB_OUTPUT"
-          fi
-      - name: Resolve fallback project-type from artifacts.yml
-        id: fallback
-        env:
-          ARTIFACTS: ${{ steps.parse.outputs.artifacts }}
-        run: |
-          set -euo pipefail
-          # When the dev caller didn't pass project-type, take the first
-          # artefact's type as a convenience default. Multi-artifact
-          # callers should set project-type explicitly.
-          fallback=$(printf '%s' "$ARTIFACTS" | jq -r '.[0]["project-type"] // ""')
-          printf 'project-type=%s\n' "$fallback" >>"$GITHUB_OUTPUT"
-      - name: Compose dev control-plane interface
-        id: interface
-        env:
+          CONFIG_PLAN_JSON: ${{ steps.parse.outputs.config-plan-json }}
           PROJECT_TYPE: ${{ inputs['project-type'] }}
-          FALLBACK_PROJECT_TYPE: ${{ steps.fallback.outputs.project-type }}
           BRANCH: ${{ github.ref_name }}
           RELEASE_SHA: ${{ github.sha }}
           RELEASE_ACTOR: ${{ github.actor }}
@@ -201,12 +256,14 @@ jobs:
           NODE_VERSION: ${{ inputs['node-version'] }}
           RUST_TOOLCHAIN: ${{ inputs['rust-toolchain'] }}
           REGISTRY: ${{ inputs.registry }}
-          SCRIPTS_REF: ${{ inputs['scripts-ref'] }}
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
           NPM_REGISTRY: ${{ inputs['npm-registry'] }}
           PACKAGE_SCOPE: ${{ inputs['package-scope'] }}
+          SBOMS: ${{ inputs.sboms }}
           PUBLISH_NPM: ${{ inputs['publish-npm'] }}
           USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
-        run: reusable-ci plan write-dev-release-interface
+          PUBLISH_CONTAINER: ${{ inputs['publish-container'] }}
+        run: reusable-ci plan dev-release
 
   # ===== Stage 1: Build =====
   execute-dev-build-stage:
@@ -214,16 +271,28 @@ jobs:
     needs: [setup-dev]
     permissions:
       contents: read
-    secrets: inherit
+    secrets:
+      ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      SECRETS_PROPERTIES_BASE64: ${{ secrets.SECRETS_PROPERTIES_BASE64 }}
+      IOS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.IOS_SIGNING_CERTIFICATE_BASE64 }}
+      IOS_SIGNING_CERTIFICATE_PASSPHRASE: ${{ secrets.IOS_SIGNING_CERTIFICATE_PASSPHRASE }}
+      PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      XCCONFIG_BASE64: ${{ secrets.XCCONFIG_BASE64 }}
     uses: ./.github/workflows/release-dev-build-stage.yml
     with:
-      dev-context-json: ${{ needs.setup-dev.outputs.dev-context-json }}
-      scripts-ref: ${{ inputs['scripts-ref'] }}
-      maven-artifacts: ${{ needs.setup-dev.outputs.maven-artifacts }}
-      npm-artifacts: ${{ needs.setup-dev.outputs.npm-artifacts }}
-      gradle-artifacts: ${{ needs.setup-dev.outputs.gradle-artifacts }}
-      gradleandroid-artifacts: ${{ needs.setup-dev.outputs.gradleandroid-artifacts }}
-      xcodeios-artifacts: ${{ needs.setup-dev.outputs.xcodeios-artifacts }}
+      dev-release-plan-json: ${{ needs.setup-dev.outputs.dev-release-plan-json }}
+      dev-build-stage-plan-json: ${{ needs.setup-dev.outputs.dev-build-stage-plan-json }}
+      reusable-ci-binary-ref: ${{ inputs['reusable-ci-binary-ref'] }}
+      runtime-image: ${{ inputs['runtime-image'] }}
+      runtime-image-java: ${{ inputs['runtime-image-java'] }}
+      runtime-image-node: ${{ inputs['runtime-image-node'] }}
+      runtime-image-go: ${{ inputs['runtime-image-go'] }}
+      runtime-image-android: ${{ inputs['runtime-image-android'] }}
+      runtime-image-rust: ${{ inputs['runtime-image-rust'] }}
       sboms: ${{ inputs.sboms }}
 
   # ===== Stage 2: Publish =====
@@ -232,23 +301,31 @@ jobs:
     needs: [setup-dev, execute-dev-build-stage]
     if: ${{ !failure() && !cancelled() }}
     permissions:
+      actions: read
       contents: read
       packages: write
-    secrets: inherit
+    # release-dev-publish-stage forwards only to leaves using auto-
+    # provided GITHUB_TOKEN; the optional external registry-password
+    # is the only declared secret on the dev-publish stage. Bracket
+    # notation is required because GHA expressions parse `-` as
+    # subtraction in dotted references.
+    secrets:
+      registry-password: ${{ secrets['registry-password'] }}
+      REUSABLE_CI_BUILD_SECRETS_JSON: ${{ secrets.REUSABLE_CI_BUILD_SECRETS_JSON }}
     uses: ./.github/workflows/release-dev-publish-stage.yml
     with:
-      dev-context-json: ${{ needs.setup-dev.outputs.dev-context-json }}
-      scripts-ref: ${{ inputs['scripts-ref'] }}
-      dev-policy-json: ${{ needs.setup-dev.outputs.dev-policy-json }}
+      dev-release-plan-json: ${{ needs.setup-dev.outputs.dev-release-plan-json }}
+      reusable-ci-binary-ref: ${{ inputs['reusable-ci-binary-ref'] }}
+      runtime-image: ${{ inputs['runtime-image-full'] }}
+      runtime-image-node: ${{ inputs['runtime-image-node'] }}
+      runtime-image-rust: ${{ inputs['runtime-image-rust'] }}
+      runtime-image-go: ${{ inputs['runtime-image-go'] }}
+      dev-publish-stage-plan-json: ${{ needs.setup-dev.outputs.dev-publish-stage-plan-json }}
+      artifact-transfer-plan-json: ${{ needs.setup-dev.outputs.artifact-transfer-plan-json }}
       build-result-json: ${{ needs.execute-dev-build-stage.outputs.result-json }}
       sboms: ${{ inputs.sboms }}
-      publish-container: ${{ inputs['publish-container'] }}
-      # Containers JSON from setup-dev's parse step. Each entry becomes a
-      # parallel matrix job in release-dev-publish-stage.yml.
-      containers: ${{ needs.setup-dev.outputs.containers }}
-      # Per-ecosystem arrays drive the publish-target gates.
-      npm-artifacts: ${{ needs.setup-dev.outputs.npm-artifacts }}
-      cargo-artifacts: ${{ needs.setup-dev.outputs.cargo-artifacts }}
+      registry-username: ${{ inputs['registry-username'] }}
+      use-ci-token: ${{ inputs['use-ci-token'] }}
 
   # ===== Stage 3: Summary =====
   dev-release-summary:
@@ -258,7 +335,7 @@ jobs:
       - execute-dev-build-stage
       - execute-dev-publish-stage
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ${{ inputs['runtime-image'] }}
     permissions:
@@ -267,7 +344,7 @@ jobs:
       - name: Generate Dev Release Summary
         env:
           # Dev release context.
-          PROJECT_TYPE: ${{ inputs['project-type'] }}
+          PROJECT_TYPE: ${{ fromJson(needs.setup-dev.outputs['dev-release-plan-json']).context.project_type }}
           RELEASE_REF: ${{ github.ref_name }}
           RELEASE_SHA: ${{ github.sha }}
           RELEASE_ACTOR: ${{ github.actor }}
@@ -277,4 +354,4 @@ jobs:
           BUILD_STAGE_RESULT_JSON: ${{ needs.execute-dev-build-stage.outputs.result-json }}
           PUBLISH_STAGE_RESULT_JSON: ${{ needs.execute-dev-publish-stage.outputs.result-json }}
           DEV_ARTIFACTS_JSON: ${{ needs.execute-dev-publish-stage.outputs.artifacts-json }}
-        run: reusable-ci summary dev-release
+        run: reusable-ci report dev-release

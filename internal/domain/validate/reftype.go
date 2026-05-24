@@ -28,10 +28,12 @@ func (e *RefTypeError) Error() string {
 // *RefTypeError on mismatch so callers can render their own guidance.
 func RequireTagRefType(refType provider.RefType, ref string) error {
 	if refType == "" {
-		return fmt.Errorf("Usage: validate ref-type <ref-type> <ref-name> [ref]: %w", errs.ErrUsage)
+		return fmt.Errorf("usage: validate ref-type <ref-type> <ref-name> [ref]: %w", errs.ErrUsage)
 	}
+
 	if refType != provider.RefTypeTag {
 		return &RefTypeError{Got: refType, Ref: ref}
 	}
+
 	return nil
 }

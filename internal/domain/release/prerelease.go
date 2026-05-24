@@ -14,11 +14,13 @@ import (
 // after `-` matches a known token?" check in domain/validate build
 // their regexes from this list.
 //
-// Mirrors CI_PRERELEASE_IDENTIFIERS in scripts/ci/output.sh.
+//nolint:gochecknoglobals // canonical prerelease identifier list.
 var PrereleaseIdentifiers = []string{"alpha", "beta", "rc", "dev", "snapshot", "SNAPSHOT"}
 
 // prereleasePattern matches the canonical pre-release identifiers
 // embedded in a tag name (with the leading dash).
+//
+//nolint:gochecknoglobals // precompiled regex derived from the list above.
 var prereleasePattern = regexp.MustCompile(`-(` + strings.Join(PrereleaseIdentifiers, "|") + `)`)
 
 // IsPrereleaseTag reports whether the tag name embeds a known

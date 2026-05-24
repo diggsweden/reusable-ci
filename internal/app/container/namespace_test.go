@@ -17,19 +17,21 @@ func TestValidateNamespace_WrapsDomainValidation(t *testing.T) {
 	if err := appcontainer.ValidateNamespace(domaincontainer.ValidateNamespaceInput{
 		ImageName:        "ghcr.io/diggsweden/reusable-ci/runtime:latest",
 		Repository:       "diggsweden/reusable-ci",
-		Registry:         "ghcr.io",
+		Registry:         "ghcr.io", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		EnforceNamespace: "diggsweden",
 	}); err != nil {
 		t.Fatalf("ValidateNamespace: %v", err)
 	}
+
 	err := appcontainer.ValidateNamespace(domaincontainer.ValidateNamespaceInput{
 		ImageName:        "ghcr.io/other/repo/runtime:latest",
 		Repository:       "diggsweden/reusable-ci",
 		Registry:         "ghcr.io",
 		EnforceNamespace: "diggsweden",
 	})
-	var violation *domaincontainer.NamespaceViolation
+
+	var violation *domaincontainer.NamespaceViolationError
 	if !errors.As(err, &violation) {
-		t.Fatalf("err = %v, want NamespaceViolation", err)
+		t.Fatalf("err = %v, want NamespaceViolationError", err)
 	}
 }

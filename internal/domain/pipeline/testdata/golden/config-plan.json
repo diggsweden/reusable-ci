@@ -1,0 +1,239 @@
+{
+  "version": 1,
+  "artifacts": {
+    "all": [
+      {
+        "name": "lib",
+        "project_type": "maven",
+        "working_directory": "services/lib",
+        "build_type": "library",
+        "publish_to": [
+          "maven-central"
+        ],
+        "sboms": "all",
+        "effective_sboms": [
+          "build",
+          "analyzed-artifact",
+          "analyzed-container"
+        ],
+        "require_authorization": true,
+        "build_artifact_name": "lib-build-artifacts",
+        "build_sbom_artifact_name": "lib-build-sbom",
+        "maven": {
+          "java_version": "25",
+          "settings_path": "settings.xml"
+        }
+      },
+      {
+        "name": "web",
+        "project_type": "npm",
+        "working_directory": "apps/web",
+        "publish_to": [
+          "github-packages",
+          "npmjs"
+        ],
+        "sboms": "all",
+        "effective_sboms": [
+          "build",
+          "analyzed-artifact",
+          "analyzed-container"
+        ],
+        "build_artifact_name": "web-build-artifacts",
+        "build_sbom_artifact_name": "web-build-sbom",
+        "npm": {
+          "node_version": "24"
+        }
+      },
+      {
+        "name": "api",
+        "project_type": "go",
+        "working_directory": "cmd/api",
+        "sboms": "all",
+        "effective_sboms": [
+          "build",
+          "analyzed-artifact",
+          "analyzed-container"
+        ],
+        "go_build_mode": "container-first",
+        "build_sbom_artifact_name": "api-go-build-sbom",
+        "go": {
+          "build_mode": "container-first"
+        }
+      }
+    ],
+    "maven": [
+      {
+        "name": "lib",
+        "project_type": "maven",
+        "working_directory": "services/lib",
+        "build_type": "library",
+        "publish_to": [
+          "maven-central"
+        ],
+        "sboms": "all",
+        "effective_sboms": [
+          "build",
+          "analyzed-artifact",
+          "analyzed-container"
+        ],
+        "require_authorization": true,
+        "build_artifact_name": "lib-build-artifacts",
+        "build_sbom_artifact_name": "lib-build-sbom",
+        "maven": {
+          "java_version": "25",
+          "settings_path": "settings.xml"
+        }
+      }
+    ],
+    "npm": [
+      {
+        "name": "web",
+        "project_type": "npm",
+        "working_directory": "apps/web",
+        "publish_to": [
+          "github-packages",
+          "npmjs"
+        ],
+        "sboms": "all",
+        "effective_sboms": [
+          "build",
+          "analyzed-artifact",
+          "analyzed-container"
+        ],
+        "build_artifact_name": "web-build-artifacts",
+        "build_sbom_artifact_name": "web-build-sbom",
+        "npm": {
+          "node_version": "24"
+        }
+      }
+    ],
+    "gradle": [],
+    "gradle_android": [],
+    "xcode_ios": [],
+    "python": [],
+    "go": [
+      {
+        "name": "api",
+        "project_type": "go",
+        "working_directory": "cmd/api",
+        "sboms": "all",
+        "effective_sboms": [
+          "build",
+          "analyzed-artifact",
+          "analyzed-container"
+        ],
+        "go_build_mode": "container-first",
+        "build_sbom_artifact_name": "api-go-build-sbom",
+        "go": {
+          "build_mode": "container-first"
+        }
+      }
+    ],
+    "cargo": [],
+    "meta": [],
+    "go_artifact_first": [],
+    "go_container_first": [
+      {
+        "name": "api",
+        "project_type": "go",
+        "working_directory": "cmd/api",
+        "sboms": "all",
+        "effective_sboms": [
+          "build",
+          "analyzed-artifact",
+          "analyzed-container"
+        ],
+        "go_build_mode": "container-first",
+        "build_sbom_artifact_name": "api-go-build-sbom",
+        "go": {
+          "build_mode": "container-first"
+        }
+      }
+    ],
+    "cargo_artifact_first": [],
+    "cargo_container_first": [],
+    "github_packages": [
+      {
+        "name": "web",
+        "project_type": "npm",
+        "working_directory": "apps/web",
+        "publish_to": [
+          "github-packages",
+          "npmjs"
+        ],
+        "sboms": "all",
+        "effective_sboms": [
+          "build",
+          "analyzed-artifact",
+          "analyzed-container"
+        ],
+        "build_artifact_name": "web-build-artifacts",
+        "build_sbom_artifact_name": "web-build-sbom",
+        "npm": {
+          "node_version": "24"
+        }
+      }
+    ],
+    "maven_central": [
+      {
+        "name": "lib",
+        "project_type": "maven",
+        "working_directory": "services/lib",
+        "build_type": "library",
+        "publish_to": [
+          "maven-central"
+        ],
+        "sboms": "all",
+        "effective_sboms": [
+          "build",
+          "analyzed-artifact",
+          "analyzed-container"
+        ],
+        "require_authorization": true,
+        "build_artifact_name": "lib-build-artifacts",
+        "build_sbom_artifact_name": "lib-build-sbom",
+        "maven": {
+          "java_version": "25",
+          "settings_path": "settings.xml"
+        }
+      }
+    ],
+    "google_play": [],
+    "npmjs": []
+  },
+  "containers": {
+    "all": [
+      {
+        "name": "api",
+        "from": [
+          "api"
+        ],
+        "artifact_types": [
+          "go"
+        ],
+        "container_file": "Containerfile",
+        "context": ".",
+        "platforms": "linux/amd64,linux/arm64",
+        "enable_analyzed_container_sbom": true,
+        "enable_slsa": true,
+        "enable_scan": true,
+        "build_args": {
+          "VERSION": "${VERSION}"
+        },
+        "build_args_string": "VERSION=${VERSION}",
+        "extract_binary_target": "export",
+        "extract_binary_names": [
+          "api"
+        ]
+      }
+    ],
+    "has_containers": true
+  },
+  "any_require_authorization": true,
+  "pipeline_sboms": "build,analyzed-artifact,analyzed-container",
+  "fallback_project_type": "maven",
+  "sign": {
+    "method": "gpg",
+    "requires_id_token": false
+  }
+}

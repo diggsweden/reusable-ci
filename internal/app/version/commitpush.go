@@ -39,12 +39,10 @@ type CommitPushInput struct {
 }
 
 // CommitPush stages the file pattern, commits with --signoff (idempotent
-// no-op when nothing changed), and pushes to origin/<Branch>.
-//
-// Mirrors scripts/version/commit-and-push.sh exactly. GPG signing is
-// inherited from the repo-local git config written by import-gpg-key
-// (commit.gpgsign=true).
-func CommitPush(ctx context.Context, repo commitPushOps, in CommitPushInput, out io.Writer) error {
+// no-op when nothing changed), and pushes to origin/<Branch>. GPG
+// signing is inherited from the repo-local git config written by
+// GPGImport (commit.gpgsign=true).
+func CommitPush(ctx context.Context, repo commitPushOps, out io.Writer, in CommitPushInput) error {
 	if err := requireFields(in); err != nil {
 		return err
 	}
@@ -52,6 +50,7 @@ func CommitPush(ctx context.Context, repo commitPushOps, in CommitPushInput, out
 	if err := repo.Config(ctx, "user.name", in.AuthorName); err != nil {
 		return fmt.Errorf("set user.name: %w", err)
 	}
+
 	if err := repo.Config(ctx, "user.email", in.AuthorEmail); err != nil {
 		return fmt.Errorf("set user.email: %w", err)
 	}
@@ -64,8 +63,10 @@ func CommitPush(ctx context.Context, repo commitPushOps, in CommitPushInput, out
 	if err != nil {
 		return fmt.Errorf("check staged changes: %w", err)
 	}
+
 	if !hasChanges {
-		fmt.Fprintln(out, "No staged changes — skipping commit and push.")
+		_, _ = fmt.Fprintln(out, "No staged changes — skipping commit and push.")
+
 		return nil
 	}
 
@@ -78,9 +79,14 @@ func CommitPush(ctx context.Context, repo commitPushOps, in CommitPushInput, out
 		return fmt.Errorf("commit: %w", err)
 	}
 
+	_, _ = fmt.Fprintf(out, "✓ Committed as %s <%s>\n", in.AuthorName, in.AuthorEmail)
+
 	if err := repo.Push(ctx, "HEAD", in.Branch, false); err != nil {
 		return fmt.Errorf("push: %w", err)
 	}
+
+	_, _ = fmt.Fprintf(out, "✓ Pushed HEAD to origin/%s\n", in.Branch)
+
 	return nil
 }
 
@@ -97,5 +103,6 @@ func requireFields(in CommitPushInput) error {
 	case in.FilePattern == "":
 		return fmt.Errorf("commit-push: FILE_PATTERN is required: %w", errs.ErrUsage)
 	}
+
 	return nil
 }
