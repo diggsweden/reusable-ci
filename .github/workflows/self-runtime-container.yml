@@ -492,6 +492,13 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute build stamp
+        id: stamp
+        # Tag-safe build stamp derived from the commit timestamp (not
+        # wall-clock), so re-runs of the same commit produce the same tag.
+        run: |
+          epoch="$(git log -1 --format=%ct HEAD)"
+          printf 'value=%s\n' "$(date -u -d "@$epoch" +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
       - name: Compute image metadata
         id: metadata
         env:
@@ -501,6 +508,8 @@ jobs:
             type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=weekly,enable=${{ github.event_name == 'schedule' }}
             type=raw,value=v3-pre,enable=${{ (github.event_name == 'workflow_dispatch' && inputs.publish) || github.ref == 'refs/heads/feat/refactor-go' }}
+            type=raw,value=v3-pre-${{ steps.stamp.outputs.value }},enable=${{ (github.event_name == 'workflow_dispatch' && inputs.publish) || github.ref == 'refs/heads/feat/refactor-go' }}
+            type=ref,event=branch
             type=sha,prefix=sha-,enable=${{ github.event_name != 'schedule' && github.ref_type != 'tag' }}
             type=semver,pattern={{version}},enable=${{ github.ref_type == 'tag' }}
             type=semver,pattern={{major}}.{{minor}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
