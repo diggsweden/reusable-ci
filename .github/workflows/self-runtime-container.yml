@@ -352,6 +352,16 @@ jobs:
             REUSABLE_CI_COMMIT=${{ github.sha }}
             REUSABLE_CI_DATE=${{ steps.meta.outputs.commit-date }}
             SOURCE_DATE_EPOCH=${{ steps.meta.outputs.source-date-epoch }}
+          # OCI labels so each image self-identifies via `docker inspect` /
+          # GHCR even after tags are pruned. (licenses is intentionally
+          # omitted — a runtime image bundles many differently-licensed tools.)
+          labels: |
+            org.opencontainers.image.title=${{ matrix.runtime.name }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.commit-date }}
           cache-from: type=gha,scope=self-runtime-container-${{ matrix.runtime.target }}-${{ matrix.platform.suffix }}
           cache-to: type=gha,mode=max,scope=self-runtime-container-${{ matrix.runtime.target }}-${{ matrix.platform.suffix }}
       - name: Export digest
