@@ -50,10 +50,6 @@ const (
 	TargetSBOM                = "sbom"                 // dev publish only
 
 	// Quality-stage targets (PR).
-	TargetDependencyReview = "dependency_review"
-	TargetSASTOpengrep     = "sast_opengrep"
-	TargetPublicCodeLint   = "public_code_lint"
-	TargetDevbaseCheck     = "devbase_check"
 	TargetNanolinter       = "nanolinter"
 	TargetSwift            = "swift"
 )

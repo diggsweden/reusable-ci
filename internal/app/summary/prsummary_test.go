@@ -28,12 +28,8 @@ func TestPRSummary_HappyPath(t *testing.T) {
 		Actor:       "alice",
 		RunURL:      "https://example.com/run/1", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		QualityStageResultJSON: stageResultJSON(t, "pr-quality", map[string]string{
-			"dependency_review": "success", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			"sast_opengrep":     "failure", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			"public_code_lint":  "skipped", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			"devbase_check":     "skipped",
-			"nanolinter":        "success",
-			"swift":             "skipped",
+			"nanolinter": "success", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			"swift":      "skipped",
 		}),
 		Now: fixedNow(),
 	})
@@ -50,10 +46,6 @@ func TestPRSummary_HappyPath(t *testing.T) {
 		"| **Checked By** | @alice |",
 		"| **Checked At** | 2026-05-10 14:30:00 UTC |",
 		"| Nanolinter | ✓ |",
-		"| Devbase Check | − |",
-		"| Dependency Review | ✓ |",
-		"| OpenGrep SAST | ✗ |",
-		"| Publiccode Lint | − |",
 		"| Swift Lint | − |",
 		"- [Workflow Run](https://example.com/run/1)",
 	} {
@@ -96,11 +88,8 @@ func TestPRSummary_FailureAndSkippedIcons(t *testing.T) {
 		Commit:      "abc1234567890",
 		Actor:       "test-user",
 		QualityStageResultJSON: stageResultJSON(t, "pr-quality", map[string]string{
-			"dependency_review": "skipped",
-			"sast_opengrep":     "failure",
-			"public_code_lint":  "success",
-			"devbase_check":     "failure",
-			"swift":             "skipped",
+			"nanolinter": "failure",
+			"swift":      "skipped",
 		}),
 	})
 	if err != nil {
@@ -108,7 +97,7 @@ func TestPRSummary_FailureAndSkippedIcons(t *testing.T) {
 	}
 
 	body := sink.buf.String()
-	for _, want := range []string{"| Devbase Check | ✗ |", "| OpenGrep SAST | ✗ |", "| Dependency Review | − |"} {
+	for _, want := range []string{"| Nanolinter | ✗ |", "| Swift Lint | − |"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in %s", want, body)
 		}

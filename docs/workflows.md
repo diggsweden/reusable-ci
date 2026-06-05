@@ -28,17 +28,11 @@ graph TD
     B --> C[compose-pr-plan]
     C --> D[pullrequest-quality-stage.yml]
 
-    D --> H[dependency-review]
-    D --> I[opengrep-sast]
-    D --> J[publiccode-lint]
-    D --> K[devbase-check-lint]
+    D --> N[nanolinter]
     D --> L[swift-lint]
-    H --> M[quality-status]
-    I --> M
-    J --> M
-    K --> M
+    N --> M[quality-status]
     L --> M
-    M --> N[summarize-quality-stage]
+    M --> S[summarize-quality-stage]
     D --> O[pr-summary]
 
     style A fill:#a7c080,stroke:#5c6a4a,color:#2b3339
@@ -68,8 +62,6 @@ The PR orchestrator produces typed JSON payloads that drive the quality stage:
 | `context.project_type` | `inputs.project-type` | Project ecosystem (maven, npm, gradle, gradle-android, xcode-ios, cargo, go; python is reserved) |
 | `context.base_branch` | `inputs.base-branch` or PR target | Base branch for commit linting |
 | `context.reusable_ci_binary_ref` | `inputs.reusable-ci-binary-ref` | `reusable-ci` binary revision used by plain-runner jobs |
-| `context.sast_opengrep_rules` | SAST input | OpenGrep rule selection |
-| `context.sast_opengrep_fail_on_severity` | SAST input | OpenGrep failure threshold |
 
 **`quality-stage-plan-json`** — quality check target plan:
 
@@ -77,10 +69,7 @@ The PR orchestrator produces typed JSON payloads that drive the quality stage:
 |--------|---------|---------|
 | `targets.nanolinter.runs` | `true` | Run nanolinter — default lint surface (consumer's `just lint` via mise-installed nanolinter) |
 | `targets.devbase_check.runs` | `false` | Run devbase-check — legacy alternative to nanolinter |
-| `targets.dependency_review.runs` | `true` | Enable dependency vulnerability review |
-| `targets.sast_opengrep.runs` | `true` | Enable OpenGrep SAST |
-| `targets.public_code_lint.runs` | `false` | Enable publiccode.yml linting |
-| `targets.swift.runs` | derived | `true` if either Swift linter is enabled |
+| `targets.swift.runs` | derived | `true` if either Swift linter is enabled (runs standalone on macOS — nanolinter has no macOS binary) |
 
 ### Stage Result Contract
 

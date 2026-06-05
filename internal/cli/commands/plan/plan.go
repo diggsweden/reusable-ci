@@ -36,12 +36,6 @@ func prCmd() *cli.Command {
 			&cli.StringFlag{Name: "project-type", Sources: cli.EnvVars("PROJECT_TYPE"), Usage: "primary ecosystem of the project (maven/npm/go/cargo/…)"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			&cli.StringFlag{Name: "base-branch", Sources: cli.EnvVars("BASE_BRANCH"), Usage: "base branch the PR targets (used for diff-mode scans)"},
 			&cli.StringFlag{Name: "reusable-ci-binary-ref", Sources: cli.EnvVars("REUSABLE_CI_BINARY_REF"), Usage: "git ref of the reusable-ci binary used in the plan (pinned for reproducibility)"},
-			&cli.StringFlag{Name: "sast-opengrep-rules", Value: "p/default", Sources: cli.EnvVars("SAST_OPENGREP_RULES"), Usage: "comma-separated opengrep rulesets the SAST quality gate uses"},
-			&cli.StringFlag{Name: "sast-opengrep-fail-on-severity", Value: "high", Sources: cli.EnvVars("SAST_OPENGREP_FAIL_ON_SEVERITY"), Usage: "minimum opengrep severity that fails the SAST gate"},
-			&cli.BoolFlag{Name: "linter-dependencyreview", Sources: cli.EnvVars("LINTER_DEPENDENCYREVIEW"), Usage: "include the GitHub dependency-review gate in the plan"},
-			&cli.BoolFlag{Name: "sast-opengrep", Sources: cli.EnvVars("SAST_OPENGREP"), Usage: "include the opengrep SAST gate in the plan"},
-			&cli.BoolFlag{Name: "linter-publiccodelint", Sources: cli.EnvVars("LINTER_PUBLICCODELINT"), Usage: "include the publiccode-yml lint gate in the plan"},
-			&cli.BoolFlag{Name: "linter-devbasecheck", Sources: cli.EnvVars("LINTER_DEVBASECHECK"), Usage: "include the devbase lint gate in the plan"},
 			&cli.BoolFlag{Name: "linter-nanolinter", Sources: cli.EnvVars("LINTER_NANOLINTER"), Usage: "include the nanolinter lint gate in the plan"},
 			&cli.BoolFlag{Name: "linter-swiftformat", Sources: cli.EnvVars("LINTER_SWIFTFORMAT"), Usage: "include the swift-format lint gate in the plan"},
 			&cli.BoolFlag{Name: "linter-swiftlint", Sources: cli.EnvVars("LINTER_SWIFTLINT"), Usage: "include the swiftlint lint gate in the plan"},
@@ -49,18 +43,12 @@ func prCmd() *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
 				_, err := appplan.PR(ctx, d.OutputSink, appplan.PRInput{
-					ProjectType:                cmd.String("project-type"),
-					BaseBranch:                 cmd.String("base-branch"),
-					ReusableCIBinaryRef:        cmd.String("reusable-ci-binary-ref"),
-					SASTOpengrepRules:          cmd.String("sast-opengrep-rules"),
-					SASTOpengrepFailOnSeverity: cmd.String("sast-opengrep-fail-on-severity"),
-					DependencyReview:           cmd.Bool("linter-dependencyreview"),
-					SASTOpengrep:               cmd.Bool("sast-opengrep"),
-					PublicCodeLint:             cmd.Bool("linter-publiccodelint"),
-					DevbaseCheck:               cmd.Bool("linter-devbasecheck"),
-					Nanolinter:                 cmd.Bool("linter-nanolinter"),
-					SwiftFormat:                cmd.Bool("linter-swiftformat"),
-					SwiftLint:                  cmd.Bool("linter-swiftlint"),
+					ProjectType:         cmd.String("project-type"),
+					BaseBranch:          cmd.String("base-branch"),
+					ReusableCIBinaryRef: cmd.String("reusable-ci-binary-ref"),
+					Nanolinter:          cmd.Bool("linter-nanolinter"),
+					SwiftFormat:         cmd.Bool("linter-swiftformat"),
+					SwiftLint:           cmd.Bool("linter-swiftlint"),
 				})
 
 				return err

@@ -62,7 +62,7 @@ binary extraction.
 - `Containerfile.example` — reference multi-stage Containerfile with the
   three named stages (`builder`, `export-binary`, `runtime`). Copy to
   `<service>/Containerfile` and adjust per-service.
-- `pullrequest-workflow.yml` — runs reusable-ci devbase and OpenGrep checks.
+- `pullrequest-workflow.yml` — runs reusable-ci nanolinter checks.
   Add a caller-owned `test.yml` for workspace-specific Rust checks.
 - `release-workflow.yml` — standard tag-driven release; the orchestrator
   dispatches `sbom-cargo` per artefact and `publish-container` per container.

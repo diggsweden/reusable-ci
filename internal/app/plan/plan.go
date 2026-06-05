@@ -197,18 +197,12 @@ func emitJSONOutput[T any](ctx context.Context, sink ci.OutputSink, key string, 
 
 // PRInput drives `plan pr`.
 type PRInput struct {
-	ProjectType                string
-	BaseBranch                 string
-	ReusableCIBinaryRef        string
-	SASTOpengrepRules          string
-	SASTOpengrepFailOnSeverity string
-	DependencyReview           bool
-	SASTOpengrep               bool
-	PublicCodeLint             bool
-	DevbaseCheck               bool
-	Nanolinter                 bool
-	SwiftFormat                bool
-	SwiftLint                  bool
+	ProjectType         string
+	BaseBranch          string
+	ReusableCIBinaryRef string
+	Nanolinter          bool
+	SwiftFormat         bool
+	SwiftLint           bool
 }
 
 // PR composes typed pull-request quality plan outputs.
@@ -219,18 +213,12 @@ func PR(ctx context.Context, sink ci.OutputSink, in PRInput) (*pipeline.PRPlan, 
 	}
 
 	plan := pipeline.NewPRPlan(pipeline.PRPlanInput{
-		ProjectType:                pt,
-		BaseBranch:                 in.BaseBranch,
-		ReusableCIBinaryRef:        in.ReusableCIBinaryRef,
-		SASTOpengrepRules:          in.SASTOpengrepRules,
-		SASTOpengrepFailOnSeverity: in.SASTOpengrepFailOnSeverity,
-		DependencyReview:           in.DependencyReview,
-		SASTOpengrep:               in.SASTOpengrep,
-		PublicCodeLint:             in.PublicCodeLint,
-		DevbaseCheck:               in.DevbaseCheck,
-		Nanolinter:                 in.Nanolinter,
-		SwiftFormat:                in.SwiftFormat,
-		SwiftLint:                  in.SwiftLint,
+		ProjectType:         pt,
+		BaseBranch:          in.BaseBranch,
+		ReusableCIBinaryRef: in.ReusableCIBinaryRef,
+		Nanolinter:          in.Nanolinter,
+		SwiftFormat:         in.SwiftFormat,
+		SwiftLint:           in.SwiftLint,
 	})
 	if err := emitJSONOutput(ctx, sink, "pr-plan-json", plan); err != nil {
 		return nil, err

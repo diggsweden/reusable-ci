@@ -28,7 +28,7 @@ func TestQualityCheckStatus_AllPass(t *testing.T) {
 	sink := &fakeSummarySink{}
 
 	err := appsummary.QualityCheckStatus(context.Background(), sink, []appsummary.QualityCheck{
-		{Name: "Devbase", Enabled: true, Result: domainsummary.ResultSuccess},
+		{Name: "Nanolinter", Enabled: true, Result: domainsummary.ResultSuccess},
 		{Name: "OpenGrep SAST", Enabled: true, Result: domainsummary.ResultSuccess},
 	})
 	if err != nil {
@@ -37,7 +37,7 @@ func TestQualityCheckStatus_AllPass(t *testing.T) {
 
 	for _, want := range []string{
 		"## Pull Request Check Status",
-		"| Devbase | ✓ Pass |",
+		"| Nanolinter | ✓ Pass |",
 		"| OpenGrep SAST | ✓ Pass |",
 		"### ✓ All enabled checks passed",
 	} {
@@ -78,7 +78,7 @@ func TestParseQualityChecks(t *testing.T) {
 	t.Parallel()
 
 	got := appsummary.ParseQualityChecks([]string{
-		"Devbase|true|success",
+		"Nanolinter|true|success",
 		"Sast|false|skipped",
 		"malformed-no-pipes",
 	})
@@ -86,7 +86,7 @@ func TestParseQualityChecks(t *testing.T) {
 		t.Fatalf("got %d, want 2 (malformed line skipped)", len(got))
 	}
 
-	if got[0].Name != "Devbase" || !got[0].Enabled || got[0].Result != domainsummary.ResultSuccess {
+	if got[0].Name != "Nanolinter" || !got[0].Enabled || got[0].Result != domainsummary.ResultSuccess {
 		t.Errorf("got[0] = %+v", got[0])
 	}
 

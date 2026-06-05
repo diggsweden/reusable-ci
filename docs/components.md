@@ -274,14 +274,8 @@ uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@v3.0
 with:
   project-type: maven              # Required: maven, npm, gradle, gradle-android, xcode-ios, cargo, go (python reserved)
   base-branch: ""                  # Optional: auto-detects PR target
-  linters.nanolinter: true         # Default — runs just lint via mise-installed nanolinter
-  linters.devbasecheck: false      # Legacy alternative — runs just lint via a cloned devbase-check
-  linters.dependencyreview: true   # Dependency vulnerability review
-  security.sast-opengrep: true     # OpenGrep SAST (default; set false to opt out)
-  security.sast-opengrep-rules: p/default
-  security.sast-opengrep-fail-on-severity: high
-  linters.publiccodelint: false    # Publiccode.yml validation
-  linters.swiftformat: false       # Swift format for iOS/macOS
+  linters.nanolinter: true         # Run the project's just lint via mise (uploads security findings as SARIF)
+  linters.swiftformat: false       # Swift format for iOS/macOS (separate macOS job)
   linters.swiftlint: false         # SwiftLint for iOS/macOS
   reusable-ci-binary-ref: v3.0.0   # Match the pinned workflow release
 ```
@@ -298,64 +292,30 @@ Performs miscellaneous validation checks.
 uses: diggsweden/reusable-ci/.github/workflows/lint-misc.yml@v3.0.0
 ```
 
-#### `lint-publiccode.yml`
-Validates publiccode.yml file format.
-```yaml
-uses: diggsweden/reusable-ci/.github/workflows/lint-publiccode.yml@v3.0.0
-```
-
 #### `lint-nanolinter.yml`
-Default lint surface — runs `nanolinter`, covering the consumer's `just lint`
-plan (commit messages, SPDX/license headers, and filesystem-level
-multi-language checks). nanolinter and every check tool are pinned in the
-consumer's `.mise.toml` and installed via `mise install`. Client `justfile`
-overrides work both locally and in CI.
+Runs `nanolinter` against the consumer's `just lint` plan (tools pinned in
+`.mise.toml`, installed via `mise`). Security findings upload to GitHub Code
+Scanning as SARIF.
 ```yaml
 uses: diggsweden/reusable-ci/.github/workflows/lint-nanolinter.yml@v3.0.0
 ```
 
-Runs the consumer repository's aggregate `just lint-all` (or `just lint`);
-client justfile overrides like `lint-yaml: @echo "Skipping"` work in CI the
-same way they work locally. nanolinter is pinned in `.mise.toml` and tracked
-by Renovate.
-
-#### `lint-devbase.yml`
-Legacy lint surface — runs `devbase-check` instead of nanolinter, covering the
-same `just lint` plan via a cloned devtools repo. Enable with
-`linters.devbasecheck: true` (and `linters.nanolinter: false`).
-```yaml
-uses: diggsweden/reusable-ci/.github/workflows/lint-devbase.yml@v3.0.0
-with:
-  devbase-check-version: ""  # Optional: override pinned version
-```
-
-Like `lint-nanolinter.yml`, it runs the consumer repository's aggregate `just
-lint-all` (or `just lint`); client justfile overrides work in CI the same way
-they work locally. The `devbase-check` version is pinned and tracked by
-Renovate.
+Swift/iOS linting runs separately in `lint-swift.yml` (macOS) — nanolinter has
+no native macOS binary.
 
 ### Security Workflows
 
 These workflows are automatically called by `pullrequest-orchestrator.yml`.
 
-#### `security-dependency-review.yml`
-Reviews dependencies for known vulnerabilities.
-```yaml
-uses: diggsweden/reusable-ci/.github/workflows/security-dependency-review.yml@v3.0.0
-```
+> **SAST + dependency scanning** are no longer standalone workflows. The
+> `nanolinter` lint route (default) runs OpenGrep SAST, OSV dependency
+> scanning, secret detection, and trivy-fs as part of its plan, and uploads
+> the findings to GitHub Code Scanning as SARIF (category `nanolinter-security`)
+> via `lint-nanolinter.yml`. Configure rules/severity in `nanolinter.toml`.
 
-#### `security-opengrep.yml`
-Runs OpenGrep SAST and emits portable outputs for GitHub and GitLab-style integrations.
-```yaml
-uses: diggsweden/reusable-ci/.github/workflows/security-opengrep.yml@v3.0.0
-with:
-  opengrep-rules: p/default
-  fail-on-severity: high
-```
-
-The workflow runs inside the reusable-ci runtime image and emits SARIF plus portable report artifacts.
-
-SARIF is always generated and saved as a workflow artifact. To publish results into GitHub Security / Code Scanning, configure the org or repo secret `CODE_SCANNING_TOKEN` and pass secrets with `secrets: inherit`.
+SARIF is uploaded to GitHub Code Scanning when the org or repo secret
+`CODE_SCANNING_TOKEN` is configured and secrets are passed with `secrets:
+inherit`; it is always also saved as a workflow artifact.
 
 #### `security-openssf-scorecard.yml`
 Generates OpenSSF security scorecard for the repository.

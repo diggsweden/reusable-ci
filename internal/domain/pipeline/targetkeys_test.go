@@ -66,10 +66,7 @@ func TestTargetKeys_MatchStructTags(t *testing.T) {
 		{TargetSBOM, DevPublishTargets{}, "SBOM"},
 
 		// PR quality-stage targets.
-		{TargetDependencyReview, PRQualityTargets{}, "DependencyReview"},
-		{TargetSASTOpengrep, PRQualityTargets{}, "SASTOpengrep"},
-		{TargetPublicCodeLint, PRQualityTargets{}, "PublicCodeLint"},
-		{TargetDevbaseCheck, PRQualityTargets{}, "DevbaseCheck"},
+		{TargetNanolinter, PRQualityTargets{}, "Nanolinter"},
 		{TargetSwift, PRQualityTargets{}, "Swift"},
 	}
 

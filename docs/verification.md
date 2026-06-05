@@ -12,113 +12,18 @@ matching guarantees are generated on the producing side.
 
 ## Code Quality Verification
 
-### Devbase-Check Linting Workflow
+### Linting
 
-The `lint-devbase.yml` workflow provides a reusable just/mise-based quality gate.
+PR linting runs through `lint-nanolinter.yml` (called automatically by the PR
+orchestrator). It installs the consumer's pinned tools via `mise` and runs the
+repository's aggregate `just lint` (or `lint-all`) — the same recipe developers
+run locally. Security findings (SAST, dependencies, secrets) are uploaded to
+GitHub Code Scanning as SARIF. Swift/iOS projects additionally run
+`lint-swift.yml` on macOS.
 
-The workflow checks out the project, installs pinned `just`, `mise`,
-and `devbase-check`, runs `just install`, then invokes the
-repository's aggregate lint recipe (`just lint-all` if present,
-otherwise `just lint`). It doesn't pull a multi-GB linter container.
+Your project needs a `.mise.toml` (pinning `nanolinter` and its check tools)
+and a `justfile` with a `lint` recipe. See the [examples](../examples/).
 
-The consumer repository decides which checks the aggregate recipe
-runs, and the same recipe is what developers run locally before
-pushing — there's only one definition of "lint", in the consumer's
-justfile.
-
-#### Requirements
-
-Your project must have:
-1. **justfile** with `install` and either `lint-all` or `lint`
-2. **.mise.toml** with required tools specified
-3. **install** task in justfile to set up tools via mise
-
-#### Usage
-
-Add to your pull request workflow:
-
-```yaml
-jobs:
-  lint:
-    uses: diggsweden/reusable-ci/.github/workflows/lint-devbase.yml@v3.0.0
-    permissions:
-      contents: read
-```
-
-#### Example Justfile Structure
-
-```just
-# Install development tools
-install:
-    mise install
-
-# Run all linters
-lint-all: lint-java lint-markdown lint-yaml lint-actions lint-shell lint-secrets
-
-# Optional fallback name. The workflow uses this if lint-all is absent.
-lint: lint-all
-
-# Individual linter tasks referenced by the aggregate recipe
-# Lint Java code
-lint-java:
-    mvn checkstyle:check pmd:check spotbugs:check
-
-# Lint markdown files
-lint-markdown:
-    rumdl check .
-
-# Lint YAML files
-lint-yaml:
-    yamlfmt -lint .
-
-# Lint GitHub Actions
-lint-actions:
-    actionlint
-
-# Lint shell scripts
-lint-shell:
-    find . -name '*.sh' | xargs shellcheck
-
-# Scan for secrets
-lint-secrets:
-    gitleaks detect --no-banner
-
-# Fix tasks are safe as long as the aggregate recipe does not depend on them
-lint-yaml-fix:
-    yamlfmt .
-
-lint-markdown-fix:
-    rumdl check --fix .
-```
-
-#### GitHub Actions Output
-
-The workflow streams the aggregate just recipe output. If the aggregate recipe
-uses `devbase-check`, its normal summaries are preserved. Otherwise, each tool's
-stdout/stderr appears directly in the GitHub Actions log.
-
-#### How It Works
-
-1. **Checkout**: Fetches the repository and PR base branch when applicable
-2. **Tool bootstrap**: Installs pinned `just`, `mise`, and `devbase-check`
-3. **Install**: Runs `just install` after `mise trust`
-4. **Clean workspace**: Resets install-time tracked file changes
-5. **Execution**: Runs `just lint-all` if present, otherwise `just lint`
-
-#### Adding/Removing Linters
-
-Update the aggregate `lint-all` or `lint` recipe to include the checks you want
-CI to run:
-
-```just
-# Add a new linter
-lint-all: lint-java lint-markdown lint-cargo
-
-lint-cargo:
-    cargo clippy -- -D warnings
-
-# Remove a linter by removing it from the aggregate recipe
-```
 ## Artifact Verification Methods
 
 | Artifact Type | Verification Methods | Security Level | What It Proves |

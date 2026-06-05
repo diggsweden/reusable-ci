@@ -3,15 +3,9 @@
   "context": {
     "project_type": "go",
     "base_branch": "main",
-    "reusable_ci_binary_ref": "v3.0.0",
-    "sast_opengrep_rules": "p/ci",
-    "sast_opengrep_fail_on_severity": "medium"
+    "reusable_ci_binary_ref": "v3.0.0"
   },
   "policy": {
-    "dependency_review": true,
-    "sast_opengrep": true,
-    "public_code_lint": true,
-    "devbase_check": false,
     "nanolinter": true,
     "swift_format": false,
     "swift_lint": false,
@@ -22,28 +16,6 @@
       "version": 1,
       "stage": "pr-quality",
       "targets": {
-        "dependency_review": {
-          "runs": true,
-          "items": [
-            "dependency-review"
-          ]
-        },
-        "sast_opengrep": {
-          "runs": true,
-          "items": [
-            "sast-opengrep"
-          ]
-        },
-        "public_code_lint": {
-          "runs": true,
-          "items": [
-            "publiccode-lint"
-          ]
-        },
-        "devbase_check": {
-          "runs": false,
-          "items": []
-        },
         "nanolinter": {
           "runs": true,
           "items": [

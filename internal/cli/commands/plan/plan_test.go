@@ -99,20 +99,18 @@ func TestDevReleaseCmd_UsesConfigPlanFallbackAndEmitsStagePlans(t *testing.T) {
 func TestPRCmd_EmitsPlanAndQualityStagePlan(t *testing.T) {
 	env := ghaenv.Setup(t)
 	env.Setenv("PROJECT_TYPE", "go")
-	env.Setenv("LINTER_DEPENDENCYREVIEW", "true")
-	env.Setenv("SAST_OPENGREP", "true")
-	env.Setenv("LINTER_DEVBASECHECK", "true")
+	env.Setenv("LINTER_NANOLINTER", "true")
 
 	cmd := plancmd.New()
 	if err := cmd.Run(context.Background(), []string{"plan", "pr"}); err != nil {
 		t.Fatal(err)
 	}
 
-	if got := env.Output("pr-plan-json"); !strings.Contains(got, `"project_type":"go"`) || !strings.Contains(got, `"devbase_check":true`) {
+	if got := env.Output("pr-plan-json"); !strings.Contains(got, `"project_type":"go"`) || !strings.Contains(got, `"nanolinter":true`) {
 		t.Errorf("pr-plan-json = %s", got)
 	}
 
-	if got := env.Output("quality-stage-plan-json"); !strings.Contains(got, `"stage":"pr-quality"`) || !strings.Contains(got, `"dependency_review":{"runs":true`) {
+	if got := env.Output("quality-stage-plan-json"); !strings.Contains(got, `"stage":"pr-quality"`) || !strings.Contains(got, `"nanolinter":{"runs":true`) {
 		t.Errorf("quality-stage-plan-json = %s", got)
 	}
 }

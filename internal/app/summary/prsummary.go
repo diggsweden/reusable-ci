@@ -48,10 +48,6 @@ func PRSummary(ctx context.Context, sink ci.SummarySink, in PRSummaryInput) erro
 	get := func(key string) string {
 		return string(quality.TargetResult(key))
 	}
-	dep := get(pipeline.TargetDependencyReview)
-	sast := get(pipeline.TargetSASTOpengrep)
-	publiccode := get(pipeline.TargetPublicCodeLint)
-	devbase := get(pipeline.TargetDevbaseCheck)
 	nanolinter := get(pipeline.TargetNanolinter)
 	swift := get(pipeline.TargetSwift)
 
@@ -70,10 +66,6 @@ func PRSummary(ctx context.Context, sink ci.SummarySink, in PRSummaryInput) erro
 	_, _ = fmt.Fprintf(&b, "| Check | Status |\n")
 	_, _ = fmt.Fprintf(&b, "|-------|--------|\n")
 	_, _ = fmt.Fprintf(&b, "| Nanolinter | %s |\n", domainsummary.StatusIcon(nanolinter))
-	_, _ = fmt.Fprintf(&b, "| Devbase Check | %s |\n", domainsummary.StatusIcon(devbase))
-	_, _ = fmt.Fprintf(&b, "| Dependency Review | %s |\n", domainsummary.StatusIcon(dep))
-	_, _ = fmt.Fprintf(&b, "| OpenGrep SAST | %s |\n", domainsummary.StatusIcon(sast))
-	_, _ = fmt.Fprintf(&b, "| Publiccode Lint | %s |\n", domainsummary.StatusIcon(publiccode))
 	_, _ = fmt.Fprintf(&b, "| Swift Lint | %s |\n", domainsummary.StatusIcon(swift))
 	_, _ = fmt.Fprintf(&b, "\n## Resources\n")
 	_, _ = fmt.Fprintf(&b, "- [Workflow Run](%s)\n", in.RunURL)

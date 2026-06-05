@@ -27,12 +27,8 @@ jobs:
     with:
       reusable-ci-binary-ref: v3.0.0
       project-type: gradle
-      # Recommended: Use devbase-check (lightweight, just+mise-based)
+      # Default lint route: nanolinter (just+mise-based; runs your `just lint`)
       linters.nanolinter: true
-      # OpenGrep SAST is enabled by default. Opt out if needed:
-      # security.sast-opengrep: false
-      # security.sast-opengrep-rules: p/default
-      # security.sast-opengrep-fail-on-severity: high
 
   # Optional: Add project-specific tests
   # test:

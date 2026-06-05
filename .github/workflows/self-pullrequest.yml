@@ -25,12 +25,10 @@ jobs:
       project-type: npm
       reusable-ci-binary-ref: ${{ github.head_ref }}
       # This repo dogfoods nanolinter via the dedicated `lint` job below,
-      # which sets up Go for the go-* checks. Disable BOTH orchestrator lint
-      # routes so neither runs a second, Go-less `just lint` that would fail.
-      # Consumer projects just take the default (linters.nanolinter: true).
+      # which sets up Go for the go-* checks. Disable the orchestrator
+      # nanolinter route so it doesn't run a second, Go-less `just lint`
+      # that would fail. Consumer projects take the default (nanolinter: true).
       linters.nanolinter: false
-      linters.devbasecheck: false
-      linters.dependencyreview: true
   lint:
     name: Lint (nanolinter verify)
     runs-on: ubuntu-24.04

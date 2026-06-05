@@ -53,13 +53,8 @@ func TestPlanContracts_Golden(t *testing.T) {
 	prPlan := pipeline.NewPRPlan(pipeline.PRPlanInput{
 		ProjectType:                projecttype.Go,
 		BaseBranch:                 "main",
-		ReusableCIBinaryRef:        "v3.0.0",
-		SASTOpengrepRules:          "p/ci",
-		SASTOpengrepFailOnSeverity: "medium",
-		DependencyReview:           true,
-		SASTOpengrep:               true,
-		PublicCodeLint:             true,
-		Nanolinter:                 true,
+		ReusableCIBinaryRef: "v3.0.0",
+		Nanolinter:          true,
 	})
 
 	for _, tc := range []struct {

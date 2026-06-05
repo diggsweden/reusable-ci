@@ -33,17 +33,10 @@
 #   secrets: inherit       # Pass CODE_SCANNING_TOKEN for Code Scanning upload
 #
 # Configurable Linters:
-#   linters.dependencyreview: Dependency vulnerability scan (default: true)
-#   linters.publiccodelint: Publiccode.yml validation (default: false)
-#   linters.nanolinter:   nanolinter linting (default: true) — runs the
-#                         consumer's `just lint` plan via mise-installed
-#                         nanolinter
-#   linters.devbasecheck: devbase-check linting (default: false) — legacy
-#                         alternative; runs `just lint` via a cloned
-#                         devbase-check. Set true and nanolinter false to
-#                         keep the old behaviour
-# Configurable Security:
-#   security.sast-opengrep: OpenGrep SAST with SARIF/GitLab SAST outputs (default: true, opt out with false)
+#   linters.nanolinter:   run nanolinter (default: true) — the project's
+#                         `just lint` via mise; uploads security findings to
+#                         Code Scanning as SARIF. Swift/iOS linting runs
+#                         separately (lint-swift.yml).
 name: Orchestrate Pull Request
 on:
   workflow_call:
@@ -59,25 +52,10 @@ on:
         default: ""
         type: string
       # Linter toggles
-      linters.dependencyreview:
-        description: "Enable dependency vulnerability review"
-        required: false
-        default: true
-        type: boolean
-      linters.publiccodelint:
-        description: "Enable publiccode.yml linting"
-        required: false
-        default: false
-        type: boolean
       linters.nanolinter:
         description: "Enable nanolinter linting — runs the consumer's just lint plan via mise-installed nanolinter (default: true)"
         required: false
         default: true
-        type: boolean
-      linters.devbasecheck:
-        description: "Enable devbase-check linting — runs just lint via a cloned devbase-check (legacy/opt-in alternative to nanolinter; default: false)"
-        required: false
-        default: false
         type: boolean
       linters.swiftformat:
         description: "Enable swift-format (Google Swift Style Guide) for iOS/macOS projects"
@@ -89,21 +67,6 @@ on:
         required: false
         default: false
         type: boolean
-      security.sast-opengrep:
-        description: "Enable OpenGrep SAST scanning"
-        required: false
-        default: true
-        type: boolean
-      security.sast-opengrep-rules:
-        description: "OpenGrep rules path, registry pack, or comma-separated list"
-        required: false
-        default: "p/default"
-        type: string
-      security.sast-opengrep-fail-on-severity:
-        description: "Fail OpenGrep on none, low, medium, or high findings"
-        required: false
-        default: "high"
-        type: string
       reusable-ci-binary-ref:
         description: "reusable-ci ref/version passed to downstream plain-runner jobs (defaults to v3.0.0)"
         required: false
@@ -114,14 +77,9 @@ on:
         required: false
         default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
         type: string
-      runtime-image-security:
-        description: "reusable-ci full runtime image for dependency review and OpenGrep jobs. Optional override; default uses the matching v3.0.0 runtime image."
-        required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime:v3.0.0"
-        type: string
     secrets:
       CODE_SCANNING_TOKEN:
-        description: "Token with security-events:write for SARIF upload (dependency review + OpenGrep)"
+        description: "Token with security-events:write for SARIF upload (nanolinter security findings)"
         required: false
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
@@ -144,15 +102,9 @@ jobs:
           PROJECT_TYPE: ${{ inputs['project-type'] }}
           BASE_BRANCH: ${{ inputs['base-branch'] }}
           REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
-          LINTER_DEPENDENCYREVIEW: ${{ inputs['linters.dependencyreview'] }}
-          LINTER_PUBLICCODELINT: ${{ inputs['linters.publiccodelint'] }}
-          LINTER_DEVBASECHECK: ${{ inputs['linters.devbasecheck'] }}
           LINTER_NANOLINTER: ${{ inputs['linters.nanolinter'] }}
           LINTER_SWIFTFORMAT: ${{ inputs['linters.swiftformat'] }}
           LINTER_SWIFTLINT: ${{ inputs['linters.swiftlint'] }}
-          SAST_OPENGREP: ${{ inputs['security.sast-opengrep'] }}
-          SAST_OPENGREP_RULES: ${{ inputs['security.sast-opengrep-rules'] }}
-          SAST_OPENGREP_FAIL_ON_SEVERITY: ${{ inputs['security.sast-opengrep-fail-on-severity'] }}
         run: reusable-ci plan pr
 
   # ===== Stage 1: Quality =====
@@ -168,7 +120,6 @@ jobs:
       pr-plan-json: ${{ needs.compose-pr-plan.outputs.pr-plan-json }}
       quality-stage-plan-json: ${{ needs.compose-pr-plan.outputs.quality-stage-plan-json }}
       runtime-image: ${{ inputs['runtime-image'] }}
-      runtime-image-security: ${{ inputs['runtime-image-security'] }}
 
   # ===== Summary =====
   pr-summary:

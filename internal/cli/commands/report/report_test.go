@@ -18,7 +18,7 @@ import (
 func TestPRCmd_PrefersPathOverInlineJSON(t *testing.T) {
 	env := ghaenv.Setup(t)
 	fsys := testfs.NewReal(t)
-	path := fsys.WriteFile("quality.json", []byte(`{"version":1,"stage":"pr-quality","result":"failure","ran":true,"targets":{"dependency_review":"skipped","sast_opengrep":"failure","public_code_lint":"success","devbase_check":"failure","swift":"skipped"}}`))
+	path := fsys.WriteFile("quality.json", []byte(`{"version":1,"stage":"pr-quality","result":"failure","ran":true,"targets":{"nanolinter":"failure","swift":"skipped"}}`))
 
 	env.Setenv("PROJECT_TYPE", "maven")
 	env.Setenv("CI_BRANCH", "feat/my-branch")
@@ -26,7 +26,7 @@ func TestPRCmd_PrefersPathOverInlineJSON(t *testing.T) {
 	env.Setenv("CI_ACTOR", "test-user")
 	env.Setenv("CI_RUN_URL", "https://example.com/run/1")
 	env.Setenv("QUALITY_STAGE_RESULT_PATH", path)
-	env.Setenv("QUALITY_STAGE_RESULT_JSON", `{"version":1,"stage":"pr-quality","result":"success","ran":true,"targets":{"dependency_review":"success","sast_opengrep":"success","public_code_lint":"success","devbase_check":"success","swift":"success"}}`)
+	env.Setenv("QUALITY_STAGE_RESULT_JSON", `{"version":1,"stage":"pr-quality","result":"success","ran":true,"targets":{"nanolinter":"success","swift":"success"}}`)
 
 	cmd := reportcmd.New()
 	if err := cmd.Run(context.Background(), []string{"report", "pr"}); err != nil { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
@@ -34,7 +34,7 @@ func TestPRCmd_PrefersPathOverInlineJSON(t *testing.T) {
 	}
 
 	body := env.Summary()
-	for _, want := range []string{"| Devbase Check | ✗ |", "| OpenGrep SAST | ✗ |"} {
+	for _, want := range []string{"| Nanolinter | ✗ |"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in %s", want, body)
 		}

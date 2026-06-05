@@ -12,17 +12,12 @@ on:
         required: true
         type: string
       runtime-image:
-        description: "reusable-ci runtime image for the status/summary jobs (base is sufficient)"
+        description: "reusable-ci runtime image for the lint/status/summary jobs (base is sufficient)"
         required: false
         default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
         type: string
-      runtime-image-security:
-        description: "reusable-ci runtime image for dependency review and OpenGrep jobs (full image carries trivy/opengrep)"
-        required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime:v3.0.0"
-        type: string
-    # Aggregator: forwards to security-{dependency-review,opengrep}
-    # (CODE_SCANNING_TOKEN) and lint-* (auto GITHUB_TOKEN only).
+    # Aggregator: forwards CODE_SCANNING_TOKEN to the nanolinter job for
+    # its security-SARIF upload; other lint jobs use the auto GITHUB_TOKEN.
     secrets:
       CODE_SCANNING_TOKEN:
         description: "Token with security-events:write for SARIF upload"
@@ -30,40 +25,6 @@ on:
 permissions:
   contents: read
 jobs:
-  dependency-review:
-    name: Dependency Review
-    if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.dependency_review.runs }}
-    permissions:
-      contents: read
-    secrets:
-      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
-    uses: ./.github/workflows/security-dependency-review.yml
-    with:
-      runtime-image: ${{ inputs['runtime-image-security'] }}
-  sast-opengrep:
-    name: OpenGrep SAST
-    if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.sast_opengrep.runs }}
-    permissions:
-      contents: read
-    secrets:
-      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
-    uses: ./.github/workflows/security-opengrep.yml
-    with:
-      runtime-image: ${{ inputs['runtime-image-security'] }}
-      opengrep-rules: ${{ fromJson(inputs['pr-plan-json']).context.sast_opengrep_rules }}
-      fail-on-severity: ${{ fromJson(inputs['pr-plan-json']).context.sast_opengrep_fail_on_severity }}
-  public-code-lint:
-    name: Publiccode Lint
-    if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.public_code_lint.runs }}
-    uses: ./.github/workflows/lint-publiccode.yml
-    with:
-      runtime-image: ${{ inputs['runtime-image'] }}
-  devbase-check:
-    name: Devbase Check
-    if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.devbase_check.runs }}
-    permissions:
-      contents: read
-    uses: ./.github/workflows/lint-devbase.yml
   nanolinter:
     name: Nanolinter
     if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.nanolinter.runs }}
@@ -90,27 +51,19 @@ jobs:
     container:
       image: ${{ inputs['runtime-image'] }}
     if: always()
-    needs: [dependency-review, sast-opengrep, public-code-lint, devbase-check, nanolinter, swift]
+    needs: [nanolinter, swift]
     steps:
       - name: Check quality results
         env:
-          CHECK_DEPENDENCYREVIEW: Dependency Review|${{ fromJson(inputs['quality-stage-plan-json']).targets.dependency_review.runs }}|${{ needs.dependency-review.result }}
-          CHECK_SASTOPENGREP: OpenGrep SAST|${{ fromJson(inputs['quality-stage-plan-json']).targets.sast_opengrep.runs }}|${{ needs.sast-opengrep.result }}
-          CHECK_PUBLICCODELINT: Publiccode Lint|${{ fromJson(inputs['quality-stage-plan-json']).targets.public_code_lint.runs }}|${{ needs.public-code-lint.result }}
-          CHECK_DEVBASECHECK: Devbase Check|${{ fromJson(inputs['quality-stage-plan-json']).targets.devbase_check.runs }}|${{ needs.devbase-check.result }}
           CHECK_NANOLINTER: Nanolinter|${{ fromJson(inputs['quality-stage-plan-json']).targets.nanolinter.runs }}|${{ needs.nanolinter.result }}
           CHECK_SWIFT: Swift Lint|${{ fromJson(inputs['quality-stage-plan-json']).targets.swift.runs }}|${{ needs.swift.result }}
         run: |
           reusable-ci report status quality-check \
-            "$CHECK_DEPENDENCYREVIEW" \
-            "$CHECK_SASTOPENGREP" \
-            "$CHECK_PUBLICCODELINT" \
-            "$CHECK_DEVBASECHECK" \
             "$CHECK_NANOLINTER" \
             "$CHECK_SWIFT"
   summarize-quality-stage:
     name: Summary
-    needs: [dependency-review, sast-opengrep, public-code-lint, devbase-check, nanolinter, swift, quality-status]
+    needs: [nanolinter, swift, quality-status]
     if: always()
     runs-on: ubuntu-24.04
     container:

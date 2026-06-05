@@ -53,8 +53,9 @@ Three top-level chains, each invoked from the adopter's repo as a
 single `workflow_call:` entry:
 
 1. **Pull Request** (`pullrequest-orchestrator.yml`) — runs on PR and
-   push: linters, license / REUSE compliance, dependency review,
-   OpenGrep SAST. The adopter's own tests are wired separately.
+   push: nanolinter (lint, security scanning, license/REUSE), with security
+   findings uploaded to Code Scanning as SARIF. The adopter's own tests are
+   wired separately.
 
 2. **Release** (`release-orchestrator.yml`) — runs on signed tag push:
    parse `.reusable-ci/artifacts.yml`, validate release prerequisites,
@@ -168,15 +169,9 @@ jobs:
          reusable-ci-binary-ref: v3.0.0
          project-type: maven  # or npm, gradle, gradle-android, xcode-ios, cargo, go
          # Lint route — both run your justfile's `just lint`/`lint-all`:
-         linters.nanolinter: true       # nanolinter (default; mise-installed)
-         # linters.devbasecheck: true   # devbase-check (legacy alternative; set nanolinter false)
+         linters.nanolinter: true       # run nanolinter (mise-installed)
          # Optional linters:
-         # linters.dependencyreview: true  # Dependency vulnerability scan
-         # security.sast-opengrep: false   # Opt out of OpenGrep SAST
-         # security.sast-opengrep-rules: p/default
-         # security.sast-opengrep-fail-on-severity: high
-         # linters.publiccodelint: false   # publiccode.yml validation
-         # linters.swiftlint: false        # Swift linting for iOS/macOS
+         # linters.swiftlint: false        # Swift linting for iOS/macOS (standalone macOS job)
    ```
 
 3. **Create release workflow** - Trigger builds on tags:
@@ -261,15 +256,15 @@ adopter's own workflow (the orchestrator doesn't invoke them).
                     │   quality-stage matrix  │
                     └────────────┬────────────┘
                                  │
-        ┌───────────────┬────────┴────────┬────────────────┐
-        │               │                 │                │
-┌───────▼──────┐ ┌──────▼───────┐ ┌───────▼──────┐ ┌───────▼──────┐
-│ lint-devbase │ │ dependency-  │ │   opengrep   │ │ lint-misc /  │
-│ (commits,    │ │   review     │ │     SAST     │ │ publiccode   │
-│ SPDX, REUSE) │ │ (PR scope)   │ │ (PR diff)    │ │ (optional)   │
-└───────┬──────┘ └──────┬───────┘ └───────┬──────┘ └───────┬──────┘
-        │               │                 │                │
-        └───────────────┴────────┬────────┴────────────────┘
+                 ┌───────────────┴───────────────┐
+                 │                                │
+        ┌────────▼────────┐            ┌──────────▼─────────┐
+        │   nanolinter    │            │     swift-lint     │
+        │ lint+license+   │            │ (macOS; iOS only,  │
+        │ publiccode+SAST │            │ nanolinter has no  │
+        │ +deps -> SARIF  │            │  macOS binary)     │
+        └────────┬────────┘            └──────────┬─────────┘
+                 └───────────────┬────────────────┘
                                  │
                     ┌────────────▼────────────┐
                     │       PR Summary        │

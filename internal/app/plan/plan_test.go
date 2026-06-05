@@ -153,11 +153,9 @@ func TestPlanPR_EmitsTypedPlanOutputs(t *testing.T) {
 	sink := fakeoutputsink.New(t)
 
 	got, err := appplan.PR(context.Background(), sink, appplan.PRInput{
-		ProjectType:      "go",
-		DependencyReview: true,
-		SASTOpengrep:     true,
-		DevbaseCheck:     true,
-		SwiftLint:        true,
+		ProjectType: "go",
+		Nanolinter:  true,
+		SwiftLint:   true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -171,7 +169,7 @@ func TestPlanPR_EmitsTypedPlanOutputs(t *testing.T) {
 		t.Errorf("pr-plan-json = %s", out)
 	}
 
-	if out := sink.Single("quality-stage-plan-json"); !strings.Contains(out, `"stage":"pr-quality"`) || !strings.Contains(out, `"devbase_check":{"runs":true`) {
+	if out := sink.Single("quality-stage-plan-json"); !strings.Contains(out, `"stage":"pr-quality"`) || !strings.Contains(out, `"nanolinter":{"runs":true`) {
 		t.Errorf("quality-stage-plan-json = %s", out)
 	}
 }

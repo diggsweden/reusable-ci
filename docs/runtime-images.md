@@ -56,7 +56,7 @@ across both images on the runner.
 
 | Workflow | Image | Notes |
 |---|---|---|
-| `security-opengrep`, `security-dependency-review` | `runtime` (full) | Needs opengrep/trivy |
+| `lint-nanolinter` | `runtime-base` | nanolinter + its check tools (opengrep, osv-scanner, …) are mise-installed from the consumer's .mise.toml at runtime |
 | `release-*-stage`, `pullrequest-quality-stage`, all orchestrators | `runtime-base` | Just bash + jq + yq for summaries |
 | `release-create-github`, `release-dev-publish-stage`'s `generate-dev-sboms` | `runtime` (full) | Needs syft for SBOM aggregation |
 | `generate-changelog`, `validate-release-prerequisites` | `runtime-base` normally; `runtime-rust-stable` when Cargo artifacts are present | git-cliff / gh + gpg are in base; Cargo prerequisite validation also checks `cargo --version` |

@@ -614,12 +614,6 @@ compose typed pull-request quality plan contracts
 | `--project-type` | primary ecosystem of the project (maven/npm/go/cargo/…) | `$PROJECT_TYPE` |
 | `--base-branch` | base branch the PR targets (used for diff-mode scans) | `$BASE_BRANCH` |
 | `--reusable-ci-binary-ref` | git ref of the reusable-ci binary used in the plan (pinned for reproducibility) | `$REUSABLE_CI_BINARY_REF` |
-| `--sast-opengrep-rules` | comma-separated opengrep rulesets the SAST quality gate uses | `$SAST_OPENGREP_RULES` |
-| `--sast-opengrep-fail-on-severity` | minimum opengrep severity that fails the SAST gate | `$SAST_OPENGREP_FAIL_ON_SEVERITY` |
-| `--linter-dependencyreview` | include the GitHub dependency-review gate in the plan | `$LINTER_DEPENDENCYREVIEW` |
-| `--sast-opengrep` | include the opengrep SAST gate in the plan | `$SAST_OPENGREP` |
-| `--linter-publiccodelint` | include the publiccode-yml lint gate in the plan | `$LINTER_PUBLICCODELINT` |
-| `--linter-devbasecheck` | include the devbase lint gate in the plan | `$LINTER_DEVBASECHECK` |
 | `--linter-nanolinter` | include the nanolinter lint gate in the plan | `$LINTER_NANOLINTER` |
 | `--linter-swiftformat` | include the swift-format lint gate in the plan | `$LINTER_SWIFTFORMAT` |
 | `--linter-swiftlint` | include the swiftlint lint gate in the plan | `$LINTER_SWIFTLINT` |
