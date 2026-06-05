@@ -9,6 +9,7 @@
 [settings]
 experimental = true  # Enable experimental features
 paranoid = true      # Enable strict security checks and verification
+pipx.uvx = true      # Install pipx: backend tools via uv (uvx), never pipx
 
 [env]
 # Proxy configuration - available during tool installation AND runtime
@@ -25,7 +26,7 @@ PIP_INDEX_URL = "{{ get_env(name='PIP_INDEX_URL', default='') }}"
 [tools]
 # Lint/security orchestrator — derives a verify plan from the repo and
 # runs the configured checks. See nanolinter.toml for the plan.
-"forgejo:itiquette/nanolinter" = "0.1.0"
+"forgejo:itiquette/nanolinter" = "0.7.0"
 
 # Per-check tools nanolinter delegates to. Inline comments name the
 # nanolinter check ID each tool backs.
@@ -44,6 +45,11 @@ PIP_INDEX_URL = "{{ get_env(name='PIP_INDEX_URL', default='') }}"
 "aqua:tamasfe/taplo" = "0.10.0"               # toml
 "aqua:aquasecurity/trivy" = "0.70.0"          # trivy-fs
 "aqua:crate-ci/typos" = "1.46.2"              # typos
+
+# uv provides the Python tool runner (uvx) that backs the pipx: tools
+# above — with pipx.uvx=true mise routes those installs through uv, so
+# pipx is never required.
+"aqua:astral-sh/uv" = "0.11.19"
 
 # Misc dev-loop utilities (not bound to a nanolinter check).
 "aqua:sharkdp/fd" = "v10.4.2"
