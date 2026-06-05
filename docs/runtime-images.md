@@ -103,9 +103,11 @@ All runtime images follow the same tag scheme:
 | `:vX.Y.Z` | On release tag push | Yes — pin in production |
 | `:vX.Y` | On release tag push (LTS-style major.minor) | Yes |
 | `:vX` | On release tag push | Yes — moves on minor |
-| `:main` | On every push to main | No — moves frequently |
+| `:<branch>` | Every published branch build (e.g. `:main`, `:feat-refactor-go`) | No — moves with the branch |
+| `:v3-pre` | Pre-v3.0.0 branch/dispatch builds | No — moves to the latest pre-release |
+| `:v3-pre-<YYYYMMDD-HHMMSS>` | Pre-v3.0.0 builds, from the commit timestamp | Yes — immutable build stamp |
 | `:weekly` | Weekly cron rebuild (refreshes pinned tools + base) | Yes for opt-in users |
-| `:sha-<short-commit>` | On main / dispatch | Yes for testing a specific build |
+| `:sha-<short-commit>` | main / branch / dispatch builds | Yes — exact commit |
 | `@sha256:<digest>` | Per build | Yes — strictest pin |
 
 Normal consumers do not need to set `runtime-image*` inputs. Released workflows
@@ -113,6 +115,14 @@ default to the matching reusable-ci runtime image line.
 
 External consumers who need stricter reproducibility can pin by **digest**
 (`@sha256:…`) or override images by `:vX.Y.Z`.
+
+## OCI labels
+
+Every image carries `org.opencontainers.image.{title, source, url, revision,
+version, created}` (set at build time). They identify an image via `docker
+inspect` or the GHCR UI even when tags have been pruned, and `source` links the
+GHCR package back to this repository. `licenses` is intentionally left unset —
+a runtime image bundles many differently-licensed tools.
 
 ## Advanced Pinning Recipe
 
