@@ -156,6 +156,15 @@ RUN bash -c 'set -euo pipefail \
   && cosign version \
   && reusable-ci --version
 
+# Git aborts operations on a repository whose on-disk owner differs from the
+# invoking process UID ("detected dubious ownership"). In every container-based
+# job the workspace is checked out on the host runner and bind-mounted into this
+# image, so its owner never matches the in-container UID. The workspace path is
+# assigned per repository at run time and is therefore unknown at build time, so
+# the exception is scoped to all paths. This image is an ephemeral, single-tenant
+# CI sandbox; the broadened scope introduces no multi-tenant exposure.
+RUN git config --system --add safe.directory '*'
+
 WORKDIR /workspace
 
 FROM base AS full
