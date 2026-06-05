@@ -54,5 +54,6 @@ const (
 	TargetSASTOpengrep     = "sast_opengrep"
 	TargetPublicCodeLint   = "public_code_lint"
 	TargetDevbaseCheck     = "devbase_check"
+	TargetNanolinter       = "nanolinter"
 	TargetSwift            = "swift"
 )

@@ -24,10 +24,11 @@ jobs:
     with:
       project-type: npm
       reusable-ci-binary-ref: ${{ github.head_ref }}
-      # This repo dogfoods nanolinter via the dedicated `lint` job below;
-      # the orchestrator's devbase-check route would call `just lint`
-      # without nanolinter on PATH and fail. Consumer projects keep using
-      # devbase-check unchanged via `linters.devbasecheck: true`.
+      # This repo dogfoods nanolinter via the dedicated `lint` job below,
+      # which sets up Go for the go-* checks. Disable BOTH orchestrator lint
+      # routes so neither runs a second, Go-less `just lint` that would fail.
+      # Consumer projects just take the default (linters.nanolinter: true).
+      linters.nanolinter: false
       linters.devbasecheck: false
       linters.dependencyreview: true
   lint:

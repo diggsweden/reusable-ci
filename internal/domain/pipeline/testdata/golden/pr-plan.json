@@ -11,7 +11,8 @@
     "dependency_review": true,
     "sast_opengrep": true,
     "public_code_lint": true,
-    "devbase_check": true,
+    "devbase_check": false,
+    "nanolinter": true,
     "swift_format": false,
     "swift_lint": false,
     "swift": false
@@ -40,9 +41,13 @@
           ]
         },
         "devbase_check": {
+          "runs": false,
+          "items": []
+        },
+        "nanolinter": {
           "runs": true,
           "items": [
-            "devbase-check"
+            "nanolinter"
           ]
         },
         "swift": {

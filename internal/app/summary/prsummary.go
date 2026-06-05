@@ -52,6 +52,7 @@ func PRSummary(ctx context.Context, sink ci.SummarySink, in PRSummaryInput) erro
 	sast := get(pipeline.TargetSASTOpengrep)
 	publiccode := get(pipeline.TargetPublicCodeLint)
 	devbase := get(pipeline.TargetDevbaseCheck)
+	nanolinter := get(pipeline.TargetNanolinter)
 	swift := get(pipeline.TargetSwift)
 
 	var b strings.Builder //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
@@ -68,6 +69,7 @@ func PRSummary(ctx context.Context, sink ci.SummarySink, in PRSummaryInput) erro
 	_, _ = fmt.Fprintf(&b, "\n## Quality Check Status\n")
 	_, _ = fmt.Fprintf(&b, "| Check | Status |\n")
 	_, _ = fmt.Fprintf(&b, "|-------|--------|\n")
+	_, _ = fmt.Fprintf(&b, "| Nanolinter | %s |\n", domainsummary.StatusIcon(nanolinter))
 	_, _ = fmt.Fprintf(&b, "| Devbase Check | %s |\n", domainsummary.StatusIcon(devbase))
 	_, _ = fmt.Fprintf(&b, "| Dependency Review | %s |\n", domainsummary.StatusIcon(dep))
 	_, _ = fmt.Fprintf(&b, "| OpenGrep SAST | %s |\n", domainsummary.StatusIcon(sast))

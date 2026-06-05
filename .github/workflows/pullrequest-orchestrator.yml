@@ -35,9 +35,13 @@
 # Configurable Linters:
 #   linters.dependencyreview: Dependency vulnerability scan (default: true)
 #   linters.publiccodelint: Publiccode.yml validation (default: false)
-#   linters.devbasecheck: devbase-check linting — covers commit lint,
-#                         SPDX/license lint, and the filesystem checks
-#                         that previously had separate toggles
+#   linters.nanolinter:   nanolinter linting (default: true) — runs the
+#                         consumer's `just lint` plan via mise-installed
+#                         nanolinter
+#   linters.devbasecheck: devbase-check linting (default: false) — legacy
+#                         alternative; runs `just lint` via a cloned
+#                         devbase-check. Set true and nanolinter false to
+#                         keep the old behaviour
 # Configurable Security:
 #   security.sast-opengrep: OpenGrep SAST with SARIF/GitLab SAST outputs (default: true, opt out with false)
 name: Orchestrate Pull Request
@@ -65,10 +69,15 @@ on:
         required: false
         default: false
         type: boolean
-      linters.devbasecheck:
-        description: "Enable devbase-check linting — covers commit messages, SPDX/license headers, and filesystem checks (default: true)"
+      linters.nanolinter:
+        description: "Enable nanolinter linting — runs the consumer's just lint plan via mise-installed nanolinter (default: true)"
         required: false
         default: true
+        type: boolean
+      linters.devbasecheck:
+        description: "Enable devbase-check linting — runs just lint via a cloned devbase-check (legacy/opt-in alternative to nanolinter; default: false)"
+        required: false
+        default: false
         type: boolean
       linters.swiftformat:
         description: "Enable swift-format (Google Swift Style Guide) for iOS/macOS projects"
@@ -138,6 +147,7 @@ jobs:
           LINTER_DEPENDENCYREVIEW: ${{ inputs['linters.dependencyreview'] }}
           LINTER_PUBLICCODELINT: ${{ inputs['linters.publiccodelint'] }}
           LINTER_DEVBASECHECK: ${{ inputs['linters.devbasecheck'] }}
+          LINTER_NANOLINTER: ${{ inputs['linters.nanolinter'] }}
           LINTER_SWIFTFORMAT: ${{ inputs['linters.swiftformat'] }}
           LINTER_SWIFTLINT: ${{ inputs['linters.swiftlint'] }}
           SAST_OPENGREP: ${{ inputs['security.sast-opengrep'] }}

@@ -167,8 +167,9 @@ jobs:
        with:
          reusable-ci-binary-ref: v3.0.0
          project-type: maven  # or npm, gradle, gradle-android, xcode-ios, cargo, go
-         # Recommended: Use devbase-check (lightweight, just+mise-based)
-         linters.devbasecheck: true
+         # Lint route — both run your justfile's `just lint`/`lint-all`:
+         linters.nanolinter: true       # nanolinter (default; mise-installed)
+         # linters.devbasecheck: true   # devbase-check (legacy alternative; set nanolinter false)
          # Optional linters:
          # linters.dependencyreview: true  # Dependency vulnerability scan
          # security.sast-opengrep: false   # Opt out of OpenGrep SAST

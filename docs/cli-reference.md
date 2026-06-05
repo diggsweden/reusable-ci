@@ -620,6 +620,7 @@ compose typed pull-request quality plan contracts
 | `--sast-opengrep` | include the opengrep SAST gate in the plan | `$SAST_OPENGREP` |
 | `--linter-publiccodelint` | include the publiccode-yml lint gate in the plan | `$LINTER_PUBLICCODELINT` |
 | `--linter-devbasecheck` | include the devbase lint gate in the plan | `$LINTER_DEVBASECHECK` |
+| `--linter-nanolinter` | include the nanolinter lint gate in the plan | `$LINTER_NANOLINTER` |
 | `--linter-swiftformat` | include the swift-format lint gate in the plan | `$LINTER_SWIFTFORMAT` |
 | `--linter-swiftlint` | include the swiftlint lint gate in the plan | `$LINTER_SWIFTLINT` |
 

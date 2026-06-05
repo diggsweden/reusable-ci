@@ -28,7 +28,7 @@ jobs:
     with:
       reusable-ci-binary-ref: v3.0.0
       project-type: go
-      linters.devbasecheck: true
+      linters.nanolinter: true
 
   # Keep project-specific Go tests and govulncheck in the caller repository.
   # Uncomment once .github/workflows/test.yml runs `go test ./...`, `go vet`,

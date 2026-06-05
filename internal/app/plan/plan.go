@@ -206,6 +206,7 @@ type PRInput struct {
 	SASTOpengrep               bool
 	PublicCodeLint             bool
 	DevbaseCheck               bool
+	Nanolinter                 bool
 	SwiftFormat                bool
 	SwiftLint                  bool
 }
@@ -227,6 +228,7 @@ func PR(ctx context.Context, sink ci.OutputSink, in PRInput) (*pipeline.PRPlan, 
 		SASTOpengrep:               in.SASTOpengrep,
 		PublicCodeLint:             in.PublicCodeLint,
 		DevbaseCheck:               in.DevbaseCheck,
+		Nanolinter:                 in.Nanolinter,
 		SwiftFormat:                in.SwiftFormat,
 		SwiftLint:                  in.SwiftLint,
 	})

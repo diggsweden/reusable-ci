@@ -28,7 +28,7 @@ jobs:
     with:
       reusable-ci-binary-ref: v3.0.0
       project-type: cargo
-      linters.devbasecheck: true
+      linters.nanolinter: true
 
   # Workspace-level tests (testcontainers, workspace features) live in the
   # caller. sbom-cargo.yml does not run cargo test — that path is per-artefact

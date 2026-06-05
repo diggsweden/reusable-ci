@@ -64,6 +64,16 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/lint-devbase.yml
+  nanolinter:
+    name: Nanolinter
+    if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.nanolinter.runs }}
+    permissions:
+      contents: read
+    secrets:
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
+    uses: ./.github/workflows/lint-nanolinter.yml
+    with:
+      runtime-image: ${{ inputs['runtime-image'] }}
   swift:
     name: Swift Lint
     if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.swift.runs }}
@@ -80,7 +90,7 @@ jobs:
     container:
       image: ${{ inputs['runtime-image'] }}
     if: always()
-    needs: [dependency-review, sast-opengrep, public-code-lint, devbase-check, swift]
+    needs: [dependency-review, sast-opengrep, public-code-lint, devbase-check, nanolinter, swift]
     steps:
       - name: Check quality results
         env:
@@ -88,6 +98,7 @@ jobs:
           CHECK_SASTOPENGREP: OpenGrep SAST|${{ fromJson(inputs['quality-stage-plan-json']).targets.sast_opengrep.runs }}|${{ needs.sast-opengrep.result }}
           CHECK_PUBLICCODELINT: Publiccode Lint|${{ fromJson(inputs['quality-stage-plan-json']).targets.public_code_lint.runs }}|${{ needs.public-code-lint.result }}
           CHECK_DEVBASECHECK: Devbase Check|${{ fromJson(inputs['quality-stage-plan-json']).targets.devbase_check.runs }}|${{ needs.devbase-check.result }}
+          CHECK_NANOLINTER: Nanolinter|${{ fromJson(inputs['quality-stage-plan-json']).targets.nanolinter.runs }}|${{ needs.nanolinter.result }}
           CHECK_SWIFT: Swift Lint|${{ fromJson(inputs['quality-stage-plan-json']).targets.swift.runs }}|${{ needs.swift.result }}
         run: |
           reusable-ci report status quality-check \
@@ -95,10 +106,11 @@ jobs:
             "$CHECK_SASTOPENGREP" \
             "$CHECK_PUBLICCODELINT" \
             "$CHECK_DEVBASECHECK" \
+            "$CHECK_NANOLINTER" \
             "$CHECK_SWIFT"
   summarize-quality-stage:
     name: Summary
-    needs: [dependency-review, sast-opengrep, public-code-lint, devbase-check, swift, quality-status]
+    needs: [dependency-review, sast-opengrep, public-code-lint, devbase-check, nanolinter, swift, quality-status]
     if: always()
     runs-on: ubuntu-24.04
     container:

@@ -59,7 +59,7 @@ func TestPlanContracts_Golden(t *testing.T) {
 		DependencyReview:           true,
 		SASTOpengrep:               true,
 		PublicCodeLint:             true,
-		DevbaseCheck:               true,
+		Nanolinter:                 true,
 	})
 
 	for _, tc := range []struct {

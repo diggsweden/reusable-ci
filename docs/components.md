@@ -274,7 +274,8 @@ uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@v3.0
 with:
   project-type: maven              # Required: maven, npm, gradle, gradle-android, xcode-ios, cargo, go (python reserved)
   base-branch: ""                  # Optional: auto-detects PR target
-  linters.devbasecheck: true       # Default — covers commit messages, SPDX/license headers, and filesystem-level multi-language checks
+  linters.nanolinter: true         # Default — runs just lint via mise-installed nanolinter
+  linters.devbasecheck: false      # Legacy alternative — runs just lint via a cloned devbase-check
   linters.dependencyreview: true   # Dependency vulnerability review
   security.sast-opengrep: true     # OpenGrep SAST (default; set false to opt out)
   security.sast-opengrep-rules: p/default
@@ -303,18 +304,35 @@ Validates publiccode.yml file format.
 uses: diggsweden/reusable-ci/.github/workflows/lint-publiccode.yml@v3.0.0
 ```
 
+#### `lint-nanolinter.yml`
+Default lint surface — runs `nanolinter`, covering the consumer's `just lint`
+plan (commit messages, SPDX/license headers, and filesystem-level
+multi-language checks). nanolinter and every check tool are pinned in the
+consumer's `.mise.toml` and installed via `mise install`. Client `justfile`
+overrides work both locally and in CI.
+```yaml
+uses: diggsweden/reusable-ci/.github/workflows/lint-nanolinter.yml@v3.0.0
+```
+
+Runs the consumer repository's aggregate `just lint-all` (or `just lint`);
+client justfile overrides like `lint-yaml: @echo "Skipping"` work in CI the
+same way they work locally. nanolinter is pinned in `.mise.toml` and tracked
+by Renovate.
+
 #### `lint-devbase.yml`
-Default lint surface — runs `devbase-check`, which covers commit messages, SPDX/license headers, and filesystem-level multi-language linting. Client `justfile` overrides work both locally and in CI.
+Legacy lint surface — runs `devbase-check` instead of nanolinter, covering the
+same `just lint` plan via a cloned devtools repo. Enable with
+`linters.devbasecheck: true` (and `linters.nanolinter: false`).
 ```yaml
 uses: diggsweden/reusable-ci/.github/workflows/lint-devbase.yml@v3.0.0
 with:
   devbase-check-version: ""  # Optional: override pinned version
 ```
 
-Runs the consumer repository's aggregate `just lint-all` (or `just
-lint`); client justfile overrides like `lint-yaml: @echo "Skipping"`
-work in CI the same way they work locally. The `devbase-check`
-version is pinned and tracked by Renovate.
+Like `lint-nanolinter.yml`, it runs the consumer repository's aggregate `just
+lint-all` (or `just lint`); client justfile overrides work in CI the same way
+they work locally. The `devbase-check` version is pinned and tracked by
+Renovate.
 
 ### Security Workflows
 

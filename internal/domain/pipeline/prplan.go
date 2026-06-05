@@ -23,6 +23,7 @@ type PRPlanInput struct {
 	SASTOpengrep               bool
 	PublicCodeLint             bool
 	DevbaseCheck               bool
+	Nanolinter                 bool
 	SwiftFormat                bool
 	SwiftLint                  bool
 }
@@ -50,6 +51,7 @@ type PRPolicy struct {
 	SASTOpengrep     bool `json:"sast_opengrep"`
 	PublicCodeLint   bool `json:"public_code_lint"`
 	DevbaseCheck     bool `json:"devbase_check"`
+	Nanolinter       bool `json:"nanolinter"`
 	SwiftFormat      bool `json:"swift_format"`
 	SwiftLint        bool `json:"swift_lint"`
 	Swift            bool `json:"swift"`
@@ -73,6 +75,7 @@ type PRQualityTargets struct {
 	SASTOpengrep     TargetPlan[string] `json:"sast_opengrep"`
 	PublicCodeLint   TargetPlan[string] `json:"public_code_lint"`
 	DevbaseCheck     TargetPlan[string] `json:"devbase_check"`
+	Nanolinter       TargetPlan[string] `json:"nanolinter"`
 	Swift            TargetPlan[string] `json:"swift"`
 }
 
@@ -83,6 +86,7 @@ func NewPRPlan(in PRPlanInput) PRPlan {
 		SASTOpengrep:     in.SASTOpengrep,
 		PublicCodeLint:   in.PublicCodeLint,
 		DevbaseCheck:     in.DevbaseCheck,
+		Nanolinter:       in.Nanolinter,
 		SwiftFormat:      in.SwiftFormat,
 		SwiftLint:        in.SwiftLint,
 		Swift:            in.SwiftFormat || in.SwiftLint,
@@ -95,6 +99,7 @@ func NewPRPlan(in PRPlanInput) PRPlan {
 			SASTOpengrep:     singletonTargetPlan("sast-opengrep", policy.SASTOpengrep),
 			PublicCodeLint:   singletonTargetPlan("publiccode-lint", policy.PublicCodeLint),
 			DevbaseCheck:     singletonTargetPlan("devbase-check", policy.DevbaseCheck),
+			Nanolinter:       singletonTargetPlan("nanolinter", policy.Nanolinter),
 			Swift:            singletonTargetPlan("swift", policy.Swift),
 		},
 	}

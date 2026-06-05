@@ -1,5 +1,14 @@
 # TODO
 
+## MegaLinter lint route (`linters.megalinter`)
+
+The PR orchestrator now offers `linters.devbasecheck` and `linters.nanolinter`.
+A third route, `linters.megalinter`, is still to add: wire a `linters.megalinter`
+input + `nanolinter`-style planner target + a `lint-megalinter.yml` reusable
+workflow that runs MegaLinter (its own container/action, not the mise toolchain).
+The execution model differs from devbase-check/nanolinter (both of which run the
+consumer's `just lint`), so it needs its own job design.
+
 ## Multi-artifact version-bump race condition
 
 The `execute-version-bump` job in `release-prepare-stage.yml` uses a matrix strategy.

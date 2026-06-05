@@ -75,7 +75,8 @@ The PR orchestrator produces typed JSON payloads that drive the quality stage:
 
 | Target | Default | Purpose |
 |--------|---------|---------|
-| `targets.devbase_check.runs` | `true` | Run devbase-check — covers commit messages, SPDX/license headers, and filesystem-level multi-language checks |
+| `targets.nanolinter.runs` | `true` | Run nanolinter — default lint surface (consumer's `just lint` via mise-installed nanolinter) |
+| `targets.devbase_check.runs` | `false` | Run devbase-check — legacy alternative to nanolinter |
 | `targets.dependency_review.runs` | `true` | Enable dependency vulnerability review |
 | `targets.sast_opengrep.runs` | `true` | Enable OpenGrep SAST |
 | `targets.public_code_lint.runs` | `false` | Enable publiccode.yml linting |

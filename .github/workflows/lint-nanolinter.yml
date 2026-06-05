@@ -1,0 +1,116 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# Description:
+# Default PR lint surface — runs `nanolinter verify` against the consumer
+# repository and uploads nanolinter's security findings (OpenGrep SAST, OSV
+# dependency scan, secrets, trivy-fs) to GitHub Code Scanning as SARIF.
+#
+# Runs inside the reusable-ci runtime container, which carries `reusable-ci`
+# (for the SARIF enrich/upload commands) and `mise` (to install the
+# consumer's pinned nanolinter + every check tool from its .mise.toml).
+#
+# How to use:
+# 1. Ensure your project has:
+#    - .mise.toml pinning forgejo:itiquette/nanolinter (+ the check tools)
+#    - nanolinter.toml verify plan
+#
+# 2. It is called automatically by pullrequest-orchestrator.yml when
+#    linters.nanolinter is enabled (the default).
+name: Lint Nanolinter
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      runtime-image:
+        description: "reusable-ci runtime image (provides reusable-ci + mise). Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+        type: string
+      upload-sarif:
+        description: "Upload nanolinter's security SARIF to GitHub Code Scanning"
+        required: false
+        default: true
+        type: boolean
+      sarif-category:
+        description: "Code Scanning category label for the nanolinter security SARIF"
+        required: false
+        default: "nanolinter-security"
+        type: string
+    secrets:
+      CODE_SCANNING_TOKEN:
+        description: "Token with security-events:write for SARIF upload"
+        required: false
+permissions:
+  contents: read
+jobs:
+  nanolinter-lint:
+    name: Nanolinter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Fetch base branch for PR
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git fetch origin "$BASE_REF":"$BASE_REF"
+      - name: Install project tools (nanolinter + check tools)
+        env:
+          MISE_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # nanolinter + every check tool (opengrep, osv-scanner, …) are
+          # pinned in the consumer's .mise.toml.
+          mise trust
+          mise install
+      - name: Reset install-time working tree changes
+        # Install hooks (e.g. npm prepare) can modify tracked files, causing
+        # false positives in the version-control check. Reset so linters only
+        # see committed source state.
+        run: git checkout -- .
+      - name: Run nanolinter (gate + security SARIF)
+        id: lint
+        # --report sarif-security is a report filter only: verify still runs
+        # the full plan and gates on every check; the SARIF carries just the
+        # CheckClass::Security findings (sast/osv/secrets/trivy-fs).
+        run: |
+          set +e
+          mise exec -- nanolinter verify --report sarif-security --out nanolinter-security.sarif
+          status=$?
+          printf 'status=%s\n' "$status" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Enrich nanolinter SARIF for GitHub dedupe
+        if: always() && inputs.upload-sarif && hashFiles('nanolinter-security.sarif') != ''
+        env:
+          SARIF_FILE: nanolinter-security.sarif
+        run: reusable-ci security report enrich-sarif
+      - name: Save nanolinter SARIF artifact
+        if: always() && hashFiles('nanolinter-security.sarif') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sarif-nanolinter
+          path: nanolinter-security.sarif
+          retention-days: 5
+          if-no-files-found: ignore
+      - name: Upload nanolinter SARIF to Code Scanning
+        # Uses CODE_SCANNING_TOKEN (not GITHUB_TOKEN); continue-on-error so a
+        # transient Code Scanning API failure doesn't turn the lint gate red.
+        if: always() && inputs.upload-sarif && hashFiles('nanolinter-security.sarif') != ''
+        continue-on-error: true
+        env:
+          CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
+          SARIF_FILE: nanolinter-security.sarif
+          SARIF_CATEGORY: ${{ inputs.sarif-category }}
+        run: reusable-ci security report upload-sarif
+      - name: Gate on nanolinter result
+        if: steps.lint.outputs.status != '0'
+        run: |
+          printf '::error::nanolinter verify failed (status %s)\n' "${{ steps.lint.outputs.status }}"
+          exit 1

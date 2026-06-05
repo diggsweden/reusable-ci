@@ -31,7 +31,8 @@ func TestPRSummary_HappyPath(t *testing.T) {
 			"dependency_review": "success", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			"sast_opengrep":     "failure", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			"public_code_lint":  "skipped", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			"devbase_check":     "success",
+			"devbase_check":     "skipped",
+			"nanolinter":        "success",
 			"swift":             "skipped",
 		}),
 		Now: fixedNow(),
@@ -48,7 +49,8 @@ func TestPRSummary_HappyPath(t *testing.T) {
 		"| **Commit** | `abcdef0` |", // truncated
 		"| **Checked By** | @alice |",
 		"| **Checked At** | 2026-05-10 14:30:00 UTC |",
-		"| Devbase Check | ✓ |",
+		"| Nanolinter | ✓ |",
+		"| Devbase Check | − |",
 		"| Dependency Review | ✓ |",
 		"| OpenGrep SAST | ✗ |",
 		"| Publiccode Lint | − |",

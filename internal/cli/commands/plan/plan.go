@@ -42,6 +42,7 @@ func prCmd() *cli.Command {
 			&cli.BoolFlag{Name: "sast-opengrep", Sources: cli.EnvVars("SAST_OPENGREP"), Usage: "include the opengrep SAST gate in the plan"},
 			&cli.BoolFlag{Name: "linter-publiccodelint", Sources: cli.EnvVars("LINTER_PUBLICCODELINT"), Usage: "include the publiccode-yml lint gate in the plan"},
 			&cli.BoolFlag{Name: "linter-devbasecheck", Sources: cli.EnvVars("LINTER_DEVBASECHECK"), Usage: "include the devbase lint gate in the plan"},
+			&cli.BoolFlag{Name: "linter-nanolinter", Sources: cli.EnvVars("LINTER_NANOLINTER"), Usage: "include the nanolinter lint gate in the plan"},
 			&cli.BoolFlag{Name: "linter-swiftformat", Sources: cli.EnvVars("LINTER_SWIFTFORMAT"), Usage: "include the swift-format lint gate in the plan"},
 			&cli.BoolFlag{Name: "linter-swiftlint", Sources: cli.EnvVars("LINTER_SWIFTLINT"), Usage: "include the swiftlint lint gate in the plan"},
 		},
@@ -57,6 +58,7 @@ func prCmd() *cli.Command {
 					SASTOpengrep:               cmd.Bool("sast-opengrep"),
 					PublicCodeLint:             cmd.Bool("linter-publiccodelint"),
 					DevbaseCheck:               cmd.Bool("linter-devbasecheck"),
+					Nanolinter:                 cmd.Bool("linter-nanolinter"),
 					SwiftFormat:                cmd.Bool("linter-swiftformat"),
 					SwiftLint:                  cmd.Bool("linter-swiftlint"),
 				})

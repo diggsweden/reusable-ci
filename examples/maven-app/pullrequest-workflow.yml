@@ -28,7 +28,7 @@ jobs:
       reusable-ci-binary-ref: v3.0.0
       project-type: maven
       # Recommended: Use devbase-check (lightweight, just+mise-based)
-      linters.devbasecheck: true
+      linters.nanolinter: true
       # OpenGrep SAST is enabled by default. Opt out if needed:
       # security.sast-opengrep: false
       # security.sast-opengrep-rules: p/default
