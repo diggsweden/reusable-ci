@@ -39,6 +39,12 @@
 # renovate: datasource=docker depName=golang versioning=docker
 ARG GO_BUILDER_TAG=1.26.3-alpine
 
+# DEBIAN_VERSION lives in the global ARG scope (before any FROM) because a
+# FROM line can only reference ARGs declared globally — a stage-scoped ARG is
+# invisible to a later FROM. See the pinning rationale at the base stage below.
+# renovate: datasource=docker depName=debian versioning=docker
+ARG DEBIAN_VERSION=13-slim
+
 FROM golang:${GO_BUILDER_TAG} AS gobuilder
 
 WORKDIR /src
@@ -83,13 +89,10 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 # Pinned by tag here; Renovate digest-pins on first run to convert
 # `debian:13-slim` into `debian:13-slim@sha256:<hash>`. Tag-only
 # pinning lets a malicious upstream republish the same tag with new
-# content — the SHA pin closes that window. The renovate comment
-# below opts the line into the docker datasource so Renovate keeps
-# both the tag and the digest current.
-#
-# renovate: datasource=docker depName=debian versioning=docker
-ARG DEBIAN_VERSION=13-slim
-
+# content — the SHA pin closes that window. The renovate comment on
+# the DEBIAN_VERSION ARG (hoisted to the global scope above) opts the
+# line into the docker datasource so Renovate keeps both the tag and
+# the digest current.
 FROM debian:${DEBIAN_VERSION} AS base
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -204,7 +207,7 @@ RUN apt-get update \
   && rm -rf "${CARGO_HOME}/registry" "${CARGO_HOME}/git" \
   && rustc --version \
   && cargo --version \
-  && cargo-cyclonedx --version
+  && cargo cyclonedx --version
 
 # Point cargo at the cross-linker for aarch64. Without this the
 # x86_64 default linker is used and aarch64 compiles fail with
@@ -278,7 +281,7 @@ RUN arch="$(dpkg --print-architecture)" \
 FROM base AS java
 
 # renovate: datasource=adoptium-java depName=temurin
-ARG JDK_VERSION=25.0.1+9
+ARG JDK_VERSION=25.0.3+9
 # renovate: datasource=maven depName=org.apache.maven:apache-maven extractVersion=^(?<version>.*)$
 ARG MAVEN_VERSION=3.9.11
 # renovate: datasource=gradle-version depName=gradle
@@ -349,7 +352,7 @@ RUN mkdir -p "$ANDROID_HOME/cmdline-tools" \
   && unzip -q /tmp/cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools" \
   && mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest" \
   && rm -f /tmp/cmdline-tools.zip \
-  && yes 2>/dev/null | sdkmanager --licenses >/dev/null \
+  && { yes 2>/dev/null || true; } | sdkmanager --licenses >/dev/null \
   && sdkmanager --install \
        "platform-tools" \
        "platforms;${ANDROID_PLATFORM}" \

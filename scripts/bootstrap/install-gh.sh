@@ -12,7 +12,7 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-common.sh"
 
 # renovate: datasource=github-releases depName=cli/cli
-readonly GH_VERSION="v2.84.1"
+readonly GH_VERSION="v2.93.0"
 
 resolve_gh_dist() {
   local os arch dist=""

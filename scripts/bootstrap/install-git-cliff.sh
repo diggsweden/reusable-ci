@@ -12,7 +12,7 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-common.sh"
 
 # renovate: datasource=github-releases depName=orhun/git-cliff
-readonly GIT_CLIFF_VERSION="v2.11.2"
+readonly GIT_CLIFF_VERSION="v2.13.1"
 
 resolve_git_cliff_dist() {
   local os arch dist=""

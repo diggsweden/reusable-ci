@@ -39,6 +39,10 @@ on:
   push:
     branches:
       - main
+      # Temporary: build+publish runtime images from the Go-rewrite branch so
+      # pilot consumers can resolve :v3-pre / :sha-<sha> before v3.0.0 ships.
+      # Remove this branch entry once the rewrite merges and is tagged.
+      - feat/refactor-go
     tags:
       - "v*.*.*"
       # No `paths:` filter on push: tag pushes routinely don't touch runtime
@@ -115,7 +119,7 @@ jobs:
               yq --version
               rustc --version
               cargo --version
-              cargo-cyclonedx --version
+              cargo cyclonedx --version
               reusable-ci --version
               test -d /opt/reusable-ci/scripts/bootstrap
           - name: reusable-ci-runtime-go-1.26
@@ -267,6 +271,18 @@ jobs:
             suffix: amd64
           - os: linux/arm64
             suffix: arm64
+        # Android SDK platform-tools/build-tools ship as x86_64-only Linux
+        # binaries (adb/aapt2/d8 are x86_64 ELF), so an arm64 android image
+        # cannot run its own tooling ("Exec format error"). Build android for
+        # amd64 only; publish-merge globs whatever arches exist, producing a
+        # single-arch android manifest.
+        exclude:
+          - runtime:
+              name: reusable-ci-runtime-android-35
+              target: android
+            platform:
+              os: linux/arm64
+              suffix: arm64
     permissions:
       contents: read
       packages: write
@@ -295,6 +311,15 @@ jobs:
         uses: anchore/sbom-action/download-syft@f325610c9f50a54015d37c8d16cb3b0e2c8f4de0 # v0.18.0
         with:
           syft-version: 'v1.37.0'
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Build reusable-ci binary
+        # write-digest-marker (Export digest, below) runs the reusable-ci CLI
+        # on the runner, so the binary must be built here — same as publish-merge.
+        run: bash scripts/bootstrap/install-reusable-ci.sh local
       - name: Compute build metadata
         id: meta
         run: |
@@ -383,7 +408,7 @@ jobs:
         # visibility against the security tab. exit-code=0 keeps
         # this advisory; promote to a non-zero gate once the noise
         # floor is understood.
-        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ghcr.io/${{ github.repository_owner }}/${{ matrix.runtime.name }}@${{ steps.build.outputs.digest }}
           format: sarif
@@ -448,7 +473,7 @@ jobs:
           go-version-file: go.mod
           check-latest: true
       - name: Install cosign
-        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: 'v3.0.6'
       - name: Build reusable-ci binary
@@ -475,6 +500,7 @@ jobs:
           TAG_RULES: |
             type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=weekly,enable=${{ github.event_name == 'schedule' }}
+            type=raw,value=v3-pre,enable=${{ (github.event_name == 'workflow_dispatch' && inputs.publish) || github.ref == 'refs/heads/feat/refactor-go' }}
             type=sha,prefix=sha-,enable=${{ github.event_name != 'schedule' && github.ref_type != 'tag' }}
             type=semver,pattern={{version}},enable=${{ github.ref_type == 'tag' }}
             type=semver,pattern={{major}}.{{minor}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
