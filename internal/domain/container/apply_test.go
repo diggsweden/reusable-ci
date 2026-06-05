@@ -50,6 +50,27 @@ func TestApply_RefEventBranch(t *testing.T) {
 	if !ok || got.Tag != "develop" {
 		t.Errorf("got=%+v ok=%v", got, ok)
 	}
+	// Branch names are sanitized to the docker tag grammar
+	// [A-Za-z0-9_][A-Za-z0-9_.-]{0,127}.
+	for _, tc := range []struct {
+		ref  string
+		want string
+	}{
+		{"feat/refactor-go", "feat-refactor-go"},             // slash -> dash
+		{"user/feature@v2", "user-feature-v2"},               // run of invalid chars -> single dash
+		{".hidden", "hidden"},                                // illegal leading '.'
+		{"-leading", "leading"},                              // illegal leading '-'
+		{"release/1.0.x", "release-1.0.x"},                   // dots kept in body
+		{strings.Repeat("a", 200), strings.Repeat("a", 128)}, // capped at 128
+	} {
+		got, ok, _ := container.Apply(r, container.MetadataContext{
+			RefName: tc.ref,
+			RefType: provider.RefTypeBranch,
+		})
+		if !ok || got.Tag != tc.want {
+			t.Errorf("sanitize %q: got=%q ok=%v, want %q", tc.ref, got.Tag, ok, tc.want)
+		}
+	}
 	// On a tag ref: silent skip.
 	_, ok, _ = container.Apply(r, container.MetadataContext{
 		RefName: "v1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
@@ -144,6 +165,32 @@ func TestApply_SemverUnsupportedPattern(t *testing.T) {
 	}
 }
 
+func TestApply_SemverStrict(t *testing.T) {
+	t.Parallel()
+
+	// A valid prerelease passes through {{version}} (still a valid docker tag).
+	r := mustRule(t, "type=semver,pattern={{version}}")
+	got, ok, _ := container.Apply(r, container.MetadataContext{
+		RefName: "v1.0.0-rc.1", RefType: provider.RefTypeTag,
+	})
+	if !ok || got.Tag != "1.0.0-rc.1" {
+		t.Errorf("prerelease: got=%+v ok=%v", got, ok)
+	}
+
+	// Tags that aren't strict semver (missing patch, leading zeros, date-like)
+	// don't match the official grammar, so semver rules skip them.
+	for _, ref := range []string{"v1.2", "v01.2.3", "2024.01.15"} {
+		mm := mustRule(t, "type=semver,pattern={{major}}.{{minor}}")
+
+		_, ok, _ := container.Apply(mm, container.MetadataContext{
+			RefName: ref, RefType: provider.RefTypeTag,
+		})
+		if ok {
+			t.Errorf("%q should not match strict semver", ref)
+		}
+	}
+}
+
 func TestApply_SHAWithBranchTemplate(t *testing.T) {
 	t.Parallel()
 	r := mustRule(t, "type=sha,prefix={{branch}}-")
@@ -154,6 +201,26 @@ func TestApply_SHAWithBranchTemplate(t *testing.T) {
 	})
 	if !ok || got.Tag != "feat-x-abcdef0" {
 		t.Errorf("got=%+v ok=%v", got, ok)
+	}
+	// A slashed branch in the {{branch}} template is sanitized too.
+	got, ok, _ = container.Apply(r, container.MetadataContext{
+		BranchName: "feat/x",
+		ShortSHA:   "abcdef0",
+	})
+	if !ok || got.Tag != "feat-x-abcdef0" {
+		t.Errorf("slash branch: got=%+v ok=%v", got, ok)
+	}
+}
+
+func TestApply_RejectsInvalidTag(t *testing.T) {
+	t.Parallel()
+	// A raw value the operator mistyped (slash is illegal in a tag) must fail
+	// loudly here rather than surfacing as 'invalid reference format' at push.
+	r := mustRule(t, "type=raw,value=bad/tag,enable=true")
+
+	_, _, err := container.Apply(r, container.MetadataContext{})
+	if err == nil || !strings.Contains(err.Error(), "invalid docker tag") {
+		t.Errorf("error = %v", err)
 	}
 }
 

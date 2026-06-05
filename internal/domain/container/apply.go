@@ -8,8 +8,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/internal/domain/provider"
 )
 
 // MetadataContext is the slice of provider.EventContext that tag-rule
@@ -71,6 +71,17 @@ func Apply(r Rule, ctx MetadataContext) (AppliedTag, bool, error) { //nolint:var
 		return AppliedTag{}, false, nil
 	}
 
+	// Final guarantee: no rule may emit a tag the registry will reject.
+	// Ref-derived tags are pre-sanitized, so this only trips on an invalid
+	// operator-supplied raw value or template — surfaced as a loud config
+	// error instead of an "invalid reference format" deep in `docker buildx`.
+	if !dockerTagValid.MatchString(tag) {
+		return AppliedTag{}, false, fmt.Errorf(
+			"rule produced invalid docker tag %q (must match %s): %w",
+			tag, dockerTagValid.String(), errs.ErrValidation,
+		)
+	}
+
 	return AppliedTag{Tag: tag, Priority: r.Priority()}, true, nil
 }
 
@@ -87,12 +98,49 @@ func tagFor(r Rule, ctx MetadataContext) (string, bool, error) { //nolint:varnam
 			return "", false, nil
 		}
 
-		resolved := strings.ReplaceAll(r.Prefix, "{{branch}}", ctx.BranchName)
+		// Sanitize the branch the same way as ref tags: a {{branch}}- prefix
+		// with a slashed branch (feat/refactor-go) would otherwise yield an
+		// invalid tag.
+		resolved := strings.ReplaceAll(r.Prefix, "{{branch}}", sanitizeRefTag(ctx.BranchName))
 
 		return resolved + ctx.ShortSHA, true, nil
 	}
 
 	return "", false, fmt.Errorf("unhandled rule type %q: %w", r.Type, errs.ErrValidation)
+}
+
+// maxDockerTagLen is the OCI/distribution limit on a reference tag.
+const maxDockerTagLen = 128
+
+// dockerTagInvalid matches any run of characters outside the Docker image-tag
+// alphabet ([A-Za-z0-9_.-]). Git ref names routinely contain others — most
+// often the '/' in `feat/refactor-go`, which would otherwise abort the push
+// with "invalid reference format".
+var dockerTagInvalid = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)
+
+// dockerTagValid is the OCI/distribution reference tag grammar. Every emitted
+// tag is checked against it as a final safety net (see Apply).
+var dockerTagValid = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$`)
+
+// sanitizeRefTag turns an arbitrary git ref name into a tag that satisfies the
+// distribution grammar `[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}`, mirroring
+// docker/metadata-action:
+//   - runs of tag-invalid characters collapse to a single '-'
+//     (feat/refactor-go -> feat-refactor-go),
+//   - a leading '.' or '-' (illegal as the first character) is trimmed, and
+//   - the result is capped at 128 characters.
+//
+// Returns "" when nothing valid remains, so callers skip the tag rather than
+// emit an empty/invalid reference.
+func sanitizeRefTag(ref string) string {
+	tag := dockerTagInvalid.ReplaceAllString(ref, "-")
+	tag = strings.TrimLeft(tag, ".-")
+
+	if len(tag) > maxDockerTagLen {
+		tag = tag[:maxDockerTagLen]
+	}
+
+	return tag
 }
 
 func refTag(event RefEvent, ctx MetadataContext) (string, bool, error) {
@@ -102,13 +150,17 @@ func refTag(event RefEvent, ctx MetadataContext) (string, bool, error) {
 			return "", false, nil
 		}
 
-		return ctx.RefName, ctx.RefName != "", nil
+		tag := sanitizeRefTag(ctx.RefName)
+
+		return tag, tag != "", nil
 	case RefEventTag:
 		if ctx.RefType != provider.RefTypeTag {
 			return "", false, nil
 		}
 
-		return ctx.RefName, ctx.RefName != "", nil
+		tag := sanitizeRefTag(ctx.RefName)
+
+		return tag, tag != "", nil
 	case RefEventPR:
 		if ctx.PRNumber == "" {
 			return "", false, nil
@@ -120,8 +172,12 @@ func refTag(event RefEvent, ctx MetadataContext) (string, bool, error) {
 	return "", false, fmt.Errorf("unsupported ref event %q: %w", event, errs.ErrValidation)
 }
 
-var semverMajorMinor = regexp.MustCompile(`^([0-9]+)\.([0-9]+)`)
-var semverMajor = regexp.MustCompile(`^([0-9]+)`)
+// semverRE is the official SemVer 2.0.0 grammar, verbatim from the named-group
+// variant published at
+// https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
+// It is RE2-compatible (no look-around/back-references), so it compiles under
+// Go's regexp. Capture groups: major, minor, patch, prerelease, buildmetadata.
+var semverRE = regexp.MustCompile(`^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`)
 
 func semverTag(pattern string, ctx MetadataContext) (string, bool, error) {
 	if ctx.RefType != provider.RefTypeTag {
@@ -130,23 +186,23 @@ func semverTag(pattern string, ctx MetadataContext) (string, bool, error) {
 
 	stripped := strings.TrimPrefix(ctx.RefName, "v")
 
+	// Not a strict semver tag (e.g. a date or codename) — skip the semver
+	// rules rather than emit a malformed version.
+	m := semverRE.FindStringSubmatch(stripped)
+	if m == nil {
+		return "", false, nil
+	}
+
+	major := m[semverRE.SubexpIndex("major")]
+	minor := m[semverRE.SubexpIndex("minor")]
+
 	switch pattern {
 	case "{{version}}":
-		return stripped, stripped != "", nil
+		return stripped, true, nil
 	case "{{major}}.{{minor}}":
-		m := semverMajorMinor.FindStringSubmatch(stripped)
-		if m == nil {
-			return "", false, nil
-		}
-
-		return m[1] + "." + m[2], true, nil
+		return major + "." + minor, true, nil
 	case "{{major}}":
-		m := semverMajor.FindStringSubmatch(stripped)
-		if m == nil {
-			return "", false, nil
-		}
-
-		return m[1], true, nil
+		return major, true, nil
 	}
 
 	return "", false, fmt.Errorf("unsupported semver pattern %q: %w", pattern, errs.ErrValidation)
