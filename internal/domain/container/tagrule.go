@@ -38,7 +38,7 @@ type Rule struct {
 	Type    RuleType
 	Enable  bool
 	Value   string   // type=raw
-	Pattern string   // type=semver: {{version}} | {{major}}.{{minor}} | {{major}}
+	Pattern string   // type=semver: template over {{version}}/{{major}}/{{minor}}/{{patch}} (e.g. v{{major}})
 	Event   RefEvent // type=ref
 	Prefix  string   // type=sha (may include {{branch}} placeholder)
 }

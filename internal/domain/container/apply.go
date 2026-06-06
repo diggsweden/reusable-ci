@@ -193,17 +193,22 @@ func semverTag(pattern string, ctx MetadataContext) (string, bool, error) {
 		return "", false, nil
 	}
 
-	major := m[semverRE.SubexpIndex("major")]
-	minor := m[semverRE.SubexpIndex("minor")]
+	// Substitute the supported placeholders into the pattern template. Literal
+	// text around them is preserved, so `v{{major}}` yields `v3` — letting the
+	// image tags match how consumers pin the workflow (`uses: …@v3`).
+	out := strings.NewReplacer(
+		"{{version}}", stripped,
+		"{{major}}.{{minor}}.{{patch}}", stripped,
+		"{{major}}.{{minor}}", m[semverRE.SubexpIndex("major")]+"."+m[semverRE.SubexpIndex("minor")],
+		"{{major}}", m[semverRE.SubexpIndex("major")],
+		"{{minor}}", m[semverRE.SubexpIndex("minor")],
+		"{{patch}}", m[semverRE.SubexpIndex("patch")],
+	).Replace(pattern)
 
-	switch pattern {
-	case "{{version}}":
-		return stripped, true, nil
-	case "{{major}}.{{minor}}":
-		return major + "." + minor, true, nil
-	case "{{major}}":
-		return major, true, nil
+	// A leftover placeholder means the pattern used an unknown token.
+	if strings.Contains(out, "{{") {
+		return "", false, fmt.Errorf("unsupported semver pattern %q: %w", pattern, errs.ErrValidation)
 	}
 
-	return "", false, fmt.Errorf("unsupported semver pattern %q: %w", pattern, errs.ErrValidation)
+	return out, true, nil
 }

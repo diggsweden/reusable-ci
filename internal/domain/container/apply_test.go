@@ -122,8 +122,13 @@ func TestApply_SemverPatterns(t *testing.T) {
 		{"{{version}}", "v1.2.3", "1.2.3"},
 		{"{{major}}.{{minor}}", "v2.5.7", "2.5"},
 		{"{{major}}", "v3.7.1", "3"},
+		{"{{patch}}", "v1.0.9", "9"},
 		// no leading v — still works.
 		{"{{version}}", "0.1.0", "0.1.0"},
+		// literal prefix preserved, so image tags can match `uses: …@v3`.
+		{"v{{version}}", "v1.2.3", "v1.2.3"},
+		{"v{{major}}.{{minor}}", "v2.5.7", "v2.5"},
+		{"v{{major}}", "v3.7.1", "v3"},
 	}
 	for _, c := range cases { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		r := mustRule(t, "type=semver,pattern="+c.pattern)
@@ -154,7 +159,7 @@ func TestApply_SemverSilentOnNonTag(t *testing.T) {
 
 func TestApply_SemverUnsupportedPattern(t *testing.T) {
 	t.Parallel()
-	r := mustRule(t, "type=semver,pattern={{patch}}")
+	r := mustRule(t, "type=semver,pattern={{unknown}}")
 
 	_, _, err := container.Apply(r, container.MetadataContext{
 		RefName: "v1.0.0",
