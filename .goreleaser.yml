@@ -70,11 +70,14 @@ sboms:
     documents:
       - '${artifact}.cdx.sbom.json'
     cmd: syft
+    # sbom args use env-style expansion ($artifact, $document), NOT Go
+    # templates — `{{ .Document }}` errors with "map has no entry for key
+    # Document". $document expands to the documents: entry above.
     args:
       - scan
-      - '${artifact}'
+      - '$artifact'
       - --output
-      - 'cyclonedx-json={{ .Document }}'
+      - 'cyclonedx-json=$document'
 
 # Sigstore-keyless signing of the release. cosign signs the
 # checksums.txt — one bundle covers every per-arch tarball AND every
