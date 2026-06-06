@@ -8,7 +8,7 @@
 # consume in the SAME run: the runtime-image build bakes the byte-identical
 # linux binary (Containerfile CLI_SOURCE=prebuilt), and a publish job uploads
 # the tarballs to a release. It deliberately does NOT publish (--skip=publish);
-# publishing is the caller's job, so one build feeds both the rolling edge
+# publishing is the caller's job, so one build feeds both the rolling pre-release
 # channel and (later) tagged releases — eliminating the drift between the CLI
 # in the image and the CLI in the release tarball.
 #
@@ -19,7 +19,7 @@ on: # yamllint disable-line rule:truthy
   workflow_call:
     inputs:
       version-tag:
-        description: "Version tag goreleaser stamps (e.g. v3.0.0-edge or vX.Y.Z); the leading v is stripped in archive names."
+        description: "Version tag goreleaser stamps (e.g. v3.0.0-pre or vX.Y.Z); the leading v is stripped in archive names."
         required: true
         type: string
       artifact-name:
@@ -39,7 +39,7 @@ on: # yamllint disable-line rule:truthy
         type: boolean
     outputs:
       version:
-        description: "Resolved version (version-tag without the leading v), e.g. 3.0.0-edge."
+        description: "Resolved version (version-tag without the leading v), e.g. 3.0.0-pre."
         value: ${{ jobs.build.outputs.version }}
       artifact-name:
         description: "Echoes the dist/ artifact name for callers to download."
@@ -106,8 +106,8 @@ jobs:
         run: printf 'value=%s\n' "${TAG#v}" >> "$GITHUB_OUTPUT"
       - name: Run goreleaser
         # skip=publish: this workflow only produces dist/; the caller publishes
-        #   (edge prerelease via REST, or the tagged release in Phase 2).
-        # skip=validate: edge runs have no real git tag on HEAD; the version is
+        #   (pre-release via REST, or the tagged release in Phase 2).
+        # skip=validate: pre-release runs have no real git tag on HEAD; the version is
         #   forced via GORELEASER_CURRENT_TAG instead.
         # Build-only runs (sign=false, e.g. PRs) additionally skip sign+sbom, so
         # no cosign/syft/OIDC is needed. Both branches of the expression are

@@ -135,9 +135,9 @@ tarball, selected by `reusable-ci-binary-ref`:
 | `reusable-ci-binary-ref` | Channel | Stable to pin? |
 |---|---|---|
 | `vX.Y.Z` | Release tarball, cosign-pinned to `release-binary.yml@vX.Y.Z` | Yes — production |
-| `v3.0.0-edge` | Rolling edge prerelease from the latest dev-branch build, cosign-pinned to `build-cli.yml@refs/heads/…` | No — moves; not for production |
+| `v3.0.0-pre` | Rolling pre-release from the latest dev-branch build, cosign-pinned to `build-cli.yml@refs/heads/…` | No — moves; not for production |
 
-Both verify by SHA-256 + Sigstore. The edge channel is a separate, opt-in trust
+Both verify by SHA-256 + Sigstore. The pre-release channel is a separate, opt-in trust
 domain — it never relaxes the release pin — and mirrors the image `:v3-pre` tag.
 `install-reusable-ci.sh` falls back to `go install` if download or verification
 fails.

@@ -159,18 +159,18 @@ t_sha256_accepts_genuine() (
 # _reusable_ci_cosign_identity: the two trust domains must each accept their own
 # signer's SAN and reject the other's. These grep the SANs against the actual
 # returned regex, so they validate the regex, not just a substring.
-EDGE_SAN_FEAT='https://github.com/diggsweden/reusable-ci/.github/workflows/build-cli.yml@refs/heads/feat/refactor-go'
-EDGE_SAN_MAIN='https://github.com/diggsweden/reusable-ci/.github/workflows/build-cli.yml@refs/heads/main'
+PRE_SAN_FEAT='https://github.com/diggsweden/reusable-ci/.github/workflows/build-cli.yml@refs/heads/feat/refactor-go'
+PRE_SAN_MAIN='https://github.com/diggsweden/reusable-ci/.github/workflows/build-cli.yml@refs/heads/main'
 REL_SAN='https://github.com/diggsweden/reusable-ci/.github/workflows/release-binary.yml@refs/tags/v3.1.0'
 
-t_identity_edge_accepts_dev_branches() (
-  id="$(_reusable_ci_cosign_identity v3.0.0-edge)"
-  printf '%s\n' "$EDGE_SAN_FEAT" | grep -Eq "$id" && printf '%s\n' "$EDGE_SAN_MAIN" | grep -Eq "$id"
+t_identity_pre_accepts_dev_branches() (
+  id="$(_reusable_ci_cosign_identity v3.0.0-pre)"
+  printf '%s\n' "$PRE_SAN_FEAT" | grep -Eq "$id" && printf '%s\n' "$PRE_SAN_MAIN" | grep -Eq "$id"
 )
 
-t_identity_edge_rejects_release_signer() (
-  # An edge ref must NOT trust a production-tag signature.
-  id="$(_reusable_ci_cosign_identity v3.0.0-edge)"
+t_identity_pre_rejects_release_signer() (
+  # A pre-release ref must NOT trust a production-tag signature.
+  id="$(_reusable_ci_cosign_identity v3.0.0-pre)"
   ! printf '%s\n' "$REL_SAN" | grep -Eq "$id"
 )
 
@@ -179,14 +179,14 @@ t_identity_release_accepts_tag_signer() (
   printf '%s\n' "$REL_SAN" | grep -Eq "$id"
 )
 
-t_identity_release_rejects_edge_signer() (
-  # A production ref must NOT trust an edge branch signature.
+t_identity_release_rejects_pre_signer() (
+  # A production ref must NOT trust a pre-release branch signature.
   id="$(_reusable_ci_cosign_identity v3.1.0)"
-  ! printf '%s\n' "$EDGE_SAN_MAIN" | grep -Eq "$id"
+  ! printf '%s\n' "$PRE_SAN_MAIN" | grep -Eq "$id"
 )
 
 t_identity_override_wins() (
-  [[ "$(REUSABLE_CI_COSIGN_IDENTITY='OVERRIDE-IDENTITY' _reusable_ci_cosign_identity v3.0.0-edge)" == 'OVERRIDE-IDENTITY' ]]
+  [[ "$(REUSABLE_CI_COSIGN_IDENTITY='OVERRIDE-IDENTITY' _reusable_ci_cosign_identity v3.0.0-pre)" == 'OVERRIDE-IDENTITY' ]]
 )
 
 printf 'install-reusable-ci.sh test suite\n'
@@ -200,10 +200,10 @@ assert_exit "cosign verify-blob exit 0 → accept" 0 t_cosign_verify_passes
 assert_exit "cosign verify-blob exit non-0 → reject (tampered)" 1 t_cosign_verify_rejects
 assert_exit "sha256 verify rejects tampered tarball" 1 t_sha256_rejects_tampered
 assert_exit "sha256 verify accepts genuine tarball" 0 t_sha256_accepts_genuine
-assert_exit "edge identity accepts build-cli dev-branch SAN" 0 t_identity_edge_accepts_dev_branches
-assert_exit "edge identity rejects release-binary SAN" 0 t_identity_edge_rejects_release_signer
+assert_exit "pre-release identity accepts build-cli dev-branch SAN" 0 t_identity_pre_accepts_dev_branches
+assert_exit "pre-release identity rejects release-binary SAN" 0 t_identity_pre_rejects_release_signer
 assert_exit "release identity accepts release-binary tag SAN" 0 t_identity_release_accepts_tag_signer
-assert_exit "release identity rejects edge build-cli SAN" 0 t_identity_release_rejects_edge_signer
+assert_exit "release identity rejects pre-release build-cli SAN" 0 t_identity_release_rejects_pre_signer
 assert_exit "REUSABLE_CI_COSIGN_IDENTITY override wins" 0 t_identity_override_wins
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

@@ -100,7 +100,7 @@ verify_reusable_ci_sha256() {
 # Identity is pinned to the diggsweden/reusable-ci workflow that produced the
 # signature. Two trust domains, selected by ref (see _reusable_ci_cosign_identity):
 #   vN.N.N      -> release-binary.yml on a release tag (production)
-#   *-edge      -> build-cli.yml on a development branch (rolling edge channel)
+#   *-pre      -> build-cli.yml on a development branch (rolling pre-release channel)
 # A signature from any other workflow/ref fails the check even if cosign accepts
 # the bundle. REUSABLE_CI_COSIGN_IDENTITY overrides both.
 #
@@ -111,7 +111,7 @@ _reusable_ci_cosign_identity() {
   local ref="$1"
   if [[ -n "${REUSABLE_CI_COSIGN_IDENTITY:-}" ]]; then
     printf '%s' "$REUSABLE_CI_COSIGN_IDENTITY"
-  elif [[ "$ref" == *-edge ]]; then
+  elif [[ "$ref" == *-pre ]]; then
     printf '%s' '^https://github.com/diggsweden/reusable-ci/\.github/workflows/build-cli\.yml@refs/heads/(main|feat/refactor-go)$'
   else
     printf '%s' '^https://github.com/diggsweden/reusable-ci/\.github/workflows/release-binary\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+.*$'

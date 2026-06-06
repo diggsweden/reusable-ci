@@ -45,9 +45,9 @@ on:
       - feat/refactor-go
     tags:
       - "v*.*.*"
-      # Exclude the rolling CLI edge tag (v3.0.0-edge): it's created by this
+      # Exclude the rolling CLI pre-release tag (v3.0.0-pre): it's created by this
       # workflow's publish-cli job and must NOT re-trigger the release/tag path.
-      - "!v*-edge"
+      - "!v*-pre"
       # No `paths:` filter on push: tag pushes routinely don't touch runtime
       # files, but every release tag must produce a matching image so consumers
       # can pin runtime-image to the version they're using. Branch pushes pay
@@ -238,9 +238,9 @@ jobs:
           printf 'OK: embedded version contains %s\n  output: %s\n' "$EXPECTED_VERSION" "$actual"
   # Build the reusable-ci CLI ONCE (goreleaser). The same artifact is baked
   # into every image (publish-arch, CLI_SOURCE=prebuilt) and uploaded to the
-  # rolling edge prerelease (publish-cli) — no second compile on the publish
+  # rolling pre-release (publish-cli) — no second compile on the publish
   # path, so the CLI in the image is byte-for-byte the one consumers download.
-  # version-tag: the real tag on a release push, else the rolling edge tag.
+  # version-tag: the real tag on a release push, else the rolling pre-release tag.
   build-cli:
     name: Build CLI
     # Runs on every event (incl. PR): verify and the publish jobs all consume the
@@ -251,7 +251,7 @@ jobs:
       attestations: write
     uses: ./.github/workflows/build-cli.yml
     with:
-      version-tag: ${{ github.ref_type == 'tag' && github.ref_name || 'v3.0.0-edge' }}
+      version-tag: ${{ github.ref_type == 'tag' && github.ref_name || 'v3.0.0-pre' }}
       artifact-name: cli-dist
       sign: ${{ github.event_name != 'pull_request' }}
 
@@ -610,21 +610,21 @@ jobs:
         run: |
           reusable-ci container sign "${{ steps.inspect.outputs.image-digest-ref }}"
 
-  # Publish the CLI tarballs (built once by build-cli) to the rolling edge
-  # prerelease v3.0.0-edge. Edge only — tagged releases still publish via
+  # Publish the CLI tarballs (built once by build-cli) to the rolling pre-release
+  # prerelease v3.0.0-pre. Pre-release only — tagged releases still publish via
   # release-binary.yml until Phase 2 unifies them. Runs after publish-merge so
-  # the edge CLI and edge images advance together. install-reusable-ci.sh
-  # resolves `reusable-ci-binary-ref: v3.0.0-edge` to these assets (download +
-  # cosign-verify against the build-cli edge identity).
+  # the pre-release CLI and pre-release images advance together. install-reusable-ci.sh
+  # resolves `reusable-ci-binary-ref: v3.0.0-pre` to these assets (download +
+  # cosign-verify against the build-cli pre-release identity).
   publish-cli:
-    name: Publish CLI (edge)
+    name: Publish CLI (pre-release)
     needs: [build-cli, publish-merge]
     if: >-
       github.event_name == 'schedule' || (github.event_name == 'push' && github.ref_type != 'tag') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
-      contents: write # create/update the edge prerelease + its tag
+      contents: write # create/update the pre-release + its tag
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -637,10 +637,10 @@ jobs:
         with:
           name: cli-dist
           path: cli-dist
-      - name: Publish rolling edge prerelease
+      - name: Publish rolling pre-release
         # GitHub REST API via curl (no gh, no extra action). Rolling: drop the
         # existing release + tag, then recreate at this commit and upload the
-        # dist assets — so v3.0.0-edge always re-anchors to the latest edge
+        # dist assets — so v3.0.0-pre always re-anchors to the latest pre-release
         # build. The recreated tag is excluded from this workflow's and
         # self-release.yml's tag triggers, so it never re-enters the release
         # path. curl + jq are preinstalled on the runner.
@@ -665,7 +665,7 @@ jobs:
           # Recreate the prerelease (also creates the tag at this commit).
           body="Rolling pre-release built from the latest development commit. Not for production — pin a vN.N.N release for an immutable CLI."
           create="$(curl -fsS -X POST "${auth[@]}" "${api}/releases" \
-            -d "$(jq -n --arg t "$tag" --arg c "$SHA" --arg n "reusable-ci ${VERSION} (rolling edge)" --arg b "$body" \
+            -d "$(jq -n --arg t "$tag" --arg c "$SHA" --arg n "reusable-ci ${VERSION} (rolling pre-release)" --arg b "$body" \
                  '{tag_name:$t, target_commitish:$c, name:$n, body:$b, prerelease:true, make_latest:"false"}')")"
           upload="$(printf '%s' "$create" | jq -r '.upload_url' | sed 's/{?name,label}//')"
           [ -n "$upload" ] && [ "$upload" != "null" ] || { echo "::error::release create failed"; printf '%s\n' "$create"; exit 1; }
