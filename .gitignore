@@ -23,3 +23,6 @@ Thumbs.db
 .golangci-lint-cache/
 .nanolinter/
 .mise.local.toml
+
+# Transient: prebuilt reusable-ci binary injected into the image build (CLI_SOURCE=prebuilt)
+cli-prebuilt/

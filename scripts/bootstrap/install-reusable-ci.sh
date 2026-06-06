@@ -97,15 +97,29 @@ verify_reusable_ci_sha256() {
 # than failing, so existing consumers don't break when this script
 # is updated faster than their tooling.
 #
-# Identity is pinned to release-binary.yml on a vN.N.N tag in the
-# diggsweden/reusable-ci repo. A signature produced by any other
-# workflow would fail this check even if cosign accepts the bundle.
+# Identity is pinned to the diggsweden/reusable-ci workflow that produced the
+# signature. Two trust domains, selected by ref (see _reusable_ci_cosign_identity):
+#   vN.N.N      -> release-binary.yml on a release tag (production)
+#   *-edge      -> build-cli.yml on a development branch (rolling edge channel)
+# A signature from any other workflow/ref fails the check even if cosign accepts
+# the bundle. REUSABLE_CI_COSIGN_IDENTITY overrides both.
 #
 # Operators can force-require cosign verification by setting
 # REUSABLE_CI_REQUIRE_COSIGN=1; the function then errors when cosign
 # is absent or verification fails, instead of soft-skipping.
+_reusable_ci_cosign_identity() {
+  local ref="$1"
+  if [[ -n "${REUSABLE_CI_COSIGN_IDENTITY:-}" ]]; then
+    printf '%s' "$REUSABLE_CI_COSIGN_IDENTITY"
+  elif [[ "$ref" == *-edge ]]; then
+    printf '%s' '^https://github.com/diggsweden/reusable-ci/\.github/workflows/build-cli\.yml@refs/heads/(main|feat/refactor-go)$'
+  else
+    printf '%s' '^https://github.com/diggsweden/reusable-ci/\.github/workflows/release-binary\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+.*$'
+  fi
+}
+
 verify_reusable_ci_cosign() {
-  local checksums="$1" bundle="$2"
+  local checksums="$1" bundle="$2" ref="${3:-}"
 
   if ! command -v cosign &>/dev/null; then
     if [[ "${REUSABLE_CI_REQUIRE_COSIGN:-0}" == "1" ]]; then
@@ -128,7 +142,7 @@ verify_reusable_ci_cosign() {
   fi
 
   local identity issuer
-  identity="${REUSABLE_CI_COSIGN_IDENTITY:-^https://github.com/diggsweden/reusable-ci/\\.github/workflows/release-binary\\.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+.*\$}"
+  identity="$(_reusable_ci_cosign_identity "$ref")"
   issuer="${REUSABLE_CI_COSIGN_ISSUER:-https://token.actions.githubusercontent.com}"
 
   if ! cosign verify-blob \
@@ -175,7 +189,7 @@ install_reusable_ci_release() {
   # 404 is not an error; verify_reusable_ci_cosign soft-skips when
   # the file is absent (unless REUSABLE_CI_REQUIRE_COSIGN=1).
   curl -sSfL -o "$tmp/checksums.txt.bundle" "$bundle_url" >/dev/null 2>&1 || true
-  if ! verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/checksums.txt.bundle"; then
+  if ! verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/checksums.txt.bundle" "$ref"; then
     return 1
   fi
   if ! verify_reusable_ci_sha256 "$tmp/$dist" "$tmp/checksums.txt"; then

@@ -124,6 +124,24 @@ inspect` or the GHCR UI even when tags have been pruned, and `source` links the
 GHCR package back to this repository. `licenses` is intentionally left unset —
 a runtime image bundles many differently-licensed tools.
 
+## CLI binary channels
+
+The `reusable-ci` CLI is built once per commit and used everywhere: the
+byte-identical linux binary is baked into every runtime image, and the *same*
+build is published as signed tarballs (linux/darwin × amd64/arm64). Container
+jobs use the baked binary; non-container jobs (e.g. macOS swift/iOS) download a
+tarball, selected by `reusable-ci-binary-ref`:
+
+| `reusable-ci-binary-ref` | Channel | Stable to pin? |
+|---|---|---|
+| `vX.Y.Z` | Release tarball, cosign-pinned to `release-binary.yml@vX.Y.Z` | Yes — production |
+| `v3.0.0-edge` | Rolling edge prerelease from the latest dev-branch build, cosign-pinned to `build-cli.yml@refs/heads/…` | No — moves; not for production |
+
+Both verify by SHA-256 + Sigstore. The edge channel is a separate, opt-in trust
+domain — it never relaxes the release pin — and mirrors the image `:v3-pre` tag.
+`install-reusable-ci.sh` falls back to `go install` if download or verification
+fails.
+
 ## Advanced Pinning Recipe
 
 When reusable-ci cuts a release, every image gets a matching semver tag. Override

@@ -9,6 +9,9 @@ on:
   push:
     tags:
       - "v*.*.*"
+      # Exclude the rolling CLI edge tag (v3.0.0-edge) — it is an artifact
+      # anchor created by self-runtime-container, not a real release.
+      - "!v*-edge"
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false

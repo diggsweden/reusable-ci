@@ -8,8 +8,8 @@
 #
 #   base    — bash, ca-certificates, curl, git, gnupg, gzip, jq, tar, unzip,
 #             xz, zip, yq, git-cliff, gh, glab, mise, publiccode-parser, +
-#             the reusable-ci Go binary (built from cmd/reusable-ci in the
-#             gobuilder stage below). Used by config / plan / release /
+#             the reusable-ci Go binary (built once by build-cli.yml and baked
+#             from cli-prebuilt/). Used by config / plan / release /
 #             orchestrator / changelog / provider-dispatch / publiccode-lint
 #             jobs.
 #   full    — base + opengrep + syft + trivy. Used by security and SBOM jobs.
@@ -31,56 +31,11 @@
 # Tool versions are pinned via Renovate (datasource comments below or in
 # the install-*.sh helpers).
 
-# =============================================================================
-# Go builder — produces /out/reusable-ci, copied into base below.
-# CGO is disabled so the binary is statically linked and doesn't pin a libc.
-# =============================================================================
-
-# renovate: datasource=docker depName=golang versioning=docker
-ARG GO_BUILDER_TAG=1.26.3-alpine
-
 # DEBIAN_VERSION lives in the global ARG scope (before any FROM) because a
 # FROM line can only reference ARGs declared globally — a stage-scoped ARG is
 # invisible to a later FROM. See the pinning rationale at the base stage below.
 # renovate: datasource=docker depName=debian versioning=docker
 ARG DEBIAN_VERSION=13-slim
-
-FROM golang:${GO_BUILDER_TAG} AS gobuilder
-
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-
-COPY cmd/ cmd/
-COPY internal/ internal/
-
-ARG REUSABLE_CI_VERSION=dev
-ARG REUSABLE_CI_COMMIT=unknown
-ARG REUSABLE_CI_DATE=unknown
-# SOURCE_DATE_EPOCH (RFC 5785-style reproducible-builds env) makes
-# the `go build` output byte-identical across rebuilds of the same
-# commit. The default `0` is intentional: when an external caller
-# runs `docker build` without passing this, they get the canonical
-# Unix epoch, not the runner's wall-clock. Self-runtime-container.yml
-# passes the git-commit timestamp here.
-ARG SOURCE_DATE_EPOCH=0
-
-# BuildKit go-build + module caches: the Containerfile compiles the
-# same binary 14× per CI cycle (7 targets × 2 archs). Cache mounts
-# cut all but the first invocation to milliseconds. The mounts
-# survive across runs via `cache-to: type=gha,mode=max`.
-ENV CGO_ENABLED=0
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    --mount=type=cache,target=/go/pkg/mod \
-    SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
-    go build \
-      -trimpath \
-      -ldflags="-s -w \
-        -X main.version=${REUSABLE_CI_VERSION} \
-        -X main.commit=${REUSABLE_CI_COMMIT} \
-        -X main.date=${REUSABLE_CI_DATE}" \
-      -o /out/reusable-ci ./cmd/reusable-ci \
-  && /out/reusable-ci --version
 
 # =============================================================================
 # Base stage
@@ -120,11 +75,13 @@ RUN apt-get update \
 COPY scripts/bootstrap /opt/reusable-ci/scripts/bootstrap
 COPY templates /opt/reusable-ci/templates
 
-# The Go binary built in the gobuilder stage — the source of truth for
-# every CI/CD operation. The bash scripts under scripts/bootstrap/ are only
-# tool installers used at runtime-image build time, not at workflow run
-# time.
-COPY --from=gobuilder /out/reusable-ci /usr/local/bin/reusable-ci
+# The reusable-ci binary — built once by build-cli.yml (goreleaser), published
+# as a signed tarball, and baked here byte-for-byte. The verify/publish jobs
+# extract it to cli-prebuilt/reusable-ci in the build context, so the CLI in the
+# image is the same artifact consumers download (build-once). The bash scripts
+# under scripts/bootstrap/ are only tool installers used at runtime-image build
+# time, not at workflow run time.
+COPY cli-prebuilt/reusable-ci /usr/local/bin/reusable-ci
 
 # Install binary tools via the shared install-*.sh helpers so versions stay
 # Renovate-managed in one place. Each helper short-circuits if the binary
