@@ -47,7 +47,10 @@ archives:
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
     files:
       - LICENSE
-      - LICENSES/**/*
+      # Flat dir — LICENSES/**/* matches nothing here; LICENSES/* ships the
+      # EUPL-1.2 / GPL-3.0-or-later / CC0-1.0 texts (GPL-3 requires conveying
+      # the license with the binary).
+      - LICENSES/*
       - README.md
 
 checksum:

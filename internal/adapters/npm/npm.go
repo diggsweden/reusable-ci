@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-// SPDX-License-Identifier: CC0-1.0
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
 // Package npm shells out to the system `npm` binary. Used by the
 // version-bump use case to run `npm version <v> --no-git-tag-version`.

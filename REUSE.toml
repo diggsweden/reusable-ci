@@ -4,6 +4,12 @@
 
 version = 1
 
+# Root dual-license notice (points to LICENSES/); the notice itself is CC0.
+[[annotations]]
+path = "LICENSE"
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
 # misc - test explicit paths first
 [[annotations]]
 path = "README.md"

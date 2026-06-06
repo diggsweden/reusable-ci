@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-// SPDX-License-Identifier: CC0-1.0
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
 // Package gpg integrates with the on-disk GPG keyring and gpg-agent so
 // git's own signing path — `git tag -s`, `git commit -S`, `git tag -v`

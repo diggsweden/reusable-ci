@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-// SPDX-License-Identifier: CC0-1.0
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
 // Command gen-cli-reference walks the reusable-ci urfave/cli command
 // tree and prints a Markdown reference document to stdout. It is the

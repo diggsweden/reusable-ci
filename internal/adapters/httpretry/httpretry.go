@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-// SPDX-License-Identifier: CC0-1.0
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
 // Package httpretry wraps an http.RoundTripper with retry-on-transient-failure
 // semantics: 502/503/504, 429 Too Many Requests (honouring Retry-After),
