@@ -58,32 +58,16 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.value }}
     steps:
-      - name: Harden runner (egress=block, explicit allowlist)
-        # The binary produced here is what the image bakes and what consumers
-        # download — egress is knowable, so block everything else (a compromised
-        # module-graph dependency can't exfiltrate during build/sign).
+      - name: Harden runner
+        # audit (not block), consistent with every other job in
+        # self-runtime-container.yml. The CLI's supply-chain trust is cosign
+        # keyless signing + SLSA build-provenance + the consumer-side identity
+        # pin — not egress. A block-list here is brittle: tool downloads
+        # (cosign, syft, goreleaser, GitHub release-asset S3 redirects) hit
+        # shifting CDN/host endpoints. harden-runner still records all egress.
         uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
         with:
-          egress-policy: block
-          # Build/sign endpoints are lifted from release-binary.yml (the proven
-          # goreleaser job). The trailing two cover actions/upload-artifact's
-          # results backend — verify/trim on the first real run (block mode
-          # reports any endpoint it stops).
-          allowed-endpoints: >
-            api.github.com:443
-            github.com:443
-            objects.githubusercontent.com:443
-            release-assets.githubusercontent.com:443
-            uploads.github.com:443
-            proxy.golang.org:443
-            sum.golang.org:443
-            storage.googleapis.com:443
-            fulcio.sigstore.dev:443
-            rekor.sigstore.dev:443
-            tuf-repo-cdn.sigstore.dev:443
-            ghcr.io:443
-            *.actions.githubusercontent.com:443
-            *.blob.core.windows.net:443
+          egress-policy: audit
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
