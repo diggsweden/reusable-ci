@@ -65,16 +65,16 @@ jobs:
         # pin — not egress. A block-list here is brittle: tool downloads
         # (cosign, syft, goreleaser, GitHub release-asset S3 redirects) hit
         # shifting CDN/host endpoints. harden-runner still records all egress.
-        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
           fetch-tags: true
       - name: Set up Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -92,9 +92,9 @@ jobs:
         # goreleaser's sboms: block shells out to syft (one CycloneDX doc per
         # archive). Pin matches release-binary.yml.
         if: ${{ inputs.sign }}
-        uses: anchore/sbom-action/download-syft@f325610c9f50a54015d37c8d16cb3b0e2c8f4de0 # v0.18.0
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
-          syft-version: 'v1.37.0'
+          syft-version: 'v1.45.1'
       - name: Set SOURCE_DATE_EPOCH from commit
         # Pins the embedded date + tarball mtimes to the commit timestamp so
         # rebuilds of the same commit are byte-identical.
@@ -111,7 +111,7 @@ jobs:
         #   forced via GORELEASER_CURRENT_TAG instead.
         # Build-only runs (sign=false, e.g. PRs) also skip sign+sbom so no cosign,
         # syft, or OIDC is required.
-        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
+        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         with:
           distribution: goreleaser
           version: '~> v2'
@@ -123,7 +123,7 @@ jobs:
         # SLSA v1.0 provenance for every tarball — covers the bytes that are
         # simultaneously baked into the image and uploaded to the release.
         if: ${{ inputs.sign }}
-        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-path: 'dist/reusable-ci_*.tar.gz'
       - name: Upload dist artifact
