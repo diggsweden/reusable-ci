@@ -89,7 +89,9 @@ jobs:
         # goreleaser's signs: block shells out to cosign; install it
         # explicitly with version pinning rather than relying on a
         # runner-provided default. Renovate keeps the pin current.
-        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
+        # v4.x installer is required for cosign v3.x (v3 ships a .sigstore.json
+        # bundle, not the detached .sig the v3.7.0 installer fails to fetch).
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: 'v3.0.6'
       - name: Install syft
