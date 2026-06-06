@@ -105,17 +105,19 @@ jobs:
           TAG: ${{ inputs.version-tag }}
         run: printf 'value=%s\n' "${TAG#v}" >> "$GITHUB_OUTPUT"
       - name: Run goreleaser
-        # --skip=publish: this workflow only produces dist/; the caller publishes
+        # skip=publish: this workflow only produces dist/; the caller publishes
         #   (edge prerelease via REST, or the tagged release in Phase 2).
-        # --skip=validate: edge runs have no real git tag on HEAD; the version is
+        # skip=validate: edge runs have no real git tag on HEAD; the version is
         #   forced via GORELEASER_CURRENT_TAG instead.
-        # Build-only runs (sign=false, e.g. PRs) also skip sign+sbom so no cosign,
-        # syft, or OIDC is required.
+        # Build-only runs (sign=false, e.g. PRs) additionally skip sign+sbom, so
+        # no cosign/syft/OIDC is needed. Both branches of the expression are
+        # non-empty on purpose: an empty string is falsy in GitHub Actions, so
+        # `sign && '' || ...` would wrongly take the fallback and skip signing.
         uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         with:
           distribution: goreleaser
           version: '~> v2'
-          args: release --clean --skip=publish,validate${{ inputs.sign && '' || ',sign,sbom' }}
+          args: release --clean --skip=${{ inputs.sign && 'publish,validate' || 'publish,validate,sign,sbom' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ inputs.version-tag }}

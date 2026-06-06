@@ -670,9 +670,12 @@ jobs:
           upload="$(printf '%s' "$create" | jq -r '.upload_url' | sed 's/{?name,label}//')"
           [ -n "$upload" ] && [ "$upload" != "null" ] || { echo "::error::release create failed"; printf '%s\n' "$create"; exit 1; }
 
-          # Upload every dist asset.
+          # Upload the release artifacts only: archives, checksums, the cosign
+          # signature bundle, and per-archive SBOMs. Deliberately excludes
+          # goreleaser's internal dist files (artifacts.json, config.yaml,
+          # metadata.json), which are not release assets.
           n=0
-          for f in "$assets_dir"/*; do
+          for f in "$assets_dir"/*.tar.gz "$assets_dir"/checksums.txt "$assets_dir"/checksums.txt.bundle "$assets_dir"/*.sbom.json; do
             [ -f "$f" ] || continue
             curl -fsS -X POST "${auth[@]}" -H "Content-Type: application/octet-stream" \
               --data-binary @"$f" "${upload}?name=$(basename "$f")" >/dev/null
