@@ -52,19 +52,35 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Mark workspace safe for git
-        # The runtime image also sets this at the system level, but a workflow
-        # change takes effect immediately whereas the image fix is gated on an
-        # image rebuild. Setting it here as well keeps the job correct on any
-        # consumer-pinned image tag. The container checkout is owned by the host
-        # runner UID, so git otherwise rejects the workspace as "dubious
-        # ownership" for the base fetch and nanolinter's git-based checks.
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Fetch base branch for PR
-        if: github.event_name == 'pull_request'
+      - name: Checkout repository
+        # Use the git binary baked into the runtime image instead of
+        # actions/checkout: that action is a Node JS action, and the runtime
+        # images don't ship node (only the dedicated node image does), so it
+        # only works where the platform injects node (GitHub) and breaks on
+        # Forgejo/podman runners. git-binary checkout works everywhere.
+        #
+        # Full history (no --depth) so nanolinter's git-based checks
+        # (commit range, version-control) have the merge-base. Token auth via
+        # http.extraheader keeps the credential out of the remote URL and the
+        # process list's remote config. safe.directory covers the case where the
+        # workspace mount is owned by a different UID than the container user.
         env:
+          GIT_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+          SHA: ${{ github.sha }}
           BASE_REF: ${{ github.base_ref }}
-        run: git fetch origin "$BASE_REF":"$BASE_REF"
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git init -q .
+          git remote add origin "${SERVER_URL}/${REPO}.git"
+          hdr="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GIT_TOKEN" | base64 | tr -d '\n')"
+          git -c http.extraheader="$hdr" fetch --prune origin "$SHA"
+          if [ -n "${BASE_REF:-}" ]; then
+            git -c http.extraheader="$hdr" fetch origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          fi
+          git checkout -q --detach "$SHA"
       - name: Install project tools (nanolinter + check tools)
         env:
           MISE_GITHUB_TOKEN: ${{ github.token }}
