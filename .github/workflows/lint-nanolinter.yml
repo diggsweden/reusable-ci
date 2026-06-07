@@ -90,8 +90,8 @@ jobs:
       # files: $GITHUB_ENV/$GITHUB_OUTPUT/$GITHUB_PATH all live under RUNNER_TEMP
       # (/__w/_temp), a runner-owned mount. So steps must NOT use them — they
       # share state through these static paths under the container-writable /tmp
-      # (workdir + SARIF), a status file, and an absolute binary path instead of
-      # step outputs / env exports / PATH appends.
+      # (workdir + SARIF) and an absolute binary path instead of step outputs /
+      # env exports / PATH appends.
       WORKDIR: /tmp/nl-src
       SARIF_FILE: /tmp/nl-src/nanolinter-security.sarif
       RC_BIN: /tmp/nl-bin/reusable-ci
@@ -121,19 +121,23 @@ jobs:
             git -c http.extraheader="$hdr" fetch origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
           fi
           git checkout -q --detach "$SHA"
-      - name: Run nanolinter (gate + security SARIF)
+      - name: Run nanolinter (security gate)
         # nanolinter + check tools are baked (default env → /opt/mise shims).
         # --report sarif-security is a report filter only: verify runs the full
-        # plan and gates on every check. The exit status is written to a status
-        # file (not $GITHUB_OUTPUT, which the non-root user can't write); the
-        # final gate step reads it.
+        # plan and gates on every check. This step fails directly on a blocking
+        # finding (with a clear message) so the red lands HERE, next to the
+        # per-check summary — not on a separate "gate" step that reads like a
+        # workflow glitch. The SARIF steps below still run via `if: always()`, so
+        # the report is produced + uploaded even though this step failed.
         run: |
           set +e
           cd "$WORKDIR"
           nanolinter verify --report sarif-security --out "$SARIF_FILE"
-          status=$?
-          printf '%s\n' "$status" > "$WORKDIR/.lint-status"
-          exit 0
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            printf '::error::nanolinter found blocking lint issues — see the per-check summary above (this is a lint gate on your code, not a workflow error).\n'
+          fi
+          exit "$rc"
       - name: Install reusable-ci (cosign-verified, SARIF tooling)
         # SARIF glue only, installed via the canonical bootstrap installer (curl +
         # cosign, both baked into the flavour image). curl-fetches the two scripts
@@ -179,13 +183,3 @@ jobs:
           set -euo pipefail
           [ -f "$SARIF_FILE" ] && [ -x "$RC_BIN" ] || exit 0
           "$RC_BIN" security report upload-sarif
-      - name: Gate on nanolinter result
-        # Reads the status file the lint step wrote (no step outputs available to
-        # the non-root user). Missing file ⇒ lint never ran ⇒ fail.
-        if: always()
-        run: |
-          status="$(cat "$WORKDIR/.lint-status" 2>/dev/null || echo 1)"
-          if [ "$status" != "0" ]; then
-            printf '::error::nanolinter verify failed (status %s)\n' "$status"
-            exit 1
-          fi
