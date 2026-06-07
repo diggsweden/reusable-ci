@@ -77,6 +77,15 @@ jobs:
       GIT_CONFIG_COUNT: "1"
       GIT_CONFIG_KEY_0: safe.directory
       GIT_CONFIG_VALUE_0: "*"
+      # Restore the image's intended writable home. GitHub forces HOME=/github/home
+      # (a read-only mount) for container jobs, overriding the image's own
+      # /home/nanolinter (owned by the non-root user). opengrep hardcodes
+      # `mkdir $HOME/.opengrep` on startup with no env override, so it crashes the
+      # SAST check under the read-only /github/home; pointing HOME back at the
+      # image home (where the baked tool caches/config already live) fixes it.
+      # Other tools use the baked XDG_CACHE_HOME, and mvn already doesn't need a
+      # writable HOME, so this only helps.
+      HOME: /home/nanolinter
       # The non-root image user (uid 65532) cannot write the runner file-command
       # files: $GITHUB_ENV/$GITHUB_OUTPUT/$GITHUB_PATH all live under RUNNER_TEMP
       # (/__w/_temp), a runner-owned mount. So steps must NOT use them — they
