@@ -63,6 +63,15 @@ jobs:
       image: ${{ inputs['nanolinter-image'] }}
     permissions:
       contents: read
+    env:
+      # Trust the workspace for git WITHOUT writing a config file: the image is
+      # non-root and $HOME (/github/home) is read-only, so `git config --global`
+      # fails. GIT_CONFIG_* env is read by every git invocation in the job
+      # (our checkout + nanolinter's own git-based checks), so it covers the
+      # host-UID-vs-container-UID "dubious ownership" on the workspace mount.
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: "*"
     steps:
       - name: Checkout repository
         # git binary (baked in the image) — not actions/checkout (a Node JS
@@ -79,7 +88,6 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git init -q .
           git remote add origin "${SERVER_URL}/${REPO}.git"
           hdr="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GIT_TOKEN" | base64 | tr -d '\n')"
