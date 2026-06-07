@@ -118,8 +118,11 @@ jobs:
       - name: Install reusable-ci (SARIF tooling, via mise github)
         # SARIF glue only. The image's $HOME and /opt/mise are read-only for the
         # non-root user, so redirect HOME + XDG_* + MISE_*_DIR to a writable
-        # mktemp dir. github: avoids the baked /opt/mise tools, so the redirect
-        # is safe. Copies the binary onto PATH. TLS-verified (not cosign).
+        # mktemp dir. The image also bakes MISE_CONFIG_DIR=/opt/mise and pins
+        # MISE_OVERRIDE_CONFIG_FILENAMES=/opt/mise/config.toml (read-only), so
+        # `mise use -g` would try to write that file and fail — redirect both to
+        # a writable empty config too. github: avoids the baked /opt/mise tools,
+        # so the redirect is safe. Copies the binary onto PATH. TLS-verified (not cosign).
         if: always() && inputs.upload-sarif && steps.lint.outputs.sarif == 'true'
         env:
           MISE_GITHUB_TOKEN: ${{ github.token }}
@@ -128,9 +131,11 @@ jobs:
           set -euo pipefail
           base="$(mktemp -d)"
           mkdir -p "$base"/cache "$base"/config "$base"/data "$base"/mise "$base"/misecache "$base"/state "$base"/bin
+          : > "$base/config.toml"
           export HOME="$base" \
                  XDG_CACHE_HOME="$base/cache" XDG_CONFIG_HOME="$base/config" XDG_DATA_HOME="$base/data" \
-                 MISE_DATA_DIR="$base/mise" MISE_CACHE_DIR="$base/misecache" MISE_STATE_DIR="$base/state"
+                 MISE_DATA_DIR="$base/mise" MISE_CACHE_DIR="$base/misecache" MISE_STATE_DIR="$base/state" \
+                 MISE_CONFIG_DIR="$base" MISE_OVERRIDE_CONFIG_FILENAMES="$base/config.toml"
           mise use -g "github:diggsweden/reusable-ci@${BINARY_REF}"
           install -m0755 "$(mise which reusable-ci)" "$base/bin/reusable-ci"
           printf '%s\n' "$base/bin" >> "$GITHUB_PATH"
