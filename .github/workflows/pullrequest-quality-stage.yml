@@ -12,9 +12,19 @@ on:
         required: true
         type: string
       runtime-image:
-        description: "reusable-ci runtime image for the lint/status/summary jobs (base is sufficient)"
+        description: "reusable-ci runtime image for the status/summary jobs (base is sufficient)"
         required: false
         default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+        type: string
+      nanolinter-image:
+        description: "nanolinter flavour image the nanolinter lint job runs in (pin by @sha256)"
+        required: false
+        default: "codeberg.org/itiquette/nanolinter:full"
+        type: string
+      reusable-ci-binary-ref:
+        description: "reusable-ci version the nanolinter job installs (mise github:) for SARIF tooling"
+        required: false
+        default: "v3.0.0"
         type: string
     # Aggregator: forwards CODE_SCANNING_TOKEN to the nanolinter job for
     # its security-SARIF upload; other lint jobs use the auto GITHUB_TOKEN.
@@ -34,7 +44,8 @@ jobs:
       CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
     uses: ./.github/workflows/lint-nanolinter.yml
     with:
-      runtime-image: ${{ inputs['runtime-image'] }}
+      nanolinter-image: ${{ inputs['nanolinter-image'] }}
+      reusable-ci-binary-ref: ${{ inputs['reusable-ci-binary-ref'] }}
   swift:
     name: Swift Lint
     if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.swift.runs }}

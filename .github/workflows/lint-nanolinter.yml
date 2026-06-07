@@ -6,25 +6,37 @@
 # repository and uploads nanolinter's security findings (OpenGrep SAST, OSV
 # dependency scan, secrets, trivy-fs) to GitHub Code Scanning as SARIF.
 #
-# Runs inside the reusable-ci runtime container, which carries `reusable-ci`
-# (for the SARIF enrich/upload commands) and `mise` (to install the
-# consumer's pinned nanolinter + every check tool from its .mise.toml).
+# Runs inside a nanolinter FLAVOUR image (e.g. codeberg.org/itiquette/nanolinter:java),
+# which bakes nanolinter + its whole check toolchain (xmllint, opengrep,
+# osv-scanner, java checkstyle/pmd/spotbugs, …). reusable-ci is installed at
+# runtime via the image's mise (github: backend) only for the SARIF
+# enrich/upload glue. The image is non-root and its $HOME / /opt/mise are
+# read-only, so the reusable-ci install redirects HOME + XDG_* + MISE_*_DIR to a
+# workspace-temp dir (it doesn't need the baked tools, so the redirect is safe).
+#
+# Note: the reusable-ci install here is TLS-verified (mise github:), not
+# cosign-identity-pinned — acceptable for the lint helper (it only processes
+# SARIF). Consumers that *run* reusable-ci pipelines install it cosign-verified
+# via install-reusable-ci.sh elsewhere.
 #
 # How to use:
-# 1. Ensure your project has:
-#    - .mise.toml pinning forgejo:itiquette/nanolinter (+ the check tools)
-#    - nanolinter.toml verify plan
-#
+# 1. Ensure your project has a nanolinter.toml verify plan and sets
+#    `nanolinter-image` to the flavour matching its ecosystem.
 # 2. It is called automatically by pullrequest-orchestrator.yml when
 #    linters.nanolinter is enabled (the default).
 name: Lint Nanolinter
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
-      runtime-image:
-        description: "reusable-ci runtime image (provides reusable-ci + mise). Optional override; default uses the matching v3.0.0 runtime image."
+      nanolinter-image:
+        description: "nanolinter flavour image to lint in (pin by @sha256). e.g. codeberg.org/itiquette/nanolinter:java"
         required: false
-        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+        default: "codeberg.org/itiquette/nanolinter:full"
+        type: string
+      reusable-ci-binary-ref:
+        description: "reusable-ci version installed (via mise github:) for the SARIF enrich/upload commands"
+        required: false
+        default: "v3.0.0"
         type: string
       upload-sarif:
         description: "Upload nanolinter's security SARIF to GitHub Code Scanning"
@@ -48,22 +60,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     container:
-      image: ${{ inputs['runtime-image'] }}
+      image: ${{ inputs['nanolinter-image'] }}
     permissions:
       contents: read
     steps:
       - name: Checkout repository
-        # Use the git binary baked into the runtime image instead of
-        # actions/checkout: that action is a Node JS action, and the runtime
-        # images don't ship node (only the dedicated node image does), so it
-        # only works where the platform injects node (GitHub) and breaks on
-        # Forgejo/podman runners. git-binary checkout works everywhere.
-        #
-        # Full history (no --depth) so nanolinter's git-based checks
-        # (commit range, version-control) have the merge-base. Token auth via
-        # http.extraheader keeps the credential out of the remote URL and the
-        # process list's remote config. safe.directory covers the case where the
-        # workspace mount is owned by a different UID than the container user.
+        # git binary (baked in the image) — not actions/checkout (a Node JS
+        # action; the image ships no node). Full history (no --depth) so
+        # nanolinter's git-based checks (commit range, version-control) have the
+        # merge-base. Token auth via http.extraheader keeps the credential out
+        # of the remote URL. safe.directory covers the host-UID-vs-container-UID
+        # ownership mismatch on the workspace mount.
         env:
           GIT_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -81,30 +88,39 @@ jobs:
             git -c http.extraheader="$hdr" fetch origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
           fi
           git checkout -q --detach "$SHA"
-      - name: Install project tools (nanolinter + check tools)
-        env:
-          MISE_GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          # nanolinter + every check tool (opengrep, osv-scanner, …) are
-          # pinned in the consumer's .mise.toml.
-          mise trust
-          mise install
-      - name: Reset install-time working tree changes
-        # Install hooks (e.g. npm prepare) can modify tracked files, causing
-        # false positives in the version-control check. Reset so linters only
-        # see committed source state.
-        run: git checkout -- .
       - name: Run nanolinter (gate + security SARIF)
         id: lint
-        # --report sarif-security is a report filter only: verify still runs
-        # the full plan and gates on every check; the SARIF carries just the
-        # CheckClass::Security findings (sast/osv/secrets/trivy-fs).
+        # nanolinter + every check tool are baked in the flavour image (default
+        # env → MISE_DATA_DIR=/opt/mise shims). --report sarif-security is a
+        # report filter only: verify still runs the full plan and gates on every
+        # check; the SARIF carries just the CheckClass::Security findings.
         run: |
           set +e
-          mise exec -- nanolinter verify --report sarif-security --out nanolinter-security.sarif
+          nanolinter verify --report sarif-security --out nanolinter-security.sarif
           status=$?
           printf 'status=%s\n' "$status" >> "$GITHUB_OUTPUT"
           exit 0
+      - name: Install reusable-ci (SARIF tooling, via mise github)
+        # Only the SARIF glue. The image's $HOME and /opt/mise are read-only for
+        # the non-root user, so redirect HOME + XDG_* + MISE_*_DIR to a writable
+        # temp. github: avoids the baked /opt/mise tools, so the redirect is
+        # safe (this step doesn't use them). Copies the binary onto PATH for the
+        # enrich/upload steps. TLS-verified (not cosign) — see the file header.
+        if: always() && inputs.upload-sarif && hashFiles('nanolinter-security.sarif') != ''
+        env:
+          MISE_GITHUB_TOKEN: ${{ github.token }}
+          BINARY_REF: ${{ inputs.reusable-ci-binary-ref }}
+        run: |
+          set -euo pipefail
+          base="${RUNNER_TEMP:-/tmp}/rcinstall"
+          mkdir -p "$base"/cache "$base"/config "$base"/data "$base"/mise "$base"/misecache "$base"/state "$base"/bin
+          export HOME="$base" \
+                 XDG_CACHE_HOME="$base/cache" XDG_CONFIG_HOME="$base/config" XDG_DATA_HOME="$base/data" \
+                 MISE_DATA_DIR="$base/mise" MISE_CACHE_DIR="$base/misecache" MISE_STATE_DIR="$base/state"
+          mise use -g "github:diggsweden/reusable-ci@${BINARY_REF}"
+          install -m0755 "$(mise which reusable-ci)" "$base/bin/reusable-ci"
+          printf '%s\n' "$base/bin" >> "$GITHUB_PATH"
+          "$base/bin/reusable-ci" --version
       - name: Enrich nanolinter SARIF for GitHub dedupe
         if: always() && inputs.upload-sarif && hashFiles('nanolinter-security.sarif') != ''
         env:

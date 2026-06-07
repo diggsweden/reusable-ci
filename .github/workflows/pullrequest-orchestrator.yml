@@ -77,6 +77,11 @@ on:
         required: false
         default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
         type: string
+      nanolinter-image:
+        description: "nanolinter flavour image the nanolinter lint job runs in (pin by @sha256 to your ecosystem flavour, e.g. codeberg.org/itiquette/nanolinter:java)"
+        required: false
+        default: "codeberg.org/itiquette/nanolinter:full"
+        type: string
     secrets:
       CODE_SCANNING_TOKEN:
         description: "Token with security-events:write for SARIF upload (nanolinter security findings)"
@@ -120,6 +125,8 @@ jobs:
       pr-plan-json: ${{ needs.compose-pr-plan.outputs.pr-plan-json }}
       quality-stage-plan-json: ${{ needs.compose-pr-plan.outputs.quality-stage-plan-json }}
       runtime-image: ${{ inputs['runtime-image'] }}
+      nanolinter-image: ${{ inputs['nanolinter-image'] }}
+      reusable-ci-binary-ref: ${{ inputs['reusable-ci-binary-ref'] }}
 
   # ===== Summary =====
   pr-summary:
