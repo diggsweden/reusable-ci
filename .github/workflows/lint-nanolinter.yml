@@ -10,9 +10,14 @@
 # which bakes nanolinter + its whole check toolchain (xmllint, opengrep,
 # osv-scanner, java checkstyle/pmd/spotbugs, …). reusable-ci is installed at
 # runtime via the image's mise (github: backend) only for the SARIF
-# enrich/upload glue. The image is non-root and its $HOME / /opt/mise are
-# read-only, so the reusable-ci install redirects HOME + XDG_* + MISE_*_DIR to a
-# workspace-temp dir (it doesn't need the baked tools, so the redirect is safe).
+# enrich/upload glue.
+#
+# Non-root image notes: the flavour image runs as a non-root user, and in a
+# GitHub job both $GITHUB_WORKSPACE and RUNNER_TEMP are runner-owned mounts the
+# user can't write, plus $HOME is the read-only /github/home mount. So the job
+# does the checkout, lint, SARIF and reusable-ci install in a fresh writable
+# `mktemp -d` (the container's /tmp is user-writable) and redirects HOME/XDG/MISE
+# there too. No root, no workspace writes.
 #
 # Note: the reusable-ci install here is TLS-verified (mise github:), not
 # cosign-identity-pinned — acceptable for the lint helper (it only processes
@@ -64,22 +69,20 @@ jobs:
     permissions:
       contents: read
     env:
-      # Trust the workspace for git WITHOUT writing a config file: the image is
-      # non-root and $HOME (/github/home) is read-only, so `git config --global`
-      # fails. GIT_CONFIG_* env is read by every git invocation in the job
-      # (our checkout + nanolinter's own git-based checks), so it covers the
-      # host-UID-vs-container-UID "dubious ownership" on the workspace mount.
+      # Trust the worktree for git without writing a config file: the image is
+      # non-root with a read-only $HOME, so `git config --global` fails.
+      # GIT_CONFIG_* is read by every git invocation (our checkout + nanolinter's
+      # own git-based checks).
       GIT_CONFIG_COUNT: "1"
       GIT_CONFIG_KEY_0: safe.directory
       GIT_CONFIG_VALUE_0: "*"
     steps:
-      - name: Checkout repository
-        # git binary (baked in the image) — not actions/checkout (a Node JS
-        # action; the image ships no node). Full history (no --depth) so
-        # nanolinter's git-based checks (commit range, version-control) have the
-        # merge-base. Token auth via http.extraheader keeps the credential out
-        # of the remote URL. safe.directory covers the host-UID-vs-container-UID
-        # ownership mismatch on the workspace mount.
+      - name: Checkout repository (writable workdir)
+        # The non-root user can't write $GITHUB_WORKSPACE / RUNNER_TEMP (runner-
+        # owned mounts), so check out into a fresh mktemp dir (/tmp is writable)
+        # and export it as WORKDIR for later steps. git binary, not
+        # actions/checkout (the image ships no node). Full history so nanolinter's
+        # git-based checks have the merge-base; token auth via http.extraheader.
         env:
           GIT_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -88,6 +91,9 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
+          workdir="$(mktemp -d)"
+          printf 'WORKDIR=%s\n' "$workdir" >> "$GITHUB_ENV"
+          cd "$workdir"
           git init -q .
           git remote add origin "${SERVER_URL}/${REPO}.git"
           hdr="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GIT_TOKEN" | base64 | tr -d '\n')"
@@ -98,29 +104,29 @@ jobs:
           git checkout -q --detach "$SHA"
       - name: Run nanolinter (gate + security SARIF)
         id: lint
-        # nanolinter + every check tool are baked in the flavour image (default
-        # env → MISE_DATA_DIR=/opt/mise shims). --report sarif-security is a
-        # report filter only: verify still runs the full plan and gates on every
-        # check; the SARIF carries just the CheckClass::Security findings.
+        # nanolinter + check tools are baked (default env → /opt/mise shims).
+        # --report sarif-security is a report filter only: verify runs the full
+        # plan and gates on every check.
         run: |
           set +e
+          cd "$WORKDIR"
           nanolinter verify --report sarif-security --out nanolinter-security.sarif
           status=$?
           printf 'status=%s\n' "$status" >> "$GITHUB_OUTPUT"
+          [ -f "$WORKDIR/nanolinter-security.sarif" ] && printf 'sarif=true\n' >> "$GITHUB_OUTPUT"
           exit 0
       - name: Install reusable-ci (SARIF tooling, via mise github)
-        # Only the SARIF glue. The image's $HOME and /opt/mise are read-only for
-        # the non-root user, so redirect HOME + XDG_* + MISE_*_DIR to a writable
-        # temp. github: avoids the baked /opt/mise tools, so the redirect is
-        # safe (this step doesn't use them). Copies the binary onto PATH for the
-        # enrich/upload steps. TLS-verified (not cosign) — see the file header.
-        if: always() && inputs.upload-sarif && hashFiles('nanolinter-security.sarif') != ''
+        # SARIF glue only. The image's $HOME and /opt/mise are read-only for the
+        # non-root user, so redirect HOME + XDG_* + MISE_*_DIR to a writable
+        # mktemp dir. github: avoids the baked /opt/mise tools, so the redirect
+        # is safe. Copies the binary onto PATH. TLS-verified (not cosign).
+        if: always() && inputs.upload-sarif && steps.lint.outputs.sarif == 'true'
         env:
           MISE_GITHUB_TOKEN: ${{ github.token }}
           BINARY_REF: ${{ inputs.reusable-ci-binary-ref }}
         run: |
           set -euo pipefail
-          base="${RUNNER_TEMP:-/tmp}/rcinstall"
+          base="$(mktemp -d)"
           mkdir -p "$base"/cache "$base"/config "$base"/data "$base"/mise "$base"/misecache "$base"/state "$base"/bin
           export HOME="$base" \
                  XDG_CACHE_HOME="$base/cache" XDG_CONFIG_HOME="$base/config" XDG_DATA_HOME="$base/data" \
@@ -130,26 +136,18 @@ jobs:
           printf '%s\n' "$base/bin" >> "$GITHUB_PATH"
           "$base/bin/reusable-ci" --version
       - name: Enrich nanolinter SARIF for GitHub dedupe
-        if: always() && inputs.upload-sarif && hashFiles('nanolinter-security.sarif') != ''
+        if: always() && inputs.upload-sarif && steps.lint.outputs.sarif == 'true'
         env:
-          SARIF_FILE: nanolinter-security.sarif
+          SARIF_FILE: ${{ env.WORKDIR }}/nanolinter-security.sarif
         run: reusable-ci security report enrich-sarif
-      - name: Save nanolinter SARIF artifact
-        if: always() && hashFiles('nanolinter-security.sarif') != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: sarif-nanolinter
-          path: nanolinter-security.sarif
-          retention-days: 5
-          if-no-files-found: ignore
       - name: Upload nanolinter SARIF to Code Scanning
         # Uses CODE_SCANNING_TOKEN (not GITHUB_TOKEN); continue-on-error so a
         # transient Code Scanning API failure doesn't turn the lint gate red.
-        if: always() && inputs.upload-sarif && hashFiles('nanolinter-security.sarif') != ''
+        if: always() && inputs.upload-sarif && steps.lint.outputs.sarif == 'true'
         continue-on-error: true
         env:
           CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
-          SARIF_FILE: nanolinter-security.sarif
+          SARIF_FILE: ${{ env.WORKDIR }}/nanolinter-security.sarif
           SARIF_CATEGORY: ${{ inputs.sarif-category }}
         run: reusable-ci security report upload-sarif
       - name: Gate on nanolinter result
