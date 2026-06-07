@@ -33,10 +33,10 @@
 #   secrets: inherit       # Pass CODE_SCANNING_TOKEN for Code Scanning upload
 #
 # Configurable Linters:
-#   linters.nanolinter:   run nanolinter (default: true) — the project's
-#                         `just lint` via mise; uploads security findings to
-#                         Code Scanning as SARIF. Swift/iOS linting runs
-#                         separately (lint-swift.yml).
+#   linters.nanolinter:   run nanolinter (default: true) — `nanolinter verify`
+#                         against the consumer repo inside the nanolinter flavour
+#                         image; uploads security findings to Code Scanning as
+#                         SARIF. Swift/iOS linting runs separately (lint-swift.yml).
 name: Orchestrate Pull Request
 on:
   workflow_call:
@@ -53,7 +53,7 @@ on:
         type: string
       # Linter toggles
       linters.nanolinter:
-        description: "Enable nanolinter linting — runs the consumer's just lint plan via mise-installed nanolinter (default: true)"
+        description: "Enable nanolinter linting — runs `nanolinter verify` in the nanolinter flavour image; uploads security findings to Code Scanning as SARIF (default: true)"
         required: false
         default: true
         type: boolean

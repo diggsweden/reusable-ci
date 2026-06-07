@@ -8,9 +8,11 @@
 #
 # Runs inside a nanolinter FLAVOUR image (e.g. codeberg.org/itiquette/nanolinter:java),
 # which bakes nanolinter + its whole check toolchain (xmllint, opengrep,
-# osv-scanner, java checkstyle/pmd/spotbugs, …). reusable-ci is installed at
-# runtime via the image's mise (github: backend) only for the SARIF
-# enrich/upload glue.
+# osv-scanner, java checkstyle/pmd/spotbugs, …) plus curl + cosign. reusable-ci
+# is installed at runtime via the canonical cosign-verified bootstrap installer
+# (scripts/bootstrap/install-reusable-ci.sh) only for the SARIF enrich/upload
+# glue — the same fail-closed, identity-pinned install path the rest of the suite
+# uses.
 #
 # Non-root image notes: the flavour image runs as a non-root user, and in a
 # GitHub job $GITHUB_WORKSPACE and RUNNER_TEMP are runner-owned mounts the user
@@ -18,14 +20,10 @@
 # file-command files ($GITHUB_ENV/$GITHUB_OUTPUT/$GITHUB_PATH, all under
 # RUNNER_TEMP) are unwritable too. So this job touches none of them: it does the
 # checkout, lint, SARIF and reusable-ci install under static paths in the
-# container-writable /tmp, redirects HOME/XDG/MISE there, and shares state
-# between steps via a status file + an absolute binary path instead of step
-# outputs / env exports / PATH appends. No root, no workspace writes.
-#
-# Note: the reusable-ci install here is TLS-verified (mise github:), not
-# cosign-identity-pinned — acceptable for the lint helper (it only processes
-# SARIF). Consumers that *run* reusable-ci pipelines install it cosign-verified
-# via install-reusable-ci.sh elsewhere.
+# container-writable /tmp, redirects HOME/XDG there (cosign's sigstore cache
+# needs a writable HOME), and shares state between steps via a status file + an
+# absolute binary path instead of step outputs / env exports / PATH appends.
+# No root, no workspace writes.
 #
 # How to use:
 # 1. Ensure your project has a nanolinter.toml verify plan and sets
@@ -42,7 +40,7 @@ on:
         default: "codeberg.org/itiquette/nanolinter:full"
         type: string
       reusable-ci-binary-ref:
-        description: "reusable-ci version installed (via mise github:) for the SARIF enrich/upload commands"
+        description: "reusable-ci version installed (cosign-verified) for the SARIF enrich/upload commands. Use a published release tag (vN.N.N or vN.N.N-pre) so the bootstrap scripts + signature resolve."
         required: false
         default: "v3.0.0"
         type: string
@@ -127,33 +125,32 @@ jobs:
           status=$?
           printf '%s\n' "$status" > "$WORKDIR/.lint-status"
           exit 0
-      - name: Install reusable-ci (SARIF tooling, via mise github)
-        # SARIF glue only. The image's $HOME and /opt/mise are read-only for the
-        # non-root user, so redirect HOME + XDG_* + MISE_*_DIR to a writable
-        # mktemp dir. The image also bakes MISE_CONFIG_DIR=/opt/mise and pins
-        # MISE_OVERRIDE_CONFIG_FILENAMES=/opt/mise/config.toml (read-only), so
-        # `mise use -g` would try to write that file and fail — redirect both to
-        # a writable empty config too. github: avoids the baked /opt/mise tools,
-        # so the redirect is safe. Installs to the static $RC_BIN (no $GITHUB_PATH
-        # append; later steps call it by absolute path). TLS-verified (not cosign).
+      - name: Install reusable-ci (cosign-verified, SARIF tooling)
+        # SARIF glue only, installed via the canonical bootstrap installer (curl +
+        # cosign, both baked into the flavour image). curl-fetches the two scripts
+        # at $BINARY_REF (no node for actions/checkout), then runs them fail-closed
+        # (REUSABLE_CI_REQUIRE_COSIGN=1 → SHA-256 + cosign build-identity, or the
+        # step fails). cosign keyless writes its sigstore TUF cache under $HOME/XDG
+        # (both read-only in the image) so point them at a writable mktemp dir.
+        # GITHUB_PATH is set empty so the installer skips the PATH append the
+        # non-root user can't write — it installs to the static $RC_BIN and later
+        # steps call it by absolute path.
         if: always() && inputs.upload-sarif
         env:
-          MISE_GITHUB_TOKEN: ${{ github.token }}
           BINARY_REF: ${{ inputs.reusable-ci-binary-ref }}
         run: |
           set -euo pipefail
           [ -f "$SARIF_FILE" ] || { echo "no SARIF produced; skipping reusable-ci install"; exit 0; }
-          base="$(mktemp -d)"
-          mkdir -p "$base"/cache "$base"/config "$base"/data "$base"/mise "$base"/misecache "$base"/state
-          : > "$base/config.toml"
-          export HOME="$base" \
-                 XDG_CACHE_HOME="$base/cache" XDG_CONFIG_HOME="$base/config" XDG_DATA_HOME="$base/data" \
-                 MISE_DATA_DIR="$base/mise" MISE_CACHE_DIR="$base/misecache" MISE_STATE_DIR="$base/state" \
-                 MISE_CONFIG_DIR="$base" MISE_OVERRIDE_CONFIG_FILENAMES="$base/config.toml"
-          mise use -g "github:diggsweden/reusable-ci@${BINARY_REF}"
-          mkdir -p "$(dirname "$RC_BIN")"
-          install -m0755 "$(mise which reusable-ci)" "$RC_BIN"
-          "$RC_BIN" --version
+          home="$(mktemp -d)"
+          mkdir -p "$home"/cache "$home"/config "$home"/data
+          export HOME="$home" \
+                 XDG_CACHE_HOME="$home/cache" XDG_CONFIG_HOME="$home/config" XDG_DATA_HOME="$home/data"
+          work="$(mktemp -d)"
+          raw="https://raw.githubusercontent.com/diggsweden/reusable-ci/${BINARY_REF}/scripts/bootstrap"
+          curl -sSfL -o "$work/install-common.sh" "$raw/install-common.sh"
+          curl -sSfL -o "$work/install-reusable-ci.sh" "$raw/install-reusable-ci.sh"
+          GITHUB_PATH="" REUSABLE_CI_REQUIRE_COSIGN=1 REUSABLE_CI_INSTALL_DIR="$(dirname "$RC_BIN")" \
+            bash "$work/install-reusable-ci.sh" "$BINARY_REF"
       - name: Enrich nanolinter SARIF for GitHub dedupe
         # SARIF_FILE comes from the job env; reusable-ci reads it.
         if: always() && inputs.upload-sarif

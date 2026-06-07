@@ -22,7 +22,7 @@ on:
         default: "codeberg.org/itiquette/nanolinter:full"
         type: string
       reusable-ci-binary-ref:
-        description: "reusable-ci version the nanolinter job installs (mise github:) for SARIF tooling"
+        description: "reusable-ci version the nanolinter job installs (cosign-verified) for SARIF tooling"
         required: false
         default: "v3.0.0"
         type: string
