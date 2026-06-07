@@ -13,11 +13,14 @@
 # enrich/upload glue.
 #
 # Non-root image notes: the flavour image runs as a non-root user, and in a
-# GitHub job both $GITHUB_WORKSPACE and RUNNER_TEMP are runner-owned mounts the
-# user can't write, plus $HOME is the read-only /github/home mount. So the job
-# does the checkout, lint, SARIF and reusable-ci install in a fresh writable
-# `mktemp -d` (the container's /tmp is user-writable) and redirects HOME/XDG/MISE
-# there too. No root, no workspace writes.
+# GitHub job $GITHUB_WORKSPACE and RUNNER_TEMP are runner-owned mounts the user
+# can't write, $HOME is the read-only /github/home mount, AND the runner
+# file-command files ($GITHUB_ENV/$GITHUB_OUTPUT/$GITHUB_PATH, all under
+# RUNNER_TEMP) are unwritable too. So this job touches none of them: it does the
+# checkout, lint, SARIF and reusable-ci install under static paths in the
+# container-writable /tmp, redirects HOME/XDG/MISE there, and shares state
+# between steps via a status file + an absolute binary path instead of step
+# outputs / env exports / PATH appends. No root, no workspace writes.
 #
 # Note: the reusable-ci install here is TLS-verified (mise github:), not
 # cosign-identity-pinned — acceptable for the lint helper (it only processes
@@ -76,13 +79,22 @@ jobs:
       GIT_CONFIG_COUNT: "1"
       GIT_CONFIG_KEY_0: safe.directory
       GIT_CONFIG_VALUE_0: "*"
+      # The non-root image user (uid 65532) cannot write the runner file-command
+      # files: $GITHUB_ENV/$GITHUB_OUTPUT/$GITHUB_PATH all live under RUNNER_TEMP
+      # (/__w/_temp), a runner-owned mount. So steps must NOT use them — they
+      # share state through these static paths under the container-writable /tmp
+      # (workdir + SARIF), a status file, and an absolute binary path instead of
+      # step outputs / env exports / PATH appends.
+      WORKDIR: /tmp/nl-src
+      SARIF_FILE: /tmp/nl-src/nanolinter-security.sarif
+      RC_BIN: /tmp/nl-bin/reusable-ci
     steps:
       - name: Checkout repository (writable workdir)
         # The non-root user can't write $GITHUB_WORKSPACE / RUNNER_TEMP (runner-
-        # owned mounts), so check out into a fresh mktemp dir (/tmp is writable)
-        # and export it as WORKDIR for later steps. git binary, not
-        # actions/checkout (the image ships no node). Full history so nanolinter's
-        # git-based checks have the merge-base; token auth via http.extraheader.
+        # owned mounts), so check out into the static $WORKDIR under /tmp (the
+        # container's /tmp is user-writable). git binary, not actions/checkout
+        # (the image ships no node). Full history so nanolinter's git-based checks
+        # have the merge-base; token auth via http.extraheader.
         env:
           GIT_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -91,9 +103,9 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
-          workdir="$(mktemp -d)"
-          printf 'WORKDIR=%s\n' "$workdir" >> "$GITHUB_ENV"
-          cd "$workdir"
+          rm -rf "$WORKDIR"
+          mkdir -p "$WORKDIR"
+          cd "$WORKDIR"
           git init -q .
           git remote add origin "${SERVER_URL}/${REPO}.git"
           hdr="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GIT_TOKEN" | base64 | tr -d '\n')"
@@ -103,17 +115,17 @@ jobs:
           fi
           git checkout -q --detach "$SHA"
       - name: Run nanolinter (gate + security SARIF)
-        id: lint
         # nanolinter + check tools are baked (default env → /opt/mise shims).
         # --report sarif-security is a report filter only: verify runs the full
-        # plan and gates on every check.
+        # plan and gates on every check. The exit status is written to a status
+        # file (not $GITHUB_OUTPUT, which the non-root user can't write); the
+        # final gate step reads it.
         run: |
           set +e
           cd "$WORKDIR"
-          nanolinter verify --report sarif-security --out nanolinter-security.sarif
+          nanolinter verify --report sarif-security --out "$SARIF_FILE"
           status=$?
-          printf 'status=%s\n' "$status" >> "$GITHUB_OUTPUT"
-          [ -f "$WORKDIR/nanolinter-security.sarif" ] && printf 'sarif=true\n' >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$status" > "$WORKDIR/.lint-status"
           exit 0
       - name: Install reusable-ci (SARIF tooling, via mise github)
         # SARIF glue only. The image's $HOME and /opt/mise are read-only for the
@@ -122,41 +134,52 @@ jobs:
         # MISE_OVERRIDE_CONFIG_FILENAMES=/opt/mise/config.toml (read-only), so
         # `mise use -g` would try to write that file and fail — redirect both to
         # a writable empty config too. github: avoids the baked /opt/mise tools,
-        # so the redirect is safe. Copies the binary onto PATH. TLS-verified (not cosign).
-        if: always() && inputs.upload-sarif && steps.lint.outputs.sarif == 'true'
+        # so the redirect is safe. Installs to the static $RC_BIN (no $GITHUB_PATH
+        # append; later steps call it by absolute path). TLS-verified (not cosign).
+        if: always() && inputs.upload-sarif
         env:
           MISE_GITHUB_TOKEN: ${{ github.token }}
           BINARY_REF: ${{ inputs.reusable-ci-binary-ref }}
         run: |
           set -euo pipefail
+          [ -f "$SARIF_FILE" ] || { echo "no SARIF produced; skipping reusable-ci install"; exit 0; }
           base="$(mktemp -d)"
-          mkdir -p "$base"/cache "$base"/config "$base"/data "$base"/mise "$base"/misecache "$base"/state "$base"/bin
+          mkdir -p "$base"/cache "$base"/config "$base"/data "$base"/mise "$base"/misecache "$base"/state
           : > "$base/config.toml"
           export HOME="$base" \
                  XDG_CACHE_HOME="$base/cache" XDG_CONFIG_HOME="$base/config" XDG_DATA_HOME="$base/data" \
                  MISE_DATA_DIR="$base/mise" MISE_CACHE_DIR="$base/misecache" MISE_STATE_DIR="$base/state" \
                  MISE_CONFIG_DIR="$base" MISE_OVERRIDE_CONFIG_FILENAMES="$base/config.toml"
           mise use -g "github:diggsweden/reusable-ci@${BINARY_REF}"
-          install -m0755 "$(mise which reusable-ci)" "$base/bin/reusable-ci"
-          printf '%s\n' "$base/bin" >> "$GITHUB_PATH"
-          "$base/bin/reusable-ci" --version
+          mkdir -p "$(dirname "$RC_BIN")"
+          install -m0755 "$(mise which reusable-ci)" "$RC_BIN"
+          "$RC_BIN" --version
       - name: Enrich nanolinter SARIF for GitHub dedupe
-        if: always() && inputs.upload-sarif && steps.lint.outputs.sarif == 'true'
-        env:
-          SARIF_FILE: ${{ env.WORKDIR }}/nanolinter-security.sarif
-        run: reusable-ci security report enrich-sarif
+        # SARIF_FILE comes from the job env; reusable-ci reads it.
+        if: always() && inputs.upload-sarif
+        run: |
+          set -euo pipefail
+          [ -f "$SARIF_FILE" ] && [ -x "$RC_BIN" ] || exit 0
+          "$RC_BIN" security report enrich-sarif
       - name: Upload nanolinter SARIF to Code Scanning
         # Uses CODE_SCANNING_TOKEN (not GITHUB_TOKEN); continue-on-error so a
         # transient Code Scanning API failure doesn't turn the lint gate red.
-        if: always() && inputs.upload-sarif && steps.lint.outputs.sarif == 'true'
+        if: always() && inputs.upload-sarif
         continue-on-error: true
         env:
           CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
-          SARIF_FILE: ${{ env.WORKDIR }}/nanolinter-security.sarif
           SARIF_CATEGORY: ${{ inputs.sarif-category }}
-        run: reusable-ci security report upload-sarif
-      - name: Gate on nanolinter result
-        if: steps.lint.outputs.status != '0'
         run: |
-          printf '::error::nanolinter verify failed (status %s)\n' "${{ steps.lint.outputs.status }}"
-          exit 1
+          set -euo pipefail
+          [ -f "$SARIF_FILE" ] && [ -x "$RC_BIN" ] || exit 0
+          "$RC_BIN" security report upload-sarif
+      - name: Gate on nanolinter result
+        # Reads the status file the lint step wrote (no step outputs available to
+        # the non-root user). Missing file ⇒ lint never ran ⇒ fail.
+        if: always()
+        run: |
+          status="$(cat "$WORKDIR/.lint-status" 2>/dev/null || echo 1)"
+          if [ "$status" != "0" ]; then
+            printf '::error::nanolinter verify failed (status %s)\n' "$status"
+            exit 1
+          fi
