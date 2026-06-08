@@ -160,8 +160,10 @@ jobs:
                  XDG_CACHE_HOME="$home/cache" XDG_CONFIG_HOME="$home/config" XDG_DATA_HOME="$home/data"
           work="$(mktemp -d)"
           raw="https://raw.githubusercontent.com/diggsweden/reusable-ci/${BINARY_REF}/scripts/bootstrap"
-          curl -sSfL -o "$work/install-common.sh" "$raw/install-common.sh"
-          curl -sSfL -o "$work/install-reusable-ci.sh" "$raw/install-reusable-ci.sh"
+          # -f → fail loudly on any HTTP error (never run a half-downloaded
+          # script); --retry rides out transient 5xx/timeouts (e.g. raw CDN 504s).
+          curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-common.sh" "$raw/install-common.sh"
+          curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-reusable-ci.sh" "$raw/install-reusable-ci.sh"
           GITHUB_PATH="" REUSABLE_CI_REQUIRE_COSIGN=1 REUSABLE_CI_INSTALL_DIR="$(dirname "$RC_BIN")" \
             bash "$work/install-reusable-ci.sh" "$BINARY_REF"
       - name: Enrich nanolinter SARIF for GitHub dedupe

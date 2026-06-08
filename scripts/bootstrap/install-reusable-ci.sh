@@ -173,22 +173,27 @@ install_reusable_ci_release() {
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
 
+  # Retry transient network / 5xx failures (e.g. GitHub Releases returning a
+  # 504 gateway timeout). `--retry` already covers HTTP 408/429/5xx + timeouts;
+  # `--retry-connrefused` adds connection-refused. Both are old/portable flags.
+  local -a curl_retry=(--retry 5 --retry-delay 3 --retry-connrefused)
+
   local asset_url="${REUSABLE_CI_RELEASE_URL_BASE}/${ref}/${dist}"
   local sums_url="${REUSABLE_CI_RELEASE_URL_BASE}/${ref}/checksums.txt"
   local bundle_url="${REUSABLE_CI_RELEASE_URL_BASE}/${ref}/checksums.txt.bundle"
   printf 'Downloading reusable-ci %s (%s/%s)...\n' "$ref" "$os" "$arch"
-  if ! curl -sSfL -o "$tmp/$dist" "$asset_url"; then
+  if ! curl "${curl_retry[@]}" -sSfL -o "$tmp/$dist" "$asset_url"; then
     printf 'WARN: failed to download %s\n' "$asset_url" >&2
     return 1
   fi
-  if ! curl -sSfL -o "$tmp/checksums.txt" "$sums_url"; then
+  if ! curl "${curl_retry[@]}" -sSfL -o "$tmp/checksums.txt" "$sums_url"; then
     printf 'WARN: failed to download %s\n' "$sums_url" >&2
     return 1
   fi
   # Sigstore v3 bundle is best-effort: older releases predate it.
   # 404 is not an error; verify_reusable_ci_cosign soft-skips when
   # the file is absent (unless REUSABLE_CI_REQUIRE_COSIGN=1).
-  curl -sSfL -o "$tmp/checksums.txt.bundle" "$bundle_url" >/dev/null 2>&1 || true
+  curl "${curl_retry[@]}" -sSfL -o "$tmp/checksums.txt.bundle" "$bundle_url" >/dev/null 2>&1 || true
   if ! verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/checksums.txt.bundle" "$ref"; then
     return 1
   fi
