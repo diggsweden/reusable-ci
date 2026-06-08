@@ -645,16 +645,6 @@ jobs:
           # category and one silently overwrites the other.
           SARIF_CATEGORY: container-scan-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
         run: reusable-ci security report upload-sarif
-      - name: Install syft
-        # `reusable-ci sbom generate container` shells out to syft. syft is baked
-        # into the runtime images, but this buildx job runs on the bare host, so
-        # install it here. ci_prepend_path persists it to $GITHUB_PATH for the
-        # next step.
-        if: ${{ inputs['enable-analyzed-container-sbom'] && inputs['push-image'] }}
-        run: |
-          # shellcheck disable=SC1091
-          source .github-shared/scripts/bootstrap/install-syft.sh
-          install_syft
       - name: Generate Container SBOMs${{ inputs.name && format(' — {0}', inputs.name) || '' }} (SPDX + CycloneDX)
         if: &if_sbom_enabled ${{ inputs['enable-analyzed-container-sbom'] && inputs['push-image'] }}
         env:
@@ -663,7 +653,14 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           IMAGE_NAME: ${{ needs.prep.outputs.image-name }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-        run: reusable-ci sbom generate container
+        run: |
+          # syft is baked into the runtime images, but this buildx job runs on
+          # the bare host — install it (to /tmp) and run in the same step so its
+          # in-process PATH covers the reusable-ci call.
+          # shellcheck disable=SC1091
+          source .github-shared/scripts/bootstrap/install-syft.sh
+          install_syft
+          reusable-ci sbom generate container
       - name: Upload Analyzed-Container SBOMs
         if: *if_sbom_enabled
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

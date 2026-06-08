@@ -10,14 +10,6 @@ ci_install_dir() {
 ci_prepend_path() {
   local dir="$1"
   export PATH="${dir}:$PATH"
-  # Persist to later workflow steps too — without this a tool installed in one
-  # step (reusable-ci, syft, trivy, …) is not on PATH in a subsequent step,
-  # since a step's `export PATH` does not survive into the next step. Guarded:
-  # skipped when GITHUB_PATH is unset/empty (e.g. the non-root nanolinter lint
-  # sets it empty because it can't write the runner file-command files).
-  if [[ -n "${GITHUB_PATH:-}" ]]; then
-    printf '%s\n' "$dir" >>"$GITHUB_PATH"
-  fi
 }
 
 ci_require_command() {
