@@ -344,7 +344,10 @@ jobs:
       - name: Generate Dev Release Summary
         env:
           # Dev release context.
-          PROJECT_TYPE: ${{ fromJson(needs.setup-dev.outputs['dev-release-plan-json']).context.project_type }}
+          # `|| '{}'` so an upstream (setup-dev) failure — which leaves this
+          # output empty — produces an empty PROJECT_TYPE instead of a fromJson
+          # template crash. This job is `if: always()`; it must summarize failures.
+          PROJECT_TYPE: ${{ fromJson(needs.setup-dev.outputs['dev-release-plan-json'] || '{}').context.project_type }}
           RELEASE_REF: ${{ github.ref_name }}
           RELEASE_SHA: ${{ github.sha }}
           RELEASE_ACTOR: ${{ github.actor }}
