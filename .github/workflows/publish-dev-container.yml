@@ -450,6 +450,16 @@ jobs:
       # syft step, minus the attest-sbom call (dev has no SLSA trust plane).
       # Each leg's SBOM is uploaded as a separate artefact so generate-dev-sboms
       # — and downstream release attach — can pick them up by run-id pattern.
+      - name: Install syft
+        # `reusable-ci sbom generate container` shells out to syft. syft is baked
+        # into the runtime images, but this buildx job runs on the bare host, so
+        # install it here. ci_prepend_path persists it to $GITHUB_PATH for the
+        # next step.
+        if: ${{ inputs['enable-analyzed-container-sbom'] }}
+        run: |
+          # shellcheck disable=SC1091
+          source .github-shared/scripts/bootstrap/install-syft.sh
+          install_syft
       - name: Generate Container SBOMs${{ inputs.name && format(' — {0}', inputs.name) || '' }} (SPDX + CycloneDX)
         if: &if_sbom_enabled ${{ inputs['enable-analyzed-container-sbom'] }}
         env:

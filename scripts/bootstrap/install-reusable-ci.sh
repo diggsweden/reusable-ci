@@ -243,10 +243,7 @@ install_reusable_ci() {
     install_reusable_ci_go_install "$ref" "$install_dir" || return 1
   fi
 
-  ci_prepend_path "$install_dir"
-  if [[ -n "${GITHUB_PATH:-}" ]]; then
-    printf '%s\n' "$install_dir" >>"$GITHUB_PATH"
-  fi
+  ci_prepend_path "$install_dir" # exports PATH in-process + appends to $GITHUB_PATH
   ci_require_command reusable-ci reusable-ci || return 1
   ci_print_installed "reusable-ci" "$(reusable-ci --version 2>/dev/null || printf 'version unavailable')"
 }
