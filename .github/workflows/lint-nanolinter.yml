@@ -135,10 +135,13 @@ jobs:
         # summary file (it lives under RUNNER_TEMP). So redirect it to a writable
         # /tmp file; the next step ships it to the runtime-base Summary job, which
         # renders it as the GitHub job-summary panel for end users.
-        env:
-          GITHUB_STEP_SUMMARY: /tmp/nl-step-summary.md
         run: |
           set +e
+          # Redirect the summary to a writable file. This MUST be a shell export,
+          # not a step `env:` — the runner re-injects its own GITHUB_STEP_SUMMARY
+          # per step (a step `env:` override is ignored), but a shell export wins
+          # for the nanolinter child process.
+          export GITHUB_STEP_SUMMARY=/tmp/nl-step-summary.md
           cd "$WORKDIR"
           nanolinter verify --report sarif-security --out "$SARIF_FILE"
           rc=$?
