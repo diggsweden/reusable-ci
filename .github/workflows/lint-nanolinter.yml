@@ -129,6 +129,14 @@ jobs:
         # per-check summary — not on a separate "gate" step that reads like a
         # workflow glitch. The SARIF steps below still run via `if: always()`, so
         # the report is produced + uploaded even though this step failed.
+        #
+        # nanolinter auto-writes its rich "Linting Results" panel to
+        # $GITHUB_STEP_SUMMARY, but the non-root user can't write the real runner
+        # summary file (it lives under RUNNER_TEMP). So redirect it to a writable
+        # /tmp file; the next step ships it to the runtime-base Summary job, which
+        # renders it as the GitHub job-summary panel for end users.
+        env:
+          GITHUB_STEP_SUMMARY: /tmp/nl-step-summary.md
         run: |
           set +e
           cd "$WORKDIR"
@@ -138,6 +146,20 @@ jobs:
             printf '::error::nanolinter found blocking lint issues — see the per-check summary above (this is a lint gate on your code, not a workflow error).\n'
           fi
           exit "$rc"
+      - name: Upload nanolinter summary panel
+        # The non-root, node-less job can't write the real $GITHUB_STEP_SUMMARY,
+        # so ship nanolinter's panel markdown to the runtime-base Summary job
+        # (pullrequest-quality-stage.yml), which CAN write the panel. NOT
+        # continue-on-error: a genuine upload failure should surface, not be
+        # silently swallowed. `if-no-files-found: ignore` already covers the
+        # legitimate "nanolinter produced no summary" case without failing.
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nanolinter-step-summary
+          path: /tmp/nl-step-summary.md
+          if-no-files-found: ignore
+          retention-days: 5
       - name: Install reusable-ci (cosign-verified, SARIF tooling)
         # SARIF glue only, installed via the canonical bootstrap installer (curl +
         # cosign, both baked into the flavour image). curl-fetches the two scripts
