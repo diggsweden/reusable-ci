@@ -56,7 +56,7 @@ install_mise() {
   asset_url="https://github.com/jdx/mise/releases/download/${MISE_VERSION}/${dist}"
 
   printf "Installing mise (version: %s)...\n" "$MISE_VERSION"
-  if ! curl -fsSL -o "$install_dir/mise" "$asset_url"; then
+  if ! curl --retry 5 --retry-delay 3 --retry-connrefused -fsSL -o "$install_dir/mise" "$asset_url"; then
     printf "ERROR: Failed to download mise from %s\n" "$asset_url" >&2
     return 1
   fi

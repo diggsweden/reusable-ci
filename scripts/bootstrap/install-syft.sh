@@ -25,7 +25,7 @@ install_syft() {
   mkdir -p "$install_dir"
 
   printf "Installing Syft SBOM generator (version: %s)...\n" "${SYFT_VERSION}"
-  if ! curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b "$install_dir" "${SYFT_VERSION}"; then
+  if ! curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b "$install_dir" "${SYFT_VERSION}"; then
     printf "ERROR: Failed to install Syft %s\n" "${SYFT_VERSION}" >&2
     return 1
   fi

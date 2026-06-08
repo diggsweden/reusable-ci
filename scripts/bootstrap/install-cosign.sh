@@ -42,7 +42,7 @@ install_cosign() {
   url="https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-${arch}"
 
   printf "Installing cosign (version: %s)...\n" "${COSIGN_VERSION}"
-  if ! curl -sSfL "$url" -o "${install_dir}/cosign"; then
+  if ! curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL "$url" -o "${install_dir}/cosign"; then
     printf "ERROR: Failed to download cosign %s\n" "${COSIGN_VERSION}" >&2
     return 1
   fi

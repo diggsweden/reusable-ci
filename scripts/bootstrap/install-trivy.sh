@@ -25,7 +25,7 @@ install_trivy() {
   mkdir -p "$install_dir"
 
   printf "Installing Trivy vulnerability scanner (version: %s)...\n" "${TRIVY_VERSION}"
-  if ! curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$install_dir" "${TRIVY_VERSION}"; then
+  if ! curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$install_dir" "${TRIVY_VERSION}"; then
     printf "ERROR: Failed to install Trivy %s\n" "${TRIVY_VERSION}" >&2
     return 1
   fi

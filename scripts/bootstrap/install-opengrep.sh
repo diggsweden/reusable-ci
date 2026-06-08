@@ -63,7 +63,7 @@ install_opengrep() {
   asset_url="https://github.com/opengrep/opengrep/releases/download/${OPENGREP_VERSION}/${dist}"
 
   printf "Installing OpenGrep (version: %s)...\n" "$OPENGREP_VERSION"
-  if ! curl -fsSL -o "$install_dir/opengrep" "$asset_url"; then
+  if ! curl --retry 5 --retry-delay 3 --retry-connrefused -fsSL -o "$install_dir/opengrep" "$asset_url"; then
     printf "ERROR: Failed to download OpenGrep from %s\n" "$asset_url" >&2
     return 1
   fi

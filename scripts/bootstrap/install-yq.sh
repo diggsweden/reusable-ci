@@ -57,7 +57,7 @@ install_yq() {
   asset_url="https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${dist}"
 
   printf "Installing yq (version: %s)...\n" "$YQ_VERSION"
-  if ! curl -fsSL -o "$install_dir/yq" "$asset_url"; then
+  if ! curl --retry 5 --retry-delay 3 --retry-connrefused -fsSL -o "$install_dir/yq" "$asset_url"; then
     printf "ERROR: Failed to download yq from %s\n" "$asset_url" >&2
     return 1
   fi

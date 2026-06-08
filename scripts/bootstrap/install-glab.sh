@@ -57,7 +57,7 @@ install_glab() {
   archive="$install_dir/${dist}"
 
   printf "Installing glab (version: %s)...\n" "$GLAB_VERSION"
-  if ! curl -fsSL -o "$archive" "$asset_url"; then
+  if ! curl --retry 5 --retry-delay 3 --retry-connrefused -fsSL -o "$archive" "$asset_url"; then
     printf "ERROR: Failed to download glab from %s\n" "$asset_url" >&2
     return 1
   fi
