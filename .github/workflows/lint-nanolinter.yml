@@ -169,6 +169,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 5
       - name: Install reusable-ci (cosign-verified, SARIF tooling)
+        id: install
         # SARIF glue only, installed via the canonical bootstrap installer (curl +
         # cosign, both baked into the flavour image). curl-fetches the two scripts
         # at $BINARY_REF (no node for actions/checkout), then runs them fail-closed
@@ -197,21 +198,25 @@ jobs:
           GITHUB_PATH="" REUSABLE_CI_REQUIRE_COSIGN=1 REUSABLE_CI_INSTALL_DIR="$(dirname "$RC_BIN")" \
             bash "$work/install-reusable-ci.sh" "$BINARY_REF"
       - name: Enrich nanolinter SARIF for GitHub dedupe
-        # SARIF_FILE comes from the job env; reusable-ci reads it.
-        if: always() && inputs.upload-sarif
+        # Gated on the install step succeeding: if reusable-ci couldn't be installed
+        # (e.g. a transient release 504), this skips honestly instead of faking
+        # success — the install step's own red surfaces the failure. SARIF_FILE
+        # comes from the job env; reusable-ci reads it.
+        if: always() && inputs.upload-sarif && steps.install.outcome == 'success'
         run: |
           set -euo pipefail
-          [ -f "$SARIF_FILE" ] && [ -x "$RC_BIN" ] || exit 0
+          [ -f "$SARIF_FILE" ] || exit 0
           "$RC_BIN" security report enrich-sarif
       - name: Upload nanolinter SARIF to Code Scanning
-        # Uses CODE_SCANNING_TOKEN (not GITHUB_TOKEN); continue-on-error so a
-        # transient Code Scanning API failure doesn't turn the lint gate red.
-        if: always() && inputs.upload-sarif
+        # Gated on install success (see enrich step). Uses CODE_SCANNING_TOKEN
+        # (not GITHUB_TOKEN); continue-on-error so a transient Code Scanning API
+        # failure doesn't turn the lint gate red.
+        if: always() && inputs.upload-sarif && steps.install.outcome == 'success'
         continue-on-error: true
         env:
           CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
           SARIF_CATEGORY: ${{ inputs.sarif-category }}
         run: |
           set -euo pipefail
-          [ -f "$SARIF_FILE" ] && [ -x "$RC_BIN" ] || exit 0
+          [ -f "$SARIF_FILE" ] || exit 0
           "$RC_BIN" security report upload-sarif
