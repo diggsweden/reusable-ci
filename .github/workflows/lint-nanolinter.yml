@@ -152,11 +152,16 @@ jobs:
       - name: Upload nanolinter summary panel
         # The non-root, node-less job can't write the real $GITHUB_STEP_SUMMARY,
         # so ship nanolinter's panel markdown to the runtime-base Summary job
-        # (pullrequest-quality-stage.yml), which CAN write the panel. NOT
-        # continue-on-error: a genuine upload failure should surface, not be
-        # silently swallowed. `if-no-files-found: ignore` already covers the
-        # legitimate "nanolinter produced no summary" case without failing.
+        # (pullrequest-quality-stage.yml), which CAN write the panel.
+        #
+        # continue-on-error: the artifact upload itself SUCCEEDS, but upload-artifact
+        # then fails writing its (unused) step outputs to $GITHUB_OUTPUT — another
+        # runner file-command file the non-root user can't write (EACCES). That
+        # cosmetic failure must not red the job. This does NOT weaken the lint gate:
+        # the gate is the separate "Run nanolinter" step. If the upload ever truly
+        # failed, the missing panel downstream ("Artifact not found") signals it.
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nanolinter-step-summary
