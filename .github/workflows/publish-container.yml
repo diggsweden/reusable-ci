@@ -232,15 +232,15 @@ jobs:
       platforms-json: ${{ steps.platforms.outputs.json }}
     steps:
       - name: Harden GitHub runner
-        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: ${{ inputs.egress-policy }}
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ inputs.branch }}
       - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: diggsweden/reusable-ci
           ref: ${{ inputs['reusable-ci-ref'] }}
@@ -329,15 +329,15 @@ jobs:
       SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
     steps:
       - name: Harden GitHub runner
-        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: ${{ inputs.egress-policy }}
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ inputs.branch }}
       - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: diggsweden/reusable-ci
           ref: ${{ inputs['reusable-ci-ref'] }}
@@ -397,7 +397,7 @@ jobs:
         run: bash .github-shared/scripts/container/validate-containerfile.sh "$CONTAINER_FILE"
       - name: Set up Buildx
         id: buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       - name: Check registry authentication configuration
         if: &if_push_image ${{ inputs['push-image'] }}
         env:
@@ -408,14 +408,14 @@ jobs:
         run: bash .github-shared/scripts/registry/validate-auth.sh
       - name: Log in to Container Registry
         if: *if_push_image
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ${{ inputs.registry }}
           username: ${{ inputs['registry-username'] || github.actor }}
           password: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
       - name: Build by digest
         id: build
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: ${{ inputs.context }}
           file: ${{ steps.containerfile.outputs.containerfile }}
@@ -549,7 +549,7 @@ jobs:
       # Per-arch artefact name avoids upload-artifact collision.
       - name: Extract binaries${{ inputs.name && format(' ({0})', inputs.name) || '' }}
         if: ${{ inputs['extract-binary-target'] != '' }}
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: ${{ inputs.context }}
           file: ${{ steps.containerfile.outputs.containerfile }}
@@ -619,11 +619,11 @@ jobs:
       digest: ${{ steps.outputs.outputs.digest }}
     steps:
       - name: Harden GitHub runner
-        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: ${{ inputs.egress-policy }}
       - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: diggsweden/reusable-ci
           ref: ${{ inputs['reusable-ci-ref'] }}
@@ -636,7 +636,7 @@ jobs:
           pattern: digests-${{ github.run_id }}-${{ inputs.name || 'container' }}-*
           merge-multiple: true
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       - name: Check registry authentication configuration
         env:
           USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
@@ -645,7 +645,7 @@ jobs:
           REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
         run: bash .github-shared/scripts/registry/validate-auth.sh
       - name: Log in to Container Registry
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ${{ inputs.registry }}
           username: ${{ inputs['registry-username'] || github.actor }}
