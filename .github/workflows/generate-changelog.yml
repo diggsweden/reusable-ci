@@ -59,13 +59,13 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 0 # Need full history for git-cliff
       - name: Fetch git-cliff templates
         if: ${{ startsWith(inputs['changelog-config'], '.github-templates/') }}
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: diggsweden/reusable-ci
           path: .github-templates
@@ -81,7 +81,7 @@ jobs:
           OUTPUT: ${{ inputs['output-file'] }}
           GITHUB_REPO: ${{ github.repository }}
       - name: Checkout .github repository for scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: diggsweden/reusable-ci
           ref: ${{ inputs['reusable-ci-ref'] }}
