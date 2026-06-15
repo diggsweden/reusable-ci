@@ -17,6 +17,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/provider"
@@ -50,7 +51,7 @@ func RefType(out io.Writer, in RefTypeInput) error {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(out, "✓ Triggered by tag: %s\n", in.RefName)
+	_, _ = fmt.Fprintf(out, "%s Triggered by tag: %s\n", clicolor.Check(out), in.RefName)
 
 	return nil
 }
@@ -74,7 +75,7 @@ func TagFormat(out io.Writer, in TagFormatInput) error {
 	}
 
 	_, _ = fmt.Fprintf(out, "## Validating Tag Format\n")
-	_, _ = fmt.Fprintf(out, "✓ Valid semantic version tag\n")
+	_, _ = fmt.Fprintf(out, "%s Valid semantic version tag\n", clicolor.Check(out))
 	_, _ = fmt.Fprintf(out, "   Version: %s.%s.%s\n", tf.Major, tf.Minor, tf.Patch)
 
 	if tf.IsStable() {
@@ -83,7 +84,7 @@ func TagFormat(out io.Writer, in TagFormatInput) error {
 		_, _ = fmt.Fprintf(out, "   Pre-release: %s\n", tf.Prerelease)
 
 		if tf.PrereleaseStandard {
-			_, _ = fmt.Fprintf(out, "   ✓ Pre-release identifier follows convention\n")
+			_, _ = fmt.Fprintf(out, "   %s Pre-release identifier follows convention\n", clicolor.Check(out))
 		} else {
 			_, _ = fmt.Fprintf(out, "   ℹ️ Non-standard pre-release identifier: %s\n", tf.Prerelease)
 			_, _ = fmt.Fprintf(out, "      Standard identifiers: alpha, beta, rc, snapshot, SNAPSHOT, dev\n")
@@ -92,8 +93,8 @@ func TagFormat(out io.Writer, in TagFormatInput) error {
 	}
 
 	_, _ = fmt.Fprintf(out, "\n### Tag Format Summary:\n")
-	_, _ = fmt.Fprintf(out, "✓ Tag follows semantic versioning (vX.Y.Z)\n")
-	_, _ = fmt.Fprintf(out, "✓ Tag format validation passed\n")
+	_, _ = fmt.Fprintf(out, "%s Tag follows semantic versioning (vX.Y.Z)\n", clicolor.Check(out))
+	_, _ = fmt.Fprintf(out, "%s Tag format validation passed\n", clicolor.Check(out))
 
 	return nil
 }
@@ -127,7 +128,7 @@ func Changelog(ctx context.Context, sink ci.OutputSink, out io.Writer, in Change
 			return fmt.Errorf("full changelog (%s) not found\nthis file is required for the version bump commit: %w", in.Path, errs.ErrMissingInput)
 		}
 
-		_, _ = fmt.Fprintf(out, "✓ Full changelog found (%d lines)\n", validate.CountLines(data))
+		_, _ = fmt.Fprintf(out, "%s Full changelog found (%d lines)\n", clicolor.Check(out), validate.CountLines(data))
 
 		return nil
 	}

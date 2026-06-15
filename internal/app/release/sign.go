@@ -14,7 +14,7 @@ import (
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	domain "github.com/diggsweden/reusable-ci/internal/domain/release"
+	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
 )
 
 // Signer is the slice of the signing adapter the sign flow needs.
@@ -40,9 +40,10 @@ type Signer interface {
 
 // SignInput drives `reusable-ci release sign`.
 type SignInput struct {
-	ChecksumsFile       string // default: domain.ChecksumsFile
+	ChecksumsFile       string // default: domainrelease.ChecksumsFile
 	ReleaseArtifactsDir string // default: ./release-artifacts; signatures land in cwd as <basename>.asc
 	AttachArtifacts     string // comma-separated glob list; signatures land in cwd as <basename>.asc
+	AssemblyFile        string // when set, sign exactly the staged release assembly
 }
 
 // SignArtifacts signs the checksums file in place (if present), each release
@@ -54,12 +55,16 @@ func SignArtifacts(ctx context.Context, signer Signer, out io.Writer, in SignInp
 		return fmt.Errorf("sign: signer is required: %w", errs.ErrUsage)
 	}
 
+	if in.AssemblyFile != "" {
+		return signAssemblyArtifacts(ctx, signer, out, in.AssemblyFile)
+	}
+
 	if in.ChecksumsFile == "" {
-		in.ChecksumsFile = domain.ChecksumsFile
+		in.ChecksumsFile = domainrelease.ChecksumsFile
 	}
 
 	if in.ReleaseArtifactsDir == "" {
-		in.ReleaseArtifactsDir = domain.DefaultReleaseArtifactsDir
+		in.ReleaseArtifactsDir = domainrelease.DefaultReleaseArtifactsDir
 	}
 
 	if err := signChecksumsIfPresent(ctx, signer, in.ChecksumsFile, out); err != nil {
@@ -73,6 +78,61 @@ func SignArtifacts(ctx context.Context, signer Signer, out io.Writer, in SignInp
 	}
 
 	return signAttachArtifacts(in.AttachArtifacts, out, signAsset)
+}
+
+func signAssemblyArtifacts(ctx context.Context, signer Signer, out io.Writer, assemblyFile string) error {
+	asm, err := readAssembly(assemblyFile)
+	if err != nil {
+		return err
+	}
+
+	signed := map[string]struct{}{}
+	sign := func(path string) error {
+		if path == "" {
+			return nil
+		}
+
+		if _, ok := signed[path]; ok {
+			return nil
+		}
+
+		if !regularFileExists(path) {
+			return fmt.Errorf("assembly sign target %q is missing or not a regular file: %w", path, errs.ErrMissingInput)
+		}
+
+		_, _ = fmt.Fprintf(out, "Signing %s\n", path)
+		if err := signer.SignFile(ctx, path); err != nil {
+			return fmt.Errorf("sign %q: %w", path, err)
+		}
+
+		signed[path] = struct{}{}
+
+		return nil
+	}
+
+	for _, asset := range asm.Assets {
+		if err := sign(asset.Path); err != nil {
+			return err
+		}
+	}
+
+	if asm.SBOMZipFile != "" && regularFileExists(asm.SBOMZipFile) {
+		if err := sign(asm.SBOMZipFile); err != nil {
+			return err
+		}
+	}
+
+	if asm.ChecksumFile != "" {
+		if regularFileNonEmpty(asm.ChecksumFile) {
+			return sign(asm.ChecksumFile)
+		}
+
+		if len(asm.Assets) > 0 || regularFileExists(asm.SBOMZipFile) {
+			return fmt.Errorf("assembly checksums file %q is missing or empty; run release checksums --assembly first: %w", asm.ChecksumFile, errs.ErrMissingInput)
+		}
+	}
+
+	return nil
 }
 
 // signChecksumsIfPresent signs the checksums file when it exists and
@@ -136,6 +196,7 @@ func newAssetSigner(ctx context.Context, signer Signer, out io.Writer) func(stri
 // signReleaseArtifactsDir signs every regular file in dir that
 // IsReleaseArtifact accepts. A missing directory is a valid state
 // (attach globs may still match) and is silently skipped.
+//
 //nolint:cyclop // stat + branch on dir state + walk + count signed/skipped — phases of one operation.
 func signReleaseArtifactsDir(dir string, signAsset func(string) error, out io.Writer) error {
 	info, err := os.Stat(dir)
@@ -167,7 +228,7 @@ func signReleaseArtifactsDir(dir string, signAsset func(string) error, out io.Wr
 		}
 
 		full := filepath.Join(dir, e.Name())
-		if !domain.IsReleaseArtifact(full) {
+		if !domainrelease.IsReleaseArtifact(full) {
 			skippedCount++
 
 			continue
@@ -188,7 +249,7 @@ func signReleaseArtifactsDir(dir string, signAsset func(string) error, out io.Wr
 		_, _ = fmt.Fprintf(out,
 			"  no files in %q matched the release-artifact extension filter (%s); "+
 				"use --attach-artifacts for bare binaries or other extensions\n",
-			dir, strings.Join(domain.ReleaseArtifactExtensions, ", "))
+			dir, strings.Join(domainrelease.ReleaseArtifactExtensions, ", "))
 	}
 
 	return nil

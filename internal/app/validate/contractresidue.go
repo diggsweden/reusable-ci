@@ -16,10 +16,11 @@ import (
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/internal/domain/output"
 )
 
 //nolint:gochecknoglobals // default scan roots — fixed paths read-only.
-var defaultV3ContractRoots = []string{
+var defaultContractResidueRoots = []string{
 	".github/workflows",
 	"internal",
 	"docs",
@@ -30,7 +31,7 @@ var defaultV3ContractRoots = []string{
 }
 
 //nolint:gochecknoglobals // contract rule set — precompiled regex table.
-var v3ContractRules = []contractResidueRule{
+var contractResidueRules = []contractResidueRule{
 	{
 		name:    "legacy parse-artifacts output",
 		pattern: regexp.MustCompile(`\b(?:maven-artifacts|gradleandroid-artifacts|githubpackages-artifacts|goartifactfirst-artifacts|gocontainerfirst-artifacts|pipeline-sboms|any-require-authorization)\b`),
@@ -79,8 +80,8 @@ type contractResidueRule struct {
 	message string
 }
 
-// V3ContractsInput drives V3Contracts.
-type V3ContractsInput struct {
+// ContractResidueInput drives ContractResidue.
+type ContractResidueInput struct {
 	// Root is the repository root. Empty -> cwd.
 	Root string
 	// Paths overrides the default source/workflow/doc roots to scan.
@@ -90,9 +91,9 @@ type V3ContractsInput struct {
 	FS fs.FS
 }
 
-// V3Contracts rejects removed compatibility contracts that must not return in
+// ContractResidue rejects removed compatibility contracts that must not return in
 // the breaking v3 line.
-func V3Contracts(w io.Writer, in V3ContractsInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+func ContractResidue(w io.Writer, annot output.Annotator, in ContractResidueInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	root := in.Root
 	if root == "" {
 		var err error
@@ -105,7 +106,7 @@ func V3Contracts(w io.Writer, in V3ContractsInput) error { //nolint:varnamelen /
 
 	paths := in.Paths
 	if len(paths) == 0 {
-		paths = defaultV3ContractRoots
+		paths = defaultContractResidueRoots
 	}
 
 	for i := range paths {
@@ -117,7 +118,7 @@ func V3Contracts(w io.Writer, in V3ContractsInput) error { //nolint:varnamelen /
 		f = os.DirFS(root)
 	}
 
-	files, err := v3ContractFiles(f, paths)
+	files, err := contractResidueFiles(f, paths)
 	if err != nil {
 		return err
 	}
@@ -125,7 +126,7 @@ func V3Contracts(w io.Writer, in V3ContractsInput) error { //nolint:varnamelen /
 	failures := 0
 
 	for _, file := range files {
-		count, err := scanV3ContractFile(w, f, file)
+		count, err := scanContractResidueFile(annot, f, file)
 		if err != nil {
 			return err
 		}
@@ -143,7 +144,7 @@ func V3Contracts(w io.Writer, in V3ContractsInput) error { //nolint:varnamelen /
 }
 
 //nolint:cyclop // lists per-component contract files for each workflow this binary backs.
-func v3ContractFiles(fsys fs.FS, roots []string) ([]string, error) {
+func contractResidueFiles(fsys fs.FS, roots []string) ([]string, error) {
 	files := make([]string, 0)
 	seen := make(map[string]struct{})
 
@@ -163,8 +164,8 @@ func v3ContractFiles(fsys fs.FS, roots []string) ([]string, error) {
 		}
 
 		if !info.IsDir() {
-			if shouldScanV3ContractFile(root) {
-				files = appendV3ContractFile(files, seen, root)
+			if shouldScanContractResidueFile(root) {
+				files = appendContractResidueFile(files, seen, root)
 			}
 
 			continue
@@ -176,15 +177,15 @@ func v3ContractFiles(fsys fs.FS, roots []string) ([]string, error) {
 			}
 
 			if d.IsDir() {
-				if skipV3ContractDir(d.Name()) {
+				if skipContractResidueDir(d.Name()) {
 					return fs.SkipDir
 				}
 
 				return nil
 			}
 
-			if shouldScanV3ContractFile(p) {
-				files = appendV3ContractFile(files, seen, p)
+			if shouldScanContractResidueFile(p) {
+				files = appendContractResidueFile(files, seen, p)
 			}
 
 			return nil
@@ -198,7 +199,7 @@ func v3ContractFiles(fsys fs.FS, roots []string) ([]string, error) {
 	return files, nil
 }
 
-func appendV3ContractFile(files []string, seen map[string]struct{}, file string) []string {
+func appendContractResidueFile(files []string, seen map[string]struct{}, file string) []string {
 	file = filepath.ToSlash(filepath.Clean(file))
 	if _, ok := seen[file]; ok {
 		return files
@@ -209,7 +210,7 @@ func appendV3ContractFile(files []string, seen map[string]struct{}, file string)
 	return append(files, file)
 }
 
-func skipV3ContractDir(name string) bool {
+func skipContractResidueDir(name string) bool {
 	switch name {
 	case ".git", ".github-shared", "bin", "coverage", "dist", "node_modules", "vendor":
 		return true
@@ -218,7 +219,7 @@ func skipV3ContractDir(name string) bool {
 	}
 }
 
-func shouldScanV3ContractFile(file string) bool {
+func shouldScanContractResidueFile(file string) bool {
 	if path.Base(file) == "coverage.html" || strings.HasSuffix(file, ".spdx.json") {
 		return false
 	}
@@ -231,8 +232,8 @@ func shouldScanV3ContractFile(file string) bool {
 	}
 }
 
-func scanV3ContractFile(w io.Writer, fsys fs.FS, file string) (int, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	if file == "internal/app/validate/v3contracts.go" || file == "internal/app/validate/v3contracts_test.go" {
+func scanContractResidueFile(annot output.Annotator, fsys fs.FS, file string) (int, error) {
+	if file == "internal/app/validate/contractresidue.go" || file == "internal/app/validate/contractresidue_test.go" {
 		return 0, nil
 	}
 
@@ -251,12 +252,16 @@ func scanV3ContractFile(w io.Writer, fsys fs.FS, file string) (int, error) { //n
 		lineNo++
 
 		line := scanner.Text()
-		for _, rule := range v3ContractRules {
+		for _, rule := range contractResidueRules {
 			if !rule.pattern.MatchString(line) {
 				continue
 			}
 
-			_, _ = fmt.Fprintf(w, "::error file=%s,line=%d::%s: %s (%s)\n", file, lineNo, rule.name, rule.message, strings.TrimSpace(line))
+			// rule.name/rule.message are trusted static text; the Annotator
+			// escapes the file property and the scanned-line message data.
+			annot.ErrorAt(output.Annotation{File: file, Line: lineNo},
+				"%s: %s (%s)", rule.name, rule.message, strings.TrimSpace(line))
+
 			failures++
 		}
 	}

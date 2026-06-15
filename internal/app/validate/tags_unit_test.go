@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	appvalidate "github.com/diggsweden/reusable-ci/internal/app/validate"
+	"github.com/diggsweden/reusable-ci/internal/domain/output"
 )
 
 // fakeTagGit is shared by every TagSignature unit test. The struct
@@ -71,7 +72,7 @@ func TestTagSignature_GPGSignedVerifiesInProcessAndPrintsSigner(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := appvalidate.TagSignature(context.Background(), gitr, &out, appvalidate.TagSignatureInput{
+	err := appvalidate.TagSignature(context.Background(), gitr, &out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.TagSignatureInput{
 		Tag:                 "v1.0.0",
 		ReleaseGPGPublicKey: []byte("public-key"),
 	})
@@ -105,12 +106,16 @@ func TestTagSignature_GPGSignedWithoutPublicKeyIsInformational(t *testing.T) {
 	gitr := &fakeTagGit{body: "-----BEGIN PGP SIGNATURE-----\n...\n-----END PGP SIGNATURE-----\n"}
 
 	var out bytes.Buffer
-	if err := appvalidate.TagSignature(context.Background(), gitr, &out, appvalidate.TagSignatureInput{Tag: "v1.0.0"}); err != nil {
+	if err := appvalidate.TagSignature(context.Background(), gitr, &out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.TagSignatureInput{Tag: "v1.0.0"}); err != nil {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(out.String(), "verification requires signer's public key") {
+	if !strings.Contains(out.String(), "verification requires the signer's public key") {
 		t.Errorf("missing unverified note:\n%s", out.String())
+	}
+
+	if !strings.Contains(out.String(), "::warning title=No release signer allowlist::") {
+		t.Errorf("missing loud no-allowlist warning:\n%s", out.String())
 	}
 }
 
@@ -123,14 +128,14 @@ func TestTagSignature_GPGSignedButVerifyFailsRendersFailureNote(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := appvalidate.TagSignature(context.Background(), gitr, &out, appvalidate.TagSignatureInput{
+	if err := appvalidate.TagSignature(context.Background(), gitr, &out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.TagSignatureInput{
 		Tag:                 "v1.0.0",
 		ReleaseGPGPublicKey: []byte("wrong-key"),
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(out.String(), "did not verify against the configured public key") {
+	if !strings.Contains(out.String(), "did not verify against any available key") {
 		t.Errorf("missing failure note:\n%s", out.String())
 	}
 }
@@ -141,7 +146,7 @@ func TestTagSignature_SSHSignedDoesNotRunGPGVerification(t *testing.T) {
 	gitr := &fakeTagGit{body: "-----BEGIN SSH SIGNATURE-----\n...\n-----END SSH SIGNATURE-----\n"}
 
 	var out bytes.Buffer
-	if err := appvalidate.TagSignature(context.Background(), gitr, &out, appvalidate.TagSignatureInput{Tag: "v1.0.0"}); err != nil {
+	if err := appvalidate.TagSignature(context.Background(), gitr, &out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.TagSignatureInput{Tag: "v1.0.0"}); err != nil {
 		t.Fatal(err)
 	}
 

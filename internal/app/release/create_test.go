@@ -99,7 +99,7 @@ func TestCreateRelease_HappyPath(t *testing.T) {
 		Tag:          "v1.0.0",
 		Repository:   "owner/my-app",
 		ArtifactName: "my-app",
-		MakeLatest:   true,
+		MakeLatest:   "true",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +244,7 @@ func TestCreateRelease_DraftFlagPropagates(t *testing.T) {
 		Tag:        "v1.0.0",
 		Repository: "owner/repo",
 		Draft:      true,
-		MakeLatest: false,
+		MakeLatest: "false",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -255,8 +255,28 @@ func TestCreateRelease_DraftFlagPropagates(t *testing.T) {
 		t.Error("Draft should be true")
 	}
 
-	if spec.MakeLatest {
+	if spec.MakeLatest != provider.MakeLatestFalse {
 		t.Error("MakeLatest should be false")
+	}
+}
+
+func TestCreateRelease_MakeLatestLegacyPropagates(t *testing.T) {
+	t.Parallel()
+
+	prov := fakeprovider.New(t)
+	fs := &fakeFS{Files: map[string]bool{}}
+
+	err := apprelease.CreateRelease(context.Background(), prov, fs, &bytes.Buffer{}, apprelease.CreateReleaseInput{
+		Tag:        "v1.0.0",
+		Repository: "owner/repo",
+		MakeLatest: "legacy",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := prov.CreateReleaseCalls()[0].Spec.MakeLatest; got != provider.MakeLatestLegacy {
+		t.Errorf("MakeLatest = %q, want %q", got, provider.MakeLatestLegacy)
 	}
 }
 

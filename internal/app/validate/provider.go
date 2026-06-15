@@ -7,32 +7,33 @@ import (
 	"context"
 	"fmt"
 	"io"
+
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/provider"
-	"github.com/diggsweden/reusable-ci/internal/domain/validate"
 )
 
-// TokenInput drives `validate auth token` on the GitHub or GitLab provider.
+// TokenInput drives `validate auth token`. Forge-specific labels and
+// token-format advice come from the provider itself (Describer /
+// TokenAdviser), not from a platform field here.
 type TokenInput struct {
 	Token      string
 	Repository string
-	// Platform is the active CI provider — only used for guidance text
-	// (label, token-format hints). The actual probe runs against the
-	// TokenValidator dependency, regardless of platform.
-	Platform provider.Platform
 }
 
-// Token validates a release-bot token. On GitHub it gates classic PATs
-// (ghp_*) and surfaces an info line for unknown prefixes; validity is
-// confirmed by a single authenticated GET against the repo. On GitLab
-// the format checks are skipped (no canonical token kinds) and the
-// network call alone reports validity.
+// Token validates a release-bot token. Forge-specific behaviour is
+// delegated to the provider: labels and setup guidance come from its
+// Describer; token-format advice (e.g. GitHub classic-PAT refusal)
+// comes from its optional TokenAdviser. Validity is confirmed by the
+// provider's ValidateToken probe.
 func Token(ctx context.Context, prov provider.TokenValidator, out io.Writer, in TokenInput) error {
+	info := describe(prov)
+
 	if in.Token == "" {
 		return fmt.Errorf(
 			"no %s token provided\n%s: %w",
-			tokenKindLabel(in.Platform),
-			tokenSetupGuidance(in.Platform),
+			info.DisplayName,
+			tokenSetupGuidance(info),
 			errs.ErrPermissionDenied)
 	}
 
@@ -40,18 +41,14 @@ func Token(ctx context.Context, prov provider.TokenValidator, out io.Writer, in 
 		return fmt.Errorf("no repository provided\nusage: validate auth token <token> <repository>: %w", errs.ErrUsage)
 	}
 
-	if in.Platform == provider.PlatformGitHub {
-		switch validate.ClassifyGitHubToken(in.Token) {
-		case validate.GitHubTokenClassic:
-			return fmt.Errorf("classic PAT detected (ghp_*)\n"+
-				"Classic PATs have broad access and are not recommended.\n"+
-				"Please use a fine-grained PAT (github_pat_*) with 'contents: write' permission.\n"+
-				"See: https://github.com/settings/personal-access-tokens/new: %w", errs.ErrPermissionDenied)
-		case validate.GitHubTokenUnknown:
-			_, _ = fmt.Fprintf(out, "ℹ️  Unknown token type. Expected fine-grained PAT (github_pat_*) or GitHub App token (ghs_*).\n")
-		default:
-			// GitHubTokenFineGrained / GitHubTokenApp: the recommended
-			// shapes — pass silently to the API-side ValidateToken probe.
+	if adviser, ok := prov.(provider.TokenAdviser); ok {
+		advice, reject := adviser.AdviseToken(in.Token)
+		if reject {
+			return fmt.Errorf("%s: %w", advice, errs.ErrPermissionDenied)
+		}
+
+		if advice != "" {
+			_, _ = fmt.Fprintf(out, "%s\n", advice)
 		}
 	}
 
@@ -63,37 +60,34 @@ func Token(ctx context.Context, prov provider.TokenValidator, out io.Writer, in 
 			err, errs.ErrPermissionDenied)
 	}
 
-	_, _ = fmt.Fprintf(out, "✓ %s token validated\n", tokenKindLabel(in.Platform))
+	_, _ = fmt.Fprintf(out, "%s %s token validated\n", clicolor.Check(out), info.DisplayName)
 
 	return nil
 }
 
-func tokenKindLabel(p provider.Platform) string { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	switch p {
-	case provider.PlatformGitHub:
-		return "GitHub"
-	case provider.PlatformGitLab:
-		return "GitLab"
-	default:
-		// PlatformLocal (or any unknown): use the raw enum value as
-		// label — local mode never reaches token-validation use cases.
-		return string(p)
+// describe returns the provider's self-description, falling back to a
+// generic label when the dependency does not implement Describer (every
+// real adapter does).
+func describe(prov provider.TokenValidator) provider.Info {
+	if d, ok := prov.(provider.Describer); ok {
+		return d.Describe()
+	}
+
+	return provider.Info{
+		DisplayName: "the configured",
+		ScopesHint:  "Provide a token with the appropriate permissions.",
 	}
 }
 
-func tokenSetupGuidance(p provider.Platform) string {
-	switch p {
-	case provider.PlatformGitHub:
-		return "A fine-grained PAT (github_pat_*) with 'contents: write' permission is required.\n" +
-			"Create one at: https://github.com/settings/personal-access-tokens/new"
-	case provider.PlatformGitLab:
-		return "A project / group / personal access token with api + write_repository scopes is required.\n" +
-			"Create one at: https://gitlab.com/-/user_settings/personal_access_tokens"
-	default:
-		// PlatformLocal (or any unknown): generic guidance — local mode
-		// never reaches token-setup paths.
-		return "Provide a token with the appropriate permissions."
+// tokenSetupGuidance renders the human guidance line from a provider's
+// self-description: the scopes hint, plus a "create one at" pointer when
+// the provider exposes a setup URL.
+func tokenSetupGuidance(info provider.Info) string {
+	if info.SetupURL == "" {
+		return info.ScopesHint
 	}
+
+	return info.ScopesHint + "\nCreate one at: " + info.SetupURL
 }
 
 // BotPermissionsInput drives `validate auth bot-permissions`.
@@ -132,7 +126,7 @@ func BotPermissions(ctx context.Context, prov provider.TokenValidator, out io.Wr
 		_, _ = fmt.Fprintf(out, "  - Bypass branch protection (if enabled)\n")
 	}
 
-	_, _ = fmt.Fprintf(out, "✓ Bot token is valid and has repository access\n")
+	_, _ = fmt.Fprintf(out, "%s Bot token is valid and has repository access\n", clicolor.Check(out))
 
 	return nil
 }
@@ -141,5 +135,5 @@ func BotPermissions(ctx context.Context, prov provider.TokenValidator, out io.Wr
 // validate.tags.go::TagSignature + checkGPGSignerAllowlist +
 // checkSSHSignerAllowlist. The committed allowlist files are
 // .reusable-ci/allowed_signers (SSH) and
-// .reusable-ci/allowed_gpg_fingerprints (GPG); contract documented in
+// .reusable-ci/allowed_gpg_keys.asc (GPG); contract documented in
 // docs/verification.md.

@@ -13,7 +13,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/adapters/cosign"
 	appcontainer "github.com/diggsweden/reusable-ci/internal/app/container"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	domain "github.com/diggsweden/reusable-ci/internal/domain/release"
+	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
 )
 
 type recordingSigner struct {
@@ -43,7 +43,7 @@ func TestSignImage_SigstoreDispatch(t *testing.T) {
 
 	err := appcontainer.SignImage(context.Background(), rec, &bytes.Buffer{}, appcontainer.SignImageInput{
 		Image:      testImageDigest,
-		Method:     domain.SignMethodSigstore,
+		Method:     domainrelease.SignMethodSigstore,
 		Recursive:  true,
 		OIDCIssuer: "https://token.actions.githubusercontent.com",
 	})
@@ -67,7 +67,7 @@ func TestSignImage_KMSDispatch(t *testing.T) {
 
 	err := appcontainer.SignImage(context.Background(), rec, &bytes.Buffer{}, appcontainer.SignImageInput{
 		Image:     testImageDigest,
-		Method:    domain.SignMethodKMS,
+		Method:    domainrelease.SignMethodKMS,
 		Recursive: true,
 		KeyRef:    "hashivault://transit/keys/release",
 	})
@@ -88,7 +88,7 @@ func TestSignImage_KMSDispatch(t *testing.T) {
 func TestSignImage_GPGMethodRejected(t *testing.T) {
 	err := appcontainer.SignImage(context.Background(), &recordingSigner{}, &bytes.Buffer{}, appcontainer.SignImageInput{
 		Image:  testImageDigest,
-		Method: domain.SignMethodGPG,
+		Method: domainrelease.SignMethodGPG,
 	})
 	if !errors.Is(err, errs.ErrInvalidConfig) {
 		t.Errorf("gpg cannot sign images; expected ErrInvalidConfig, got %v", err)
@@ -98,7 +98,7 @@ func TestSignImage_GPGMethodRejected(t *testing.T) {
 func TestSignImage_EmptyImageRejected(t *testing.T) {
 	err := appcontainer.SignImage(context.Background(), &recordingSigner{}, &bytes.Buffer{}, appcontainer.SignImageInput{
 		Image:  "",
-		Method: domain.SignMethodSigstore,
+		Method: domainrelease.SignMethodSigstore,
 	})
 	if !errors.Is(err, errs.ErrMissingInput) {
 		t.Errorf("empty image; expected ErrMissingInput, got %v", err)
@@ -110,7 +110,7 @@ func TestVerifyImage_SigstoreDispatch(t *testing.T) {
 
 	err := appcontainer.VerifyImage(context.Background(), rec, &bytes.Buffer{}, appcontainer.VerifyImageInput{
 		Image:              testImageDigest,
-		Method:             domain.SignMethodSigstore,
+		Method:             domainrelease.SignMethodSigstore,
 		CertIdentityRegexp: "^https://github.com/diggsweden/",
 		CertOIDCIssuer:     "https://token.actions.githubusercontent.com",
 	})
@@ -132,7 +132,7 @@ func TestVerifyImage_SigstoreDispatch(t *testing.T) {
 func TestVerifyImage_GPGMethodRejected(t *testing.T) {
 	err := appcontainer.VerifyImage(context.Background(), &recordingVerifier{}, &bytes.Buffer{}, appcontainer.VerifyImageInput{
 		Image:  testImageDigest,
-		Method: domain.SignMethodGPG,
+		Method: domainrelease.SignMethodGPG,
 	})
 	if !errors.Is(err, errs.ErrInvalidConfig) {
 		t.Errorf("gpg cannot verify images; expected ErrInvalidConfig, got %v", err)

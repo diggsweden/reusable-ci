@@ -10,7 +10,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/internal/adapters/cosign"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	domain "github.com/diggsweden/reusable-ci/internal/domain/release"
+	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
 )
 
 // CosignSigner adapts the low-level cosign subprocess wrapper to the
@@ -27,7 +27,7 @@ import (
 // there is no decrypted key in our heap to leak.
 type CosignSigner struct {
 	adapter    cosignSignBlobber
-	method     domain.SignMethod
+	method     domainrelease.SignMethod
 	keyRef     string
 	oidcIssuer string
 	errOut     io.Writer
@@ -45,7 +45,7 @@ type cosignSignBlobber interface {
 type CosignSignerInput struct {
 	// Method is SignMethodSigstore or SignMethodKMS. Other values
 	// (gpg, "") are rejected — caller picked the wrong factory.
-	Method domain.SignMethod
+	Method domainrelease.SignMethod
 
 	// KeyRef is required when Method == SignMethodKMS, forbidden
 	// when Method == SignMethodSigstore. Passed verbatim to cosign's
@@ -66,11 +66,11 @@ func NewCosignSigner(adapter cosignSignBlobber, in CosignSignerInput, errOut io.
 	}
 
 	switch in.Method {
-	case domain.SignMethodSigstore:
+	case domainrelease.SignMethodSigstore:
 		if in.KeyRef != "" {
 			return nil, fmt.Errorf("cosign signer (sigstore): KeyRef forbidden (got %q): %w", in.KeyRef, errs.ErrUsage)
 		}
-	case domain.SignMethodKMS:
+	case domainrelease.SignMethodKMS:
 		if in.KeyRef == "" {
 			return nil, fmt.Errorf("cosign signer (kms): KeyRef is required: %w", errs.ErrUsage)
 		}
@@ -109,10 +109,10 @@ func (s *CosignSigner) SignFile(ctx context.Context, file string) error {
 	}
 
 	switch s.method {
-	case domain.SignMethodSigstore:
+	case domainrelease.SignMethodSigstore:
 		in.Keyless = true
 		in.OIDCIssuer = s.oidcIssuer
-	case domain.SignMethodKMS:
+	case domainrelease.SignMethodKMS:
 		in.KeyRef = s.keyRef
 	default:
 		return fmt.Errorf("cosign signer: invariant violated, method %q is not sigstore/kms: %w", s.method, errs.ErrInvalidConfig)

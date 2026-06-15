@@ -22,7 +22,7 @@ func TestStageResult_GenericPlan(t *testing.T) {
 	_, err := appsummary.StageResult(context.Background(), out, mf, appsummary.StageResultInput{
 		StagePlanJSON: `{"version":1,"stage":"build","targets":{"npm":{"runs":true},"maven":{"runs":false}}}`,
 		Results: []domainsummary.KeyValue{
-			{Key: "npm", Value: "success"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			{Key: "npm", Value: "success"},   //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			{Key: "maven", Value: "failure"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		},
 		Extras: []domainsummary.KeyValue{{Key: "project_type", Value: "npm"}},
@@ -250,7 +250,7 @@ func TestStageResult_FailurePriorityAndSkippedTargets(t *testing.T) {
 		StagePlanJSON: `{"version":1,"stage":"publish","targets":{"containers":{"runs":true},"cargo":{"runs":true},"npm":{"runs":false}}}`,
 		Results: []domainsummary.KeyValue{
 			{Key: "containers", Value: "cancelled"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			{Key: "cargo", Value: "failure"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			{Key: "cargo", Value: "failure"},        //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			{Key: "npm", Value: "failure"},
 		},
 	})

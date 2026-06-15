@@ -13,6 +13,7 @@ import (
 
 	adaptergit "github.com/diggsweden/reusable-ci/internal/adapters/git"
 	appvalidate "github.com/diggsweden/reusable-ci/internal/app/validate"
+	"github.com/diggsweden/reusable-ci/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/internal/testutil/isolatedgit"
 )
 
@@ -59,7 +60,7 @@ func TestTagUniqueness_FailsWhenCollisions(t *testing.T) {
 func TestTagUniqueness_EmptyTagUsage(t *testing.T) {
 	gitr, _ := newRealGit(t)
 	err := appvalidate.TagUniqueness(context.Background(), gitr, &bytes.Buffer{}, appvalidate.TagUniquenessInput{})
-	if err == nil || !strings.Contains(err.Error(), "Usage") {
+	if err == nil || !strings.Contains(err.Error(), "usage") {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -120,7 +121,7 @@ func TestTagSignature_LightweightTagFails(t *testing.T) {
 	gitr, ig := newRealGit(t)
 	ig.Git("tag", "v1.0.0") // lightweight (no -a)
 
-	err := appvalidate.TagSignature(context.Background(), gitr, nil, &bytes.Buffer{}, appvalidate.TagSignatureInput{Tag: "v1.0.0"})
+	err := appvalidate.TagSignature(context.Background(), gitr, &bytes.Buffer{}, output.NewAnnotator(&bytes.Buffer{}, output.FormatGitHub), appvalidate.TagSignatureInput{Tag: "v1.0.0"})
 	if err == nil || !strings.Contains(err.Error(), "lightweight tag") {
 		t.Errorf("err = %v", err)
 	}
@@ -131,7 +132,7 @@ func TestTagSignature_AnnotatedUnsignedFails(t *testing.T) {
 	ig.AddTag("v1.0.0", "annotated, unsigned")
 
 	var buf bytes.Buffer
-	err := appvalidate.TagSignature(context.Background(), gitr, nil, &buf, appvalidate.TagSignatureInput{Tag: "v1.0.0"})
+	err := appvalidate.TagSignature(context.Background(), gitr, &buf, output.NewAnnotator(&buf, output.FormatGitHub), appvalidate.TagSignatureInput{Tag: "v1.0.0"})
 	if err == nil || !strings.Contains(err.Error(), "is not signed") {
 		t.Errorf("err = %v", err)
 	}
@@ -144,8 +145,8 @@ func TestTagSignature_AnnotatedUnsignedFails(t *testing.T) {
 
 func TestTagSignature_EmptyTagUsage(t *testing.T) {
 	gitr, _ := newRealGit(t)
-	err := appvalidate.TagSignature(context.Background(), gitr, nil, &bytes.Buffer{}, appvalidate.TagSignatureInput{})
-	if err == nil || !strings.Contains(err.Error(), "Usage") {
+	err := appvalidate.TagSignature(context.Background(), gitr, &bytes.Buffer{}, output.NewAnnotator(&bytes.Buffer{}, output.FormatGitHub), appvalidate.TagSignatureInput{})
+	if err == nil || !strings.Contains(err.Error(), "usage") {
 		t.Errorf("err = %v", err)
 	}
 }

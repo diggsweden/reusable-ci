@@ -54,7 +54,7 @@ func TestPrerequisites_TagSection(t *testing.T) {
 	}
 
 	err := appsummary.Prerequisites(context.Background(), sink, gitr, appsummary.PrerequisitesSummaryInput{
-		TagName:         "v1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		TagName:         "v1.0.0",     //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		CommitSHA:       "abcdef0123", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		RefType:         provider.RefTypeTag,
 		HasReleaseToken: true,
@@ -79,7 +79,7 @@ func TestPrerequisites_TagSection(t *testing.T) {
 		"- **SHA:** `abcdef0123`",
 		"- **Author:** Alice <alice@example.invalid>",
 		"- **Date:** 2026-05-09",
-		"### ✅ All required prerequisites are configured!",
+		"### ✓ All required prerequisites are configured!",
 		"| Release Type | 🎯 Stable | Production release |",
 		"| Release Token | ✓ Pass | Valid GitHub token |",
 	} {
@@ -296,7 +296,7 @@ func TestPrerequisites_FailedJobStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(sink.buf.String(), "### ❌ Prerequisites validation failed") {
+	if !strings.Contains(sink.buf.String(), "### ✗ Prerequisites validation failed") {
 		t.Errorf("expected failure header: %s", sink.buf.String())
 	}
 }

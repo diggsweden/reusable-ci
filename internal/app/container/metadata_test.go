@@ -165,7 +165,7 @@ func TestComputeMetadata_PrimaryByPriority(t *testing.T) {
 func TestComputeMetadata_LabelsWithOverrides_SkipFetch(t *testing.T) {
 	t.Parallel()
 	prov := newFake(t, provider.EventContext{
-		Repo:    "example/app", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		Repo:    "example/app",                    //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		RepoURL: "https://github.com/example/app", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		SHA:     "abcdef0123",
 	})

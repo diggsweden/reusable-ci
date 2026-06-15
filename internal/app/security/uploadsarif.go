@@ -9,10 +9,12 @@ import (
 	"io"
 	"os"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/cliio"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/internal/domain/security"
 )
 
 // UploadSARIFInput drives UploadSARIF.
@@ -27,8 +29,10 @@ type UploadSARIFInput struct {
 	SHA string
 	// Ref is the full git ref (typically $GITHUB_REF).
 	Ref string
-	// Category is the SARIF tool category. Empty omits the tool_name
-	// field in the request body.
+	// Category is the Code Scanning analysis category. When set, it is
+	// stamped into the SARIF body as each run's automationDetails.id so
+	// distinct categories upload as distinct analyses. Empty leaves the
+	// SARIF's own analysis identity untouched.
 	Category string
 }
 
@@ -51,6 +55,7 @@ type UploadSARIFInput struct {
 // Hard failure (return error): required fields missing, transport
 // failure. Only github currently implements provider.SARIFUploader —
 // the CLI gates on platform before reaching this use case.
+//
 //nolint:cyclop // SARIF upload flow: discover → gzip → enrich → upload → summary.
 func UploadSARIF(ctx context.Context, prov provider.SARIFUploader, w io.Writer, annot output.Annotator, in UploadSARIFInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if in.Token == "" {
@@ -98,6 +103,14 @@ func UploadSARIF(ctx context.Context, prov provider.SARIFUploader, w io.Writer, 
 		return fmt.Errorf("read SARIF: %w", err)
 	}
 
+	// Stamp the category into the SARIF body as automationDetails.id — the
+	// key Code Scanning actually dedupes analyses by. Distinct categories
+	// then upload as distinct analyses instead of overwriting one another.
+	raw, err = security.SetSARIFCategory(raw, in.Category)
+	if err != nil {
+		return fmt.Errorf("set SARIF category: %w", err)
+	}
+
 	shortSHA := in.SHA
 	if len(shortSHA) > 7 {
 		shortSHA = shortSHA[:7]
@@ -116,7 +129,6 @@ func UploadSARIF(ctx context.Context, prov provider.SARIFUploader, w io.Writer, 
 		SHA:        in.SHA,
 		Ref:        in.Ref,
 		SARIF:      raw,
-		Category:   in.Category,
 		Token:      in.Token,
 	})
 	if err != nil {
@@ -125,7 +137,7 @@ func UploadSARIF(ctx context.Context, prov provider.SARIFUploader, w io.Writer, 
 		return fmt.Errorf("upload sarif: %w", err)
 	}
 
-	_, _ = fmt.Fprintln(w, "✓ SARIF accepted by Code Scanning (results appear after async processing)")
+	_, _ = fmt.Fprintf(w, "%s SARIF accepted by Code Scanning (results appear after async processing)\n", clicolor.Check(w))
 
 	return nil
 }

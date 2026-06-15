@@ -19,9 +19,9 @@ func TestReleaseSummary_HappyPath(t *testing.T) {
 
 	err := appsummary.ReleaseSummary(context.Background(), sink, appsummary.ReleaseSummaryInput{
 		ReleaseVersion:      "v1.2.3",
-		ReleaseBranch:       "main", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		ReleaseBranch:       "main",       //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		ReleaseCommit:       "abcdef0123", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		ReleaseActor:        "bot", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		ReleaseActor:        "bot",        //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		RunURL:              "https://example.com/run/42",
 		CreateReleaseResult: "success", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		PrepareStageJSON:    stageResultJSON(t, "prepare", map[string]string{"version_bump": "success"}),
@@ -35,7 +35,7 @@ func TestReleaseSummary_HappyPath(t *testing.T) {
 		PublishStageJSON: stageResultJSON(t, "publish", map[string]string{
 			"github_packages":       "success",
 			"xcode_ios":             "success",
-			"containers":            "success",                                                                                                            //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			"containers":            "success", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			"cargo_container_first": "success",
 			"go_container_first":    "failure",
 		}),

@@ -12,7 +12,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/adapters/cosign"
 	apprelease "github.com/diggsweden/reusable-ci/internal/app/release"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	domain "github.com/diggsweden/reusable-ci/internal/domain/release"
+	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
 )
 
 // recordingBlobber captures the SignBlobInput cosign would receive,
@@ -30,7 +30,7 @@ func (r *recordingBlobber) SignBlob(_ context.Context, in cosign.SignBlobInput, 
 
 func TestNewCosignSigner_SigstoreRejectsKeyRef(t *testing.T) {
 	_, err := apprelease.NewCosignSigner(&recordingBlobber{}, apprelease.CosignSignerInput{
-		Method: domain.SignMethodSigstore,
+		Method: domainrelease.SignMethodSigstore,
 		KeyRef: "awskms:///alias/X",
 	}, io.Discard)
 	if !errors.Is(err, errs.ErrUsage) {
@@ -40,7 +40,7 @@ func TestNewCosignSigner_SigstoreRejectsKeyRef(t *testing.T) {
 
 func TestNewCosignSigner_KMSRequiresKeyRef(t *testing.T) {
 	_, err := apprelease.NewCosignSigner(&recordingBlobber{}, apprelease.CosignSignerInput{
-		Method: domain.SignMethodKMS,
+		Method: domainrelease.SignMethodKMS,
 	}, io.Discard)
 	if !errors.Is(err, errs.ErrUsage) {
 		t.Errorf("kms without KeyRef must reject as ErrUsage, got %v", err)
@@ -49,7 +49,7 @@ func TestNewCosignSigner_KMSRequiresKeyRef(t *testing.T) {
 
 func TestNewCosignSigner_KMSRejectsOIDCIssuer(t *testing.T) {
 	_, err := apprelease.NewCosignSigner(&recordingBlobber{}, apprelease.CosignSignerInput{
-		Method:     domain.SignMethodKMS,
+		Method:     domainrelease.SignMethodKMS,
 		KeyRef:     "awskms:///alias/X",
 		OIDCIssuer: "https://example",
 	}, io.Discard)
@@ -60,7 +60,7 @@ func TestNewCosignSigner_KMSRejectsOIDCIssuer(t *testing.T) {
 
 func TestNewCosignSigner_RejectsGPGMethod(t *testing.T) {
 	_, err := apprelease.NewCosignSigner(&recordingBlobber{}, apprelease.CosignSignerInput{
-		Method: domain.SignMethodGPG,
+		Method: domainrelease.SignMethodGPG,
 	}, io.Discard)
 	if !errors.Is(err, errs.ErrUsage) {
 		t.Errorf("gpg method must reject as ErrUsage (wrong factory), got %v", err)
@@ -71,7 +71,7 @@ func TestCosignSigner_SigstoreSignFileShape(t *testing.T) {
 	rec := &recordingBlobber{}
 
 	signer, err := apprelease.NewCosignSigner(rec, apprelease.CosignSignerInput{
-		Method:     domain.SignMethodSigstore,
+		Method:     domainrelease.SignMethodSigstore,
 		OIDCIssuer: "https://token.actions.githubusercontent.com",
 	}, io.Discard)
 	if err != nil {
@@ -97,7 +97,7 @@ func TestCosignSigner_KMSSignFileShape(t *testing.T) {
 	rec := &recordingBlobber{}
 
 	signer, err := apprelease.NewCosignSigner(rec, apprelease.CosignSignerInput{
-		Method: domain.SignMethodKMS,
+		Method: domainrelease.SignMethodKMS,
 		KeyRef: "hashivault://transit/keys/release",
 	}, io.Discard)
 	if err != nil {
@@ -120,16 +120,16 @@ func TestCosignSigner_KMSSignFileShape(t *testing.T) {
 
 func TestCosignSigner_ExtensionsMatchMethod(t *testing.T) {
 	cases := []struct {
-		method domain.SignMethod
+		method domainrelease.SignMethod
 		want   []string
 	}{
-		{domain.SignMethodSigstore, []string{".bundle"}},
-		{domain.SignMethodKMS, []string{".bundle"}},
+		{domainrelease.SignMethodSigstore, []string{".bundle"}},
+		{domainrelease.SignMethodKMS, []string{".bundle"}},
 	}
 
 	for _, c := range cases {
 		in := apprelease.CosignSignerInput{Method: c.method}
-		if c.method == domain.SignMethodKMS {
+		if c.method == domainrelease.SignMethodKMS {
 			in.KeyRef = "awskms:///alias/X"
 		}
 

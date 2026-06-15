@@ -200,7 +200,7 @@ func TestMavenLibrary_RunsCompileTestPackage_WithProfile(t *testing.T) {
 	}
 
 	wantCompile := []string{"--batch-mode", "--errors", "clean", "compile", "-Pcentral-release"} //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-	wantTest := []string{"--batch-mode", "--errors", "test", "-Pcentral-release"} //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+	wantTest := []string{"--batch-mode", "--errors", "test", "-Pcentral-release"}                //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 
 	wantPackage := []string{"--batch-mode", "--errors", "package", "-DskipTests=false", "-Pcentral-release", "-Dgpg.skip=true"} //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	for i, want := range [][]string{wantCompile, wantTest, wantPackage} {

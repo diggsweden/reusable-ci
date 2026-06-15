@@ -41,6 +41,7 @@ type ExpandSBOMsInput struct {
 // ExpandSBOMs prints the expanded layer set to out in the requested
 // format and, on GitHub/GitLab, also publishes the comma-joined list as
 // CI outputs via in.Sink.
+//
 //nolint:cyclop // expands layer×format×naming permutations for each artifact.
 func ExpandSBOMs(ctx context.Context, out io.Writer, in ExpandSBOMsInput) error {
 	if in.Value == "" {

@@ -107,7 +107,7 @@ func TestGenerate_NPM_BuildLayer_HappyPath(t *testing.T) {
 		t.Errorf("expected %s, got: %v", wantFile, err)
 	}
 
-	if !strings.Contains(out.String(), "✅ "+wantFile) {
+	if !strings.Contains(out.String(), "✓ "+wantFile) {
 		t.Errorf("missing success line:\n%s", out.String())
 	}
 }
@@ -159,7 +159,7 @@ func TestGenerate_GoArtifactLayer_ScansExecutableFromReleaseArtifacts(t *testing
 	syft := &fakeSyft{}
 	if err := appsbom.Generate(context.Background(), syft, nil, &fakeGit{}, io.Discard, io.Discard, appsbom.GenerateInput{
 		ProjectType: "go",
-		Name:        "demo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		Name:        "demo",  //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Version:     "1.2.3", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Layers:      "analyzed-artifact",
 	}); err != nil {
@@ -353,7 +353,7 @@ func TestGenerate_Maven_BuildAndArtifactLayers(t *testing.T) {
 
 	mvn := &fakeMaven{answers: map[string]string{
 		"project.version":    "1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		"project.artifactId": "demo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"project.artifactId": "demo",  //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}}
 
 	err := appsbom.Generate(context.Background(), &fakeSyft{}, mvn, &fakeGit{sha: "abc1234"}, io.Discard, io.Discard, appsbom.GenerateInput{

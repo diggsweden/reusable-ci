@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	appversion "github.com/diggsweden/reusable-ci/internal/app/version"
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
 	"github.com/diggsweden/reusable-ci/internal/testutil/testfs"
@@ -200,6 +201,12 @@ func TestBump_GradleJVM_FileMissingErrors(t *testing.T) {
 		t.Fatal("expected error")
 	}
 
+	// A missing user-supplied version file is EX_NOINPUT (66), not the
+	// unclassified internal-bug default (70).
+	if !errors.Is(err, errs.ErrMissingInput) {
+		t.Errorf("err = %v, want wrapped errs.ErrMissingInput", err)
+	}
+
 	if !strings.Contains(stderr.String(), "::error::Gradle version file not found") {
 		t.Errorf("expected ::error:: line, got: %s", stderr.String())
 	}
@@ -323,6 +330,26 @@ func TestBump_Cargo_OfflineFailureFallsBackToOnline(t *testing.T) {
 
 	if len(ops.calls) != 2 {
 		t.Errorf("expected 2 cargo calls (offline then online), got %d", len(ops.calls))
+	}
+}
+
+func TestBump_Cargo_MissingManifestIsMissingInput(t *testing.T) {
+	t.Parallel()
+	fsys := testfs.NewReal(t)
+
+	err := appversion.Bump(context.Background(), appversion.BumpOps{Cargo: &fakeCargoOps{avail: true}}, io.Discard, io.Discard, output.Annotator{}, appversion.BumpInput{
+		ProjectType: projecttype.Cargo,
+		Version:     "1.0.0",
+		WorkingDir:  fsys.Root, // no Cargo.toml written
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	// A missing user-supplied Cargo.toml is EX_NOINPUT (66), not the
+	// unclassified internal-bug default (70).
+	if !errors.Is(err, errs.ErrMissingInput) {
+		t.Errorf("err = %v, want wrapped errs.ErrMissingInput", err)
 	}
 }
 

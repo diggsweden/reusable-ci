@@ -18,7 +18,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/adapters/cosign"
 	appvalidate "github.com/diggsweden/reusable-ci/internal/app/validate"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	domain "github.com/diggsweden/reusable-ci/internal/domain/release"
+	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
 )
 
 // recordingVerifier captures the VerifyBlobInput the dispatcher
@@ -288,7 +288,7 @@ func TestVerifyArtifactSignature_ExplicitMethodOverridesDetection(t *testing.T) 
 	// and kms; setting --method=sigstore short-circuits that.
 	err := appvalidate.VerifyArtifactSignature(context.Background(), v, &bytes.Buffer{}, appvalidate.ArtifactSignatureInput{
 		Artefact:           art,
-		Method:             domain.SignMethodSigstore,
+		Method:             domainrelease.SignMethodSigstore,
 		CertIdentityRegexp: "^x",
 		CertOIDCIssuer:     "https://x",
 	})

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	domaingpg "github.com/diggsweden/reusable-ci/internal/domain/gpg"
@@ -137,7 +138,7 @@ func importKeyAndReadMetadata(ctx context.Context, gpg gpgImporter, readMetadata
 }
 
 func emitKeyMetadata(out io.Writer, md domaingpg.Metadata) {
-	_, _ = fmt.Fprintln(out, "✓ Imported GPG key into the local keyring")
+	_, _ = fmt.Fprintf(out, "%s Imported GPG key into the local keyring\n", clicolor.Check(out))
 	_, _ = fmt.Fprintf(out, "  Fingerprint : %s\n", md.Fingerprint)
 	_, _ = fmt.Fprintf(out, "  KeyID       : %s\n", md.KeyID)
 	_, _ = fmt.Fprintf(out, "  Name        : %s\n", md.Name)

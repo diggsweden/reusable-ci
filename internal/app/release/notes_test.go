@@ -47,6 +47,36 @@ func TestPrepareNotes_CopiesSourceWhenPresent(t *testing.T) {
 	}
 }
 
+func TestPrepareNotes_EmptySourceFallsBackToVersionStub(t *testing.T) {
+	t.Parallel()
+	fsys := testfs.NewReal(t)
+	dir := fsys.Root
+	src := filepath.Join(dir, "src.md")
+	tgt := filepath.Join(dir, "release-notes.md")
+	// A 0-byte source (git-cliff produced no commits in range) must not be
+	// copied verbatim — that would publish empty notes. It falls through to
+	// the version stub.
+	fsys.WriteFile("src.md", []byte{})
+
+	var buf bytes.Buffer
+
+	err := apprelease.PrepareNotes(context.Background(), &buf, apprelease.PrepareNotesInput{
+		SourceFile: src, TargetFile: tgt, ReleaseVersion: "v1.0.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := os.ReadFile(tgt) //nolint:gosec // test fixture
+	if !strings.Contains(string(got), "# Release v1.0.0") {
+		t.Errorf("target = %q, want fallback stub", got)
+	}
+
+	if !strings.Contains(buf.String(), "creating fallback") {
+		t.Errorf("output = %q, want fallback path", buf.String())
+	}
+}
+
 func TestPrepareNotes_FallbackWithVersion(t *testing.T) {
 	t.Parallel()
 
@@ -137,7 +167,7 @@ func TestPrepareNotes_DefaultsForFileNames(t *testing.T) {
 	}
 }
 
-func TestValidateChangelog_PrintsPreview(t *testing.T) {
+func TestVerifyChangelog_PrintsPreview(t *testing.T) {
 	t.Parallel()
 	fsys := testfs.NewReal(t)
 	dir := fsys.Root
@@ -147,7 +177,7 @@ func TestValidateChangelog_PrintsPreview(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	err := apprelease.ValidateChangelog(context.Background(), &buf, apprelease.ValidateChangelogInput{
+	err := apprelease.VerifyChangelog(context.Background(), &buf, apprelease.VerifyChangelogInput{
 		ChangelogFile: path,
 	})
 	if err != nil {
@@ -161,11 +191,11 @@ func TestValidateChangelog_PrintsPreview(t *testing.T) {
 	}
 }
 
-func TestValidateChangelog_MissingFails(t *testing.T) {
+func TestVerifyChangelog_MissingFails(t *testing.T) {
 	t.Parallel()
 	fsys := testfs.NewReal(t)
 
-	err := apprelease.ValidateChangelog(context.Background(), &bytes.Buffer{}, apprelease.ValidateChangelogInput{
+	err := apprelease.VerifyChangelog(context.Background(), &bytes.Buffer{}, apprelease.VerifyChangelogInput{
 		ChangelogFile: fsys.Path("missing.md"),
 	})
 	if err == nil || !strings.Contains(err.Error(), "no changelog generated") {
@@ -173,10 +203,10 @@ func TestValidateChangelog_MissingFails(t *testing.T) {
 	}
 }
 
-func TestValidateChangelog_EmptyPathErrors(t *testing.T) {
+func TestVerifyChangelog_EmptyPathErrors(t *testing.T) {
 	t.Parallel()
 
-	err := apprelease.ValidateChangelog(context.Background(), &bytes.Buffer{}, apprelease.ValidateChangelogInput{})
+	err := apprelease.VerifyChangelog(context.Background(), &bytes.Buffer{}, apprelease.VerifyChangelogInput{})
 	if err == nil || !strings.Contains(err.Error(), "changelog file is required") {
 		t.Errorf("err = %v", err)
 	}

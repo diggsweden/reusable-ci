@@ -11,17 +11,18 @@ import (
 
 	appvalidate "github.com/diggsweden/reusable-ci/internal/app/validate"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/internal/testutil/testfs"
 )
 
-func TestV3Contracts_Success(t *testing.T) {
+func TestContractResidue_Success(t *testing.T) {
 	mem := testfs.NewMemory(t)
 	mem.WriteFile(".github/workflows/build.yml", []byte("value: ${{ steps.meta.outputs.version }}\n"))
 	mem.WriteFile("internal/app/example.go", []byte("sink.Set(ctx, \"version\", v)\n"))
 
 	var out bytes.Buffer
-	if err := appvalidate.V3Contracts(&out, appvalidate.V3ContractsInput{Root: ".", FS: mem.FS()}); err != nil {
-		t.Fatalf("V3Contracts: %v", err)
+	if err := appvalidate.ContractResidue(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.ContractResidueInput{Root: ".", FS: mem.FS()}); err != nil {
+		t.Fatalf("ContractResidue: %v", err)
 	}
 
 	if got := out.String(); got != "V3 contracts look valid.\n" {
@@ -29,7 +30,7 @@ func TestV3Contracts_Success(t *testing.T) {
 	}
 }
 
-func TestV3Contracts_ReportsRemovedContracts(t *testing.T) {
+func TestContractResidue_ReportsRemovedContracts(t *testing.T) {
 	mem := testfs.NewMemory(t)
 	mem.WriteFile(".github/workflows/release.yml", []byte(strings.Join([]string{
 		"outputs:",
@@ -40,7 +41,7 @@ func TestV3Contracts_ReportsRemovedContracts(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := appvalidate.V3Contracts(&out, appvalidate.V3ContractsInput{Root: ".", FS: mem.FS()})
+	err := appvalidate.ContractResidue(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.ContractResidueInput{Root: ".", FS: mem.FS()})
 	if !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("err = %v, want ErrValidation", err)
 	}

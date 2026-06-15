@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/build"
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
@@ -169,7 +170,7 @@ func AndroidDecodeKeystore(w, stderr io.Writer, in AndroidDecodeKeystoreInput) e
 		return fmt.Errorf("resolve keystore path: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(stderr, "✓ Android keystore decoded successfully\n")
+	_, _ = fmt.Fprintf(stderr, "%s Android keystore decoded successfully\n", clicolor.Check(stderr))
 	_, _ = fmt.Fprintf(w, "ANDROID_KEYSTORE_PATH=%s\n", absPath)
 
 	return nil
@@ -248,7 +249,7 @@ func AndroidWriteSecretsProperties(w io.Writer, in AndroidWriteSecretsProperties
 		return fmt.Errorf("write secrets.properties: %w", err)
 	}
 
-	_, _ = fmt.Fprintln(w, "✓ secrets.properties decoded successfully")
+	_, _ = fmt.Fprintf(w, "%s secrets.properties decoded successfully\n", clicolor.Check(w))
 
 	return nil
 }
@@ -327,6 +328,7 @@ type AndroidListArtifactsInput struct {
 
 // AndroidListArtifacts walks <BuildModule>/build/outputs for *.apk and
 // *.aab files and prints their absolute paths to w, one per line.
+//
 //nolint:cyclop // lists APK+AAB by build-type with conditional include/skip per pattern.
 func AndroidListArtifacts(w io.Writer, in AndroidListArtifactsInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if in.BuildModule == "" {

@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/build"
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
@@ -40,9 +41,10 @@ type SwiftLintRunInput struct {
 // SwiftFilesLister enumerates the Swift files swift-format should lint.
 // Implemented by the git adapter (`git ls-files -- <pattern>`).
 //
-//nolint:iface // consumer-defined narrow port — same shape as
 // XcodeSecurityOps but semantically a different role (git vs security
 // CLI). Merging would couple unrelated adapters.
+//
+//nolint:iface // consumer-defined narrow port — same shape as
 type SwiftFilesLister interface {
 	Run(ctx context.Context, args ...string) (string, error)
 }
@@ -108,7 +110,7 @@ func SwiftFormatLint(
 		return fmt.Errorf("swift-format reported issues: %w", errs.ErrValidation)
 	}
 
-	_, _ = fmt.Fprintln(w, "✓ swift-format passed")
+	_, _ = fmt.Fprintf(w, "%s swift-format passed\n", clicolor.Check(w))
 
 	return appendSwiftFormatBlock(ctx, summary, build.SwiftLintPassed, "")
 }
@@ -160,7 +162,7 @@ func SwiftLintLint(
 	}
 
 	if exitCode == 0 {
-		_, _ = fmt.Fprintln(w, "✓ SwiftLint passed")
+		_, _ = fmt.Fprintf(w, "%s SwiftLint passed\n", clicolor.Check(w))
 
 		return summary.Append(ctx, build.RenderSwiftLintBlock(build.SwiftLintPassed, ""))
 	}

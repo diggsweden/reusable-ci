@@ -10,6 +10,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/internal/domain/build"
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 )
@@ -27,6 +28,7 @@ type PlatformPlanOutput struct {
 }
 
 // PlatformPlan writes platform matrix/suffix values to the output sink.
+//
 //nolint:cyclop // selects platforms per (CI provider, refType, override) combination.
 func PlatformPlan(ctx context.Context, sink ci.OutputSink, w io.Writer, in PlatformPlanInput) (*PlatformPlanOutput, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	platforms, err := splitPlatforms(in.Platforms)
@@ -92,7 +94,7 @@ func splitPlatforms(value string) ([]string, error) {
 	}
 
 	if len(out) == 0 && strings.TrimSpace(value) == "" {
-		out = append(out, "linux/amd64")
+		out = append(out, build.DefaultPlatform)
 	}
 
 	if len(out) == 0 {

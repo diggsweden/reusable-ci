@@ -20,6 +20,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	domainbuild "github.com/diggsweden/reusable-ci/internal/domain/build"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
@@ -364,13 +365,13 @@ func generateSummary(w io.Writer, ws workspace, projectName, ver string, createZ
 	matches := listSBOMs(ws, ".")
 	if len(matches) == 0 {
 		// The error sentinel is the single source of truth — main.go
-		// prints "Error: …" downstream. A second "❌ No SBOM files
+		// prints "Error: …" downstream. A second "✗ No SBOM files
 		// generated" line here just duplicates the failure for the
 		// reader.
 		return fmt.Errorf("no SBOM files generated: %w", errs.ErrValidation)
 	}
 
-	_, _ = fmt.Fprintf(w, "✅ Successfully generated %d SBOM files\n\n", len(matches))
+	_, _ = fmt.Fprintf(w, "%s Successfully generated %d SBOM files\n\n", clicolor.Check(w), len(matches))
 	_, _ = fmt.Fprintln(w, "Generated files:")
 
 	for _, m := range matches { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
@@ -397,7 +398,7 @@ func generateSummary(w io.Writer, ws workspace, projectName, ver string, createZ
 			return nil
 		}
 
-		_, _ = fmt.Fprintf(w, "✅ Created: %s\n\n", zipName)
+		_, _ = fmt.Fprintf(w, "%s Created: %s\n\n", clicolor.Check(w), zipName)
 		// Match the bash `unzip -l` listing.
 		for _, m := range matches { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 			info, _ := os.Stat(ws.outputPath(m))

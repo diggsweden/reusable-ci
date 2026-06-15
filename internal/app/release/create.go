@@ -17,6 +17,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/internal/domain/release"
 	"github.com/diggsweden/reusable-ci/internal/domain/sbom"
+	domainversion "github.com/diggsweden/reusable-ci/internal/domain/version"
 )
 
 // fsOps is the slice of filesystem queries the use case needs. Tests
@@ -45,12 +46,13 @@ type CreateReleaseInput struct {
 	Repository       string
 	ReleaseName      string // defaults to Tag
 	Draft            bool
-	MakeLatest       bool
+	MakeLatest       string
 	AttachArtifacts  string // CSV of glob patterns
 	ReleaseNotesFile string // default release.DefaultReleaseNotesFile
 	ArtifactName     string // default basename(Repository)
 	ChecksumsFile    string // default "checksums.sha256"
 	ReleaseDir       string // default release.DefaultReleaseArtifactsDir
+	AssemblyFile     string // when set, upload exactly the staged release assembly
 }
 
 // CreateRelease delegates to the ReleaseCreator after assembling the
@@ -58,6 +60,7 @@ type CreateReleaseInput struct {
 // + remaining .asc signatures, deduped by basename. The local provider
 // does not satisfy ReleaseCreator — the CLI gates on platform before
 // reaching this use case.
+//
 //nolint:cyclop // release flow: notes → assets → provider call → summary.
 func CreateRelease(
 	ctx context.Context,
@@ -79,13 +82,61 @@ func CreateRelease(
 	releaseDir := cmp.Or(in.ReleaseDir, release.DefaultReleaseArtifactsDir)
 	checksums := cmp.Or(in.ChecksumsFile, release.ChecksumsFile)
 	artifactName := cmp.Or(in.ArtifactName, path.Base(in.Repository))
-	version := strings.TrimPrefix(in.Tag, "v")
+	version := domainversion.StripVPrefix(in.Tag)
+	makeLatest, err := normalizeMakeLatest(in.MakeLatest)
+	if err != nil {
+		return err
+	}
 
 	specNotesFile := ""
 	if fs.FileNonEmpty(notesFile) {
 		specNotesFile = notesFile
 	}
 
+	assets, err := collectCreateAssets(fs, out, createAssetInput{
+		AssemblyFile:    in.AssemblyFile,
+		AttachArtifacts: in.AttachArtifacts,
+		ReleaseDir:      releaseDir,
+		ArtifactName:    artifactName,
+		Version:         version,
+		Checksums:       checksums,
+	})
+	if err != nil {
+		return err
+	}
+
+	spec := provider.ReleaseSpec{
+		Tag:        in.Tag,
+		Name:       releaseName,
+		NotesFile:  specNotesFile,
+		Draft:      in.Draft,
+		Prerelease: release.IsPrereleaseTag(in.Tag),
+		MakeLatest: makeLatest,
+		Assets:     assets,
+	}
+	_, _ = fmt.Fprintf(out, "Creating release %s with %d asset(s)\n", in.Tag, len(assets))
+
+	return prov.CreateRelease(ctx, in.Repository, spec)
+}
+
+type createAssetInput struct {
+	AssemblyFile    string
+	AttachArtifacts string
+	ReleaseDir      string
+	ArtifactName    string
+	Version         string
+	Checksums       string
+}
+
+func collectCreateAssets(fs fsOps, out io.Writer, in createAssetInput) ([]string, error) {
+	if in.AssemblyFile != "" {
+		return collectCreateAssetsFromAssembly(in.AssemblyFile)
+	}
+
+	return collectCreateAssetsLegacy(fs, out, in), nil
+}
+
+func collectCreateAssetsLegacy(fs fsOps, out io.Writer, in createAssetInput) []string {
 	candidates := []string{}
 
 	// 1. Pattern-glob artifacts (CSV of globs).
@@ -103,7 +154,7 @@ func CreateRelease(
 	}
 
 	// 2. Release-artifacts directory (recursive, recognised extensions).
-	for _, p := range fs.FindReleaseArtifacts(releaseDir) {
+	for _, p := range fs.FindReleaseArtifacts(in.ReleaseDir) {
 		candidates = append(candidates, p)
 		// Add every possible sidecar (.asc, .bundle) when colocated.
 		// Only one will exist in practice — the producer chose one
@@ -116,7 +167,7 @@ func CreateRelease(
 	}
 
 	// 3. SBOM zip + signature sidecars.
-	sbomZip := sbom.ZipName(artifactName, version)
+	sbomZip := sbom.ZipName(in.ArtifactName, in.Version)
 	if fs.FileExists(sbomZip) {
 		_, _ = fmt.Fprintf(out, "Adding SBOM ZIP: %s\n", sbomZip)
 		candidates = append(candidates, sbomZip)
@@ -126,11 +177,11 @@ func CreateRelease(
 	}
 
 	// 4. Checksums + signature sidecars.
-	if fs.FileNonEmpty(checksums) {
-		candidates = append(candidates, checksums)
-		candidates = append(candidates, release.SignatureSidecars(checksums)...)
+	if fs.FileNonEmpty(in.Checksums) {
+		candidates = append(candidates, in.Checksums)
+		candidates = append(candidates, release.SignatureSidecars(in.Checksums)...)
 	} else {
-		_, _ = fmt.Fprintf(out, "⚠️  No %s or file is empty - skipping\n", checksums)
+		_, _ = fmt.Fprintf(out, "⚠️  No %s or file is empty - skipping\n", in.Checksums)
 	}
 
 	// 5. Any remaining signature sidecars the bash sweep picks up
@@ -146,18 +197,90 @@ func CreateRelease(
 		}
 	}
 
-	assets := release.CollectAssets(keep)
+	return release.CollectAssets(keep)
+}
 
-	spec := provider.ReleaseSpec{
-		Tag:        in.Tag,
-		Name:       releaseName,
-		NotesFile:  specNotesFile,
-		Draft:      in.Draft,
-		Prerelease: release.IsPrereleaseTag(in.Tag),
-		MakeLatest: in.MakeLatest,
-		Assets:     assets,
+func collectCreateAssetsFromAssembly(path string) ([]string, error) {
+	asm, err := readAssembly(path)
+	if err != nil {
+		return nil, err
 	}
-	_, _ = fmt.Fprintf(out, "Creating release %s with %d asset(s)\n", in.Tag, len(assets))
 
-	return prov.CreateRelease(ctx, in.Repository, spec)
+	assets := make([]string, 0, len(asm.Assets)+4)
+	seen := map[string]string{}
+	add := func(path string, required bool) error {
+		if path == "" {
+			return nil
+		}
+
+		if !regularFileExists(path) {
+			if required {
+				return fmt.Errorf("assembly release asset %q is missing or not a regular file: %w", path, errs.ErrMissingInput)
+			}
+
+			return nil
+		}
+
+		base := filepath.Base(path)
+		if previous, ok := seen[base]; ok {
+			if previous == path {
+				return nil
+			}
+
+			return fmt.Errorf("release asset basename %q is duplicated by %s and %s: %w", base, previous, path, errs.ErrValidation)
+		}
+
+		seen[base] = path
+		assets = append(assets, path)
+
+		return nil
+	}
+
+	addWithSidecars := func(path string, required bool) error {
+		if err := add(path, required); err != nil {
+			return err
+		}
+
+		for _, sidecar := range release.SignatureSidecars(path) {
+			if err := add(sidecar, false); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+
+	for _, asset := range asm.Assets {
+		if err := addWithSidecars(asset.Path, true); err != nil {
+			return nil, err
+		}
+	}
+
+	if asm.SBOMZipFile != "" {
+		if err := addWithSidecars(asm.SBOMZipFile, len(asm.SBOMs) > 0); err != nil {
+			return nil, err
+		}
+	}
+
+	if asm.ChecksumFile != "" && regularFileNonEmpty(asm.ChecksumFile) {
+		if err := addWithSidecars(asm.ChecksumFile, true); err != nil {
+			return nil, err
+		}
+	}
+
+	return assets, nil
+}
+
+func normalizeMakeLatest(value string) (provider.MakeLatestMode, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return provider.MakeLatestTrue, nil
+	}
+
+	switch provider.MakeLatestMode(value) {
+	case provider.MakeLatestTrue, provider.MakeLatestFalse, provider.MakeLatestLegacy:
+		return provider.MakeLatestMode(value), nil
+	default:
+		return "", fmt.Errorf("make-latest must be one of true, false, legacy (got %q): %w", value, errs.ErrUsage)
+	}
 }

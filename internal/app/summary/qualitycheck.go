@@ -33,15 +33,17 @@ func QualityCheckStatus(ctx context.Context, sink ci.SummarySink, checks []Quali
 	failed := false
 
 	for _, c := range checks { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+		name := domainsummary.SanitizeCell(c.Name)
+
 		switch {
 		case !c.Enabled:
-			_, _ = fmt.Fprintf(&b, "| %s | 🔸 Disabled |\n", c.Name)
+			_, _ = fmt.Fprintf(&b, "| %s | 🔸 Disabled |\n", name)
 		case c.Result == domainsummary.ResultSuccess:
-			_, _ = fmt.Fprintf(&b, "| %s | ✓ Pass |\n", c.Name)
+			_, _ = fmt.Fprintf(&b, "| %s | ✓ Pass |\n", name)
 		case c.Result == domainsummary.ResultSkipped:
-			_, _ = fmt.Fprintf(&b, "| %s | − Skipped |\n", c.Name)
+			_, _ = fmt.Fprintf(&b, "| %s | − Skipped |\n", name)
 		default:
-			_, _ = fmt.Fprintf(&b, "| %s | ✗ Fail |\n", c.Name)
+			_, _ = fmt.Fprintf(&b, "| %s | ✗ Fail |\n", name)
 
 			failed = true
 		}

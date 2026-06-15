@@ -4,7 +4,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -39,11 +38,11 @@ var manifestProbes = []struct {
 // manifest at root when no artifacts.yml is present. Returns:
 //
 //   - cfg, nil  → exactly one root manifest matched; cfg has one
-//                 Artifact populated from that manifest.
+//     Artifact populated from that manifest.
 //   - nil, err  → zero or multiple matches. The error message lists
-//                 every manifest seen so the operator can pick the
-//                 right action (write artifacts.yml, or remove the
-//                 stray manifest).
+//     every manifest seen so the operator can pick the
+//     right action (write artifacts.yml, or remove the
+//     stray manifest).
 //
 // fsys defaults to the OS filesystem rooted at root. Tests pass an
 // in-memory fs.FS for determinism.
@@ -122,15 +121,11 @@ func statable(fsys fs.FS, path string) bool {
 	rel = strings.TrimPrefix(rel, "./")
 	rel = strings.TrimPrefix(rel, "/")
 
-	if _, err := fs.Stat(fsys, rel); err == nil {
-		return true
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		// Any other stat error (permission, symlink loop) → treat as
-		// "no, can't be confident it's a manifest". Conservative.
-		return false
-	}
-
-	return false
+	_, err := fs.Stat(fsys, rel)
+	// Stat succeeded → the path exists and is a candidate manifest. Any
+	// error — ErrNotExist or an unexpected one (permission, symlink loop)
+	// — is treated as "no, can't be confident it's a manifest".
+	return err == nil
 }
 
 func deriveFromManifest(fsys fs.FS, root string, manifest detectedManifest) (*config.Config, error) {

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
@@ -62,6 +63,7 @@ type BumpOps struct {
 // Bump rewrites the version-of-record for a project per its
 // project-type, optionally invoking maven/npm/cargo to refresh
 // dependent files.
+//
 //nolint:cyclop // version-bump flow: read manifest → compute next → write per project type.
 func Bump(ctx context.Context, ops BumpOps, w, stderr io.Writer, annot output.Annotator, in BumpInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if in.Version == "" {
@@ -103,14 +105,14 @@ func Bump(ctx context.Context, ops BumpOps, w, stderr io.Writer, annot output.An
 		return bumpXcodeIOS(filepath.Join(dir, xcconfig), in.Version, w)
 	case projecttype.Go:
 		_, _ = fmt.Fprintln(w, "Go project type - no version file to update")
-		_, _ = fmt.Fprintf(w, "✓ Version %s will be supplied by the release tag/build ldflags\n", in.Version)
+		_, _ = fmt.Fprintf(w, "%s Version %s will be supplied by the release tag/build ldflags\n", clicolor.Check(w), in.Version)
 
 		return nil
 	case projecttype.Cargo:
 		return bumpCargo(ctx, ops.Cargo, dir, in.Version, w, stderr, annot)
 	case projecttype.Meta:
 		_, _ = fmt.Fprintln(w, "Meta project type - no version file to update")
-		_, _ = fmt.Fprintf(w, "✓ Version %s recorded for changelog generation only\n", in.Version)
+		_, _ = fmt.Fprintf(w, "%s Version %s recorded for changelog generation only\n", clicolor.Check(w), in.Version)
 
 		return nil
 	default:
@@ -120,7 +122,7 @@ func Bump(ctx context.Context, ops BumpOps, w, stderr io.Writer, annot output.An
 
 func bumpMaven(ctx context.Context, ops MavenOps, dir string, cliOpts []string, ver string, w, stderr io.Writer) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if ops == nil {
-		return fmt.Errorf("maven adapter not provided" + ": %w", errs.ErrUsage)
+		return fmt.Errorf("maven adapter not provided"+": %w", errs.ErrUsage)
 	}
 
 	_, _ = fmt.Fprintf(w, "Updating Maven version to %s\n", ver)
@@ -141,14 +143,14 @@ func bumpMaven(ctx context.Context, ops MavenOps, dir string, cliOpts []string, 
 		return err
 	}
 
-	_, _ = fmt.Fprintln(w, "✓ Maven version updated (including all sub-modules)")
+	_, _ = fmt.Fprintf(w, "%s Maven version updated (including all sub-modules)\n", clicolor.Check(w))
 
 	return nil
 }
 
 func bumpNPM(ctx context.Context, ops NPMOps, dir, ver string, w, stderr io.Writer) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if ops == nil {
-		return fmt.Errorf("npm adapter not provided" + ": %w", errs.ErrUsage)
+		return fmt.Errorf("npm adapter not provided"+": %w", errs.ErrUsage)
 	}
 
 	_, _ = fmt.Fprintf(w, "Updating NPM version to %s\n", ver)
@@ -158,7 +160,7 @@ func bumpNPM(ctx context.Context, ops NPMOps, dir, ver string, w, stderr io.Writ
 		return fmt.Errorf("npm version: %w", err)
 	}
 
-	_, _ = fmt.Fprintln(w, "✓ NPM version updated")
+	_, _ = fmt.Fprintf(w, "%s NPM version updated\n", clicolor.Check(w))
 
 	return nil
 }
@@ -173,7 +175,11 @@ func readGradleVersionFile(path string, annot output.Annotator) ([]byte, error) 
 	if err != nil {
 		annot.Errorf("Gradle version file not found: %s", path)
 
-		return nil, fmt.Errorf("read %s: %w", path, err)
+		// The gradle properties file is user-supplied project input, so a
+		// missing/unreadable one is EX_NOINPUT (66), not the unclassified
+		// internal-bug default (70). Keep the underlying os error wrapped
+		// too so debug output still shows the real cause.
+		return nil, fmt.Errorf("read %s: %w: %w", path, err, errs.ErrMissingInput)
 	}
 
 	return body, nil
@@ -196,7 +202,7 @@ func bumpGradleJVM(path, ver string, w io.Writer, annot output.Annotator) error 
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 
-	_, _ = fmt.Fprintln(w, "✓ Gradle JVM version updated")
+	_, _ = fmt.Fprintf(w, "%s Gradle JVM version updated\n", clicolor.Check(w))
 	_, _ = fmt.Fprint(w, out)
 
 	return nil
@@ -228,7 +234,7 @@ func bumpGradleAndroid(path, ver string, w io.Writer, annot output.Annotator) er
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 
-	_, _ = fmt.Fprintln(w, "✓ Gradle Android version updated")
+	_, _ = fmt.Fprintf(w, "%s Gradle Android version updated\n", clicolor.Check(w))
 	_, _ = fmt.Fprint(w, out)
 
 	return nil
@@ -245,7 +251,7 @@ func bumpXcodeIOS(path, ver string, w io.Writer) error { //nolint:varnamelen // 
 			return fmt.Errorf("create %s: %w", path, werr)
 		}
 
-		_, _ = fmt.Fprintf(w, "✓ Created %s with MARKETING_VERSION = %s\n", path, ver)
+		_, _ = fmt.Fprintf(w, "%s Created %s with MARKETING_VERSION = %s\n", clicolor.Check(w), path, ver)
 
 		return nil
 	}
@@ -261,7 +267,7 @@ func bumpXcodeIOS(path, ver string, w io.Writer) error { //nolint:varnamelen // 
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 
-	_, _ = fmt.Fprintln(w, "✓ Xcode version updated")
+	_, _ = fmt.Fprintf(w, "%s Xcode version updated\n", clicolor.Check(w))
 	_, _ = fmt.Fprint(w, out)
 
 	return nil
@@ -274,7 +280,10 @@ func bumpCargo(ctx context.Context, ops CargoOps, dir, ver string, w, stderr io.
 	if err != nil {
 		annot.Errorf("Cargo.toml not found in %s", dir)
 
-		return fmt.Errorf("read %s: %w", cargoToml, err)
+		// Cargo.toml is user-supplied project input — a missing/unreadable
+		// one is EX_NOINPUT (66), not the unclassified internal-bug default
+		// (70). The underlying os error stays wrapped for debug output.
+		return fmt.Errorf("read %s: %w: %w", cargoToml, err, errs.ErrMissingInput)
 	}
 
 	out, sec, err := version.UpdateCargoVersion(string(body), ver)
@@ -300,7 +309,7 @@ func bumpCargo(ctx context.Context, ops CargoOps, dir, ver string, w, stderr io.
 
 	refreshCargoLock(ctx, ops, dir, w, stderr)
 
-	_, _ = fmt.Fprintln(w, "✓ Rust version updated")
+	_, _ = fmt.Fprintf(w, "%s Rust version updated\n", clicolor.Check(w))
 
 	return nil
 }

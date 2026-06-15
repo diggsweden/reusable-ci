@@ -18,43 +18,70 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/testutil/testfs"
 )
 
-type fakeDockerOps struct {
-	digestOut  string
-	digestErr  string
-	runErr     error
-	inheritErr error
-	calls      [][]string
+// fakeManifestRegistry stubs the daemonless registry surface the manifest
+// helpers depend on, recording calls so the app-layer logic (digest
+// validation, output emission, index assembly inputs) can be asserted without
+// a real registry. The real round-trip lives in the ociregistry adapter test.
+type fakeManifestRegistry struct {
+	digest      string
+	digestErr   error
+	manifest    []byte
+	manifestErr error
+	mergeErr    error
+
+	resolveCalls  []string
+	manifestCalls []string
+
+	mergeCalls    int
+	mergedImage   string
+	mergedDigests []string
+	mergedTags    []string
 }
 
-func (f *fakeDockerOps) Run(_ context.Context, args ...string) (string, string, error) {
-	f.calls = append(f.calls, append([]string(nil), args...))
+func (f *fakeManifestRegistry) ResolveDigest(_ context.Context, ref string) (string, error) {
+	f.resolveCalls = append(f.resolveCalls, ref)
 
-	return f.digestOut, f.digestErr, f.runErr
+	return f.digest, f.digestErr
 }
 
-func (f *fakeDockerOps) RunInherit(_ context.Context, out, _ io.Writer, args ...string) error {
-	f.calls = append(f.calls, append([]string(nil), args...))
+func (f *fakeManifestRegistry) Manifest(_ context.Context, ref string) ([]byte, error) {
+	f.manifestCalls = append(f.manifestCalls, ref)
 
-	if out != nil {
-		_, _ = io.WriteString(out, "inspect output\n")
+	if f.manifestErr != nil {
+		return nil, f.manifestErr
 	}
 
-	return f.inheritErr
+	if f.manifest != nil {
+		return f.manifest, nil
+	}
+
+	return []byte("manifest output"), nil
 }
+
+func (f *fakeManifestRegistry) MergeManifest(_ context.Context, image string, digests, tags []string) error {
+	f.mergeCalls++
+	f.mergedImage = image
+	f.mergedDigests = digests
+	f.mergedTags = tags
+
+	return f.mergeErr
+}
+
+const oneDigest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 
 func TestInspectManifest_UsesExplicitImage(t *testing.T) {
 	t.Parallel()
 	sink := fakeoutputsink.New(t)
-	docker := &fakeDockerOps{digestOut: "sha256:1111111111111111111111111111111111111111111111111111111111111111\n"}
+	reg := &fakeManifestRegistry{digest: oneDigest, manifest: []byte("manifest output")}
 
 	var out bytes.Buffer
 
-	res, err := appcontainer.InspectManifest(context.Background(), docker, sink, &out, &bytes.Buffer{}, appcontainer.InspectManifestInput{Image: "ghcr.io/org/app:v1"}) //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+	res, err := appcontainer.InspectManifest(context.Background(), reg, sink, &out, appcontainer.InspectManifestInput{Image: "ghcr.io/org/app:v1"}) //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if res.Image != "ghcr.io/org/app:v1" || res.Digest != "sha256:1111111111111111111111111111111111111111111111111111111111111111" {
+	if res.Image != "ghcr.io/org/app:v1" || res.Digest != oneDigest {
 		t.Fatalf("res = %+v", res)
 	}
 
@@ -62,36 +89,36 @@ func TestInspectManifest_UsesExplicitImage(t *testing.T) {
 		t.Errorf("image output = %q", got)
 	}
 
-	if got := sink.Single("digest"); got != "sha256:1111111111111111111111111111111111111111111111111111111111111111" {
+	if got := sink.Single("digest"); got != oneDigest {
 		t.Errorf("digest output = %q", got)
 	}
 
-	// image-digest-ref must be the cosign-ready immutable form: the
-	// bare image (tag stripped) joined to the digest with `@`.
-	if got := sink.Single("image-digest-ref"); got != "ghcr.io/org/app@sha256:1111111111111111111111111111111111111111111111111111111111111111" {
-		t.Errorf("image-digest-ref output = %q, want ghcr.io/org/app@sha256:1111111111111111111111111111111111111111111111111111111111111111", got)
+	// image-digest-ref must be the cosign-ready immutable form: the bare image
+	// (tag stripped) joined to the digest with `@`.
+	if got := sink.Single("image-digest-ref"); got != "ghcr.io/org/app@"+oneDigest {
+		t.Errorf("image-digest-ref output = %q, want ghcr.io/org/app@%s", got, oneDigest)
 	}
 
-	if !strings.Contains(out.String(), "inspect output") {
-		t.Errorf("out = %q", out.String())
+	if !strings.Contains(out.String(), "manifest output") {
+		t.Errorf("out = %q (want the fetched manifest printed for the run log)", out.String())
 	}
 
-	assertInspectCalls(t, docker.calls, "ghcr.io/org/app:v1")
+	assertInspected(t, reg, "ghcr.io/org/app:v1")
 }
 
 func TestInspectManifest_RejectsMalformedDigest(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name      string
-		digestOut string
+		name   string
+		digest string
 	}{
+		{"empty", ""},
 		{"missing sha256 prefix", "abc1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd"},
 		{"wrong algorithm", "sha512:abc1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd"},
 		{"too short", "sha256:abc123"},
 		{"uppercase hex", "sha256:ABC1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCD"},
 		{"trailing garbage", "sha256:abc1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd extra"},
-		{"json wrapper", `{"digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111..."}`},
 	}
 
 	for _, c := range cases {
@@ -99,11 +126,11 @@ func TestInspectManifest_RejectsMalformedDigest(t *testing.T) {
 			t.Parallel()
 
 			sink := fakeoutputsink.New(t)
-			docker := &fakeDockerOps{digestOut: c.digestOut + "\n"}
+			reg := &fakeManifestRegistry{digest: c.digest}
 
-			_, err := appcontainer.InspectManifest(context.Background(), docker, sink, io.Discard, io.Discard, appcontainer.InspectManifestInput{Image: "ghcr.io/org/app:v1"})
+			_, err := appcontainer.InspectManifest(context.Background(), reg, sink, io.Discard, appcontainer.InspectManifestInput{Image: "ghcr.io/org/app:v1"})
 			if err == nil {
-				t.Fatalf("expected rejection for malformed digest %q, got nil error", c.digestOut)
+				t.Fatalf("expected rejection for malformed digest %q, got nil error", c.digest)
 			}
 
 			if !strings.Contains(err.Error(), "unexpected digest format") {
@@ -128,18 +155,18 @@ func TestStripTag_HandlesPortInRegistry(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		// stripTag is package-private; we exercise it via the
-		// public InspectManifest output to avoid widening the API.
+		// stripTag is package-private; exercise it via the public
+		// InspectManifest output to avoid widening the API.
 		sink := fakeoutputsink.New(t)
-		docker := &fakeDockerOps{digestOut: "sha256:1111111111111111111111111111111111111111111111111111111111111111"}
+		reg := &fakeManifestRegistry{digest: oneDigest}
 
-		_, err := appcontainer.InspectManifest(context.Background(), docker, sink, io.Discard, io.Discard, appcontainer.InspectManifestInput{Image: c.in})
+		_, err := appcontainer.InspectManifest(context.Background(), reg, sink, io.Discard, appcontainer.InspectManifestInput{Image: c.in})
 		if err != nil {
 			t.Fatalf("%s: %v", c.in, err)
 		}
 
-		if got := sink.Single("image-digest-ref"); got != c.want+"@sha256:1111111111111111111111111111111111111111111111111111111111111111" {
-			t.Errorf("stripTag(%q) → image-digest-ref = %q, want %s@sha256:1111111111111111111111111111111111111111111111111111111111111111", c.in, got, c.want)
+		if got := sink.Single("image-digest-ref"); got != c.want+"@"+oneDigest {
+			t.Errorf("stripTag(%q) → image-digest-ref = %q, want %s@%s", c.in, got, c.want, oneDigest)
 		}
 	}
 }
@@ -147,9 +174,9 @@ func TestStripTag_HandlesPortInRegistry(t *testing.T) {
 func TestInspectManifest_UsesFirstTagWhenImageEmpty(t *testing.T) {
 	t.Parallel()
 	sink := fakeoutputsink.New(t)
-	docker := &fakeDockerOps{digestOut: "sha256:2222222222222222222222222222222222222222222222222222222222222222"}
+	reg := &fakeManifestRegistry{digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222"}
 
-	_, err := appcontainer.InspectManifest(context.Background(), docker, sink, io.Discard, io.Discard, appcontainer.InspectManifestInput{Tags: "\n  ghcr.io/org/app:v1\n  ghcr.io/org/app:latest\n"})
+	_, err := appcontainer.InspectManifest(context.Background(), reg, sink, io.Discard, appcontainer.InspectManifestInput{Tags: "\n  ghcr.io/org/app:v1\n  ghcr.io/org/app:latest\n"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,53 +185,55 @@ func TestInspectManifest_UsesFirstTagWhenImageEmpty(t *testing.T) {
 		t.Errorf("image output = %q", got)
 	}
 
-	assertInspectCalls(t, docker.calls, "ghcr.io/org/app:v1")
+	assertInspected(t, reg, "ghcr.io/org/app:v1")
 }
 
 func TestInspectManifest_RequiresImageOrTags(t *testing.T) {
 	t.Parallel()
 	sink := fakeoutputsink.New(t)
 
-	_, err := appcontainer.InspectManifest(context.Background(), &fakeDockerOps{}, sink, io.Discard, io.Discard, appcontainer.InspectManifestInput{})
+	_, err := appcontainer.InspectManifest(context.Background(), &fakeManifestRegistry{}, sink, io.Discard, appcontainer.InspectManifestInput{})
 	if err == nil || !strings.Contains(err.Error(), "image or tags is required") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestInspectManifest_PropagatesInspectFailure(t *testing.T) {
+func TestInspectManifest_PropagatesManifestFetchFailure(t *testing.T) {
 	t.Parallel()
 	sink := fakeoutputsink.New(t)
 
-	mockErr := errors.New("inspect failed") //nolint:err113 // test mock error.
+	mockErr := errors.New("registry unreachable") //nolint:err113 // test mock error.
 
-	_, err := appcontainer.InspectManifest(context.Background(), &fakeDockerOps{inheritErr: mockErr}, sink, io.Discard, io.Discard, appcontainer.InspectManifestInput{Image: "img"}) //nolint:goconst // test fixture image name.
-	if err == nil || !strings.Contains(err.Error(), "inspect failed") {
+	_, err := appcontainer.InspectManifest(context.Background(), &fakeManifestRegistry{manifestErr: mockErr}, sink, io.Discard, appcontainer.InspectManifestInput{Image: "img"}) //nolint:goconst // test fixture image name.
+	if err == nil || !strings.Contains(err.Error(), "registry unreachable") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestInspectManifest_RejectsEmptyDigest(t *testing.T) {
+func TestInspectManifest_PropagatesDigestResolveFailure(t *testing.T) {
 	t.Parallel()
 	sink := fakeoutputsink.New(t)
 
-	_, err := appcontainer.InspectManifest(context.Background(), &fakeDockerOps{digestOut: "\n"}, sink, io.Discard, io.Discard, appcontainer.InspectManifestInput{Image: "img"})
-	if err == nil || !strings.Contains(err.Error(), "empty manifest digest") {
+	mockErr := errors.New("digest resolve failed") //nolint:err113 // test mock error.
+
+	_, err := appcontainer.InspectManifest(context.Background(), &fakeManifestRegistry{digestErr: mockErr}, sink, io.Discard, appcontainer.InspectManifestInput{Image: "img"})
+	if err == nil || !strings.Contains(err.Error(), "digest resolve failed") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestMergeManifest_CreatesTagsFromDigestFiles(t *testing.T) {
+func TestMergeManifest_PassesSortedDigestsAndTags(t *testing.T) {
 	t.Parallel()
 	fsys := testfs.NewReal(t)
 	dir := fsys.MkdirAll("digests")
-	a := strings.Repeat("a", 64) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	b := strings.Repeat("b", 64) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	fsys.WriteFile("digests/"+b, nil)
-	fsys.WriteFile("digests/"+a, nil)
+	digestA := strings.Repeat("a", 64)
+	digestB := strings.Repeat("b", 64)
+	fsys.WriteFile("digests/"+digestB, nil)
+	fsys.WriteFile("digests/"+digestA, nil)
 
-	docker := &fakeDockerOps{}
+	reg := &fakeManifestRegistry{}
 
-	if err := appcontainer.MergeManifest(context.Background(), docker, io.Discard, io.Discard, appcontainer.MergeManifestInput{
+	if err := appcontainer.MergeManifest(context.Background(), reg, io.Discard, appcontainer.MergeManifestInput{
 		ImageName:  "ghcr.io/org/app",
 		Tags:       "ghcr.io/org/app:v1\nghcr.io/org/app:latest\n",
 		DigestsDir: dir,
@@ -212,15 +241,20 @@ func TestMergeManifest_CreatesTagsFromDigestFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{
-		"buildx", "imagetools", "create", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		"-t", "ghcr.io/org/app:v1",
-		"-t", "ghcr.io/org/app:latest",
-		"ghcr.io/org/app@sha256:" + a,
-		"ghcr.io/org/app@sha256:" + b,
+	if reg.mergeCalls != 1 {
+		t.Fatalf("MergeManifest called %d times, want 1", reg.mergeCalls)
 	}
-	if !reflect.DeepEqual(docker.calls[0], want) {
-		t.Fatalf("call = %#v, want %#v", docker.calls[0], want)
+
+	if reg.mergedImage != "ghcr.io/org/app" {
+		t.Errorf("image = %q", reg.mergedImage)
+	}
+
+	if !reflect.DeepEqual(reg.mergedDigests, []string{digestA, digestB}) {
+		t.Errorf("digests = %v, want sorted [a… b…]", reg.mergedDigests)
+	}
+
+	if !reflect.DeepEqual(reg.mergedTags, []string{"ghcr.io/org/app:v1", "ghcr.io/org/app:latest"}) {
+		t.Errorf("tags = %v", reg.mergedTags)
 	}
 }
 
@@ -230,12 +264,30 @@ func TestMergeManifest_RejectsInvalidDigestMarker(t *testing.T) {
 	dir := fsys.MkdirAll("digests")
 	fsys.WriteFile("digests/not-a-digest", nil)
 
-	err := appcontainer.MergeManifest(context.Background(), &fakeDockerOps{}, io.Discard, io.Discard, appcontainer.MergeManifestInput{
+	reg := &fakeManifestRegistry{}
+
+	err := appcontainer.MergeManifest(context.Background(), reg, io.Discard, appcontainer.MergeManifestInput{
 		ImageName:  "ghcr.io/org/app",
 		Tags:       "ghcr.io/org/app:v1",
 		DigestsDir: dir,
 	})
 	if err == nil || !strings.Contains(err.Error(), "invalid digest marker") {
+		t.Fatalf("err = %v", err)
+	}
+
+	if reg.mergeCalls != 0 {
+		t.Errorf("registry must not be called when a digest marker is invalid")
+	}
+}
+
+func TestMergeManifest_RequiresTags(t *testing.T) {
+	t.Parallel()
+	fsys := testfs.NewReal(t)
+	dir := fsys.MkdirAll("digests")
+	fsys.WriteFile("digests/"+strings.Repeat("a", 64), nil)
+
+	err := appcontainer.MergeManifest(context.Background(), &fakeManifestRegistry{}, io.Discard, appcontainer.MergeManifestInput{ImageName: "img", DigestsDir: dir})
+	if err == nil || !strings.Contains(err.Error(), "tags is required") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -273,26 +325,16 @@ func TestWriteDigestMarker_RejectsInvalidDigest(t *testing.T) {
 	}
 }
 
-func TestMergeManifest_RequiresTags(t *testing.T) {
-	t.Parallel()
-	fsys := testfs.NewReal(t)
-	dir := fsys.MkdirAll("digests")
-	fsys.WriteFile("digests/"+strings.Repeat("a", 64), nil)
-
-	err := appcontainer.MergeManifest(context.Background(), &fakeDockerOps{}, io.Discard, io.Discard, appcontainer.MergeManifestInput{ImageName: "img", DigestsDir: dir})
-	if err == nil || !strings.Contains(err.Error(), "tags is required") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func assertInspectCalls(t *testing.T, got [][]string, image string) {
+// assertInspected checks InspectManifest fetched the manifest and resolved the
+// digest for exactly the expected image reference.
+func assertInspected(t *testing.T, reg *fakeManifestRegistry, image string) {
 	t.Helper()
 
-	want := [][]string{
-		{"buildx", "imagetools", "inspect", image},
-		{"buildx", "imagetools", "inspect", image, "--format", "{{.Manifest.Digest}}"},
+	if !reflect.DeepEqual(reg.manifestCalls, []string{image}) {
+		t.Errorf("Manifest calls = %v, want [%s]", reg.manifestCalls, image)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("calls = %#v, want %#v", got, want)
+
+	if !reflect.DeepEqual(reg.resolveCalls, []string{image}) {
+		t.Errorf("ResolveDigest calls = %v, want [%s]", reg.resolveCalls, image)
 	}
 }

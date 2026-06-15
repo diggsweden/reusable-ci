@@ -10,15 +10,11 @@ import (
 	"io"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/pipeline"
-	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
+	"github.com/diggsweden/reusable-ci/internal/domain/provider"
 )
-
-// ArtifactDownloader downloads one CI artifact by exact name.
-type ArtifactDownloader interface {
-	DownloadArtifact(ctx context.Context, in domainrelease.ArtifactDownloadInput) error
-}
 
 // DownloadArtifactsInput drives DownloadArtifacts.
 type DownloadArtifactsInput struct {
@@ -28,8 +24,9 @@ type DownloadArtifactsInput struct {
 }
 
 // DownloadArtifacts downloads release artifacts from an explicit transfer plan.
+//
 //nolint:cyclop // download flow: list → per-artifact filter + unzip + place.
-func DownloadArtifacts(ctx context.Context, dl ArtifactDownloader, stderr io.Writer, in DownloadArtifactsInput) error {
+func DownloadArtifacts(ctx context.Context, dl provider.RunArtifactDownloader, stderr io.Writer, in DownloadArtifactsInput) error {
 	if strings.TrimSpace(in.ArtifactTransferPlanJSON) == "" {
 		return fmt.Errorf("artifact-transfer-plan-json is required: %w", errs.ErrUsage)
 	}
@@ -53,7 +50,7 @@ func DownloadArtifacts(ctx context.Context, dl ArtifactDownloader, stderr io.Wri
 			return err
 		}
 
-		err = dl.DownloadArtifact(ctx, domainrelease.ArtifactDownloadInput{
+		_, err = dl.DownloadRunArtifact(ctx, provider.RunArtifactDownload{
 			RunID:      in.RunID,
 			Repository: in.Repository,
 			Name:       name,
@@ -61,7 +58,7 @@ func DownloadArtifacts(ctx context.Context, dl ArtifactDownloader, stderr io.Wri
 		})
 		if err == nil {
 			if stderr != nil {
-				_, _ = fmt.Fprintf(stderr, "✓ Downloaded %s → %s\n", name, item.Path)
+				_, _ = fmt.Fprintf(stderr, "%s Downloaded %s → %s\n", clicolor.Check(stderr), name, item.Path)
 			}
 
 			continue

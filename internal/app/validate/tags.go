@@ -4,6 +4,7 @@
 package validate
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,7 +13,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/internal/adapters/openpgp"
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/internal/domain/validate"
 )
 
@@ -29,8 +33,8 @@ type gitOps interface {
 	CatFileTag(ctx context.Context, tag string) (string, error)
 	// VerifyTagSignature verifies a GPG-signed tag in-process; returns
 	// signer display string, primary-key fingerprint (uppercase hex),
-	// ok flag, error. Fingerprint is what TagSignature checks against
-	// the project's allowed_gpg_fingerprints file.
+	// ok flag, error. Fingerprint is what TagSignature checks against the
+	// fingerprints derived from the project's allowed_gpg_keys.asc bundle.
 	VerifyTagSignature(ctx context.Context, tag string, armoredKeyring []byte) (signer, fingerprint string, ok bool, err error)
 	// VerifyTagSSHAgainstAllowedSigners shells out to `git verify-tag`
 	// with gpg.ssh.allowedSignersFile pointed at allowedSignersPath.
@@ -63,7 +67,7 @@ func TagUniqueness(ctx context.Context, repo gitOps, out io.Writer, in TagUnique
 		return fmt.Errorf("resolve tag commit: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(out, "✓ Tag '%s' points to commit: %s\n", in.Tag, commit)
+	_, _ = fmt.Fprintf(out, "%s Tag '%s' points to commit: %s\n", clicolor.Check(out), in.Tag, commit)
 
 	all, err := repo.TagsPointingAt(ctx, commit)
 	if err != nil {
@@ -88,8 +92,8 @@ func TagUniqueness(ctx context.Context, repo gitOps, out io.Writer, in TagUnique
 		return fmt.Errorf("%s: %w", b, errs.ErrValidation)
 	}
 
-	_, _ = fmt.Fprintf(out, "✓ Tag '%s' points to a unique commit\n", in.Tag)
-	_, _ = fmt.Fprintf(out, "✓ No other tags found on commit %s\n", commit)
+	_, _ = fmt.Fprintf(out, "%s Tag '%s' points to a unique commit\n", clicolor.Check(out), in.Tag)
+	_, _ = fmt.Fprintf(out, "%s No other tags found on commit %s\n", clicolor.Check(out), commit)
 
 	return nil
 }
@@ -102,6 +106,7 @@ type TagCommitInput struct {
 
 // TagCommit verifies the tagged commit is reachable from origin/<branch>.
 // On Ahead / Diverged it returns an error with operator guidance.
+//
 //nolint:cyclop // tag-commit validation: tag → release-branch → workflow → annotated check.
 func TagCommit(ctx context.Context, repo gitOps, out io.Writer, in TagCommitInput) error {
 	if in.Tag == "" {
@@ -174,10 +179,10 @@ func TagCommit(ctx context.Context, repo gitOps, out io.Writer, in TagCommitInpu
 		// branch below.
 	}
 
-	_, _ = fmt.Fprintf(out, "✓ Tag commit %s is in branch '%s' history\n", tagCommit, branch)
+	_, _ = fmt.Fprintf(out, "%s Tag commit %s is in branch '%s' history\n", clicolor.Check(out), tagCommit, branch)
 
 	if pos == validate.BranchPositionAtHead {
-		_, _ = fmt.Fprintf(out, "✓ Tag points to branch HEAD (ideal)\n")
+		_, _ = fmt.Fprintf(out, "%s Tag points to branch HEAD (ideal)\n", clicolor.Check(out))
 	} else {
 		_, _ = fmt.Fprintf(out, "ℹ️  Tag commit is an ancestor of branch HEAD\n")
 		_, _ = fmt.Fprintf(out, "   This is normal for existing releases\n")
@@ -193,28 +198,34 @@ type TagSignatureInput struct {
 	ReleaseGPGPublicKey []byte // optional armored key for verification
 
 	// RequireAllowlistedSigner enforces that the signer is in the
-	// project's committed allowlist. When true, missing/empty allowlist
-	// files fail closed (ErrPermissionDenied). When false, the allowlist
-	// check is still performed if the relevant file exists, but only
-	// informationally — release-authorisation policy lives in the
+	// project's committed allowlist. When true, a missing/empty allowlist
+	// or an unverifiable signature fails closed (ErrPermissionDenied).
+	// When false, the check still runs informationally and warns loudly if
+	// no allowlist is present — release-authorisation policy lives in the
 	// per-artefact `require-authorization` flag.
 	RequireAllowlistedSigner bool
 
 	// AllowedSignersPath is the OpenSSH allowed_signers file for SSH
-	// signatures. Empty → default ".reusable-ci/allowed_signers".
+	// signatures. Empty → default ".reusable-ci/allowed_signers". Each line
+	// carries the public key inline, so it is both the authorised set and
+	// the verification material.
 	AllowedSignersPath string
 
-	// AllowedGPGFingerprintsPath is the flat-list fingerprint file for
-	// GPG signatures. Empty → default ".reusable-ci/allowed_gpg_fingerprints".
-	AllowedGPGFingerprintsPath string
+	// AllowedGPGKeysPath is an armored public-key bundle (.asc) whose keys
+	// are BOTH the verification material and the GPG signer allowlist
+	// (single source — the keys' primary fingerprints are the authorised
+	// set). Empty → default ".reusable-ci/allowed_gpg_keys.asc". A
+	// human-signed trigger tag verifies because the signer's public key
+	// travels with the repo, so enforcement is self-contained.
+	AllowedGPGKeysPath string
 }
 
-// Default file locations for the two allowlist files. Committed to the
-// repo and read at release-validation time. Documented in
-// docs/verification.md.
+// Default file locations for the two allowlist files (one per signature
+// type). Committed to the repo and read at release-validation time.
+// Documented in docs/verification.md.
 const (
-	defaultAllowedSignersPath         = ".reusable-ci/allowed_signers"
-	defaultAllowedGPGFingerprintsPath = ".reusable-ci/allowed_gpg_fingerprints"
+	defaultAllowedSignersPath = ".reusable-ci/allowed_signers"
+	defaultAllowedGPGKeysPath = ".reusable-ci/allowed_gpg_keys.asc"
 )
 
 // TagSignature verifies that <tag> is annotated and cryptographically
@@ -222,8 +233,9 @@ const (
 // verifier (go-git + go-crypto/openpgp) is invoked for the signer
 // identity. Verification failure is informational, not fatal — only
 // "no signature at all" or "lightweight tag" return errors.
+//
 //nolint:cyclop // tag-signature validation: present → annotated → key-source → verify → render.
-func TagSignature(ctx context.Context, gitr gitOps, out io.Writer, in TagSignatureInput) error {
+func TagSignature(ctx context.Context, gitr gitOps, out io.Writer, annot output.Annotator, in TagSignatureInput) error {
 	if in.Tag == "" {
 		return fmt.Errorf("usage: validate tag-signature <tag-name> [repository]: %w", errs.ErrUsage)
 	}
@@ -245,7 +257,7 @@ func TagSignature(ctx context.Context, gitr gitOps, out io.Writer, in TagSignatu
 			in.Tag, errs.ErrValidation)
 	}
 
-	_, _ = fmt.Fprintf(out, "✓ Tag '%s' is annotated\n", in.Tag)
+	_, _ = fmt.Fprintf(out, "%s Tag '%s' is annotated\n", clicolor.Check(out), in.Tag)
 
 	body, err := gitr.CatFileTag(ctx, in.Tag)
 	if err != nil {
@@ -256,11 +268,11 @@ func TagSignature(ctx context.Context, gitr gitOps, out io.Writer, in TagSignatu
 
 	sigs := validate.DetectTagSignatures(body)
 	if sigs.HasGPG {
-		_, _ = fmt.Fprintf(out, "✓ Tag has a GPG signature\n")
+		_, _ = fmt.Fprintf(out, "%s Tag has a GPG signature\n", clicolor.Check(out))
 	}
 
 	if sigs.HasSSH {
-		_, _ = fmt.Fprintf(out, "✓ Tag has an SSH signature\n")
+		_, _ = fmt.Fprintf(out, "%s Tag has an SSH signature\n", clicolor.Check(out))
 	}
 
 	if !sigs.Any() {
@@ -277,27 +289,27 @@ func TagSignature(ctx context.Context, gitr gitOps, out io.Writer, in TagSignatu
 		allowedSignersPath = defaultAllowedSignersPath
 	}
 
-	allowedFingerprintsPath := in.AllowedGPGFingerprintsPath
-	if allowedFingerprintsPath == "" {
-		allowedFingerprintsPath = defaultAllowedGPGFingerprintsPath
+	allowedKeysPath := in.AllowedGPGKeysPath
+	if allowedKeysPath == "" {
+		allowedKeysPath = defaultAllowedGPGKeysPath
 	}
 
 	if sigs.HasGPG {
-		if err := checkGPGSignerAllowlist(ctx, gitr, out, in, allowedFingerprintsPath); err != nil {
+		if err := checkGPGSignerAllowlist(ctx, gitr, out, annot, in, allowedKeysPath); err != nil {
 			return err
 		}
 	}
 
 	if sigs.HasSSH {
-		if err := checkSSHSignerAllowlist(ctx, gitr, out, in, allowedSignersPath); err != nil {
+		if err := checkSSHSignerAllowlist(ctx, gitr, out, annot, in, allowedSignersPath); err != nil {
 			return err
 		}
 	}
 
 	_, _ = fmt.Fprintf(out, "\n### Tag Security Summary:\n")
-	_, _ = fmt.Fprintf(out, "✓ Tag is annotated (not lightweight)\n")
-	_, _ = fmt.Fprintf(out, "✓ Tag is cryptographically signed\n")
-	_, _ = fmt.Fprintf(out, "✓ Release security requirements met\n\n")
+	_, _ = fmt.Fprintf(out, "%s Tag is annotated (not lightweight)\n", clicolor.Check(out))
+	_, _ = fmt.Fprintf(out, "%s Tag is cryptographically signed\n", clicolor.Check(out))
+	_, _ = fmt.Fprintf(out, "%s Release security requirements met\n\n", clicolor.Check(out))
 
 	commit, _ := gitr.TagSHA(ctx, in.Tag)
 	tagger, date, _ := gitr.TaggerInfo(ctx, in.Tag)
@@ -312,86 +324,196 @@ func TagSignature(ctx context.Context, gitr gitOps, out io.Writer, in TagSignatu
 	return nil
 }
 
-// checkGPGSignerAllowlist runs the in-process GPG verification, extracts
-// the signing primary-key fingerprint, and asserts it appears in the
-// project's allowed_gpg_fingerprints file. Behaviour matrix:
+// checkGPGSignerAllowlist verifies the GPG-signed tag against the keys the
+// project trusts, then asserts the signer is authorised. Trust comes from
+// one committed file:
 //
-//   - file missing + RequireAllowlistedSigner=true → ErrPermissionDenied
-//   - file missing + RequireAllowlistedSigner=false → informational
-//     skip (the project hasn't opted in)
-//   - signature didn't verify (wrong key, no key available) →
-//     informational, same as the pre-allowlist behaviour
-//   - signature verified + fingerprint in allowlist → pass
-//   - signature verified + fingerprint NOT in allowlist →
-//     ErrPermissionDenied (regardless of RequireAllowlistedSigner: if the
-//     file exists, having it makes it authoritative)
-func checkGPGSignerAllowlist(ctx context.Context, gitr gitOps, out io.Writer, in TagSignatureInput, allowedFingerprintsPath string) error {
-	signer, fingerprint, ok, vErr := gitr.VerifyTagSignature(ctx, in.Tag, in.ReleaseGPGPublicKey)
-	if !reportGPGVerificationOutcome(out, signer, fingerprint, ok, vErr, in.ReleaseGPGPublicKey) {
-		return nil
+//   - allowed_gpg_keys.asc — an armored public-key bundle. Its keys are
+//     BOTH the verification material AND the authorised set (single
+//     source): a human-signed trigger tag verifies because the signer's
+//     public key travels with the repo, and membership is the set of
+//     primary-key fingerprints in the bundle. No separate fingerprint list
+//     exists, so "listed but unverifiable" is impossible by construction.
+//
+// Behaviour matrix:
+//
+//   - no allowlist present + require=true  → ErrPermissionDenied
+//   - no allowlist present + require=false → loud warning, then pass
+//     (the project hasn't opted in; the release proceeds but the gap is
+//     surfaced in the Annotations pane and the summary)
+//   - signature can't be verified + require=true  → ErrPermissionDenied
+//     (fail closed — "I required allowlisting but couldn't establish the
+//     signer")
+//   - signature can't be verified + require=false → loud warning, pass
+//   - signer fingerprint in the set → pass
+//   - signer fingerprint NOT in the set → ErrPermissionDenied (the
+//     allowlist exists, so it is authoritative regardless of require)
+func checkGPGSignerAllowlist(ctx context.Context, gitr gitOps, out io.Writer, annot output.Annotator, in TagSignatureInput, allowedKeysPath string) error {
+	allowedKeys, _, err := readOptionalFile(allowedKeysPath)
+	if err != nil {
+		return err
 	}
 
-	body, readErr := os.ReadFile(allowedFingerprintsPath) //nolint:gosec // allowedFingerprintsPath is the project's allowlist file, derived from the CI plan, not user-controlled input.
-	if readErr != nil {
-		if !errors.Is(readErr, fs.ErrNotExist) {
-			return fmt.Errorf("read %s: %w", allowedFingerprintsPath, readErr)
-		}
+	allowlistPresent := len(bytes.TrimSpace(allowedKeys)) > 0
 
+	// Verification keyring: the optionally-supplied release key (e.g. the
+	// bot key for an already-re-signed tag) plus every committed allowed
+	// key. go-git checks the signature against any key in the bundle.
+	keyring := combineArmoredKeys(in.ReleaseGPGPublicKey, allowedKeys)
+
+	signer, fingerprint, ok, vErr := gitr.VerifyTagSignature(ctx, in.Tag, keyring)
+	verified := reportGPGVerificationOutcome(out, signer, fingerprint, ok, vErr, keyring)
+
+	if !allowlistPresent {
 		if in.RequireAllowlistedSigner {
 			return fmt.Errorf(
-				"require-authorization is enabled but %s is missing — commit a fingerprints file listing every GPG primary-key fingerprint allowed to sign releases: %w",
-				allowedFingerprintsPath, errs.ErrPermissionDenied)
+				"require-authorization is enabled but no GPG allowlist is present — commit %s (armored public keys of authorised signers): %w",
+				allowedKeysPath, errs.ErrPermissionDenied)
 		}
 
-		_, _ = fmt.Fprintf(out, "ℹ️ No %s present — allowlist enforcement skipped (require-authorization=false)\n", allowedFingerprintsPath)
+		warnNoAllowlist(out, annot, "GPG", allowedKeysPath)
 
 		return nil
 	}
 
-	set, parseErr := validate.ParseAllowedFingerprints(body)
-	if parseErr != nil {
-		return fmt.Errorf("parse %s: %w", allowedFingerprintsPath, parseErr)
+	if !verified {
+		if in.RequireAllowlistedSigner {
+			return fmt.Errorf(
+				"require-authorization is enabled but the tag signature could not be verified against any authorised key — commit the signer's public key to %s: %w",
+				allowedKeysPath, errs.ErrPermissionDenied)
+		}
+
+		warnUnverifiableSigner(out, annot, allowedKeysPath)
+
+		return nil
+	}
+
+	set, err := buildGPGAllowlist(allowedKeys)
+	if err != nil {
+		return err
 	}
 
 	if !set.Has(fingerprint) {
 		return fmt.Errorf(
-			"tag signer fingerprint %s is not in %s (%d authorised key(s))\n\n"+
+			"tag signer fingerprint %s is not authorised (%d key(s) in %s)\n\n"+
 				"Either:\n"+
 				"  - sign the tag with one of the authorised keys, or\n"+
-				"  - add this fingerprint to %s in a reviewed PR: %w",
-			fingerprint, allowedFingerprintsPath, set.Len(),
-			allowedFingerprintsPath, errs.ErrPermissionDenied)
+				"  - add this signer's public key to %s in a reviewed PR: %w",
+			fingerprint, set.Len(), allowedKeysPath, allowedKeysPath, errs.ErrPermissionDenied)
 	}
 
-	_, _ = fmt.Fprintf(out, "✓ Signer fingerprint is in %s\n", allowedFingerprintsPath)
+	_, _ = fmt.Fprintf(out, "%s Signer fingerprint is authorised\n", clicolor.Check(out))
 
 	return nil
 }
 
+// readOptionalFile returns a file's contents and whether it existed.
+// A missing file is (nil, false, nil); any other read error is returned.
+// Allowlist files are CI-plan-derived locations, not user input.
+func readOptionalFile(path string) ([]byte, bool, error) {
+	body, err := os.ReadFile(path) //nolint:gosec // path is a CI-plan-derived allowlist location, not user-controlled input.
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, false, nil
+		}
+
+		return nil, false, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	return body, true, nil
+}
+
+// combineArmoredKeys concatenates armored key blocks into a single
+// keyring blob accepted by openpgp.ReadArmoredKeyRing. Empty blocks are
+// skipped; a newline separates blocks so two armors that each lack a
+// trailing newline don't merge their boundary lines.
+func combineArmoredKeys(blocks ...[]byte) []byte {
+	var buf []byte
+
+	for _, block := range blocks {
+		trimmed := bytes.TrimSpace(block)
+		if len(trimmed) == 0 {
+			continue
+		}
+
+		if len(buf) > 0 {
+			buf = append(buf, '\n')
+		}
+
+		buf = append(buf, trimmed...)
+	}
+
+	return buf
+}
+
+// buildGPGAllowlist builds the authorised set from the primary-key
+// fingerprints of the committed allowed_gpg_keys.asc bundle — the single
+// source of both verification material and authorisation.
+func buildGPGAllowlist(allowedKeys []byte) (validate.AllowedFingerprintSet, error) {
+	fps, err := openpgp.PrimaryFingerprints(allowedKeys)
+	if err != nil {
+		return validate.AllowedFingerprintSet{}, fmt.Errorf("parse allowed GPG keys: %w", err)
+	}
+
+	set := validate.NewAllowedFingerprintSet()
+	for _, fingerprint := range fps {
+		set.Add(fingerprint)
+	}
+
+	return set, nil
+}
+
+// warnNoAllowlist loudly surfaces that a release ran with no signer allowlist.
+// The annotation lands in the GitHub Actions Annotations pane (`::warning::`)
+// or a plain `Warning:` line off-GitHub; the ⚠️ line is collected by
+// WritePrerequisitesSummary into the summary's warning callout.
+func warnNoAllowlist(out io.Writer, annot output.Annotator, method, paths string) {
+	annot.WarningAt(output.Annotation{Title: "No release signer allowlist"},
+		"%s release ran with NO signer allowlist — any valid signature was accepted. Commit %s to authorise specific signers.",
+		method, paths)
+
+	_, _ = fmt.Fprintf(out,
+		"⚠️ No %s signer allowlist present (%s) — enforcement skipped (require-authorization=false)\n",
+		method, paths)
+}
+
+// warnUnverifiableSigner loudly surfaces that an allowlist exists but the
+// tag signature could not be checked against it (the signer's public key
+// is not available). With require-authorization=false this is a warning,
+// not a failure; with it true the caller fails closed instead.
+func warnUnverifiableSigner(out io.Writer, annot output.Annotator, allowedKeysPath string) {
+	annot.WarningAt(output.Annotation{Title: "Unverifiable tag signature"},
+		"Tag signature could not be verified against any authorised key — allowlist not enforced. Commit the signer's public key to %s.",
+		allowedKeysPath)
+
+	_, _ = fmt.Fprintf(out,
+		"⚠️ GPG signature could not be verified against the allowlist — enforcement skipped (require-authorization=false)\n")
+}
+
 // reportGPGVerificationOutcome writes the GPG signature-verification
-// message to out and reports whether the caller should proceed to the
-// allowlist check. Returns false (and writes a "skipped" /
-// "present-but-unverified" note) when verification couldn't conclude;
-// returns true (and writes a "verified" line) when the fingerprint
-// was confirmed and the caller should look it up against the
-// allowlist.
-func reportGPGVerificationOutcome(out io.Writer, signer, fingerprint string, ok bool, vErr error, releaseGPGPublicKey []byte) bool {
+// message to out and reports whether verification concluded. Returns
+// false (and writes a diagnostic ℹ️ note explaining why) when the
+// signature couldn't be checked against the available key material;
+// returns true (and writes a "verified" line) when the fingerprint was
+// confirmed. The caller decides what an unverified outcome means
+// (fail-closed under require, loud warning otherwise).
+func reportGPGVerificationOutcome(out io.Writer, signer, fingerprint string, ok bool, vErr error, keyMaterial []byte) bool {
 	switch {
 	case vErr != nil:
 		_, _ = fmt.Fprintf(out, "ℹ️ GPG signature verification skipped: %v\n", vErr)
 
 		return false
-	case !ok && len(releaseGPGPublicKey) == 0:
-		_, _ = fmt.Fprintf(out, "ℹ️ GPG signature present (verification requires signer's public key)\n")
+	case !ok && len(bytes.TrimSpace(keyMaterial)) == 0:
+		_, _ = fmt.Fprintf(out, "ℹ️ GPG signature present (verification requires the signer's public key)\n")
 
 		return false
 	case !ok:
-		_, _ = fmt.Fprintf(out, "ℹ️ GPG signature present but did not verify against the configured public key\n")
+		_, _ = fmt.Fprintf(out, "ℹ️ GPG signature present but did not verify against any available key\n")
 
 		return false
 	}
 
-	_, _ = fmt.Fprintf(out, "✓ GPG signature verified (fingerprint %s)\n", fingerprint)
+	_, _ = fmt.Fprintf(out, "%s GPG signature verified (fingerprint %s)\n", clicolor.Check(out), fingerprint)
 
 	if signer != "" {
 		_, _ = fmt.Fprintf(out, "   Signed by: %s\n", signer)
@@ -404,7 +526,7 @@ func reportGPGVerificationOutcome(out io.Writer, signer, fingerprint string, ok 
 // gpg.ssh.allowedSignersFile set — git invokes ssh-keygen -Y verify
 // internally and does the right thing in one call. Behaviour mirrors
 // checkGPGSignerAllowlist: file missing + require=true → fail closed.
-func checkSSHSignerAllowlist(ctx context.Context, gitr gitOps, out io.Writer, in TagSignatureInput, allowedSignersPath string) error {
+func checkSSHSignerAllowlist(ctx context.Context, gitr gitOps, out io.Writer, annot output.Annotator, in TagSignatureInput, allowedSignersPath string) error {
 	if _, err := os.Stat(allowedSignersPath); err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("stat %s: %w", allowedSignersPath, err)
@@ -416,7 +538,7 @@ func checkSSHSignerAllowlist(ctx context.Context, gitr gitOps, out io.Writer, in
 				allowedSignersPath, errs.ErrPermissionDenied)
 		}
 
-		_, _ = fmt.Fprintf(out, "ℹ️ No %s present — SSH allowlist enforcement skipped (require-authorization=false)\n", allowedSignersPath)
+		warnNoAllowlist(out, annot, "SSH", allowedSignersPath)
 
 		return nil
 	}
@@ -434,7 +556,7 @@ func checkSSHSignerAllowlist(ctx context.Context, gitr gitOps, out io.Writer, in
 		return fmt.Errorf("SSH signature rejected by allowed_signers: %s: %w", gitOutput, errs.ErrPermissionDenied)
 	}
 
-	_, _ = fmt.Fprintf(out, "✓ SSH signature verified against %s\n", allowedSignersPath)
+	_, _ = fmt.Fprintf(out, "%s SSH signature verified against %s\n", clicolor.Check(out), allowedSignersPath)
 
 	if gitOutput != "" {
 		_, _ = fmt.Fprintf(out, "   %s\n", strings.TrimSpace(gitOutput))
@@ -453,7 +575,7 @@ func GPGPublicKey(out io.Writer, releaseGPGPublicKey string) error {
 			"Add it in Settings → Secrets → Actions: %w", errs.ErrPermissionDenied)
 	}
 
-	_, _ = fmt.Fprintf(out, "✓ GPG public key configured\n")
+	_, _ = fmt.Fprintf(out, "%s GPG public key configured\n", clicolor.Check(out))
 
 	return nil
 }

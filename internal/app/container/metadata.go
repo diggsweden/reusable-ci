@@ -7,12 +7,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/internal/domain/imageledger"
 	"github.com/diggsweden/reusable-ci/internal/domain/provider"
 )
 
@@ -48,12 +50,13 @@ type ComputeMetadataOutput struct {
 // (parsing, applying rules, label assembly, JSON shape) lives in
 // internal/domain/container; this layer drives those steps, talks to
 // the provider for the build context and OCI-label repo metadata, and
-// writes the four canonical outputs (tags, labels, version, json) to
+// writes the canonical outputs (tags, labels, version, json, ref-clean) to
 // sink.
 //
 // All three platform adapters satisfy both interfaces — local returns
 // empty RepoMetadata, which the OCI label assembly degrades to blank
 // fields gracefully.
+//
 //nolint:cyclop // emits one output per metadata field (image, tag, labels).
 func ComputeMetadata(
 	ctx context.Context,
@@ -125,6 +128,29 @@ func ComputeMetadata(
 
 	if err := writeOutputs(ctx, sink, tags, labels, primary, jsonOut, in.EmitLabels); err != nil {
 		return nil, err
+	}
+
+	// ref-clean tells the publish workflow whether this tag build's ref is
+	// usable verbatim as an OCI tag. The promotion staging tag and ledger are
+	// assembled from the raw ref (not the sanitizer), so they push only when
+	// the ref is clean — an unusual tag degrades to "no promotion", never a
+	// failed manifest push.
+	refClean := mctx.RefType == provider.RefTypeTag && container.IsCleanRefTag(mctx.RefName)
+	if err := sink.Set(ctx, "ref-clean", strconv.FormatBool(refClean)); err != nil {
+		return nil, fmt.Errorf("set ref-clean: %w", err)
+	}
+
+	// staging-tag is the promotion candidate tag this build pushes, derived in
+	// Go from the one source of the convention (imageledger.DeriveTags) so the
+	// workflow doesn't re-encode "staging-<tag>" in YAML. Empty unless the ref
+	// is a clean tag, so the merge step pushes it only when promotable.
+	var stagingTag string
+	if refClean {
+		_, stagingTag = imageledger.DeriveTags(in.ImageName, mctx.RefName)
+	}
+
+	if err := sink.Set(ctx, "staging-tag", stagingTag); err != nil {
+		return nil, fmt.Errorf("set staging-tag: %w", err)
 	}
 
 	return &ComputeMetadataOutput{

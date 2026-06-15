@@ -11,6 +11,7 @@ import (
 
 	appvalidate "github.com/diggsweden/reusable-ci/internal/app/validate"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/internal/testutil/testfs"
 )
 
@@ -20,7 +21,7 @@ func TestWorkflowInputDefaults_Success(t *testing.T) {
 	mem.WriteFile(".github/workflows/nested/ignored.yml", []byte("      default: ${{ secrets.BAD }}\n"))
 
 	var out bytes.Buffer
-	if err := appvalidate.WorkflowInputDefaults(&out, appvalidate.WorkflowInputDefaultsInput{Root: ".", FS: mem.FS()}); err != nil {
+	if err := appvalidate.WorkflowInputDefaults(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.WorkflowInputDefaultsInput{Root: ".", FS: mem.FS()}); err != nil {
 		t.Fatalf("WorkflowInputDefaults: %v", err)
 	}
 
@@ -43,7 +44,7 @@ func TestWorkflowInputDefaults_ReportsExpressions(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := appvalidate.WorkflowInputDefaults(&out, appvalidate.WorkflowInputDefaultsInput{Root: ".", FS: mem.FS()})
+	err := appvalidate.WorkflowInputDefaults(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.WorkflowInputDefaultsInput{Root: ".", FS: mem.FS()})
 	if !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("err = %v, want ErrValidation", err)
 	}

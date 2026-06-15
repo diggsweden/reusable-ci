@@ -109,6 +109,7 @@ func GradleApplication(ctx context.Context, ops GradleOps, w, stderr io.Writer, 
 //
 // The init script is written to a tempfile that is deleted before
 // return regardless of success.
+//
 //nolint:cyclop // executes 4 gradle phases each gated on detected config.
 func GradleSBOM(ctx context.Context, ops GradleOps, w, stderr io.Writer, in GradleSBOMInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if in.CycloneDXVersion == "" {

@@ -3,7 +3,7 @@
 
 // Package version wires `reusable-ci version <subcmd>` use cases.
 //
-// Pure version helpers (sanitise, dev-version compose, latest-semver-tag
+// Pure version helpers (sanitise, snapshot-version compose, latest-semver-tag
 // pick) live in domain/version. This package adds the I/O orchestration
 // that drives a real git binary.
 package version
@@ -14,6 +14,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/git"
 )
@@ -79,13 +80,13 @@ func CommitPush(ctx context.Context, repo commitPushOps, out io.Writer, in Commi
 		return fmt.Errorf("commit: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(out, "✓ Committed as %s <%s>\n", in.AuthorName, in.AuthorEmail)
+	_, _ = fmt.Fprintf(out, "%s Committed as %s <%s>\n", clicolor.Check(out), in.AuthorName, in.AuthorEmail)
 
 	if err := repo.Push(ctx, "HEAD", in.Branch, false); err != nil {
 		return fmt.Errorf("push: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(out, "✓ Pushed HEAD to origin/%s\n", in.Branch)
+	_, _ = fmt.Fprintf(out, "%s Pushed HEAD to origin/%s\n", clicolor.Check(out), in.Branch)
 
 	return nil
 }

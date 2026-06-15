@@ -95,6 +95,15 @@ func MaterializeBuildSecrets(
 	if err := os.MkdirAll(dir, 0o700); err != nil { //nolint:gosec // private secret directory.
 		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
+	// MkdirAll is a no-op on an existing directory, so it won't tighten a
+	// pre-existing loose mode. The path ($RUNNER_TEMP/buildkit-secrets) is
+	// fixed and predictable — a prior step or a self-hosted-runner leftover
+	// could have created it world-listable, exposing the secret filenames.
+	// Enforce 0700 unconditionally, mirroring the gpg adapter's GNUPGHOME
+	// handling.
+	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // private secret directory.
+		return fmt.Errorf("chmod %s: %w", dir, err)
+	}
 
 	// Build the docker/build-push-action `secrets:` payload as we
 	// materialize. Each line: `id=<lowercased-name>,src=<path>`.

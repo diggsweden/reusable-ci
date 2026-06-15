@@ -24,9 +24,10 @@ import (
 
 // GoTool runs `go` commands.
 //
-//nolint:iface // intentionally distinct consumer-defined port — the
 // architecture uses narrow per-tool interfaces so adapters for `go`
 // vs `cyclonedx-gomod` stay swappable. Merging would conflate roles.
+//
+//nolint:iface // intentionally distinct consumer-defined port — the
 type GoTool interface {
 	Run(ctx context.Context, in GoRunInput) error
 }
@@ -125,6 +126,7 @@ type GoBuildBinariesInput struct {
 }
 
 // GoBuildBinaries cross-compiles one binary per target platform into dist/.
+//
 //nolint:cyclop // matrix loop: GOOS×GOARCH×ldflags×outputName combinations.
 func GoBuildBinaries(ctx context.Context, tool GoTool, w, stderr io.Writer, in GoBuildBinariesInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	dir := defaultGoDir(in.Dir)
@@ -229,6 +231,7 @@ func GoBuildBinaries(ctx context.Context, tool GoTool, w, stderr io.Writer, in G
 
 // GoMetadata reads go.mod metadata and emits the build contract used by the Go
 // build workflow: binary-name, version, and module.
+//
 //nolint:cyclop // input-validation flow: resolve dir → read module → resolve names → validate scalars → emit.
 func GoMetadata(ctx context.Context, sink ci.OutputSink, w io.Writer, in GoMetadataInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	dir := in.Dir
@@ -345,7 +348,7 @@ func defaultGoDir(dir string) string {
 func splitGoPlatforms(value string) ([]string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return []string{"linux/amd64"}, nil
+		return []string{domainbuild.DefaultPlatform}, nil
 	}
 
 	platforms := make([]string, 0)

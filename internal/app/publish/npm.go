@@ -10,12 +10,14 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/internal/archive"
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/output"
@@ -23,8 +25,9 @@ import (
 
 // NPMRCInput drives WriteNPMRC.
 type NPMRCInput struct {
-	// Registry is the npm registry URL. http:// and https:// are accepted;
-	// other schemes are rejected. Required.
+	// Registry is the npm registry URL. https:// is required; http:// is
+	// accepted only for loopback hosts (local dev registries), since the
+	// emitted .npmrc carries an auth token. Required.
 	Registry string
 	// Scope is the optional npm package scope (must start with @).
 	Scope string
@@ -34,7 +37,7 @@ type NPMRCInput struct {
 }
 
 // WriteNPMRC composes an `.npmrc` body matching the historical bash heredoc
-// in publish-dev-npm.yml. The literal `${NODE_AUTH_TOKEN}` placeholder is
+// in publish-snapshot-npm.yml. The literal `${NODE_AUTH_TOKEN}` placeholder is
 // emitted as-is so npm expands it at publish time from the env var.
 //
 // Format:
@@ -76,12 +79,12 @@ func validateNPMRCInput(in NPMRCInput) (npmrcSettings, error) {
 		return npmrcSettings{}, fmt.Errorf("parse registry %q: %w: %w", registry, err, errs.ErrUsage)
 	}
 
-	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return npmrcSettings{}, fmt.Errorf("registry scheme %q must be http or https: %w", parsed.Scheme, errs.ErrUsage)
-	}
-
 	if parsed.Host == "" {
 		return npmrcSettings{}, fmt.Errorf("registry %q has no host: %w", registry, errs.ErrUsage)
+	}
+
+	if err := validateRegistryScheme(parsed, registry); err != nil {
+		return npmrcSettings{}, err
 	}
 
 	scope := strings.TrimSpace(in.Scope)
@@ -124,9 +127,47 @@ func emitNPMRCLines(w io.Writer, s npmrcSettings) error { //nolint:varnamelen //
 	return nil
 }
 
+// validateRegistryScheme enforces the secure-by-default transport rule:
+// https is required because the emitted .npmrc carries an auth token
+// (always-auth=true), so npm sends NODE_AUTH_TOKEN to this host on every
+// request. Plaintext http is permitted only for loopback hosts (local dev
+// registries such as verdaccio), where the token never leaves the machine.
+func validateRegistryScheme(parsed *url.URL, registry string) error {
+	switch parsed.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if !isLoopbackHost(parsed.Hostname()) {
+			return fmt.Errorf(
+				"registry %q uses plaintext http, which would leak the npm auth token; use https (http is allowed only for localhost): %w",
+				registry, errs.ErrUsage)
+		}
+
+		return nil
+	default:
+		return fmt.Errorf("registry scheme %q must be https (http is allowed only for localhost): %w", parsed.Scheme, errs.ErrUsage)
+	}
+}
+
+// isLoopbackHost reports whether host (already stripped of any port) is a
+// loopback address or the literal "localhost" — the only hosts for which
+// plaintext http is safe, since the auth token never leaves the machine.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+
+	return false
+}
+
 // isNPMScope reports whether s is a valid npm scope: leading '@', followed by
 // 1+ characters drawn from [a-z0-9-_.~]. Mirrors npm's own scope-name rules
 // without pulling in a regex dependency.
+//
 //nolint:cyclop // npm scope validation: one branch per allowed/disallowed rune class.
 func isNPMScope(s string) bool {
 	if len(s) < 2 || s[0] != '@' {
@@ -269,9 +310,9 @@ func NPMValidateTarball(_ context.Context, w, stderr io.Writer, annot output.Ann
 	_, _ = fmt.Fprintln(w, "Verifying dist/cli.js exists:")
 
 	if _, err := os.Stat(cliJS); err == nil {
-		_, _ = fmt.Fprintln(w, "✓ dist/cli.js found")
+		_, _ = fmt.Fprintf(w, "%s dist/cli.js found\n", clicolor.Check(w))
 	} else {
-		_, _ = fmt.Fprintln(w, "✗ dist/cli.js NOT found")
+		_, _ = fmt.Fprintf(w, "%s dist/cli.js NOT found\n", clicolor.Cross(w))
 
 		return fmt.Errorf("dist/cli.js not found in extracted tarball: %w", errs.ErrValidation)
 	}

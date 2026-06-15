@@ -4,8 +4,10 @@
 package security
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 
 	"github.com/diggsweden/reusable-ci/internal/cliio"
@@ -33,7 +35,9 @@ func EnrichGitHubSARIFFile(w, stderr io.Writer, annot output.Annotator, in Enric
 
 	body, err := cliio.ReadFile(in.Path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		// errors.Is (not os.IsNotExist) so the check survives cliio.ReadFile
+		// wrapping the os error with its typed sentinel.
+		if errors.Is(err, fs.ErrNotExist) {
 			annot.Warningf("SARIF file not found, skipping GitHub enrichment: %s", in.Path)
 
 			return nil

@@ -67,7 +67,7 @@ func TestPrerequisites_NonTagRefSkipsTagChecks(t *testing.T) {
 		RefType:      "branch",
 		Tag:          "main",
 		Ref:          "refs/heads/main",
-		ReleaseToken: "ghp_dummy", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		ReleaseToken: "ghp_dummy",  //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Repository:   "owner/repo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	})
 
@@ -146,7 +146,7 @@ func TestPrerequisites_PolicyFlagsGateOptionalChecks(t *testing.T) {
 
 	// Release authorisation no longer has its own validator — it's now
 	// folded into tag-signature via the allowed_signers /
-	// allowed_gpg_fingerprints files. Only the per-flag skips remain.
+	// allowed_gpg_keys.asc files. Only the per-flag skips remain.
 	for _, want := range []string{"gpg-public-key", "maven-central", "cargo"} {
 		if _, ok := skipped[want]; !ok {
 			t.Errorf("expected %s to be skipped (flag disabled)", want)

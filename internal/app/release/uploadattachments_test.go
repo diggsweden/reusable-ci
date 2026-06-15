@@ -40,7 +40,7 @@ func TestUploadAttachments_UploadsExpandedMatches(t *testing.T) {
 	fp := fakeprovider.New(t)
 	if err := apprelease.UploadAttachments(context.Background(), fp, &bytes.Buffer{}, output.Annotator{}, apprelease.UploadAttachmentsInput{
 		Tag:        "v1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		Pattern:    "*.tgz", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		Pattern:    "*.tgz",  //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		WorkingDir: dir,
 	}); err != nil {
 		t.Fatal(err)

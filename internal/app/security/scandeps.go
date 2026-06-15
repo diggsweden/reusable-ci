@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/output"
@@ -321,7 +322,7 @@ func writeScanDepsSummary(
 
 func reportScanDepsVerdict(w io.Writer, annot output.Annotator, cfg scanDepsConfig, newIDs []string) error {
 	if len(newIDs) == 0 {
-		_, _ = fmt.Fprintf(w, "✅ No new vulnerabilities found at severity %s or above\n", cfg.failOnSev)
+		_, _ = fmt.Fprintf(w, "%s No new vulnerabilities found at severity %s or above\n", clicolor.Check(w), cfg.failOnSev)
 
 		return nil
 	}

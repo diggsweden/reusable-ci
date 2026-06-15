@@ -25,18 +25,18 @@ import (
 
 // ReleaseInput drives `plan release`.
 type ReleaseInput struct {
-	ConfigPlanJSON            string
-	Branch                    string
-	RefName                   string
-	FilePattern               string
-	ReleaseType               string
-	ReleasePublisher          string
+	ConfigPlanJSON                  string
+	Branch                          string
+	RefName                         string
+	FilePattern                     string
+	ReleaseType                     string
+	ReleasePublisher                string
 	ReleaseRequireAllowlistedSigner bool
-	ReleaseDraft              bool
-	ReleaseSBOMs              string
-	ReleaseSignArtifacts      bool
-	ChangelogCreator          string
-	ChangelogSkipVersionBump  bool
+	ReleaseDraft                    bool
+	ReleaseSBOMs                    string
+	ReleaseSignArtifacts            bool
+	ChangelogCreator                string
+	ChangelogSkipVersionBump        bool
 }
 
 // Release composes the typed release plan outputs consumed by release workflows.
@@ -51,18 +51,18 @@ func Release(ctx context.Context, sink ci.OutputSink, summary ci.SummarySink, in
 	}
 
 	releasePlan, err := pipeline.NewReleasePlan(pipeline.ReleasePlanInput{
-		ConfigPlan:                configPlan,
-		Branch:                    in.Branch,
-		RefName:                   in.RefName,
-		FilePattern:               in.FilePattern,
-		ReleaseType:               in.ReleaseType,
-		ReleasePublisher:          in.ReleasePublisher,
+		ConfigPlan:                      configPlan,
+		Branch:                          in.Branch,
+		RefName:                         in.RefName,
+		FilePattern:                     in.FilePattern,
+		ReleaseType:                     in.ReleaseType,
+		ReleasePublisher:                in.ReleasePublisher,
 		ReleaseRequireAllowlistedSigner: in.ReleaseRequireAllowlistedSigner,
-		ReleaseDraft:              in.ReleaseDraft,
-		ReleaseSBOMs:              in.ReleaseSBOMs,
-		ReleaseSignArtifacts:      in.ReleaseSignArtifacts,
-		ChangelogCreator:          in.ChangelogCreator,
-		ChangelogSkipVersionBump:  in.ChangelogSkipVersionBump,
+		ReleaseDraft:                    in.ReleaseDraft,
+		ReleaseSBOMs:                    in.ReleaseSBOMs,
+		ReleaseSignArtifacts:            in.ReleaseSignArtifacts,
+		ChangelogCreator:                in.ChangelogCreator,
+		ChangelogSkipVersionBump:        in.ChangelogSkipVersionBump,
 	})
 	if err != nil {
 		return nil, err
@@ -110,8 +110,8 @@ func warnSBOMConflict(ctx context.Context, summary ci.SummarySink, releaseSBOMs,
 	}
 }
 
-// DevReleaseInput drives `plan dev-release`.
-type DevReleaseInput struct {
+// SnapshotReleaseInput drives `plan snapshot-release`.
+type SnapshotReleaseInput struct {
 	ConfigPlanJSON      string
 	ProjectType         string
 	Branch              string
@@ -129,11 +129,10 @@ type DevReleaseInput struct {
 	SBOMs               string
 	PublishNPM          bool
 	UseCIToken          bool
-	PublishContainer    bool
 }
 
-// DevRelease composes the typed dev-release plan outputs.
-func DevRelease(ctx context.Context, sink ci.OutputSink, in DevReleaseInput) (*pipeline.DevReleasePlan, error) {
+// SnapshotRelease composes the typed snapshot-release plan outputs.
+func SnapshotRelease(ctx context.Context, sink ci.OutputSink, in SnapshotReleaseInput) (*pipeline.SnapshotReleasePlan, error) {
 	if strings.TrimSpace(in.ConfigPlanJSON) == "" {
 		return nil, fmt.Errorf("config-plan-json is required: %w", errs.ErrUsage)
 	}
@@ -143,7 +142,7 @@ func DevRelease(ctx context.Context, sink ci.OutputSink, in DevReleaseInput) (*p
 		return nil, fmt.Errorf("parse config-plan-json: %w: %w", err, errs.ErrInvalidConfig)
 	}
 
-	devPlan, err := pipeline.NewDevReleasePlan(pipeline.DevReleasePlanInput{
+	devPlan, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
 		ConfigPlan:          configPlan,
 		ProjectType:         projecttype.Type(in.ProjectType),
 		Branch:              in.Branch,
@@ -161,21 +160,20 @@ func DevRelease(ctx context.Context, sink ci.OutputSink, in DevReleaseInput) (*p
 		SBOMs:               in.SBOMs,
 		PublishNPM:          in.PublishNPM,
 		UseCIToken:          in.UseCIToken,
-		PublishContainer:    in.PublishContainer,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	if err := emitJSONOutput(ctx, sink, "dev-release-plan-json", devPlan); err != nil {
+	if err := emitJSONOutput(ctx, sink, "snapshot-release-plan-json", devPlan); err != nil {
 		return nil, err
 	}
 
-	if err := emitJSONOutput(ctx, sink, "dev-build-stage-plan-json", devPlan.Stages.Build); err != nil {
+	if err := emitJSONOutput(ctx, sink, "snapshot-build-stage-plan-json", devPlan.Stages.Build); err != nil {
 		return nil, err
 	}
 
-	if err := emitJSONOutput(ctx, sink, "dev-publish-stage-plan-json", devPlan.Stages.Publish); err != nil {
+	if err := emitJSONOutput(ctx, sink, "snapshot-publish-stage-plan-json", devPlan.Stages.Publish); err != nil {
 		return nil, err
 	}
 

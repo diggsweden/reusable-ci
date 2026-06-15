@@ -8,13 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
 	"github.com/diggsweden/reusable-ci/internal/domain/release"
+	"github.com/diggsweden/reusable-ci/internal/domain/version"
 )
 
 // ResolveArtifactNamesInput drives `release resolve-artifact-name`.
@@ -92,7 +92,7 @@ func ResolveMetadata(ctx context.Context, sink ci.OutputSink, stderr io.Writer, 
 		return err
 	}
 
-	if err := sink.Set(ctx, "version-no-v", strings.TrimPrefix(in.Version, "v")); err != nil {
+	if err := sink.Set(ctx, "version-no-v", version.StripVPrefix(in.Version)); err != nil {
 		return err
 	}
 

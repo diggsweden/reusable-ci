@@ -9,15 +9,16 @@ import (
 	"io"
 	"os"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/cliio"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	domain "github.com/diggsweden/reusable-ci/internal/domain/release"
+	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
 )
 
 // PrepareNotesInput drives `release notes`.
 type PrepareNotesInput struct {
 	SourceFile     string // default "ReleasenotesTmp"
-	TargetFile     string // default domain.DefaultReleaseNotesFile
+	TargetFile     string // default domainrelease.DefaultReleaseNotesFile
 	ReleaseVersion string
 	ReleaseCommit  string
 }
@@ -28,6 +29,7 @@ type PrepareNotesInput struct {
 //  2. ReleaseVersion set → write a fallback "# Release vX.Y.Z" header,
 //     plus "Release created from commit ABC" when ReleaseCommit is set.
 //  3. otherwise → touch the target file (empty body).
+//
 //nolint:cyclop // notes generation: choose source (file/CHANGELOG/git-log) and format.
 func PrepareNotes(_ context.Context, out io.Writer, in PrepareNotesInput) error {
 	src := in.SourceFile
@@ -37,10 +39,13 @@ func PrepareNotes(_ context.Context, out io.Writer, in PrepareNotesInput) error 
 
 	tgt := in.TargetFile
 	if tgt == "" {
-		tgt = domain.DefaultReleaseNotesFile
+		tgt = domainrelease.DefaultReleaseNotesFile
 	}
 
-	if info, err := os.Stat(src); err == nil && !info.IsDir() {
+	// A 0-byte source (git-cliff ran but found no commits in the range)
+	// is treated as "no artifact" so we fall through to the version stub
+	// below — copying it verbatim would publish empty release notes.
+	if info, err := os.Stat(src); err == nil && !info.IsDir() && info.Size() > 0 {
 		_, _ = fmt.Fprintf(out, "Changelog artifact found (%d bytes)\n", info.Size())
 
 		data, err := os.ReadFile(src) //nolint:gosec // src is a CLI-flag path.
@@ -83,14 +88,14 @@ func PrepareNotes(_ context.Context, out io.Writer, in PrepareNotesInput) error 
 	return f.Close()
 }
 
-// ValidateChangelogInput drives `release verify-changelog`.
-type ValidateChangelogInput struct {
+// VerifyChangelogInput drives `release verify-changelog`.
+type VerifyChangelogInput struct {
 	ChangelogFile string
 }
 
-// ValidateChangelog verifies the changelog file exists and prints a
+// VerifyChangelog verifies the changelog file exists and prints a
 // preview. Errors when the file is absent.
-func ValidateChangelog(_ context.Context, out io.Writer, in ValidateChangelogInput) error {
+func VerifyChangelog(_ context.Context, out io.Writer, in VerifyChangelogInput) error {
 	if in.ChangelogFile == "" {
 		return fmt.Errorf("changelog file is required: pass --changelog-file <path> or set $CHANGELOG_FILE: %w", errs.ErrUsage)
 	}
@@ -113,7 +118,7 @@ func ValidateChangelog(_ context.Context, out io.Writer, in ValidateChangelogInp
 		}
 	}
 
-	_, _ = fmt.Fprintf(out, "✓ Changelog generated successfully: %s\n", in.ChangelogFile)
+	_, _ = fmt.Fprintf(out, "%s Changelog generated successfully: %s\n", clicolor.Check(out), in.ChangelogFile)
 	_, _ = fmt.Fprintf(out, "  • File size: %d bytes\n", info.Size())
 	_, _ = fmt.Fprintf(out, "  • Line count: %d\n\n", lineCount)
 	_, _ = fmt.Fprintf(out, "Preview (first 10 lines):\n")

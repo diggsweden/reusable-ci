@@ -278,10 +278,10 @@ func readCargoMetadata(ctx context.Context, tool CargoTool, dir string) (cargoMe
 	}
 
 	var doc struct {
-		Packages       []pkg    `json:"packages"`
-		WorkspaceRoot  string   `json:"workspace_root"`
-		WorkspaceMems  []string `json:"workspace_members"` //nolint:tagliatelle // schema field is exactly this.
-		Resolve        any      `json:"resolve"`
+		Packages      []pkg    `json:"packages"`
+		WorkspaceRoot string   `json:"workspace_root"`
+		WorkspaceMems []string `json:"workspace_members"` //nolint:tagliatelle // schema field is exactly this.
+		Resolve       any      `json:"resolve"`
 	}
 
 	if err := json.NewDecoder(strings.NewReader(buf.String())).Decode(&doc); err != nil {
@@ -377,7 +377,7 @@ func defaultCargoDir(dir string) string {
 func splitCargoPlatforms(value string) ([]string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return []string{"linux/amd64"}, nil
+		return []string{domainbuild.DefaultPlatform}, nil
 	}
 
 	platforms := make([]string, 0)

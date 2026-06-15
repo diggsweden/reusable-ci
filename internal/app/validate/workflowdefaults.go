@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/internal/domain/output"
 )
 
 var workflowInputDefaultPattern = regexp.MustCompile(`^[[:space:]]+default:[[:space:]].*\$\{\{`)
@@ -40,7 +41,7 @@ type workflowInputDefaultsFSInput struct {
 // defaults are literal values, not GitHub expression blocks (which
 // silently degrade to the empty string when callers don't override
 // them).
-func WorkflowInputDefaults(w io.Writer, in WorkflowInputDefaultsInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+func WorkflowInputDefaults(w io.Writer, annot output.Annotator, in WorkflowInputDefaultsInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	root := in.Root
 	if root == "" {
 		var err error
@@ -59,7 +60,7 @@ func WorkflowInputDefaults(w io.Writer, in WorkflowInputDefaultsInput) error { /
 	if in.FS != nil {
 		workflowsDir = filepath.ToSlash(filepath.Clean(workflowsDir))
 
-		return workflowInputDefaultsInFS(w, workflowInputDefaultsFSInput{
+		return workflowInputDefaultsInFS(w, annot, workflowInputDefaultsFSInput{
 			workflowsDir: workflowDirForFS(workflowsDir),
 			fsys:         in.FS,
 		})
@@ -70,13 +71,13 @@ func WorkflowInputDefaults(w io.Writer, in WorkflowInputDefaultsInput) error { /
 		return fmt.Errorf("relative workflows dir %s from %s: %w", workflowsDir, root, err)
 	}
 
-	return workflowInputDefaultsInFS(w, workflowInputDefaultsFSInput{
+	return workflowInputDefaultsInFS(w, annot, workflowInputDefaultsFSInput{
 		workflowsDir: filepath.ToSlash(relDir),
 		fsys:         os.DirFS(root),
 	})
 }
 
-func workflowInputDefaultsInFS(w io.Writer, in workflowInputDefaultsFSInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+func workflowInputDefaultsInFS(w io.Writer, annot output.Annotator, in workflowInputDefaultsFSInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	entries, err := fs.ReadDir(in.fsys, in.workflowsDir)
 	if err != nil {
 		return fmt.Errorf("read workflows dir %s: %w", in.workflowsDir, err)
@@ -96,7 +97,7 @@ func workflowInputDefaultsInFS(w io.Writer, in workflowInputDefaultsFSInput) err
 	failures := 0
 
 	for _, path := range files {
-		count, err := scanWorkflowInputDefaults(w, in.fsys, path)
+		count, err := scanWorkflowInputDefaults(annot, in.fsys, path)
 		if err != nil {
 			return err
 		}
@@ -113,7 +114,7 @@ func workflowInputDefaultsInFS(w io.Writer, in workflowInputDefaultsFSInput) err
 	return nil
 }
 
-func scanWorkflowInputDefaults(w io.Writer, fsys fs.FS, path string) (int, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+func scanWorkflowInputDefaults(annot output.Annotator, fsys fs.FS, path string) (int, error) {
 	file, err := fsys.Open(path)
 	if err != nil {
 		return 0, fmt.Errorf("open %s: %w", path, err)
@@ -133,9 +134,12 @@ func scanWorkflowInputDefaults(w io.Writer, fsys fs.FS, path string) (int, error
 			continue
 		}
 
-		_, _ = fmt.Fprintf(w,
-			"::error file=%s,line=%d::workflow_call input defaults must be literal values, found expression: %s\n",
-			path, lineNo, line)
+		// The Annotator escapes the file path and message; on non-GitHub
+		// runners it renders a plain "Error: <file>:<line>: …" instead of a
+		// workflow command.
+		annot.ErrorAt(output.Annotation{File: path, Line: lineNo},
+			"workflow_call input defaults must be literal values, found expression: %s", line)
+
 		failures++
 	}
 

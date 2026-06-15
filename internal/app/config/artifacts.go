@@ -31,6 +31,7 @@ type EmitConfigPlanInput struct {
 
 // EmitConfigPlan reads + validates artifacts.yml, derives the typed
 // config-plan contract, and writes it through OutputSink + SummarySink.
+//
 //nolint:cyclop // emits one sink output per typed-output field of the ConfigPlan.
 func EmitConfigPlan(
 	ctx context.Context,

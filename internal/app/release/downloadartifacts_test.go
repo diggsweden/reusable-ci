@@ -12,21 +12,21 @@ import (
 
 	apprelease "github.com/diggsweden/reusable-ci/internal/app/release"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
+	"github.com/diggsweden/reusable-ci/internal/domain/provider"
 )
 
 type fakeArtifactDownloader struct {
-	calls []domainrelease.ArtifactDownloadInput
+	calls []provider.RunArtifactDownload
 	fail  map[string]error
 }
 
-func (f *fakeArtifactDownloader) DownloadArtifact(_ context.Context, in domainrelease.ArtifactDownloadInput) error {
+func (f *fakeArtifactDownloader) DownloadRunArtifact(_ context.Context, in provider.RunArtifactDownload) (provider.RunArtifactInfo, error) {
 	f.calls = append(f.calls, in)
 	if err := f.fail[in.Name]; err != nil {
-		return err
+		return provider.RunArtifactInfo{}, err
 	}
 
-	return nil
+	return provider.RunArtifactInfo{Name: in.Name}, nil
 }
 
 func TestDownloadArtifacts_DownloadsExactNames(t *testing.T) {

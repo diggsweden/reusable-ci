@@ -79,6 +79,42 @@ func TestMaterializeBuildSecrets_WritesFilesAndEmitsBuildxFormat(t *testing.T) {
 	}
 }
 
+// TestMaterializeBuildSecrets_TightensPreexistingLooseDir guards the
+// least-privilege invariant: if the output directory already exists with
+// a world-listable mode (MkdirAll would leave it untouched), the secret
+// dir is still forced to 0700 so the materialized secret *filenames*
+// can't be enumerated by another user on a shared runner.
+func TestMaterializeBuildSecrets_TightensPreexistingLooseDir(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join(t.TempDir(), "buildkit-secrets")
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // deliberately loose: the SUT must tighten it.
+		t.Fatal(err)
+	}
+	// Defend against a permissive umask masking the test setup.
+	if err := os.Chmod(dir, 0o755); err != nil { //nolint:gosec // deliberately loose: the SUT must tighten it.
+		t.Fatal(err)
+	}
+
+	sink := fakeoutputsink.New(t)
+	if err := appcontainer.MaterializeBuildSecrets(context.Background(), sink, io.Discard, appcontainer.MaterializeBuildSecretsInput{
+		Names:        "DB_PASSWORD",
+		EnvelopeJSON: `{"DB_PASSWORD":"pw-value"}`,
+		OutputDir:    dir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if info.Mode().Perm() != 0o700 {
+		t.Errorf("secret dir mode = %v, want 0700", info.Mode().Perm())
+	}
+}
+
 // TestMaterializeBuildSecrets_EmptyNamesIsNoop covers the no-build-
 // secrets case: workflow input is empty so the step emits empty output
 // without touching the envelope. docker/build-push-action treats an

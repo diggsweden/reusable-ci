@@ -34,6 +34,7 @@ type XcodeArchiveInput struct {
 //
 // The bash piped to `xcbeautify`; the Go port streams xcodebuild's
 // own output through (callers can pipe externally if needed).
+//
 //nolint:cyclop // xcodebuild flow: workspace/project dispatch + scheme/config inference + archive.
 func XcodeArchive(ctx context.Context, ops XcodeBuildOps, w, stderr io.Writer, in XcodeArchiveInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if in.Scheme == "" {

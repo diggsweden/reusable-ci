@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/internal/domain/security"
@@ -89,7 +90,7 @@ func ScanContainer(
 	// Empty JSON means "trivy ran but found nothing at threshold". The
 	// pipeline passes; no SARIF / GitLab artefacts to upload.
 	if empty || len(ids) == 0 {
-		_, _ = fmt.Fprintf(out, "✅ No vulnerabilities found at severity %s or above\n", severity)
+		_, _ = fmt.Fprintf(out, "%s No vulnerabilities found at severity %s or above\n", clicolor.Check(out), severity)
 
 		return nil
 	}

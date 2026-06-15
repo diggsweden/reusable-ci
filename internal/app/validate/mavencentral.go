@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/output"
 )
@@ -38,7 +39,7 @@ func MavenCentralCredentials(w, stderr io.Writer, annot output.Annotator, in Mav
 		return fmt.Errorf("missing MAVEN_CENTRAL_PASSWORD secret: %w", errs.ErrPermissionDenied)
 	}
 
-	_, _ = fmt.Fprintln(w, "✓ Maven Central credentials configured")
+	_, _ = fmt.Fprintf(w, "%s Maven Central credentials configured\n", clicolor.Check(w))
 
 	return nil
 }

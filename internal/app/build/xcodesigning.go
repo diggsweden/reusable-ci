@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 )
 
@@ -70,7 +71,7 @@ func XcodeSetupCodeSigning(ctx context.Context, sec XcodeSecurityOps, w io.Write
 		return err
 	}
 
-	_, _ = fmt.Fprintln(w, "✓ Code signing configured successfully")
+	_, _ = fmt.Fprintf(w, "%s Code signing configured successfully\n", clicolor.Check(w))
 
 	return nil
 }

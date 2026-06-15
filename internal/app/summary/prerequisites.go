@@ -39,17 +39,17 @@ type gitInfoOps interface {
 // composes ~6 markdown sections (tag info / commit info / configuration
 // / secrets status / job status / validation results / footer).
 type PrerequisitesSummaryInput struct {
-	TagName            string
-	CommitSHA          string
-	RefType            provider.RefType
-	ConfigPlanJSON     string
-	ProjectTypes       string // optional pre-resolved comma list
-	BuildTypes         string // optional pre-resolved comma list
-	ContainerRegistry  string
+	TagName                  string
+	CommitSHA                string
+	RefType                  provider.RefType
+	ConfigPlanJSON           string
+	ProjectTypes             string // optional pre-resolved comma list
+	BuildTypes               string // optional pre-resolved comma list
+	ContainerRegistry        string
 	SignArtifacts            bool
 	RequireAllowlistedSigner bool
 	JobStatus                domainsummary.Result
-	PublishTo          string // "maven-central,npmjs,github-packages" CSV
+	PublishTo                string // "maven-central,npmjs,github-packages" CSV
 
 	// Boolean secret presence flags
 	HasReleaseGPGPrivateKey bool
@@ -265,9 +265,9 @@ func writeConfiguration(b *strings.Builder, in PrerequisitesSummaryInput) { //no
 	_, _ = fmt.Fprintf(b, "\n## ⚙️ Configuration\n")
 	_, _ = fmt.Fprintf(b, "| Setting | Value |\n")
 	_, _ = fmt.Fprintf(b, "|---------|-------|\n")
-	_, _ = fmt.Fprintf(b, "| **Project Types** | %s |\n", projectTypes)
-	_, _ = fmt.Fprintf(b, "| **Build Types** | %s |\n", buildTypes)
-	_, _ = fmt.Fprintf(b, "| **Container Registry** | %s |\n", in.ContainerRegistry)
+	_, _ = fmt.Fprintf(b, "| **Project Types** | %s |\n", domainsummary.SanitizeCell(projectTypes))
+	_, _ = fmt.Fprintf(b, "| **Build Types** | %s |\n", domainsummary.SanitizeCell(buildTypes))
+	_, _ = fmt.Fprintf(b, "| **Container Registry** | %s |\n", domainsummary.SanitizeCell(in.ContainerRegistry))
 	_, _ = fmt.Fprintf(b, "| **Release Publisher** | GitHub CLI |\n")
 	_, _ = fmt.Fprintf(b, "| **GPG Signing** | %s |\n", signing)
 }
@@ -313,16 +313,16 @@ func writeJobStatus(b *strings.Builder, in PrerequisitesSummaryInput) { //nolint
 	_, _ = fmt.Fprintf(b, "\n")
 
 	if in.JobStatus == domainsummary.ResultSuccess {
-		_, _ = fmt.Fprintf(b, "### ✅ All required prerequisites are configured!\n")
+		_, _ = fmt.Fprintf(b, "### ✓ All required prerequisites are configured!\n")
 		_, _ = fmt.Fprintf(b, "Ready to proceed with release 🚀\n")
 	} else {
-		_, _ = fmt.Fprintf(b, "### ❌ Prerequisites validation failed\n")
+		_, _ = fmt.Fprintf(b, "### ✗ Prerequisites validation failed\n")
 		_, _ = fmt.Fprintf(b, "Please configure the missing secrets before attempting release\n")
 	}
 }
 
 func writeValidationResults(b *strings.Builder, in PrerequisitesSummaryInput) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	_, _ = fmt.Fprintf(b, "\n## ✅ Validation Results\n\n")
+	_, _ = fmt.Fprintf(b, "\n## ✓ Validation Results\n\n")
 	_, _ = fmt.Fprintf(b, "| Validation | Result | Details |\n")
 	_, _ = fmt.Fprintf(b, "|------------|--------|---------|\n")
 

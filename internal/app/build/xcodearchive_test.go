@@ -41,8 +41,8 @@ func TestXcodeArchive_WorkspaceArgComposition(t *testing.T) {
 	var out bytes.Buffer
 	if err := appbuild.XcodeArchive(context.Background(), ops, &out, io.Discard, appbuild.XcodeArchiveInput{
 		Workspace:     "App.xcworkspace",
-		Scheme:        "App", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		Configuration: "Release", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		Scheme:        "App",                  //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		Configuration: "Release",              //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Destination:   "generic/platform=iOS", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		XcconfigPath:  "Config.xcconfig",
 		BuildNumber:   "42",

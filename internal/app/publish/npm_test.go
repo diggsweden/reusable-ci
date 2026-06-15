@@ -263,6 +263,17 @@ func TestWriteNPMRC(t *testing.T) {
 				"@example:registry=https://npm.example.com:8443/path\n" +
 				"always-auth=true\n",
 		},
+		{
+			// http is permitted for a loopback registry (e.g. verdaccio in
+			// local dev): the token can't leave the machine.
+			name: "plaintext http allowed for localhost",
+			in: apppublish.NPMRCInput{
+				Registry: "http://localhost:4873",
+			},
+			wantBody: "//localhost:4873/:_authToken=${NODE_AUTH_TOKEN}\n" +
+				"registry=http://localhost:4873\n" +
+				"always-auth=true\n",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -297,7 +308,12 @@ func TestWriteNPMRC_RejectsInvalidInputs(t *testing.T) {
 		{
 			name: "bad scheme",
 			in:   apppublish.NPMRCInput{Registry: "ftp://example.com", Output: io.Discard},
-			want: `scheme "ftp" must be http or https`,
+			want: `scheme "ftp" must be https`,
+		},
+		{
+			name: "plaintext http to remote host is rejected",
+			in:   apppublish.NPMRCInput{Registry: "http://npm.example.com", Output: io.Discard},
+			want: "would leak the npm auth token",
 		},
 		{
 			name: "missing host",

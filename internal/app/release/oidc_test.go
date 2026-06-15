@@ -10,39 +10,59 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/domain/provider"
 )
 
-func TestDefaultOIDCIssuer_GitHub(t *testing.T) {
-	got := apprelease.DefaultOIDCIssuer(provider.PlatformGitHub)
-	want := "https://token.actions.githubusercontent.com"
+// stubDescriber is a minimal provider.Describer for delegation tests.
+// The concrete per-forge issuer values are tested in each adapter's
+// describe_test.go; here we only assert DefaultOIDCIssuer's behaviour.
+type stubDescriber struct{ info provider.Info }
 
-	if got != want {
-		t.Errorf("github OIDC issuer = %q, want %q", got, want)
+func (s stubDescriber) Describe() provider.Info { return s.info }
+
+func TestDefaultOIDCIssuer_DelegatesToDescriber(t *testing.T) {
+	t.Parallel()
+
+	got := apprelease.DefaultOIDCIssuer(stubDescriber{provider.Info{OIDCIssuer: "https://issuer.example"}})
+	if got != "https://issuer.example" {
+		t.Errorf("OIDC issuer = %q, want https://issuer.example", got)
 	}
 }
 
-func TestDefaultOIDCIssuer_GitLabSaaS(t *testing.T) {
-	t.Setenv("CI_SERVER_URL", "")
+func TestDefaultOIDCIssuer_EmptyWhenProviderHasNoIssuer(t *testing.T) {
+	t.Parallel()
 
-	got := apprelease.DefaultOIDCIssuer(provider.PlatformGitLab)
-	if got != "https://gitlab.com" {
-		t.Errorf("gitlab SaaS OIDC issuer = %q, want https://gitlab.com", got)
+	if got := apprelease.DefaultOIDCIssuer(stubDescriber{provider.Info{}}); got != "" {
+		t.Errorf("OIDC issuer = %q, want empty", got)
 	}
 }
 
-func TestDefaultOIDCIssuer_GitLabSelfHosted(t *testing.T) {
-	t.Setenv("CI_SERVER_URL", "https://gitlab.diggsweden.internal")
+func TestDefaultOIDCIssuer_NilDescriberIsEmpty(t *testing.T) {
+	t.Parallel()
 
-	got := apprelease.DefaultOIDCIssuer(provider.PlatformGitLab)
-	if got != "https://gitlab.diggsweden.internal" {
-		t.Errorf("self-hosted GitLab OIDC issuer = %q, want CI_SERVER_URL value", got)
+	if got := apprelease.DefaultOIDCIssuer(nil); got != "" {
+		t.Errorf("OIDC issuer = %q, want empty for nil describer", got)
 	}
 }
 
-func TestDefaultOIDCIssuer_LocalIsEmpty(t *testing.T) {
-	// Local invocations cannot infer an OIDC issuer; the caller
-	// must supply --oidc-issuer explicitly. Empty result is the
-	// signal for that.
-	got := apprelease.DefaultOIDCIssuer(provider.PlatformLocal)
-	if got != "" {
-		t.Errorf("local OIDC issuer = %q, want empty", got)
+func TestKeylessNeedsIssuer(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name           string
+		explicitIssuer string
+		keylessCapable bool
+		want           bool
+	}{
+		{"forge_keyless_no_explicit", "", true, false},                   // GitHub: forge publishes an issuer
+		{"forge_not_keyless_no_explicit", "", false, true},               // Forgejo: warn
+		{"forge_not_keyless_explicit_issuer", "https://x", false, false}, // operator supplied → trust them
+		{"forge_keyless_explicit_issuer", "https://x", true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := apprelease.KeylessNeedsIssuer(tc.explicitIssuer, tc.keylessCapable); got != tc.want {
+				t.Errorf("KeylessNeedsIssuer(%q, %v) = %v, want %v", tc.explicitIssuer, tc.keylessCapable, got, tc.want)
+			}
+		})
 	}
 }

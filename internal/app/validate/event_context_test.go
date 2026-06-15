@@ -11,13 +11,14 @@ import (
 
 	appvalidate "github.com/diggsweden/reusable-ci/internal/app/validate"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/internal/domain/output"
 )
 
 func TestEventContext_AllowedPrintsConfirmation(t *testing.T) {
 	t.Parallel()
 
 	var out bytes.Buffer
-	if err := appvalidate.EventContext(&out, appvalidate.EventContextInput{EventName: "push"}); err != nil {
+	if err := appvalidate.EventContext(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.EventContextInput{EventName: "push"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -31,7 +32,7 @@ func TestEventContext_PullRequestRefusedWithGuidance(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := appvalidate.EventContext(&out, appvalidate.EventContextInput{EventName: "pull_request_target"})
+	err := appvalidate.EventContext(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.EventContextInput{EventName: "pull_request_target"})
 	if err == nil {
 		t.Fatal("expected refusal")
 	}
@@ -58,7 +59,7 @@ func TestEventContext_UnknownEventGetsGenericGuidance(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := appvalidate.EventContext(&out, appvalidate.EventContextInput{EventName: "fork"})
+	err := appvalidate.EventContext(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.EventContextInput{EventName: "fork"})
 	if err == nil {
 		t.Fatal("expected refusal")
 	}
@@ -76,7 +77,7 @@ func TestEventContext_CustomAllowlistAcceptsPullRequest(t *testing.T) {
 	t.Parallel()
 
 	var out bytes.Buffer
-	if err := appvalidate.EventContext(&out, appvalidate.EventContextInput{
+	if err := appvalidate.EventContext(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.EventContextInput{
 		EventName:     "pull_request",
 		AllowedEvents: []string{"pull_request"},
 	}); err != nil {
@@ -89,7 +90,7 @@ func TestEventContext_EmptyEventNameWrapsMissingInput(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := appvalidate.EventContext(&out, appvalidate.EventContextInput{EventName: ""})
+	err := appvalidate.EventContext(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.EventContextInput{EventName: ""})
 	if !errors.Is(err, errs.ErrMissingInput) {
 		t.Errorf("expected ErrMissingInput, got %v", err)
 	}

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/internal/domain/pipeline"
@@ -241,7 +242,7 @@ func checkMavenReproducibility(dir string, out io.Writer, annot output.Annotator
 		return false
 	default:
 		annot.Noticef("Maven reproducibility configured in %s (outputTimestamp=%s)", displayDir(dir), value)
-		_, _ = fmt.Fprintf(out, "✓ %s: project.build.outputTimestamp=%s\n", displayDir(dir), value)
+		_, _ = fmt.Fprintf(out, "%s %s: project.build.outputTimestamp=%s\n", clicolor.Check(out), displayDir(dir), value)
 
 		return true
 	}
@@ -250,7 +251,7 @@ func checkMavenReproducibility(dir string, out io.Writer, annot output.Annotator
 func failMavenMissing(dir, reason string, out io.Writer, annot output.Annotator) {
 	annot.Errorf("%s in %s — JAR builds will not be byte-identical across rebuilds", reason, displayDir(dir))
 
-	_, _ = fmt.Fprintf(out, "❌ %s: %s\n", displayDir(dir), reason)
+	_, _ = fmt.Fprintf(out, "%s %s: %s\n", clicolor.Cross(out), displayDir(dir), reason)
 	_, _ = fmt.Fprintf(out, "  Fix: add to pom.xml <properties>:\n")
 	_, _ = fmt.Fprintf(out, "    <project.build.outputTimestamp>2026-01-01T00:00:00Z</project.build.outputTimestamp>\n")
 	_, _ = fmt.Fprintf(out, "  Reference: https://maven.apache.org/guides/mini/guide-reproducible-builds.html\n")
@@ -300,7 +301,7 @@ func checkGradleReproducibility(dir string, out io.Writer, annot output.Annotato
 	switch {
 	case preserve && order:
 		annot.Noticef("Gradle reproducibility configured in %s", displayDir(dir))
-		_, _ = fmt.Fprintf(out, "✓ %s: preserveFileTimestamps=false + reproducibleFileOrder=true\n", displayDir(dir))
+		_, _ = fmt.Fprintf(out, "%s %s: preserveFileTimestamps=false + reproducibleFileOrder=true\n", clicolor.Check(out), displayDir(dir))
 
 		return true
 	case !preserve && !order:
@@ -375,7 +376,7 @@ func isIdentChar(b byte) bool {
 func failGradleMissing(dir, reason string, out io.Writer, annot output.Annotator) {
 	annot.Errorf("Gradle reproducibility not configured in %s — JAR builds will not be byte-identical across rebuilds (%s)", displayDir(dir), reason)
 
-	_, _ = fmt.Fprintf(out, "❌ %s: %s\n", displayDir(dir), reason)
+	_, _ = fmt.Fprintf(out, "%s %s: %s\n", clicolor.Cross(out), displayDir(dir), reason)
 	_, _ = fmt.Fprintf(out, "  Fix: add to build.gradle{,.kts}:\n")
 	_, _ = fmt.Fprintf(out, "    tasks.withType(AbstractArchiveTask).configureEach {\n")
 	_, _ = fmt.Fprintf(out, "        preserveFileTimestamps = false\n")

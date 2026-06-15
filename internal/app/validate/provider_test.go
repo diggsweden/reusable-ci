@@ -25,8 +25,7 @@ func TestToken_GitHub_FineGrainedAPISucceeds(t *testing.T) {
 	//nolint:gosec // fake token literal — not a real credential.
 	err := appvalidate.Token(context.Background(), prov, &buf, appvalidate.TokenInput{
 		Token:      "github_pat_AAAA", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		Repository: "owner/repo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		Platform:   provider.PlatformGitHub,
+		Repository: "owner/repo",      //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +46,7 @@ func TestToken_GitHub_ClassicPATRefused(t *testing.T) {
 	prov := fakeprovider.New(t).WithPlatform(provider.PlatformGitHub)
 
 	err := appvalidate.Token(context.Background(), prov, &bytes.Buffer{}, appvalidate.TokenInput{
-		Token: "ghp_classic", Repository: "owner/repo", Platform: provider.PlatformGitHub,
+		Token: "ghp_classic", Repository: "owner/repo",
 	})
 	if err == nil || !strings.Contains(err.Error(), "classic PAT detected") {
 		t.Errorf("err = %v", err)
@@ -64,7 +63,7 @@ func TestToken_GitHub_UnknownPrefixWarnsButProceeds(t *testing.T) {
 
 	var buf bytes.Buffer
 	if err := appvalidate.Token(context.Background(), prov, &buf, appvalidate.TokenInput{
-		Token: "weird_token", Repository: "owner/repo", Platform: provider.PlatformGitHub,
+		Token: "weird_token", Repository: "owner/repo",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +79,7 @@ func TestToken_GitHub_AppToken(t *testing.T) {
 
 	var buf bytes.Buffer
 	if err := appvalidate.Token(context.Background(), prov, &buf, appvalidate.TokenInput{
-		Token: "ghs_AAAA", Repository: "owner/repo", Platform: provider.PlatformGitHub,
+		Token: "ghs_AAAA", Repository: "owner/repo",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +94,7 @@ func TestToken_EmptyToken(t *testing.T) {
 	prov := fakeprovider.New(t).WithPlatform(provider.PlatformGitHub)
 
 	err := appvalidate.Token(context.Background(), prov, &bytes.Buffer{}, appvalidate.TokenInput{
-		Repository: "owner/repo", Platform: provider.PlatformGitHub,
+		Repository: "owner/repo",
 	})
 	if err == nil || !strings.Contains(err.Error(), "no GitHub token provided") {
 		t.Errorf("err = %v", err)
@@ -114,8 +113,7 @@ func TestToken_EmptyRepositoryUsage(t *testing.T) {
 
 	//nolint:gosec // fake token literal — not a real credential.
 	err := appvalidate.Token(context.Background(), prov, &bytes.Buffer{}, appvalidate.TokenInput{
-		Token:    "github_pat_AAAA",
-		Platform: provider.PlatformGitHub,
+		Token: "github_pat_AAAA",
 	})
 	if err == nil || !strings.Contains(err.Error(), "no repository provided") {
 		t.Errorf("err = %v", err)
@@ -129,7 +127,7 @@ func TestToken_GitLab_NoFormatChecks(t *testing.T) {
 	var buf bytes.Buffer
 	// "ghp_classic" would fail on GitHub; on GitLab we don't gate by prefix.
 	if err := appvalidate.Token(context.Background(), prov, &buf, appvalidate.TokenInput{
-		Token: "ghp_classic", Repository: "group/project", Platform: provider.PlatformGitLab,
+		Token: "ghp_classic", Repository: "group/project",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +146,6 @@ func TestToken_APIRejection(t *testing.T) {
 	err := appvalidate.Token(context.Background(), prov, &bytes.Buffer{}, appvalidate.TokenInput{
 		Token:      "github_pat_AAAA",
 		Repository: "owner/repo",
-		Platform:   provider.PlatformGitHub,
 	})
 	if err == nil || !strings.Contains(err.Error(), "Token is invalid") {
 		t.Errorf("err = %v", err)
@@ -244,4 +241,3 @@ func TestBotPermissions_EmptyRepoUsage(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
-

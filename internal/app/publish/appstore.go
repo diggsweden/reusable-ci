@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	domainpublish "github.com/diggsweden/reusable-ci/internal/domain/publish"
@@ -74,7 +75,7 @@ func PrepareAppStoreCredentials(_ context.Context, w io.Writer, in AppStorePrepa
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 
-	_, _ = fmt.Fprintf(w, "✓ App Store Connect API configured\n")
+	_, _ = fmt.Fprintf(w, "%s App Store Connect API configured\n", clicolor.Check(w))
 
 	return nil
 }

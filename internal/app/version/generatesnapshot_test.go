@@ -49,44 +49,44 @@ func (f *fakeGit) ShortSHA(_ context.Context, ref string, _ int) (string, error)
 	return f.shortSHAOut, f.shortSHAErr
 }
 
-func TestGenerateDevVersion_HappyPath(t *testing.T) {
+func TestGenerateSnapshotVersion_HappyPath(t *testing.T) {
 	ops := &fakeGit{
 		tags:        []string{"v0.4.0", "v0.5.9", "v0.5.0"},
 		shortSHAOut: "abc1234", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}
 
 	var out bytes.Buffer
-	if err := appversion.GenerateDevVersion(context.Background(), ops, &out, appversion.GenerateDevVersionInput{
+	if err := appversion.GenerateSnapshotVersion(context.Background(), ops, &out, appversion.GenerateSnapshotVersionInput{
 		RefName: "feat/awesome",
 	}); err != nil {
-		t.Fatalf("GenerateDevVersion: %v", err)
+		t.Fatalf("GenerateSnapshotVersion: %v", err)
 	}
 
 	got := strings.TrimSpace(out.String())
-	if got != "0.5.9-dev-feat-awesome-abc1234" {
+	if got != "0.5.9-snapshot-feat-awesome-abc1234" {
 		t.Errorf("got %q", got)
 	}
 }
 
-func TestGenerateDevVersion_NoTagsFallsBackToZero(t *testing.T) {
+func TestGenerateSnapshotVersion_NoTagsFallsBackToZero(t *testing.T) {
 	ops := &fakeGit{
 		shortSHAOut: "deadbee",
 	}
 
 	var out bytes.Buffer
-	if err := appversion.GenerateDevVersion(context.Background(), ops, &out, appversion.GenerateDevVersionInput{
+	if err := appversion.GenerateSnapshotVersion(context.Background(), ops, &out, appversion.GenerateSnapshotVersionInput{
 		RefName: "main", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}); err != nil {
-		t.Fatalf("GenerateDevVersion: %v", err)
+		t.Fatalf("GenerateSnapshotVersion: %v", err)
 	}
 
 	got := strings.TrimSpace(out.String())
-	if got != "0.0.0-dev-main-deadbee" {
+	if got != "0.0.0-snapshot-main-deadbee" {
 		t.Errorf("got %q", got)
 	}
 }
 
-func TestGenerateDevVersion_FetchFailureIgnored(t *testing.T) {
+func TestGenerateSnapshotVersion_FetchFailureIgnored(t *testing.T) {
 	ops := &fakeGit{
 		runErr:      errors.New("offline"), //nolint:err113 // test mock error
 		tags:        []string{"v1.0.0"},
@@ -94,36 +94,36 @@ func TestGenerateDevVersion_FetchFailureIgnored(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := appversion.GenerateDevVersion(context.Background(), ops, &out, appversion.GenerateDevVersionInput{
+	if err := appversion.GenerateSnapshotVersion(context.Background(), ops, &out, appversion.GenerateSnapshotVersionInput{
 		RefName: "main",
 	}); err != nil {
 		t.Fatalf("expected fetch failure to be ignored: %v", err)
 	}
 
-	if !strings.Contains(out.String(), "1.0.0-dev-main-1234567") {
+	if !strings.Contains(out.String(), "1.0.0-snapshot-main-1234567") {
 		t.Errorf("output = %q", out.String())
 	}
 }
 
-func TestGenerateDevVersion_ShortSHAErrorBubbles(t *testing.T) {
+func TestGenerateSnapshotVersion_ShortSHAErrorBubbles(t *testing.T) {
 	ops := &fakeGit{
 		tags:        []string{"v1.0.0"},
 		shortSHAErr: errors.New("not a git repo"), //nolint:err113 // test mock error
 	}
-	if err := appversion.GenerateDevVersion(context.Background(), ops, &bytes.Buffer{}, appversion.GenerateDevVersionInput{
+	if err := appversion.GenerateSnapshotVersion(context.Background(), ops, &bytes.Buffer{}, appversion.GenerateSnapshotVersionInput{
 		RefName: "main",
 	}); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
-func TestGenerateDevVersion_RequiresRefName(t *testing.T) {
-	if err := appversion.GenerateDevVersion(context.Background(), &fakeGit{}, &bytes.Buffer{}, appversion.GenerateDevVersionInput{}); err == nil {
+func TestGenerateSnapshotVersion_RequiresRefName(t *testing.T) {
+	if err := appversion.GenerateSnapshotVersion(context.Background(), &fakeGit{}, &bytes.Buffer{}, appversion.GenerateSnapshotVersionInput{}); err == nil {
 		t.Fatal("expected ref-name error")
 	}
 }
 
-func TestGenerateDevVersion_JSONFormat_EmitsObject(t *testing.T) {
+func TestGenerateSnapshotVersion_JSONFormat_EmitsObject(t *testing.T) {
 	t.Parallel()
 
 	ops := &fakeGit{
@@ -133,7 +133,7 @@ func TestGenerateDevVersion_JSONFormat_EmitsObject(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := appversion.GenerateDevVersion(context.Background(), ops, &out, appversion.GenerateDevVersionInput{
+	err := appversion.GenerateSnapshotVersion(context.Background(), ops, &out, appversion.GenerateSnapshotVersionInput{
 		RefName: "main",
 		Format:  output.FormatJSON,
 	})
@@ -143,25 +143,25 @@ func TestGenerateDevVersion_JSONFormat_EmitsObject(t *testing.T) {
 		Version string `json:"version"`
 	}
 	require.NoError(t, json.Unmarshal(out.Bytes(), &decoded))
-	require.Equal(t, "1.2.3-dev-main-abc1234", decoded.Version)
+	require.Equal(t, "1.2.3-snapshot-main-abc1234", decoded.Version)
 }
 
-func TestGenerateDevVersion_TextFormat_PreservesBareLine(t *testing.T) {
+func TestGenerateSnapshotVersion_TextFormat_PreservesBareLine(t *testing.T) {
 	t.Parallel()
 
 	ops := &fakeGit{tags: []string{"v0.1.0"}, shortSHAOut: "deadbee"}
 
 	var out bytes.Buffer
 
-	err := appversion.GenerateDevVersion(context.Background(), ops, &out, appversion.GenerateDevVersionInput{
+	err := appversion.GenerateSnapshotVersion(context.Background(), ops, &out, appversion.GenerateSnapshotVersionInput{
 		RefName: "main",
 		Format:  output.FormatText,
 	})
 	require.NoError(t, err)
-	require.Equal(t, "0.1.0-dev-main-deadbee\n", out.String())
+	require.Equal(t, "0.1.0-snapshot-main-deadbee\n", out.String())
 }
 
-func TestGenerateDevVersion_GitHubFormatEmitsOutput(t *testing.T) {
+func TestGenerateSnapshotVersion_GitHubFormatEmitsOutput(t *testing.T) {
 	t.Parallel()
 
 	ops := &fakeGit{tags: []string{"v0.2.0"}, shortSHAOut: "abc1234"}
@@ -169,12 +169,12 @@ func TestGenerateDevVersion_GitHubFormatEmitsOutput(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := appversion.GenerateDevVersion(context.Background(), ops, &out, appversion.GenerateDevVersionInput{
+	err := appversion.GenerateSnapshotVersion(context.Background(), ops, &out, appversion.GenerateSnapshotVersionInput{
 		RefName: "feature/demo",
 		Format:  output.FormatGitHub,
 		Sink:    sink,
 	})
 	require.NoError(t, err)
-	require.Equal(t, "0.2.0-dev-feature-demo-abc1234", sink.Single("dev-version"))
-	require.Equal(t, "0.2.0-dev-feature-demo-abc1234\n", out.String())
+	require.Equal(t, "0.2.0-snapshot-feature-demo-abc1234", sink.Single("snapshot-version"))
+	require.Equal(t, "0.2.0-snapshot-feature-demo-abc1234\n", out.String())
 }

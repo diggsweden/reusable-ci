@@ -12,17 +12,20 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/cliio"
-	domain "github.com/diggsweden/reusable-ci/internal/domain/release"
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
 )
 
 // ChecksumsInput drives `reusable-ci release checksums`.
 type ChecksumsInput struct {
-	OutputFile          string // default: domain.ChecksumsFile
+	OutputFile          string // default: domainrelease.ChecksumsFile
 	ReleaseArtifactsDir string // default: ./release-artifacts
 	AttachArtifacts     string // comma-separated glob list (verbatim from artifacts.yml)
 	SBOMDir             string // default: ./sbom-artifacts
 	WorkingDir          string // glob root for the *-sbom.{spdx,cyclonedx}.json patterns; default: cwd
+	AssemblyFile        string // when set, checksum exactly the staged release assembly
 }
 
 // Checksums computes SHA256 over a fileset and writes lines of the form
@@ -37,18 +40,23 @@ type ChecksumsInput struct {
 //   - cwd *-sbom.{spdx,cyclonedx}.json → basename
 //
 // Returns the line count and any I/O error.
+//
 //nolint:cyclop // emits checksum file + uploads + summary entry per artifact.
 func Checksums(out io.Writer, in ChecksumsInput) (int, error) {
+	if in.AssemblyFile != "" {
+		return checksumsFromAssembly(out, in)
+	}
+
 	if in.OutputFile == "" {
-		in.OutputFile = domain.ChecksumsFile
+		in.OutputFile = domainrelease.ChecksumsFile
 	}
 
 	if in.ReleaseArtifactsDir == "" {
-		in.ReleaseArtifactsDir = domain.DefaultReleaseArtifactsDir
+		in.ReleaseArtifactsDir = domainrelease.DefaultReleaseArtifactsDir
 	}
 
 	if in.SBOMDir == "" {
-		in.SBOMDir = domain.DefaultSBOMArtifactsDir
+		in.SBOMDir = domainrelease.DefaultSBOMArtifactsDir
 	}
 
 	f, err := cliio.CreateWriter(in.OutputFile, 0o644) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
@@ -106,7 +114,74 @@ func Checksums(out io.Writer, in ChecksumsInput) (int, error) {
 		return count, err
 	}
 
-	_, _ = fmt.Fprintf(out, "✓ Generated %d checksums in %s\n", count, in.OutputFile)
+	_, _ = fmt.Fprintf(out, "%s Generated %d checksums in %s\n", clicolor.Check(out), count, in.OutputFile)
+
+	return count, nil
+}
+
+func checksumsFromAssembly(out io.Writer, in ChecksumsInput) (int, error) {
+	asm, err := readAssembly(in.AssemblyFile)
+	if err != nil {
+		return 0, err
+	}
+
+	outputFile := in.OutputFile
+	if outputFile == "" {
+		outputFile = asm.ChecksumFile
+	}
+
+	if outputFile == "" {
+		outputFile = domainrelease.ChecksumsFile
+	}
+
+	if err := os.MkdirAll(filepath.Dir(outputFile), 0o755); err != nil { //nolint:gosec,mnd // public release staging dir.
+		return 0, fmt.Errorf("create checksum dir for %q: %w", outputFile, err)
+	}
+
+	f, err := cliio.CreateWriter(outputFile, 0o644) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	if err != nil {
+		return 0, fmt.Errorf("create %q: %w", outputFile, err)
+	}
+
+	defer func() { _ = f.Close() }()
+
+	count := 0
+	write := func(path, label string) error {
+		if !regularFileExists(path) {
+			return fmt.Errorf("assembly checksum input %q is missing or not a regular file: %w", path, errs.ErrMissingInput)
+		}
+
+		hash, err := sha256File(path)
+		if err != nil {
+			return err
+		}
+
+		if _, err := fmt.Fprintf(f, "%s  %s\n", hash, label); err != nil {
+			return err
+		}
+
+		count++
+
+		return nil
+	}
+
+	for _, asset := range asm.Assets {
+		if err := write(asset.Path, asset.Name); err != nil {
+			return count, err
+		}
+	}
+
+	if asm.SBOMZipFile != "" {
+		if regularFileExists(asm.SBOMZipFile) {
+			if err := write(asm.SBOMZipFile, filepath.Base(asm.SBOMZipFile)); err != nil {
+				return count, err
+			}
+		} else if len(asm.SBOMs) > 0 {
+			return count, fmt.Errorf("assembly SBOM ZIP %q is missing; run release sbom-zip --assembly first: %w", asm.SBOMZipFile, errs.ErrMissingInput)
+		}
+	}
+
+	_, _ = fmt.Fprintf(out, "%s Generated %d checksums in %s\n", clicolor.Check(out), count, outputFile)
 
 	return count, nil
 }
@@ -157,7 +232,7 @@ func checksumContainerSBOMs(dir string, out io.Writer, write func(absPath, label
 			continue
 		}
 
-		matched, err := filepath.Match(domain.AnalyzedContainerSBOMPattern, e.Name())
+		matched, err := filepath.Match(domainrelease.AnalyzedContainerSBOMPattern, e.Name())
 		if err != nil || !matched {
 			continue
 		}
@@ -186,7 +261,7 @@ func checksumWorkdirSBOMs(workdir string, out io.Writer, write func(absPath, lab
 
 	_, _ = fmt.Fprintln(out, "→ Checksumming all SBOM layers")
 
-	for _, pattern := range domain.SBOMFilePatterns {
+	for _, pattern := range domainrelease.SBOMFilePatterns {
 		matches, err := filepath.Glob(filepath.Join(root, pattern))
 		if err != nil {
 			return fmt.Errorf("glob %q: %w", pattern, err)
@@ -231,6 +306,7 @@ func sha256File(path string) (string, error) {
 // and invokes write(absPath, manifestLabel) for every match that exists
 // and is a regular file. No-op when patterns is empty. skip excludes
 // the output manifest when a glob accidentally matches it.
+//
 //nolint:cyclop // CSV → globs → stat → filter → write — one branch per phase.
 func checksumAttachArtifacts(patterns string, out io.Writer, write func(absPath, label string) error, skip func(string) bool) error {
 	if patterns == "" {

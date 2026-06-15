@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/output"
 )
@@ -93,6 +94,7 @@ type MavenValidateArtifactsResult struct {
 // MavenValidateArtifacts walks <Root>/**/target/ for the JAR types
 // Maven Central requires (sources + javadoc) and errors when either is
 // missing.
+//
 //nolint:cyclop // checks each required file presence + signature pairing.
 func MavenValidateArtifacts(_ context.Context, w, stderr io.Writer, annot output.Annotator, in MavenValidateArtifactsInput) (MavenValidateArtifactsResult, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	root := in.Root
@@ -156,7 +158,7 @@ func MavenValidateArtifacts(_ context.Context, w, stderr io.Writer, annot output
 		return res, fmt.Errorf("missing javadoc JAR: %w", errs.ErrValidation)
 	}
 
-	_, _ = fmt.Fprintln(w, "✓ All required artifacts present:")
+	_, _ = fmt.Fprintf(w, "%s All required artifacts present:\n", clicolor.Check(w))
 	_, _ = fmt.Fprintf(w, "  - Sources JARs: %d\n", res.SourcesCount)
 	_, _ = fmt.Fprintf(w, "  - Javadoc JARs: %d\n", res.JavadocCount)
 

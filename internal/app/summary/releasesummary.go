@@ -25,7 +25,12 @@ type ReleaseSummaryInput struct {
 	ReleaseActor        string
 	RunURL              string
 	CreateReleaseResult string
-	PrepareStageJSON    string
+	// Image-promotion ladder job results (success/failure/skipped). Empty/
+	// skipped for releases without a container.
+	PromoteDevResult     string
+	PromoteStagingResult string
+	PromoteReleaseResult string
+	PrepareStageJSON     string
 	BuildStageJSON      string
 	PublishStageJSON    string
 	Platform            provider.Platform
@@ -62,16 +67,28 @@ func ReleaseSummary(ctx context.Context, sink ci.SummarySink, in ReleaseSummaryI
 		return string(stage.TargetResult(key))
 	}
 
+	// reported renders an unset job result as skipped rather than a failure:
+	// a promotion job that never ran (a release with no container) reports an
+	// empty result here, which is "not applicable", not an error. In a normal
+	// run GHA always supplies success/failure/skipped.
+	reported := func(result string) string {
+		if result == "" {
+			return string(domainsummary.ResultSkipped)
+		}
+
+		return result
+	}
+
 	var b strings.Builder //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 
 	_, _ = fmt.Fprintf(&b, "# Release Summary\n\n")
 	_, _ = fmt.Fprintf(&b, "## Release Overview\n")
 	_, _ = fmt.Fprintf(&b, "| Property | Value |\n")
 	_, _ = fmt.Fprintf(&b, "|----------|-------|\n")
-	_, _ = fmt.Fprintf(&b, "| **Version** | `%s` |\n", in.ReleaseVersion)
-	_, _ = fmt.Fprintf(&b, "| **Branch** | `%s` |\n", in.ReleaseBranch)
-	_, _ = fmt.Fprintf(&b, "| **Commit** | `%s` |\n", in.ReleaseCommit)
-	_, _ = fmt.Fprintf(&b, "| **Released By** | @%s |\n", in.ReleaseActor)
+	_, _ = fmt.Fprintf(&b, "| **Version** | `%s` |\n", domainsummary.SanitizeCell(in.ReleaseVersion))
+	_, _ = fmt.Fprintf(&b, "| **Branch** | `%s` |\n", domainsummary.SanitizeCell(in.ReleaseBranch))
+	_, _ = fmt.Fprintf(&b, "| **Commit** | `%s` |\n", domainsummary.SanitizeCell(in.ReleaseCommit))
+	_, _ = fmt.Fprintf(&b, "| **Released By** | @%s |\n", domainsummary.SanitizeCell(in.ReleaseActor))
 	_, _ = fmt.Fprintf(&b, "| **Released At** | %s |\n\n", now.UTC().Format("2006-01-02 15:04:05 UTC"))
 	_, _ = fmt.Fprintf(&b, "## Job Status\n")
 	_, _ = fmt.Fprintf(&b, "| Job | Status |\n")
@@ -96,6 +113,9 @@ func ReleaseSummary(ctx context.Context, sink ci.SummarySink, in ReleaseSummaryI
 		{"Containers", target(publish, pipeline.TargetContainers)},
 		{"Cargo SBOM", target(publish, pipeline.TargetCargoContainerFirst)},
 		{"Go SBOM", target(publish, pipeline.TargetGoContainerFirst)},
+		{"Promote Image → dev", reported(in.PromoteDevResult)},
+		{"Promote Image → staging", reported(in.PromoteStagingResult)},
+		{"Promote Image → release", reported(in.PromoteReleaseResult)},
 		{"GitHub Release", in.CreateReleaseResult},
 	}
 	for _, r := range rows {

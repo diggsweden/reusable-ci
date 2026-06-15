@@ -30,7 +30,7 @@ func TestResolveName_WritesNameOutput(t *testing.T) {
 	}
 }
 
-func TestResolveName_MultiContainerNameSuffix(t *testing.T) {
+func TestResolveName_MultiContainerName(t *testing.T) {
 	t.Parallel()
 	sink := fakeoutputsink.New(t)
 

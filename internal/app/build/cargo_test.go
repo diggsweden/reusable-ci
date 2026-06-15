@@ -24,7 +24,7 @@ import (
 // succeeds without a real cargo on PATH.
 type fakeCargoTool struct {
 	calls       []appbuild.CargoRunInput
-	metadata    string // JSON to write on `metadata` calls
+	metadata    string   // JSON to write on `metadata` calls
 	binaryNames []string // candidates to write into target/release/ on `build` calls
 }
 

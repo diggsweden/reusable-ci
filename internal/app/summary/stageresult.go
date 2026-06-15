@@ -54,6 +54,7 @@ type needsEntry struct {
 
 // StageResult composes a stage-result manifest from any typed stage plan whose
 // targets object contains per-target runs flags.
+//
 //nolint:cyclop // envelope marshalling: one branch per stage-result field (provider × ecosystem × status).
 func StageResult(
 	ctx context.Context,
@@ -67,7 +68,10 @@ func StageResult(
 
 	var plan genericStagePlanJSON
 	if err := json.Unmarshal([]byte(in.StagePlanJSON), &plan); err != nil {
-		return nil, fmt.Errorf("parse stage plan: %w", err)
+		// Classify like the field checks below (EX_CONFIG), not the
+		// unclassified EX_SOFTWARE default — a malformed stage plan is
+		// caller-supplied data, not an internal bug.
+		return nil, fmt.Errorf("parse stage plan: not valid JSON: %w", errs.ErrInvalidConfig)
 	}
 
 	if err := validateGenericStagePlan(plan); err != nil {

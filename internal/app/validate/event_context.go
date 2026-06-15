@@ -9,7 +9,9 @@ import (
 	"io"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/internal/domain/validate"
 )
 
@@ -30,14 +32,14 @@ type EventContextInput struct {
 // trigger by mistake (or by malice).
 //
 // On refuse:
-//   - emits a `::error::` line (GHA workflow-command surfacing)
+//   - emits an error annotation via annot (GHA: `::error::`; else plain)
 //   - returns a wrapped errs.ErrValidation
 //
 // On accept: prints a one-line confirmation to out.
-func EventContext(out io.Writer, in EventContextInput) error {
+func EventContext(out io.Writer, annot output.Annotator, in EventContextInput) error {
 	err := validate.RequireAllowedEvent(in.EventName, in.AllowedEvents)
 	if err == nil {
-		_, _ = fmt.Fprintf(out, "✓ Trigger event %q is allowed\n", in.EventName)
+		_, _ = fmt.Fprintf(out, "%s Trigger event %q is allowed\n", clicolor.Check(out), in.EventName)
 
 		return nil
 	}
@@ -51,13 +53,11 @@ func EventContext(out io.Writer, in EventContextInput) error {
 	guidance := guidanceFor(ece.Got)
 	allowed := strings.Join(ece.Allowed, ", ")
 
-	// `::error::` is the GHA workflow-command form that surfaces in the
-	// Annotations panel of the run summary. The same content is also in
-	// the wrapped Go error for non-GHA callers (gitlab, local test).
-	_, _ = fmt.Fprintf(out,
-		"::error title=Refused trigger event::%s\n",
-		ece.Error(),
-	)
+	// On GitHub the Annotator surfaces this in the run-summary Annotations
+	// pane (`::error title=…::`); elsewhere it's a plain `Error:` line. The
+	// same content is also in the wrapped Go error below. ece.Error() embeds
+	// the workflow-supplied event name, which the Annotator escapes.
+	annot.ErrorAt(output.Annotation{Title: "Refused trigger event"}, "%s", ece.Error())
 
 	return fmt.Errorf(
 		"trigger event %q is not allowed to run privileged publish/release workflows\n"+

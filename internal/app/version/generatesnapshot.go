@@ -15,17 +15,17 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/domain/version"
 )
 
-// GenerateDevOps is the slice of git-adapter methods GenerateDevVersion
+// GenerateSnapshotOps is the slice of git-adapter methods GenerateSnapshotVersion
 // needs. Tests inject a fake; production passes adapter/git.New().
-type GenerateDevOps interface {
+type GenerateSnapshotOps interface {
 	Run(ctx context.Context, args ...string) (string, error)
 	ListTags(ctx context.Context, pattern string) ([]string, error)
 	ShortSHA(ctx context.Context, ref string, n int) (string, error)
 }
 
-// GenerateDevVersionInput drives GenerateDevVersion.
-type GenerateDevVersionInput struct {
-	// RefName is the source branch / ref to sanitise into the dev-version
+// GenerateSnapshotVersionInput drives GenerateSnapshotVersion.
+type GenerateSnapshotVersionInput struct {
+	// RefName is the source branch / ref to sanitise into the snapshot-version
 	// suffix.
 	RefName string
 
@@ -38,11 +38,11 @@ type GenerateDevVersionInput struct {
 	Sink   ci.OutputSink
 }
 
-// GenerateDevVersion prints `<base>-dev-<sanitised-branch>-<short-sha>`
+// GenerateSnapshotVersion prints `<base>-snapshot-<sanitised-branch>-<short-sha>`
 // to w. Best-effort `git fetch --tags` is attempted; failures are
 // ignored so the function still works on a shallow checkout that
 // already has the tags it needs.
-func GenerateDevVersion(ctx context.Context, ops GenerateDevOps, w io.Writer, in GenerateDevVersionInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+func GenerateSnapshotVersion(ctx context.Context, ops GenerateSnapshotOps, w io.Writer, in GenerateSnapshotVersionInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if in.RefName == "" {
 		return fmt.Errorf("ref-name is required: %w", errs.ErrUsage)
 	}
@@ -57,30 +57,30 @@ func GenerateDevVersion(ctx context.Context, ops GenerateDevOps, w io.Writer, in
 
 	latest := version.LatestSemverTag(tags)
 
-	base := version.DevVersionDefaultBase
+	base := version.SnapshotVersionDefaultBase
 	if latest != "" {
 		base = version.StripVPrefix(latest)
 	}
 
-	shortSHA, err := ops.ShortSHA(ctx, "HEAD", version.DevShortSHALen)
+	shortSHA, err := ops.ShortSHA(ctx, "HEAD", version.SnapshotShortSHALen)
 	if err != nil {
 		return fmt.Errorf("rev-parse --short HEAD: %w", err)
 	}
 
-	dev := version.ComposeDevVersion(base, in.RefName, shortSHA)
+	dev := version.ComposeSnapshotVersion(base, in.RefName, shortSHA)
 	if in.Sink != nil && (in.Format == output.FormatGitHub || in.Format == output.FormatGitLab) {
-		if err := in.Sink.Set(ctx, "dev-version", dev); err != nil {
+		if err := in.Sink.Set(ctx, "snapshot-version", dev); err != nil {
 			return err
 		}
 	}
 
-	return writeDevVersion(w, dev, in.Format)
+	return writeSnapshotVersion(w, dev, in.Format)
 }
 
-// writeDevVersion renders dev according to format. The historical
+// writeSnapshotVersion renders dev according to format. The historical
 // shape is a bare line on w; FormatJSON wraps in a one-key
 // object. Unknown formats fall back to the bare line.
-func writeDevVersion(w io.Writer, dev string, format output.Format) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+func writeSnapshotVersion(w io.Writer, dev string, format output.Format) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if format == output.FormatJSON {
 		body, err := json.Marshal(struct {
 			Version string `json:"version"`

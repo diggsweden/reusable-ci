@@ -55,8 +55,10 @@ func TestUploadSARIF_HappyPath_ForwardsPayloadToProvider(t *testing.T) {
 	require.Equal(t, "diggsweden/reusable-ci", call.Repository)
 	require.Equal(t, "abcdef0123456789", call.SHA)
 	require.Equal(t, "refs/heads/main", call.Ref)
-	require.Equal(t, "opengrep", call.Category)
 	require.Equal(t, "secret", call.Token)
+	// Empty runs: the category has nothing to stamp, so the body is
+	// semantically unchanged. (automationDetails stamping is covered by the
+	// domain SetSARIFCategory tests.)
 	require.JSONEq(t, sarifBody, string(call.SARIF))
 	require.Contains(t, out.String(), "✓ SARIF accepted by Code Scanning")
 }

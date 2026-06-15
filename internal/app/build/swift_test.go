@@ -104,7 +104,7 @@ func TestSwiftFormatLint_PassedAppendsCheck(t *testing.T) {
 		t.Errorf("expected one invocation with 2 files, got %v", sf.files)
 	}
 
-	if !strings.Contains(sink.String(), "## Swift Format ✅") {
+	if !strings.Contains(sink.String(), "## Swift Format ✓") {
 		t.Errorf("expected passed block:\n%s", sink.String())
 	}
 }
@@ -132,7 +132,7 @@ func TestSwiftLintLint_PassedAppendsCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(sink.String(), "## SwiftLint ✅") {
+	if !strings.Contains(sink.String(), "## SwiftLint ✓") {
 		t.Errorf("expected passed block:\n%s", sink.String())
 	}
 }

@@ -30,6 +30,7 @@ type SuffixExtractedBinariesInput struct {
 //
 // Files that don't exist (when ExpectedNames is set) are silently
 // skipped.
+//
 //nolint:cyclop // renames per (variant, ext, platform) combination.
 func SuffixExtractedBinaries(w io.Writer, in SuffixExtractedBinariesInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if in.Dir == "" {

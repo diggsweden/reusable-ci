@@ -60,6 +60,7 @@ type MavenMetadataInput struct {
 //	artifact-id   project.artifactId
 //
 // w receives the final "Project: G:A:V" status line.
+//
 //nolint:cyclop // POM-read flow: read manifest → resolve fields → validate → emit (one branch per field).
 func MavenMetadata(ctx context.Context, sink ci.OutputSink, ops MavenOps, w io.Writer, in MavenMetadataInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	dir := in.Dir

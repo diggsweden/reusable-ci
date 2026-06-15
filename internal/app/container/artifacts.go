@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/output"
@@ -90,7 +91,7 @@ func ValidateArtifacts(w, stderr io.Writer, annot output.Annotator, in ValidateA
 		return fmt.Errorf("no %s artifacts in %s: %w", typeLabel, in.ArtifactDir, errs.ErrValidation)
 	}
 
-	_, _ = fmt.Fprintf(w, "✓ %s artifacts found:\n", typeLabel)
+	_, _ = fmt.Fprintf(w, "%s %s artifacts found:\n", clicolor.Check(w), typeLabel)
 
 	for _, h := range hits { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		info, _ := os.Stat(h)

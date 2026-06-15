@@ -48,7 +48,7 @@ func BuildSBOMStatus(ctx context.Context, sink ci.SummarySink, in BuildSBOMStatu
 	if in.Outcome == string(domainsummary.ResultSuccess) {
 		bom := firstMatchingPath(workDir, preset.patterns)
 		if bom != "" {
-			_, _ = fmt.Fprintf(&b, "- ✅ %s: `%s`\n", preset.successLabel, bom)
+			_, _ = fmt.Fprintf(&b, "- ✓ %s: `%s`\n", preset.successLabel, bom)
 		} else {
 			_, _ = fmt.Fprintf(&b, "- ⚠️ %s\n", preset.missingMessage)
 		}
@@ -57,7 +57,7 @@ func BuildSBOMStatus(ctx context.Context, sink ci.SummarySink, in BuildSBOMStatu
 		// workflow has already failed before this summary block ran (the
 		// status report is invoked under `if: always()` so it surfaces
 		// the failure in the step summary too).
-		_, _ = fmt.Fprintf(&b, "- ❌ Generation step did not succeed — release blocked\n")
+		_, _ = fmt.Fprintf(&b, "- ✗ Generation step did not succeed — release blocked\n")
 	}
 
 	return sink.Append(ctx, b.String())

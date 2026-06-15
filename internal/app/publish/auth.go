@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/internal/domain/publish"
@@ -31,7 +32,7 @@ func RegistryAuth(_ context.Context, w, stderr io.Writer, annot output.Annotator
 		return fmt.Errorf("%s: %w", res.Errors[0], errs.ErrPermissionDenied)
 	}
 
-	_, _ = fmt.Fprintln(w, "✓ Registry authentication configuration is valid")
+	_, _ = fmt.Fprintf(w, "%s Registry authentication configuration is valid\n", clicolor.Check(w))
 
 	return nil
 }

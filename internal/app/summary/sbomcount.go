@@ -45,12 +45,12 @@ func SBOMCountStatus(ctx context.Context, sink ci.SummarySink, in SBOMCountStatu
 	if in.Outcome == string(domainsummary.ResultSuccess) {
 		count := countBOMFiles(workDir, preset)
 		if count > 0 {
-			_, _ = fmt.Fprintf(&b, "- ✅ CycloneDX: %d bom.json file(s)\n", count)
+			_, _ = fmt.Fprintf(&b, "- ✓ CycloneDX: %d bom.json file(s)\n", count)
 		} else {
 			_, _ = fmt.Fprintf(&b, "- ⚠️ %s\n", preset.missingMessage)
 		}
 	} else {
-		_, _ = fmt.Fprintf(&b, "- ❌ Generation step did not succeed — release blocked\n")
+		_, _ = fmt.Fprintf(&b, "- ✗ Generation step did not succeed — release blocked\n")
 	}
 
 	return sink.Append(ctx, b.String())

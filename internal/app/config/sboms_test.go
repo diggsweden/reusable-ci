@@ -24,7 +24,7 @@ func TestExpandSBOMs_OutputFormats(t *testing.T) {
 		want  string
 	}{
 		{name: "json_all", input: appconfig.ExpandSBOMsInput{Value: "all"}, want: `["build","analyzed-artifact","analyzed-container"]` + "\n"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		{name: "json_none", input: appconfig.ExpandSBOMsInput{Value: "none"}, want: "[]\n"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		{name: "json_none", input: appconfig.ExpandSBOMsInput{Value: "none"}, want: "[]\n"},                                                    //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{name: "comma_all", input: appconfig.ExpandSBOMsInput{Value: "all", Format: appconfig.ExpandSBOMsFormatComma}, want: "build,analyzed-artifact,analyzed-container\n"},
 		{name: "comma_none", input: appconfig.ExpandSBOMsInput{Value: "none", Format: appconfig.ExpandSBOMsFormatComma}, want: "\n"},
 		{name: "comma_exclude", input: appconfig.ExpandSBOMsInput{Value: "all", Format: appconfig.ExpandSBOMsFormatComma, Exclude: []string{"analyzed-container"}}, want: "build,analyzed-artifact\n"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.

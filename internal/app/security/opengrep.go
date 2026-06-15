@@ -20,8 +20,9 @@ import (
 
 // OpengrepOps abstracts the opengrep adapter for dependency injection.
 //
-//nolint:iface // consumer-defined port — same shape as TrivyOps but a
 // distinct adapter; merging would couple two unrelated scanners.
+//
+//nolint:iface // consumer-defined port — same shape as TrivyOps but a
 type OpengrepOps interface {
 	RunInherit(ctx context.Context, w, stderr io.Writer, args ...string) (int, error)
 }

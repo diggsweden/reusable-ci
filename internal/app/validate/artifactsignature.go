@@ -14,7 +14,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/adapters/cosign"
 	"github.com/diggsweden/reusable-ci/internal/adapters/openpgp"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	domain "github.com/diggsweden/reusable-ci/internal/domain/release"
+	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
 )
 
 // ArtifactSignatureInput drives `reusable-ci validate artifact-
@@ -39,7 +39,7 @@ type ArtifactSignatureInput struct {
 	// Method overrides the auto-detection result. Empty enables
 	// auto-detect from the sidecar files; an explicit value short-
 	// circuits the detection (operator knows what was used).
-	Method domain.SignMethod
+	Method domainrelease.SignMethod
 
 	// CertIdentityRegexp + CertOIDCIssuer constrain who could have
 	// produced the keyless signature. Both required for sigstore.
@@ -82,9 +82,9 @@ func VerifyArtifactSignature(
 	_, _ = fmt.Fprintf(out, "Verifying %s (method=%s, signature=%s)\n", in.Artefact, resolved.method, resolved.signaturePath)
 
 	switch resolved.method {
-	case domain.SignMethodGPG:
+	case domainrelease.SignMethodGPG:
 		return verifyGPG(in.Artefact, resolved.signaturePath, in.PublicKey)
-	case domain.SignMethodSigstore:
+	case domainrelease.SignMethodSigstore:
 		return verifyCosign(ctx, cosignVerifier, cosign.VerifyBlobInput{
 			Artefact:           in.Artefact,
 			BundlePath:         resolved.signaturePath,
@@ -92,7 +92,7 @@ func VerifyArtifactSignature(
 			CertIdentityRegexp: in.CertIdentityRegexp,
 			CertOIDCIssuer:     in.CertOIDCIssuer,
 		}, out)
-	case domain.SignMethodKMS:
+	case domainrelease.SignMethodKMS:
 		return verifyCosign(ctx, cosignVerifier, cosign.VerifyBlobInput{
 			Artefact:   in.Artefact,
 			BundlePath: resolved.signaturePath,
@@ -112,7 +112,7 @@ type cosignBlobVerifier interface {
 
 // resolvedLayout captures what the on-disk inspection turned up.
 type resolvedLayout struct {
-	method        domain.SignMethod
+	method        domainrelease.SignMethod
 	signaturePath string
 }
 
@@ -174,14 +174,14 @@ func resolveSignatureLayout(in ArtifactSignatureInput) (resolvedLayout, error) {
 // .bundle alone is ambiguous between sigstore and kms — pick based on
 // which identity constraint the caller supplied. .asc → gpg. No
 // sidecar → error.
-func autoDetectSignMethod(in ArtifactSignatureInput, hasBundle, hasAsc bool) (domain.SignMethod, error) {
+func autoDetectSignMethod(in ArtifactSignatureInput, hasBundle, hasAsc bool) (domainrelease.SignMethod, error) {
 	switch {
 	case hasBundle:
 		switch {
 		case in.KeyRef != "":
-			return domain.SignMethodKMS, nil
+			return domainrelease.SignMethodKMS, nil
 		case in.CertIdentityRegexp != "":
-			return domain.SignMethodSigstore, nil
+			return domainrelease.SignMethodSigstore, nil
 		default:
 			return "", fmt.Errorf(
 				"validate artifact-signature: %s.bundle present but no identity constraint supplied — pass --key (kms) or --cert-identity-regexp (sigstore): %w",
@@ -189,7 +189,7 @@ func autoDetectSignMethod(in ArtifactSignatureInput, hasBundle, hasAsc bool) (do
 			)
 		}
 	case hasAsc:
-		return domain.SignMethodGPG, nil
+		return domainrelease.SignMethodGPG, nil
 	default:
 		return "", fmt.Errorf(
 			"validate artifact-signature: no signature sidecar next to %s (looked for .bundle, .asc): %w",
@@ -198,7 +198,7 @@ func autoDetectSignMethod(in ArtifactSignatureInput, hasBundle, hasAsc bool) (do
 	}
 }
 
-func defaultSigPath(artefact string, method domain.SignMethod) string {
+func defaultSigPath(artefact string, method domainrelease.SignMethod) string {
 	exts := method.SignatureExtensions()
 	if len(exts) == 0 {
 		return ""

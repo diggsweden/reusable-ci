@@ -183,8 +183,8 @@ func TestPlanPR_RejectsUnknownProjectType(t *testing.T) {
 	}
 }
 
-//nolint:cyclop // verifies many typed plan outputs on one DevRelease plan.
-func TestPlanDevRelease_EmitsTypedPlanOutputs(t *testing.T) {
+//nolint:cyclop // verifies many typed plan outputs on one SnapshotRelease plan.
+func TestPlanSnapshotRelease_EmitsTypedPlanOutputs(t *testing.T) {
 	t.Parallel()
 	sink := fakeoutputsink.New(t)
 	configPlanJSON := mustConfigPlanJSON(t, pipeline.NewConfigPlan(&config.Config{
@@ -195,7 +195,7 @@ func TestPlanDevRelease_EmitsTypedPlanOutputs(t *testing.T) {
 		Containers: []config.Container{{Name: "image"}},
 	}))
 
-	got, err := appplan.DevRelease(context.Background(), sink, appplan.DevReleaseInput{
+	got, err := appplan.SnapshotRelease(context.Background(), sink, appplan.SnapshotReleaseInput{
 		ConfigPlanJSON:      configPlanJSON,
 		Branch:              "feature/dev-plan",
 		ReleaseSHA:          "abc123",
@@ -208,7 +208,6 @@ func TestPlanDevRelease_EmitsTypedPlanOutputs(t *testing.T) {
 		SBOMs:               "analyzed-artifact",
 		PublishNPM:          true,
 		UseCIToken:          true,
-		PublishContainer:    true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -218,17 +217,13 @@ func TestPlanDevRelease_EmitsTypedPlanOutputs(t *testing.T) {
 		t.Errorf("project type = %q", got.Context.ProjectType)
 	}
 
-	var planJSON pipeline.DevReleasePlan
-	if err := json.Unmarshal([]byte(sink.Single("dev-release-plan-json")), &planJSON); err != nil {
+	var planJSON pipeline.SnapshotReleasePlan
+	if err := json.Unmarshal([]byte(sink.Single("snapshot-release-plan-json")), &planJSON); err != nil {
 		t.Fatal(err)
 	}
 
 	if planJSON.Stages.Build.Stage != "dev-build" || !planJSON.Stages.Build.Targets.Go.Runs {
 		t.Errorf("build stage plan = %+v", planJSON.Stages.Build)
-	}
-
-	if !planJSON.Stages.Publish.Targets.Containers.Runs {
-		t.Errorf("publish stage plan = %+v", planJSON.Stages.Publish)
 	}
 
 	if planJSON.Context.Branch != "feature/dev-plan" || !planJSON.Policy.PublishNPM || !planJSON.Policy.UseCIToken {
@@ -253,14 +248,14 @@ func TestPlanDevRelease_EmitsTypedPlanOutputs(t *testing.T) {
 	}
 }
 
-func TestPlanDevRelease_ProjectTypeOverrideWins(t *testing.T) {
+func TestPlanSnapshotRelease_ProjectTypeOverrideWins(t *testing.T) {
 	t.Parallel()
 	sink := fakeoutputsink.New(t)
 	configPlanJSON := mustConfigPlanJSON(t, pipeline.NewConfigPlan(&config.Config{
 		Artifacts: []config.Artifact{{Name: "web", ProjectType: projecttype.NPM}},
 	}))
 
-	got, err := appplan.DevRelease(context.Background(), sink, appplan.DevReleaseInput{
+	got, err := appplan.SnapshotRelease(context.Background(), sink, appplan.SnapshotReleaseInput{
 		ConfigPlanJSON: configPlanJSON,
 		ProjectType:    "maven", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	})
@@ -273,20 +268,20 @@ func TestPlanDevRelease_ProjectTypeOverrideWins(t *testing.T) {
 	}
 }
 
-func TestPlanDevRelease_MissingConfigPlanErrors(t *testing.T) {
+func TestPlanSnapshotRelease_MissingConfigPlanErrors(t *testing.T) {
 	t.Parallel()
 	sink := fakeoutputsink.New(t)
 
-	_, err := appplan.DevRelease(context.Background(), sink, appplan.DevReleaseInput{})
+	_, err := appplan.SnapshotRelease(context.Background(), sink, appplan.SnapshotReleaseInput{})
 	if err == nil || !strings.Contains(err.Error(), "config-plan-json is required") {
 		t.Errorf("err = %v", err)
 	}
 }
 
-func TestPlanDevRelease_RejectsUnsupportedConfigPlanVersion(t *testing.T) {
+func TestPlanSnapshotRelease_RejectsUnsupportedConfigPlanVersion(t *testing.T) {
 	t.Parallel()
 
-	_, err := appplan.DevRelease(context.Background(), fakeoutputsink.New(t), appplan.DevReleaseInput{
+	_, err := appplan.SnapshotRelease(context.Background(), fakeoutputsink.New(t), appplan.SnapshotReleaseInput{
 		ConfigPlanJSON: `{"version":2,"artifacts":{"all":[]},"containers":{"all":[],"has_containers":false}}`,
 	})
 	if err == nil || !strings.Contains(err.Error(), "unsupported config-plan version 2") {

@@ -13,10 +13,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
 	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
 	domainsbom "github.com/diggsweden/reusable-ci/internal/domain/sbom"
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 )
 
 // generateDualSBOMs emits both an SPDX and a CycloneDX SBOM for the
@@ -38,7 +39,7 @@ func generateDualSBOMs(
 		"spdx-json":      ws.outputPath(spdxFile),
 		"cyclonedx-json": ws.outputPath(cdxFile),
 	}, stderr); err != nil {
-		_, _ = fmt.Fprintf(stderr, "   ❌ Failed to generate SBOMs for %s\n", scanTarget)
+		_, _ = fmt.Fprintf(stderr, "   %s Failed to generate SBOMs for %s\n", clicolor.Cross(stderr), scanTarget)
 
 		return fmt.Errorf("generate sboms for %s: %w", scanTarget, err)
 	}
@@ -46,12 +47,12 @@ func generateDualSBOMs(
 	for _, f := range []string{spdxFile, cdxFile} { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		info, statErr := os.Stat(ws.outputPath(f))
 		if statErr != nil || info.Size() == 0 {
-			_, _ = fmt.Fprintf(stderr, "   ❌ Failed to generate: %s\n", f)
+			_, _ = fmt.Fprintf(stderr, "   %s Failed to generate: %s\n", clicolor.Cross(stderr), f)
 
 			return fmt.Errorf("generate %s: missing or empty output: %w", f, errs.ErrMissingInput)
 		}
 
-		_, _ = fmt.Fprintf(w, "   ✅ %s\n", f)
+		_, _ = fmt.Fprintf(w, "   %s %s\n", clicolor.Check(w), f)
 	}
 
 	return nil
@@ -154,12 +155,12 @@ func emitBuildBOMSource(ws workspace, root, src, name, version, sha, stack, hint
 
 	out := domainsbom.BuildLayerFilename(name, version, sha)
 	if err := copyFile(ws, srcPath, out); err != nil {
-		_, _ = fmt.Fprintf(w, "   ❌ Failed to copy %s → %s: %v\n", srcPath, out, err)
+		_, _ = fmt.Fprintf(w, "   %s Failed to copy %s → %s: %v\n", clicolor.Cross(w), srcPath, out, err)
 
 		return
 	}
 
-	_, _ = fmt.Fprintf(w, "   ✅ %s\n", out)
+	_, _ = fmt.Fprintf(w, "   %s %s\n", clicolor.Check(w), out)
 }
 
 func copyFile(ws workspace, src, dst string) error {

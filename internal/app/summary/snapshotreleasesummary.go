@@ -18,30 +18,30 @@ import (
 	domainsummary "github.com/diggsweden/reusable-ci/internal/domain/summary"
 )
 
-// DevReleaseSummaryInput drives `summary dev-release`. BuildStageJSON and
-// PublishStageJSON supply job results; DevArtifactsJSON has npm package
+// SnapshotReleaseSummaryInput drives `summary snapshot-release`. BuildStageJSON and
+// PublishStageJSON supply job results; SnapshotArtifactsJSON has npm package
 // metadata + a publish-status sentinel ("already-exists" → "skipped"
 // rendering with a clarifying note).
-type DevReleaseSummaryInput struct {
-	ProjectType       projecttype.Type
-	ReleaseRef        string
-	ReleaseSHA        string
-	ReleaseActor      string
-	ReleaseRepository string
-	RunURL            string
-	BuildStageJSON    string
-	PublishStageJSON  string
-	DevArtifactsJSON  string
-	Platform          provider.Platform
-	ServerURL         string
-	Now               time.Time
+type SnapshotReleaseSummaryInput struct {
+	ProjectType           projecttype.Type
+	ReleaseRef            string
+	ReleaseSHA            string
+	ReleaseActor          string
+	ReleaseRepository     string
+	RunURL                string
+	BuildStageJSON        string
+	PublishStageJSON      string
+	SnapshotArtifactsJSON string
+	Platform              provider.Platform
+	ServerURL             string
+	Now                   time.Time
 }
 
-// DevReleaseSummary appends the dev-release block to the step summary and
+// SnapshotReleaseSummary appends the snapshot-release block to the step summary and
 // prints a short w banner.
 //
-//nolint:cyclop // renders one summary block per dev-release artifact category.
-func DevReleaseSummary(ctx context.Context, sink ci.SummarySink, w io.Writer, in DevReleaseSummaryInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+//nolint:cyclop // renders one summary block per snapshot-release artifact category.
+func SnapshotReleaseSummary(ctx context.Context, sink ci.SummarySink, w io.Writer, in SnapshotReleaseSummaryInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	now := in.Now
 	if now.IsZero() {
 		now = time.Now()
@@ -54,18 +54,17 @@ func DevReleaseSummary(ctx context.Context, sink ci.SummarySink, w io.Writer, in
 
 	build, err := domainsummary.ParseStageResultEnvelope(in.BuildStageJSON)
 	if err != nil {
-		return fmt.Errorf("dev-build-stage result-json: %w", err)
+		return fmt.Errorf("snapshot-build-stage result-json: %w", err)
 	}
 
 	publish, err := domainsummary.ParseStageResultEnvelope(in.PublishStageJSON)
 	if err != nil {
-		return fmt.Errorf("dev-publish-stage result-json: %w", err)
+		return fmt.Errorf("snapshot-publish-stage result-json: %w", err)
 	}
 
 	target := func(stage domainsummary.StageResultEnvelope, key string) string {
 		return string(stage.TargetResult(key))
 	}
-	containerStatus := target(publish, pipeline.TargetContainers)
 	npmStatus := target(publish, pipeline.TargetNPM)
 	buildMavenStatus := target(build, pipeline.TargetMaven)
 	buildNPMStatus := target(build, pipeline.TargetNPM)
@@ -77,9 +76,9 @@ func DevReleaseSummary(ctx context.Context, sink ci.SummarySink, w io.Writer, in
 	cargoSBOMStatus := target(publish, pipeline.TargetCargoContainerFirst)
 	goSBOMStatus := target(publish, pipeline.TargetGoContainerFirst)
 	sbomStatus := target(publish, pipeline.TargetSBOM)
-	npmPackageName := topLevelJSONString(in.DevArtifactsJSON, "npm_package_name")
-	npmPackageVersion := topLevelJSONString(in.DevArtifactsJSON, "npm_package_version")
-	npmPublishStatus := topLevelJSONString(in.DevArtifactsJSON, "npm_publish_status")
+	npmPackageName := topLevelJSONString(in.SnapshotArtifactsJSON, "npm_package_name")
+	npmPackageVersion := topLevelJSONString(in.SnapshotArtifactsJSON, "npm_package_version")
+	npmPublishStatus := topLevelJSONString(in.SnapshotArtifactsJSON, "npm_publish_status")
 
 	_, _ = fmt.Fprintf(w, "================================================\n")
 	_, _ = fmt.Fprintf(w, "Generating Dev Release Summary\n")
@@ -106,10 +105,10 @@ func DevReleaseSummary(ctx context.Context, sink ci.SummarySink, w io.Writer, in
 	_, _ = fmt.Fprintf(&b, "## Build Information\n")
 	_, _ = fmt.Fprintf(&b, "| Property | Value |\n")
 	_, _ = fmt.Fprintf(&b, "|----------|-------|\n")
-	_, _ = fmt.Fprintf(&b, "| **Project Type** | `%s` |\n", in.ProjectType)
-	_, _ = fmt.Fprintf(&b, "| **Branch** | `%s` |\n", in.ReleaseRef)
-	_, _ = fmt.Fprintf(&b, "| **Commit** | `%s` |\n", short)
-	_, _ = fmt.Fprintf(&b, "| **Built By** | @%s |\n", in.ReleaseActor)
+	_, _ = fmt.Fprintf(&b, "| **Project Type** | `%s` |\n", domainsummary.SanitizeCell(string(in.ProjectType)))
+	_, _ = fmt.Fprintf(&b, "| **Branch** | `%s` |\n", domainsummary.SanitizeCell(in.ReleaseRef))
+	_, _ = fmt.Fprintf(&b, "| **Commit** | `%s` |\n", domainsummary.SanitizeCell(short))
+	_, _ = fmt.Fprintf(&b, "| **Built By** | @%s |\n", domainsummary.SanitizeCell(in.ReleaseActor))
 	_, _ = fmt.Fprintf(&b, "| **Built At** | %s |\n\n", now.UTC().Format("2006-01-02 15:04:05 UTC"))
 	_, _ = fmt.Fprintf(&b, "## Job Status\n")
 	_, _ = fmt.Fprintf(&b, "| Job | Status |\n")
@@ -121,7 +120,6 @@ func DevReleaseSummary(ctx context.Context, sink ci.SummarySink, w io.Writer, in
 	_, _ = fmt.Fprintf(&b, "| Build Cargo | %s |\n", domainsummary.StatusIcon(buildCargoStatus))
 	_, _ = fmt.Fprintf(&b, "| Build Gradle Android | %s |\n", domainsummary.StatusIcon(buildGradleAndroidStatus))
 	_, _ = fmt.Fprintf(&b, "| Build Xcode | %s |\n", domainsummary.StatusIcon(buildXcodeStatus))
-	_, _ = fmt.Fprintf(&b, "| Build Container | %s |\n", domainsummary.StatusIcon(containerStatus))
 
 	if in.ProjectType == projecttype.NPM {
 		row := fmt.Sprintf("| Publish NPM Package | %s |\n", domainsummary.StatusIcon(npmStatus))

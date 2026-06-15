@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	domainversion "github.com/diggsweden/reusable-ci/internal/domain/version"
 )
 
 // GenerateContainerInput drives GenerateContainer.
@@ -64,7 +66,7 @@ func GenerateContainer(
 		return fmt.Errorf("image digest is required: pass --image-digest <sha256:…> or set $IMAGE_DIGEST: %w", errs.ErrUsage)
 	}
 
-	version := strings.TrimPrefix(in.RefName, "v")
+	version := domainversion.StripVPrefix(in.RefName)
 	projectName := filepath.Base(in.Repo)
 	image := in.ImageName + "@" + in.ImageDigest
 
@@ -82,7 +84,7 @@ func GenerateContainer(
 			return err
 		}
 
-		_, _ = fmt.Fprintln(w, "✓ Container SBOM generation completed")
+		_, _ = fmt.Fprintf(w, "%s Container SBOM generation completed\n", clicolor.Check(w))
 
 		return nil
 	}
@@ -100,7 +102,7 @@ func GenerateContainer(
 		}
 	}
 
-	_, _ = fmt.Fprintln(w, "✓ Container SBOM generation completed")
+	_, _ = fmt.Fprintf(w, "%s Container SBOM generation completed\n", clicolor.Check(w))
 
 	return nil
 }
