@@ -76,7 +76,7 @@
         "sboms": { "$ref": "#/$defs/sboms" },
         "require-authorization": {
           "type": "boolean",
-          "description": "When true, the release tag must be signed by a key listed in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_fingerprints (GPG)."
+          "description": "When true, the release tag must be signed by a key listed in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_keys.asc (GPG)."
         },
         "config": {
           "type": "object",

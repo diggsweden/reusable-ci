@@ -8,7 +8,6 @@
 
 [settings]
 experimental = true  # Enable experimental features
-paranoid = true      # Enable strict security checks and verification
 pipx.uvx = true      # Install pipx: backend tools via uv (uvx), never pipx
 
 [env]

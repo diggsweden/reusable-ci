@@ -1,0 +1,26 @@
+{
+  "version": "15.2.1",
+  "scan": {
+    "scanner": {
+      "id": "trivy",
+      "name": "Trivy",
+      "version": "unknown",
+      "vendor": {
+        "name": "Aqua Security"
+      }
+    },
+    "analyzer": {
+      "id": "trivy",
+      "name": "Trivy",
+      "version": "unknown",
+      "vendor": {
+        "name": "Aqua Security"
+      }
+    },
+    "type": "dependency_scanning",
+    "start_time": "2026-06-13T04:02:49",
+    "end_time": "2026-06-13T04:02:49",
+    "status": "success"
+  },
+  "vulnerabilities": []
+}
