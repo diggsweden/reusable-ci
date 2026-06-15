@@ -125,10 +125,9 @@ jobs:
           WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
         run: reusable-ci report status build-sbom
       - name: Upload Maven artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ inputs['artifact-name'] && format('{0}-build-artifacts', inputs['artifact-name']) || 'maven-build-artifacts' }}
-          path: |
+        env:
+          ARTIFACT_NAME: ${{ inputs['artifact-name'] && format('{0}-build-artifacts', inputs['artifact-name']) || 'maven-build-artifacts' }}
+          ARTIFACT_PATHS: |
             ${{ inputs['working-directory'] }}/target/*.jar
             ${{ inputs['working-directory'] }}/target/*.war
             ${{ inputs['working-directory'] }}/target/*.pom
@@ -137,21 +136,22 @@ jobs:
             ${{ inputs['working-directory'] }}/**/target/*.pom
             !${{ inputs['working-directory'] }}/target/original-*.jar
             !${{ inputs['working-directory'] }}/**/target/original-*.jar
-          retention-days: 7
-          if-no-files-found: error
+          ARTIFACT_RETENTION_DAYS: "7"
+          ARTIFACT_IF_NO_FILES: error
+        run: reusable-ci artifact upload
       # Build SBOM is a separate compliance deliverable; keeping it in its
       # own artifact means a broken SBOM plugin can't take down the code
       # artifact and downstream consumers can fetch just what they need.
       - name: Upload Maven Build SBOM
         if: steps.sbom.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ inputs['artifact-name'] && format('{0}-build-sbom', inputs['artifact-name']) || 'maven-build-sbom' }}
-          path: |
+        env:
+          ARTIFACT_NAME: ${{ inputs['artifact-name'] && format('{0}-build-sbom', inputs['artifact-name']) || 'maven-build-sbom' }}
+          ARTIFACT_PATHS: |
             ${{ inputs['working-directory'] }}/target/bom.json
             ${{ inputs['working-directory'] }}/**/target/bom.json
-          retention-days: 7
-          if-no-files-found: warn
+          ARTIFACT_RETENTION_DAYS: "7"
+          ARTIFACT_IF_NO_FILES: warn
+        run: reusable-ci artifact upload
       - name: Generate build summary
         env:
           BUILD_TYPE: ${{ inputs['build-type'] }}

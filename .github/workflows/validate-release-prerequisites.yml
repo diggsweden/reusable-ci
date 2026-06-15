@@ -78,7 +78,7 @@ on:
         default: true
         type: boolean
       require-allowlisted-signer:
-        description: "Require the tag signer's fingerprint to appear in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_fingerprints (GPG). When true, missing/empty allowlist files fail closed with EX_NOPERM (77)."
+        description: "Require the tag signer to be allowlisted in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_keys.asc (GPG). When true, a missing/empty allowlist or an unverifiable signature fails closed with EX_NOPERM (77)."
         required: false
         default: false
         type: boolean

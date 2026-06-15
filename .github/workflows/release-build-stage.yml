@@ -282,10 +282,10 @@ jobs:
         run: reusable-ci report status stage
       - name: Upload build stage manifests
         if: always() && hashFiles('.ci-results/*.json') != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ci-results-build
-          path: .ci-results/*.json
-          include-hidden-files: true
-          retention-days: 5
-          if-no-files-found: ignore
+        env:
+          ARTIFACT_NAME: ci-results-build
+          ARTIFACT_PATHS: .ci-results/*.json
+          ARTIFACT_INCLUDE_HIDDEN: "true"
+          ARTIFACT_RETENTION_DAYS: "5"
+          ARTIFACT_IF_NO_FILES: ignore
+        run: reusable-ci artifact upload

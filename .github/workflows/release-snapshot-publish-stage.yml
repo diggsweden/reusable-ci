@@ -1,0 +1,205 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+name: Snapshot Release Publish Stage
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      snapshot-release-plan-json:
+        required: true
+        type: string
+      snapshot-publish-stage-plan-json:
+        required: true
+        type: string
+      artifact-transfer-plan-json:
+        required: true
+        type: string
+      build-result-json:
+        required: true
+        type: string
+      reusable-ci-binary-ref:
+        required: false
+        default: "v3.0.0"
+        type: string
+      runtime-image:
+        description: "reusable-ci runtime image (full — generate-snapshot-sboms needs syft)"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime:v3.0.0"
+        type: string
+      runtime-image-node:
+        description: "reusable-ci runtime image for snapshot NPM publish jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-node-24:v3.0.0"
+        type: string
+      runtime-image-rust:
+        description: "reusable-ci runtime image for Cargo SBOM jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-rust-stable:v3.0.0"
+        type: string
+      runtime-image-go:
+        description: "reusable-ci runtime image for Go SBOM jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-go-1.26:v3.0.0"
+        type: string
+      sboms:
+        required: false
+        default: "none"
+        type: string
+    secrets:
+      registry-password:
+        required: false
+    outputs:
+      stage-ran:
+        description: Snapshot publish stage ran
+        value: ${{ jobs.summarize-snapshot-publish-stage.outputs.stage-ran }}
+      stage-result:
+        description: Normalized snapshot publish stage result
+        value: ${{ jobs.summarize-snapshot-publish-stage.outputs.stage-result }}
+      result-json:
+        description: Snapshot publish stage result payload
+        value: ${{ jobs.summarize-snapshot-publish-stage.outputs.result-json }}
+      artifacts-json:
+        description: Published snapshot artifact payload
+        value: ${{ jobs.summarize-snapshot-publish-stage.outputs.artifacts-json }}
+permissions:
+  contents: read
+jobs:
+  # Snapshot container builds were removed: a container is built ONCE on the release
+  # path and promoted to :dev by the build-once/promote-many ladder
+  # (promote-stage.yml), never rebuilt here. This stage keeps the snapshot
+  # package-snapshot capabilities (npm/cargo/go SBOMs) only.
+  npm:
+    name: Publish Snapshot NPM Package
+    if: ${{ fromJson(inputs['snapshot-publish-stage-plan-json']).targets.npm.runs && fromJson(inputs['build-result-json']).targets.npm == 'success' }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-snapshot-npm.yml
+    with:
+      working-directory: ${{ fromJson(inputs['snapshot-publish-stage-plan-json']).inputs.npm_working_directory }}
+      artifact-source: ${{ fromJson(inputs['snapshot-publish-stage-plan-json']).inputs.npm_build_artifact_name || 'npm-build-artifacts' }}
+      branch: ${{ fromJson(inputs['snapshot-release-plan-json']).context.branch }}
+      registry: ${{ fromJson(inputs['snapshot-release-plan-json']).context.npm_registry }}
+      package-scope: ${{ fromJson(inputs['snapshot-release-plan-json']).context.package_scope }}
+      use-ci-token: ${{ fromJson(inputs['snapshot-release-plan-json']).policy.use_ci_token }}
+      runtime-image: ${{ inputs['runtime-image-node'] }}
+    secrets:
+      registry-password: ${{ secrets.registry-password }}
+  # Container-first cargo's lockfile-derived "build" SBOM. Artefact-first
+  # cargo emits its Build SBOM inline in build-cargo.yml at snapshot-build-stage,
+  # so this job only fires for cargo artefacts with build-mode:
+  # container-first — same split as the prod release-publish-stage.
+  # Gated on the Build layer so snapshot's default fast path, and snapshot runs that
+  # request only analyzed layers, don't pay for an unused Build SBOM.
+  cargo-container-first:
+    name: Cargo SBOM Snapshot
+    if: ${{ fromJson(inputs['snapshot-publish-stage-plan-json']).targets.cargo_container_first.runs }}
+    permissions:
+      contents: read
+    # sbom-cargo uses only auto-provided GITHUB_TOKEN.
+    uses: ./.github/workflows/sbom-cargo.yml
+    with:
+      working-directory: ${{ fromJson(inputs['snapshot-publish-stage-plan-json']).inputs.cargo_working_directory }}
+      branch: ${{ fromJson(inputs['snapshot-release-plan-json']).context.branch }}
+      runtime-image: ${{ inputs['runtime-image-rust'] }}
+  go-container-first:
+    name: Go SBOM Snapshot
+    # Snapshot SBOM aggregation follows the same single-project contract as
+    # sbom-cargo-snapshot above. Multi-artifact release SBOM packaging is handled by
+    # the production release orchestrator.
+    if: ${{ fromJson(inputs['snapshot-publish-stage-plan-json']).targets.go_container_first.runs }}
+    permissions:
+      contents: read
+    # sbom-go uses only auto-provided GITHUB_TOKEN.
+    uses: ./.github/workflows/sbom-go.yml
+    with:
+      working-directory: ${{ fromJson(inputs['snapshot-publish-stage-plan-json']).inputs.go_sbom_working_directory }}
+      branch: ${{ fromJson(inputs['snapshot-release-plan-json']).context.branch }}
+      artifact-name: ${{ fromJson(inputs['snapshot-publish-stage-plan-json']).inputs.go_sbom_artifact_name }}
+      runtime-image: ${{ inputs['runtime-image-go'] }}
+  sbom:
+    name: Generate Snapshot SBOMs
+    needs: [cargo-container-first, go-container-first]
+    # Container-first Build SBOM jobs are listed in needs; needs[].result ==
+    # 'skipped' means the job was gated off (non-container-first project or no
+    # Build layer requested), which is fine.
+    if: ${{ inputs.sboms != 'none' && (fromJson(inputs['build-result-json']).result == 'success' || fromJson(inputs['build-result-json']).result == 'skipped') && !cancelled() && needs.cargo-container-first.result != 'failure' && needs.go-container-first.result != 'failure' }}
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ fromJson(inputs['snapshot-release-plan-json']).context.branch }}
+          fetch-depth: 0
+      - name: Download planned snapshot artifacts
+        env:
+          ARTIFACT_TRANSFER_PLAN_JSON: ${{ inputs['artifact-transfer-plan-json'] }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: reusable-ci release download-artifacts
+      - name: Resolve artifact SBOM layers
+        id: artifact-sbom-layers
+        env:
+          SBOMS: ${{ inputs.sboms }}
+        run: reusable-ci config expand-sboms --format comma --exclude analyzed-container "$SBOMS"
+      - name: Generate CISA-layer SBOMs (snapshot)
+        if: ${{ steps.artifact-sbom-layers.outputs.has-layers == 'true' }}
+        env:
+          PROJECT_TYPE: ${{ fromJson(inputs['snapshot-release-plan-json']).context.project_type }}
+          PROJECT_NAME: ${{ github.event.repository.name }}
+          SNAPSHOT_VERSION: snapshot-${{ github.sha }}
+          LAYERS: ${{ steps.artifact-sbom-layers.outputs.layers }}
+        run: >-
+          reusable-ci sbom generate all --project-type "$PROJECT_TYPE" --layers "$LAYERS" --version "$SNAPSHOT_VERSION" --name "$PROJECT_NAME"
+      - name: Upload Snapshot SBOMs
+        env:
+          ARTIFACT_NAME: snapshot-sboms-${{ github.run_id }}
+          ARTIFACT_PATHS: |
+            *-sbom.cyclonedx.json
+            *-sbom.spdx.json
+          ARTIFACT_RETENTION_DAYS: "7"
+          ARTIFACT_IF_NO_FILES: warn
+        run: reusable-ci artifact upload
+  summarize-snapshot-publish-stage:
+    name: Summarize Snapshot Publish Stage
+    needs: [npm, cargo-container-first, go-container-first, sbom]
+    if: always()
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      contents: read
+    outputs:
+      stage-ran: ${{ steps.summary.outputs.stage-ran }}
+      stage-result: ${{ steps.summary.outputs.stage-result }}
+      result-json: ${{ steps.summary.outputs.result-json }}
+      artifacts-json: ${{ steps.summary.outputs.artifacts-json }}
+    steps:
+      - name: Normalize snapshot publish stage result
+        id: summary
+        env:
+          STAGE_PLAN_JSON: ${{ inputs['snapshot-publish-stage-plan-json'] }}
+          NEEDS_JSON: ${{ toJson(needs) }}
+          # Materialise every dynamic field via env so the shell never
+          # interpolates an attacker-controlled JSON value directly.
+          PROJECT_TYPE: ${{ fromJson(inputs['snapshot-release-plan-json']).context.project_type }}
+          NPM_PACKAGE_NAME: ${{ needs.npm.outputs.package-name }}
+          NPM_PACKAGE_VERSION: ${{ needs.npm.outputs.package-version }}
+          NPM_PUBLISH_STATUS: ${{ fromJson(inputs['snapshot-publish-stage-plan-json']).targets.npm.runs && (needs.npm.outputs.publish-status || 'published') || 'skipped' }}
+        run: >-
+          reusable-ci report status stage --extra "project_type=${PROJECT_TYPE}" --json-output-key artifacts-json --json-field "npm_package_name=${NPM_PACKAGE_NAME}" --json-field "npm_package_version=${NPM_PACKAGE_VERSION}" --json-field "npm_publish_status=${NPM_PUBLISH_STATUS}"
+      - name: Upload snapshot publish stage manifests
+        if: always() && hashFiles('.ci-results/*.json') != ''
+        env:
+          ARTIFACT_NAME: ci-results-snapshot-publish
+          ARTIFACT_PATHS: .ci-results/*.json
+          ARTIFACT_INCLUDE_HIDDEN: "true"
+          ARTIFACT_RETENTION_DAYS: "5"
+          ARTIFACT_IF_NO_FILES: ignore
+        run: reusable-ci artifact upload

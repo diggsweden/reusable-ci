@@ -72,18 +72,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
-      contents: write
+      # Least-privilege: publishes to GitHub Packages via GITHUB_TOKEN
+      # (packages: write); no git write performed. Confirm on next release.
+      contents: read
       packages: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ inputs.branch }}
-      - name: Download build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ${{ inputs['artifact-source'] }}
-          path: ${{ inputs['working-directory'] }}/
       - name: Checkout reusable-ci bootstrap installers
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -105,6 +102,11 @@ jobs:
       # from leaking via PR-HEAD code.
       - name: Refuse PR-context trigger (publish/release secrets in scope)
         run: reusable-ci validate event-context
+      - name: Download build artifacts
+        env:
+          ARTIFACT_NAME: ${{ inputs['artifact-source'] }}
+          ARTIFACT_DIR: ${{ inputs['working-directory'] }}/
+        run: reusable-ci artifact download
       # Maven publishing
       - name: Set up JDK for Maven
         if: ${{ inputs['package-type'] == 'maven' }}

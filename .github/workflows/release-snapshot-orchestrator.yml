@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
 # SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
-# Release Dev Orchestrator
+# Release Snapshot Orchestrator
 # 
 # Purpose: Lightweight orchestrator for development builds. Provides fast
 # feedback loops by keeping the production control-plane shape while skipping
@@ -10,14 +10,17 @@
 # How it works:
 # 1. Triggers on pushes to development branches (develop, feature/*)
 # 2. Builds configured artifact-first ecosystems
-# 3. Creates container image with dev tag
-# 4. Optionally publishes NPM package to GitHub Packages (dev tag)
-# 5. Optionally generates SBOMs when the `sboms` input opts in
-# 6. Skips release-only features (SLSA, signing, GitHub releases)
+# 3. Optionally publishes NPM package to GitHub Packages (snapshot tag)
+# 4. Optionally generates SBOMs when the `sboms` input opts in
+# 5. Skips release-only features (SLSA, signing, GitHub releases)
+#
+# Note: the snapshot flow builds no containers. A container is built ONCE on
+# the release path and promoted to :dev by the build-once/promote-many ladder
+# (promote-stage.yml); the snapshot flow is npm/SBOM-only.
 #
 # Security controls:
 # - Minimal - focused on speed over security for development
-# - Images/packages clearly marked with -dev suffix
+# - Packages clearly marked with -snap namespace / snapshot tag
 # - No production attestations or signing
 #
 # Registry Authentication:
@@ -32,19 +35,19 @@
 #   packages: write  # Push images to ghcr.io and packages to GitHub Packages
 #
 # Differences from Production:
-#   - Dev tags (0.5.9-dev-feat-name-abc1234) vs version tags
+#   - Snapshot tags (0.5.9-snapshot-feat-name-abc1234) vs version tags
 #   - No SLSA attestation
 #   - SBOM generation defaults to none; opt in with `sboms`
 #   - No vulnerability scanning
 #   - No artifact signing
 #   - No GitHub release
 #   - ~3-5 min vs ~12-15 min build time
-name: Orchestrate Dev Release
+name: Orchestrate Snapshot Release
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
       artifacts-config:
-        description: "Path to the artifacts config file. Defaults to .reusable-ci/artifacts.yml. The dev release reads containers and per-artefact configuration from this file; auto-derives when the file is absent and the repo has exactly one root manifest."
+        description: "Path to the artifacts config file. Defaults to .reusable-ci/artifacts.yml. The snapshot release reads containers and per-artefact configuration from this file; auto-derives when the file is absent and the repo has exactly one root manifest."
         required: false
         default: ".reusable-ci/artifacts.yml"
         type: string
@@ -54,7 +57,7 @@ on:
         default: ""
         type: string
       registry:
-        description: "Container registry"
+        description: "Registry forwarded to the snapshot plan context (default ghcr.io). The snapshot flow is npm/SBOM-only and builds no containers."
         required: false
         default: "ghcr.io"
         type: string
@@ -94,15 +97,10 @@ on:
         default: ""
         type: string
       use-ci-token:
-        description: "Use GITHUB_TOKEN for GitHub Packages/GHCR authentication. Set false for external NPM or container registries."
+        description: "Use GITHUB_TOKEN for GitHub Packages authentication. Set false for external NPM registries."
         required: false
         default: true
         type: boolean
-      registry-username:
-        description: "Container registry username (defaults to github.actor for GHCR)"
-        required: false
-        default: ""
-        type: string
       reusable-ci-binary-ref:
         description: "reusable-ci ref/version passed to downstream plain-runner jobs (defaults to v3.0.0)"
         required: false
@@ -114,7 +112,7 @@ on:
         default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
         type: string
       runtime-image-full:
-        description: "reusable-ci full runtime image for SBOM-capable dev publish jobs. Optional override; default uses the matching v3.0.0 runtime image."
+        description: "reusable-ci full runtime image for SBOM-capable snapshot publish jobs. Optional override; default uses the matching v3.0.0 runtime image."
         required: false
         default: "ghcr.io/diggsweden/reusable-ci-runtime:v3.0.0"
         type: string
@@ -144,23 +142,18 @@ on:
         default: "ghcr.io/diggsweden/reusable-ci-runtime-android-35:v3.0.0"
         type: string
       sboms:
-        description: "SBOMs to generate: all | none | comma-list of build,analyzed-artifact,analyzed-container (default: none for dev speed; set to 'all' to test SBOM wiring)"
+        description: "SBOMs to generate: all | none | comma-list of build,analyzed-artifact,analyzed-container (default: none for snapshot speed; set to 'all' to test SBOM wiring)"
         required: false
         default: "none"
         type: string
-      publish-container:
-        description: "Publish container image to registry (set false for repos without a Containerfile)"
-        required: false
-        default: true
-        type: boolean
-    # Dev orchestrator: forwards to release-dev-build-stage (which
+    # Snapshot orchestrator: forwards to release-snapshot-build-stage (which
     # may need Android/iOS signing secrets via gradle-android /
-    # xcode-ios leaves) and release-dev-publish-stage (only needs
+    # xcode-ios leaves) and release-snapshot-publish-stage (only needs
     # GITHUB_TOKEN auto-provided + the external registry-password).
     # All `required: false` — `secrets: inherit` callers unchanged.
     secrets:
       registry-password:
-        description: "External NPM/container registry token (required when use-ci-token=false)"
+        description: "External NPM registry token (required when use-ci-token=false)"
         required: false
       ANDROID_KEYSTORE:
         description: "Base64-encoded Android signing keystore"
@@ -192,29 +185,22 @@ on:
       XCCONFIG_BASE64:
         description: "Base64-encoded xcconfig file"
         required: false
-      REUSABLE_CI_BUILD_SECRETS_JSON:
-        description: |
-          JSON envelope of {name: value} for every name listed in
-          containers[].build-secrets. Forwarded to
-          release-dev-publish-stage → publish-dev-container. Mirrors
-          the prod release-orchestrator declaration.
-        required: false
     outputs:
       npm-package-name:
         description: "Published NPM package name (if published)"
-        value: ${{ fromJson(jobs.execute-dev-publish-stage.outputs['artifacts-json'] || '{}').npm_package_name }}
+        value: ${{ fromJson(jobs.execute-snapshot-publish-stage.outputs['artifacts-json'] || '{}').npm_package_name }}
       npm-package-version:
         description: "Published NPM package version (if published)"
-        value: ${{ fromJson(jobs.execute-dev-publish-stage.outputs['artifacts-json'] || '{}').npm_package_version }}
+        value: ${{ fromJson(jobs.execute-snapshot-publish-stage.outputs['artifacts-json'] || '{}').npm_package_version }}
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
   # ===== Stage 0: Configuration And Policy =====
   # Single Setup job mirroring release-orchestrator.yml's parse-config shape.
   # Conditionally parses artifacts.yml when `artifacts-config` is set
-  # (multi-container path); always composes the dev control-plane interface
+  # (multi-artefact path); always composes the snapshot control-plane interface
   # consumed by every later stage.
-  setup-dev:
+  setup-snapshot:
     name: Setup
     runs-on: ubuntu-24.04
     container:
@@ -223,14 +209,14 @@ jobs:
       contents: read
     outputs:
       config-plan-json: ${{ steps.parse.outputs.config-plan-json }}
-      dev-release-plan-json: ${{ steps.plan.outputs.dev-release-plan-json }}
-      dev-build-stage-plan-json: ${{ steps.plan.outputs.dev-build-stage-plan-json }}
-      dev-publish-stage-plan-json: ${{ steps.plan.outputs.dev-publish-stage-plan-json }}
+      snapshot-release-plan-json: ${{ steps.plan.outputs.snapshot-release-plan-json }}
+      snapshot-build-stage-plan-json: ${{ steps.plan.outputs.snapshot-build-stage-plan-json }}
+      snapshot-publish-stage-plan-json: ${{ steps.plan.outputs.snapshot-publish-stage-plan-json }}
       artifact-transfer-plan-json: ${{ steps.plan.outputs.artifact-transfer-plan-json }}
     steps:
-      # Defense-in-depth gate at the top of the dev-release pipeline.
-      # Every downstream job depends on setup-dev via `needs:`, so
-      # refusal here aborts the whole dev release. reusable-ci is
+      # Defense-in-depth gate at the top of the snapshot-release pipeline.
+      # Every downstream job depends on setup-snapshot via `needs:`, so
+      # refusal here aborts the whole snapshot release. reusable-ci is
       # pre-baked in the runtime image; no install step needed.
       - name: Refuse PR-context trigger (publish/release secrets in scope)
         run: reusable-ci validate event-context
@@ -242,7 +228,7 @@ jobs:
         env:
           ARTIFACTS_CONFIG: ${{ inputs['artifacts-config'] }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
-      - name: Plan dev release
+      - name: Plan snapshot release
         id: plan
         env:
           CONFIG_PLAN_JSON: ${{ steps.parse.outputs.config-plan-json }}
@@ -262,13 +248,13 @@ jobs:
           SBOMS: ${{ inputs.sboms }}
           PUBLISH_NPM: ${{ inputs['publish-npm'] }}
           USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
-          PUBLISH_CONTAINER: ${{ inputs['publish-container'] }}
-        run: reusable-ci plan dev-release
+        run: reusable-ci plan snapshot-release
 
   # ===== Stage 1: Build =====
-  execute-dev-build-stage:
+  execute-snapshot-build-stage:
     name: Build
-    needs: [setup-dev]
+    needs: [setup-snapshot]
+    if: ${{ !failure() && !cancelled() }}
     permissions:
       contents: read
     secrets:
@@ -282,10 +268,10 @@ jobs:
       PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
       XCCONFIG_BASE64: ${{ secrets.XCCONFIG_BASE64 }}
-    uses: ./.github/workflows/release-dev-build-stage.yml
+    uses: ./.github/workflows/release-snapshot-build-stage.yml
     with:
-      dev-release-plan-json: ${{ needs.setup-dev.outputs.dev-release-plan-json }}
-      dev-build-stage-plan-json: ${{ needs.setup-dev.outputs.dev-build-stage-plan-json }}
+      snapshot-release-plan-json: ${{ needs.setup-snapshot.outputs.snapshot-release-plan-json }}
+      snapshot-build-stage-plan-json: ${{ needs.setup-snapshot.outputs.snapshot-build-stage-plan-json }}
       reusable-ci-binary-ref: ${{ inputs['reusable-ci-binary-ref'] }}
       runtime-image: ${{ inputs['runtime-image'] }}
       runtime-image-java: ${{ inputs['runtime-image-java'] }}
@@ -296,44 +282,41 @@ jobs:
       sboms: ${{ inputs.sboms }}
 
   # ===== Stage 2: Publish =====
-  execute-dev-publish-stage:
+  execute-snapshot-publish-stage:
     name: Publish
-    needs: [setup-dev, execute-dev-build-stage]
+    needs: [setup-snapshot, execute-snapshot-build-stage]
     if: ${{ !failure() && !cancelled() }}
     permissions:
       actions: read
       contents: read
       packages: write
-    # release-dev-publish-stage forwards only to leaves using auto-
+    # release-snapshot-publish-stage forwards only to leaves using auto-
     # provided GITHUB_TOKEN; the optional external registry-password
-    # is the only declared secret on the dev-publish stage. Bracket
+    # is the only declared secret on the snapshot-publish stage. Bracket
     # notation is required because GHA expressions parse `-` as
     # subtraction in dotted references.
     secrets:
       registry-password: ${{ secrets['registry-password'] }}
-      REUSABLE_CI_BUILD_SECRETS_JSON: ${{ secrets.REUSABLE_CI_BUILD_SECRETS_JSON }}
-    uses: ./.github/workflows/release-dev-publish-stage.yml
+    uses: ./.github/workflows/release-snapshot-publish-stage.yml
     with:
-      dev-release-plan-json: ${{ needs.setup-dev.outputs.dev-release-plan-json }}
+      snapshot-release-plan-json: ${{ needs.setup-snapshot.outputs.snapshot-release-plan-json }}
       reusable-ci-binary-ref: ${{ inputs['reusable-ci-binary-ref'] }}
       runtime-image: ${{ inputs['runtime-image-full'] }}
       runtime-image-node: ${{ inputs['runtime-image-node'] }}
       runtime-image-rust: ${{ inputs['runtime-image-rust'] }}
       runtime-image-go: ${{ inputs['runtime-image-go'] }}
-      dev-publish-stage-plan-json: ${{ needs.setup-dev.outputs.dev-publish-stage-plan-json }}
-      artifact-transfer-plan-json: ${{ needs.setup-dev.outputs.artifact-transfer-plan-json }}
-      build-result-json: ${{ needs.execute-dev-build-stage.outputs.result-json }}
+      snapshot-publish-stage-plan-json: ${{ needs.setup-snapshot.outputs.snapshot-publish-stage-plan-json }}
+      artifact-transfer-plan-json: ${{ needs.setup-snapshot.outputs.artifact-transfer-plan-json }}
+      build-result-json: ${{ needs.execute-snapshot-build-stage.outputs.result-json }}
       sboms: ${{ inputs.sboms }}
-      registry-username: ${{ inputs['registry-username'] }}
-      use-ci-token: ${{ inputs['use-ci-token'] }}
 
   # ===== Stage 3: Summary =====
-  dev-release-summary:
-    name: Summary
+  snapshot-release-summary:
+    name: Snapshot Summary
     needs:
-      - setup-dev
-      - execute-dev-build-stage
-      - execute-dev-publish-stage
+      - setup-snapshot
+      - execute-snapshot-build-stage
+      - execute-snapshot-publish-stage
     if: always()
     runs-on: ubuntu-24.04
     container:
@@ -341,20 +324,20 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Generate Dev Release Summary
+      - name: Generate Snapshot Release Summary
         env:
-          # Dev release context.
-          # `|| '{}'` so an upstream (setup-dev) failure — which leaves this
+          # Snapshot release context.
+          # `|| '{}'` so an upstream (setup-snapshot) failure — which leaves this
           # output empty — produces an empty PROJECT_TYPE instead of a fromJson
           # template crash. This job is `if: always()`; it must summarize failures.
-          PROJECT_TYPE: ${{ fromJson(needs.setup-dev.outputs['dev-release-plan-json'] || '{}').context.project_type }}
+          PROJECT_TYPE: ${{ fromJson(needs.setup-snapshot.outputs['snapshot-release-plan-json'] || '{}').context.project_type }}
           RELEASE_REF: ${{ github.ref_name }}
           RELEASE_SHA: ${{ github.sha }}
           RELEASE_ACTOR: ${{ github.actor }}
           RELEASE_REPOSITORY: ${{ github.repository }}
 
           # Stage results and published artifacts.
-          BUILD_STAGE_RESULT_JSON: ${{ needs.execute-dev-build-stage.outputs.result-json }}
-          PUBLISH_STAGE_RESULT_JSON: ${{ needs.execute-dev-publish-stage.outputs.result-json }}
-          DEV_ARTIFACTS_JSON: ${{ needs.execute-dev-publish-stage.outputs.artifacts-json }}
-        run: reusable-ci report dev-release
+          BUILD_STAGE_RESULT_JSON: ${{ needs.execute-snapshot-build-stage.outputs.result-json }}
+          PUBLISH_STAGE_RESULT_JSON: ${{ needs.execute-snapshot-publish-stage.outputs.result-json }}
+          SNAPSHOT_ARTIFACTS_JSON: ${{ needs.execute-snapshot-publish-stage.outputs.artifacts-json }}
+        run: reusable-ci report snapshot-release

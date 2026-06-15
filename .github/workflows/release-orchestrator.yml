@@ -107,7 +107,7 @@ on:
         default: true
         type: boolean
       release.requireallowlistedsigner:
-        description: "Require the tag signer's fingerprint to appear in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_fingerprints (GPG). Typically true for public libraries publishing to Maven Central."
+        description: "Require the tag signer to be allowlisted: .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_keys.asc (GPG). Org policy sets this true in the shared release-workflow template; the engine default stays false as an auditable per-repo escape hatch for genuinely-private repos."
         required: false
         default: false
         type: boolean
@@ -167,6 +167,40 @@ on:
         description: "reusable-ci Android runtime image for Gradle Android jobs. Optional override; default uses the matching v3.0.0 runtime image."
         required: false
         default: "ghcr.io/diggsweden/reusable-ci-runtime-android-35:v3.0.0"
+        type: string
+      # === IMAGE PROMOTION LADDER (build-once / promote-many) ===
+      # When the release builds a container, the same immutable digest is
+      # promoted dev → staging → release by verified tag-moves (no rebuild).
+      # These name the GitHub Environments whose protection rules gate the
+      # staging and release promotions; the dev promotion is automatic.
+      # Fork-friendly: a fork can point these at its own environments.
+      promote-staging-environment:
+        description: "GitHub Environment gating the staging image promotion (its protection rules / reviewers pause the job). Empty = no gate."
+        required: false
+        default: "staging"
+        type: string
+      promote-release-environment:
+        description: "GitHub Environment gating the release image promotion (production reviewers). Empty = no gate."
+        required: false
+        default: "production"
+        type: string
+      # Optional digital-sovereignty target for the RELEASE promotion: copy the
+      # released digest (with its signature, via cosign) to a registry you own
+      # (Codeberg/Forgejo, Harbor). Empty = release stays on the build registry.
+      promote-release-repo:
+        description: "Destination PREFIX (typically the registry host, optionally + a namespace) for the release promotion. Each image's source path is preserved beneath it (<prefix>/<source-path-after-host>, e.g. codeberg.org + ghcr.io/org/app → codeberg.org/org/app), so a monorepo's containers map to distinct paths by construction. Empty = no cross-registry copy."
+        required: false
+        default: ""
+        type: string
+      promote-release-registry:
+        description: "Destination registry host to authenticate to for promote-release-repo (e.g. codeberg.org). Required when promote-release-repo is on a different registry."
+        required: false
+        default: ""
+        type: string
+      promote-release-registry-username:
+        description: "Username for the destination registry login (sovereignty release promotion)."
+        required: false
+        default: ""
         type: string
     # Top-level orchestrator: the canonical union of every secret any
     # downstream stage may need. All `required: false` — callers
@@ -262,6 +296,12 @@ on:
           provenance, step inputs, or workflow logs. Recipe:
           docs/artifacts-reference.md `build-secrets`.
         required: false
+      # Sovereignty release promotion: destination-registry push token. Only
+      # needed when promote-release-repo targets a different registry; cosign
+      # copy authenticates the cross-registry push with it.
+      PROMOTE_RELEASE_REGISTRY_PASSWORD:
+        description: "Push token for promote-release-registry (digital-sovereignty release promotion)."
+        required: false
 concurrency:
   group: release-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: false # Queue releases, don't cancel partial releases
@@ -290,6 +330,12 @@ jobs:
       # they install the same reusable-ci commit the runtime image was built
       # from, surviving version-bump tag moves.
       reusable-ci-binary-ref: ${{ steps.resolve-ref.outputs.sha }}
+
+      # Final release tag (vX.Y.Z) derived from the pushed request ref
+      # (release-request/vX.Y.Z). Downstream jobs key off this, not
+      # github.ref_name, so the request prefix never leaks into release
+      # names, image tags or stable/draft classification.
+      release-tag: ${{ steps.relctx.outputs.release-tag }}
     steps:
       # Defense-in-depth gate at the top of the release pipeline:
       # refuse triggers that would attach signing/package/API secrets
@@ -308,12 +354,17 @@ jobs:
         env:
           REF: ${{ inputs['reusable-ci-binary-ref'] }}
         run: reusable-ci platform resolve-ref
+      - name: Derive release tag from request ref
+        id: relctx
+        # release-request/vX.Y.Z → vX.Y.Z (the final release tag). The CLI
+        # owns the parsing; bash never strips refs.
+        run: reusable-ci version release-context
       - name: Parse artifacts.yml
         id: parse
         run: reusable-ci config parse-artifacts
         env:
           ARTIFACTS_CONFIG: ${{ inputs['artifacts-config'] }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_REF_NAME: ${{ steps.relctx.outputs.release-tag }}
       - name: Plan release
         id: plan
         env:
@@ -331,8 +382,9 @@ jobs:
           CHANGELOG_CREATOR: ${{ inputs['changelog-creator'] }}
           CHANGELOG_SKIP_VERSION_BUMP: ${{ inputs['changelog.skipversionbump'] }}
 
-          # Provider context.
-          GITHUB_REF_NAME: ${{ github.ref_name }}
+          # Provider context — the DERIVED release tag, so stable/draft
+          # classification keys off vX.Y.Z, not the release-request/ prefix.
+          GITHUB_REF_NAME: ${{ steps.relctx.outputs.release-tag }}
         run: reusable-ci plan release
   # ===== Stage 1: Validation =====
   validate-prerequisites:
@@ -457,6 +509,64 @@ jobs:
       # sign.method (sigstore | kms; gpg is skipped).
       config-plan-json: ${{ needs.parse-config.outputs.config-plan-json }}
       sign-artifacts: ${{ fromJson(needs.parse-config.outputs['release-plan-json']).policy.sign_artifacts }}
+  # ===== Stage 4b: Image promotion ladder (build-once / promote-many) =====
+  # Only runs when the release built a container. The publish stage already
+  # pushed the immutable digest + its staging candidate tag and uploaded the
+  # release-image ledger as a run-scoped artifact; each job below promotes that
+  # SAME digest to the next stage pointer (:dev → :staging → :release) by a
+  # verified tag-move, never a rebuild. dev is automatic; staging and release
+  # pause on their GitHub Environment's protection rules. Kept parallel to
+  # create-release (not a dependency of it) so non-container releases — and the
+  # GitHub release itself, which attaches to the already-immutable :<version>
+  # tag — are never gated on the ladder.
+  promote-dev:
+    name: Promote image → dev
+    needs: [parse-config, execute-publish-stage]
+    if: ${{ !failure() && !cancelled() && fromJson(needs.parse-config.outputs['publish-stage-plan-json']).targets.containers.runs }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    uses: ./.github/workflows/promote-stage.yml
+    with:
+      stage: dev
+      release-tag: ${{ needs.parse-config.outputs.release-tag }}
+      reusable-ci-binary-ref: ${{ needs.parse-config.outputs.reusable-ci-binary-ref }}
+  promote-staging:
+    name: Promote image → staging
+    needs: [parse-config, execute-publish-stage, promote-dev]
+    if: ${{ !failure() && !cancelled() && fromJson(needs.parse-config.outputs['publish-stage-plan-json']).targets.containers.runs }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    uses: ./.github/workflows/promote-stage.yml
+    with:
+      stage: staging
+      environment: ${{ inputs['promote-staging-environment'] }}
+      release-tag: ${{ needs.parse-config.outputs.release-tag }}
+      reusable-ci-binary-ref: ${{ needs.parse-config.outputs.reusable-ci-binary-ref }}
+  promote-release:
+    name: Promote image → release
+    needs: [parse-config, execute-publish-stage, promote-staging]
+    if: ${{ !failure() && !cancelled() && fromJson(needs.parse-config.outputs['publish-stage-plan-json']).targets.containers.runs }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    uses: ./.github/workflows/promote-stage.yml
+    with:
+      stage: release
+      environment: ${{ inputs['promote-release-environment'] }}
+      release-tag: ${{ needs.parse-config.outputs.release-tag }}
+      reusable-ci-binary-ref: ${{ needs.parse-config.outputs.reusable-ci-binary-ref }}
+      # Optional digital-sovereignty target — empty inputs keep release on the
+      # build registry (same-registry tag-move, no cosign/dest login).
+      stage-repo: ${{ inputs['promote-release-repo'] }}
+      stage-registry: ${{ inputs['promote-release-registry'] }}
+      stage-registry-username: ${{ inputs['promote-release-registry-username'] }}
+    secrets:
+      stage-registry-password: ${{ secrets.PROMOTE_RELEASE_REGISTRY_PASSWORD }}
   # ===== Stage 5: Release =====
   # Release creation stays top-level because it is the public end of the pipeline.
   create-release:
@@ -475,7 +585,7 @@ jobs:
       RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
     uses: ./.github/workflows/release-create-github.yml
     with:
-      release-name: "${{ github.ref_name }}"
+      release-name: "${{ needs.parse-config.outputs.release-tag }}"
       checkout-ref: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
       attach-artifacts: ${{ inputs['release.attachartifacts'] }}
       sboms: ${{ fromJson(needs.parse-config.outputs['release-plan-json']).policy.sboms }}
@@ -494,6 +604,9 @@ jobs:
       - execute-prepare-stage
       - execute-build-stage
       - execute-publish-stage
+      - promote-dev
+      - promote-staging
+      - promote-release
       - create-release
     if: always()
     runs-on: ubuntu-24.04
@@ -506,7 +619,7 @@ jobs:
       - name: Generate Release Summary
         env:
           # Release context.
-          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.parse-config.outputs.release-tag }}
           RELEASE_BRANCH: ${{ inputs.branch }}
           RELEASE_COMMIT: ${{ needs.execute-prepare-stage.outputs.release-sha || github.sha }}
           RELEASE_ACTOR: ${{ github.actor }}
@@ -519,6 +632,11 @@ jobs:
 
           # Publish-stage results.
           PUBLISH_STAGE_RESULT_JSON: ${{ needs.execute-publish-stage.outputs.result-json }}
+
+          # Image-promotion ladder results (skipped when no container).
+          PROMOTE_DEV_RESULT: ${{ needs.promote-dev.result }}
+          PROMOTE_STAGING_RESULT: ${{ needs.promote-staging.result }}
+          PROMOTE_RELEASE_RESULT: ${{ needs.promote-release.result }}
 
           # Release-stage result.
           CREATE_RELEASE_RESULT: ${{ needs.create-release.result }}

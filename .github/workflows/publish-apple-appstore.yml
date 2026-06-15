@@ -128,10 +128,10 @@ jobs:
         run: reusable-ci validate event-context
 
       - name: Download IPA artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ${{ inputs['ipa-artifact-name'] }}
-          path: artifacts/
+        env:
+          ARTIFACT_NAME: ${{ inputs['ipa-artifact-name'] }}
+          ARTIFACT_DIR: artifacts/
+        run: reusable-ci artifact download
 
       - name: Find IPA file
         id: find-ipa
@@ -200,8 +200,9 @@ jobs:
 
       - name: Upload result artifact
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: appstore-upload-result
-          path: upload-result.json
-          retention-days: 30
+        env:
+          ARTIFACT_NAME: appstore-upload-result
+          ARTIFACT_PATHS: upload-result.json
+          ARTIFACT_RETENTION_DAYS: "30"
+          ARTIFACT_IF_NO_FILES: warn
+        run: reusable-ci artifact upload

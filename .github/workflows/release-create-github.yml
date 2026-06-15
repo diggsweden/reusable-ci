@@ -169,10 +169,11 @@ jobs:
           GIT_USER_SIGNINGKEY: "true"
         run: reusable-ci release gpg import
       - name: Download Release Changelog
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         continue-on-error: true
-        with:
-          name: release-changelog
+        env:
+          ARTIFACT_NAME: release-changelog
+          ARTIFACT_DIR: .
+        run: reusable-ci artifact download
       - name: Download planned release artifacts
         env:
           ARTIFACT_TRANSFER_PLAN_JSON: ${{ inputs['artifact-transfer-plan-json'] }}
@@ -195,7 +196,7 @@ jobs:
       - name: Resolve release metadata
         id: release-metadata
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ inputs['release-name'] }}
           REPOSITORY: ${{ github.repository }}
         run: reusable-ci release resolve metadata
       - name: Generate CISA-layer SBOMs
@@ -205,9 +206,25 @@ jobs:
           VERSION: ${{ steps.release-metadata.outputs.version-no-v }}
           SBOMS: ${{ inputs.sboms }}
         run: reusable-ci sbom generate artifacts
+      - name: Assemble release files
+        env:
+          CONFIG_PLAN_JSON: ${{ inputs['config-plan-json'] }}
+          ARTIFACT_TRANSFER_PLAN_JSON: ${{ inputs['artifact-transfer-plan-json'] }}
+          ATTACH_ARTIFACTS: ${{ steps.attach-effective.outputs.attach-artifacts }}
+          PROJECT_NAME: ${{ steps.release-metadata.outputs.project-name }}
+          VERSION: ${{ steps.release-metadata.outputs.version }}
+          RELEASE_ASSEMBLY: .reusable-ci/release-assembly.json
+        run: reusable-ci release assemble
+      - name: Create SBOM ZIP
+        if: *if_has_sboms
+        env:
+          PROJECT_NAME: ${{ steps.release-metadata.outputs.project-name }}
+          VERSION: ${{ steps.release-metadata.outputs.version }}
+          RELEASE_ASSEMBLY: .reusable-ci/release-assembly.json
+        run: reusable-ci release sbom-zip
       - name: Generate checksums
         env:
-          ATTACH_ARTIFACTS: ${{ steps.attach-effective.outputs.attach-artifacts }}
+          RELEASE_ASSEMBLY: .reusable-ci/release-assembly.json
         run: reusable-ci release checksums
       - name: Sign artifacts
         if: ${{ inputs['sign-artifacts'] }}
@@ -223,53 +240,38 @@ jobs:
           GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
           GPG_KEY_ID: ${{ steps.import-gpg.outputs.keyid }}
-          ATTACH_ARTIFACTS: ${{ steps.attach-effective.outputs.attach-artifacts }}
+          RELEASE_ASSEMBLY: .reusable-ci/release-assembly.json
         run: reusable-ci release sign
-      - name: Create SBOM ZIP
-        if: *if_has_sboms
-        # Same multi-backend dispatch as the Sign artifacts step above.
-        # When SIGN_ARTIFACTS=false, sbom-zip skips signing entirely
-        # and the env vars below are ignored.
-        env:
-          SIGN_ARTIFACTS: ${{ inputs['sign-artifacts'] }}
-          SIGN_METHOD: ${{ fromJSON(inputs['config-plan-json']).sign.method }}
-          SIGN_KEY: ${{ fromJSON(inputs['config-plan-json']).sign.key }}
-          SIGN_OIDC_ISSUER: ${{ fromJSON(inputs['config-plan-json']).sign.oidc_issuer }}
-          GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
-          GPG_KEY_ID: ${{ steps.import-gpg.outputs.keyid }}
-          PROJECT_NAME: ${{ steps.release-metadata.outputs.project-name }}
-          VERSION: ${{ steps.release-metadata.outputs.version }}
-        run: reusable-ci release sbom-zip
       - name: Prepare release notes
         env:
           SOURCE_FILE: ReleasenotesTmp
           TARGET_FILE: release-notes.md
-          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ inputs['release-name'] }}
           RELEASE_COMMIT: ${{ github.sha }}
         run: reusable-ci release notes
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          TAG_NAME: ${{ github.ref_name }}
+          TAG_NAME: ${{ inputs['release-name'] }}
           RELEASE_NAME: ${{ inputs['release-name'] }}
           REPOSITORY: ${{ github.repository }}
           DRAFT: ${{ inputs.draft }}
           MAKE_LATEST: ${{ inputs['make-latest'] }}
-          ATTACH_ARTIFACTS: ${{ steps.attach-effective.outputs.attach-artifacts }}
+          RELEASE_ASSEMBLY: .reusable-ci/release-assembly.json
           RELEASE_NOTES_FILE: release-notes.md
         run: reusable-ci release create
       - name: Upload release artifacts summary
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: release-artifacts-${{ github.run_id }}
-          path: |
+        env:
+          ARTIFACT_NAME: release-artifacts-${{ github.run_id }}
+          ARTIFACT_PATHS: |
+            .reusable-ci/release-assembly.json
             release-files/
             ReleasenotesTmp
             release-notes.md
-          retention-days: 30
-          if-no-files-found: ignore
+          ARTIFACT_RETENTION_DAYS: "30"
+          ARTIFACT_IF_NO_FILES: ignore
+        run: reusable-ci artifact upload
       - name: Cleanup GPG key
         if: always()
         env:

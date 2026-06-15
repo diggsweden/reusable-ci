@@ -126,7 +126,7 @@ jobs:
     permissions:
       contents: write
     outputs:
-      release-sha: ${{ steps.move-tag.outputs.release-sha }}
+      release-sha: ${{ steps.tag-release.outputs.release-sha }}
     steps:
       # Defense-in-depth: refuse PR-context triggers. RELEASE_TOKEN and
       # RELEASE_GPG_PRIVATE_KEY are consumed by this job; must never run
@@ -139,6 +139,13 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.branch }}
           token: ${{ secrets.RELEASE_TOKEN }}
+      - name: Derive release context from request tag
+        id: relctx
+        # The human pushed a signed `release-request/vX.Y.Z` tag (the
+        # immutable, allowlist-verified anchor). The CLI derives the final
+        # release tag/version and the original-tagger commit trailers — no ref
+        # parsing in bash. The request tag is never moved or deleted.
+        run: reusable-ci version release-context
       - name: Import GPG key
         id: import-gpg
         env:
@@ -156,20 +163,20 @@ jobs:
           GRADLE_VERSION_FILE: ${{ inputs['gradle-version-file'] }}
           XCODE_VERSION_FILE: ${{ inputs['xcode-version-file'] }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}" reusable-ci version bump
+          VERSION="${{ steps.relctx.outputs.version }}" reusable-ci version bump
       - name: Download Full Changelog
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: full-changelog
-          path: ${{ inputs['working-directory'] }}
+        env:
+          ARTIFACT_NAME: full-changelog
+          ARTIFACT_DIR: ${{ inputs['working-directory'] }}
+        run: reusable-ci artifact download
       - name: Verify Full Changelog
         working-directory: ${{ inputs['working-directory'] }}
         run: reusable-ci validate changelog --path CHANGELOG.md --required
       - name: Download Minimal Changelog
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: minimal-changelog
-          path: ${{ inputs['working-directory'] }}
+        env:
+          ARTIFACT_NAME: minimal-changelog
+          ARTIFACT_DIR: ${{ inputs['working-directory'] }}
+        run: reusable-ci artifact download
       - name: Read Minimal Changelog
         id: minimal-changelog
         working-directory: ${{ inputs['working-directory'] }}
@@ -186,16 +193,19 @@ jobs:
           COMMIT_AUTHOR_NAME: ${{ steps.import-gpg.outputs.name }}
           COMMIT_AUTHOR_EMAIL: ${{ steps.import-gpg.outputs.email }}
           COMMIT_MESSAGE: |
-            chore(release): ${{ github.ref_name }}
+            chore(release): ${{ steps.relctx.outputs.release-tag }}
 
             ${{ steps.minimal-changelog.outputs.content }}
 
+            ${{ steps.relctx.outputs.commit-trailers }}
             [skip ci]
           FILE_PATTERN: ${{ steps.file-pattern.outputs.pattern }}
         run: reusable-ci version commit-push
-      - name: Move tag to current commit
-        id: move-tag
-        run: reusable-ci version move-tag
+      - name: Create release tag (create-once, no force)
+        id: tag-release
+        env:
+          RELEASE_TAG: ${{ steps.relctx.outputs.release-tag }}
+        run: reusable-ci version tag-release
       - name: Cleanup GPG key
         if: always()
         env:

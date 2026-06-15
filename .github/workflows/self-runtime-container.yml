@@ -362,11 +362,11 @@ jobs:
             printf 'commit-date=%s\n' "$commit_date"
           } >> "$GITHUB_OUTPUT"
       - name: Log in to GHCR
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          CONTAINER_REGISTRY: ghcr.io
+          REGISTRY_USERNAME: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: reusable-ci container login
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
@@ -414,12 +414,12 @@ jobs:
           fi
           printf 'build-once OK: baked CLI matches published binary (%s)\n' "$want"
       - name: Upload digest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: digests-${{ matrix.runtime.target }}-${{ matrix.platform.suffix }}
-          path: /tmp/digests/*
-          if-no-files-found: error
-          retention-days: 1
+        env:
+          ARTIFACT_NAME: digests-${{ matrix.runtime.target }}-${{ matrix.platform.suffix }}
+          ARTIFACT_PATHS: /tmp/digests/*
+          ARTIFACT_IF_NO_FILES: error
+          ARTIFACT_RETENTION_DAYS: "1"
+        run: reusable-ci artifact upload
       - name: Generate analyzed-container SBOM
         # Runtime images are tooling, not user-app containers, so we
         # bypass `reusable-ci sbom generate container` (which is
@@ -472,14 +472,17 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: '0'
       - name: Upload trivy SARIF to Code Scanning
-        # Per-(target, arch) category so amd64 + arm64 don't
-        # overwrite each other in GitHub's dedupe (categorised by
-        # (category, file)). Without this, the second leg silently
-        # replaces the first.
-        uses: github/codeql-action/upload-sarif@fca7ace96b7d713c7035871441bd52efbe39e27e # v3.28.19
-        with:
-          sarif_file: trivy-results.sarif
-          category: runtime-${{ matrix.runtime.target }}-${{ matrix.platform.suffix }}
+        # reusable-ci's own upload-sarif (no JS codeql-action): it stamps the
+        # category into each SARIF run's automationDetails.id — the field Code
+        # Scanning keys analyses on — so the per-(target, arch) legs stay
+        # distinct instead of silently overwriting one another. GITHUB_TOKEN is
+        # mapped to the CLI's CODE_SCANNING_TOKEN (this job has
+        # security-events: write).
+        env:
+          SARIF_FILE: trivy-results.sarif
+          SARIF_CATEGORY: runtime-${{ matrix.runtime.target }}-${{ matrix.platform.suffix }}
+          CODE_SCANNING_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: reusable-ci security report upload-sarif
 
   # Publish phase 2: assemble each target's per-arch digests into a single
   # multi-arch manifest list and apply tags from reusable-ci metadata.
@@ -548,19 +551,19 @@ jobs:
           sudo install -m0755 "$tmp/reusable-ci" /usr/local/bin/reusable-ci
           reusable-ci --version
       - name: Download digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          path: /tmp/digests
-          pattern: digests-${{ matrix.runtime.target }}-*
-          merge-multiple: true
+        env:
+          ARTIFACT_DIR: /tmp/digests
+          ARTIFACT_PATTERN: digests-${{ matrix.runtime.target }}-*
+          ARTIFACT_MERGE_MULTIPLE: "true"
+        run: reusable-ci artifact download
       - name: Set up Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
       - name: Log in to GHCR
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          CONTAINER_REGISTRY: ghcr.io
+          REGISTRY_USERNAME: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: reusable-ci container login
       - name: Compute build stamp
         id: stamp
         # Tag-safe build stamp derived from the commit timestamp (not

@@ -16,17 +16,17 @@
 #
 # How it works:
 # 1. Downloads pre-built artifacts from build-npm.yml
-# 2. Generates dev version: ${BASE_VERSION}-dev-${BRANCH}-${SHORT_SHA}
+# 2. Generates snapshot version: ${BASE_VERSION}-snapshot-${BRANCH}-${SHORT_SHA}
 # 3. Checks if version already exists in registry (idempotent — same SHA = same content)
 # 4. If already published: logs warning, skips remaining steps, exits successfully
 # 5. Applies version to package.json (no git commit)
 # 6. Creates npm pack tarball
-# 7. Publishes to registry with 'dev' tag
+# 7. Publishes to registry with 'snapshot' tag
 # 8. Uploads tarball as workflow artifact
 #
 # Security controls:
 # - Minimal - optimized for speed
-# - Packages tagged with 'dev' not 'latest'
+# - Packages tagged with 'snapshot' not 'latest'
 # - No SBOM, no signing, no attestation
 #
 # Dependencies:
@@ -46,9 +46,9 @@
 #
 # Outputs:
 #   package-name: Published package name
-#   package-version: Published dev version
+#   package-version: Published snapshot version
 #   tarball: Tarball filename
-name: Publish Dev NPM
+name: Publish Snapshot NPM
 on:
   workflow_call:
     inputs:
@@ -106,7 +106,7 @@ on:
         description: "Published package name"
         value: ${{ jobs.build-and-publish.outputs.package-name }}
       package-version:
-        description: "Published dev version"
+        description: "Published snapshot version"
         value: ${{ jobs.build-and-publish.outputs.package-version }}
       tarball:
         description: "Tarball filename"
@@ -118,7 +118,7 @@ permissions:
   contents: read
 jobs:
   build-and-publish:
-    name: Build & Publish Dev NPM Package
+    name: Build & Publish Snapshot NPM Package
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     container:
@@ -128,7 +128,7 @@ jobs:
       packages: write
     outputs:
       package-name: ${{ steps.meta.outputs.name }}
-      package-version: ${{ steps.tags.outputs.dev-version }}
+      package-version: ${{ steps.tags.outputs.snapshot-version }}
       tarball: ${{ steps.pack.outputs.tarball }}
       publish-status: ${{ steps.check-registry.outputs['already-published'] == 'true' && 'already-exists' || 'published' }}
     steps:
@@ -162,10 +162,10 @@ jobs:
           PACKAGE_SCOPE: ${{ inputs.package-scope }}
         run: reusable-ci build npm metadata
       - name: Download NPM build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ${{ inputs['artifact-source'] }}
-          path: ${{ inputs.working-directory }}/
+        env:
+          ARTIFACT_NAME: ${{ inputs['artifact-source'] }}
+          ARTIFACT_DIR: ${{ inputs.working-directory }}/
+        run: reusable-ci artifact download
       - name: Extract tarball contents
         working-directory: ${{ inputs.working-directory }}
         run: reusable-ci publish npm validate-tarball
@@ -176,25 +176,25 @@ jobs:
           CI_REGISTRY: "https://npm.pkg.github.com"
           REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
         run: reusable-ci validate auth registry
-      - name: Generate dev version tag
+      - name: Generate snapshot version tag
         id: tags
-        run: reusable-ci version generate-dev
+        run: reusable-ci version generate-snapshot
       - name: Check if version already published
         id: check-registry
         working-directory: ${{ inputs.working-directory }}
         env:
           NODE_AUTH_TOKEN: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
-          VERSION: ${{ steps.tags.outputs.dev-version }}
+          VERSION: ${{ steps.tags.outputs.snapshot-version }}
           NPM_REGISTRY: ${{ inputs.registry }}
         run: reusable-ci publish npm validate-version
-      - name: Apply dev version to package.json
+      - name: Apply snapshot version to package.json
         if: steps.check-registry.outputs['already-published'] != 'true'
         working-directory: ${{ inputs.working-directory }}
         env:
-          DEV_VERSION: ${{ steps.tags.outputs.dev-version }}
+          SNAPSHOT_VERSION: ${{ steps.tags.outputs.snapshot-version }}
         run: |
-          npm version "$DEV_VERSION" --no-git-tag-version --allow-same-version
-          printf "Applied version: %s\n" "$DEV_VERSION"
+          npm version "$SNAPSHOT_VERSION" --no-git-tag-version --allow-same-version
+          printf "Applied version: %s\n" "$SNAPSHOT_VERSION"
       - name: Pack tarball
         if: steps.check-registry.outputs['already-published'] != 'true'
         id: pack
@@ -202,11 +202,12 @@ jobs:
         run: reusable-ci build npm pack
       - name: Upload tarball as artifact
         if: steps.check-registry.outputs['already-published'] != 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: npm-dev-package-${{ github.run_id }}
-          path: ${{ inputs.working-directory }}/${{ steps.pack.outputs.tarball }}
-          retention-days: 7
+        env:
+          ARTIFACT_NAME: npm-snapshot-package-${{ github.run_id }}
+          ARTIFACT_PATHS: ${{ inputs.working-directory }}/${{ steps.pack.outputs.tarball }}
+          ARTIFACT_RETENTION_DAYS: "7"
+          ARTIFACT_IF_NO_FILES: warn
+        run: reusable-ci artifact upload
       - name: Publish to NPM registry
         if: steps.check-registry.outputs['already-published'] != 'true'
         working-directory: ${{ inputs.working-directory }}
@@ -214,8 +215,8 @@ jobs:
           NODE_AUTH_TOKEN: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
           NPM_REGISTRY: ${{ inputs.registry }}
           PACKAGE_NAME: ${{ steps.meta.outputs.name }}
-          DEV_VERSION: ${{ steps.tags.outputs.dev-version }}
+          SNAPSHOT_VERSION: ${{ steps.tags.outputs.snapshot-version }}
         run: |
-          printf "Publishing %s@%s to %s with tag 'dev'\n" "$PACKAGE_NAME" "$DEV_VERSION" "$NPM_REGISTRY"
-          npm publish --tag dev
+          printf "Publishing %s@%s to %s with tag 'snapshot'\n" "$PACKAGE_NAME" "$SNAPSHOT_VERSION" "$NPM_REGISTRY"
+          npm publish --tag snapshot
           printf "✅ Published successfully\n"

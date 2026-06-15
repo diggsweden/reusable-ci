@@ -85,7 +85,9 @@ jobs:
     container:
       image: ${{ inputs['runtime-image'] }}
     permissions:
-      contents: write
+      # Least-privilege: Maven Central publishes externally to Sonatype and this
+      # job performs no git write (no tag/commit/release). Confirm on next release.
+      contents: read
       packages: write
       id-token: write
     steps:
@@ -111,10 +113,10 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
         run: reusable-ci release gpg import
       - name: Download build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ${{ inputs['artifact-source'] }}
-          path: ${{ inputs['working-directory'] }}/
+        env:
+          ARTIFACT_NAME: ${{ inputs['artifact-source'] }}
+          ARTIFACT_DIR: ${{ inputs['working-directory'] }}/
+        run: reusable-ci artifact download
       - name: Verify artifacts for Maven Central
         working-directory: ${{ inputs['working-directory'] }}
         run: reusable-ci publish maven-central validate-artifacts

@@ -108,22 +108,22 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         run: reusable-ci build npm pack
       - name: Upload NPM artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ inputs['artifact-name'] && format('{0}-build-artifacts', inputs['artifact-name']) || 'npm-build-artifacts' }}
-          path: ${{ inputs['working-directory'] }}/${{ steps.pack.outputs.tarball }}
-          retention-days: 7
-          if-no-files-found: error
+        env:
+          ARTIFACT_NAME: ${{ inputs['artifact-name'] && format('{0}-build-artifacts', inputs['artifact-name']) || 'npm-build-artifacts' }}
+          ARTIFACT_PATHS: ${{ inputs['working-directory'] }}/${{ steps.pack.outputs.tarball }}
+          ARTIFACT_RETENTION_DAYS: "7"
+          ARTIFACT_IF_NO_FILES: error
+        run: reusable-ci artifact upload
       # Build SBOM is a separate compliance deliverable; see build-maven.yml
       # for rationale.
       - name: Upload NPM Build SBOM
         if: steps.sbom.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ inputs['artifact-name'] && format('{0}-build-sbom', inputs['artifact-name']) || 'npm-build-sbom' }}
-          path: ${{ inputs['working-directory'] }}/bom.json
-          retention-days: 7
-          if-no-files-found: warn
+        env:
+          ARTIFACT_NAME: ${{ inputs['artifact-name'] && format('{0}-build-sbom', inputs['artifact-name']) || 'npm-build-sbom' }}
+          ARTIFACT_PATHS: ${{ inputs['working-directory'] }}/bom.json
+          ARTIFACT_RETENTION_DAYS: "7"
+          ARTIFACT_IF_NO_FILES: warn
+        run: reusable-ci artifact upload
       - name: Generate build summary
         env:
           PACKAGE_NAME: ${{ steps.version-info.outputs.name }}

@@ -94,21 +94,20 @@ jobs:
           cargo cyclonedx --all --format json --override-filename bom
       - name: Upload Cargo SBOM
         if: steps.sbom.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          # When called from release-build-stage.yml's per-artefact matrix,
-          # artifact-name is set to the cargo artefact's user-chosen name
-          # (e.g. "hsm-worker") so each upload is unique. Direct callers
-          # who don't pass artifact-name fall back to the bare default,
-          # which is fine for single-cargo-artefact projects.
-          name: ${{ inputs['artifact-name'] != '' && format('{0}-cargo-build-sbom', inputs['artifact-name']) || 'cargo-build-sbom' }}
-          path: |
+        # When called from release-build-stage.yml's per-artefact matrix,
+        # artifact-name is set to the cargo artefact's user-chosen name
+        # (e.g. "hsm-worker") so each upload is unique. Direct callers
+        # who don't pass artifact-name fall back to the bare default,
+        # which is fine for single-cargo-artefact projects.
+        # SBOM generation is advisory (beta); a missing bom.json warns, not fails.
+        env:
+          ARTIFACT_NAME: ${{ inputs['artifact-name'] != '' && format('{0}-cargo-build-sbom', inputs['artifact-name']) || 'cargo-build-sbom' }}
+          ARTIFACT_PATHS: |
             ${{ inputs['working-directory'] }}/bom.json
             ${{ inputs['working-directory'] }}/**/bom.json
-          retention-days: 7
-          # SBOM generation is advisory (beta); a missing bom.json should not
-          # fail the workflow.
-          if-no-files-found: warn
+          ARTIFACT_RETENTION_DAYS: "7"
+          ARTIFACT_IF_NO_FILES: warn
+        run: reusable-ci artifact upload
       - name: Write SBOM status to step summary
         if: always()
         env:
