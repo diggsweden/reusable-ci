@@ -6,7 +6,11 @@
 // Adapters and I/O live in internal/app/publish.
 package publish
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/diggsweden/reusable-ci/internal/domain/container"
+)
 
 // RegistryAuthInput describes the auth configuration the workflow wants
 // to use. Mirrors the four positional / env inputs of.
@@ -37,7 +41,7 @@ type RegistryAuthResult struct {
 func ValidateRegistryAuth(in RegistryAuthInput) RegistryAuthResult {
 	expected := in.ExpectedRegistry
 	if expected == "" {
-		expected = "ghcr.io"
+		expected = container.DefaultRegistry
 	}
 
 	var res RegistryAuthResult

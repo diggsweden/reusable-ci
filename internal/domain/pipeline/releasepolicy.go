@@ -14,18 +14,18 @@ import (
 // resolver reads from. Unexported: it is an internal helper input shape
 // for resolveReleasePolicy; public callers use ReleasePlanInput.
 type releasePolicyInputs struct {
-	ReleaseType               string // "stable" | "" | …
-	ReleasePublisher          string // "github-cli" | "" | …
+	ReleaseType                     string // "stable" | "" | …
+	ReleasePublisher                string // "github-cli" | "" | …
 	ReleaseRequireAllowlistedSigner bool
-	ReleaseDraft              bool
-	ReleaseSBOMs              string // "all" | "none" | "build,…"
-	ReleaseSignArtifacts      bool
-	ChangelogCreator          string // "git-cliff" | "" | …
-	ChangelogSkipVersionBump  bool
-	RefName                   string // CI_REF_NAME (tag name)
-	PipelineSBOMs             string // union from parse-artifacts-config
-	AnyRequireAuthorization   bool   // any artefact's require_authorization
-	HasContainers             bool   // CONTAINERS != []
+	ReleaseDraft                    bool
+	ReleaseSBOMs                    string // "all" | "none" | "build,…"
+	ReleaseSignArtifacts            bool
+	ChangelogCreator                string // "git-cliff" | "" | …
+	ChangelogSkipVersionBump        bool
+	RefName                         string // CI_REF_NAME (tag name)
+	PipelineSBOMs                   string // union from parse-artifacts-config
+	AnyRequireAuthorization         bool   // any artefact's require_authorization
+	HasContainers                   bool   // CONTAINERS != []
 }
 
 // resolveReleasePolicy computes the typed release policy from workflow
@@ -36,13 +36,13 @@ type releasePolicyInputs struct {
 // sensible defaults matching the bash.
 func resolveReleasePolicy(in releasePolicyInputs) (ReleasePolicy, error) {
 	policy := ReleasePolicy{
-		HasContainers:      in.HasContainers,
-		SignArtifacts:      in.ReleaseSignArtifacts,
-		CreateRelease:      in.ReleasePublisher == "github-cli",
+		HasContainers:            in.HasContainers,
+		SignArtifacts:            in.ReleaseSignArtifacts,
+		CreateRelease:            in.ReleasePublisher == "github-cli",
 		RequireAllowlistedSigner: in.AnyRequireAuthorization || in.ReleaseRequireAllowlistedSigner,
-		RunVersionBump:     !in.ChangelogSkipVersionBump && in.ChangelogCreator == "git-cliff", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		MakeLatest:         isStableRelease(in.ReleaseType, in.RefName),
-		CreateDraftRelease: in.ReleaseDraft || isDraftRelease(in.RefName),
+		RunVersionBump:           !in.ChangelogSkipVersionBump && in.ChangelogCreator == "git-cliff", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		MakeLatest:               isStableRelease(in.ReleaseType, in.RefName),
+		CreateDraftRelease:       in.ReleaseDraft || isDraftRelease(in.RefName),
 	}
 
 	effective, conflict, err := computeEffectiveSBOMs(in.ReleaseSBOMs, in.PipelineSBOMs)

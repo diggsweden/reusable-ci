@@ -78,24 +78,24 @@ func TestResolve(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		format   output.Format
-		platform provider.Platform
-		want     output.Format
+		name   string
+		format output.Format
+		runner provider.RunnerKind
+		want   output.Format
 	}{
-		{name: "concrete_text_passes_through", format: output.FormatText, platform: provider.PlatformGitHub, want: output.FormatText},
-		{name: "concrete_json_passes_through", format: output.FormatJSON, platform: provider.PlatformGitLab, want: output.FormatJSON},
-		{name: "concrete_github_passes_through", format: output.FormatGitHub, platform: provider.PlatformLocal, want: output.FormatGitHub},
-		{name: "concrete_gitlab_passes_through", format: output.FormatGitLab, platform: provider.PlatformLocal, want: output.FormatGitLab},
-		{name: "auto_on_github", format: output.FormatAuto, platform: provider.PlatformGitHub, want: output.FormatGitHub},
-		{name: "auto_on_gitlab", format: output.FormatAuto, platform: provider.PlatformGitLab, want: output.FormatGitLab},
-		{name: "auto_on_local", format: output.FormatAuto, platform: provider.PlatformLocal, want: output.FormatText},
-		{name: "auto_on_empty_platform", format: output.FormatAuto, platform: "", want: output.FormatText},
+		{name: "concrete_text_passes_through", format: output.FormatText, runner: provider.RunnerGHA, want: output.FormatText},
+		{name: "concrete_json_passes_through", format: output.FormatJSON, runner: provider.RunnerGitLab, want: output.FormatJSON},
+		{name: "concrete_github_passes_through", format: output.FormatGitHub, runner: provider.RunnerLocal, want: output.FormatGitHub},
+		{name: "concrete_gitlab_passes_through", format: output.FormatGitLab, runner: provider.RunnerLocal, want: output.FormatGitLab},
+		{name: "auto_on_gha", format: output.FormatAuto, runner: provider.RunnerGHA, want: output.FormatGitHub},
+		{name: "auto_on_gitlab", format: output.FormatAuto, runner: provider.RunnerGitLab, want: output.FormatGitLab},
+		{name: "auto_on_local", format: output.FormatAuto, runner: provider.RunnerLocal, want: output.FormatText},
+		{name: "auto_on_empty_runner", format: output.FormatAuto, runner: "", want: output.FormatText},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			require.Equal(t, testCase.want, output.Resolve(testCase.format, testCase.platform))
+			require.Equal(t, testCase.want, output.Resolve(testCase.format, testCase.runner))
 		})
 	}
 }
@@ -103,7 +103,7 @@ func TestResolve(t *testing.T) {
 func TestParseAndResolve_ResolvesAuto(t *testing.T) {
 	t.Parallel()
 
-	got, err := output.ParseAndResolve("auto", provider.PlatformGitHub)
+	got, err := output.ParseAndResolve("auto", provider.RunnerGHA)
 	require.NoError(t, err)
 	require.Equal(t, output.FormatGitHub, got)
 }
@@ -111,7 +111,7 @@ func TestParseAndResolve_ResolvesAuto(t *testing.T) {
 func TestParseAndResolve_PropagatesParseError(t *testing.T) {
 	t.Parallel()
 
-	_, err := output.ParseAndResolve("yaml", provider.PlatformLocal)
+	_, err := output.ParseAndResolve("yaml", provider.RunnerLocal)
 	require.ErrorIs(t, err, output.ErrUnknownFormat)
 }
 

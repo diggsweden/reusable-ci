@@ -20,7 +20,7 @@ func TestPlanContracts_Golden(t *testing.T) {
 
 	releasePlan, err := pipeline.NewReleasePlan(pipeline.ReleasePlanInput{
 		ConfigPlan:           configPlan,
-		Branch:               "main", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		Branch:               "main",   //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		RefName:              "v1.2.3", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		ReleasePublisher:     "github-cli",
 		ReleaseSBOMs:         "build,analyzed-container",
@@ -31,7 +31,7 @@ func TestPlanContracts_Golden(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	devPlan, err := pipeline.NewDevReleasePlan(pipeline.DevReleasePlanInput{
+	devPlan, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
 		ConfigPlan:          configPlan,
 		Branch:              "feature/demo",
 		ReleaseSHA:          "abc1234",
@@ -44,15 +44,14 @@ func TestPlanContracts_Golden(t *testing.T) {
 		SBOMs:               "build", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		PublishNPM:          true,
 		UseCIToken:          true,
-		PublishContainer:    true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	prPlan := pipeline.NewPRPlan(pipeline.PRPlanInput{
-		ProjectType:                projecttype.Go,
-		BaseBranch:                 "main",
+		ProjectType:         projecttype.Go,
+		BaseBranch:          "main",
 		ReusableCIBinaryRef: "v3.0.0",
 		Nanolinter:          true,
 	})
@@ -63,7 +62,7 @@ func TestPlanContracts_Golden(t *testing.T) {
 	}{
 		{name: "config-plan.json", value: configPlan},
 		{name: "release-plan.json", value: releasePlan},
-		{name: "dev-release-plan.json", value: devPlan},
+		{name: "snapshot-release-plan.json", value: devPlan},
 		{name: "pr-plan.json", value: prPlan},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

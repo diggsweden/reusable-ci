@@ -58,7 +58,7 @@ func TestRenderXcodeSummary_SignedBuild(t *testing.T) {
 
 	got := build.RenderXcodeSummary(build.XcodeSummaryInput{
 		XcodeVersion:  "16.4", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		Scheme:        "App", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		Scheme:        "App",  //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Configuration: "Release",
 		Destination:   "generic/platform=iOS",
 		Signing:       true,

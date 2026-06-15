@@ -3,6 +3,12 @@
 
 package build
 
+// DefaultPlatform is the build/container target assumed when no platform is
+// specified. Single source for that default across the `--platforms` flag,
+// the Go/Cargo platform resolvers, the container platform plan, and the
+// release config plan.
+const DefaultPlatform = "linux/amd64"
+
 // GoPlatforms is the canonical GOOS/GOARCH set the toolchain supports
 // for Go 1.26. Sourced from `go tool dist list`; embedded so the CLI
 // can validate `--platforms` input without shelling out to go (which

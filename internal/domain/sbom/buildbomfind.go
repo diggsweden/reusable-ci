@@ -25,6 +25,7 @@ type FindBuildBOMInput struct {
 //
 // Mirrors the depth-sort logic in `_find_build_bom` — the bash
 // `find -printf '%d\t%p\n' | sort -k1,1n -k2,2 | head -1` shape.
+//
 //nolint:cyclop // build-BOM discovery: per project type + per format + per layer.
 func FindBuildBOM(in FindBuildBOMInput) string {
 	type cand struct {

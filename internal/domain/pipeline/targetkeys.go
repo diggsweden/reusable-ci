@@ -50,6 +50,6 @@ const (
 	TargetSBOM                = "sbom"                 // dev publish only
 
 	// Quality-stage targets (PR).
-	TargetNanolinter       = "nanolinter"
-	TargetSwift            = "swift"
+	TargetNanolinter = "nanolinter"
+	TargetSwift      = "swift"
 )

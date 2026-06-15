@@ -14,109 +14,73 @@ import (
 // happy-path cases.
 const canonicalFP = "ABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD"
 
-func TestParseAllowedFingerprints_HappyPath(t *testing.T) {
-	body := []byte(`# Release-authorised GPG signers
-` + canonicalFP + `
-` + // GPG-rendered form (spaced):
-		`ABCD EFAB CDEF ABCD EFAB CDEF ABCD EFAB CDEF DCBA
-`)
+func TestAllowedFingerprintSet_AddAndHas(t *testing.T) {
+	set := validate.NewAllowedFingerprintSet()
 
-	set, err := validate.ParseAllowedFingerprints(body)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if set.Len() != 2 {
-		t.Errorf("Len = %d, want 2", set.Len())
-	}
-
-	if !set.Has(canonicalFP) {
-		t.Errorf("set missing canonical fingerprint")
-	}
-
-	// Round-trip the GPG-spaced form: lookup should normalise.
-	if !set.Has("abcd efab cdef abcd efab cdef abcd efab cdef dcba") {
-		t.Errorf("case-insensitive + whitespace-tolerant lookup failed")
-	}
-}
-
-func TestParseAllowedFingerprints_RejectsShortKeyID(t *testing.T) {
-	body := []byte("ABCDEF1234567890\n")
-
-	_, err := validate.ParseAllowedFingerprints(body)
-	if err == nil {
-		t.Fatalf("expected rejection of 16-hex short key ID")
-	}
-
-	if !strings.Contains(err.Error(), "line 1") {
-		t.Errorf("error should cite the line number; got: %v", err)
-	}
-}
-
-func TestParseAllowedFingerprints_RejectsNonHex(t *testing.T) {
-	body := []byte(`# comment
-ABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD
-ZZZZEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD
-`)
-
-	_, err := validate.ParseAllowedFingerprints(body)
-	if err == nil {
-		t.Fatalf("expected rejection of non-hex character")
-	}
-
-	if !strings.Contains(err.Error(), "line 3") {
-		t.Errorf("error should cite line 3 (after comment + valid entry); got: %v", err)
-	}
-}
-
-func TestParseAllowedFingerprints_IgnoresCommentsAndBlanks(t *testing.T) {
-	body := []byte(`
-# header comment
-
-# another comment
-
-` + canonicalFP + `
-
-# trailing comment
-`)
-
-	set, err := validate.ParseAllowedFingerprints(body)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if !set.Add(canonicalFP) {
+		t.Fatalf("Add(%q) = false, want true", canonicalFP)
 	}
 
 	if set.Len() != 1 {
-		t.Errorf("Len = %d, want 1 (comments + blanks should not count)", set.Len())
+		t.Errorf("Len = %d, want 1", set.Len())
+	}
+
+	if !set.Has(canonicalFP) {
+		t.Errorf("set missing the added fingerprint")
 	}
 }
 
-func TestParseAllowedFingerprints_EmptyFileIsEmptySet(t *testing.T) {
-	set, err := validate.ParseAllowedFingerprints(nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestAllowedFingerprintSet_AddNormalisesSpacedAndLowercase(t *testing.T) {
+	set := validate.NewAllowedFingerprintSet()
+
+	// The GPG-rendered spaced form must be accepted and normalised.
+	if !set.Add("abcd efab cdef abcd efab cdef abcd efab cdef dcba") {
+		t.Fatal("Add of spaced/lowercase fingerprint rejected")
+	}
+
+	for _, query := range []string{
+		"ABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFDCBA",
+		"abcdefabcdefabcdefabcdefabcdefabcdefdcba",
+		"ABCD EFAB CDEF ABCD EFAB CDEF ABCD EFAB CDEF DCBA",
+	} {
+		if !set.Has(query) {
+			t.Errorf("Has(%q) = false, want true (case/whitespace tolerant)", query)
+		}
+	}
+}
+
+func TestAllowedFingerprintSet_AddRejectsShortKeyID(t *testing.T) {
+	set := validate.NewAllowedFingerprintSet()
+
+	if set.Add("ABCDEF1234567890") { // 16-hex short key ID
+		t.Fatal("Add accepted a 16-hex short key ID; must reject")
 	}
 
 	if set.Len() != 0 {
-		t.Errorf("empty file should produce empty set; got Len = %d", set.Len())
-	}
-
-	if set.Has(canonicalFP) {
-		t.Errorf("empty set must not match any fingerprint")
+		t.Errorf("Len = %d, want 0 (rejected value must not widen the set)", set.Len())
 	}
 }
 
-func TestAllowedFingerprintSet_HasIsCaseInsensitive(t *testing.T) {
-	set, _ := validate.ParseAllowedFingerprints([]byte(canonicalFP + "\n"))
+func TestAllowedFingerprintSet_AddRejectsNonHex(t *testing.T) {
+	set := validate.NewAllowedFingerprintSet()
 
-	for _, query := range []string{
-		canonicalFP,
-		strings.ToLower(canonicalFP),
-		"abcd efab cdef abcd efab cdef abcd efab cdef abcd",
-		"ABCD EFAB CDEF ABCD EFAB CDEF ABCD EFAB CDEF ABCD",
-	} {
-		if !set.Has(query) {
-			t.Errorf("Has(%q) = false, want true", query)
-		}
+	if set.Add("ZZZZEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD") {
+		t.Fatal("Add accepted a non-hex fingerprint; must reject")
+	}
+
+	if set.Len() != 0 {
+		t.Errorf("Len = %d, want 0", set.Len())
+	}
+}
+
+func TestAllowedFingerprintSet_AddIsIdempotent(t *testing.T) {
+	set := validate.NewAllowedFingerprintSet()
+
+	set.Add(canonicalFP)
+	set.Add(strings.ToLower(canonicalFP))
+
+	if set.Len() != 1 {
+		t.Errorf("Len = %d, want 1 (same fingerprint added twice)", set.Len())
 	}
 }
 
@@ -124,5 +88,17 @@ func TestAllowedFingerprintSet_HasOnZeroValueReturnsFalse(t *testing.T) {
 	var s validate.AllowedFingerprintSet
 	if s.Has(canonicalFP) {
 		t.Errorf("zero-value set must report Has=false (no nil panic)")
+	}
+}
+
+func TestNewAllowedFingerprintSet_IsEmpty(t *testing.T) {
+	set := validate.NewAllowedFingerprintSet()
+
+	if set.Len() != 0 {
+		t.Errorf("new set Len = %d, want 0", set.Len())
+	}
+
+	if set.Has(canonicalFP) {
+		t.Errorf("new set must not match any fingerprint")
 	}
 }

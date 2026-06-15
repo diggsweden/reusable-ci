@@ -7,10 +7,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"sort"
 	"strconv"
 	"strings"
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 )
 
 // StageResultEnvelopeVersion is the current stage-result JSON contract version.
@@ -127,7 +127,13 @@ func ParseStageResultEnvelope(value string) (StageResultEnvelope, error) {
 		Targets map[string]Result `json:"targets"`
 	}
 	if err := json.Unmarshal([]byte(value), &raw); err != nil {
-		return StageResultEnvelope{}, fmt.Errorf("parse stage-result JSON: %w", err)
+		// Classify as malformed input (EX_DATAERR) like the field checks
+		// below, not the unclassified EX_SOFTWARE default — a bad envelope
+		// is the caller's data, not our bug. The shape hint replaces Go's
+		// "cannot unmarshal X into struct{…}" dump, which leaks internals.
+		return StageResultEnvelope{}, fmt.Errorf(
+			"parse stage-result JSON: not a valid stage-result object (want {version, stage, result, ran, targets}): %w",
+			errs.ErrMalformedInput)
 	}
 
 	if raw.Version != StageResultEnvelopeVersion {
@@ -135,7 +141,7 @@ func ParseStageResultEnvelope(value string) (StageResultEnvelope, error) {
 	}
 
 	if strings.TrimSpace(raw.Stage) == "" {
-		return StageResultEnvelope{}, fmt.Errorf("stage-result JSON missing stage" + ": %w", errs.ErrMalformedInput)
+		return StageResultEnvelope{}, fmt.Errorf("stage-result JSON missing stage"+": %w", errs.ErrMalformedInput)
 	}
 
 	if !IsResult(raw.Result) {
@@ -143,13 +149,13 @@ func ParseStageResultEnvelope(value string) (StageResultEnvelope, error) {
 	}
 
 	if raw.Targets == nil {
-		return StageResultEnvelope{}, fmt.Errorf("stage-result JSON missing targets" + ": %w", errs.ErrMalformedInput)
+		return StageResultEnvelope{}, fmt.Errorf("stage-result JSON missing targets"+": %w", errs.ErrMalformedInput)
 	}
 
 	targets := make([]Target, 0, len(raw.Targets))
 	for name, result := range raw.Targets {
 		if strings.TrimSpace(name) == "" {
-			return StageResultEnvelope{}, fmt.Errorf("stage-result JSON contains an empty target name" + ": %w", errs.ErrMalformedInput)
+			return StageResultEnvelope{}, fmt.Errorf("stage-result JSON contains an empty target name"+": %w", errs.ErrMalformedInput)
 		}
 
 		if !IsResult(result) {

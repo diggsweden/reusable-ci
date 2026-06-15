@@ -29,6 +29,9 @@ func TestReleaseURL(t *testing.T) {
 			server = "https://github.com"
 		case provider.PlatformGitLab:
 			server = "https://gitlab.com"
+		case provider.PlatformForgejo:
+			// Forgejo summary URLs are wired in a later phase (the
+			// forge adapter); no case is exercised here yet.
 		case provider.PlatformLocal:
 			// No server URL needed — the local placeholder ignores it.
 		}

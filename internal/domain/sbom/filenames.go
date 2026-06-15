@@ -18,8 +18,6 @@ const (
 // When customBasename is non-empty, the file is named
 // "<customBasename>-sbom.<format-suffix>"; otherwise
 // "<name>-<version>-<layer>-sbom.<format-suffix>" is used.
-//
-// Mirrors the file-naming logic in generate_dual_sboms.
 func Filename(customBasename, name, version, layer string, format Format) string {
 	suffix := "spdx.json"
 	if format == FormatCycloneDX {
@@ -37,8 +35,6 @@ func Filename(customBasename, name, version, layer string, format Format) string
 // When sha is non-empty (i.e. inside a git repo), the short SHA is
 // injected for traceability: "<file>-<sha>-<layer>". Otherwise:
 // "<file>-<layer>" (SHA-less form for test fixtures without git).
-//
-// Mirrors `_analyzed_basename` in the bash.
 func AnalyzedBasename(fileBasename, layer, sha string) string {
 	if sha != "" {
 		return fmt.Sprintf("%s-%s-%s", fileBasename, sha, layer)
@@ -50,8 +46,6 @@ func AnalyzedBasename(fileBasename, layer, sha string) string {
 // BuildLayerFilename returns the Build-layer SBOM filename. When sha
 // is non-empty the short SHA is injected; otherwise the SHA-less
 // fallback is used.
-//
-// Mirrors `build_layer_filename` in the bash.
 func BuildLayerFilename(name, version, sha string) string {
 	if sha != "" {
 		return fmt.Sprintf("%s-%s-%s-build-sbom.cyclonedx.json", name, version, sha)

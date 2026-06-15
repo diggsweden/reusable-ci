@@ -18,10 +18,8 @@
   "policy": {
     "publish_npm": true,
     "use_ci_token": true,
-    "publish_container": true,
     "sboms": "build"
   },
-  "has_containers": true,
   "stages": {
     "build": {
       "version": 1,
@@ -112,34 +110,6 @@
         "artifact_name": "lib"
       },
       "targets": {
-        "containers": {
-          "runs": true,
-          "items": [
-            {
-              "name": "api",
-              "from": [
-                "api"
-              ],
-              "artifact_types": [
-                "go"
-              ],
-              "container_file": "Containerfile",
-              "context": ".",
-              "platforms": "linux/amd64,linux/arm64",
-              "enable_analyzed_container_sbom": true,
-              "enable_slsa": true,
-              "enable_scan": true,
-              "build_args": {
-                "VERSION": "${VERSION}"
-              },
-              "build_args_string": "VERSION=${VERSION}",
-              "extract_binary_target": "export",
-              "extract_binary_names": [
-                "api"
-              ]
-            }
-          ]
-        },
         "npm": {
           "runs": true,
           "items": [

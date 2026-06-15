@@ -11,6 +11,27 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/domain/provider"
 )
 
+func TestIsCleanRefTag(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		ref  string
+		want bool
+	}{
+		{"v1.2.3", true},
+		{"v1.2.3-rc.1", true},
+		{"2024.01", true},
+		{"releases/1.2.3", false}, // '/' would break a raw-ref staging tag
+		{"feature/x", false},
+		{"", false},
+		{".leading-dot", false}, // illegal first char
+	} {
+		if got := container.IsCleanRefTag(tc.ref); got != tc.want {
+			t.Errorf("IsCleanRefTag(%q) = %v, want %v", tc.ref, got, tc.want)
+		}
+	}
+}
+
 func TestApply_RawValue(t *testing.T) {
 	t.Parallel()
 	r := mustRule(t, "type=raw,value=main,enable=true")
@@ -63,7 +84,7 @@ func TestApply_RefEventBranch(t *testing.T) {
 		{"release/1.0.x", "release-1.0.x"},                   // dots kept in body
 		{strings.Repeat("a", 200), strings.Repeat("a", 128)}, // capped at 128
 	} {
-		got, ok, _ := container.Apply(r, container.MetadataContext{
+		got, ok, _ = container.Apply(r, container.MetadataContext{
 			RefName: tc.ref,
 			RefType: provider.RefTypeBranch,
 		})
@@ -175,6 +196,7 @@ func TestApply_SemverStrict(t *testing.T) {
 
 	// A valid prerelease passes through {{version}} (still a valid docker tag).
 	r := mustRule(t, "type=semver,pattern={{version}}")
+
 	got, ok, _ := container.Apply(r, container.MetadataContext{
 		RefName: "v1.0.0-rc.1", RefType: provider.RefTypeTag,
 	})

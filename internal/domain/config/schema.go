@@ -174,12 +174,12 @@ type Artifact struct {
 // Container is one entry under the top-level `containers:` list. Internal
 // representation only — the public JSON contract is pipeline.PlannedContainer.
 type Container struct {
-	Name          string            `yaml:"name"`
-	From          []string          `yaml:"from,omitempty"`
-	ContainerFile string            `yaml:"container-file,omitempty"`
-	Context       string            `yaml:"context,omitempty"`
-	Target        string            `yaml:"target,omitempty"`
-	Platforms     string            `yaml:"platforms,omitempty"`
+	Name          string   `yaml:"name"`
+	From          []string `yaml:"from,omitempty"`
+	ContainerFile string   `yaml:"container-file,omitempty"`
+	Context       string   `yaml:"context,omitempty"`
+	Target        string   `yaml:"target,omitempty"`
+	Platforms     string   `yaml:"platforms,omitempty"`
 	// EnableSLSA / EnableScan use pointer-bool so the planner can
 	// distinguish "unset" (nil) from "explicitly false" — both default to
 	// true (per the publish-container.yml input defaults), but an explicit
@@ -189,8 +189,8 @@ type Container struct {
 	// ScanSeverity narrows the trivy --severity filter (and the fail-on
 	// threshold) for this container. Empty → use the workflow default
 	// (CRITICAL,HIGH). Set per-container to relax / tighten the gate.
-	ScanSeverity string `yaml:"scan-severity,omitempty"`
-	BuildArgs     map[string]string `yaml:"build-args,omitempty"`
+	ScanSeverity string            `yaml:"scan-severity,omitempty"`
+	BuildArgs    map[string]string `yaml:"build-args,omitempty"`
 	// BuildSecrets lists the GHA secret names that should be forwarded
 	// to BuildKit as `--mount=type=secret,id=<lowercased-name>` mounts.
 	// Unlike BuildArgs (which BuildKit records verbatim in `mode=max`
@@ -206,8 +206,8 @@ type Container struct {
 	// REUSABLE_CI_BUILD_SECRETS_JSON envelope; publish-container.yml
 	// unpacks at build time. See docs/artifacts-reference.md for the
 	// full caller-side recipe.
-	BuildSecrets  []string          `yaml:"build-secrets,omitempty"`
-	Extract       *ContainerExtract `yaml:"extract,omitempty"`
+	BuildSecrets []string          `yaml:"build-secrets,omitempty"`
+	Extract      *ContainerExtract `yaml:"extract,omitempty"`
 
 	// Computed during parse. Not in YAML.
 	ArtifactTypes               []projecttype.Type `yaml:"-"`

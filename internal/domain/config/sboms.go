@@ -5,8 +5,8 @@ package config
 
 import (
 	"fmt"
-	"strings"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"strings"
 )
 
 // ExpandSBOMs translates an `sboms` enum value to the deduped list of
@@ -20,11 +20,12 @@ import (
 // "all" and "none" cannot be combined with other tokens.
 //
 // Returns an error with a clear message on invalid input.
+//
 //nolint:cyclop // expands per layer × format permutation.
 func ExpandSBOMs(value string) ([]SBOMLayer, error) {
 	cleaned := stripWhitespace(value)
 	if cleaned == "" {
-		return nil, fmt.Errorf("sboms: value required (expected: all | none | comma-list of build,analyzed-artifact,analyzed-container)" + ": %w", errs.ErrValidation)
+		return nil, fmt.Errorf("sboms: value required (expected: all | none | comma-list of build,analyzed-artifact,analyzed-container)"+": %w", errs.ErrValidation)
 	}
 
 	if strings.HasPrefix(cleaned, ",") || strings.HasSuffix(cleaned, ",") || strings.Contains(cleaned, ",,") {

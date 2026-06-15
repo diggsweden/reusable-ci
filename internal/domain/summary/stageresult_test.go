@@ -5,8 +5,10 @@ package summary_test
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/summary"
 )
 
@@ -191,12 +193,22 @@ func TestParseStageResultEnvelope_RejectsInvalidContracts(t *testing.T) {
 		{name: "bad result", json: `{"version":1,"stage":"build","result":"in_progress","targets":{}}`},
 		{name: "bad target result", json: `{"version":1,"stage":"build","result":"success","targets":{"npm":"in_progress"}}`},
 		{name: "missing stage", json: `{"version":1,"result":"success","targets":{}}`},
+		// Wrong JSON shape and bad syntax are caller-input errors too, so
+		// they must classify as malformed input (EX_DATAERR), not the
+		// unclassified internal-bug default.
+		{name: "array instead of object", json: `[{"name":"lint"}]`},
+		{name: "syntax error", json: `{not json`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := summary.ParseStageResultEnvelope(tc.json); err == nil {
+			_, err := summary.ParseStageResultEnvelope(tc.json)
+			if err == nil {
 				t.Fatal("expected invalid contract to fail")
+			}
+
+			if !errors.Is(err, errs.ErrMalformedInput) {
+				t.Errorf("err should wrap errs.ErrMalformedInput, got %v", err)
 			}
 		})
 	}

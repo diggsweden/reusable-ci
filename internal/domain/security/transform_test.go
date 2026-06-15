@@ -242,7 +242,7 @@ func TestNormalizeSeverity(t *testing.T) {
 		"critical":      "Critical", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"High":          "High",
 		"medium":        "Medium", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		"LOW":           "Low", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"LOW":           "Low",    //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"INFO":          "Info",
 		"INFORMATIONAL": "Info",
 		"unknown":       "Unknown", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.

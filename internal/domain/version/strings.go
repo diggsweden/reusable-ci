@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
 // Package version holds pure version-related helpers: branch-name
-// sanitisation, dev-version composition, latest-semver-tag selection.
+// sanitisation, snapshot-version composition, latest-semver-tag selection.
 //
 // File mutation per project type (Maven `versions:set`, npm `version`,
 // gradle/cargo sed) lives in app/version, not here — those need the

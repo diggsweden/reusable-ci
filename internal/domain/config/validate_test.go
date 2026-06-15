@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
 )
 
@@ -58,6 +59,12 @@ func TestValidate_RejectsUnsupportedPublishTarget(t *testing.T) {
 	err := config.Validate(c)
 	if !isValidationError(err) {
 		t.Fatalf("err = %v, want ValidationError", err)
+	}
+
+	// A semantic config violation must classify as ErrInvalidConfig so the
+	// exit-code ladder reports EX_CONFIG (78), not the EX_SOFTWARE default.
+	if !errors.Is(err, errs.ErrInvalidConfig) {
+		t.Errorf("err should wrap errs.ErrInvalidConfig, got %v", err)
 	}
 
 	for _, want := range []string{"gradle-lib", "maven-app", "npm-public"} {

@@ -12,16 +12,16 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
 )
 
-//nolint:cyclop // exercises many invariants on one DevReleasePlan.
-func TestNewDevReleasePlan_UsesFallbackProjectTypeAndBuildsStagePlans(t *testing.T) {
+//nolint:cyclop // exercises many invariants on one SnapshotReleasePlan.
+func TestNewSnapshotReleasePlan_UsesFallbackProjectTypeAndBuildsStagePlans(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{
 		Artifacts: []config.Artifact{
 			{Name: "api", ProjectType: projecttype.NPM}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			{Name: "rust-service", ProjectType: projecttype.Cargo, Cargo: &config.CargoConfig{BuildMode: config.CargoBuildModeContainerFirst}}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			{Name: "go-cli", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeArtifactFirst}}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			{Name: "go-service", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeContainerFirst}}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			{Name: "go-cli", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeArtifactFirst}},                    //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			{Name: "go-service", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeContainerFirst}},               //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		},
 		Containers: []config.Container{{Name: "image"}}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}
@@ -31,19 +31,18 @@ func TestNewDevReleasePlan_UsesFallbackProjectTypeAndBuildsStagePlans(t *testing
 
 	configPlan := pipeline.NewConfigPlan(cfg)
 
-	plan, err := pipeline.NewDevReleasePlan(pipeline.DevReleasePlanInput{
-		ConfigPlan:       configPlan,
-		Branch:           "feature/dev",
-		PublishNPM:       true,
-		UseCIToken:       true,
-		PublishContainer: true,
-		SBOMs:            "build", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+	plan, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
+		ConfigPlan: configPlan,
+		Branch:     "feature/dev",
+		PublishNPM: true,
+		UseCIToken: true,
+		SBOMs:      "build", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if plan.Version != pipeline.DevReleasePlanVersion {
+	if plan.Version != pipeline.SnapshotReleasePlanVersion {
 		t.Errorf("version = %d", plan.Version)
 	}
 
@@ -53,10 +52,6 @@ func TestNewDevReleasePlan_UsesFallbackProjectTypeAndBuildsStagePlans(t *testing
 
 	if plan.Context.WorkingDirectory != "." || plan.Context.RustToolchain != "stable" {
 		t.Errorf("context defaults = %+v", plan.Context)
-	}
-
-	if !plan.HasContainers || !plan.Stages.Publish.Targets.Containers.Runs {
-		t.Errorf("container targets = %+v", plan.Stages.Publish.Targets.Containers)
 	}
 
 	if !plan.Stages.Build.Targets.NPM.Runs || !plan.Stages.Build.Targets.Go.Runs {
@@ -104,7 +99,7 @@ func TestNewDevReleasePlan_UsesFallbackProjectTypeAndBuildsStagePlans(t *testing
 	}
 }
 
-func TestNewDevReleasePlan_ComputesExplicitBinaryTransfers(t *testing.T) {
+func TestNewSnapshotReleasePlan_ComputesExplicitBinaryTransfers(t *testing.T) {
 	t.Parallel()
 
 	configPlan := pipeline.NewConfigPlan(&config.Config{
@@ -112,16 +107,15 @@ func TestNewDevReleasePlan_ComputesExplicitBinaryTransfers(t *testing.T) {
 		Containers: []config.Container{{
 			Name:      "api",
 			From:      []string{"go-service"},
-			Platforms: "linux/amd64,linux/arm64", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			Platforms: "linux/amd64,linux/arm64",                                                          //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			Extract:   &config.ContainerExtract{Binary: &config.ContainerExtractBinary{Target: "export"}}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		}},
 	})
 
-	plan, err := pipeline.NewDevReleasePlan(pipeline.DevReleasePlanInput{
-		ConfigPlan:       configPlan,
-		ProjectType:      projecttype.Go,
-		PublishContainer: true,
-		SBOMs:            "analyzed-artifact", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+	plan, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
+		ConfigPlan:  configPlan,
+		ProjectType: projecttype.Go,
+		SBOMs:       "analyzed-artifact", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -132,12 +126,12 @@ func TestNewDevReleasePlan_ComputesExplicitBinaryTransfers(t *testing.T) {
 	}
 }
 
-func TestNewDevReleasePlan_ProjectTypeOverrideWins(t *testing.T) {
+func TestNewSnapshotReleasePlan_ProjectTypeOverrideWins(t *testing.T) {
 	t.Parallel()
 
 	configPlan := pipeline.NewConfigPlan(&config.Config{Artifacts: []config.Artifact{{Name: "api", ProjectType: projecttype.NPM}}})
 
-	plan, err := pipeline.NewDevReleasePlan(pipeline.DevReleasePlanInput{
+	plan, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
 		ConfigPlan:  configPlan,
 		ProjectType: projecttype.Maven,
 	})
@@ -150,10 +144,10 @@ func TestNewDevReleasePlan_ProjectTypeOverrideWins(t *testing.T) {
 	}
 }
 
-func TestNewDevReleasePlan_RejectsUnsupportedConfigPlanVersion(t *testing.T) {
+func TestNewSnapshotReleasePlan_RejectsUnsupportedConfigPlanVersion(t *testing.T) {
 	t.Parallel()
 
-	_, err := pipeline.NewDevReleasePlan(pipeline.DevReleasePlanInput{
+	_, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
 		ConfigPlan: pipeline.ConfigPlan{Version: pipeline.ConfigPlanVersion + 1},
 	})
 	if err == nil || !strings.Contains(err.Error(), "unsupported config-plan version") {
@@ -161,12 +155,12 @@ func TestNewDevReleasePlan_RejectsUnsupportedConfigPlanVersion(t *testing.T) {
 	}
 }
 
-func TestNewDevReleasePlan_RejectsInvalidSBOMInput(t *testing.T) {
+func TestNewSnapshotReleasePlan_RejectsInvalidSBOMInput(t *testing.T) {
 	t.Parallel()
 
 	configPlan := pipeline.NewConfigPlan(&config.Config{Artifacts: []config.Artifact{{Name: "api", ProjectType: projecttype.NPM}}})
 
-	_, err := pipeline.NewDevReleasePlan(pipeline.DevReleasePlanInput{
+	_, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
 		ConfigPlan: configPlan,
 		SBOMs:      "bogus",
 	})
@@ -175,10 +169,10 @@ func TestNewDevReleasePlan_RejectsInvalidSBOMInput(t *testing.T) {
 	}
 }
 
-func TestNewDevReleasePlan_EmptyProjectTypeErrors(t *testing.T) {
+func TestNewSnapshotReleasePlan_EmptyProjectTypeErrors(t *testing.T) {
 	t.Parallel()
 
-	_, err := pipeline.NewDevReleasePlan(pipeline.DevReleasePlanInput{
+	_, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
 		ConfigPlan: pipeline.ConfigPlan{Version: pipeline.ConfigPlanVersion},
 	})
 	if err == nil || !strings.Contains(err.Error(), "project-type is empty") {
@@ -186,12 +180,12 @@ func TestNewDevReleasePlan_EmptyProjectTypeErrors(t *testing.T) {
 	}
 }
 
-func TestNewDevReleasePlan_RejectsUnknownProjectType(t *testing.T) {
+func TestNewSnapshotReleasePlan_RejectsUnknownProjectType(t *testing.T) {
 	t.Parallel()
 
 	configPlan := pipeline.NewConfigPlan(&config.Config{Artifacts: []config.Artifact{{Name: "api", ProjectType: projecttype.NPM}}})
 
-	_, err := pipeline.NewDevReleasePlan(pipeline.DevReleasePlanInput{
+	_, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
 		ConfigPlan:  configPlan,
 		ProjectType: "rust",
 	})
@@ -200,7 +194,7 @@ func TestNewDevReleasePlan_RejectsUnknownProjectType(t *testing.T) {
 	}
 }
 
-func TestNewDevReleasePlan_RejectsMultipleNPMDevPublishTargets(t *testing.T) {
+func TestNewSnapshotReleasePlan_RejectsMultipleNPMDevPublishTargets(t *testing.T) {
 	t.Parallel()
 
 	configPlan := pipeline.NewConfigPlan(&config.Config{Artifacts: []config.Artifact{
@@ -208,7 +202,7 @@ func TestNewDevReleasePlan_RejectsMultipleNPMDevPublishTargets(t *testing.T) {
 		{Name: "web", ProjectType: projecttype.NPM}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}})
 
-	_, err := pipeline.NewDevReleasePlan(pipeline.DevReleasePlanInput{
+	_, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
 		ConfigPlan:  configPlan,
 		ProjectType: projecttype.NPM,
 		PublishNPM:  true,
@@ -218,7 +212,7 @@ func TestNewDevReleasePlan_RejectsMultipleNPMDevPublishTargets(t *testing.T) {
 	}
 }
 
-func TestNewDevReleasePlan_RejectsMultipleCargoDevSBOMTargets(t *testing.T) {
+func TestNewSnapshotReleasePlan_RejectsMultipleCargoDevSBOMTargets(t *testing.T) {
 	t.Parallel()
 
 	configPlan := pipeline.NewConfigPlan(&config.Config{Artifacts: []config.Artifact{
@@ -226,7 +220,7 @@ func TestNewDevReleasePlan_RejectsMultipleCargoDevSBOMTargets(t *testing.T) {
 		{Name: "cli", ProjectType: projecttype.Cargo, Cargo: &config.CargoConfig{BuildMode: config.CargoBuildModeContainerFirst}},
 	}})
 
-	_, err := pipeline.NewDevReleasePlan(pipeline.DevReleasePlanInput{
+	_, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
 		ConfigPlan:  configPlan,
 		ProjectType: projecttype.Cargo,
 		SBOMs:       "build",
@@ -236,7 +230,7 @@ func TestNewDevReleasePlan_RejectsMultipleCargoDevSBOMTargets(t *testing.T) {
 	}
 }
 
-func TestNewDevReleasePlan_RejectsAmbiguousGoDevSBOMArtifactName(t *testing.T) {
+func TestNewSnapshotReleasePlan_RejectsAmbiguousGoDevSBOMArtifactName(t *testing.T) {
 	t.Parallel()
 
 	configPlan := pipeline.NewConfigPlan(&config.Config{Artifacts: []config.Artifact{
@@ -244,7 +238,7 @@ func TestNewDevReleasePlan_RejectsAmbiguousGoDevSBOMArtifactName(t *testing.T) {
 		{Name: "go-service", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeContainerFirst}},
 	}})
 
-	_, err := pipeline.NewDevReleasePlan(pipeline.DevReleasePlanInput{
+	_, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
 		ConfigPlan:  configPlan,
 		ProjectType: projecttype.Go,
 		SBOMs:       "analyzed-artifact",

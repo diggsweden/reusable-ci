@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
 )
 
@@ -28,29 +29,29 @@ var buildSecretNamePattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 //
 //nolint:gochecknoglobals // immutable lookup table.
 var reusableCIReservedSecretNames = map[string]bool{
-	"REUSABLE_CI_BUILD_SECRETS_JSON":        true,
-	"RELEASE_GPG_PRIVATE_KEY":               true,
-	"RELEASE_GPG_PASSPHRASE":                true,
-	"RELEASE_GPG_PUBLIC_KEY":                true,
-	"RELEASE_TOKEN":                         true,
-	"MAVEN_CENTRAL_USERNAME":                true,
-	"MAVEN_CENTRAL_PASSWORD":                true,
-	"NPM_TOKEN":                             true,
-	"CODE_SCANNING_TOKEN":                   true,
-	"ANDROID_KEYSTORE":                      true,
-	"ANDROID_KEYSTORE_PASSWORD":             true,
-	"ANDROID_KEY_ALIAS":                     true,
-	"ANDROID_KEY_PASSWORD":                  true,
-	"SECRETS_PROPERTIES_BASE64":             true,
-	"IOS_SIGNING_CERTIFICATE_BASE64":        true,
-	"IOS_SIGNING_CERTIFICATE_PASSPHRASE":    true,
-	"PROVISIONING_PROFILE_BASE64":           true,
-	"KEYCHAIN_PASSWORD":                     true,
-	"XCCONFIG_BASE64":                       true,
-	"APP_STORE_CONNECT_API_KEY_ID":          true,
-	"APP_STORE_CONNECT_ISSUER_ID":           true,
+	"REUSABLE_CI_BUILD_SECRETS_JSON":           true,
+	"RELEASE_GPG_PRIVATE_KEY":                  true,
+	"RELEASE_GPG_PASSPHRASE":                   true,
+	"RELEASE_GPG_PUBLIC_KEY":                   true,
+	"RELEASE_TOKEN":                            true,
+	"MAVEN_CENTRAL_USERNAME":                   true,
+	"MAVEN_CENTRAL_PASSWORD":                   true,
+	"NPM_TOKEN":                                true,
+	"CODE_SCANNING_TOKEN":                      true,
+	"ANDROID_KEYSTORE":                         true,
+	"ANDROID_KEYSTORE_PASSWORD":                true,
+	"ANDROID_KEY_ALIAS":                        true,
+	"ANDROID_KEY_PASSWORD":                     true,
+	"SECRETS_PROPERTIES_BASE64":                true,
+	"IOS_SIGNING_CERTIFICATE_BASE64":           true,
+	"IOS_SIGNING_CERTIFICATE_PASSPHRASE":       true,
+	"PROVISIONING_PROFILE_BASE64":              true,
+	"KEYCHAIN_PASSWORD":                        true,
+	"XCCONFIG_BASE64":                          true,
+	"APP_STORE_CONNECT_API_KEY_ID":             true,
+	"APP_STORE_CONNECT_ISSUER_ID":              true,
 	"APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64": true,
-	"GOOGLE_PLAY_SERVICE_ACCOUNT_JSON":      true,
+	"GOOGLE_PLAY_SERVICE_ACCOUNT_JSON":         true,
 }
 
 // validateBuildSecrets enforces the env-var-name shape on each entry
@@ -108,6 +109,30 @@ func (e *ValidationError) Error() string {
 	}
 
 	return fmt.Sprintf("config: %d validation errors: %v", len(e.Violations), e.Violations)
+}
+
+// Unwrap ties a semantic config-validation failure to ErrInvalidConfig so
+// main()'s exit-code ladder maps it to EX_CONFIG (78) — the same code the
+// YAML-parse path uses — rather than the unclassified EX_SOFTWARE (70).
+func (e *ValidationError) Unwrap() error { return errs.ErrInvalidConfig }
+
+// unsupportedTargetReason explains why an artifact cannot publish to a
+// target. For maven-central the real constraint is build-type — libraries
+// publish to Central, applications don't — so the generic "does not
+// support" wording would mislead (maven *does* support Central). Spell the
+// rule out and show the artifact's actual build-type.
+func unsupportedTargetReason(artifact Artifact, target PublishTarget) string {
+	if target == PublishMavenCentral && artifact.ProjectType == projecttype.Maven {
+		return fmt.Sprintf(
+			"artifact %q: publish target %q requires build-type %q (got %q)",
+			artifact.Name, target, BuildTypeLibrary, artifact.BuildType,
+		)
+	}
+
+	return fmt.Sprintf(
+		"artifact %q with project-type %q does not support publish target %q",
+		artifact.Name, artifact.ProjectType, target,
+	)
 }
 
 // Validate checks Config against the schema rules: artifacts list non-empty,
@@ -222,10 +247,7 @@ func validateArtifact(a Artifact, idx int, artifactNames map[string]bool, validT
 		}
 
 		if !SupportedPublishTarget(a, target) {
-			v = append(v, fmt.Sprintf(
-				"artifact %q with project-type %q does not support publish target %q",
-				a.Name, a.ProjectType, target,
-			))
+			v = append(v, unsupportedTargetReason(a, target))
 		}
 	}
 

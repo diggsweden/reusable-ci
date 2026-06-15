@@ -17,7 +17,7 @@ func TestSanitizePathToken(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"main", "main"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		{"main", "main"},                 //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{"feat/awesome", "feat-awesome"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{"feat/awesome/sub", "feat-awesome-sub"},
 		{"release/2026.05", "release-2026.05"},
@@ -36,7 +36,7 @@ func TestSanitizePathToken(t *testing.T) {
 		{"--", ""},
 		{"////", ""},
 		{"v1.2.3", "v1.2.3"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		{"0.5.9-dev-feat-x-abc1234", "0.5.9-dev-feat-x-abc1234"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		{"0.5.9-snapshot-feat-x-abc1234", "0.5.9-snapshot-feat-x-abc1234"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}
 
 	for _, tc := range tests {
@@ -70,7 +70,7 @@ func TestSanitizePathToken(t *testing.T) {
 func TestSanitizePathToken_Idempotent(t *testing.T) {
 	t.Parallel()
 
-	for _, in := range []string{"feat/x", "0.5.9-dev-feat-x-abc1234", "////"} {
+	for _, in := range []string{"feat/x", "0.5.9-snapshot-feat-x-abc1234", "////"} {
 		t.Run(in, func(t *testing.T) {
 			t.Parallel()
 
@@ -84,7 +84,7 @@ func TestSanitizePathToken_Idempotent(t *testing.T) {
 	}
 }
 
-func TestComposeDevVersion(t *testing.T) {
+func TestComposeSnapshotVersion(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -94,19 +94,19 @@ func TestComposeDevVersion(t *testing.T) {
 		shortSHA    string
 		want        string
 	}{
-		{name: "main happy path", baseVersion: "0.5.9", branch: "main", shortSHA: "abc1234", want: "0.5.9-dev-main-abc1234"},
-		{name: "branch sanitised", baseVersion: "1.0.0", branch: "feat/awesome", shortSHA: "deadbee", want: "1.0.0-dev-feat-awesome-deadbee"},
-		{name: "empty base falls back to 0.0.0", baseVersion: "", branch: "main", shortSHA: "abc1234", want: "0.0.0-dev-main-abc1234"},
-		{name: "renovate slashes", baseVersion: "2.1.0", branch: "renovate/some-pkg/3.x", shortSHA: "1234567", want: "2.1.0-dev-renovate-some-pkg-3.x-1234567"},
+		{name: "main happy path", baseVersion: "0.5.9", branch: "main", shortSHA: "abc1234", want: "0.5.9-snapshot-main-abc1234"},
+		{name: "branch sanitised", baseVersion: "1.0.0", branch: "feat/awesome", shortSHA: "deadbee", want: "1.0.0-snapshot-feat-awesome-deadbee"},
+		{name: "empty base falls back to 0.0.0", baseVersion: "", branch: "main", shortSHA: "abc1234", want: "0.0.0-snapshot-main-abc1234"},
+		{name: "renovate slashes", baseVersion: "2.1.0", branch: "renovate/some-pkg/3.x", shortSHA: "1234567", want: "2.1.0-snapshot-renovate-some-pkg-3.x-1234567"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := version.ComposeDevVersion(tc.baseVersion, tc.branch, tc.shortSHA)
+			got := version.ComposeSnapshotVersion(tc.baseVersion, tc.branch, tc.shortSHA)
 			if got != tc.want {
-				t.Errorf("ComposeDevVersion = %q, want %q", got, tc.want)
+				t.Errorf("ComposeSnapshotVersion = %q, want %q", got, tc.want)
 			}
 		})
 	}

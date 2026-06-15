@@ -21,18 +21,18 @@ const ArtifactTransferPlanVersion = 1
 
 // ReleasePlanInput contains workflow inputs plus the parsed config plan.
 type ReleasePlanInput struct {
-	ConfigPlan                ConfigPlan
-	Branch                    string
-	RefName                   string
-	FilePattern               string
-	ReleaseType               string
-	ReleasePublisher          string
+	ConfigPlan                      ConfigPlan
+	Branch                          string
+	RefName                         string
+	FilePattern                     string
+	ReleaseType                     string
+	ReleasePublisher                string
 	ReleaseRequireAllowlistedSigner bool
-	ReleaseDraft              bool
-	ReleaseSBOMs              string
-	ReleaseSignArtifacts      bool
-	ChangelogCreator          string
-	ChangelogSkipVersionBump  bool
+	ReleaseDraft                    bool
+	ReleaseSBOMs                    string
+	ReleaseSignArtifacts            bool
+	ChangelogCreator                string
+	ChangelogSkipVersionBump        bool
 }
 
 // ReleasePlan is the top-level typed contract for production release setup.
@@ -56,15 +56,15 @@ type ReleaseContext struct {
 
 // ReleasePolicy is the release policy envelope carried by the typed plan.
 type ReleasePolicy struct {
-	SignArtifacts      bool                 `json:"sign_artifacts"`
+	SignArtifacts            bool                 `json:"sign_artifacts"`
 	RequireAllowlistedSigner bool                 `json:"require_allowlisted_signer"`
-	RunVersionBump     bool                 `json:"run_version_bump"`
-	CreateRelease      bool                 `json:"create_release"`
-	CreateDraftRelease bool                 `json:"create_draft_release"`
-	SBOMs              string               `json:"sboms"`
-	MakeLatest         bool                 `json:"make_latest"`
-	HasContainers      bool                 `json:"has_containers"`
-	SBOMConflict       *ReleaseSBOMConflict `json:"sbom_conflict,omitempty"`
+	RunVersionBump           bool                 `json:"run_version_bump"`
+	CreateRelease            bool                 `json:"create_release"`
+	CreateDraftRelease       bool                 `json:"create_draft_release"`
+	SBOMs                    string               `json:"sboms"`
+	MakeLatest               bool                 `json:"make_latest"`
+	HasContainers            bool                 `json:"has_containers"`
+	SBOMConflict             *ReleaseSBOMConflict `json:"sbom_conflict,omitempty"`
 }
 
 // ReleaseSBOMConflict records a non-empty release/pipeline SBOM mismatch.
@@ -183,11 +183,11 @@ type ReleasePublishStagePlan struct {
 
 // ReleasePublishTargets are the release publish-stage jobs.
 type ReleasePublishTargets struct {
-	GitHubPackages   TargetPlan[PlannedArtifact]  `json:"github_packages"`
-	MavenCentral     TargetPlan[PlannedArtifact]  `json:"maven_central"`
-	GooglePlay       TargetPlan[PlannedArtifact]  `json:"google_play"`
-	XcodeIOS         TargetPlan[PlannedArtifact]  `json:"xcode_ios"`
-	Containers       TargetPlan[PlannedContainer] `json:"containers"`
+	GitHubPackages      TargetPlan[PlannedArtifact]  `json:"github_packages"`
+	MavenCentral        TargetPlan[PlannedArtifact]  `json:"maven_central"`
+	GooglePlay          TargetPlan[PlannedArtifact]  `json:"google_play"`
+	XcodeIOS            TargetPlan[PlannedArtifact]  `json:"xcode_ios"`
+	Containers          TargetPlan[PlannedContainer] `json:"containers"`
 	CargoContainerFirst TargetPlan[PlannedArtifact]  `json:"cargo_container_first"`
 	GoContainerFirst    TargetPlan[PlannedArtifact]  `json:"go_container_first"`
 }
@@ -199,18 +199,18 @@ func NewReleasePlan(in ReleasePlanInput) (ReleasePlan, error) {
 	}
 
 	policy, err := resolveReleasePolicy(releasePolicyInputs{
-		ReleaseType:               in.ReleaseType,
-		ReleasePublisher:          in.ReleasePublisher,
+		ReleaseType:                     in.ReleaseType,
+		ReleasePublisher:                in.ReleasePublisher,
 		ReleaseRequireAllowlistedSigner: in.ReleaseRequireAllowlistedSigner,
-		ReleaseDraft:              in.ReleaseDraft,
-		ReleaseSBOMs:              in.ReleaseSBOMs,
-		ReleaseSignArtifacts:      in.ReleaseSignArtifacts,
-		ChangelogCreator:          in.ChangelogCreator,
-		ChangelogSkipVersionBump:  in.ChangelogSkipVersionBump,
-		RefName:                   in.RefName,
-		PipelineSBOMs:             in.ConfigPlan.PipelineSBOMs,
-		AnyRequireAuthorization:   in.ConfigPlan.AnyRequireAuthorization,
-		HasContainers:             in.ConfigPlan.Containers.HasContainers,
+		ReleaseDraft:                    in.ReleaseDraft,
+		ReleaseSBOMs:                    in.ReleaseSBOMs,
+		ReleaseSignArtifacts:            in.ReleaseSignArtifacts,
+		ChangelogCreator:                in.ChangelogCreator,
+		ChangelogSkipVersionBump:        in.ChangelogSkipVersionBump,
+		RefName:                         in.RefName,
+		PipelineSBOMs:                   in.ConfigPlan.PipelineSBOMs,
+		AnyRequireAuthorization:         in.ConfigPlan.AnyRequireAuthorization,
+		HasContainers:                   in.ConfigPlan.Containers.HasContainers,
 	})
 	if err != nil {
 		return ReleasePlan{}, err
@@ -304,6 +304,7 @@ func NewReleasePublishStagePlan(configPlan ConfigPlan, buildSBOM bool) ReleasePu
 
 // NewReleaseArtifactTransferPlan builds the release-create artifact download
 // plan without wildcard artifact names.
+//
 //nolint:cyclop // plans transfers with one branch per artifact category.
 func NewReleaseArtifactTransferPlan(configPlan ConfigPlan, policy ReleasePolicy) ArtifactTransferPlan {
 	items := make([]ArtifactTransfer, 0)

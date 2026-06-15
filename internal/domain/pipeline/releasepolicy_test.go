@@ -13,7 +13,7 @@ import "testing"
 func baseInputs() releasePolicyInputs {
 	return releasePolicyInputs{
 		ReleaseSBOMs:  "all",
-		PipelineSBOMs: "none", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		PipelineSBOMs: "none",   //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		RefName:       "v1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}
 }

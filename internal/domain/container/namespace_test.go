@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/container"
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 )
 
 func TestValidateNamespace(t *testing.T) {
@@ -24,9 +25,9 @@ func TestValidateNamespace(t *testing.T) {
 			name: "exact prefix",
 			in: container.ValidateNamespaceInput{
 				ImageName:        "ghcr.io/myorg/myrepo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-				Repository:       "myorg/myrepo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-				Registry:         "ghcr.io", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-				EnforceNamespace: "myorg", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+				Repository:       "myorg/myrepo",         //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+				Registry:         "ghcr.io",              //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+				EnforceNamespace: "myorg",                //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			},
 		},
 		{
@@ -115,7 +116,7 @@ func TestValidateNamespace(t *testing.T) {
 				ImageName:        "registry.gitlab.com/group/project/image",
 				Repository:       "group/project",
 				Registry:         "registry.gitlab.com", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-				EnforceNamespace: "group", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+				EnforceNamespace: "group",               //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			},
 		},
 
@@ -127,6 +128,41 @@ func TestValidateNamespace(t *testing.T) {
 				Repository:       "diggsweden/myorg/myrepo",
 				Registry:         "ghcr.io",
 				EnforceNamespace: "myorg",
+			},
+		},
+
+		// === Self-hosted registry: enforced when listed (the adopter path) ===
+		// Without EnforceOnRegistries this image would silently pass; an
+		// adopter sets it to their registry so the namespace check runs.
+		{
+			name: "self-hosted registry enforced — valid namespace",
+			in: container.ValidateNamespaceInput{
+				ImageName:           "harbor.example.gov/myorg/myrepo",
+				Repository:          "myorg/myrepo",
+				Registry:            "harbor.example.gov",
+				EnforceNamespace:    "myorg",
+				EnforceOnRegistries: []string{"harbor.example.gov"},
+			},
+		},
+		{
+			name: "self-hosted registry enforced — namespace violation caught",
+			in: container.ValidateNamespaceInput{
+				ImageName:           "harbor.example.gov/evil/myrepo",
+				Repository:          "myorg/myrepo",
+				Registry:            "harbor.example.gov",
+				EnforceNamespace:    "myorg",
+				EnforceOnRegistries: []string{"harbor.example.gov"},
+			},
+			wantErr: true, wantViolation: true,
+		},
+		{
+			name: "registry not in enforce set is skipped even when explicit set is given",
+			in: container.ValidateNamespaceInput{
+				ImageName:           "ghcr.io/evil/myrepo",
+				Repository:          "myorg/myrepo",
+				Registry:            "ghcr.io",
+				EnforceNamespace:    "myorg",
+				EnforceOnRegistries: []string{"harbor.example.gov"},
 			},
 		},
 	}
@@ -144,6 +180,11 @@ func TestValidateNamespace(t *testing.T) {
 				var nv *container.NamespaceViolationError
 				if !errors.As(err, &nv) {
 					t.Errorf("err = %v, want NamespaceViolation", err)
+				}
+				// A namespace violation is a domain-rule failure → EX_VALIDATION
+				// (1), not the unclassified EX_SOFTWARE (70).
+				if !errors.Is(err, errs.ErrValidation) {
+					t.Errorf("err = %v, want wrapped errs.ErrValidation", err)
 				}
 			}
 		})

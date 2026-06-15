@@ -10,27 +10,162 @@ package provider
 
 import "context"
 
-// Platform identifies the CI provider the binary is running under.
+// Platform identifies the *forge API* the binary talks to — the server
+// REST surface used for releases, asset upload, token/permission checks,
+// repo metadata, and SARIF. It is one of two orthogonal axes; the other
+// is RunnerKind (the workflow-runner conventions). Forgejo runs on a
+// GitHub-Actions-compatible runner (RunnerGHA) but speaks a distinct
+// forge API (PlatformForgejo) — keeping the axes separate is what lets
+// one binary serve both without misrouting API calls.
 type Platform string
 
-// Recognised Platform values.
+// Recognised Platform (forge API) values.
 const (
-	PlatformGitHub Platform = "github"
-	PlatformGitLab Platform = "gitlab"
-	PlatformLocal  Platform = "local"
+	PlatformGitHub  Platform = "github"
+	PlatformGitLab  Platform = "gitlab"
+	PlatformForgejo Platform = "forgejo"
+	PlatformLocal   Platform = "local"
 )
 
 // String satisfies fmt.Stringer for ergonomic logging.
 func (p Platform) String() string { return string(p) }
 
+// AllPlatforms is the canonical, ordered set of forge-API platforms — the
+// single source consumers (IsValid, the --provider flag help/validation)
+// derive from, so adding a forge is one edit here.
+func AllPlatforms() []Platform {
+	return []Platform{PlatformGitHub, PlatformGitLab, PlatformForgejo, PlatformLocal}
+}
+
 // IsValid reports whether the value is one of the known platforms.
 func (p Platform) IsValid() bool {
-	switch p {
-	case PlatformGitHub, PlatformGitLab, PlatformLocal:
-		return true
+	for _, v := range AllPlatforms() {
+		if p == v {
+			return true
+		}
 	}
 
 	return false
+}
+
+// RunnerKind identifies the *workflow-runner conventions* the binary
+// emits for — output format, $*_OUTPUT key/value writes, annotation
+// vocabulary, and step-summary file. It is the second axis alongside
+// Platform (forge API). GitHub Actions and Forgejo Actions share
+// RunnerGHA; GitLab CI is RunnerGitLab; bare/dev invocations are
+// RunnerLocal.
+type RunnerKind string
+
+// Recognised RunnerKind values.
+const (
+	// RunnerGHA is the GitHub-Actions workflow-command dialect
+	// (::error::, $GITHUB_OUTPUT k=v, $GITHUB_STEP_SUMMARY). Forgejo
+	// Actions is wire-compatible with it.
+	RunnerGHA RunnerKind = "gha-compatible"
+
+	// RunnerGitLab is GitLab CI's dialect (section_start/section_end,
+	// dotenv $CI_OUTPUT appends, $CI_SUMMARY_FILE).
+	RunnerGitLab RunnerKind = "gitlab"
+
+	// RunnerLocal is a non-CI invocation (laptop / tests): plain text,
+	// no machine-readable sink.
+	RunnerLocal RunnerKind = "local"
+)
+
+// String satisfies fmt.Stringer for ergonomic logging.
+func (r RunnerKind) String() string { return string(r) }
+
+// AllRunnerKinds is the canonical, ordered set of runner conventions — the
+// single source consumers (IsValid, the --runner flag help/validation)
+// derive from.
+func AllRunnerKinds() []RunnerKind {
+	return []RunnerKind{RunnerGHA, RunnerGitLab, RunnerLocal}
+}
+
+// IsValid reports whether the value is one of the known runner kinds.
+func (r RunnerKind) IsValid() bool {
+	for _, v := range AllRunnerKinds() {
+		if r == v {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Info is a forge's self-description: the human labels and
+// conventions a generic command needs without branching on the forge's
+// identity. Each adapter returns its own values from Describe(), so app
+// code consults this instead of `switch`-ing on Platform.
+type Info struct {
+	DisplayName string // human name, e.g. "GitHub", "GitLab", "local"
+	SetupURL    string // where to create a release token ("" = none)
+	ScopesHint  string // human hint for the required token scopes
+	OIDCIssuer  string // default OIDC issuer ("" = caller must supply)
+}
+
+// Describer is implemented by providers that can describe their own
+// conventions. Every adapter implements it; app code depends on this
+// interface rather than the Platform enum.
+type Describer interface{ Describe() Info }
+
+// Capabilities reports which optional forge features are available, so
+// commands can degrade gracefully rather than calling an endpoint a
+// forge does not implement (e.g. Forgejo has no SARIF ingestion).
+type Capabilities struct {
+	SARIFUpload   bool `json:"sarif_upload"`   // ingest SARIF into a code-scanning surface
+	Attestation   bool `json:"attestation"`    // SLSA build-provenance attestation API
+	KeylessOIDC   bool `json:"keyless_oidc"`   // keyless signing via a runner OIDC issuer
+	ReleaseAssets bool `json:"release_assets"` // upload binary assets onto a release
+}
+
+// CapabilityReporter is implemented by providers that report their
+// feature set. Every adapter implements it.
+type CapabilityReporter interface{ Capabilities() Capabilities }
+
+// TokenAdviser is implemented by providers whose tokens have
+// recognisable shapes worth advising on (e.g. GitHub classic vs
+// fine-grained PATs). Optional: providers without token conventions
+// (GitLab, local) simply do not implement it.
+type TokenAdviser interface {
+	// AdviseToken inspects a token string and returns human advice plus
+	// whether the token must be refused. Empty advice with reject=false
+	// means "the shape is fine; say nothing".
+	AdviseToken(token string) (advice string, reject bool)
+}
+
+// ProvenanceProfile carries the forge-specific SLSA-provenance
+// vocabulary: the predicate build-type URI, the workflow directory
+// prefix (".forgejo/workflows/" vs ".github/workflows/"), and the
+// internal-parameters runner label. It lets the pure provenance domain
+// stay provider-agnostic — adapters supply these values.
+type ProvenanceProfile struct {
+	BuildType         string
+	WorkflowDirPrefix string
+	RunnerLabel       string
+}
+
+// ProvenanceProfiler is implemented by providers that can describe their
+// SLSA-provenance build profile (the GHA-compatible forges: github,
+// forgejo). Forges without a workflow-provenance story (gitlab, local)
+// do not implement it, so the CLI gates on its presence.
+type ProvenanceProfiler interface{ ProvenanceProfile() ProvenanceProfile }
+
+// TagDeleter removes a single container tag from the forge's registry,
+// keeping the underlying manifest. This is deliberately a per-forge role
+// (each forge's package/registry API differs) — it is NOT a generic OCI
+// operation: `skopeo delete` removes the manifest by digest, which would
+// destroy the promoted image when staging and final tags share a digest
+// (the shared-digest "promote a verified candidate" model). The forge's
+// package API is the only safe, tag-scoped delete.
+//
+// The method shape matches imageledger.TagDeleter, so a forge adapter
+// satisfies both the role here and the ledger domain port without either
+// domain importing the other.
+type TagDeleter interface {
+	// DeleteTag removes the tag named by ref (e.g.
+	// "codeberg.org/owner/repo:staging-v1.2.3"), keeping the manifest.
+	DeleteTag(ctx context.Context, ref string) error
 }
 
 // RefType describes whether the current ref is a branch, tag, or pull/merge
@@ -69,6 +204,12 @@ type RepoMetadata struct {
 	Description string
 	HTMLURL     string
 	LicenseSPDX string
+	// ObjectFormat is the repository hash algorithm ("sha1" or "sha256"),
+	// when the forge reports it. Empty means the forge does not expose it
+	// (e.g. GitHub) — callers default to sha1. `platform checkout` reads
+	// this to git-init the working tree with the right format instead of
+	// the curl+sed metadata probe the shell checkout used.
+	ObjectFormat string
 }
 
 // BotPermissions reports the result of probing the configured release
@@ -86,6 +227,16 @@ type BotPermissions struct {
 	BranchesAccessible bool
 }
 
+// MakeLatestMode is the platform value for release "latest" handling. GitHub
+// accepts "true", "false", and "legacy"; other forges may ignore it.
+type MakeLatestMode string
+
+const (
+	MakeLatestTrue   MakeLatestMode = "true"
+	MakeLatestFalse  MakeLatestMode = "false"
+	MakeLatestLegacy MakeLatestMode = "legacy"
+)
+
 // ReleaseSpec describes a release to create on the platform. Domain
 // code populates this from the use-case inputs + asset collection;
 // adapters consume it without further policy decisions.
@@ -99,7 +250,7 @@ type ReleaseSpec struct {
 	NotesFile  string // path; empty → no --notes-file
 	Draft      bool
 	Prerelease bool
-	MakeLatest bool
+	MakeLatest MakeLatestMode
 	Assets     []string // file paths to attach
 }
 
@@ -119,13 +270,12 @@ type SARIFUpload struct {
 	// Ref is the full git ref (refs/heads/main, refs/pull/N/merge).
 	Ref string
 
-	// SARIF is the raw SARIF JSON body (uncompressed, undeflated).
-	// Adapters apply the platform's required encoding.
+	// SARIF is the raw SARIF JSON body (uncompressed, undeflated). The
+	// analysis category is carried INSIDE this body as each run's
+	// automationDetails.id (set app-side by security.SetSARIFCategory) — the
+	// field Code Scanning keys analyses on. Adapters apply the platform's
+	// required encoding and do not handle category separately.
 	SARIF []byte
-
-	// Category is the tool-name surfaced in the Code Scanning UI.
-	// Empty → no category in the request.
-	Category string
 
 	// Token is the code-scanning-alerts:write token. Adapters that
 	// don't accept a token in their request shape ignore this.
@@ -201,4 +351,94 @@ type ReleaseAssetUploader interface {
 // this interface; transport / auth failures → propagate.
 type SARIFUploader interface {
 	UploadSARIF(ctx context.Context, up SARIFUpload) error
+}
+
+// RunArtifactUploader and RunArtifactDownloader model the ephemeral,
+// per-workflow-run artifact store — the thing actions/upload-artifact and
+// actions/download-artifact talk to. This is deliberately distinct from
+// the permanent release-asset roles above: run artifacts are an intra-CI
+// hand-off (build job → sign job), not published release assets.
+//
+// The interface is transport-free on purpose. Behind it each forge brings
+// its own mechanism:
+//   - forgejo: the in-run Actions runtime service (ACTIONS_RUNTIME_URL +
+//     ACTIONS_RUNTIME_TOKEN, v3 container protocol) — same-run scope only.
+//   - github: the repo REST artifacts API (cross-run reads) for download;
+//     upload is runtime-only and may be unimplemented (ErrUnsupported).
+//
+// Contract, independent of transport:
+//   - Exactly one artifact must match Name; zero or many is an error.
+//   - Download with an empty RunID means the current run. A provider that
+//     cannot reach other runs (forgejo's run-scoped runtime token) MUST
+//     return ErrUnsupported for an explicit foreign RunID rather than
+//     silently downloading the wrong thing.
+//   - Extraction is hardened: entries that escape the destination, are
+//     absolute, traverse "..", or are symlinks are rejected; per-file size
+//     is capped; credentials live only in transient request headers, never
+//     in argv or on disk.
+type RunArtifactUploader interface {
+	UploadRunArtifact(ctx context.Context, in RunArtifactUpload) (RunArtifactInfo, error)
+}
+
+// RunArtifactDownloader fetches a named run artifact into a directory.
+type RunArtifactDownloader interface {
+	DownloadRunArtifact(ctx context.Context, in RunArtifactDownload) (RunArtifactInfo, error)
+}
+
+// IfNoFilesPolicy selects what UploadRunArtifact does when the input
+// matches no files — mirroring actions/upload-artifact's if-no-files-found.
+type IfNoFilesPolicy string
+
+const (
+	// IfNoFilesError fails the upload (the safe default).
+	IfNoFilesError IfNoFilesPolicy = "error"
+	// IfNoFilesWarn logs and uploads nothing.
+	IfNoFilesWarn IfNoFilesPolicy = "warn"
+	// IfNoFilesIgnore silently uploads nothing.
+	IfNoFilesIgnore IfNoFilesPolicy = "ignore"
+)
+
+// RunArtifactUpload describes one upload into the current run. Exactly one
+// of Dir (upload the tree) or Files (an explicit set) is used.
+type RunArtifactUpload struct {
+	Name string
+	Dir  string
+	// Files are explicit literal files, flattened to their basenames.
+	Files []string
+	// Paths are glob patterns (*, ?, [set], ** and !excludes) whose matches
+	// preserve directory structure relative to their common root — the
+	// actions/upload-artifact `path:` contract. Mutually exclusive with Dir.
+	Paths         []string
+	RetentionDays int // 0 = forge default
+	IfNoFiles     IfNoFilesPolicy
+	// IncludeHidden uploads dotfiles/hidden entries. Off by default, matching
+	// actions/upload-artifact's include-hidden-files (false) — so a stray
+	// .git or .npmrc is never published unless explicitly asked for.
+	IncludeHidden bool
+}
+
+// RunArtifactDownload describes a download. RunID/Repository empty mean the
+// current run/repo. Either Name (one exact artifact) or Pattern (a glob over
+// artifact names, downloading every match) is given.
+type RunArtifactDownload struct {
+	Name string
+	// Pattern is a glob over artifact names (the JS download-artifact
+	// `pattern:`). When set, every matching artifact downloads and Name is
+	// ignored.
+	Pattern string
+	// MergeMultiple flattens every matched artifact's contents into Dir (the JS
+	// `merge-multiple: true`); otherwise each lands in Dir/<artifact-name>/.
+	MergeMultiple bool
+	Dir           string
+	RunID         string
+	Repository    string
+}
+
+// RunArtifactInfo is the result of an upload or download: the artifact
+// name, the forge's opaque id (when known), and the byte/file totals.
+type RunArtifactInfo struct {
+	Name      string
+	ID        string
+	Bytes     int64
+	FileCount int
 }

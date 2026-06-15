@@ -12,7 +12,7 @@ import (
 )
 
 // FuzzSanitizePathToken exercises the branch-name → path-safe-token
-// transform. The function is in the hot path for every dev-version
+// transform. The function is in the hot path for every snapshot-version
 // composition and every SBOM filename; an unexpected panic would take
 // out the entire CI run.
 //
@@ -22,12 +22,13 @@ import (
 //   - output contains only [a-zA-Z0-9._-]
 //   - output is valid UTF-8 (input may be invalid)
 //   - idempotent on already-clean input
+//
 //nolint:cyclop // fuzz harness exercising the sanitizer exhaustively.
 func FuzzSanitizePathToken(f *testing.F) {
 	// Seed corpus with shapes we've seen in the wild.
 	seeds := []string{
 		"",
-		"main", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"main",         //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"feat/awesome", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"release/2026.05",
 		"v1.2.3", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.

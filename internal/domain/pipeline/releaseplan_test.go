@@ -25,9 +25,9 @@ func TestNewReleasePlan_ComputesPolicyAndStagePlans(t *testing.T) {
 				PublishTo:            []config.PublishTarget{config.PublishMavenCentral},
 				RequireAuthorization: true,
 			},
-			{Name: "web", ProjectType: projecttype.NPM, PublishTo: []config.PublishTarget{config.PublishGitHubPackages}}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			{Name: "web", ProjectType: projecttype.NPM, PublishTo: []config.PublishTarget{config.PublishGitHubPackages}},                       //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			{Name: "rust-service", ProjectType: projecttype.Cargo, Cargo: &config.CargoConfig{BuildMode: config.CargoBuildModeContainerFirst}}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			{Name: "go-service", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeContainerFirst}}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			{Name: "go-service", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeContainerFirst}},               //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		},
 		Containers: []config.Container{{Name: "image"}}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}
@@ -37,7 +37,7 @@ func TestNewReleasePlan_ComputesPolicyAndStagePlans(t *testing.T) {
 
 	plan, err := pipeline.NewReleasePlan(pipeline.ReleasePlanInput{
 		ConfigPlan:           pipeline.NewConfigPlan(cfg),
-		Branch:               "main", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		Branch:               "main",   //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		RefName:              "v1.2.3", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		ReleasePublisher:     "github-cli",
 		ReleaseSBOMs:         "build,analyzed-artifact",

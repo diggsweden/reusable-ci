@@ -1,0 +1,57 @@
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    {
+      "name": "dist/app_linux_amd64.tar.gz",
+      "digest": {
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "dist/checksums.txt",
+      "digest": {
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  ],
+  "predicateType": "https://slsa.dev/provenance/v1",
+  "predicate": {
+    "buildDefinition": {
+      "buildType": "https://forgejo.org/actions/buildtypes/workflow/v1",
+      "externalParameters": {
+        "workflow": {
+          "ref": "v1.2.3",
+          "repository": "https://codeberg.org/itiquette/gommitlint",
+          "path": ".forgejo/workflows/release.yml"
+        }
+      },
+      "internalParameters": {
+        "runner": "forgejo-actions"
+      },
+      "resolvedDependencies": [
+        {
+          "uri": "git+https://codeberg.org/itiquette/gommitlint@v1.2.3",
+          "digest": {
+            "gitCommit": "cccccccccccccccccccccccccccccccccccccccc"
+          }
+        },
+        {
+          "uri": "pkg:golang/github.com/foo/bar@v1.2.3",
+          "digest": {
+            "gomod_h1": "abc123"
+          }
+        }
+      ]
+    },
+    "runDetails": {
+      "builder": {
+        "id": "https://codeberg.org/itiquette/gommitlint/.forgejo/workflows/release.yml@v1.2.3"
+      },
+      "metadata": {
+        "invocationId": "https://codeberg.org/itiquette/gommitlint/actions/runs/4242",
+        "startedOn": "2026-06-01T12:00:00Z",
+        "finishedOn": "2026-06-01T12:00:00Z"
+      }
+    }
+  }
+}

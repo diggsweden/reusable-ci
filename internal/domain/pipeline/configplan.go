@@ -8,6 +8,7 @@ import (
 	"cmp"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/internal/domain/build"
 	"github.com/diggsweden/reusable-ci/internal/domain/config"
 	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
 	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
@@ -37,33 +38,33 @@ type ConfigPlan struct {
 // for the orchestrator workflow's `permissions:` decision — keyless
 // Sigstore is the only method that needs id-token: write.
 type PlannedSign struct {
-	Method           domainrelease.SignMethod `json:"method"`
-	Key              string                   `json:"key,omitempty"`
-	OIDCIssuer       string                   `json:"oidc_issuer,omitempty"`
-	RequiresIDToken  bool                     `json:"requires_id_token"`
+	Method          domainrelease.SignMethod `json:"method"`
+	Key             string                   `json:"key,omitempty"`
+	OIDCIssuer      string                   `json:"oidc_issuer,omitempty"`
+	RequiresIDToken bool                     `json:"requires_id_token"`
 }
 
 // ArtifactSets groups artifacts by project type, Go build mode, and supported
 // publish target.
 type ArtifactSets struct {
-	All              []PlannedArtifact `json:"all"`
-	Maven            []PlannedArtifact `json:"maven"`
-	NPM              []PlannedArtifact `json:"npm"`
-	Gradle           []PlannedArtifact `json:"gradle"`
-	GradleAndroid    []PlannedArtifact `json:"gradle_android"`
-	XcodeIOS         []PlannedArtifact `json:"xcode_ios"`
-	Python           []PlannedArtifact `json:"python"`
-	Go               []PlannedArtifact `json:"go"`
+	All                 []PlannedArtifact `json:"all"`
+	Maven               []PlannedArtifact `json:"maven"`
+	NPM                 []PlannedArtifact `json:"npm"`
+	Gradle              []PlannedArtifact `json:"gradle"`
+	GradleAndroid       []PlannedArtifact `json:"gradle_android"`
+	XcodeIOS            []PlannedArtifact `json:"xcode_ios"`
+	Python              []PlannedArtifact `json:"python"`
+	Go                  []PlannedArtifact `json:"go"`
 	Cargo               []PlannedArtifact `json:"cargo"`
 	Meta                []PlannedArtifact `json:"meta"`
 	GoArtifactFirst     []PlannedArtifact `json:"go_artifact_first"`
 	GoContainerFirst    []PlannedArtifact `json:"go_container_first"`
 	CargoArtifactFirst  []PlannedArtifact `json:"cargo_artifact_first"`
 	CargoContainerFirst []PlannedArtifact `json:"cargo_container_first"`
-	GitHubPackages   []PlannedArtifact `json:"github_packages"`
-	MavenCentral     []PlannedArtifact `json:"maven_central"`
-	GooglePlay       []PlannedArtifact `json:"google_play"`
-	NPMJS            []PlannedArtifact `json:"npmjs"`
+	GitHubPackages      []PlannedArtifact `json:"github_packages"`
+	MavenCentral        []PlannedArtifact `json:"maven_central"`
+	GooglePlay          []PlannedArtifact `json:"google_play"`
+	NPMJS               []PlannedArtifact `json:"npmjs"`
 }
 
 // PlannedArtifact is the plan-facing artifact shape.
@@ -248,7 +249,7 @@ func planContainers(artifacts []config.Artifact, containers []config.Container) 
 			ContainerFile:               cmp.Or(c.ContainerFile, "Containerfile"),
 			Context:                     cmp.Or(c.Context, "."),
 			Target:                      c.Target,
-			Platforms:                   cmp.Or(c.Platforms, "linux/amd64"),
+			Platforms:                   cmp.Or(c.Platforms, build.DefaultPlatform),
 			EnableAnalyzedContainerSBOM: c.EnableAnalyzedContainerSBOM,
 			EnableSLSA:                  c.EnableSLSAEffective(),
 			EnableScan:                  c.EnableScanEffective(),

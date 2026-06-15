@@ -10,11 +10,11 @@ import (
 
 	"github.com/diggsweden/reusable-ci/internal/domain/config"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	domain "github.com/diggsweden/reusable-ci/internal/domain/release"
+	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
 )
 
 func TestSignConfig_EmptyDefaultsToGPG(t *testing.T) {
-	if got := (config.SignConfig{}).EffectiveMethod(); got != domain.SignMethodGPG {
+	if got := (config.SignConfig{}).EffectiveMethod(); got != domainrelease.SignMethodGPG {
 		t.Errorf("empty sign block must default to gpg, got %q", got)
 	}
 }
@@ -25,15 +25,15 @@ func TestSignConfig_Validate_HappyPaths(t *testing.T) {
 		in   config.SignConfig
 	}{
 		{"empty", config.SignConfig{}},
-		{"gpg explicit", config.SignConfig{Method: domain.SignMethodGPG}},
-		{"sigstore minimal", config.SignConfig{Method: domain.SignMethodSigstore}},
-		{"sigstore with issuer", config.SignConfig{Method: domain.SignMethodSigstore, OIDCIssuer: "https://gitlab.diggsweden.internal"}},
-		{"kms hashivault", config.SignConfig{Method: domain.SignMethodKMS, Key: "hashivault://transit/keys/release"}},
-		{"kms awskms", config.SignConfig{Method: domain.SignMethodKMS, Key: "awskms:///alias/release-signing"}},
-		{"kms gcpkms", config.SignConfig{Method: domain.SignMethodKMS, Key: "gcpkms://projects/p/locations/l/keyRings/r/cryptoKeys/k"}},
-		{"kms azurekms", config.SignConfig{Method: domain.SignMethodKMS, Key: "azurekms://vault.azure.net/keys/k/v"}},
-		{"kms pkcs11", config.SignConfig{Method: domain.SignMethodKMS, Key: "pkcs11:object=hsm-key"}},
-		{"kms file (local dev)", config.SignConfig{Method: domain.SignMethodKMS, Key: "file:./signing.key"}},
+		{"gpg explicit", config.SignConfig{Method: domainrelease.SignMethodGPG}},
+		{"sigstore minimal", config.SignConfig{Method: domainrelease.SignMethodSigstore}},
+		{"sigstore with issuer", config.SignConfig{Method: domainrelease.SignMethodSigstore, OIDCIssuer: "https://gitlab.diggsweden.internal"}},
+		{"kms hashivault", config.SignConfig{Method: domainrelease.SignMethodKMS, Key: "hashivault://transit/keys/release"}},
+		{"kms awskms", config.SignConfig{Method: domainrelease.SignMethodKMS, Key: "awskms:///alias/release-signing"}},
+		{"kms gcpkms", config.SignConfig{Method: domainrelease.SignMethodKMS, Key: "gcpkms://projects/p/locations/l/keyRings/r/cryptoKeys/k"}},
+		{"kms azurekms", config.SignConfig{Method: domainrelease.SignMethodKMS, Key: "azurekms://vault.azure.net/keys/k/v"}},
+		{"kms pkcs11", config.SignConfig{Method: domainrelease.SignMethodKMS, Key: "pkcs11:object=hsm-key"}},
+		{"kms file (local dev)", config.SignConfig{Method: domainrelease.SignMethodKMS, Key: "file:./signing.key"}},
 	}
 
 	for _, c := range cases {
@@ -50,11 +50,11 @@ func TestSignConfig_Validate_RejectsBadFieldCombinations(t *testing.T) {
 		name string
 		in   config.SignConfig
 	}{
-		{"gpg with key", config.SignConfig{Method: domain.SignMethodGPG, Key: "awskms:///alias/X"}},
-		{"gpg with issuer", config.SignConfig{Method: domain.SignMethodGPG, OIDCIssuer: "https://x"}},
-		{"sigstore with key", config.SignConfig{Method: domain.SignMethodSigstore, Key: "awskms:///alias/X"}},
-		{"kms missing key", config.SignConfig{Method: domain.SignMethodKMS}},
-		{"kms with issuer", config.SignConfig{Method: domain.SignMethodKMS, Key: "awskms:///alias/X", OIDCIssuer: "https://x"}},
+		{"gpg with key", config.SignConfig{Method: domainrelease.SignMethodGPG, Key: "awskms:///alias/X"}},
+		{"gpg with issuer", config.SignConfig{Method: domainrelease.SignMethodGPG, OIDCIssuer: "https://x"}},
+		{"sigstore with key", config.SignConfig{Method: domainrelease.SignMethodSigstore, Key: "awskms:///alias/X"}},
+		{"kms missing key", config.SignConfig{Method: domainrelease.SignMethodKMS}},
+		{"kms with issuer", config.SignConfig{Method: domainrelease.SignMethodKMS, Key: "awskms:///alias/X", OIDCIssuer: "https://x"}},
 		{"unknown method", config.SignConfig{Method: "openssl"}},
 	}
 
@@ -75,7 +75,7 @@ func TestSignConfig_Validate_KMSKeySchemeAllowlist(t *testing.T) {
 	badKeys := []string{
 		"/etc/secrets/private.key",
 		"../../../tmp/private.key",
-		"./local.key",        // no `file:` prefix → reject
+		"./local.key",         // no `file:` prefix → reject
 		"http://attacker/key", // wrong scheme entirely
 		"ftp://x",
 		"javascript:alert(0)",
@@ -84,7 +84,7 @@ func TestSignConfig_Validate_KMSKeySchemeAllowlist(t *testing.T) {
 
 	for _, k := range badKeys {
 		t.Run("reject "+k, func(t *testing.T) {
-			cfg := config.SignConfig{Method: domain.SignMethodKMS, Key: k}
+			cfg := config.SignConfig{Method: domainrelease.SignMethodKMS, Key: k}
 
 			err := cfg.Validate()
 			if !errors.Is(err, errs.ErrInvalidConfig) {
@@ -107,7 +107,7 @@ func TestSignConfig_Validate_OIDCIssuerMustBeHTTPS(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			cfg := config.SignConfig{Method: domain.SignMethodSigstore, OIDCIssuer: c.in}
+			cfg := config.SignConfig{Method: domainrelease.SignMethodSigstore, OIDCIssuer: c.in}
 
 			err := cfg.Validate()
 			if !errors.Is(err, errs.ErrInvalidConfig) {
@@ -118,7 +118,7 @@ func TestSignConfig_Validate_OIDCIssuerMustBeHTTPS(t *testing.T) {
 }
 
 func TestSignConfig_Validate_KMSKeyErrorMessageIsActionable(t *testing.T) {
-	cfg := config.SignConfig{Method: domain.SignMethodKMS, Key: "./somekey"}
+	cfg := config.SignConfig{Method: domainrelease.SignMethodKMS, Key: "./somekey"}
 
 	err := cfg.Validate()
 	if err == nil {

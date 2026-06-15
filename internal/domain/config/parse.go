@@ -81,6 +81,7 @@ func (a *Artifact) UnmarshalYAML(value *yaml.Node) error {
 
 // decodeEcosystemConfig strict-decodes the raw config:-block node into
 // the typed sub-struct on a matching ProjectType. Unknown keys fail.
+//
 //nolint:cyclop // decode dispatch: one branch per supported ecosystem (npm/maven/gradle/...).
 func decodeEcosystemConfig(a *Artifact, node *yaml.Node) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	switch a.ProjectType {

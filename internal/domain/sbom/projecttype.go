@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
 )
 
 // ValidProjectTypes is the SBOM-context valid list — accepted by the

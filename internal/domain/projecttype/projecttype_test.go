@@ -25,7 +25,7 @@ func TestDetectFromEntries_PriorityOrder(t *testing.T) {
 		entries []string
 		want    projecttype.Type
 	}{
-		{"pom_wins", []string{"pom.xml", "package.json"}, projecttype.Maven}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		{"pom_wins", []string{"pom.xml", "package.json"}, projecttype.Maven},        //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{"package_json", []string{"package.json", "build.gradle"}, projecttype.NPM}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{"build_gradle_jvm", []string{"build.gradle"}, projecttype.Gradle},
 		{"build_gradle_kts", []string{"build.gradle.kts"}, projecttype.Gradle},

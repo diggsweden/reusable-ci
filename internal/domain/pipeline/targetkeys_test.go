@@ -57,7 +57,6 @@ func TestTargetKeys_MatchStructTags(t *testing.T) {
 		{TargetGoContainerFirst, ReleasePublishTargets{}, "GoContainerFirst"},
 
 		// Dev publish-stage targets.
-		{TargetContainers, DevPublishTargets{}, "Containers"},
 		{TargetNPM, DevPublishTargets{}, "NPM"},
 		{TargetCargoContainerFirst, DevPublishTargets{}, "CargoContainerFirst"},
 		{TargetGoContainerFirst, DevPublishTargets{}, "GoContainerFirst"},

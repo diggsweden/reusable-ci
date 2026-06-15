@@ -12,11 +12,11 @@ import (
 
 func TestMapTrivyFailSeverity(t *testing.T) {
 	cases := map[string]string{
-		"critical": "CRITICAL", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		"HIGH":     "CRITICAL,HIGH", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		"Moderate": "CRITICAL,HIGH,MEDIUM", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"critical": "CRITICAL",                 //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"HIGH":     "CRITICAL,HIGH",            //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"Moderate": "CRITICAL,HIGH,MEDIUM",     //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"low":      "CRITICAL,HIGH,MEDIUM,LOW", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		"weird":    "CRITICAL", // default
+		"weird":    "CRITICAL",                 // default
 	}
 	for in, want := range cases {
 		if got := security.MapTrivyFailSeverity(in); got != want {

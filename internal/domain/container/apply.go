@@ -10,6 +10,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/internal/domain/version"
 )
 
 // MetadataContext is the slice of provider.EventContext that tag-rule
@@ -74,7 +75,8 @@ func Apply(r Rule, ctx MetadataContext) (AppliedTag, bool, error) { //nolint:var
 	// Final guarantee: no rule may emit a tag the registry will reject.
 	// Ref-derived tags are pre-sanitized, so this only trips on an invalid
 	// operator-supplied raw value or template — surfaced as a loud config
-	// error instead of an "invalid reference format" deep in `docker buildx`.
+	// error instead of an "invalid reference format" surfacing deep in the
+	// build or a registry call.
 	if !dockerTagValid.MatchString(tag) {
 		return AppliedTag{}, false, fmt.Errorf(
 			"rule produced invalid docker tag %q (must match %s): %w",
@@ -121,6 +123,16 @@ var dockerTagInvalid = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)
 // dockerTagValid is the OCI/distribution reference tag grammar. Every emitted
 // tag is checked against it as a final safety net (see Apply).
 var dockerTagValid = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$`)
+
+// IsCleanRefTag reports whether ref is already usable verbatim as an OCI tag
+// component — i.e. sanitizeRefTag would change nothing. Callers that build a
+// tag from a raw ref WITHOUT going through the metadata sanitizer (e.g. the
+// promotion staging tag, assembled in workflow YAML) use this to decide
+// whether the raw ref is safe to push, rather than letting an invalid tag
+// reach the registry and fail a build.
+func IsCleanRefTag(ref string) bool {
+	return ref != "" && sanitizeRefTag(ref) == ref
+}
 
 // sanitizeRefTag turns an arbitrary git ref name into a tag that satisfies the
 // distribution grammar `[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}`, mirroring
@@ -184,12 +196,12 @@ func semverTag(pattern string, ctx MetadataContext) (string, bool, error) {
 		return "", false, nil
 	}
 
-	stripped := strings.TrimPrefix(ctx.RefName, "v")
+	stripped := version.StripVPrefix(ctx.RefName)
 
 	// Not a strict semver tag (e.g. a date or codename) — skip the semver
 	// rules rather than emit a malformed version.
-	m := semverRE.FindStringSubmatch(stripped)
-	if m == nil {
+	match := semverRE.FindStringSubmatch(stripped)
+	if match == nil {
 		return "", false, nil
 	}
 
@@ -199,10 +211,10 @@ func semverTag(pattern string, ctx MetadataContext) (string, bool, error) {
 	out := strings.NewReplacer(
 		"{{version}}", stripped,
 		"{{major}}.{{minor}}.{{patch}}", stripped,
-		"{{major}}.{{minor}}", m[semverRE.SubexpIndex("major")]+"."+m[semverRE.SubexpIndex("minor")],
-		"{{major}}", m[semverRE.SubexpIndex("major")],
-		"{{minor}}", m[semverRE.SubexpIndex("minor")],
-		"{{patch}}", m[semverRE.SubexpIndex("patch")],
+		"{{major}}.{{minor}}", match[semverRE.SubexpIndex("major")]+"."+match[semverRE.SubexpIndex("minor")],
+		"{{major}}", match[semverRE.SubexpIndex("major")],
+		"{{minor}}", match[semverRE.SubexpIndex("minor")],
+		"{{patch}}", match[semverRE.SubexpIndex("patch")],
 	).Replace(pattern)
 
 	// A leftover placeholder means the pattern used an unknown token.

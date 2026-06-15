@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	domain "github.com/diggsweden/reusable-ci/internal/domain/release"
+	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
 )
 
 // SignConfig is the top-level `sign:` block in artifacts.yml. It
@@ -31,9 +31,9 @@ import (
 //     paths are accepted only when prefixed with `file:` to make the
 //     intent explicit.
 type SignConfig struct {
-	Method     domain.SignMethod `yaml:"method,omitempty"`
-	Key        string            `yaml:"key,omitempty"`
-	OIDCIssuer string            `yaml:"oidc-issuer,omitempty"`
+	Method     domainrelease.SignMethod `yaml:"method,omitempty"`
+	Key        string                   `yaml:"key,omitempty"`
+	OIDCIssuer string                   `yaml:"oidc-issuer,omitempty"`
 }
 
 // allowedKMSSchemes restricts which URI shapes can appear in sign.key.
@@ -55,9 +55,9 @@ var allowedKMSSchemes = []string{
 // EffectiveMethod returns the configured method or the package default
 // when none is set. Callers that need to know whether the operator made
 // an explicit choice should inspect SignConfig.Method directly.
-func (s SignConfig) EffectiveMethod() domain.SignMethod {
+func (s SignConfig) EffectiveMethod() domainrelease.SignMethod {
 	if s.Method == "" {
-		return domain.DefaultSignMethod
+		return domainrelease.DefaultSignMethod
 	}
 
 	return s.Method
@@ -72,12 +72,12 @@ func (s SignConfig) EffectiveMethod() domain.SignMethod {
 func (s SignConfig) Validate() error {
 	method := s.EffectiveMethod()
 
-	if _, err := domain.ParseSignMethod(string(method)); err != nil {
+	if _, err := domainrelease.ParseSignMethod(string(method)); err != nil {
 		return err
 	}
 
 	switch method {
-	case domain.SignMethodGPG:
+	case domainrelease.SignMethodGPG:
 		if s.Key != "" {
 			return fmt.Errorf("sign.key is forbidden for method=gpg (got %q): %w", s.Key, errs.ErrInvalidConfig)
 		}
@@ -85,7 +85,7 @@ func (s SignConfig) Validate() error {
 		if s.OIDCIssuer != "" {
 			return fmt.Errorf("sign.oidc-issuer is forbidden for method=gpg (got %q): %w", s.OIDCIssuer, errs.ErrInvalidConfig)
 		}
-	case domain.SignMethodSigstore:
+	case domainrelease.SignMethodSigstore:
 		if s.Key != "" {
 			return fmt.Errorf("sign.key is forbidden for method=sigstore (keyless has no key) (got %q): %w", s.Key, errs.ErrInvalidConfig)
 		}
@@ -95,7 +95,7 @@ func (s SignConfig) Validate() error {
 				return err
 			}
 		}
-	case domain.SignMethodKMS:
+	case domainrelease.SignMethodKMS:
 		if s.Key == "" {
 			return fmt.Errorf("sign.key is required for method=kms (e.g. hashivault://transit/keys/release): %w", errs.ErrInvalidConfig)
 		}

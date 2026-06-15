@@ -32,7 +32,7 @@ func RenderSwiftFormatBlock(outcome SwiftLintOutcome, output string) string {
 
 	switch outcome {
 	case SwiftLintPassed:
-		_, _ = fmt.Fprintln(&b, "## Swift Format ✅")
+		_, _ = fmt.Fprintln(&b, "## Swift Format ✓")
 		_, _ = fmt.Fprintln(&b, "")
 		_, _ = fmt.Fprintln(&b, "All Swift files are properly formatted.")
 	case SwiftLintFailed:
@@ -60,7 +60,7 @@ func RenderSwiftLintBlock(outcome SwiftLintOutcome, output string) string {
 
 	switch outcome {
 	case SwiftLintPassed:
-		_, _ = fmt.Fprintln(&b, "## SwiftLint ✅")
+		_, _ = fmt.Fprintln(&b, "## SwiftLint ✓")
 		_, _ = fmt.Fprintln(&b, "")
 		_, _ = fmt.Fprintln(&b, "No SwiftLint violations found.")
 	case SwiftLintFailed:

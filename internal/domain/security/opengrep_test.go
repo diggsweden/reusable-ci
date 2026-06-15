@@ -21,7 +21,7 @@ func TestNormalizeOpengrepFailSeverity(t *testing.T) {
 		{"Never", security.OpengrepSeverityNone},
 		{"low", security.OpengrepSeverityLow}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{"INFO", security.OpengrepSeverityLow},
-		{"medium", security.OpengrepSeverityMedium}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		{"medium", security.OpengrepSeverityMedium},   //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{"Moderate", security.OpengrepSeverityMedium}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{"Warning", security.OpengrepSeverityMedium},
 		{"high", security.OpengrepSeverityHigh},

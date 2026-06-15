@@ -18,6 +18,7 @@ package errs
 import (
 	"context"
 	"errors"
+	"net"
 )
 
 // Sentinels callers wrap with `fmt.Errorf("ctx: %w", sentinel)` so
@@ -137,6 +138,7 @@ func FromHTTPStatus(status int) error {
 // matters only insofar as a single err.Is might match multiple
 // sentinels in pathological wraps; in practice each error matches
 // one classification.
+//
 //nolint:cyclop // sysexits dispatch: one case per sentinel, refactoring would obscure the mapping.
 func ExitCodeFromError(err error) ExitCodeType {
 	switch {
@@ -144,6 +146,14 @@ func ExitCodeFromError(err error) ExitCodeType {
 		return ExitCodeOK
 	case errors.Is(err, context.Canceled):
 		return ExitCodeUsage
+	case errors.Is(err, context.DeadlineExceeded):
+		// A timeout — e.g. the adapters' 30s http.Client.Timeout firing
+		// against a slow forge API, which surfaces as a
+		// context.DeadlineExceeded-wrapping error — is a transient
+		// external-dependency failure, not an internal bug. Without this
+		// case it would fall through to ExitCodeSoftware (70), telling CI
+		// to file a bug report for what is really "the registry was slow."
+		return ExitCodeUnavailable
 	case errors.Is(err, ErrUsage):
 		return ExitCodeUsage
 	case errors.Is(err, ErrValidation):
@@ -158,7 +168,28 @@ func ExitCodeFromError(err error) ExitCodeType {
 		return ExitCodeNoPerm
 	case errors.Is(err, ErrInvalidConfig):
 		return ExitCodeConfiguration
+	case isNetworkError(err):
+		// A transport-level failure — connection refused, no route, DNS
+		// failure — surfaces as a *net.OpError / *net.DNSError / *url.Error
+		// with no domain sentinel. It is a transient external-dependency
+		// problem ("the forge/registry was unreachable"), not an internal
+		// defect, so it must not fall through to ExitCodeSoftware (70), which
+		// tells CI to report a code defect. Checked last so any explicit
+		// sentinel (e.g. a 401 turned into ErrPermissionDenied) wins first.
+		return ExitCodeUnavailable
 	default:
 		return ExitCodeSoftware
 	}
+}
+
+// isNetworkError reports whether err is (or wraps) a transport-level network
+// failure. net.Error is implemented by *net.OpError and *net.DNSError, and by
+// *url.Error (which also unwraps to the underlying op error), so a single
+// errors.As against the interface covers dial/DNS/refused failures from every
+// HTTP-based adapter. Timeouts already match the context.DeadlineExceeded case
+// above and land on the same code, so this is purely the non-timeout tail.
+func isNetworkError(err error) bool {
+	var netErr net.Error
+
+	return errors.As(err, &netErr)
 }

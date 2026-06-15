@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -25,6 +27,7 @@ func TestExitCodeFromError(t *testing.T) {
 	}{
 		{name: "nil", want: errs.ExitCodeOK},
 		{name: "context_canceled", err: context.Canceled, want: errs.ExitCodeUsage, wraps: true},
+		{name: "context_deadline_exceeded", err: context.DeadlineExceeded, want: errs.ExitCodeUnavailable, wraps: true},
 		{name: "unsupported", err: errs.ErrUnsupported, want: errs.ExitCodeUnavailable, wraps: true},
 		{name: "usage", err: errs.ErrUsage, want: errs.ExitCodeUsage, wraps: true},
 		{name: "invalid_config", err: errs.ErrInvalidConfig, want: errs.ExitCodeConfiguration, wraps: true},
@@ -46,6 +49,49 @@ func TestExitCodeFromError(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestExitCodeFromError_NetworkErrorsAreUnavailable proves a transport-level
+// failure (connection refused, DNS failure, a url.Error wrapping either) maps
+// to ExitCodeUnavailable (69) — "the forge/registry was unreachable" — and not
+// ExitCodeSoftware (70), which would tell CI to file a bug. Covers the raw
+// errors and the adapter's `fmt.Errorf("...: %w", err)` wrap shape.
+func TestExitCodeFromError_NetworkErrorsAreUnavailable(t *testing.T) {
+	t.Parallel()
+
+	refused := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connect: connection refused")} //nolint:err113 // test mock error
+	dnsFail := &net.DNSError{Err: "no such host", Name: "nonexistent.invalid"}
+	urlErr := &url.Error{Op: "Get", URL: "http://127.0.0.1:1/x", Err: refused}
+
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{name: "dial_refused", err: refused},
+		{name: "dns_failure", err: dnsFail},
+		{name: "url_error_wrapping_dial", err: urlErr},
+		{name: "adapter_wrapped", err: fmt.Errorf("list run 1 artifacts: %w", urlErr)},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, errs.ExitCodeUnavailable, errs.ExitCodeFromError(testCase.err))
+		})
+	}
+}
+
+// TestExitCodeFromError_SentinelWinsOverNetwork guards the case ordering: an
+// error that is both wrapped with a domain sentinel and a network error must
+// keep its sentinel classification (the net.Error check runs last).
+func TestExitCodeFromError_SentinelWinsOverNetwork(t *testing.T) {
+	t.Parallel()
+
+	netErr := &net.OpError{Op: "dial", Err: errors.New("refused")} //nolint:err113 // test mock error
+	// 401 → ErrPermissionDenied wrapped around a transport error.
+	wrapped := fmt.Errorf("auth failed (%w): %w", errs.ErrPermissionDenied, netErr)
+
+	require.Equal(t, errs.ExitCodeNoPerm, errs.ExitCodeFromError(wrapped))
 }
 
 func TestFromHTTPStatus_MapsKnownClasses(t *testing.T) {

@@ -44,7 +44,7 @@ func FuzzParseOutputFormat(f *testing.F) {
 			t.Fatalf("roundtrip changed format: %q -> %q", parsed, reparsed)
 		}
 
-		resolved, err := output.ParseAndResolve(in, provider.PlatformGitLab)
+		resolved, err := output.ParseAndResolve(in, provider.RunnerGitLab)
 		if err != nil {
 			t.Fatalf("ParseAndResolve failed after Parse succeeded: %v", err)
 		}

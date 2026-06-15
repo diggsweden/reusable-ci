@@ -20,7 +20,7 @@ func TestRenderSwiftFormatBlock(t *testing.T) {
 		want    []string
 		notWant []string
 	}{
-		{name: "passed", outcome: build.SwiftLintPassed, want: []string{"## Swift Format ✅", "properly formatted"}},
+		{name: "passed", outcome: build.SwiftLintPassed, want: []string{"## Swift Format ✓", "properly formatted"}},
 		{name: "failed", outcome: build.SwiftLintFailed, body: "main.swift:3:1: warning: line is too long", want: []string{"## Swift Format Issues 🔴", "```", "main.swift:3:1"}},
 		{name: "no files", outcome: build.SwiftLintNoFiles, want: []string{"## Swift Format ⊘", "nothing to lint"}},
 	} {
@@ -46,7 +46,7 @@ func TestRenderSwiftLintBlock(t *testing.T) {
 		body    string
 		want    []string
 	}{
-		{name: "passed", outcome: build.SwiftLintPassed, want: []string{"## SwiftLint ✅", "No SwiftLint violations"}},
+		{name: "passed", outcome: build.SwiftLintPassed, want: []string{"## SwiftLint ✓", "No SwiftLint violations"}},
 		{name: "failed", outcome: build.SwiftLintFailed, body: "violation 1", want: []string{"## SwiftLint Issues 🔴", "violation 1"}},
 		{name: "warned", outcome: build.SwiftLintWarned, body: "warning 1", want: []string{"## SwiftLint Warnings ⚠️", "warning 1"}},
 	} {

@@ -87,37 +87,42 @@ func Parse(s string) (Format, error) { //nolint:varnamelen // idiomatic short na
 }
 
 // ParseAndResolve is the common one-shot: parse a user-supplied
-// string and immediately resolve FormatAuto for the active platform.
+// string and immediately resolve FormatAuto for the active runner.
 // Returns the concrete (non-auto) Format.
-func ParseAndResolve(s string, plat provider.Platform) (Format, error) {
+func ParseAndResolve(s string, runner provider.RunnerKind) (Format, error) {
 	f, err := Parse(s)
 	if err != nil {
 		return "", err
 	}
 
-	return Resolve(f, plat), nil
+	return Resolve(f, runner), nil
 }
 
 // Resolve turns FormatAuto into a concrete format based on the active
-// CI platform. Non-auto inputs pass through unchanged.
+// runner conventions. Non-auto inputs pass through unchanged.
+//
+// Output format is a *runner* concern, not a forge-API one: GitHub
+// Actions and Forgejo Actions both speak the GitHub workflow-command
+// dialect (RunnerGHA → FormatGitHub) even though their forge APIs
+// differ.
 //
 // Mapping:
-//   - provider.PlatformGitHub → FormatGitHub
-//   - provider.PlatformGitLab → FormatGitLab
-//   - anything else           → FormatText
+//   - provider.RunnerGHA    → FormatGitHub
+//   - provider.RunnerGitLab → FormatGitLab
+//   - anything else         → FormatText
 //
 // JSON is never auto-selected; ask for it explicitly. Callers obtain
-// the platform from internal/platform.Detect() (which owns the env-var
-// reads); this package stays pure.
-func Resolve(f Format, plat provider.Platform) Format {
+// the runner from internal/platform.DetectRunner() (which owns the
+// env-var reads); this package stays pure.
+func Resolve(f Format, runner provider.RunnerKind) Format {
 	if f != FormatAuto {
 		return f
 	}
 
-	switch plat {
-	case provider.PlatformGitHub:
+	switch runner {
+	case provider.RunnerGHA:
 		return FormatGitHub
-	case provider.PlatformGitLab:
+	case provider.RunnerGitLab:
 		return FormatGitLab
 	default:
 		return FormatText

@@ -15,7 +15,15 @@ import (
 // when a passphrase is provided. Matches the upstream
 // crazy-max/ghaction-import-gpg defaults so cached passphrases live for
 // the duration of the job.
-const AgentConfig = `default-cache-ttl 21600
+//
+// The leading marker comment delineates this as reusable-ci's own write
+// into a config file gpg owns — clig.dev §Configuration: when you modify
+// configuration that isn't your program's, say so in the file so anyone
+// (e.g. a developer who finds their ~/.gnupg changed) can see what wrote
+// it and how to undo it.
+const AgentConfig = `# Managed by reusable-ci (release gpg) — passphrase pre-seeding for CI signing.
+# reusable-ci wrote this gpg-agent.conf; delete it to restore your own.
+default-cache-ttl 21600
 max-cache-ttl 31536000
 allow-preset-passphrase
 `

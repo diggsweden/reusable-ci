@@ -142,4 +142,11 @@ func TestAgentConfig_HasExpectedDirectives(t *testing.T) {
 			t.Errorf("AgentConfig missing directive %q", directive)
 		}
 	}
+
+	// The file must carry a delineating marker so a reader can see
+	// reusable-ci wrote it (clig.dev §Configuration), and the marker must
+	// be a gpg-agent.conf comment so it doesn't change agent behaviour.
+	if !strings.HasPrefix(gpg.AgentConfig, "# Managed by reusable-ci") {
+		t.Errorf("AgentConfig must begin with a '# Managed by reusable-ci' marker comment; got:\n%s", gpg.AgentConfig)
+	}
 }

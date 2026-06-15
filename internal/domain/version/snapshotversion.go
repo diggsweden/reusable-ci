@@ -8,40 +8,40 @@ import (
 	"regexp"
 )
 
-// DevVersionDefaultBase is the BASE_VERSION when no semver tag exists.
-const DevVersionDefaultBase = "0.0.0"
+// SnapshotVersionDefaultBase is the BASE_VERSION when no semver tag exists.
+const SnapshotVersionDefaultBase = "0.0.0"
 
-// DevShortSHALen is how many hex chars of the SHA appear in the dev-version
+// SnapshotShortSHALen is how many hex chars of the SHA appear in the snapshot-version
 // suffix. Matches `git rev-parse --short=7`.
-const DevShortSHALen = 7
+const SnapshotShortSHALen = 7
 
-// ComposeDevVersion produces the canonical dev-version tag:
+// ComposeSnapshotVersion produces the canonical snapshot-version tag:
 //
-//	{baseVersion}-dev-{branch-sanitised}-{shortSHA}
+//	{baseVersion}-snapshot-{branch-sanitised}-{shortSHA}
 //
-// Example: ComposeDevVersion("0.5.9", "feat/awesome", "abc1234")
+// Example: ComposeSnapshotVersion("0.5.9", "feat/awesome", "abc1234")
 //
-//	→ "0.5.9-dev-feat-awesome-abc1234"
+//	→ "0.5.9-snapshot-feat-awesome-abc1234"
 //
 // branch is sanitised via SanitizePathToken; shortSHA is used verbatim
 // (callers responsible for clamping to 7 chars).
-func ComposeDevVersion(baseVersion, branch, shortSHA string) string {
+func ComposeSnapshotVersion(baseVersion, branch, shortSHA string) string {
 	if baseVersion == "" {
-		baseVersion = DevVersionDefaultBase
+		baseVersion = SnapshotVersionDefaultBase
 	}
 
-	return fmt.Sprintf("%s-dev-%s-%s",
+	return fmt.Sprintf("%s-snapshot-%s-%s",
 		baseVersion, SanitizePathToken(branch), shortSHA)
 }
 
 // semverTagPattern matches strict v-prefixed semver tags (no pre-release
 // suffix). Used internally when picking the "latest stable" tag for the
-// dev-version base. Matches glob `v[0-9]*.[0-9]*.[0-9]*`
+// snapshot-version base. Matches glob `v[0-9]*.[0-9]*.[0-9]*`
 // interpreted strictly.
 //
 // Unexported: the package-level public "is this a semver tag?" answer
 // lives in domain/validate.SemverTagPattern (permissive, includes
-// pre-release suffix). This pattern is the stricter dev-version-specific
+// pre-release suffix). This pattern is the stricter snapshot-version-specific
 // variant and is not part of any consumer's API.
 var semverTagPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 

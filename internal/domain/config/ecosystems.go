@@ -36,6 +36,7 @@ type NPMConfig struct {
 // GradleConfig holds the typed `config:` block for plain Gradle JVM
 // artifacts (not Android).
 type GradleConfig struct {
+	JavaVersion       string `json:"java_version,omitempty"        yaml:"java-version,omitempty"`
 	GradleTasks       string `json:"gradle_tasks,omitempty"        yaml:"gradle-tasks,omitempty"`
 	GradleVersionFile string `json:"gradle_version_file,omitempty" yaml:"gradle-version-file,omitempty"`
 }
@@ -44,6 +45,8 @@ type GradleConfig struct {
 // artifacts. IncludeAAB is a pointer so the planner can distinguish
 // "user omitted it" (default true) from "user explicitly set false".
 type GradleAndroidConfig struct {
+	JavaVersion          string `json:"java_version,omitempty"           yaml:"java-version,omitempty"`
+	GradleVersionFile    string `json:"gradle_version_file,omitempty"    yaml:"gradle-version-file,omitempty"`
 	BuildModule          string `json:"build_module,omitempty"           yaml:"build-module,omitempty"`
 	ProductFlavor        string `json:"product_flavor,omitempty"         yaml:"product-flavor,omitempty"`
 	BuildTypes           string `json:"build_types,omitempty"            yaml:"build-types,omitempty"`

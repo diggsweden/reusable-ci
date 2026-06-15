@@ -102,6 +102,24 @@ func TestResolveImageName(t *testing.T) {
 			want: "docker.io/library/nginx",
 		},
 
+		// === Case normalisation (OCI names must be lowercase) ===
+		{
+			name: "mixed-case repo/owner is lowercased",
+			in: container.ResolveImageNameInput{
+				Registry: "ghcr.io", ImageName: "",
+				Repository: "OctoCat/Hello-World", RepositoryOwner: "OctoCat",
+			},
+			want: "ghcr.io/octocat/hello-world",
+		},
+		{
+			name: "explicit mixed-case image-name is lowercased too",
+			in: container.ResolveImageNameInput{
+				Registry: "ghcr.io", ImageName: "ghcr.io/Org/App",
+				Repository: "Org/App", RepositoryOwner: "Org",
+			},
+			want: "ghcr.io/org/app",
+		},
+
 		// === Custom registry (registry.gitlab.com) ===
 		{
 			name: "custom registry: bare name gets prefix",
@@ -118,45 +136,6 @@ func TestResolveImageName(t *testing.T) {
 				Repository: "group/sub/project", RepositoryOwner: "group",
 			},
 			want: "registry.gitlab.com/group/sub/project",
-		},
-
-		// === NameSuffix (dev-release path separation) ===
-		{
-			name: "NameSuffix appends to repository segment",
-			in: container.ResolveImageNameInput{
-				Registry: "ghcr.io", ImageName: "",
-				Repository: "owner/repo", RepositoryOwner: "owner",
-				NameSuffix: "-dev",
-			},
-			want: "ghcr.io/owner/repo-dev",
-		},
-		{
-			name: "NameSuffix combined with Name → repo-dev/name",
-			in: container.ResolveImageNameInput{
-				Registry: "ghcr.io", ImageName: "",
-				Repository: "owner/repo", RepositoryOwner: "owner",
-				Name:       "backend",
-				NameSuffix: "-dev",
-			},
-			want: "ghcr.io/owner/repo-dev/backend",
-		},
-		{
-			name: "NameSuffix ignored when ImageName is explicit",
-			in: container.ResolveImageNameInput{
-				Registry: "ghcr.io", ImageName: "myapp",
-				Repository: "owner/repo", RepositoryOwner: "owner",
-				NameSuffix: "-dev",
-			},
-			want: "ghcr.io/myapp",
-		},
-		{
-			name: "empty NameSuffix is a no-op",
-			in: container.ResolveImageNameInput{
-				Registry: "ghcr.io", ImageName: "",
-				Repository: "owner/repo", RepositoryOwner: "owner",
-				NameSuffix: "",
-			},
-			want: "ghcr.io/owner/repo",
 		},
 	}
 
