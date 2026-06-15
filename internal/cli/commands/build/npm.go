@@ -49,7 +49,7 @@ func npmMetadataCmd() *cli.Command {
 		Usage: "read package.json metadata and emit CI outputs",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "working-dir", Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory containing package.json"},
-			&cli.StringFlag{Name: "package-scope", Sources: cli.EnvVars("PACKAGE_SCOPE"), Usage: "expected scope (e.g. @diggsweden); errors when package.json disagrees"},
+			&cli.StringFlag{Name: "scope", Sources: cli.EnvVars("SCOPE", "PACKAGE_SCOPE"), Usage: "expected scope (e.g. @diggsweden); errors when package.json disagrees"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
@@ -57,7 +57,7 @@ func npmMetadataCmd() *cli.Command {
 
 				return appbuild.NPMMetadata(ctx, d.OutputSink, os.Stderr, annot, appbuild.NPMMetadataInput{
 					Dir:          cmd.String("working-dir"),
-					PackageScope: cmd.String("package-scope"),
+					PackageScope: cmd.String("scope"),
 				})
 			})
 		},

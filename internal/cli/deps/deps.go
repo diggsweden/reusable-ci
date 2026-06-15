@@ -19,6 +19,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/diggsweden/reusable-ci/internal/adapters/forgejo"
 	"github.com/diggsweden/reusable-ci/internal/adapters/ghaoutput"
 	"github.com/diggsweden/reusable-ci/internal/adapters/github"
 	"github.com/diggsweden/reusable-ci/internal/adapters/gitlab"
@@ -48,52 +49,78 @@ type Deps struct {
 	ManifestSink ci.ManifestSink
 }
 
+// requireRole is the single gate behind every Deps.RequireX accessor: it
+// returns the active provider's R role view, or a typed "capability is
+// not supported on platform Y" error when the provider does not implement
+// R. Each accessor below just names its role type and human-readable
+// capability and delegates here, so the assert-or-explain logic lives in
+// exactly one place.
+func requireRole[R any](d *Deps, capability string) (R, error) {
+	role, ok := d.Provider.(R)
+	if !ok {
+		var zero R
+
+		return zero, unsupportedRoleError(d.Platform, capability)
+	}
+
+	return role, nil
+}
+
 // RequireTokenValidator returns the TokenValidator role when the
 // active provider implements it. github and gitlab do; local does
 // not — invoking a CLI command that needs this on local surfaces a
 // typed error here rather than a runtime ErrUnsupported deep in the
 // use case.
 func (d *Deps) RequireTokenValidator() (provider.TokenValidator, error) {
-	v, ok := d.Provider.(provider.TokenValidator)
-	if !ok {
-		return nil, unsupportedRoleError(d.Platform, "token validation")
-	}
-
-	return v, nil
+	return requireRole[provider.TokenValidator](d, "token validation")
 }
 
 // RequireReleaseCreator returns the ReleaseCreator role when the
 // active provider implements it. github and gitlab do; local does not.
 func (d *Deps) RequireReleaseCreator() (provider.ReleaseCreator, error) {
-	c, ok := d.Provider.(provider.ReleaseCreator)
-	if !ok {
-		return nil, unsupportedRoleError(d.Platform, "release creation")
-	}
-
-	return c, nil
+	return requireRole[provider.ReleaseCreator](d, "release creation")
 }
 
 // RequireReleaseAssetUploader returns the ReleaseAssetUploader role
 // when the active provider implements it. Today only github does.
 func (d *Deps) RequireReleaseAssetUploader() (provider.ReleaseAssetUploader, error) {
-	u, ok := d.Provider.(provider.ReleaseAssetUploader)
-	if !ok {
-		return nil, unsupportedRoleError(d.Platform, "release asset upload")
-	}
+	return requireRole[provider.ReleaseAssetUploader](d, "release asset upload")
+}
 
-	return u, nil
+// RequireRunArtifactUploader returns the RunArtifactUploader role when
+// the active provider implements it.
+func (d *Deps) RequireRunArtifactUploader() (provider.RunArtifactUploader, error) {
+	return requireRole[provider.RunArtifactUploader](d, "run-artifact upload")
+}
+
+// RequireRunArtifactDownloader returns the RunArtifactDownloader role
+// when the active provider implements it.
+func (d *Deps) RequireRunArtifactDownloader() (provider.RunArtifactDownloader, error) {
+	return requireRole[provider.RunArtifactDownloader](d, "run-artifact download")
 }
 
 // RequireSARIFUploader returns the SARIFUploader role when the active
 // provider implements it. Today only github does — gitlab consumes
 // the JSON SAST report directly from trivy/opengrep.
 func (d *Deps) RequireSARIFUploader() (provider.SARIFUploader, error) {
-	u, ok := d.Provider.(provider.SARIFUploader)
-	if !ok {
-		return nil, unsupportedRoleError(d.Platform, "SARIF upload to Code Scanning")
-	}
+	return requireRole[provider.SARIFUploader](d, "SARIF upload to Code Scanning")
+}
 
-	return u, nil
+// RequireTagDeleter returns the TagDeleter role when the active provider
+// implements it. Forge-specific: deleting a container tag goes through
+// each forge's package API (forgejo does; github/gitlab/local not yet),
+// because a generic OCI delete is unsafe on the shared-digest promotion
+// model. Callers (e.g. `container ledger cleanup`) gate here.
+func (d *Deps) RequireTagDeleter() (provider.TagDeleter, error) {
+	return requireRole[provider.TagDeleter](d, "container tag deletion")
+}
+
+// RequireProvenanceProfiler returns the ProvenanceProfiler role when the
+// active provider implements it. The GHA-compatible forges (github,
+// forgejo) do; gitlab/local do not — those gate here with a typed
+// "unsupported" error rather than emitting a dishonest predicate.
+func (d *Deps) RequireProvenanceProfiler() (provider.ProvenanceProfiler, error) {
+	return requireRole[provider.ProvenanceProfiler](d, "SLSA provenance generation")
 }
 
 // RepoMetadataFetcher returns the RepoMetadataFetcher role. All three
@@ -179,24 +206,20 @@ func FromCmd(ctx context.Context, cmd *cli.Command, fn func(*Deps) error) error 
 }
 
 func buildInternal(_ context.Context) (*Deps, error) {
-	p := platform.Detect() //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	d := &Deps{Platform: p} //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	// Two orthogonal axes: the forge API (which server to call) and the
+	// runner conventions (which output dialect to emit). Forgejo runs on
+	// a GitHub-compatible runner but speaks a Gitea forge API, so the two
+	// switches below deliberately resolve independently.
+	forge := platform.Detect()
+	runner := platform.DetectRunner()
+	d := &Deps{Platform: forge} //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 
-	switch p {
-	case provider.PlatformGitHub:
-		d.Provider = github.New()
-		d.OutputSink = ghaoutput.NewFromEnv()
-		d.SummarySink = stepsummary.New(os.Getenv("GITHUB_STEP_SUMMARY"))
-	case provider.PlatformGitLab:
-		d.Provider = gitlab.New()
-		d.OutputSink = gitlaboutput.NewFromEnv()
-		d.SummarySink = stepsummary.New(os.Getenv("CI_SUMMARY_FILE"))
-	case provider.PlatformLocal:
-		d.Provider = local.New()
-		d.OutputSink = ghaoutput.New(os.DevNull)
-		d.SummarySink = stepsummary.New("")
-	default:
-		return nil, fmt.Errorf("unsupported platform: %q: %w", p, errs.ErrValidation)
+	if err := wireProvider(d, forge); err != nil {
+		return nil, err
+	}
+
+	if err := wireSinks(d, runner); err != nil {
+		return nil, err
 	}
 
 	// ManifestSink: writes <stage>-result.json under $CI_RESULTS_DIR
@@ -204,6 +227,95 @@ func buildInternal(_ context.Context) (*Deps, error) {
 	d.ManifestSink = manifest.NewFromEnv()
 
 	return d, nil
+}
+
+// wireProvider selects the forge-API adapter for the detected platform.
+func wireProvider(d *Deps, forge provider.Platform) error { //nolint:varnamelen // idiomatic short name (matches buildInternal's receiver-style d).
+	p, err := providerFor(forge)
+	if err != nil {
+		return err
+	}
+
+	d.Provider = p
+
+	return nil
+}
+
+// providerFor returns the forge-API adapter for a platform. This is the
+// single provider-construction switch in the codebase; app/domain code
+// asks the returned provider (via the Describer / Capabilities / role
+// interfaces) rather than branching on the platform enum itself.
+func providerFor(forge provider.Platform) (provider.Provider, error) {
+	switch forge {
+	case provider.PlatformGitHub:
+		return github.New(), nil
+	case provider.PlatformGitLab:
+		return gitlab.New(), nil
+	case provider.PlatformForgejo:
+		return forgejo.New(), nil
+	case provider.PlatformLocal:
+		return local.New(), nil
+	default:
+		return nil, fmt.Errorf("unsupported platform: %q: %w", forge, errs.ErrValidation)
+	}
+}
+
+// DescriberForDetected returns the forge self-description for the
+// auto-detected platform. CLI helpers that need provider metadata (e.g.
+// the default OIDC issuer) outside a fully-built *Deps use this so they
+// reuse the single providerFor factory instead of re-deriving the
+// platform→provider mapping. Every adapter implements Describer, so the
+// type assertion always succeeds; the local fallback is defensive.
+func DescriberForDetected() provider.Describer {
+	p, err := providerFor(platform.Detect())
+	if err != nil {
+		return local.New()
+	}
+
+	if d, ok := p.(provider.Describer); ok {
+		return d
+	}
+
+	return local.New()
+}
+
+// CapabilitiesForDetected returns the optional-feature set of the
+// auto-detected forge. Reporting surfaces (doctor) use it to show which
+// behaviours degrade on the active forge. Every adapter implements
+// CapabilityReporter; the empty set is the defensive fallback.
+func CapabilitiesForDetected() provider.Capabilities {
+	p, err := providerFor(platform.Detect())
+	if err != nil {
+		return provider.Capabilities{}
+	}
+
+	if c, ok := p.(provider.CapabilityReporter); ok {
+		return c.Capabilities()
+	}
+
+	return provider.Capabilities{}
+}
+
+// wireSinks selects the output + step-summary sinks for the detected
+// runner conventions. RunnerGHA serves both GitHub and Forgejo: a
+// Forgejo runner exports the same $GITHUB_OUTPUT / $GITHUB_STEP_SUMMARY
+// files the GitHub sinks write to.
+func wireSinks(d *Deps, runner provider.RunnerKind) error { //nolint:varnamelen // idiomatic short name (matches buildInternal's receiver-style d).
+	switch runner {
+	case provider.RunnerGHA:
+		d.OutputSink = ghaoutput.NewFromEnv()
+		d.SummarySink = stepsummary.New(os.Getenv("GITHUB_STEP_SUMMARY"))
+	case provider.RunnerGitLab:
+		d.OutputSink = gitlaboutput.NewFromEnv()
+		d.SummarySink = stepsummary.New(os.Getenv("CI_SUMMARY_FILE"))
+	case provider.RunnerLocal:
+		d.OutputSink = ghaoutput.New(os.DevNull)
+		d.SummarySink = stepsummary.New("")
+	default:
+		return fmt.Errorf("unsupported runner: %q: %w", runner, errs.ErrValidation)
+	}
+
+	return nil
 }
 
 // Close releases any resources held by the wired adapters. Today only
@@ -223,7 +335,7 @@ func (d *Deps) Close(ctx context.Context) error {
 // shortcut). Hides the cmd.Root()/flag-name/platform-detect chain
 // that would otherwise be replicated at every Action.
 func Annotator(cmd *cli.Command) output.Annotator {
-	return output.AnnotatorFromFlag(os.Stderr, rawFormat(cmd), platform.Detect())
+	return output.AnnotatorFromFlag(os.Stderr, rawFormat(cmd), platform.DetectRunner())
 }
 
 // OutputFormat returns the resolved output format selected by the root
@@ -240,7 +352,7 @@ func OutputFormat(cmd *cli.Command) (output.Format, error) {
 		raw = string(output.FormatAuto)
 	}
 
-	return output.ParseAndResolve(raw, platform.Detect())
+	return output.ParseAndResolve(raw, platform.DetectRunner())
 }
 
 // rawFormat reads the root format selection, applying the --json

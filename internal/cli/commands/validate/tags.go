@@ -11,6 +11,8 @@ import (
 
 	"github.com/diggsweden/reusable-ci/internal/adapters/git"
 	appvalidate "github.com/diggsweden/reusable-ci/internal/app/validate"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
+	"github.com/diggsweden/reusable-ci/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/internal/domain/provider"
 )
 
@@ -38,18 +40,18 @@ func refTypeCmd() *cli.Command {
 			&cli.StringFlag{
 				Name:     "ref-type",
 				Required: true,
-				Sources:  cli.EnvVars("REF_TYPE", "GITHUB_REF_TYPE"),
+				Sources:  cienv.RefType(),
 				Usage:    "trigger ref type (\"tag\" required for releases)",
 			},
 			&cli.StringFlag{
 				Name:     "ref-name",
 				Required: true,
-				Sources:  cli.EnvVars("REF_NAME", "GITHUB_REF_NAME"),
+				Sources:  cienv.RefName(),
 				Usage:    "trigger ref name (the tag or branch)",
 			},
 			&cli.StringFlag{
 				Name:    "ref",
-				Sources: cli.EnvVars("REF", "GITHUB_REF"),
+				Sources: cienv.Ref(),
 				Usage:   "fully-qualified ref (refs/tags/X); when set the prefix is also checked",
 			},
 		},
@@ -71,7 +73,7 @@ func tagFormatCmd() *cli.Command {
 			&cli.StringFlag{
 				Name:     "tag",
 				Required: true,
-				Sources:  cli.EnvVars("TAG_NAME", "REF_NAME"),
+				Sources:  cienv.Tag(),
 				Usage:    "tag name (e.g. v1.2.3)", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			},
 		},
@@ -89,7 +91,7 @@ func tagUniquenessCmd() *cli.Command {
 			&cli.StringFlag{
 				Name:     "tag",
 				Required: true,
-				Sources:  cli.EnvVars("TAG_NAME", "REF_NAME"),
+				Sources:  cienv.Tag(),
 				Usage:    "tag name (e.g. v1.2.3)",
 			},
 		},
@@ -108,7 +110,7 @@ func tagCommitCmd() *cli.Command {
 			&cli.StringFlag{
 				Name:     "tag",
 				Required: true,
-				Sources:  cli.EnvVars("TAG_NAME", "REF_NAME"),
+				Sources:  cienv.Tag(),
 				Usage:    "tag name (e.g. v1.2.3)",
 			},
 			&cli.StringFlag{
@@ -134,12 +136,12 @@ func tagSignatureCmd() *cli.Command {
 			&cli.StringFlag{
 				Name:     "tag",
 				Required: true,
-				Sources:  cli.EnvVars("TAG_NAME", "REF_NAME"),
+				Sources:  cienv.Tag(),
 				Usage:    "tag name (e.g. v1.2.3)",
 			},
 			&cli.StringFlag{
 				Name:    "repository", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-				Sources: cli.EnvVars("REPOSITORY", "GITHUB_REPOSITORY"),
+				Sources: cienv.Repository(),
 				Usage:   "repository slug used in error messages and SSH allowed-signers lookup",
 			},
 			&cli.StringFlag{
@@ -150,7 +152,7 @@ func tagSignatureCmd() *cli.Command {
 			&cli.BoolFlag{
 				Name:    "require-allowlisted-signer",
 				Sources: cli.EnvVars("REQUIRE_ALLOWLISTED_SIGNER"),
-				Usage:   "require the signer to appear in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_fingerprints (GPG); missing/empty allowlist fails closed",
+				Usage:   "require the signer to appear in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_keys.asc (GPG); missing/empty allowlist or unverifiable signature fails closed",
 			},
 			&cli.StringFlag{
 				Name:    "allowed-signers-file",
@@ -158,24 +160,24 @@ func tagSignatureCmd() *cli.Command {
 				Usage:   "override the default SSH allowed_signers path (default: .reusable-ci/allowed_signers)",
 			},
 			&cli.StringFlag{
-				Name:    "allowed-gpg-fingerprints-file",
-				Sources: cli.EnvVars("ALLOWED_GPG_FINGERPRINTS_FILE"),
-				Usage:   "override the default GPG fingerprints path (default: .reusable-ci/allowed_gpg_fingerprints)",
+				Name:    "allowed-gpg-keys-file",
+				Sources: cli.EnvVars("ALLOWED_GPG_KEYS_FILE"),
+				Usage:   "override the default armored allowed-GPG-keys bundle path (default: .reusable-ci/allowed_gpg_keys.asc); its keys are both verification material and the authorised set",
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			in := appvalidate.TagSignatureInput{
-				Tag:                        cmd.String("tag"),
-				Repository:                 cmd.String("repository"),
-				RequireAllowlistedSigner:   cmd.Bool("require-allowlisted-signer"),
-				AllowedSignersPath:         cmd.String("allowed-signers-file"),
-				AllowedGPGFingerprintsPath: cmd.String("allowed-gpg-fingerprints-file"),
+				Tag:                      cmd.String("tag"),
+				Repository:               cmd.String("repository"),
+				RequireAllowlistedSigner: cmd.Bool("require-allowlisted-signer"),
+				AllowedSignersPath:       cmd.String("allowed-signers-file"),
+				AllowedGPGKeysPath:       cmd.String("allowed-gpg-keys-file"),
 			}
 			if k := cmd.String("release-gpg-public-key"); k != "" {
 				in.ReleaseGPGPublicKey = []byte(k)
 			}
 
-			return appvalidate.TagSignature(ctx, git.New(), os.Stderr, in)
+			return appvalidate.TagSignature(ctx, git.New(), os.Stderr, deps.Annotator(cmd), in)
 		},
 	}
 }

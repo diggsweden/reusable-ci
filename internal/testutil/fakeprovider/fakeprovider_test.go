@@ -92,16 +92,16 @@ func TestFake_RecordsCalls(t *testing.T) {
 //nolint:cyclop // covers every method on the fake provider.
 func TestFake_ProviderMethodResponsesAndRecorders(t *testing.T) {
 	releaseErr := errors.New("release failed") //nolint:err113 // test mock error
-	uploadErr := errors.New("upload failed") //nolint:err113 // test mock error
-	tokenErr := errors.New("token failed") //nolint:err113 // test mock error
-	botErr := errors.New("bot failed") //nolint:err113 // test mock error
-	repoErr := errors.New("repo failed") //nolint:err113 // test mock error
+	uploadErr := errors.New("upload failed")   //nolint:err113 // test mock error
+	tokenErr := errors.New("token failed")     //nolint:err113 // test mock error
+	botErr := errors.New("bot failed")         //nolint:err113 // test mock error
+	repoErr := errors.New("repo failed")       //nolint:err113 // test mock error
 
 	f := fakeprovider.New(t). //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		WithRepoMetadata(provider.RepoMetadata{Description: "repo", LicenseSPDX: "Apache-2.0"}).
-		WithBotPermissions(provider.BotPermissions{UserAccessible: true}).
-		WithCreateReleaseError(releaseErr).
-		WithUploadSARIFError(uploadErr)
+					WithRepoMetadata(provider.RepoMetadata{Description: "repo", LicenseSPDX: "Apache-2.0"}).
+					WithBotPermissions(provider.BotPermissions{UserAccessible: true}).
+					WithCreateReleaseError(releaseErr).
+					WithUploadSARIFError(uploadErr)
 
 	meta, err := f.FetchRepoMetadata(context.Background(), "owner/repo")
 	if err != nil || meta.Description != "repo" || meta.LicenseSPDX != "Apache-2.0" {
@@ -117,7 +117,7 @@ func TestFake_ProviderMethodResponsesAndRecorders(t *testing.T) {
 		t.Fatalf("CreateRelease err = %v", err)
 	}
 
-	if err := f.UploadSARIF(context.Background(), provider.SARIFUpload{Repository: "owner/repo", Category: "scan"}); !errors.Is(err, uploadErr) {
+	if err := f.UploadSARIF(context.Background(), provider.SARIFUpload{Repository: "owner/repo"}); !errors.Is(err, uploadErr) {
 		t.Fatalf("UploadSARIF err = %v", err)
 	}
 
@@ -133,7 +133,7 @@ func TestFake_ProviderMethodResponsesAndRecorders(t *testing.T) {
 		t.Errorf("CreateReleaseCalls = %+v", got)
 	}
 
-	if got := f.UploadSARIFCalls(); len(got) != 1 || got[0].Repository != "owner/repo" || got[0].Category != "scan" {
+	if got := f.UploadSARIFCalls(); len(got) != 1 || got[0].Repository != "owner/repo" {
 		t.Errorf("UploadSARIFCalls = %+v", got)
 	}
 

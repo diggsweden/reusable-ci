@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -25,12 +26,54 @@ func TestFormatPanic_IncludesValueStackContextAndURL(t *testing.T) {
 		"reusable-ci: internal error: nil pointer dereference",
 		"goroutine 1 [running]:",
 		"Context: version=1.2.3  commit=abc1234  command=reusable-ci version bump --project-type=npm --version=1.0.0",
-		"This is a bug in reusable-ci — please report it at:",
+		"please report it",
 		bugReportURL,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("formatPanic output missing %q\nfull output:\n%s", want, out)
 		}
+	}
+}
+
+func TestBugReportLink_PrePopulatesTitleAndEnvironment(t *testing.T) {
+	t.Parallel()
+
+	link := bugReportLink("nil pointer dereference", "1.2.3", "abc1234",
+		[]string{"reusable-ci", "release", "sign"})
+
+	// Must be the issue-tracker base with a query string GitHub honours.
+	if !strings.HasPrefix(link, bugReportURL+"?") {
+		t.Fatalf("link does not target the issue tracker: %s", link)
+	}
+
+	parsed, err := url.Parse(link)
+	if err != nil {
+		t.Fatalf("link is not a valid URL: %v", err)
+	}
+
+	q := parsed.Query()
+	if got := q.Get("title"); got != "panic: nil pointer dereference" {
+		t.Errorf("title = %q", got)
+	}
+
+	// The decoded body carries the environment so the reporter doesn't
+	// have to hand-copy it.
+	body := q.Get("body")
+	for _, want := range []string{"version: 1.2.3", "commit: abc1234", "command: reusable-ci release sign"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q\nbody:\n%s", want, body)
+		}
+	}
+}
+
+func TestBugReportLink_TruncatesLongTitle(t *testing.T) {
+	t.Parallel()
+
+	link := bugReportLink(strings.Repeat("x", 500), "v", "c", []string{"reusable-ci"})
+
+	parsed, _ := url.Parse(link)
+	if got := parsed.Query().Get("title"); len(got) > 120 || !strings.HasSuffix(got, "...") {
+		t.Errorf("title not truncated: len=%d %q", len(got), got)
 	}
 }
 

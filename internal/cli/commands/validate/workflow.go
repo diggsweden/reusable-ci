@@ -10,6 +10,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	appvalidate "github.com/diggsweden/reusable-ci/internal/app/validate"
+	"github.com/diggsweden/reusable-ci/internal/cli/deps"
 )
 
 // workflowGroup wires `reusable-ci validate workflow <verb>` — every
@@ -21,7 +22,7 @@ func workflowGroup() *cli.Command {
 		Usage: "scan reusable workflow YAML for structural rules",
 		Commands: []*cli.Command{
 			workflowInputDefaultsCmd(),
-			workflowV3ContractsCmd(),
+			workflowContractResidueCmd(),
 		},
 	}
 }
@@ -34,23 +35,23 @@ func workflowInputDefaultsCmd() *cli.Command {
 			&cli.StringFlag{Name: "root", Value: ".", Usage: "repository root containing .github/workflows"},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
-			return appvalidate.WorkflowInputDefaults(os.Stderr, appvalidate.WorkflowInputDefaultsInput{
+			return appvalidate.WorkflowInputDefaults(os.Stderr, deps.Annotator(cmd), appvalidate.WorkflowInputDefaultsInput{
 				Root: cmd.String("root"),
 			})
 		},
 	}
 }
 
-func workflowV3ContractsCmd() *cli.Command {
+func workflowContractResidueCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "v3-contracts",
+		Name:  "contract-residue",
 		Usage: "reject removed v3-incompatible output contracts and aliases",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "root", Value: ".", Usage: "repository root to scan"},
 			&cli.StringSliceFlag{Name: "path", Usage: "path under root to scan (repeatable); defaults to source/workflow/doc roots"},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
-			return appvalidate.V3Contracts(os.Stderr, appvalidate.V3ContractsInput{
+			return appvalidate.ContractResidue(os.Stderr, deps.Annotator(cmd), appvalidate.ContractResidueInput{
 				Root:  cmd.String("root"),
 				Paths: cmd.StringSlice("path"),
 			})

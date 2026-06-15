@@ -21,7 +21,7 @@ func TestValidateCommands_UsageErrorsBeforeDeps(t *testing.T) {
 		want string
 	}{
 		{name: "ref-type no flags", argv: []string{"validate", "ref-type"}, want: `Required flags "ref-type, ref-name" not set`}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		{name: "tag-format no flags", argv: []string{"validate", "tag", "format"}, want: `Required flag "tag" not set`}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		{name: "tag-format no flags", argv: []string{"validate", "tag", "format"}, want: `Required flag "tag" not set`},          //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{name: "tag-uniqueness no flags", argv: []string{"validate", "tag", "uniqueness"}, want: `Required flag "tag" not set`},
 		{name: "tag-commit no flags", argv: []string{"validate", "tag", "commit"}, want: `Required flag "tag" not set`},
 		{name: "tag-signature no flags", argv: []string{"validate", "tag", "signature"}, want: `Required flag "tag" not set`},
@@ -51,13 +51,13 @@ func TestWorkflowInputDefaultsCmd_ReportsValidationFailure(t *testing.T) {
 	}
 }
 
-func TestV3ContractsCmd_ReportsValidationFailure(t *testing.T) {
+func TestContractResidueCmd_ReportsValidationFailure(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.WriteFile(".github/workflows/bad.yml", []byte("value: ${{ steps.meta.outputs."+"VERSION }}\n"))
 
 	cmd := validatecmd.New()
 
-	err := cmd.Run(context.Background(), []string{"validate", "workflow", "v3-contracts", "--root", fsys.Root})
+	err := cmd.Run(context.Background(), []string{"validate", "workflow", "contract-residue", "--root", fsys.Root})
 	if err == nil || !strings.Contains(err.Error(), "v3 contract validation failed") {
 		t.Errorf("err = %v", err)
 	}

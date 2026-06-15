@@ -11,7 +11,9 @@ import (
 
 	"github.com/diggsweden/reusable-ci/internal/adapters/cargo"
 	appbuild "github.com/diggsweden/reusable-ci/internal/app/build"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/internal/domain/build"
 )
 
 func cargoCmd() *cli.Command {
@@ -60,9 +62,9 @@ func cargoCompileCmd() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagWorkingDir, Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: usageCargoDirectory},
 			&cli.StringFlag{Name: flagBinaryName, Sources: cli.EnvVars("BINARY_NAME"), Usage: "explicit binary name (defaults to the Cargo.toml [[bin]] target or package name)"},
-			&cli.StringFlag{Name: "platforms", Value: "linux/amd64", Sources: cli.EnvVars("PLATFORMS"), Usage: "comma-separated GOOS/GOARCH targets to cross-compile (each must have a Rust target triple mapping)"},
+			&cli.StringFlag{Name: "platforms", Value: build.DefaultPlatform, Sources: cli.EnvVars("PLATFORMS"), Usage: "comma-separated GOOS/GOARCH targets to cross-compile (each must have a Rust target triple mapping)"},
 			&cli.StringFlag{Name: flagVersion, Sources: cli.EnvVars("VERSION"), Usage: "release version (one of --version or --ref-name is required; use 'dev' for local builds)"},
-			&cli.StringFlag{Name: flagRefName, Sources: cli.EnvVars("REF_NAME", "GITHUB_REF_NAME"), Usage: usageVersionRef},
+			&cli.StringFlag{Name: flagRefName, Sources: cienv.RefName(), Usage: usageVersionRef},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return appbuild.CargoBuildBinaries(ctx, cargo.New(), os.Stderr, os.Stderr, appbuild.CargoBuildBinariesInput{
@@ -85,7 +87,7 @@ func cargoMetadataCmd() *cli.Command {
 			&cli.StringFlag{Name: flagArtifactName, Sources: cli.EnvVars("ARTIFACT_NAME"), Usage: "explicit artifact-name override"},
 			&cli.StringFlag{Name: flagBinaryName, Sources: cli.EnvVars("BINARY_NAME"), Usage: "explicit binary-name override (skips the Cargo.toml [[bin]]/package heuristic)"},
 			&cli.StringFlag{Name: flagVersion, Sources: cli.EnvVars("VERSION"), Usage: "explicit version override (skips the --ref-name and Cargo.toml fallbacks)"},
-			&cli.StringFlag{Name: flagRefName, Sources: cli.EnvVars("REF_NAME", "GITHUB_REF_NAME"), Usage: usageVersionRef},
+			&cli.StringFlag{Name: flagRefName, Sources: cienv.RefName(), Usage: usageVersionRef},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {

@@ -11,6 +11,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	appcontainer "github.com/diggsweden/reusable-ci/internal/app/container"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
 	domaincontainer "github.com/diggsweden/reusable-ci/internal/domain/container"
 )
@@ -90,7 +91,7 @@ func validateContainerfileCmd() *cli.Command {
 func validateNamespaceCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "namespace",
-		Usage: "verify an image lives in the allowed ghcr.io namespace (no-op on other registries)",
+		Usage: "verify an image lives in the allowed namespace for an enforced registry (no-op for registries not in --enforce-namespace-on)",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:     "image-name", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
@@ -100,7 +101,7 @@ func validateNamespaceCmd() *cli.Command {
 			&cli.StringFlag{
 				Name:     "repository",
 				Required: true,
-				Sources:  cli.EnvVars("REPOSITORY", "GITHUB_REPOSITORY"),
+				Sources:  cienv.Repository(),
 			},
 			&cli.StringFlag{
 				Name:     "registry",
@@ -112,13 +113,20 @@ func validateNamespaceCmd() *cli.Command {
 				Required: true,
 				Sources:  cli.EnvVars("ENFORCE_NAMESPACE"),
 			},
+			&cli.StringSliceFlag{
+				Name:    "enforce-namespace-on",
+				Value:   []string{domaincontainer.DefaultRegistry},
+				Sources: cli.EnvVars("ENFORCE_NAMESPACE_ON"),
+				Usage:   "registries whose namespace policy this deployment enforces (default ghcr.io); set to your registry when self-hosting so the check runs instead of silently passing",
+			},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			err := appcontainer.ValidateNamespace(domaincontainer.ValidateNamespaceInput{
-				ImageName:        cmd.String("image-name"),
-				Repository:       cmd.String("repository"),
-				Registry:         cmd.String("registry"),
-				EnforceNamespace: cmd.String("enforce-namespace"),
+				ImageName:           cmd.String("image-name"),
+				Repository:          cmd.String("repository"),
+				Registry:            cmd.String("registry"),
+				EnforceNamespace:    cmd.String("enforce-namespace"),
+				EnforceOnRegistries: cmd.StringSlice("enforce-namespace-on"),
 			})
 			if err != nil {
 				return err

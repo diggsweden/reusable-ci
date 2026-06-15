@@ -73,7 +73,7 @@ func (r *Real) Chdir() {
 func (r *Real) WriteFile(rel string, body []byte) string {
 	r.t.Helper()
 
-	p := r.Path(rel) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	p := r.Path(rel)                                            //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil { //nolint:gosec // test infra; t.TempDir() is the root.
 		r.t.Fatalf("testfs: mkdir parent for %q: %v", p, err)
 	}

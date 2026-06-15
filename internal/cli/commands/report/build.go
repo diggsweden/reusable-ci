@@ -40,8 +40,8 @@ func buildMavenCmd() *cli.Command {
 			&cli.StringFlag{Name: "build-type", Sources: cli.EnvVars("BUILD_TYPE"), Usage: "Maven build type (library/application)"},
 			&cli.StringFlag{Name: "group-id", Sources: cli.EnvVars("GROUP_ID"), Usage: "Maven groupId of the built artifact"},
 			&cli.StringFlag{Name: "artifact-id", Sources: cli.EnvVars("ARTIFACT_ID"), Usage: "Maven artifactId of the built artifact"},
-			&cli.StringFlag{Name: "version", Sources: cli.EnvVars("VERSION"), Usage: "Maven version of the built artifact"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			&cli.StringFlag{Name: "java-version", Sources: cli.EnvVars("JAVA_VERSION"), Usage: "JDK major version used for the build"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			&cli.StringFlag{Name: "version", Sources: cli.EnvVars("VERSION"), Usage: "Maven version of the built artifact"},                          //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			&cli.StringFlag{Name: "java-version", Sources: cli.EnvVars("JAVA_VERSION"), Usage: "JDK major version used for the build"},               //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			&cli.BoolFlag{Name: "skip-tests", Sources: cli.EnvVars("SKIP_TESTS"), Usage: "tests were skipped (toggles the test-status summary row)"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			&cli.BoolFlag{Name: "is-snapshot", Sources: cli.EnvVars("IS_SNAPSHOT"), Usage: "the built version is a -SNAPSHOT"},
 		},
@@ -102,12 +102,12 @@ func buildGradleCmd() *cli.Command {
 		Usage: "append the Gradle (JVM) build summary block to the step summary",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "java-version", Sources: cli.EnvVars("JAVA_VERSION"), Usage: "JDK major version used for the build"},
-			&cli.StringFlag{Name: "gradle-tasks", Sources: cli.EnvVars("GRADLE_TASKS"), Usage: "gradle tasks that ran (shown verbatim in the summary)"},
+			&cli.StringFlag{Name: "tasks", Sources: cli.EnvVars("GRADLE_TASKS"), Usage: "gradle tasks that ran (shown verbatim in the summary)"},
 			&cli.BoolFlag{Name: "skip-tests", Sources: cli.EnvVars("SKIP_TESTS"), Usage: "tests were skipped (toggles the test-status summary row)"},
 			&cli.StringFlag{Name: "version", Sources: cli.EnvVars("VERSION"), Usage: "gradle project version (from gradle.properties)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			for _, f := range []string{"java-version", "gradle-tasks"} {
+			for _, f := range []string{"java-version", "tasks"} {
 				if cmd.String(f) == "" {
 					return fmt.Errorf("--%s is required: %w", f, errs.ErrUsage)
 				}
@@ -116,7 +116,7 @@ func buildGradleCmd() *cli.Command {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
 				return appsummary.GradleBuild(ctx, d.SummarySink, appsummary.GradleBuildInput{
 					JavaVersion: cmd.String("java-version"),
-					GradleTasks: cmd.String("gradle-tasks"),
+					GradleTasks: cmd.String("tasks"),
 					SkipTests:   cmd.Bool("skip-tests"),
 					Version:     cmd.String("version"),
 				})

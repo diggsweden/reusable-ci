@@ -11,6 +11,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	appsummary "github.com/diggsweden/reusable-ci/internal/app/summary"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 )
@@ -145,7 +146,7 @@ func publishGitHubPackagesCmd() *cli.Command {
 		Name:  "github-packages",
 		Usage: "append the GitHub Packages publish summary block to the step summary",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "repository", Sources: cli.EnvVars("REPOSITORY", "GITHUB_REPOSITORY"), Usage: "\"owner/repo\" the package was published from"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			&cli.StringFlag{Name: "repository", Sources: cienv.Repository(), Usage: "\"owner/repo\" the package was published from"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			&cli.StringFlag{Name: "package-type", Sources: cli.EnvVars("PACKAGE_TYPE"), Usage: "GitHub Packages package type (maven/npm/container/…)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {

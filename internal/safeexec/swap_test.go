@@ -123,4 +123,3 @@ func TestRequireNoSwap_DebugOverridePasses(t *testing.T) {
 		t.Errorf("debug override must bypass refusal, got %v", err)
 	}
 }
-

@@ -64,13 +64,13 @@ func npmFindTarballCmd() *cli.Command {
 		Name:  "find-tarball",
 		Usage: "find a top-level npm tarball and emit tarball",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "dir", Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory scanned for the npm tarball (where 'npm pack' ran)"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			&cli.StringFlag{Name: "working-dir", Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory scanned for the npm tarball (where 'npm pack' ran)"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
 				annot := deps.Annotator(cmd)
 				_, err := apppublish.FindArtifact(ctx, d.OutputSink, os.Stderr, annot, apppublish.FindArtifactInput{
-					Dir:       cmd.String("dir"),
+					Dir:       cmd.String("working-dir"),
 					Exts:      []string{".tgz", ".tar.gz"},
 					OutputKey: "tarball",
 					Label:     "npm tarball",

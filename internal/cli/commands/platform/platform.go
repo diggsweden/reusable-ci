@@ -14,6 +14,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/internal/adapters/git"
 	appci "github.com/diggsweden/reusable-ci/internal/app/ci"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
 )
 
@@ -21,10 +22,11 @@ import (
 func New() *cli.Command {
 	return &cli.Command{
 		Name:  "platform",
-		Usage: "introspect the CI runtime (debug workspace, resolve refs)",
+		Usage: "introspect the CI runtime (debug workspace, resolve refs, check out a repo)",
 		Commands: []*cli.Command{
 			debugWorkspaceCmd(),
 			resolveRefCmd(),
+			checkoutCmd(),
 		},
 	}
 }
@@ -35,7 +37,7 @@ func resolveRefCmd() *cli.Command {
 		Usage: "resolve a remote git ref to a commit SHA output",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "remote-url", Value: "https://github.com/diggsweden/reusable-ci", Sources: cli.EnvVars("REMOTE_URL"), Usage: "remote git URL queried with 'git ls-remote'"},
-			&cli.StringFlag{Name: "ref", Sources: cli.EnvVars("REF"), Usage: "ref to resolve (tag, branch, or full refs/X/Y)"},
+			&cli.StringFlag{Name: "ref", Sources: cienv.Ref(), Usage: "ref to resolve (tag, branch, or full refs/X/Y)"},
 			&cli.StringFlag{Name: "output-key", Value: "sha", Sources: cli.EnvVars("OUTPUT_KEY"), Usage: "key written to the platform output sink"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {

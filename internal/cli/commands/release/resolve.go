@@ -10,6 +10,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	apprelease "github.com/diggsweden/reusable-ci/internal/app/release"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
 )
 
@@ -68,7 +69,7 @@ func resolveMetadataCmd() *cli.Command {
 		Usage: "compute version / version-no-v / project-name from the release inputs",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "version", Required: true, Sources: cli.EnvVars("VERSION"), Usage: "release version (e.g. v1.2.3 or 1.2.3)"},
-			&cli.StringFlag{Name: "repository", Required: true, Sources: cli.EnvVars("REPOSITORY"), Usage: "\"owner/repo\" slug used to derive the default project name"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			&cli.StringFlag{Name: "repository", Required: true, Sources: cienv.Repository(), Usage: "\"owner/repo\" slug used to derive the default project name"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			&cli.StringFlag{Name: "artifact-name", Sources: cli.EnvVars("ARTIFACT_NAME"), Usage: "explicit project name override (skips the repo-basename heuristic)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {

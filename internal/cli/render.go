@@ -34,8 +34,8 @@ func Render(root *cli.Command) string {
 	_, _ = fmt.Fprintln(&b)
 	_, _ = fmt.Fprintln(&b, "This document is the canonical surface of the `reusable-ci` binary.")
 	_, _ = fmt.Fprintln(&b)
-	_, _ = fmt.Fprintln(&b, "Every command supports `--help`. Global flags (`--quiet`, `--log-level`, `--format`, `--json`)")
-	_, _ = fmt.Fprintln(&b, "are accepted on every subcommand.")
+	_, _ = fmt.Fprintln(&b, "Every command supports `--help`. Global flags (`--quiet`, `--log-level`, `--format`, `--json`,")
+	_, _ = fmt.Fprintln(&b, "`--provider`, `--runner`) are accepted on every subcommand.")
 	_, _ = fmt.Fprintln(&b)
 
 	// Top-level table of contents.

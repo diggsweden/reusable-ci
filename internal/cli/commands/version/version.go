@@ -16,6 +16,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/adapters/maven"
 	"github.com/diggsweden/reusable-ci/internal/adapters/npm"
 	appversion "github.com/diggsweden/reusable-ci/internal/app/version"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
 )
@@ -27,7 +28,8 @@ func New() *cli.Command {
 		Usage: "version-bump and tag-management helpers",
 		Commands: []*cli.Command{
 			commitPushCmd(),
-			moveTagCmd(),
+			releaseContextCmd(),
+			tagReleaseCmd(),
 			generateDevCmd(),
 			bumpCmd(),
 		},
@@ -131,13 +133,13 @@ func bumpCmd() *cli.Command {
 
 func generateDevCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "generate-dev",
-		Usage: "print a development version tag (`<base>-dev-<branch>-<short-sha>`) to stdout",
+		Name:  "generate-snapshot",
+		Usage: "print a development version tag (`<base>-snapshot-<branch>-<short-sha>`) to stdout",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "ref-name",
-				Usage:   "source branch / ref to sanitise into the dev-version suffix",
-				Sources: cli.EnvVars("CI_REF_NAME", "GITHUB_REF_NAME"),
+				Usage:   "source branch / ref to sanitise into the snapshot-version suffix",
+				Sources: cienv.RefName(),
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -147,10 +149,10 @@ func generateDevCmd() *cli.Command {
 			}
 
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-				// generate-dev's primary output is the dev version string —
+				// generate-snapshot's primary output is the dev version string —
 				// designed to be captured via $(...) or piped. Per clig.dev
 				// the value goes to stdout; progress/errors go to stderr.
-				return appversion.GenerateDevVersion(ctx, git.New(), os.Stdout, appversion.GenerateDevVersionInput{
+				return appversion.GenerateSnapshotVersion(ctx, git.New(), os.Stdout, appversion.GenerateSnapshotVersionInput{
 					RefName: cmd.String("ref-name"),
 					Format:  format,
 					Sink:    d.OutputSink,
@@ -160,11 +162,39 @@ func generateDevCmd() *cli.Command {
 	}
 }
 
-func moveTagCmd() *cli.Command {
+func releaseContextCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "move-tag",
-		Usage: "verify the latest tag is at HEAD~1, re-create it signed at HEAD, and push --force",
+		Name:  "release-context",
+		Usage: "derive release-tag, version and original-tagger commit trailers from the pushed request ref (release-request/vX.Y.Z); emits CI outputs so workflows don't parse refs in bash",
 		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:     "ref",
+				Required: true,
+				Sources:  cli.EnvVars("GITHUB_REF_NAME", "REF_NAME"),
+				Usage:    "the pushed ref (e.g. release-request/v1.2.3)",
+			},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
+				return appversion.ReleaseContext(ctx, git.New(),
+					appversion.ReleaseContextInput{Ref: cmd.String("ref")},
+					d.OutputSink, os.Stderr)
+			})
+		},
+	}
+}
+
+func tagReleaseCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "tag-release",
+		Usage: "create the final release tag once at HEAD (the bump commit) and push it without --force; refuses to move an existing tag",
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:     "tag",
+				Required: true,
+				Sources:  cli.EnvVars("RELEASE_TAG", "TAG_NAME"),
+				Usage:    "final release tag to create (e.g. v1.2.3)",
+			},
 			&cli.BoolFlag{
 				Name:  "no-sign",
 				Usage: "skip GPG signing (intended for tests; production always signs)",
@@ -172,8 +202,8 @@ func moveTagCmd() *cli.Command {
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
-				_, err := appversion.MoveTag(ctx, git.New(),
-					appversion.MoveTagInput{Signed: !cmd.Bool("no-sign")},
+				_, err := appversion.TagRelease(ctx, git.New(),
+					appversion.TagReleaseInput{Tag: cmd.String("tag"), Signed: !cmd.Bool("no-sign")},
 					d.OutputSink, os.Stderr)
 
 				return err

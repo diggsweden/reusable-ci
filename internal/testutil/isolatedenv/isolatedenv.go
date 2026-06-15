@@ -3,13 +3,17 @@
 
 // Package isolatedenv scrubs the test process's environment so a test
 // can't accidentally read the developer's ~/.gitconfig, trigger their
-// SSH agent, pick up a stray $GNUPGHOME, or emit colour codes that
-// break golden-file assertions.
+// SSH agent, pick up a stray $GNUPGHOME, inherit the CI runner's
+// GITHUB_*/CI_*/REGISTRY_* context (which would steer forge detection,
+// output sinks, and auth — and could leak a live token), or emit colour
+// codes that break golden-file assertions.
 //
 // Use Isolate(t) at the top of any test that:
 //
 //   - shells out to git / gpg / ssh (they all read host env)
 //   - reads XDG config dirs ($XDG_CONFIG_HOME, $XDG_DATA_HOME, …)
+//   - detects the forge/runner or reads run-artifact/registry env
+//   - spawns the built binary with os.Environ() (e2e harness)
 //   - compares stdout/stderr byte-for-byte (NO_COLOR / TERM)
 //
 // Tests that already build an isolated git repo via
@@ -24,8 +28,64 @@ package isolatedenv
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// scrubCIEnv clears every CI/forge/credential variable to empty (which
+// reusable-ci's detection reads as "absent" — it uses os.Getenv()!="" /
+// truthy, never presence). Cleared via t.Setenv so the host value is
+// restored at test-end. A test that needs one of these set re-sets it
+// explicitly *after* Isolate, and that later t.Setenv wins.
+//
+// Prefixes carry CI/forge context, runner wiring, provider/output overrides,
+// run-artifact inputs, or registry credentials; the exact list is standalone
+// CI/forge/credential vars with no shared prefix. A test must never inherit
+// the developer's — or the CI runner's — real values for these: they steer
+// forge detection, output-sink selection, and authentication, and some carry
+// live tokens against real endpoints.
+func scrubCIEnv(t *testing.T) {
+	t.Helper()
+
+	prefixes := []string{
+		"GITHUB_", "ACTIONS_", "RUNNER_", // GitHub Actions runtime + artifact backend
+		"GITLAB_", "CI_", // GitLab CI (CI_JOB_TOKEN, CI_API_V4_URL, …)
+		"FORGEJO_", "GITEA_", // Forgejo / Gitea Actions
+		"REUSABLE_CI_", "ARTIFACT_", // reusable-ci's own provider/runner/format + artifact verb inputs
+		"REGISTRY_", // container/package registry auth
+	}
+
+	exact := map[string]struct{}{
+		"CI": {}, "CONTINUOUS_INTEGRATION": {}, "BUILD_NUMBER": {},
+		"BUILDKITE": {}, "CIRCLECI": {}, "TRAVIS": {}, "DRONE": {}, "APPVEYOR": {},
+		"JENKINS_URL": {}, "TEAMCITY_VERSION": {},
+		"GH_TOKEN": {}, "GH_HOST": {}, "GH_ENTERPRISE_TOKEN": {}, // gh CLI
+		"DOCKER_CONFIG": {}, "DOCKER_AUTH_CONFIG": {}, // shared registry auth file
+		"GPG_PRIVATE_KEY": {}, "GPG_PASSPHRASE": {}, // release gpg import
+		"COSIGN_PASSWORD": {}, "COSIGN_PRIVATE_KEY": {}, "COSIGN_YES": {}, // signing
+	}
+
+	for _, kv := range os.Environ() {
+		key, _, found := strings.Cut(kv, "=")
+		if !found {
+			continue
+		}
+
+		if _, ok := exact[key]; ok || hasAnyPrefix(key, prefixes) {
+			t.Setenv(key, "")
+		}
+	}
+}
+
+func hasAnyPrefix(key string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+
+	return false
+}
 
 // Isolate sets a curated set of environment variables pointing into
 // throwaway directories under t.TempDir(). All values are restored at
@@ -120,6 +180,13 @@ func Isolate(t *testing.T) string {
 	// across the developer's LC_ALL settings.
 	t.Setenv("LC_ALL", "C")
 	t.Setenv("LANG", "C")
+
+	// CI/forge/credential isolation: a test (and any binary it spawns with
+	// os.Environ()) must not inherit ambient GITHUB_*/ACTIONS_*/CI_*/
+	// REGISTRY_*/REUSABLE_CI_* etc. from the developer's shell or the CI
+	// runner. Otherwise forge detection, sinks, and auth would depend on
+	// where the suite happens to run, and real tokens could leak in.
+	scrubCIEnv(t)
 
 	return home
 }

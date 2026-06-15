@@ -36,7 +36,7 @@ func TestSetup_ExportsCIVars(t *testing.T) {
 }
 
 func TestOutput_ReadsScalar(t *testing.T) {
-	e := glabenv.Setup(t) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	e := glabenv.Setup(t)                                                                     //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	require.NoError(t, os.WriteFile(e.OutputPath, []byte("KEY=value\nOTHER=stuff\n"), 0o644)) //nolint:gosec // test fixture
 
 	if got := e.Output("KEY"); got != "value" {

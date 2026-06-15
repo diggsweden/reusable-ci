@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -186,6 +187,27 @@ func recoverPanic() {
 func formatPanic(w io.Writer, panicValue any, stack []byte, vsn, sha string, args []string) {
 	_, _ = fmt.Fprintf(w, "reusable-ci: internal error: %v\n\n%s\n", panicValue, stack)
 	_, _ = fmt.Fprintf(w, "Context: version=%s  commit=%s  command=%s\n\n", vsn, sha, strings.Join(args, " "))
-	_, _ = fmt.Fprintln(w, "This is a bug in reusable-ci — please report it at:")
-	_, _ = fmt.Fprintln(w, "  "+bugReportURL)
+	_, _ = fmt.Fprintln(w, "This is a bug in reusable-ci — please report it (the link pre-fills the details above):")
+	_, _ = fmt.Fprintln(w, "  "+bugReportLink(panicValue, vsn, sha, args))
+}
+
+// bugReportLink builds a GitHub "new issue" URL pre-populated with the
+// panic summary (title) and the environment (body), so filing a crash
+// report is one click plus pasting the stack trace — clig.dev §Errors:
+// "provide a URL and have it pre-populate as much information as
+// possible." The full panic value + stack still print to the terminal,
+// so the title is truncated to keep the URL manageable.
+func bugReportLink(panicValue any, vsn, sha string, args []string) string {
+	title := fmt.Sprintf("panic: %v", panicValue)
+	if len(title) > 120 {
+		title = title[:117] + "..."
+	}
+
+	body := fmt.Sprintf(
+		"Environment:\n- version: %s\n- commit: %s\n- command: %s\n\nStack trace (paste from the terminal output above):\n",
+		vsn, sha, strings.Join(args, " "))
+
+	query := url.Values{"title": {title}, "body": {body}}
+
+	return bugReportURL + "?" + query.Encode()
 }

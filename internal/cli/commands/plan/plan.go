@@ -11,6 +11,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	appplan "github.com/diggsweden/reusable-ci/internal/app/plan"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
 )
 
@@ -18,10 +19,10 @@ import (
 func New() *cli.Command {
 	return &cli.Command{
 		Name:  "plan",
-		Usage: "typed release, dev-release, and pull-request plan composition",
+		Usage: "typed release, snapshot-release, and pull-request plan composition",
 		Commands: []*cli.Command{
 			releaseCmd(),
-			devReleaseCmd(),
+			snapshotReleaseCmd(),
 			prCmd(),
 			getFilePatternCmd(),
 		},
@@ -64,11 +65,11 @@ func releaseCmd() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "config-plan-json", Sources: cli.EnvVars("CONFIG_PLAN_JSON"), Usage: "typed config-plan JSON (output of 'config parse-artifacts')"},
 			&cli.StringFlag{Name: "branch", Sources: cli.EnvVars("BRANCH"), Usage: "git branch the release is being built from"},
-			&cli.StringFlag{Name: "ref-name", Required: true, Sources: cli.EnvVars("CI_REF_NAME", "GITHUB_REF_NAME"), Usage: "release tag (e.g. v1.2.3)"},
+			&cli.StringFlag{Name: "tag", Required: true, Sources: cienv.Tag(), Usage: "release tag (e.g. v1.2.3)"},
 			&cli.StringFlag{Name: "file-pattern", Sources: cli.EnvVars("FILE_PATTERN"), Usage: "git pathspecs the version-bump commit stages"},
 			&cli.StringFlag{Name: "release-type", Sources: cli.EnvVars("RELEASE_TYPE"), Usage: "type override (release/snapshot); auto-detected from the tag when empty"},
 			&cli.StringFlag{Name: "release-publisher", Sources: cli.EnvVars("RELEASE_PUBLISHER"), Usage: "platform that publishes the release (github-cli, gitlab-cli, …)"},
-			&cli.BoolFlag{Name: "release-require-allowlisted-signer", Sources: cli.EnvVars("RELEASE_REQUIRE_ALLOWLISTED_SIGNER"), Usage: "require the tag signer's fingerprint to appear in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_fingerprints (GPG)"},
+			&cli.BoolFlag{Name: "release-require-allowlisted-signer", Sources: cli.EnvVars("RELEASE_REQUIRE_ALLOWLISTED_SIGNER"), Usage: "require the tag signer to be allowlisted in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_keys.asc (GPG)"},
 			&cli.BoolFlag{Name: "release-draft", Sources: cli.EnvVars("RELEASE_DRAFT"), Usage: "create the GitHub Release as a draft"},
 			&cli.StringFlag{Name: "release-sboms", Value: "all", Sources: cli.EnvVars("RELEASE_SBOMS"), Usage: "sboms enum gating which CISA layers the release attaches"},
 			&cli.BoolFlag{Name: "release-sign-artifacts", Value: true, Sources: cli.EnvVars("RELEASE_SIGN_ARTIFACTS"), Usage: "sign release artifacts with the release GPG key"},
@@ -78,18 +79,18 @@ func releaseCmd() *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
 				_, err := appplan.Release(ctx, d.OutputSink, d.SummarySink, appplan.ReleaseInput{
-					ConfigPlanJSON:            cmd.String("config-plan-json"),
-					Branch:                    cmd.String("branch"),
-					RefName:                   cmd.String("ref-name"),
-					FilePattern:               cmd.String("file-pattern"),
-					ReleaseType:               cmd.String("release-type"),
-					ReleasePublisher:          cmd.String("release-publisher"),
+					ConfigPlanJSON:                  cmd.String("config-plan-json"),
+					Branch:                          cmd.String("branch"),
+					RefName:                         cmd.String("tag"),
+					FilePattern:                     cmd.String("file-pattern"),
+					ReleaseType:                     cmd.String("release-type"),
+					ReleasePublisher:                cmd.String("release-publisher"),
 					ReleaseRequireAllowlistedSigner: cmd.Bool("release-require-allowlisted-signer"),
-					ReleaseDraft:              cmd.Bool("release-draft"),
-					ReleaseSBOMs:              cmd.String("release-sboms"),
-					ReleaseSignArtifacts:      cmd.Bool("release-sign-artifacts"),
-					ChangelogCreator:          cmd.String("changelog-creator"),
-					ChangelogSkipVersionBump:  cmd.Bool("changelog-skip-version-bump"),
+					ReleaseDraft:                    cmd.Bool("release-draft"),
+					ReleaseSBOMs:                    cmd.String("release-sboms"),
+					ReleaseSignArtifacts:            cmd.Bool("release-sign-artifacts"),
+					ChangelogCreator:                cmd.String("changelog-creator"),
+					ChangelogSkipVersionBump:        cmd.Bool("changelog-skip-version-bump"),
 				})
 
 				return err
@@ -98,33 +99,32 @@ func releaseCmd() *cli.Command {
 	}
 }
 
-func devReleaseCmd() *cli.Command {
+func snapshotReleaseCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "dev-release",
-		Usage: "compose typed dev-release and stage plan contracts",
+		Name:  "snapshot-release",
+		Usage: "compose typed snapshot-release and stage plan contracts",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "config-plan-json", Sources: cli.EnvVars("CONFIG_PLAN_JSON"), Usage: "typed config-plan JSON (output of 'config parse-artifacts')"},
 			&cli.StringFlag{Name: "project-type", Sources: cli.EnvVars("PROJECT_TYPE"), Usage: "primary ecosystem of the project (maven/npm/go/cargo/…)"},
-			&cli.StringFlag{Name: "branch", Sources: cli.EnvVars("BRANCH"), Usage: "git branch the dev-release is being built from"},
-			&cli.StringFlag{Name: "release-sha", Sources: cli.EnvVars("RELEASE_SHA"), Usage: "commit SHA the dev-release is anchored to"},
-			&cli.StringFlag{Name: "release-actor", Sources: cli.EnvVars("RELEASE_ACTOR"), Usage: "user triggering the dev-release"},
-			&cli.StringFlag{Name: "release-repository", Sources: cli.EnvVars("RELEASE_REPOSITORY"), Usage: "\"owner/repo\" the dev-release is published from"},
+			&cli.StringFlag{Name: "branch", Sources: cli.EnvVars("BRANCH"), Usage: "git branch the snapshot-release is being built from"},
+			&cli.StringFlag{Name: "release-sha", Sources: cli.EnvVars("RELEASE_SHA"), Usage: "commit SHA the snapshot-release is anchored to"},
+			&cli.StringFlag{Name: "release-actor", Sources: cli.EnvVars("RELEASE_ACTOR"), Usage: "user triggering the snapshot-release"},
+			&cli.StringFlag{Name: "release-repository", Sources: cli.EnvVars("RELEASE_REPOSITORY"), Usage: "\"owner/repo\" the snapshot-release is published from"},
 			&cli.StringFlag{Name: "working-dir", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "default working directory when no per-artifact override is in the plan"},
 			&cli.StringFlag{Name: "java-version", Sources: cli.EnvVars("JAVA_VERSION"), Usage: "JDK version installed by the publish job (Maven/Gradle paths)"},
 			&cli.StringFlag{Name: "node-version", Sources: cli.EnvVars("NODE_VERSION"), Usage: "Node.js version installed by the publish job (npm path)"},
 			&cli.StringFlag{Name: "rust-toolchain", Value: "stable", Sources: cli.EnvVars("RUST_TOOLCHAIN"), Usage: "Rust toolchain installed by the publish job (cargo path)"},
-			&cli.StringFlag{Name: "registry", Sources: cli.EnvVars("REGISTRY"), Usage: "container registry the dev image is pushed to"},
+			&cli.StringFlag{Name: "registry", Sources: cli.EnvVars("REGISTRY"), Usage: "registry forwarded to the snapshot plan context (snapshot flow is npm/SBOM-only)"},
 			&cli.StringFlag{Name: "reusable-ci-binary-ref", Sources: cli.EnvVars("REUSABLE_CI_BINARY_REF"), Usage: "git ref of the reusable-ci binary used in the plan"},
 			&cli.StringFlag{Name: "npm-registry", Sources: cli.EnvVars("NPM_REGISTRY"), Usage: "npm registry URL the dev tarball is published to"},
-			&cli.StringFlag{Name: "package-scope", Sources: cli.EnvVars("PACKAGE_SCOPE"), Usage: "npm package scope (e.g. @diggsweden) routed to the registry"},
-			&cli.StringFlag{Name: "sboms", Value: "none", Sources: cli.EnvVars("SBOMS"), Usage: "sboms enum gating which CISA layers the dev-release produces"},
+			&cli.StringFlag{Name: "scope", Sources: cli.EnvVars("SCOPE", "PACKAGE_SCOPE"), Usage: "npm package scope (e.g. @diggsweden) routed to the registry"},
+			&cli.StringFlag{Name: "sboms", Value: "none", Sources: cli.EnvVars("SBOMS"), Usage: "sboms enum gating which CISA layers the snapshot-release produces"},
 			&cli.BoolFlag{Name: "publish-npm", Value: true, Sources: cli.EnvVars("PUBLISH_NPM"), Usage: "include the npm dev-publish step in the plan"},
 			&cli.BoolFlag{Name: "use-ci-token", Value: true, Sources: cli.EnvVars("USE_CI_TOKEN"), Usage: "use the CI platform token in place of an explicit registry password"},
-			&cli.BoolFlag{Name: "publish-container", Value: true, Sources: cli.EnvVars("PUBLISH_CONTAINER"), Usage: "include the container dev-publish step in the plan"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
-				_, err := appplan.DevRelease(ctx, d.OutputSink, appplan.DevReleaseInput{
+				_, err := appplan.SnapshotRelease(ctx, d.OutputSink, appplan.SnapshotReleaseInput{
 					ConfigPlanJSON:      cmd.String("config-plan-json"),
 					ProjectType:         cmd.String("project-type"),
 					Branch:              cmd.String("branch"),
@@ -138,11 +138,10 @@ func devReleaseCmd() *cli.Command {
 					Registry:            cmd.String("registry"),
 					ReusableCIBinaryRef: cmd.String("reusable-ci-binary-ref"),
 					NPMRegistry:         cmd.String("npm-registry"),
-					PackageScope:        cmd.String("package-scope"),
+					PackageScope:        cmd.String("scope"),
 					SBOMs:               cmd.String("sboms"),
 					PublishNPM:          cmd.Bool("publish-npm"),
 					UseCIToken:          cmd.Bool("use-ci-token"),
-					PublishContainer:    cmd.Bool("publish-container"),
 				})
 
 				return err

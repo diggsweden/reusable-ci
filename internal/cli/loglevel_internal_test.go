@@ -23,9 +23,9 @@ func TestResolveLogLevel(t *testing.T) {
 		debugTruthy bool
 		want        string
 	}{
-		{name: "default → info", flagLevel: "info", want: "info"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		{name: "explicit flag wins", flagLevel: "warn", flagSet: true, want: "warn"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		{name: "DEBUG bumps default info → debug", flagLevel: "info", debugTruthy: true, want: "debug"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		{name: "default → info", flagLevel: "info", want: "info"},                                                       //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		{name: "explicit flag wins", flagLevel: "warn", flagSet: true, want: "warn"},                                    //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		{name: "DEBUG bumps default info → debug", flagLevel: "info", debugTruthy: true, want: "debug"},                 //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{name: "DEBUG ignored when flag explicit", flagLevel: "error", flagSet: true, debugTruthy: true, want: "error"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{name: "DEBUG ignored when flag value non-info", flagLevel: "warn", flagSet: false, debugTruthy: true, want: "warn"},
 		{name: "quiet wins over DEBUG", flagLevel: "info", quiet: true, debugTruthy: true, want: "error"},

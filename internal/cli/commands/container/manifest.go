@@ -9,7 +9,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	adapterdocker "github.com/diggsweden/reusable-ci/internal/adapters/docker"
+	"github.com/diggsweden/reusable-ci/internal/adapters/ociregistry"
 	appcontainer "github.com/diggsweden/reusable-ci/internal/app/container"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
 	domaincontainer "github.com/diggsweden/reusable-ci/internal/domain/container"
@@ -39,7 +39,7 @@ func manifestMergeCmd() *cli.Command {
 			&cli.StringFlag{Name: "digests-dir", Value: domaincontainer.DefaultDigestsDir, Sources: cli.EnvVars("DIGESTS_DIR"), Usage: "directory holding the per-arch digest marker files"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return appcontainer.MergeManifest(ctx, adapterdocker.New(), os.Stderr, os.Stderr, appcontainer.MergeManifestInput{
+			return appcontainer.MergeManifest(ctx, ociregistry.New(), os.Stderr, appcontainer.MergeManifestInput{
 				ImageName:  cmd.String("image-name"),
 				Tags:       cmd.String("tags"),
 				DigestsDir: cmd.String("digests-dir"),
@@ -53,13 +53,13 @@ func manifestInspectCmd() *cli.Command {
 		Name:  "inspect",
 		Usage: "inspect a pushed manifest list and emit image/digest outputs",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "image", Sources: cli.EnvVars("CONTAINER_IMAGE"), Usage: "fully-qualified image reference (registry/owner/name:tag) to inspect"},
+			&cli.StringFlag{Name: "image-ref", Sources: cli.EnvVars("IMAGE_REF"), Usage: "fully-qualified image reference (registry/owner/name:tag) to inspect"},
 			&cli.StringFlag{Name: "tags", Sources: cli.EnvVars("TAGS"), Usage: "newline-separated tags whose digest output is emitted to the sink"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
-				_, err := appcontainer.InspectManifest(ctx, adapterdocker.New(), d.OutputSink, os.Stderr, os.Stderr, appcontainer.InspectManifestInput{
-					Image: cmd.String("image"),
+				_, err := appcontainer.InspectManifest(ctx, ociregistry.New(), d.OutputSink, os.Stderr, appcontainer.InspectManifestInput{
+					Image: cmd.String("image-ref"),
 					Tags:  cmd.String("tags"),
 				})
 

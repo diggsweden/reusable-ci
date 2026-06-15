@@ -12,8 +12,10 @@ import (
 
 	apppublish "github.com/diggsweden/reusable-ci/internal/app/publish"
 	appvalidate "github.com/diggsweden/reusable-ci/internal/app/validate"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/internal/cli/secret"
+	"github.com/diggsweden/reusable-ci/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/publish"
 )
@@ -48,7 +50,7 @@ func authTokenCmd() *cli.Command {
 				Name:     "repository", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 				Required: true,
 				Usage:    "\"owner/repo\" on GitHub; \"group/project[/sub]\" on GitLab", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-				Sources:  cli.EnvVars("REPOSITORY", "GITHUB_REPOSITORY"),
+				Sources:  cienv.Repository(),
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -70,7 +72,6 @@ func authTokenCmd() *cli.Command {
 				return appvalidate.Token(ctx, tv, os.Stderr, appvalidate.TokenInput{
 					Token:      token,
 					Repository: cmd.String("repository"),
-					Platform:   d.Platform,
 				})
 			})
 		},
@@ -85,7 +86,7 @@ func authBotPermissionsCmd() *cli.Command {
 			&cli.StringFlag{
 				Name:     "repository",
 				Required: true,
-				Sources:  cli.EnvVars("REPOSITORY", "GITHUB_REPOSITORY"),
+				Sources:  cienv.Repository(),
 				Usage:    "\"owner/repo\" on GitHub; \"group/project[/sub]\" on GitLab",
 			},
 		},
@@ -111,7 +112,7 @@ func authRegistryCmd() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "use-ci-token", Sources: cli.EnvVars("USE_CI_TOKEN"), Usage: "the CI platform token is used in place of an explicit registry password"},
 			&cli.StringFlag{Name: "registry", Sources: cli.EnvVars("REGISTRY"), Usage: "registry hostname the workflow targets"},
-			&cli.StringFlag{Name: "expected-registry", Value: "ghcr.io", Sources: cli.EnvVars("CI_REGISTRY"), Usage: "registry hostname the CI token is valid for"},
+			&cli.StringFlag{Name: "expected-registry", Value: container.DefaultRegistry, Sources: cli.EnvVars("CI_REGISTRY"), Usage: "registry hostname the CI token is valid for"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			annot := deps.Annotator(cmd)

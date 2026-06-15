@@ -52,3 +52,39 @@ func TestIsolate_ScrubsAndPinsProcessEnv(t *testing.T) {
 		require.Empty(t, os.Getenv(key), "%s should be empty after Isolate", key)
 	}
 }
+
+// TestIsolate_ScrubsAmbientCIEnv proves the host's CI/forge/token context
+// cannot leak into a test (or a binary it spawns with os.Environ()): every
+// such variable is cleared to empty regardless of what the developer's shell
+// or the CI runner had set. reusable-ci's detection reads empty as absent.
+func TestIsolate_ScrubsAmbientCIEnv(t *testing.T) {
+	// Pollute the process env *before* Isolate, the way a CI runner would.
+	polluted := map[string]string{
+		"GITHUB_ACTIONS":        "true",
+		"GITHUB_TOKEN":          "ghp_leaky",
+		"GITHUB_OUTPUT":         "/host/output",
+		"GITHUB_RUN_ID":         "999",
+		"ACTIONS_RESULTS_URL":   "https://real.example",
+		"ACTIONS_RUNTIME_TOKEN": "rt_leaky",
+		"RUNNER_TEMP":           "/host/tmp",
+		"CI":                    "true",
+		"CI_JOB_TOKEN":          "gl_leaky",
+		"GITLAB_CI":             "true",
+		"FORGEJO_ACTIONS":       "true",
+		"REUSABLE_CI_PROVIDER":  "gitlab",
+		"ARTIFACT_NAME":         "hostleak",
+		"REGISTRY_PASSWORD":     "s3cret",
+		"DOCKER_CONFIG":         "/host/.docker",
+		"GPG_PRIVATE_KEY":       "-----BEGIN-----",
+		"GH_TOKEN":              "gh_leaky",
+	}
+	for key, value := range polluted {
+		t.Setenv(key, value)
+	}
+
+	isolatedenv.Isolate(t)
+
+	for key := range polluted {
+		require.Empty(t, os.Getenv(key), "ambient %s must be scrubbed by Isolate", key)
+	}
+}

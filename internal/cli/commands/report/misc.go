@@ -20,7 +20,7 @@ func extractedBinariesCmd() *cli.Command {
 		Name:  "extracted-binaries",
 		Usage: "append the extracted container binaries summary block",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "dir", Value: "./extracted-binaries", Sources: cli.EnvVars("EXTRACTED_BINARIES_DIR"), Usage: "directory containing the extracted binaries (scanned recursively)"},
+			&cli.StringFlag{Name: "binaries-dir", Value: "./extracted-binaries", Sources: cli.EnvVars("BINARIES_DIR"), Usage: "directory containing the extracted binaries (scanned recursively)"},
 			&cli.StringFlag{Name: "artifact-name", Sources: cli.EnvVars("ARTIFACT_NAME"), Usage: "project slug shown in the step-summary header"},
 			&cli.StringFlag{Name: "display-name", Sources: cli.EnvVars("DISPLAY_NAME"), Usage: "human-readable name override for the summary header"},
 			&cli.StringFlag{Name: "extract-target", Sources: cli.EnvVars("EXTRACT_TARGET"), Usage: "Containerfile stage name the binaries were extracted from"},
@@ -31,7 +31,7 @@ func extractedBinariesCmd() *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
 				return appsummary.ExtractedBinaries(ctx, d.SummarySink, appsummary.ExtractedBinariesInput{
-					Dir:           cmd.String("dir"),
+					Dir:           cmd.String("binaries-dir"),
 					ArtifactName:  cmd.String("artifact-name"),
 					DisplayName:   cmd.String("display-name"),
 					ExtractTarget: cmd.String("extract-target"),

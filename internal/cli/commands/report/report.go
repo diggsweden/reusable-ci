@@ -9,7 +9,7 @@
 //   - build.go     — `build <ecosystem>` per-ecosystem build summaries
 //   - publish.go   — `publish <target>` per-target publish summaries
 //   - status.go    — `status <stage|prerequisites|build-sbom|sbom-count|quality-check>`
-//   - lifecycle.go — flat lifecycle: `release`, `dev-release`, `pr`
+//   - lifecycle.go — flat lifecycle: `release`, `snapshot-release`, `pr`
 //   - misc.go      — flat one-offs: `extracted-binaries`, `swift-lint`
 package report
 
@@ -25,7 +25,7 @@ func New() *cli.Command {
 			publishGroup(),
 			statusGroup(),
 			releaseCmd(),
-			devReleaseCmd(),
+			snapshotReleaseCmd(),
 			prCmd(),
 			extractedBinariesCmd(),
 			swiftLintCmd(),

@@ -46,7 +46,7 @@ func (s *Sink) Set(_ context.Context, key, value string) error {
 	defer s.mu.Unlock()
 
 	if s.closed {
-		return fmt.Errorf("fakeoutputsink: Set after Close" + ": %w", errs.ErrValidation)
+		return fmt.Errorf("fakeoutputsink: Set after Close"+": %w", errs.ErrValidation)
 	}
 
 	s.scalar[key] = value
@@ -68,7 +68,7 @@ func (s *Sink) SetMultiline(_ context.Context, key string, lines []string) error
 	defer s.mu.Unlock()
 
 	if s.closed {
-		return fmt.Errorf("fakeoutputsink: SetMultiline after Close" + ": %w", errs.ErrValidation)
+		return fmt.Errorf("fakeoutputsink: SetMultiline after Close"+": %w", errs.ErrValidation)
 	}
 
 	cp := make([]string, len(lines))

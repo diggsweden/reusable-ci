@@ -18,9 +18,9 @@ func suffixBinariesCmd() *cli.Command {
 		Usage: "rename extracted binaries with a -linux-<arch> suffix",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
-				Name:     "dir",
+				Name:     "binaries-dir",
 				Required: true,
-				Sources:  cli.EnvVars("EXTRACTED_BINARIES_DIR"),
+				Sources:  cli.EnvVars("BINARIES_DIR"),
 				Usage:    "directory holding the extracted binaries",
 			},
 			&cli.StringFlag{
@@ -37,7 +37,7 @@ func suffixBinariesCmd() *cli.Command {
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			return appcontainer.SuffixExtractedBinaries(os.Stderr, appcontainer.SuffixExtractedBinariesInput{
-				Dir:           cmd.String("dir"),
+				Dir:           cmd.String("binaries-dir"),
 				Arch:          cmd.String("arch"),
 				ExpectedNames: cmd.String("expected-names"),
 			})

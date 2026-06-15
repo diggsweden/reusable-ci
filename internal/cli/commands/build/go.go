@@ -11,7 +11,9 @@ import (
 
 	"github.com/diggsweden/reusable-ci/internal/adapters/gotool"
 	appbuild "github.com/diggsweden/reusable-ci/internal/app/build"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/internal/domain/build"
 )
 
 func goCmd() *cli.Command {
@@ -68,10 +70,10 @@ func goCompileCmd() *cli.Command {
 			&cli.StringFlag{Name: "build-tags", Sources: cli.EnvVars("BUILD_TAGS"), Usage: "comma-separated build tags passed via -tags"},
 			&cli.StringFlag{Name: "ldflags", Sources: cli.EnvVars("LD_FLAGS"), Usage: "extra -ldflags appended after the version-injection block"},
 			&cli.StringFlag{Name: "main-package", Value: ".", Sources: cli.EnvVars("MAIN_PACKAGE"), Usage: "main package import path relative to --working-dir"},
-			&cli.StringFlag{Name: "platforms", Value: "linux/amd64", Sources: cli.EnvVars("PLATFORMS"), Usage: "comma-separated GOOS/GOARCH targets to cross-compile"},
+			&cli.StringFlag{Name: "platforms", Value: build.DefaultPlatform, Sources: cli.EnvVars("PLATFORMS"), Usage: "comma-separated GOOS/GOARCH targets to cross-compile"},
 			&cli.StringFlag{Name: flagVersion, Sources: cli.EnvVars("VERSION"), Usage: "release version baked into the binary via -ldflags (one of --version or --ref-name is required; use 'dev' for local builds)"},
-			&cli.StringFlag{Name: flagRefName, Sources: cli.EnvVars("REF_NAME", "GITHUB_REF_NAME"), Usage: "git ref name used to derive the version when --version is empty (mirrors 'build go metadata')"}, //nolint:goconst // flag name reused across sibling subcommands.
-			&cli.StringFlag{Name: "commit", Sources: cli.EnvVars("GITHUB_SHA", "CI_COMMIT_SHA"), Usage: "commit SHA baked into the binary via -ldflags"},
+			&cli.StringFlag{Name: flagRefName, Sources: cienv.RefName(), Usage: "git ref name used to derive the version when --version is empty (mirrors 'build go metadata')"}, //nolint:goconst // flag name reused across sibling subcommands.
+			&cli.StringFlag{Name: "commit", Sources: cienv.Commit(), Usage: "commit SHA baked into the binary via -ldflags"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return appbuild.GoBuildBinaries(ctx, gotool.Go{}, os.Stderr, os.Stderr, appbuild.GoBuildBinariesInput{
@@ -117,7 +119,7 @@ func goMetadataCmd() *cli.Command {
 			&cli.StringFlag{Name: flagArtifactName, Sources: cli.EnvVars("ARTIFACT_NAME"), Usage: "explicit artifact-name override (skips the module-basename heuristic)"},
 			&cli.StringFlag{Name: flagBinaryName, Sources: cli.EnvVars("BINARY_NAME"), Usage: "explicit binary-name override (skips the module-basename heuristic)"},
 			&cli.StringFlag{Name: flagVersion, Sources: cli.EnvVars("VERSION"), Usage: "explicit version override (skips the --ref-name heuristic)"},
-			&cli.StringFlag{Name: flagRefName, Sources: cli.EnvVars("REF_NAME", "GITHUB_REF_NAME"), Usage: usageVersionRef},
+			&cli.StringFlag{Name: flagRefName, Sources: cienv.RefName(), Usage: usageVersionRef},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {

@@ -12,10 +12,11 @@ import (
 
 	"github.com/diggsweden/reusable-ci/internal/adapters/git"
 	appsummary "github.com/diggsweden/reusable-ci/internal/app/summary"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/provider"
 	domainsummary "github.com/diggsweden/reusable-ci/internal/domain/summary"
-	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 )
 
 // statusGroup wires `reusable-ci report status <verb>` — pipeline /
@@ -100,13 +101,13 @@ func statusPrerequisitesCmd() *cli.Command {
 		Name:  "prerequisites",
 		Usage: "append the release prerequisites validation report (tag/commit info, secrets, validations)",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "tag", Sources: cli.EnvVars("TAG_NAME"), Usage: "tag the release is anchored to (e.g. v1.2.3)"},
+			&cli.StringFlag{Name: "tag", Sources: cienv.Tag(), Usage: "tag the release is anchored to (e.g. v1.2.3)"},
 			&cli.StringFlag{Name: "commit-sha", Sources: cli.EnvVars("COMMIT_SHA"), Usage: "commit SHA the tag points at"},
-			&cli.StringFlag{Name: "ref-type", Sources: cli.EnvVars("REF_TYPE"), Usage: "trigger ref type (tag/branch/…)"},
+			&cli.StringFlag{Name: "ref-type", Sources: cienv.RefType(), Usage: "trigger ref type (tag/branch/…)"},
 			&cli.StringFlag{Name: "config-plan-json", Sources: cli.EnvVars("CONFIG_PLAN_JSON"), Usage: "typed config-plan JSON used to describe targets in the summary"},
 			&cli.StringFlag{Name: "project-types", Sources: cli.EnvVars("PROJECT_TYPES"), Usage: "comma-separated ecosystems detected in the project"},
 			&cli.StringFlag{Name: "build-types", Sources: cli.EnvVars("BUILD_TYPES"), Usage: "comma-separated build types planned (library/application/...)"},
-			&cli.StringFlag{Name: "container-registry", Sources: cli.EnvVars("CONTAINER_REGISTRY"), Usage: "container registry the release will push to"},
+			&cli.StringFlag{Name: "registry", Sources: cli.EnvVars("CONTAINER_REGISTRY"), Usage: "container registry the release will push to"},
 			&cli.BoolFlag{Name: "sign-artifacts", Sources: cli.EnvVars("SIGN_ARTIFACTS"), Usage: "GPG signing was requested for release artifacts"},
 			&cli.BoolFlag{Name: "require-allowlisted-signer", Sources: cli.EnvVars("REQUIRE_ALLOWLISTED_SIGNER"), Usage: "the signer-allowlist gate is enforced for non-SNAPSHOT releases"},
 			&cli.StringFlag{Name: "job-status", Sources: cli.EnvVars("JOB_STATUS"), Usage: "validator job outcome (success/failure/cancelled)"},
@@ -122,33 +123,34 @@ func statusPrerequisitesCmd() *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
 				return appsummary.Prerequisites(ctx, d.SummarySink, git.New(), appsummary.PrerequisitesSummaryInput{
-					TagName:                 cmd.String("tag"),
-					CommitSHA:               cmd.String("commit-sha"),
-					RefType:                 provider.RefType(cmd.String("ref-type")),
-					ConfigPlanJSON:          cmd.String("config-plan-json"),
-					ProjectTypes:            cmd.String("project-types"),
-					BuildTypes:              cmd.String("build-types"),
-					ContainerRegistry:       cmd.String("container-registry"),
-					SignArtifacts:           cmd.Bool("sign-artifacts"),
+					TagName:                  cmd.String("tag"),
+					CommitSHA:                cmd.String("commit-sha"),
+					RefType:                  provider.RefType(cmd.String("ref-type")),
+					ConfigPlanJSON:           cmd.String("config-plan-json"),
+					ProjectTypes:             cmd.String("project-types"),
+					BuildTypes:               cmd.String("build-types"),
+					ContainerRegistry:        cmd.String("registry"),
+					SignArtifacts:            cmd.Bool("sign-artifacts"),
 					RequireAllowlistedSigner: cmd.Bool("require-allowlisted-signer"),
 					JobStatus:                domainsummary.NormalizeResult(cmd.String("job-status")),
-					PublishTo:               cmd.String("publish-to"),
-					HasReleaseGPGPrivateKey: cmd.Bool("has-release-gpg-private-key"),
-					HasReleaseGPGPassphrase: cmd.Bool("has-release-gpg-passphrase"),
-					HasReleaseToken:         cmd.Bool("has-release-token"),
-					HasReleaseGPGPublicKey:  cmd.Bool("has-release-gpg-public-key"),
-					HasMavenCentralUsername: cmd.Bool("has-maven-central-username"),
-					HasMavenCentralPassword: cmd.Bool("has-maven-central-password"),
-					HasNPMToken:             cmd.Bool("has-npm-token"),
+					PublishTo:                cmd.String("publish-to"),
+					HasReleaseGPGPrivateKey:  cmd.Bool("has-release-gpg-private-key"),
+					HasReleaseGPGPassphrase:  cmd.Bool("has-release-gpg-passphrase"),
+					HasReleaseToken:          cmd.Bool("has-release-token"),
+					HasReleaseGPGPublicKey:   cmd.Bool("has-release-gpg-public-key"),
+					HasMavenCentralUsername:  cmd.Bool("has-maven-central-username"),
+					HasMavenCentralPassword:  cmd.Bool("has-maven-central-password"),
+					HasNPMToken:              cmd.Bool("has-npm-token"),
 				})
 			})
 		},
 	}
 }
 
-//nolint:dupl // parallel to statusSBOMCountCmd by design — each command
 // has its own flag set / env var sources and forwards to a distinct
 // app-layer use case.
+//
+//nolint:dupl // parallel to statusSBOMCountCmd by design — each command
 func statusBuildSBOMCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "build-sbom",

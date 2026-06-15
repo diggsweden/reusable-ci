@@ -36,7 +36,7 @@ func TestSetup_ExportsEnvVars(t *testing.T) {
 }
 
 func TestOutput_ReadsScalar(t *testing.T) {
-	e := ghaenv.Setup(t) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	e := ghaenv.Setup(t)                                                                //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	require.NoError(t, os.WriteFile(e.OutputPath, []byte("foo=bar\nbaz=qux\n"), 0o644)) //nolint:gosec // test fixture
 
 	if got := e.Output("foo"); got != "bar" {

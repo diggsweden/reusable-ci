@@ -11,6 +11,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	appsecurity "github.com/diggsweden/reusable-ci/internal/app/security"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/internal/cli/secret"
 )
@@ -58,9 +59,9 @@ func reportUploadSARIFCmd() *cli.Command {
 				Name:  "token-file",
 				Usage: "path to a file containing the code-scanning token (use \"-\" for stdin; defaults to $CODE_SCANNING_TOKEN)",
 			},
-			&cli.StringFlag{Name: "repository", Sources: cli.EnvVars("GITHUB_REPOSITORY"), Usage: "\"owner/repo\" the SARIF findings are attributed to"},
-			&cli.StringFlag{Name: "sha", Sources: cli.EnvVars("GITHUB_SHA"), Usage: "commit SHA the SARIF findings are attributed to"},
-			&cli.StringFlag{Name: "ref", Sources: cli.EnvVars("GITHUB_REF"), Usage: "fully-qualified ref (refs/heads/X or refs/tags/X) for attribution"},
+			&cli.StringFlag{Name: "repository", Sources: cienv.Repository(), Usage: "\"owner/repo\" the SARIF findings are attributed to"},
+			&cli.StringFlag{Name: "commit", Sources: cienv.Commit(), Usage: "commit SHA the SARIF findings are attributed to"},
+			&cli.StringFlag{Name: "ref", Sources: cienv.Ref(), Usage: "fully-qualified ref (refs/heads/X or refs/tags/X) for attribution"},
 			&cli.StringFlag{Name: "category", Sources: cli.EnvVars("SARIF_CATEGORY"), Usage: "Code Scanning category label (groups multi-scanner results)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -87,7 +88,7 @@ func reportUploadSARIFCmd() *cli.Command {
 					SARIFFile:  cmd.String("sarif-file"),
 					Token:      token,
 					Repository: cmd.String("repository"),
-					SHA:        cmd.String("sha"),
+					SHA:        cmd.String("commit"),
 					Ref:        cmd.String("ref"),
 					Category:   cmd.String("category"),
 				})

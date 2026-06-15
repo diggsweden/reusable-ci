@@ -48,13 +48,25 @@ func ClassifyError(err error) error {
 // into "unknown subcommand 'X'", which more accurately describes what
 // the user did (typed a subcommand, not asked for help). Returns the
 // input unchanged for unrelated messages.
+//
+// When --suggest is on, urfave appends its closest-match hint as a bare
+// ". <command>" tail (help.go), e.g. "No help topic for 'relese'. release"
+// — which reads as noise to the user. We re-label that tail as an
+// explicit, clig.dev-style "Did you mean \"release\"?" so the suggestion
+// is unmistakable.
 func rewriteHelpTopicMessage(msg string) string {
 	const prefix = "No help topic for "
 	if !strings.HasPrefix(msg, prefix) {
 		return msg
 	}
 
-	return "unknown subcommand " + strings.TrimPrefix(msg, prefix)
+	// body is "'<arg>'" or, with a suggestion, "'<arg>'. <suggestion>".
+	body := strings.TrimPrefix(msg, prefix)
+	if name, suggestion, found := strings.Cut(body, "'. "); found {
+		return fmt.Sprintf("unknown subcommand %s'. Did you mean %q?", name, suggestion)
+	}
+
+	return "unknown subcommand " + body
 }
 
 // IsAlreadyPrintedByCLI reports whether the error has already been

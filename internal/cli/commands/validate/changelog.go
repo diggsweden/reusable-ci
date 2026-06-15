@@ -16,7 +16,7 @@ import (
 func changelogCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "changelog",
-		Usage: "verify a changelog file's presence (or read its content into the output sink)",
+		Usage: "validate the committed source changelog (e.g. CHANGELOG.md) is present, optionally reading its content into the output sink",
 		Description: "Two modes — full (the file must exist; emits a line count) and " +
 			"minimal (file may be absent; emits content=<file body> or content=" +
 			"\"No changes for this release\" via the OutputSink).",

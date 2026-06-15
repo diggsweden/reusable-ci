@@ -13,6 +13,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/adapters/opengrep"
 	"github.com/diggsweden/reusable-ci/internal/adapters/trivy"
 	appsecurity "github.com/diggsweden/reusable-ci/internal/app/security"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/internal/domain/security"
 )
@@ -47,7 +48,7 @@ func scanOpengrepCmd() *cli.Command {
 			&cli.StringFlag{Name: "text-file", Sources: cli.EnvVars("OPENGREP_TEXT_FILE"), Usage: "destination path for the human-readable text findings file"},
 			&cli.StringFlag{Name: "gitlab-sast-file", Sources: cli.EnvVars("OPENGREP_GITLAB_SAST_FILE"), Usage: "destination path for the GitLab SAST report"},
 			&cli.BoolFlag{Name: "has-code-scanning-token", Sources: cli.EnvVars("HAS_CODE_SCANNING_TOKEN"), Usage: "code-scanning upload token is available (toggles step-summary upload section)"},
-			&cli.StringFlag{Name: "run-url", Sources: cli.EnvVars("CI_RUN_URL"), Usage: "CI run URL emitted in the step summary for the linked findings"},
+			&cli.StringFlag{Name: "run-url", Sources: cienv.RunURL(), Usage: "CI run URL emitted in the step summary for the linked findings"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
@@ -105,6 +106,14 @@ func scanContainerCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "container",
 		Usage: "run `trivy image`, derive SARIF/GitLab reports, and fail when findings hit the severity threshold",
+		Description: `EXAMPLES:
+   # Scan a digest-pinned image, failing on HIGH+ findings
+   reusable-ci security scan container \
+     --image-ref ghcr.io/owner/app@sha256:… --fail-on-severity HIGH
+
+   # Write the trivy JSON for a downstream step
+   reusable-ci security scan container --image-ref ghcr.io/owner/app:v1.2.3 \
+     --json-file dist/trivy.json`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "image-ref", Required: true, Sources: cli.EnvVars("IMAGE_REF"), Usage: "fully-qualified image (registry/owner/name@sha256:…) to scan"},
 			&cli.StringFlag{Name: "json-file", Value: security.DefaultTrivyContainerJSONFile, Sources: cli.EnvVars("TRIVY_JSON_FILE"), Usage: "destination path for the raw trivy JSON findings"},

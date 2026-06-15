@@ -87,6 +87,9 @@ func runBinary(t *testing.T, bin string, args ...string) (string, string, int) {
 	return stdout.String(), stderr.String(), 0
 }
 
+// TestBinary_VersionFlag asserts the bare-build default (`dev`): the shared
+// binary is built without ldflags, so main.version/commit/date keep their
+// package defaults.
 func TestBinary_VersionFlag(t *testing.T) {
 	_ = testenv.New(t)
 	bin := buildBinary(t)
@@ -96,6 +99,44 @@ func TestBinary_VersionFlag(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "dev") {
 		t.Errorf("stdout = %q, want version output", stdout)
+	}
+}
+
+// buildBinaryWithVersion builds a one-off binary with the same `-X main.*`
+// ldflags the justfile and goreleaser inject, so the version-metadata wiring
+// can be smoke-tested without the release toolchain (F8 / DIST-03).
+func buildBinaryWithVersion(t *testing.T, version, commit, date string) string {
+	t.Helper()
+
+	bin := filepath.Join(t.TempDir(), "reusable-ci-versioned")
+	ldflags := fmt.Sprintf("-X main.version=%s -X main.commit=%s -X main.date=%s", version, commit, date)
+	cmd := exec.Command("go", "build", "-buildvcs=false", "-ldflags", ldflags, "-o", bin, "./cmd/reusable-ci")
+	cmd.Dir = repoRoot(t)
+	cmd.Env = os.Environ()
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go build (ldflags): %v\n%s", err, out)
+	}
+
+	return bin
+}
+
+// TestBinary_VersionMetadata_FromLdflags proves the `-X main.version/commit/date`
+// wiring that both the justfile build recipes and goreleaser depend on — a bare
+// `go build` reports `dev` and would mask drift here (F8).
+func TestBinary_VersionMetadata_FromLdflags(t *testing.T) {
+	_ = testenv.New(t)
+	bin := buildBinaryWithVersion(t, "v9.9.9", "abc1234def0", "2026-01-02T03:04:05Z")
+
+	stdout, _, code := runBinary(t, bin, "--version")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+
+	for _, want := range []string{"v9.9.9", "abc1234def0", "2026-01-02T03:04:05Z"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("--version output %q missing injected %q", stdout, want)
+		}
 	}
 }
 
@@ -116,7 +157,7 @@ func TestBinary_WorkflowInputDefaults_Success(t *testing.T) {
 	bin := buildBinary(t)
 	fsys := testfs.NewReal(t)
 	fsys.WriteFile(filepath.Join(".github", "workflows", "ok.yml"), []byte("name: ok\non:\n  workflow_call:\n    inputs:\n      foo:\n        default: literal\n"))
-	_, stderr, code := runBinary(t, bin, "validate", "workflow-input-defaults", "--root", fsys.Root)
+	_, stderr, code := runBinary(t, bin, "validate", "workflow", "input-defaults", "--root", fsys.Root)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; stderr=%q", code, stderr)
 	}
@@ -126,7 +167,12 @@ func TestBinary_WorkflowInputDefaults_Success(t *testing.T) {
 }
 
 func TestBinary_WorkflowInputDefaults_InvalidDefaultExitsWithValidation(t *testing.T) {
-	_ = testenv.New(t)
+	// GITHUB_ACTIONS=true → the runner is detected as GitHub, so the
+	// annotation renders as a `::error file=…::` workflow command (the form
+	// the reusable workflows actually run under). Off-GitHub it renders a
+	// plain `Error: <file>:<line>:` line — see the sibling test below.
+	env := testenv.New(t)
+	env.Setenv("GITHUB_ACTIONS", "true")
 	bin := buildBinary(t)
 	fsys := testfs.NewReal(t)
 	fsys.WriteFile(filepath.Join(".github", "workflows", "bad.yml"), []byte(strings.Join([]string{
@@ -137,12 +183,35 @@ func TestBinary_WorkflowInputDefaults_InvalidDefaultExitsWithValidation(t *testi
 		"      foo:",
 		"        default: ${{ github.ref_name }}",
 	}, "\n")+"\n"))
-	_, stderr, code := runBinary(t, bin, "validate", "workflow-input-defaults", "--root", fsys.Root)
+	_, stderr, code := runBinary(t, bin, "validate", "workflow", "input-defaults", "--root", fsys.Root)
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1; stderr=%q", code, stderr)
 	}
 	if !strings.Contains(stderr, "::error file=.github/workflows/bad.yml,line=6::workflow_call input defaults must be literal values") {
 		t.Errorf("stderr = %q", stderr)
+	}
+}
+
+// TestBinary_WorkflowInputDefaults_PlainOnNonGitHubRunner proves the F2
+// behaviour: off a GitHub runner the same gate renders a readable, plain
+// location-prefixed line with no `::error::` workflow-command noise.
+func TestBinary_WorkflowInputDefaults_PlainOnNonGitHubRunner(t *testing.T) {
+	_ = testenv.New(t) // no GITHUB_ACTIONS → local runner → plain format
+	bin := buildBinary(t)
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile(filepath.Join(".github", "workflows", "bad.yml"), []byte(strings.Join([]string{
+		"name: bad", "on:", "  workflow_call:", "    inputs:", "      foo:",
+		"        default: ${{ github.ref_name }}",
+	}, "\n")+"\n"))
+	_, stderr, code := runBinary(t, bin, "validate", "workflow", "input-defaults", "--root", fsys.Root)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1; stderr=%q", code, stderr)
+	}
+	if strings.Contains(stderr, "::error") {
+		t.Errorf("non-GitHub runner must not emit workflow-command syntax; got %q", stderr)
+	}
+	if !strings.Contains(stderr, "Error: .github/workflows/bad.yml:6:") {
+		t.Errorf("expected plain location-prefixed error; got %q", stderr)
 	}
 }
 
@@ -157,7 +226,7 @@ func TestBinary_ReleaseResolveMetadata_WritesGitHubOutput(t *testing.T) {
 	env.Setenv("ARTIFACT_NAME", "artifact-name")
 
 	bin := buildBinary(t)
-	_, stderr, code := runBinary(t, bin, "release", "resolve-release-metadata")
+	_, stderr, code := runBinary(t, bin, "release", "resolve", "metadata")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; stderr=%q", code, stderr)
 	}
@@ -177,7 +246,7 @@ func TestBinary_SummaryQualityCheckStatus_WritesStepSummary(t *testing.T) {
 	env.Setenv("GITHUB_STEP_SUMMARY", summaryPath)
 
 	bin := buildBinary(t)
-	_, stderr, code := runBinary(t, bin, "summary", "quality-check-status")
+	_, stderr, code := runBinary(t, bin, "report", "status", "quality-check")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; stderr=%q", code, stderr)
 	}
@@ -216,7 +285,7 @@ func TestBinary_ValidateRefType_NonTagExitsValidation(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1; stderr=%q", code, stderr)
 	}
-	if !strings.Contains(stderr, "Release workflow must be triggered by pushing a tag") {
+	if !strings.Contains(stderr, "release workflow must be triggered by pushing a tag") {
 		t.Errorf("stderr = %q", stderr)
 	}
 }
@@ -319,7 +388,7 @@ func TestBinary_ValidateTagFormat_InvalidTagExitsValidation(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1; stderr=%q", code, stderr)
 	}
-	if !strings.Contains(stderr, "Invalid tag format") {
+	if !strings.Contains(stderr, "invalid tag format") {
 		t.Errorf("stderr = %q", stderr)
 	}
 }

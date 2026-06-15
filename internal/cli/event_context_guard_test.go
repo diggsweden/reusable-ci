@@ -65,9 +65,9 @@ var privilegedSecretNames = map[string]bool{
 var forwarderWorkflows = map[string]bool{
 	"release-prepare-stage.yml":     true,
 	"release-build-stage.yml":       true,
-	"release-dev-build-stage.yml":   true,
+	"release-snapshot-build-stage.yml":   true,
 	"release-publish-stage.yml":     true,
-	"release-dev-publish-stage.yml": true,
+	"release-snapshot-publish-stage.yml": true,
 }
 
 // TestPrivilegedWorkflowsHaveEventContextGuard is the static guard
@@ -210,4 +210,3 @@ func declaredCallSecrets(body []byte) map[string]bool {
 func hasEventContextGuard(body []byte) bool {
 	return strings.Contains(string(body), "reusable-ci validate event-context")
 }
-

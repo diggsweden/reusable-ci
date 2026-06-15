@@ -10,6 +10,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	appbuild "github.com/diggsweden/reusable-ci/internal/app/build"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
 )
 
@@ -37,7 +38,7 @@ func xcodeIOSArtifactNameCmd() *cli.Command {
 			&cli.StringFlag{Name: "artifact-name", Sources: cli.EnvVars("ARTIFACT_NAME"), Usage: "explicit name override; overrides repo/tag heuristics"},
 			&cli.StringFlag{Name: "repository-name", Sources: cli.EnvVars("REPOSITORY_NAME"), Usage: "repository basename used to derive the default name"},
 			&cli.BoolFlag{Name: "include-tag", Sources: cli.EnvVars("INCLUDE_TAG"), Usage: "append the tag to the artifact name"},
-			&cli.StringFlag{Name: "ref-name", Sources: cli.EnvVars("REF_NAME", "GITHUB_REF_NAME"), Usage: "ref/tag appended when --include-tag is set"}, //nolint:goconst // flag name reused across sibling subcommands.
+			&cli.StringFlag{Name: "ref-name", Sources: cienv.RefName(), Usage: "ref/tag appended when --include-tag is set"}, //nolint:goconst // flag name reused across sibling subcommands.
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
@@ -87,7 +88,7 @@ func xcodeIOSSetupXCConfigCmd() *cli.Command {
 		Usage: "decode optional XCCONFIG_BASE64 and emit xcconfig-path",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "base64", Sources: cli.EnvVars("XCCONFIG_BASE64"), Usage: "base64-encoded .xcconfig body; empty value is a no-op"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			&cli.StringFlag{Name: "temp-dir", Sources: cli.EnvVars("RUNNER_TEMP", "CI_TEMP_DIR"), Usage: "directory the decoded .xcconfig is written to"},
+			&cli.StringFlag{Name: "temp-dir", Sources: cienv.TempDir(), Usage: "directory the decoded .xcconfig is written to"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {

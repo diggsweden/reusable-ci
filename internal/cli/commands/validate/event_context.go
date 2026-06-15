@@ -11,6 +11,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	appvalidate "github.com/diggsweden/reusable-ci/internal/app/validate"
+	"github.com/diggsweden/reusable-ci/internal/cli/deps"
 )
 
 func eventContextCmd() *cli.Command {
@@ -37,7 +38,7 @@ func eventContextCmd() *cli.Command {
 			},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
-			return appvalidate.EventContext(os.Stderr, appvalidate.EventContextInput{
+			return appvalidate.EventContext(os.Stderr, deps.Annotator(cmd), appvalidate.EventContextInput{
 				EventName:     cmd.String("event-name"),
 				AllowedEvents: splitAllowedEvents(cmd.String("allowed-events")),
 			})

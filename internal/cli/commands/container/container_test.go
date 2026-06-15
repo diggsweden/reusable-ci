@@ -52,7 +52,7 @@ func TestCommands_RequireFlagsWhenMissing(t *testing.T) {
 	}{
 		{name: "validate_containerfile", args: []string{"container", "validate", "containerfile"}, want: `Required flag "path" not set`},
 		{name: "validate_artifacts_missing_artifact_dir", args: []string{"container", "validate", "artifacts", "--project-type", "maven"}, want: `Required flag "artifact-dir" not set`},
-		{name: "suffix_extracted_binaries_missing_arch", args: []string{"container", "suffix-extracted-binaries", "--dir", "./extracted"}, want: `Required flag "arch" not set`},
+		{name: "suffix_extracted_binaries_missing_arch", args: []string{"container", "suffix-extracted-binaries", "--binaries-dir", "./extracted"}, want: `Required flag "arch" not set`},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {

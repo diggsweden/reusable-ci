@@ -13,7 +13,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/adapters/cosign"
 	appcontainer "github.com/diggsweden/reusable-ci/internal/app/container"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
-	domain "github.com/diggsweden/reusable-ci/internal/domain/release"
+	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
 )
 
 // containerSignatureCmd wires `reusable-ci validate container-
@@ -61,7 +61,7 @@ func containerSignatureCmd() *cli.Command {
 				return fmt.Errorf("validate container-signature: image reference is required (registry/image@sha256:...): %w", errs.ErrMissingInput)
 			}
 
-			method, err := domain.ParseSignMethod(cmd.String("method"))
+			method, err := domainrelease.ParseSignMethod(cmd.String("method"))
 			if err != nil {
 				return err
 			}

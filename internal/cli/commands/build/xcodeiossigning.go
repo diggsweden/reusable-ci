@@ -11,6 +11,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/internal/adapters/xcode"
 	appbuild "github.com/diggsweden/reusable-ci/internal/app/build"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/secret"
 )
 
@@ -29,7 +30,7 @@ func xcodeIOSSetupCodeSigningCmd() *cli.Command {
 				Name:  "keychain-password-file",
 				Usage: "path to a file containing the transient keychain password (use \"-\" for stdin; defaults to $KEYCHAIN_PASSWORD)",
 			},
-			&cli.StringFlag{Name: "temp-dir", Sources: cli.EnvVars("CI_TEMP_DIR", "RUNNER_TEMP"), Usage: "directory the decoded cert / profile / keychain are written under"},
+			&cli.StringFlag{Name: "temp-dir", Sources: cienv.TempDir(), Usage: "directory the decoded cert / profile / keychain are written under"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			certPassphrase, err := secret.Resolve(cmd.String("cert-passphrase-file"), "IOS_SIGNING_CERTIFICATE_PASSPHRASE")

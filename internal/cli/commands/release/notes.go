@@ -37,7 +37,7 @@ func notesCmd() *cli.Command {
 func verifyChangelogCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "verify-changelog",
-		Usage: "verify a generated changelog file exists and print a preview",
+		Usage: "verify the generated changelog artifact for this release exists and print a preview",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:     "changelog-file",
@@ -47,7 +47,7 @@ func verifyChangelogCmd() *cli.Command {
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return apprelease.ValidateChangelog(ctx, os.Stderr, apprelease.ValidateChangelogInput{
+			return apprelease.VerifyChangelog(ctx, os.Stderr, apprelease.VerifyChangelogInput{
 				ChangelogFile: cmd.String("changelog-file"),
 			})
 		},

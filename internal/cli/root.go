@@ -17,6 +17,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	cmdartifact "github.com/diggsweden/reusable-ci/internal/cli/commands/artifact"
 	cmdbuild "github.com/diggsweden/reusable-ci/internal/cli/commands/build"
 	cmdconfig "github.com/diggsweden/reusable-ci/internal/cli/commands/config"
 	cmdcontainer "github.com/diggsweden/reusable-ci/internal/cli/commands/container"
@@ -30,15 +31,33 @@ import (
 	cmdsecurity "github.com/diggsweden/reusable-ci/internal/cli/commands/security"
 	cmdvalidate "github.com/diggsweden/reusable-ci/internal/cli/commands/validate"
 	cmdversion "github.com/diggsweden/reusable-ci/internal/cli/commands/version"
+	"github.com/diggsweden/reusable-ci/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/output"
+	"github.com/diggsweden/reusable-ci/internal/domain/provider"
 )
+
+// flagAuto is the sentinel value for the --provider / --runner / --format
+// overrides meaning "defer to environment auto-detection".
+const flagAuto = "auto"
 
 // BuildInfo carries ldflags-injected version metadata from main.
 type BuildInfo struct {
 	Version string
 	Commit  string
 	Date    string
+}
+
+// docsRef returns the git ref the help-text Docs link should target so
+// the web docs match the installed binary. A release build carries a
+// version like "v3.0.0" (a real tag with a docs/ tree); dev/snapshot
+// builds carry "dev" or some non-tag string and fall back to "main".
+func docsRef(version string) string {
+	if len(version) > 1 && version[0] == 'v' && version[1] >= '0' && version[1] <= '9' {
+		return version
+	}
+
+	return "main"
 }
 
 // New builds the root *cli.Command. Subgroups are added here as each
@@ -51,8 +70,42 @@ func New(b BuildInfo) *cli.Command {
 	// flag-parse errors get the same concise treatment as root-level
 	// ones. urfave/cli does not inherit these hooks automatically.
 	applyDiagnosticHooks(root)
+	// Reject unexpected positional args on leaf commands (urfave/cli does
+	// not do this by default — it silently ignores extras).
+	applyArgGuards(root)
 
 	return root
+}
+
+// applyArgGuards walks the tree and wraps every leaf command's Action so an
+// unexpected positional argument fails with a usage error (exit 2) instead of
+// being silently ignored (urfave/cli's default). Group commands (those with
+// subcommands) are skipped. A leaf opts out simply by declaring ArgsUsage —
+// the help text for the positional arguments it accepts — so the guard never
+// fights a command that genuinely takes args, and the opt-out is the same
+// declaration that documents those args.
+func applyArgGuards(cmd *cli.Command) {
+	if len(cmd.Commands) > 0 {
+		for _, child := range cmd.Commands {
+			applyArgGuards(child)
+		}
+
+		return
+	}
+
+	if cmd.Action == nil || cmd.ArgsUsage != "" {
+		return
+	}
+
+	inner := cmd.Action
+	cmd.Action = func(ctx context.Context, leaf *cli.Command) error {
+		if leaf.Args().Len() > 0 {
+			return fmt.Errorf("unexpected argument %q (this command takes no positional arguments): %w",
+				leaf.Args().First(), errs.ErrUsage)
+		}
+
+		return inner(ctx, leaf)
+	}
 }
 
 // applyDiagnosticHooks walks the command tree and sets the
@@ -73,7 +126,7 @@ func applyDiagnosticHooks(cmd *cli.Command) {
 	}
 }
 
-func newRoot(_ BuildInfo, versionString string) *cli.Command { //nolint:unparam // BuildInfo retained for symmetry with New(b); future fields will live on this struct.
+func newRoot(info BuildInfo, versionString string) *cli.Command {
 	return &cli.Command{
 		Name:    "reusable-ci",
 		Usage:   "shared CI/CD logic for diggsweden/reusable-ci workflows",
@@ -83,7 +136,13 @@ func newRoot(_ BuildInfo, versionString string) *cli.Command { //nolint:unparam 
 		// and a couple of canonical examples. With ~80 subcommands,
 		// the root help points at the most common entry points and
 		// defers the rest to per-subcommand --help.
-		Description: `Docs:    https://github.com/diggsweden/reusable-ci/tree/main/docs
+		//
+		// The Docs link targets the installed version's tag (workflows
+		// pin reusable-ci to a tag, so a v3.0.0 binary should point at
+		// v3.0.0 docs, not main) — clig.dev §Documentation: terminal/web
+		// docs should match the installed version. dev/snapshot builds
+		// fall back to main via docsRef.
+		Description: fmt.Sprintf(`Docs:    https://github.com/diggsweden/reusable-ci/tree/%s/docs
 Issues:  https://github.com/diggsweden/reusable-ci/issues
 
 EXAMPLES:
@@ -96,7 +155,7 @@ EXAMPLES:
    # Generate every requested CISA SBOM layer locally
    reusable-ci sbom generate all --project-type=npm
 
-Pass --help on any subcommand for the full flag list.`,
+Pass --help on any subcommand for the full flag list.`, docsRef(info.Version)),
 		// Suggest enables urfave/cli's built-in Levenshtein-based "did you
 		// mean X?" suggestion on unknown subcommands.
 		Suggest: true,
@@ -139,7 +198,7 @@ Pass --help on any subcommand for the full flag list.`,
 				// write-npmrc --output -` use --output in that
 				// conventional sense.
 				Name:    "format",
-				Usage:   "output format: auto, text, json, github, gitlab",
+				Usage:   "output format: " + flagValues(output.All()),
 				Value:   string(output.FormatAuto),
 				Sources: cli.EnvVars("REUSABLE_CI_FORMAT"),
 			},
@@ -153,10 +212,43 @@ Pass --help on any subcommand for the full flag list.`,
 				Usage:   "shortcut for --format=json (overrides --format)",
 				Sources: cli.EnvVars("REUSABLE_CI_JSON"),
 			},
+			&cli.BoolFlag{
+				// --no-color forces the success/failure glyphs to plain.
+				// Color is otherwise auto-disabled off a TTY and by the
+				// cross-tool NO_COLOR / TERM=dumb conventions, which the
+				// clicolor package honours directly.
+				Name:    "no-color",
+				Usage:   "disable colored ✓/✗ output (also: $NO_COLOR, non-terminal output)",
+				Sources: cli.EnvVars("REUSABLE_CI_NO_COLOR"),
+			},
+			&cli.StringFlag{
+				// --provider overrides forge-API auto-detection. Needed
+				// because Forgejo Actions masquerades as GitHub
+				// (GITHUB_ACTIONS=true); an adopter on a custom or
+				// misreporting runner can force the correct forge.
+				// "auto" (the default) defers to env detection.
+				Name:    "provider",
+				Usage:   "forge API override: " + providerFlagValues(),
+				Value:   flagAuto,
+				Sources: cli.EnvVars("REUSABLE_CI_PROVIDER"),
+			},
+			&cli.StringFlag{
+				// --runner overrides runner-convention auto-detection
+				// (which output dialect to emit), independent of
+				// --provider. "auto" defers to env detection.
+				Name:    "runner",
+				Usage:   "runner conventions override: " + runnerFlagValues(),
+				Value:   flagAuto,
+				Sources: cli.EnvVars("REUSABLE_CI_RUNNER"),
+			},
 		},
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
 			if err := configureLogger(cmd); err != nil {
 				return ctx, err
+			}
+
+			if cmd.Bool("no-color") {
+				clicolor.Disable()
 			}
 			// --json wins over --format. The same precedence rule
 			// lives in deps.rawFormat for non-root call sites that
@@ -170,9 +262,14 @@ Pass --help on any subcommand for the full flag list.`,
 				return ctx, fmt.Errorf("%w: %w", err, errs.ErrUsage)
 			}
 
+			if err := applyProviderOverrides(cmd); err != nil {
+				return ctx, err
+			}
+
 			return ctx, nil
 		},
 		Commands: []*cli.Command{
+			cmdartifact.New(),
 			cmdbuild.New(),
 			cmdplatform.New(),
 			cmdconfig.New(),
@@ -188,6 +285,70 @@ Pass --help on any subcommand for the full flag list.`,
 			cmdversion.New(),
 		},
 	}
+}
+
+// applyProviderOverrides validates the --provider / --runner flags and
+// bridges their argv values into the REUSABLE_CI_PROVIDER /
+// REUSABLE_CI_RUNNER env vars that internal/platform reads. Detection
+// lives in one place (the platform package); the flags are sugar over
+// the env, so bridging argv → env keeps a single source of truth. The
+// env-var names must match the override constants in internal/platform
+// and the flags' EnvVars sources above.
+func applyProviderOverrides(cmd *cli.Command) error {
+	if err := bridgeOverride(cmd, "provider", "REUSABLE_CI_PROVIDER",
+		func(v string) bool { return provider.Platform(v).IsValid() },
+		providerFlagValues()); err != nil {
+		return err
+	}
+
+	return bridgeOverride(cmd, "runner", "REUSABLE_CI_RUNNER",
+		func(v string) bool { return provider.RunnerKind(v).IsValid() },
+		runnerFlagValues())
+}
+
+// flagValues renders an enum's values as a comma-separated help string.
+// flagValues / providerFlagValues / runnerFlagValues derive from the
+// domain's canonical sets (output.All, provider.AllPlatforms,
+// provider.AllRunnerKinds) so help text and validation never drift from
+// the enums they describe.
+func flagValues[T ~string](vals []T) string {
+	out := make([]string, len(vals))
+	for i, v := range vals {
+		out[i] = string(v)
+	}
+
+	return strings.Join(out, ", ")
+}
+
+// providerFlagValues / runnerFlagValues prepend the CLI-only "auto"
+// sentinel (which is not a domain Platform/RunnerKind value) to the
+// canonical set.
+func providerFlagValues() string {
+	return flagAuto + ", " + flagValues(provider.AllPlatforms())
+}
+
+func runnerFlagValues() string {
+	return flagAuto + ", " + flagValues(provider.AllRunnerKinds())
+}
+
+// bridgeOverride validates one override flag and, when it was set on the
+// command line, mirrors its normalised value into envName so
+// internal/platform (which reads only env) observes it. "auto" and the
+// empty string defer to auto-detection. valid reports whether a concrete
+// value is recognised; want is the accepted-values hint for the error.
+func bridgeOverride(cmd *cli.Command, flag, envName string, valid func(string) bool, want string) error {
+	raw := strings.ToLower(strings.TrimSpace(cmd.String(flag)))
+	if raw != "" && raw != flagAuto && !valid(raw) {
+		return fmt.Errorf("invalid --%s %q (want %s): %w", flag, cmd.String(flag), want, errs.ErrUsage)
+	}
+
+	if cmd.IsSet(flag) {
+		if err := os.Setenv(envName, raw); err != nil {
+			return fmt.Errorf("set %s override: %w", flag, err)
+		}
+	}
+
+	return nil
 }
 
 // configureLogger wires slog to stderr at the requested level.

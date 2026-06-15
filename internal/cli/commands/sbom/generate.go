@@ -4,7 +4,6 @@
 package sbom
 
 import (
-	"cmp"
 	"context"
 	"os"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/adapters/maven"
 	"github.com/diggsweden/reusable-ci/internal/adapters/syft"
 	appsbom "github.com/diggsweden/reusable-ci/internal/app/sbom"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
 )
 
@@ -50,7 +50,7 @@ func generateAllCmd() *cli.Command {
    reusable-ci sbom generate all --project-type=maven --create-zip`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "project-type", Value: string(projecttype.Auto), Usage: "ecosystem driving the syft scan (auto/maven/gradle/npm/go/cargo/…)"},
-			&cli.StringFlag{Name: "layers", Value: "build", Usage: "comma-separated CISA layers to produce (build,source,analyzed-container,…)"},
+			&cli.StringFlag{Name: "layers", Value: "build", Usage: "comma-separated CISA layers to produce (build, analyzed-artifact, analyzed-container)"},
 			&cli.StringFlag{Name: "version", Usage: "release version embedded in the SBOM filenames"},
 			&cli.StringFlag{Name: "name", Usage: "project slug used as the SBOM filename prefix"},
 			&cli.StringFlag{Name: "working-dir", Value: ".", Usage: "directory syft scans"},
@@ -98,31 +98,20 @@ func generateContainerCmd() *cli.Command {
 		Usage: "generate the analyzed-container SBOM for a multi-artifact container release",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "artifact-types", Sources: cli.EnvVars("ARTIFACT_TYPES"), Usage: "comma-separated ecosystems embedded in the multi-artifact container SBOM"},
-			&cli.StringFlag{Name: "ref-name", Sources: cli.EnvVars("CI_REF_NAME", "GITHUB_REF_NAME"), Usage: "git ref name (leading \"v\" is stripped) used in the SBOM filename"},
-			&cli.StringFlag{Name: "repository", Sources: cli.EnvVars("CI_REPO", "GITHUB_REPOSITORY"), Usage: "\"owner/repo\" used to derive the project slug"},
-			&cli.StringFlag{Name: "image-name", Sources: cli.EnvVars("IMAGE_NAME"), Usage: "fully-qualified image reference syft analyses (e.g. registry/org/app)"},
+			&cli.StringFlag{Name: "ref-name", Sources: cienv.RefName(), Usage: "git ref name (leading \"v\" is stripped) used in the SBOM filename"},
+			&cli.StringFlag{Name: "repository", Sources: cienv.Repository(), Usage: "\"owner/repo\" used to derive the project slug"},
+			&cli.StringFlag{Name: "image-name", Sources: cli.EnvVars("IMAGE_NAME"), Usage: "base image name without tag/digest (e.g. registry/org/app); paired with --image-digest to form the syft target"}, //nolint:goconst // generic flag identifier shared across container commands.
 			&cli.StringFlag{Name: "image-digest", Sources: cli.EnvVars("IMAGE_DIGEST"), Usage: "sha256:… digest pinning the exact image manifest to analyse"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			// urfave/cli v3's Sources picks the first env var that
-			// EXISTS, so a CI workflow that sets `CI_REF_NAME=""`
-			// (literal empty, via `${{ env.X || '' }}`) shadows a
-			// non-empty `GITHUB_REF_NAME`. Fall back via cmp.Or so
-			// the first non-empty value wins instead.
-			refName := cmd.String("ref-name")
-			if refName == "" {
-				refName = cmp.Or(os.Getenv("CI_REF_NAME"), os.Getenv("GITHUB_REF_NAME"))
-			}
-
-			repo := cmd.String("repository")
-			if repo == "" {
-				repo = cmp.Or(os.Getenv("CI_REPO"), os.Getenv("GITHUB_REPOSITORY"))
-			}
-
+			// cienv.RefName()/Repository() already resolve the first
+			// NON-EMPTY source, so the previous manual cmp.Or fallback
+			// (working around urfave/cli's set-but-empty shadowing) is
+			// no longer needed.
 			return appsbom.GenerateContainer(ctx, syft.New(), maven.New(), git.New(), os.Stderr, os.Stderr, appsbom.GenerateContainerInput{
 				ArtifactTypes: cmd.String("artifact-types"),
-				RefName:       refName,
-				Repo:          repo,
+				RefName:       cmd.String("ref-name"),
+				Repo:          cmd.String("repository"),
 				ImageName:     cmd.String("image-name"),
 				ImageDigest:   cmd.String("image-digest"),
 			})

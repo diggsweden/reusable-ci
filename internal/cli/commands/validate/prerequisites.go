@@ -12,6 +12,7 @@ import (
 	"github.com/diggsweden/reusable-ci/internal/adapters/cargo"
 	"github.com/diggsweden/reusable-ci/internal/adapters/git"
 	appvalidate "github.com/diggsweden/reusable-ci/internal/app/validate"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
 )
 
@@ -23,12 +24,12 @@ func prerequisitesCmd() *cli.Command {
 		Name:  "prerequisites",
 		Usage: "run all release-prerequisite validators concurrently and append a summary table",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "tag", Sources: cli.EnvVars("REF_NAME", "TAG_NAME"), Usage: "tag being released (e.g. v1.2.3)"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			&cli.StringFlag{Name: "ref-type", Sources: cli.EnvVars("REF_TYPE"), Usage: "trigger ref type (\"tag\" required for releases)"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			&cli.StringFlag{Name: "ref", Sources: cli.EnvVars("REF"), Usage: "fully-qualified ref (refs/tags/X) for prefix verification"},
-			&cli.StringFlag{Name: "branch", Sources: cli.EnvVars("TARGET_BRANCH", "BRANCH"), Usage: "branch the tag commit must be reachable from"},
-			&cli.StringFlag{Name: "repository", Sources: cli.EnvVars("REPOSITORY"), Usage: "\"owner/repo\" on GitHub; \"group/project[/sub]\" on GitLab"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			&cli.BoolFlag{Name: "require-allowlisted-signer", Sources: cli.EnvVars("REQUIRE_ALLOWLISTED_SIGNER"), Usage: "require tag signer fingerprint to appear in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_fingerprints (GPG)"},
+			&cli.StringFlag{Name: "tag", Sources: cienv.Tag(), Usage: "tag being released (e.g. v1.2.3)"},                          //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			&cli.StringFlag{Name: "ref-type", Sources: cienv.RefType(), Usage: "trigger ref type (\"tag\" required for releases)"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			&cli.StringFlag{Name: "ref", Sources: cienv.Ref(), Usage: "fully-qualified ref (refs/tags/X) for prefix verification"},
+			&cli.StringFlag{Name: "target-branch", Sources: cli.EnvVars("TARGET_BRANCH", "BRANCH"), Usage: "branch the tag commit must be reachable from"},
+			&cli.StringFlag{Name: "repository", Sources: cienv.Repository(), Usage: "\"owner/repo\" on GitHub; \"group/project[/sub]\" on GitLab"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			&cli.BoolFlag{Name: "require-allowlisted-signer", Sources: cli.EnvVars("REQUIRE_ALLOWLISTED_SIGNER"), Usage: "require the tag signer to be allowlisted in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_keys.asc (GPG)"},
 			&cli.BoolFlag{Name: "sign-artifacts", Sources: cli.EnvVars("SIGN_ARTIFACTS"), Usage: "require a GPG public key (release-artifact signing is enabled)"},
 			&cli.BoolFlag{Name: "has-maven-central", Sources: cli.EnvVars("HAS_MAVEN_CENTRAL_TARGET"), Usage: "the plan targets Maven Central (enables credential check)"},
 			&cli.BoolFlag{Name: "has-cargo", Sources: cli.EnvVars("HAS_CARGO_TARGET"), Usage: "the plan targets crates.io (enables Cargo prerequisites check)"},
@@ -48,11 +49,10 @@ func prerequisitesCmd() *cli.Command {
 					Provider: tv,
 					Cargo:    cargo.New(),
 				}, os.Stderr, annot, appvalidate.PrerequisitesInput{
-					Platform:                 d.Platform,
 					Tag:                      cmd.String("tag"),
 					RefType:                  cmd.String("ref-type"),
 					Ref:                      cmd.String("ref"),
-					Branch:                   cmd.String("branch"),
+					Branch:                   cmd.String("target-branch"),
 					Repository:               cmd.String("repository"),
 					RequireAllowlistedSigner: cmd.Bool("require-allowlisted-signer"),
 					SignArtifacts:            cmd.Bool("sign-artifacts"),

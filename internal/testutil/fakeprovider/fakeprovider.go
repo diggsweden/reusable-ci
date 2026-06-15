@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/internal/domain/validate"
 )
 
 // Calls records every method invocation count for assertions.
@@ -75,7 +76,9 @@ func New(t *testing.T) *Fake {
 	}
 }
 
-// WithPlatform sets the platform Name() returns.
+// WithPlatform sets the platform Name() returns. It also drives the
+// default Describe() / Capabilities() / AdviseToken() behaviour so most
+// tests configure forge conventions just by choosing a platform.
 func (f *Fake) WithPlatform(p provider.Platform) *Fake {
 	f.platform = p
 
@@ -351,6 +354,72 @@ func (f *Fake) UploadReleaseAsset(_ context.Context, tag, file string) error {
 	return err
 }
 
+// Describe implements provider.Describer with a platform-derived default
+// mirroring the real adapters, so platform-only tests get faithful
+// labels and guidance.
+func (f *Fake) Describe() provider.Info {
+	switch f.platform {
+	case provider.PlatformGitHub:
+		return provider.Info{
+			DisplayName: "GitHub",
+			SetupURL:    "https://github.com/settings/personal-access-tokens/new",
+			ScopesHint:  "A fine-grained PAT (github_pat_*) with 'contents: write' permission is required.",
+			OIDCIssuer:  "https://token.actions.githubusercontent.com",
+		}
+	case provider.PlatformGitLab:
+		return provider.Info{
+			DisplayName: "GitLab",
+			SetupURL:    "https://gitlab.com/-/user_settings/personal_access_tokens",
+			ScopesHint:  "A project / group / personal access token with api + write_repository scopes is required.",
+			OIDCIssuer:  "https://gitlab.com",
+		}
+	default:
+		return provider.Info{
+			DisplayName: string(f.platform),
+			ScopesHint:  "Provide a token with the appropriate permissions.",
+		}
+	}
+}
+
+// Capabilities implements provider.CapabilityReporter with a
+// platform-derived default mirroring the real adapters.
+func (f *Fake) Capabilities() provider.Capabilities {
+	switch f.platform {
+	case provider.PlatformGitHub:
+		return provider.Capabilities{SARIFUpload: true, Attestation: true, KeylessOIDC: true, ReleaseAssets: true}
+	case provider.PlatformGitLab:
+		return provider.Capabilities{KeylessOIDC: true, ReleaseAssets: true}
+	case provider.PlatformForgejo:
+		return provider.Capabilities{ReleaseAssets: true}
+	default:
+		return provider.Capabilities{}
+	}
+}
+
+// AdviseToken implements provider.TokenAdviser. It mirrors the GitHub
+// adapter's classic-PAT refusal / unknown-prefix note only when the
+// platform is GitHub; other platforms advise nothing (matching adapters
+// that do not implement TokenAdviser at all).
+func (f *Fake) AdviseToken(token string) (string, bool) {
+	if f.platform != provider.PlatformGitHub {
+		return "", false
+	}
+
+	switch validate.ClassifyGitHubToken(token) {
+	case validate.GitHubTokenClassic:
+		return "classic PAT detected (ghp_*)\n" +
+			"Classic PATs have broad access and are not recommended.\n" +
+			"Please use a fine-grained PAT (github_pat_*) with 'contents: write' permission.\n" +
+			"See: https://github.com/settings/personal-access-tokens/new", true
+	case validate.GitHubTokenUnknown:
+		return "ℹ️  Unknown token type. Expected fine-grained PAT (github_pat_*) or GitHub App token (ghs_*).", false
+	case validate.GitHubTokenFineGrained, validate.GitHubTokenApp:
+		return "", false
+	default:
+		return "", false
+	}
+}
+
 // Compile-time conformance checks. Fake satisfies every provider
 // role so tests can pass it wherever the production code expects any
 // subset.
@@ -361,4 +430,7 @@ var (
 	_ provider.ReleaseCreator       = (*Fake)(nil)
 	_ provider.ReleaseAssetUploader = (*Fake)(nil)
 	_ provider.SARIFUploader        = (*Fake)(nil)
+	_ provider.Describer            = (*Fake)(nil)
+	_ provider.CapabilityReporter   = (*Fake)(nil)
+	_ provider.TokenAdviser         = (*Fake)(nil)
 )

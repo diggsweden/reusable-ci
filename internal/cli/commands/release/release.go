@@ -8,6 +8,7 @@
 //   - gpg.go         — `gpg <import|cleanup>` lifecycle of the release GPG key
 //   - resolve.go     — `resolve <artifact-name|metadata>` name/metadata helpers
 //   - attachments.go — `attachments <plan|upload>` release-attachment lifecycle
+//   - assemble.go    — `assemble` (canonical release file set)
 //   - artifacts.go   — `sign`, `download-artifacts`
 //   - checksums.go   — `checksums` (write the SHA256 manifest)
 //   - create.go      — `create` (create the platform release)
@@ -26,7 +27,11 @@ func New() *cli.Command {
 			gpgGroup(),
 			resolveGroup(),
 			attachmentsGroup(),
+			assembleCmd(),
 			signCmd(),
+			provenanceCmd(),
+			verifyDistCmd(),
+			verifyTagCmd(),
 			downloadArtifactsCmd(),
 			checksumsCmd(),
 			sbomZipCmd(),

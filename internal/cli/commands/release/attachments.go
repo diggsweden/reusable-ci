@@ -10,6 +10,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	apprelease "github.com/diggsweden/reusable-ci/internal/app/release"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
 	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
 )
@@ -57,7 +58,8 @@ func attachmentsUploadCmd() *cli.Command {
 		Name:  "upload",
 		Usage: "expand a glob pattern and attach matching files to the platform release (gh release upload --clobber)",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "tag", Required: true, Sources: cli.EnvVars("REF_NAME", "TAG_NAME"), Usage: "tag of the existing release to attach to (e.g. v1.2.3)"},
+			//nolint:goconst // "tag" is a generic flag name; a shared const would not clarify it.
+			&cli.StringFlag{Name: "tag", Required: true, Sources: cienv.Tag(), Usage: "tag of the existing release to attach to (e.g. v1.2.3)"},
 			&cli.StringFlag{Name: "pattern", Sources: cli.EnvVars("ATTACH_PATTERN"), Usage: "comma-separated globs to expand and upload"},
 			&cli.StringFlag{Name: "working-dir", Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory the globs are resolved relative to"},
 		},

@@ -60,13 +60,13 @@ func googlePlayFindAABCmd() *cli.Command {
 		Name:  "find-aab",
 		Usage: "find an AAB artifact and emit aab-file",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "dir", Value: "artifacts", Sources: cli.EnvVars("ARTIFACTS_DIR"), Usage: "directory scanned for an .aab artifact"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			&cli.StringFlag{Name: "artifacts-dir", Value: "artifacts", Sources: cli.EnvVars("ARTIFACTS_DIR"), Usage: "directory scanned for an .aab artifact"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
 				annot := deps.Annotator(cmd)
 				_, err := apppublish.FindArtifact(ctx, d.OutputSink, os.Stderr, annot, apppublish.FindArtifactInput{
-					Dir:       cmd.String("dir"),
+					Dir:       cmd.String("artifacts-dir"),
 					Ext:       ".aab",
 					OutputKey: "aab-file",
 					Label:     "AAB",

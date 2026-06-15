@@ -11,6 +11,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/internal/adapters/localfs"
 	apprelease "github.com/diggsweden/reusable-ci/internal/app/release"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
 	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
 )
@@ -27,16 +28,18 @@ func createCmd() *cli.Command {
    reusable-ci release create --tag=v1.2.3 --repository=diggsweden/reusable-ci \
        --draft --release-notes-file=NOTES.md --attach-artifacts="dist/*.tar.gz,dist/*.bundle"`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "tag", Required: true, Sources: cli.EnvVars("TAG_NAME"), Usage: "tag the release is created from (e.g. v1.2.3)"},
-			&cli.StringFlag{Name: "repository", Required: true, Sources: cli.EnvVars("REPOSITORY"), Usage: "\"owner/repo\" on GitHub; \"group/project[/sub]\" on GitLab"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			//nolint:goconst // "tag" is a generic flag name; a shared const would not clarify it.
+			&cli.StringFlag{Name: "tag", Required: true, Sources: cienv.Tag(), Usage: "tag the release is created from (e.g. v1.2.3)"},
+			&cli.StringFlag{Name: "repository", Required: true, Sources: cienv.Repository(), Usage: "\"owner/repo\" on GitHub; \"group/project[/sub]\" on GitLab"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			&cli.StringFlag{Name: "release-name", Sources: cli.EnvVars("RELEASE_NAME"), Usage: "human-readable release title (defaults to the tag)"},
 			&cli.BoolFlag{Name: "draft", Sources: cli.EnvVars("DRAFT"), Usage: "create the release as a draft (not published until edited)"},
-			&cli.BoolFlag{Name: "make-latest", Value: true, Sources: cli.EnvVars("MAKE_LATEST"), Usage: "mark this release as 'latest' on the platform"},
+			&cli.StringFlag{Name: "make-latest", Value: "true", Sources: cli.EnvVars("MAKE_LATEST"), Usage: "platform latest handling: true, false, or legacy"},
 			&cli.StringFlag{Name: "attach-artifacts", Sources: cli.EnvVars("ATTACH_ARTIFACTS"), Usage: "comma-separated globs of extra files to attach beyond release-dir"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			&cli.StringFlag{Name: "release-notes-file", Value: domainrelease.DefaultReleaseNotesFile, Sources: cli.EnvVars("RELEASE_NOTES_FILE"), Usage: "path to the release-notes markdown body"},
 			&cli.StringFlag{Name: "artifact-name", Sources: cli.EnvVars("ARTIFACT_NAME"), Usage: "project slug used in computed asset names (defaults to repo basename)"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			&cli.StringFlag{Name: "checksums-file", Value: domainrelease.ChecksumsFile, Sources: cli.EnvVars("CI_CHECKSUMS_FILE"), Usage: "path to the SHA256 manifest to attach"},
 			&cli.StringFlag{Name: "release-dir", Value: domainrelease.DefaultReleaseArtifactsDir, Sources: cli.EnvVars("RELEASE_DIR"), Usage: "directory whose files are attached as release assets"},
+			&cli.StringFlag{Name: "assembly", Sources: cli.EnvVars("RELEASE_ASSEMBLY"), Usage: "release assembly manifest to upload exactly"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
@@ -50,12 +53,13 @@ func createCmd() *cli.Command {
 					Repository:       cmd.String("repository"),
 					ReleaseName:      cmd.String("release-name"),
 					Draft:            cmd.Bool("draft"),
-					MakeLatest:       cmd.Bool("make-latest"),
+					MakeLatest:       cmd.String("make-latest"),
 					AttachArtifacts:  cmd.String("attach-artifacts"),
 					ReleaseNotesFile: cmd.String("release-notes-file"),
 					ArtifactName:     cmd.String("artifact-name"),
 					ChecksumsFile:    cmd.String("checksums-file"),
 					ReleaseDir:       cmd.String("release-dir"),
+					AssemblyFile:     cmd.String("assembly"),
 				})
 			})
 		},

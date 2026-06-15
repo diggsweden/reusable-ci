@@ -56,18 +56,18 @@ func gradleAndroidArtifactNamesCmd() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "include-date", Value: true, Sources: cli.EnvVars("INCLUDE_DATE_STAMP"), Usage: "append a YYYYMMDD-HHMMSS stamp to the artifact name"},
 			&cli.StringFlag{Name: "prefix", Sources: cli.EnvVars("ARTIFACT_NAME_PREFIX"), Usage: "optional prefix prepended to every artifact name"},
-			&cli.StringFlag{Name: "repo-name", Sources: cli.EnvVars("REPOSITORY_NAME"), Usage: "repository basename used in the default name"},
+			&cli.StringFlag{Name: "repository-name", Sources: cli.EnvVars("REPOSITORY_NAME"), Usage: "repository basename used in the default name"},
 			&cli.StringFlag{Name: "flavor", Sources: cli.EnvVars("PRODUCT_FLAVOR"), Usage: "Android product flavor; included in the name when set"},
-			&cli.StringFlag{Name: "override", Sources: cli.EnvVars("ARTIFACT_NAME"), Usage: "explicit name override; bypasses all heuristics"},
+			&cli.StringFlag{Name: "name-override", Sources: cli.EnvVars("ARTIFACT_NAME"), Usage: "explicit artifact-name override; bypasses all heuristics"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
 				return appbuild.AndroidArtifactNames(ctx, d.OutputSink, os.Stderr, appbuild.AndroidArtifactNamesInput{
 					IncludeDate: cmd.Bool("include-date"),
 					Prefix:      cmd.String("prefix"),
-					RepoName:    cmd.String("repo-name"),
+					RepoName:    cmd.String("repository-name"),
 					Flavor:      cmd.String("flavor"),
-					Override:    cmd.String("override"),
+					Override:    cmd.String("name-override"),
 				})
 			})
 		},
@@ -115,7 +115,7 @@ func gradleAndroidResolveBuildTasksCmd() *cli.Command {
 		Name:  "resolve-build-tasks",
 		Usage: "compute the gradle task list from flavor / build-types / include-aab / build-module",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "override", Sources: cli.EnvVars("GRADLE_TASKS_OVERRIDE"), Usage: "explicit task list override; bypasses the build-type heuristics"},
+			&cli.StringFlag{Name: "tasks-override", Sources: cli.EnvVars("GRADLE_TASKS_OVERRIDE"), Usage: "explicit task list override; bypasses the build-type heuristics"},
 			&cli.StringFlag{Name: "flavor", Sources: cli.EnvVars("PRODUCT_FLAVOR"), Usage: "Android product flavor inserted into the task names"},
 			&cli.StringFlag{Name: "build-types", Value: "debug,release", Sources: cli.EnvVars("BUILD_TYPES"), Usage: "comma-separated Android build types to assemble"},
 			&cli.BoolFlag{Name: "include-aab", Value: true, Sources: cli.EnvVars("INCLUDE_AAB"), Usage: "also emit bundleRelease (produces an AAB)"},
@@ -124,7 +124,7 @@ func gradleAndroidResolveBuildTasksCmd() *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
 				return appbuild.AndroidResolveBuildTasks(ctx, d.OutputSink, os.Stderr, appbuild.AndroidResolveBuildTasksInput{
-					Override:    cmd.String("override"),
+					Override:    cmd.String("tasks-override"),
 					Flavor:      cmd.String("flavor"),
 					BuildTypes:  cmd.String("build-types"),
 					IncludeAAB:  cmd.Bool("include-aab"),

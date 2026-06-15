@@ -11,7 +11,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/internal/adapters/cosign"
 	appvalidate "github.com/diggsweden/reusable-ci/internal/app/validate"
-	domain "github.com/diggsweden/reusable-ci/internal/domain/release"
+	domainrelease "github.com/diggsweden/reusable-ci/internal/domain/release"
 )
 
 // artifactSignatureCmd wires `reusable-ci validate artifact-
@@ -80,7 +80,7 @@ func artifactSignatureCmd() *cli.Command {
 			in := appvalidate.ArtifactSignatureInput{
 				Artefact:           cmd.String("artifact"),
 				SignaturePath:      cmd.String("signature"),
-				Method:             domain.SignMethod(cmd.String("method")),
+				Method:             domainrelease.SignMethod(cmd.String("method")),
 				CertIdentityRegexp: cmd.String("cert-identity-regexp"),
 				CertOIDCIssuer:     cmd.String("cert-oidc-issuer"),
 				KeyRef:             cmd.String("key"),

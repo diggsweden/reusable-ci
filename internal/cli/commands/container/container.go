@@ -23,9 +23,16 @@ import (
 	"github.com/urfave/cli/v3"
 
 	appcontainer "github.com/diggsweden/reusable-ci/internal/app/container"
+	"github.com/diggsweden/reusable-ci/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/internal/cli/secret"
 	domaincontainer "github.com/diggsweden/reusable-ci/internal/domain/container"
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 )
+
+// flagRegistry is the shared flag name for the registry host, named once so the
+// container package stays under goconst's literal budget.
+const flagRegistry = "registry"
 
 // New returns the `container` subgroup command tree.
 func New() *cli.Command {
@@ -35,6 +42,7 @@ func New() *cli.Command {
 		Commands: []*cli.Command{
 			validateGroup(),
 			manifestGroup(),
+			ledgerGroup(),
 			resolveNameCmd(),
 			platformPlanCmd(),
 			metadataCmd(),
@@ -43,6 +51,44 @@ func New() *cli.Command {
 			suffixBinariesCmd(),
 			signCmd(),
 			materializeBuildSecretsCmd(),
+			loginCmd(),
+		},
+	}
+}
+
+func loginCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "login",
+		Usage: "write registry credentials to the shared OCI auth config (docker, podman, buildah, skopeo, cosign) — a node-less, forge-neutral replacement for docker/login-action",
+		Description: `Writes {"auths":{...}} to $REGISTRY_AUTH_FILE / $DOCKER_CONFIG/config.json /
+~/.docker/config.json (first that applies). The password is read from a file or
+stdin or $REGISTRY_PASSWORD — never argv — and the file is written 0600.
+
+EXAMPLES:
+   echo "$TOKEN" | reusable-ci container login --registry ghcr.io --username "$GITHUB_ACTOR" --password-file -
+   reusable-ci container login --registry codeberg.org --username bot   # password from $REGISTRY_PASSWORD`,
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: flagRegistry, Value: domaincontainer.DefaultRegistry, Sources: cli.EnvVars("CONTAINER_REGISTRY"), Usage: "registry host (e.g. ghcr.io, codeberg.org)"},
+			&cli.StringFlag{Name: "username", Sources: cli.EnvVars("REGISTRY_USERNAME"), Usage: "registry username"},
+			&cli.StringFlag{Name: "password-file", Usage: "file containing the password (\"-\" reads stdin); defaults to $REGISTRY_PASSWORD. The password never appears in argv."},
+			&cli.StringFlag{Name: "auth-file", Usage: "override the auth config path (default: $REGISTRY_AUTH_FILE, else $DOCKER_CONFIG/config.json, else ~/.docker/config.json)"},
+		},
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			password, err := secret.Resolve(cmd.String("password-file"), "REGISTRY_PASSWORD")
+			if err != nil {
+				return err
+			}
+
+			if password == "" {
+				return fmt.Errorf("password is required: pipe it to --password-file - or set $REGISTRY_PASSWORD: %w", errs.ErrMissingInput)
+			}
+
+			return appcontainer.RegistryLogin(os.Stderr, appcontainer.RegistryLoginInput{
+				Registry: cmd.String(flagRegistry),
+				Username: cmd.String("username"),
+				Password: password,
+				AuthFile: cmd.String("auth-file"),
+			})
 		},
 	}
 }
@@ -99,15 +145,10 @@ func resolveNameCmd() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "registry", Required: true, Sources: cli.EnvVars("CONTAINER_REGISTRY"), Usage: "registry hostname (e.g. ghcr.io)"},
 			&cli.StringFlag{Name: "image-name", Sources: cli.EnvVars("IMAGE_NAME"), Usage: "explicit image name override (defaults to <owner>/<repo>)"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			&cli.StringFlag{Name: "repository", Required: true, Sources: cli.EnvVars("REPOSITORY", "GITHUB_REPOSITORY"), Usage: "\"owner/repo\" used to build the default image name"},
-			&cli.StringFlag{Name: "repository-owner", Required: true, Sources: cli.EnvVars("REPOSITORY_OWNER", "GITHUB_REPOSITORY_OWNER"), Usage: "owner portion used to lowercase-normalize the registry path"},
+			&cli.StringFlag{Name: "repository", Required: true, Sources: cienv.Repository(), Usage: "\"owner/repo\" used to build the default image name"},
+			&cli.StringFlag{Name: "repository-owner", Required: true, Sources: cienv.RepositoryOwner(), Usage: "owner segment used to prefix bare image names on docker.io (Docker Hub); the derived reference is always lowercased for OCI compliance"},
 			&cli.StringFlag{Name: "name", Sources: cli.EnvVars("CONTAINER_NAME"),
 				Usage: "optional sub-name for multi-container projects"},
-			&cli.StringFlag{Name: "name-suffix", Sources: cli.EnvVars("IMAGE_NAME_SUFFIX"),
-				Usage: "suffix appended to the repository segment of the derived image name " +
-					"(e.g. `-dev`). Used by the dev-release flow to push to a separate namespace " +
-					"so dev tags don't share a registry path with production releases. Ignored " +
-					"when --image-name is set."},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
@@ -117,7 +158,6 @@ func resolveNameCmd() *cli.Command {
 					Repository:      cmd.String("repository"),
 					RepositoryOwner: cmd.String("repository-owner"),
 					Name:            cmd.String("name"),
-					NameSuffix:      cmd.String("name-suffix"),
 				})
 			})
 		},
@@ -138,7 +178,7 @@ func metadataCmd() *cli.Command {
 			&cli.StringFlag{Name: "tag-rules", Sources: cli.EnvVars("TAG_RULES"),
 				Usage: "newline-separated csv tag-rule lines"},
 			&cli.StringFlag{Name: "flavor", Sources: cli.EnvVars("FLAVOR"),
-				Usage: "only `latest=false` is honoured; other entries are refused"},
+				Usage: "only latest=false is honoured; other entries are refused"},
 			&cli.BoolFlag{Name: "emit-labels", Sources: cli.EnvVars("EMIT_LABELS"),
 				Usage: "also emit org.opencontainers.image.* labels"},
 			&cli.StringFlag{Name: "oci-description", Sources: cli.EnvVars("OCI_DESCRIPTION"),

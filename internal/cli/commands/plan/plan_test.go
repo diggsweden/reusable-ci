@@ -60,7 +60,7 @@ func TestReleaseCmd_UsesConfigPlanAndEmitsTypedPlans(t *testing.T) {
 	}
 }
 
-func TestDevReleaseCmd_UsesConfigPlanFallbackAndEmitsStagePlans(t *testing.T) {
+func TestSnapshotReleaseCmd_UsesConfigPlanFallbackAndEmitsStagePlans(t *testing.T) {
 	env := ghaenv.Setup(t)
 	env.Setenv("CONFIG_PLAN_JSON", mustConfigPlanJSON(t, pipeline.NewConfigPlan(&config.Config{
 		Artifacts: []config.Artifact{
@@ -72,27 +72,29 @@ func TestDevReleaseCmd_UsesConfigPlanFallbackAndEmitsStagePlans(t *testing.T) {
 	env.Setenv("BRANCH", "feature/dev-plan")
 	env.Setenv("PUBLISH_NPM", "true")
 	env.Setenv("USE_CI_TOKEN", "true")
-	env.Setenv("PUBLISH_CONTAINER", "true")
 
 	cmd := plancmd.New()
-	if err := cmd.Run(context.Background(), []string{"plan", "dev-release"}); err != nil {
+	if err := cmd.Run(context.Background(), []string{"plan", "snapshot-release"}); err != nil {
 		t.Fatal(err)
 	}
 
-	if got := env.Output("dev-release-plan-json"); !strings.Contains(got, `"has_containers":true`) || !strings.Contains(got, `"branch":"feature/dev-plan"`) {
-		t.Errorf("dev-release-plan-json = %s", got)
+	if got := env.Output("snapshot-release-plan-json"); !strings.Contains(got, `"branch":"feature/dev-plan"`) {
+		t.Errorf("snapshot-release-plan-json = %s", got)
 	}
 
 	if got := env.Output("dev-context-json"); got != "" {
 		t.Errorf("dev-context-json compatibility output should not be emitted, got %s", got)
 	}
 
-	if got := env.Output("dev-build-stage-plan-json"); !strings.Contains(got, `"stage":"dev-build"`) || !strings.Contains(got, `"go":{"runs":true`) {
-		t.Errorf("dev-build-stage-plan-json = %s", got)
+	if got := env.Output("snapshot-build-stage-plan-json"); !strings.Contains(got, `"stage":"dev-build"`) || !strings.Contains(got, `"go":{"runs":true`) {
+		t.Errorf("snapshot-build-stage-plan-json = %s", got)
 	}
 
-	if got := env.Output("dev-publish-stage-plan-json"); !strings.Contains(got, `"containers":{"runs":true`) {
-		t.Errorf("dev-publish-stage-plan-json = %s", got)
+	// The snapshot flow builds no containers — there is no containers target in
+	// the publish plan; it is promoted to :dev on the release path by the
+	// build-once/promote-many ladder.
+	if got := env.Output("snapshot-publish-stage-plan-json"); strings.Contains(got, `"containers"`) {
+		t.Errorf("snapshot-publish-stage-plan-json = %s", got)
 	}
 }
 

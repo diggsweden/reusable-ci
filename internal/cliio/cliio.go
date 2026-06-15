@@ -17,10 +17,12 @@
 package cliio
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 )
@@ -50,12 +52,48 @@ func ReadFile(path string) ([]byte, error) {
 		return body, nil
 	}
 
-	return os.ReadFile(path) //nolint:gosec // path is a CLI-flag value under operator control.
+	body, err := os.ReadFile(path) //nolint:gosec // path is a CLI-flag value under operator control.
+	if err != nil {
+		return nil, classifyReadError(path, err)
+	}
+
+	return body, nil
+}
+
+// classifyReadError maps a filesystem read failure onto the project's
+// typed sentinels so main()'s exit-code ladder reports the right sysexits
+// code: a path the user pointed at that doesn't exist is their input
+// error (EX_NOINPUT), an unreadable path is a permission error
+// (EX_NOPERM), and a path that's a directory rather than a file is also
+// an operator path mistake (EX_NOINPUT) — none is the internal-bug
+// default (EX_SOFTWARE) the unclassified error would otherwise fall
+// through to. The original os error message is preserved so the operator
+// still sees the path.
+func classifyReadError(path string, err error) error {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("%w: %w", err, errs.ErrMissingInput)
+	case errors.Is(err, fs.ErrPermission):
+		return fmt.Errorf("%w: %w", err, errs.ErrPermissionDenied)
+	}
+
+	// A path that exists but isn't a regular file (a directory, most
+	// commonly) is the operator pointing the flag at the wrong thing, not
+	// an internal bug.
+	if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
+		return fmt.Errorf("%q is a directory, not a file: %w", path, errs.ErrMissingInput)
+	}
+
+	return err
 }
 
 // WriteFile writes data to path, or — when path is exactly "-" —
 // writes to stdout. Mirrors os.WriteFile's interface. The perm argument
 // is ignored in the stdout case.
+//
+// File writes are atomic (see writeFileAtomic): a crash or kill mid-write
+// never leaves a truncated file, so a retried CI step always finds either
+// the previous complete artifact or the new one.
 func WriteFile(path string, data []byte, perm fs.FileMode) error {
 	if path == StdSentinel {
 		if _, err := os.Stdout.Write(data); err != nil {
@@ -65,7 +103,64 @@ func WriteFile(path string, data []byte, perm fs.FileMode) error {
 		return nil
 	}
 
-	return os.WriteFile(path, data, perm)
+	return writeFileAtomic(path, data, perm)
+}
+
+// writeFileAtomic writes data to path crash-safely: it writes a sibling
+// temp file, flushes it, and renames it over path. rename(2) is atomic on
+// POSIX, so a crash, kill, or ENOSPC mid-write leaves either the previous
+// complete file or the new complete file — never a half-written one that
+// would block a re-run (e.g. a truncated ledger that no longer parses).
+func writeFileAtomic(path string, data []byte, perm fs.FileMode) error {
+	dir, base := filepath.Split(path)
+	if dir == "" {
+		dir = "."
+	}
+
+	// The temp must share the destination's directory (hence filesystem)
+	// for the rename to be atomic.
+	tmp, err := os.CreateTemp(dir, base+".tmp-*") //nolint:varnamelen // 'tmp' is the idiomatic name for the temp file.
+	if err != nil {
+		return fmt.Errorf("create temp for %s: %w", path, err)
+	}
+
+	committed := false
+
+	defer func() {
+		if !committed {
+			_ = os.Remove(tmp.Name())
+		}
+	}()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+
+		return fmt.Errorf("write temp for %s: %w", path, err)
+	}
+
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+
+		return fmt.Errorf("chmod temp for %s: %w", path, err)
+	}
+
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+
+		return fmt.Errorf("sync temp for %s: %w", path, err)
+	}
+
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp for %s: %w", path, err)
+	}
+
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("rename temp to %s: %w", path, err)
+	}
+
+	committed = true
+
+	return nil
 }
 
 // CreateWriter opens path for writing (O_CREATE|O_WRONLY|O_TRUNC), or —
