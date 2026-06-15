@@ -21,7 +21,7 @@ Co-located with the other reusable-ci files:
 ├── artifacts.yml                       ← the release plan
 ├── artifacts.schema.json               ← JSON Schema for editor autocomplete
 ├── allowed_signers                     ← release-authorisation (SSH)
-└── allowed_gpg_fingerprints            ← release-authorisation (GPG)
+└── allowed_gpg_keys.asc                ← release-authorisation (GPG)
 ```
 
 ### JSON Schema
@@ -111,7 +111,7 @@ containers:
 #### `require-authorization`
 
 - **Type:** `boolean`
-- **Description:** Require the release tag to be signed by a key listed in the project's committed allowlist files (`.reusable-ci/allowed_signers` for SSH-signed tags, `.reusable-ci/allowed_gpg_fingerprints` for GPG-signed tags).
+- **Description:** Require the release tag to be signed by a key listed in the project's committed allowlist files (`.reusable-ci/allowed_signers` for SSH-signed tags, `.reusable-ci/allowed_gpg_keys.asc` for GPG-signed tags).
 - **Default:** `false`
 - **Use case:** Production libraries that need cryptographic proof of release authorship.
 - **Example:** `require-authorization: true`
@@ -170,7 +170,7 @@ containers:
   sboms: none
   ```
 - **Formats produced:** Build layer: CycloneDX 1.6. Analyzed-artifact and analyzed-container layers: SPDX 2.3 and CycloneDX 1.6.
-- **Pipeline cap:** The release orchestrator `release.sboms` input (default `all`) and release-dev orchestrator `sboms` input (default `none`) cap aggregate release/dev SBOM generation against the pipeline-wide SBOM union. They do not rewrite each artefact's parsed `effective-sboms`.
+- **Pipeline cap:** The release orchestrator `release.sboms` input (default `all`) and release-snapshot orchestrator `sboms` input (default `none`) cap aggregate release/snapshot SBOM generation against the pipeline-wide SBOM union. They do not rewrite each artefact's parsed `effective-sboms`.
 - **What it controls:** Effective SBOM layers for this artefact. On the orchestrator path it controls build-time Build SBOM execution and container SBOM generation. Direct build workflow calls still default their Build SBOM input to `true` unless explicitly disabled. See [docs/sbom.md](sbom.md) for the full semantics.
 - **Note:** `analyzed-*` scans use [Syft](https://github.com/anchore/syft); ecosystem coverage varies. Gradle Android currently produces Build SBOMs and analyzed-container SBOMs, but not APK/AAB analyzed-artifact SBOMs. The `build` layer uses the language-native cyclonedx plugin and is the highest-fidelity type.
 
@@ -349,7 +349,7 @@ way Go containers do.
 - **Type:** `string`
 - **Description:** Gradle tasks to execute.
   - **`gradle` (JVM):** default is `assemble`; set to override.
-  - **`gradle-android`:** **not honored** on the orchestrator path. The orchestrator (`release-build-stage.yml`) derives tasks from `product-flavor` + `build-types` + `include-aab` and ignores this field. Configure those instead. The override input still exists on `build-gradle-android.yml` for direct callers (e.g., a hand-rolled `release-dev-workflow.yml`).
+  - **`gradle-android`:** **not honored** on the orchestrator path. The orchestrator (`release-build-stage.yml`) derives tasks from `product-flavor` + `build-types` + `include-aab` and ignores this field. Configure those instead. The override input still exists on `build-gradle-android.yml` for direct callers (e.g., a hand-rolled `release-snapshot-workflow.yml`).
 - **Default:** `assemble` (JVM); derived (Android, ignored)
 - **Example (JVM):** `gradle-tasks: build test`
 
@@ -838,7 +838,7 @@ containers:
 
 ### `maven-central`
 
-- **Description:** Maven Central (Sonatype OSSRH)
+- **Description:** Maven Central (Sonatype Central Portal)
 - **Requirements:**
   - `MAVEN_CENTRAL_USERNAME` secret
   - `MAVEN_CENTRAL_PASSWORD` secret

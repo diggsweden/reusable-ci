@@ -42,14 +42,14 @@ Long term, the workflow layer should be organized by responsibility:
 
 - public orchestrators
   - `release-orchestrator.yml`
-  - `release-dev-orchestrator.yml`
+  - `release-snapshot-orchestrator.yml`
   - `pullrequest-orchestrator.yml`
 - stage helpers
   - `release-prepare-stage.yml`
   - `release-build-stage.yml`
   - `release-publish-stage.yml`
-  - `release-dev-build-stage.yml`
-  - `release-dev-publish-stage.yml`
+  - `release-snapshot-build-stage.yml`
+  - `release-snapshot-publish-stage.yml`
   - `pullrequest-quality-stage.yml`
 - validation helpers
   - `validate-*`
@@ -67,7 +67,7 @@ Orchestrators should remain thin and orchestration-focused.
 Helper workflows should do the lower-level build, publish, release, validation, lint, and security work.
 
 Stage-level reusable workflows are preferred when they make the public orchestrator materially easier to scan without turning contracts into giant generic input maps.
-This applies to lighter dev flows too, even when they intentionally skip the full production policy layer.
+This applies to the lighter snapshot flow too, even when it intentionally skips the full production policy layer.
 
 ## What Belongs In Planning Logic
 
@@ -156,6 +156,37 @@ The remaining shell scripts are runtime-image build-time installers under
 
 ## Third-Party Action Rules
 
+**Goal — node-less, supply-chain-minimal, forge-portable.** Behaviour lives in
+the `reusable-ci` Go binary (and a few audited bootstrap scripts), not in
+Marketplace JavaScript actions. Three things follow from one move:
+
+- **Supply chain:** every action removed is one fewer third-party release,
+  Renovate edge, and opaque step running with the workflow's secrets.
+- **Forge portability:** a CLI verb runs the same on GitHub Actions and Forgejo
+  Actions; a GitHub-Marketplace action does not. The verb is the only path that
+  works on both.
+- **Security:** auditable Go with tests, primitive port signatures, and secrets
+  kept out of argv — rather than transitive JS dependency trees.
+
+The target is **not zero actions** — it is to shrink to the *irreducible* set
+and make everything else a verb. The irreducible set is GitHub-platform glue
+with no CLI (and no Forgejo) equivalent: `actions/cache`, `actions/attest-sbom`,
+and `actions/attest-build-provenance` (GitHub's cache backend and attestation
+API). Everything that wraps a *binary* — including run artifacts — has a verb.
+
+The binary must be on `PATH` before any verb runs, which is purely a matter of
+HOW the job gets it:
+
+- **Jobs running in a reusable-ci runtime image** (`container: <runtime-image>`)
+  have the binary **baked in**, so it is present from step 1 — even the *first*
+  checkout can be `platform checkout`, no `actions/checkout` at all.
+- **Bare-runner jobs** must install it first, and that install needs the repo —
+  so they keep exactly **one** `actions/checkout` (sparse `scripts/bootstrap`) to
+  bootstrap; every later step is a verb. This, plus reusable-ci's own self-build,
+  is the only place `actions/checkout` is genuinely unavoidable.
+
+So the right default for a node-less job is to run it in the runtime image.
+
 Every external action (`uses: <owner>/<repo>@...`) is supply-chain surface
 area: a compromised release, an unreviewed transitive dependency, or an
 opaque shell step running with the workflow's secrets and `GITHUB_TOKEN`.
@@ -176,12 +207,44 @@ Treat each one as an explicit risk decision, not a convenience.
   expressible without a Marketplace action runs on both providers
   unchanged
 
-The exceptions worth keeping are actions that wrap a GitHub-platform
-feature with no CLI equivalent (`actions/checkout`, `actions/{up,down}load-artifact`,
-`actions/cache`, `actions/attest-sbom`, `actions/attest-build-provenance`),
-or a build-system primitive that would be substantially more code inline
-(`docker/build-push-action`).
-Everything else should justify its own existence on each review.
+Beyond the irreducible platform set above, the only other kept exception is a
+build-system primitive that would be substantially more code inline
+(`docker/build-push-action`). Everything else should justify its own existence
+on each review.
+
+Replaced in the workflows (node-less, and so forge-portable):
+- `github/codeql-action/upload-sarif` → `security report upload-sarif` (stamps
+  the category into each run's `automationDetails.id`, the field Code Scanning
+  keys analyses on).
+- `docker/login-action` → `container login` (writes the shared `{"auths":…}`
+  config read by docker, podman/buildah, skopeo, and cosign). The one remaining
+  use is the provenance job, where the only alternative is to *add*
+  `actions/checkout` to bootstrap — no net win.
+- `actions/{up,down}load-artifact` → `artifact upload`/`download`. The verbs read
+  and write the **same** GitHub artifact v4 store as the actions (interop both
+  ways) and are identical on GitHub and Forgejo. Flag mapping: `name:`→`--name`
+  / `$ARTIFACT_NAME`; `path:`→`--path` / `$ARTIFACT_PATHS` for uploads (glob with
+  `*`/`**`/`[set]`/`!exclude`, multi-line blocks, and lowest-common-ancestor root
+  so directory structure is preserved — the `@actions/glob` contract reimplemented
+  in Go) or `--dir` / `$ARTIFACT_DIR` for download destinations; `pattern:`/
+  `merge-multiple:`→`--pattern`/`--merge-multiple`; `include-hidden-files:`→
+  `--include-hidden` (off by default, matching upload-artifact);
+  `retention-days:`/`if-no-files-found:` map 1:1. Workflows pass these via `env:`
+  (so GitHub expressions never hit the shell). `artifact upload` drives the v4
+  "results" backend via the runner-provided `ACTIONS_RUNTIME_TOKEN` +
+  `ACTIONS_RESULTS_URL`, so it is **untestable off-runner** — verify on a real CI
+  run. Four kept exceptions, all where the binary cannot be present:
+  reusable-ci's own self-build (`build-cli.yml`, the job that *produces* the
+  binary), the `self-runtime-container.yml` "Download CLI dist" steps (they fetch
+  the binary itself — chicken-and-egg), the `lint-nanolinter.yml` panel upload (a
+  non-root node-less flavour image where reusable-ci is installed only
+  conditionally, late, and off `PATH`), and the OpenSSF Scorecard `analysis` job
+  upload (must stay pure-actions for the scorecard publish webapp).
+
+Verb exists, but adoption is gated on a CI proof (not yet swapped):
+- `actions/checkout` → `platform checkout` (`--fetch-tags`, `--sparse` cone +
+  partial clone, `--path`). Feature-complete; runtime-image jobs can use it even
+  for the first checkout. The bare-runner bootstrap checkout stays (see above).
 
 ## Validation Expectations
 

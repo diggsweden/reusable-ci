@@ -21,6 +21,7 @@
 artifacts:
   - name: my-lib
     project-type: maven
+    build-type: library # maven-central accepts libraries (not applications)
     working-directory: .
     publish-to:
       - maven-central

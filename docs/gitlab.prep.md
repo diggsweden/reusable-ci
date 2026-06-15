@@ -21,9 +21,8 @@ The runtime image is the default delivery model for build / publish /
 security / orchestrator jobs. A small set of workflows stay on bare
 runners with a hard reason — none of them block GitLab prep.
 
-- **`publish-container.yml`** and **`publish-dev-container.yml`** — need
-  a Docker daemon for `docker buildx`. A `container:` job can't compose
-  with the daemon it would need to talk to.
+- **`publish-container.yml`** — needs a Docker daemon for `docker buildx`. A
+  `container:` job can't compose with the daemon it would need to talk to.
 - **`self-runtime-container.yml`** — builds the runtime image itself.
   Its merge job builds and invokes the current `reusable-ci` binary because
   the runtime image being tested is the output of the workflow.

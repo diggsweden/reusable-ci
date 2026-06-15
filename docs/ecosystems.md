@@ -258,13 +258,13 @@ config-parse time so the choice is explicit, never silently defaulted.
 | Application artefact (executable jar) | ✅ | `build-type: application` (default) | The main jar only. |
 | Version-bump (pom.xml + multi-module child POMs) | ✅ | `reusable-ci version bump maven` | Uses `versions:set` semantics; multi-module aware. |
 | Release prerequisite checks | ✅ | `validate-release-prerequisites.yml` | Confirms `MAVEN_CENTRAL_USERNAME`/`PASSWORD` set when publishing there; validates GPG availability when sign.method=gpg. |
-| Publish — Maven Central | ✅ | `publish-maven-central.yml` | OSSRH portal (the new Sonatype Central uploader); requires `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `RELEASE_GPG_PRIVATE_KEY`, `RELEASE_GPG_PASSPHRASE`. |
+| Publish — Maven Central | ✅ | `publish-maven-central.yml` | Sonatype Central Portal (the `central-publishing-maven-plugin`); requires `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `RELEASE_GPG_PRIVATE_KEY`, `RELEASE_GPG_PASSPHRASE`. |
 | Publish — GitHub Packages | ✅ | `publish-maven-github.yml` | Uses auto-provided `GITHUB_TOKEN`; respects `<distributionManagement>` in pom.xml. |
 | Publish — other OCI / private repo | partial | extend `publish-maven-github.yml` pattern | Not wired today; would need a per-repo `<settings.xml>` injection. |
 
 #### Caller responsibilities
 
-- **`pom.xml`** with declared `<groupId>`/`<artifactId>`/`<version>` and (for Maven Central) `<licenses>`, `<scm>`, `<developers>` per OSSRH requirements.
+- **`pom.xml`** with declared `<groupId>`/`<artifactId>`/`<version>` and (for Maven Central) `<licenses>`, `<scm>`, `<developers>` per Maven Central requirements.
 - **`<project.build.outputTimestamp>`** in `pom.xml`'s `<properties>` for reproducible jars (`reusable-ci validate jvm-reproducibility` warns when missing).
 - **GPG key material** committed neither to repo nor exported — set as repo/org secret per the workflow's declared inputs (`RELEASE_GPG_PRIVATE_KEY` etc.).
 - **For multi-module**: register only the parent POM as an artifact (Maven inheritance handles children) or register children individually if each ships a separately-released variant.
@@ -305,7 +305,7 @@ config-parse time so the choice is explicit, never silently defaulted.
 | App shape (build script writes dist/) | ✅ | `npm run build` runs as part of `npm pack` lifecycle | Output under `dist/` is included in the packed tarball. |
 | Version-bump (package.json + package-lock.json) | ✅ | `reusable-ci version bump npm` | Updates both files; preserves lockfile coherence. |
 | Release prerequisite checks | ✅ | `validate-release-prerequisites.yml` | Confirms `NPM_TOKEN` set when publishing to npmjs; lockfile presence; node-version pin. |
-| Publish — npmjs.com | ✅ | `publish-dev-npm.yml` (snapshot) + matching release-flow workflow | Requires `NPM_TOKEN`. |
+| Publish — npmjs.com | partial (snapshot only) | `publish-snapshot-npm.yml` | The snapshot flow can target npmjs with `NPM_TOKEN` / registry-password. A production-release npmjs.com publisher is not wired yet — production npm publishes to GitHub Packages. |
 | Publish — GitHub Packages | ✅ | `publish-maven-github.yml` (also handles npm scoped to `npm.pkg.github.com`) | Uses auto-provided `GITHUB_TOKEN`. |
 | Publish — other private registries | partial | per-registry `.npmrc` setup | Wired via the caller's `.npmrc` ; reusable-ci doesn't manage non-default registries. |
 
@@ -387,7 +387,7 @@ config-parse time so the choice is explicit, never silently defaulted.
 | SBOM — build layer | ✅ | cyclonedx-gradle-plugin | Same v1+v2 dual support as Gradle JVM. |
 | SBOM — analyzed-artifact | ✅ | syft scan of APK | Detects bundled dependencies in the DEX. |
 | Build reproducibility | ✅ | same archive settings as Gradle JVM | |
-| Signing (APK + AAB) | ✅ | `enable-signing: true` reads ANDROID_KEYSTORE et al. from caller secrets | Without signing, only `debug` variants build. |
+| Signing (APK + AAB) | ✅ | `config.enable-android-signing: true` reads ANDROID_KEYSTORE et al. from caller secrets | Without signing, only `debug` variants build. |
 | `secrets.properties` injection | ✅ | Base64-encoded via `SECRETS_PROPERTIES_BASE64` secret | Decoded into `secrets.properties` at build time for Google Maps API keys etc. |
 | Product flavor selection | ✅ | `product-flavor` config field | E.g., `staging`, `production`. |
 | Build-type subset | ✅ | `build-types: debug,release` (default) | Pick which variants to build. |

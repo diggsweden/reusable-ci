@@ -58,15 +58,15 @@ across both images on the runner.
 |---|---|---|
 | `lint-nanolinter` | `runtime-base` | nanolinter + its check tools (opengrep, osv-scanner, …) are mise-installed from the consumer's .mise.toml at runtime |
 | `release-*-stage`, `pullrequest-quality-stage`, all orchestrators | `runtime-base` | Just bash + jq + yq for summaries |
-| `release-create-github`, `release-dev-publish-stage`'s `generate-dev-sboms` | `runtime` (full) | Needs syft for SBOM aggregation |
+| `release-create-github`, `release-snapshot-publish-stage`'s `generate-snapshot-sboms` | `runtime` (full) | Needs syft for SBOM aggregation |
 | `generate-changelog`, `validate-release-prerequisites` | `runtime-base` normally; `runtime-rust-stable` when Cargo artifacts are present | git-cliff / gh + gpg are in base; Cargo prerequisite validation also checks `cargo --version` |
 | `build-cargo`, `sbom-cargo` | `runtime-rust-stable` | Needs cargo + cargo-cyclonedx; `build-cargo` additionally relies on `rustup target add aarch64-unknown-linux-gnu` + `gcc-aarch64-linux-gnu` baked into the image for the default `linux/amd64,linux/arm64` cross-compile matrix |
 | `build-go`, `sbom-go` | `runtime-go-1.26` | Needs Go + cyclonedx-gomod |
 | `build-maven`, `build-gradle-app`, `publish-maven-central` | `runtime-java-25` | Needs JDK + Maven/Gradle |
 | `build-gradle-android` | `runtime-android-35` | JDK + Android SDK |
 | `publish-google-play` | `runtime-base` | Upload action is JS-only; no Android tooling needed |
-| `build-npm`, `publish-dev-npm` | `runtime-node-24` | Node + npm + corepack baked |
-| `publish-container`, `publish-dev-container` | host + Docker actions | DinD blocks `container:` use |
+| `build-npm`, `publish-snapshot-npm` | `runtime-node-24` | Node + npm + corepack baked |
+| `publish-container` | host + Docker actions | DinD blocks `container:` use |
 | `security-openssf-scorecard` | host + third-party Docker action | Same |
 | `build-xcode-ios`, `publish-apple-appstore` | macOS host + `go install` from `reusable-ci-binary-ref` | macOS can't run Linux containers |
 

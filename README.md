@@ -65,9 +65,11 @@ single `workflow_call:` entry:
    three CISA layers, sign with GPG or cosign, create the GitHub
    release with changelog and checksums.
 
-3. **Dev Release** (`release-dev-orchestrator.yml`) — same shape on
-   branch pushes, with no signing / no SLSA / no permanent release;
-   produces a branch-suffixed image tag for preview deploys.
+3. **Snapshot Release** (`release-snapshot-orchestrator.yml`) — same
+   control-plane shape on branch pushes, with no signing / no SLSA / no
+   permanent release; publishes a branch-suffixed npm snapshot (and
+   optional SBOMs). It builds no containers — a container is built once on
+   the release path and promoted to `:dev` by the promotion ladder.
 
 ---
 
@@ -77,7 +79,7 @@ Most projects require two or three files:
 
 1. `.github/workflows/pullrequest-workflow.yml` - For PR checks
 2. `.github/workflows/release-workflow.yml` - For production releases
-3. `.github/workflows/release-dev-workflow.yml` - (Optional) For dev/feature branch releases
+3. `.github/workflows/release-snapshot-workflow.yml` - (Optional) For snapshot (feature-branch) releases
 
 ### How it works
 
@@ -109,7 +111,7 @@ jobs:
     needs: build-npm
     uses: diggsweden/reusable-ci/.github/workflows/publish-maven-github.yml@v3.0.0
     permissions:
-      contents: write
+      contents: read
       packages: write
     with:
       package-type: npm
@@ -199,20 +201,20 @@ jobs:
          release-publisher: github-cli
    ```
 
-4. **(Optional) Create dev release workflow** - Fast dev builds:
+4. **(Optional) Create snapshot release workflow** - Fast branch builds:
    ```yaml
-   # .github/workflows/release-dev-workflow.yml
-   name: Dev Release
+   # .github/workflows/release-snapshot-workflow.yml
+   name: Snapshot Release
    on:
      push:
        branches: ['dev/**', 'feat/**']
    permissions:
      contents: read
    jobs:
-     dev-release:
-       uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@v3.0.0
+     snapshot-release:
+       uses: diggsweden/reusable-ci/.github/workflows/release-snapshot-orchestrator.yml@v3.0.0
        permissions:
-         contents: write
+         contents: read
          packages: write
        secrets: inherit
        with:
@@ -357,11 +359,11 @@ alongside for container-first ecosystems.
 linux/arm64), signed (cosign), scanned (Trivy gate), and attached to
 SLSA provenance + analyzed-container SBOM attestations.
 
-**Dev releases** — branch pushes go through
-`release-dev-orchestrator.yml`. They produce a branch-suffixed image
-tag (`0.5.9-dev-<branch>-<sha>`); no signing, no SLSA, no GitHub
-Release. Tags like `v1.0.0-dev` are excluded from the production
-release path.
+**Snapshot releases** — branch pushes go through
+`release-snapshot-orchestrator.yml`. They publish a content-addressed npm
+snapshot (`0.5.9-snapshot-<branch>-<sha>`, dist-tag `snapshot`); no
+containers, no signing, no SLSA, no GitHub Release. The snapshot flow is
+branch/dispatch-triggered, never a tag.
 
 ---
 

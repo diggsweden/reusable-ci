@@ -143,7 +143,7 @@ Finish provider behavior only when a GitLab component actually needs it:
 Two reusable-ci surfaces stay GitHub-specific by design, not by
 oversight:
 
-- `reusable-ci container validate-namespace` — hardcoded `ghcr.io`
+- `reusable-ci container validate namespace` — hardcoded `ghcr.io`
   namespace policy. Registry-specific security validation is the
   right shape; a GitLab Catalog component validates against the
   GitLab Container Registry's own rules separately.

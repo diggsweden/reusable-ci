@@ -2,14 +2,14 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-# Release Dev Workflow
+# Release Snapshot Workflow
 #
 # This workflow builds the Android app and uploads to Google Play internal track for testing.
 # Triggered manually via workflow_dispatch (GitHub Actions UI).
 #
 # How to use:
 # 1. Go to Actions tab in GitHub
-# 2. Select "Release Dev Workflow"
+# 2. Select "Release Snapshot Workflow"
 # 3. Click "Run workflow"
 # 4. Select branch to build from
 # 5. Click "Run workflow"
@@ -17,16 +17,16 @@
 # Created artifacts:
 # - AAB uploaded to Google Play internal track
 #
-# This mirrors the iOS release-dev-workflow which uploads to TestFlight.
+# This mirrors the iOS release-snapshot-workflow which uploads to TestFlight.
 # For Android, the equivalent is Google Play's internal testing track.
 
-name: Release Dev Workflow
+name: Release Snapshot Workflow
 
 on:
   workflow_dispatch:
 
 concurrency:
-  group: release-dev-${{ github.ref }}
+  group: release-snapshot-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -44,7 +44,7 @@ jobs:
       build-types: release
       include-aab: true
       enable-signing: true
-      artifact-name-prefix: dev
+      artifact-name-prefix: snapshot
       include-date-stamp: false
 
   upload-play-store:

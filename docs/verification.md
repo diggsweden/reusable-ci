@@ -150,27 +150,25 @@ Produces `<artefact>.bundle`. The signature was computed inside OpenBao; the pri
 reusable-ci validate artifact-signature --artifact app.tgz --key release-pubkey.pem
 ```
 
-### Dev-release trust model
+### Snapshot-release trust model
 
-Dev releases (`release-dev-orchestrator.yml`) are intentionally **not** signed,
-not attested, and not SBOM-attested. They exist for fast iteration on branch
-pushes, not for distribution to external consumers.
+Snapshot releases (`release-snapshot-orchestrator.yml`) are intentionally **not**
+signed and **not** attested. They exist for fast iteration on branch pushes, not
+for distribution to external consumers. A snapshot run publishes a
+content-addressed npm snapshot (dist-tag `snapshot`, version
+`<base>-snapshot-<branch>-<sha>`) and, when opted in, SBOMs — it builds **no
+container images**.
 
-To prevent confusion with production releases, dev container images are
-published under a separate registry path:
-
-| Release type | Image path |
-|---|---|
-| Production (`tag v*`) | `ghcr.io/<owner>/<repo>` |
-| Dev (`branch push`) | `ghcr.io/<owner>/<repo>-dev` |
-
-The `-dev` suffix is the visual cue. Anything pulled from `<repo>-dev` carries
-no trust claim — no cosign signature, no SBOM attestation, no SLSA provenance.
-Treat dev images as ephemeral build outputs, not as signed artefacts.
+Container images are built **once on the release path** (signed with cosign,
+SLSA-attested, SBOM-attested) and then promoted to the moving `:dev` → `:staging`
+→ `:release` tags by the build-once/promote-many ladder. A `:dev`-tagged image is
+therefore the *same signed digest* as a release build — but `:dev` is a moving
+pointer that advances on every qualifying build, so pin by digest (`@sha256:…`)
+when you need a stable reference.
 
 If you need a signed pre-release for external testing, use a `v1.0.0-rc.1`-style
-prerelease tag instead — that goes through the full production release pipeline
-and carries the full attestation stack.
+prerelease tag — that goes through the full production release pipeline and
+carries the full attestation stack.
 
 ### Choosing a method
 
@@ -182,31 +180,51 @@ A repo can switch backends by changing one line in `artifacts.yml`. No swap-poli
 
 ## Release Authorisation
 
-Release authorisation is the policy "who may trigger a non-SNAPSHOT release of this project?" In reusable-ci it lives in **two committed files** under `.reusable-ci/`. No CI secret. No platform-specific user database. No leakage when migrating between Git hosts.
+Release authorisation is the policy "who may trigger a non-SNAPSHOT release of this project?" In reusable-ci it lives in **committed files** under `.reusable-ci/`. No CI secret. No platform-specific user database. No leakage when migrating between Git hosts.
 
-The committed-file model lets `git verify-tag` do the heavy lifting — git natively reads `gpg.ssh.allowedSignersFile` and checks the signing key against the OpenSSH allowed_signers format. We add a parallel file for GPG-signed tags (no standard exists for GPG fingerprint allowlists) and one CLI subcommand that fails closed when the policy is on but the file is missing.
+The committed-file model lets the signature do the heavy lifting — for SSH, `git verify-tag` natively reads `gpg.ssh.allowedSignersFile`; for GPG, an in-process verifier checks the tag signature against the project's committed public keys. A release fails closed when the policy is on but the signer cannot be established.
+
+### Request → promote: release tags are immutable
+
+A release is requested by pushing a **signed `release-request/vX.Y.Z` tag**. reusable-ci verifies *that* tag's signature (this is what the allowlist checks), bumps the version + changelog into a commit, then **creates the final `vX.Y.Z` tag once** at that commit and pushes it without `--force`. No tag is ever moved, deleted, or force-pushed: both `release-request/vX.Y.Z` and `vX.Y.Z` are immutable. The signed request tag stays in the repo as the cryptographic anchor of who authorised the release, and the bot's release commit records the original tagger in `Release-Request` / `Release-Authorized-By` / `Co-authored-by` trailers. So the verified authorisation and the shipped commit always correspond. (The `reusable-ci version release-context` and `version tag-release` commands implement this; workflows never parse refs or move tags in bash.)
+
+### Org policy: allowlisting is on by default at the caller layer
+
+The engine input `release.requireallowlistedsigner` defaults to **false** so the tool stays usable in any repo — but **org policy turns it on in the shared release-workflow template**, so every diggsweden release is signed by an allowlisted maintainer. The reference consumer (`wallet-backend-reference`) shows the live wiring:
+
+```yaml
+# .github/workflows/release-workflow.yml
+jobs:
+  release:
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v3.0.0-pre
+    with:
+      release.requireallowlistedsigner: true   # org default; override only for private repos
+```
+
+Setting it at the caller layer (not hardcoding it non-overridable in the engine) leaves a genuinely-private repo an **auditable** escape hatch: dropping the line to `false` is a visible change in the repo's own workflow, reviewed like any other.
 
 ### When the gate runs
 
 Two switches enable it:
 
 - **Per-artefact**: `require-authorization: true` on any artefact in `artifacts.yml`. Use this when a *specific* deliverable (e.g. a public library) needs the gate; other artefacts in the same repo aren't gated.
-- **Per-release**: `release.requireallowlistedsigner: true` on `release-orchestrator.yml`. Use this when *every* release of the repo must pass the gate.
+- **Per-release**: `release.requireallowlistedsigner: true` on `release-orchestrator.yml` (the org default). Use this when *every* release of the repo must pass the gate.
 
 If either is true, the gate runs. Behaviour when the gate is on:
 
 | Scenario | Outcome |
 |---|---|
-| Signer's key/fingerprint is in the allowlist file | release proceeds |
-| Signer's key/fingerprint is NOT in the allowlist file | `EX_NOPERM` (exit 77) |
-| Allowlist file is missing or empty | `EX_NOPERM` (exit 77) — fails closed |
+| Signer's key/fingerprint is in the allowlist | release proceeds |
+| Signer's key/fingerprint is NOT in the allowlist | `EX_NOPERM` (exit 77) |
+| Allowlist files are all missing or empty | `EX_NOPERM` (exit 77) — fails closed |
+| Tag signed but signature can't be verified against any allowed key | `EX_NOPERM` (exit 77) — fails closed |
 | Tag is SNAPSHOT (`-SNAPSHOT` suffix) | gate skipped (SNAPSHOTs are pre-releases) |
 
-When the gate is off (default), the allowlist files are still honoured if present, but a missing file is silently tolerated.
+When the gate is **off**, a present allowlist is still honoured, but a missing allowlist (or an unverifiable signature) is **not** silent: the run emits a prominent `::warning::` in the Annotations pane and a `> [!WARNING]` callout in the prerequisites summary — "this release ran with no signer allowlist; any valid signature was accepted." A release without an allowlist can't slip by unnoticed.
 
-### The two files
+### The allowlist files
 
-`.reusable-ci/allowed_signers` — for SSH-signed tags. OpenSSH `allowed_signers` format (see `man ssh-keygen`, *ALLOWED SIGNERS*). The same file `git verify-tag` reads when you set `gpg.ssh.allowedSignersFile`. One entry per line:
+`.reusable-ci/allowed_signers` — for SSH-signed tags. OpenSSH `allowed_signers` format (see `man ssh-keygen`, *ALLOWED SIGNERS*). The same file `git verify-tag` reads when you set `gpg.ssh.allowedSignersFile`. Each line carries the public key inline, so it is both the authorisation list and the verification material:
 
 ```text
 # .reusable-ci/allowed_signers
@@ -216,17 +234,21 @@ bob@example.com   ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...bob's release key vali
 
 The `valid-before` / `valid-after` options let a key's authority expire without removing audit history.
 
-`.reusable-ci/allowed_gpg_fingerprints` — for GPG-signed tags. Flat list of 40-character primary-key fingerprints, one per line. `#` for comments, blank lines ignored. Case- and whitespace-tolerant — the GPG-rendered form `ABCD EFGH 1234 …` is accepted verbatim:
+`.reusable-ci/allowed_gpg_keys.asc` — for GPG-signed tags. An armored public-key bundle (one or more `PGP PUBLIC KEY BLOCK` sections concatenated). Like the SSH file, it is **both the verification material and the authorised set** (single source): the primary-key fingerprints of the keys in the bundle *are* the allowlist, so the two can never drift apart. Export with `gpg --armor --export <email> >> .reusable-ci/allowed_gpg_keys.asc`.
 
 ```text
-# .reusable-ci/allowed_gpg_fingerprints
-# Run `gpg --fingerprint <email>` to find yours.
-
-ABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD   # alice@example.com
-1234567812345678123456781234567812345678   # bob@example.com
+# .reusable-ci/allowed_gpg_keys.asc
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+...alice's release key...
+-----END PGP PUBLIC KEY BLOCK-----
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+...bob's release key...
+-----END PGP PUBLIC KEY BLOCK-----
 ```
 
-Both files are reviewed via the same PR process that protects `main`. Adding or removing a signer is a commit; the audit trail is `git log`.
+Because the signer's public key travels with the repo, the in-process verifier can actually check the signature — so `release.requireallowlistedsigner: true` genuinely enforces: a missing/empty allowlist or a signature that can't be verified against any committed key fails closed, rather than waving an unverifiable signature through. (There is no separate fingerprints-only file — a fingerprint with no key material can't be verified, which was the gap this design removes.)
+
+All allowlist files are reviewed via the same PR process that protects `main`. Adding or removing a signer is a commit; the audit trail is `git log`.
 
 ### Verifying locally
 
@@ -250,7 +272,7 @@ For GPG signatures, `gpg --verify` produces a fingerprint you can grep:
 
 ```bash
 git cat-file tag v1.2.3 | gpg --status-fd 1 --verify 2>/dev/null | grep VALIDSIG
-# VALIDSIG <fingerprint> ... — match against .reusable-ci/allowed_gpg_fingerprints
+# VALIDSIG <fingerprint> ... — must be a key committed in .reusable-ci/allowed_gpg_keys.asc
 ```
 
 ### Why a committed file, not a CI secret
@@ -265,7 +287,8 @@ git cat-file tag v1.2.3 | gpg --status-fd 1 --verify 2>/dev/null | grep VALIDSIG
 - **SNAPSHOT tags bypass the gate** by default. Any user with `tag.push` access can release `v1.2.3-SNAPSHOT`. This is by design — SNAPSHOTs are the "internal pre-release" channel. If you need to gate SNAPSHOTs too, sign every tag and require both files for every release.
 - **Multi-module Maven**: the gate is per-release-tag, not per-module. One tag, one signer, one allowlist check.
 - **Key rotation**: add the new entry, leave the old entry until everyone's switched, then remove it in a PR. `valid-before` lets you pre-stage a removal date.
-- **The file is missing but the gate is off**: silently tolerated. The project hasn't opted in. Turn on `require-authorization: true` or `release.requireallowlistedsigner: true` to enforce.
+- **The allowlist is missing but the gate is off**: tolerated, but **loudly** — a `::warning::` annotation and a summary callout flag that the release ran with no allowlist. The project hasn't opted in; turn on `require-authorization: true` or `release.requireallowlistedsigner: true` (the org default) to enforce.
+- **Fingerprints-only list, signer's key not available**: with the gate **on**, a signature that can't be verified against any allowed key fails closed (exit 77) — commit the signer's public key to `allowed_gpg_keys.asc`. With the gate **off**, it's a loud warning, not a failure.
 
 ## Secret-handling model
 
@@ -428,7 +451,7 @@ to where they live in this repo.
 | Version control everything | Reusable workflows live in this repo, not pasted into adopters'. Plans, configs, allowlists, and runtime-image Containerfiles are all checked in. |
 | Lock dependency versions | Per-ecosystem lockfile presence is validated before every release (`validate cargo`, `validate prerequisites`'s lockfile branches). Cargo's `--locked` is enforced at fetch + compile. GitHub Actions are SHA-pinned with Renovate version comments. |
 | Eliminate environmental variance | All build / test / publish jobs run inside reusable-ci-runtime container images. `runs-on:` is pinned to a specific Ubuntu major (`ubuntu-24.04`), not `ubuntu-latest`, so the runner doesn't roll forward silently. `SOURCE_DATE_EPOCH` is baked from `git log -1 --format=%ct HEAD` for Go + Cargo binaries AND for security-report timestamps (`reportTimestamp` in `internal/app/security/trivy.go`). |
-| Remove human intervention | Tag push triggers `release-orchestrator.yml` end-to-end; there is no `workflow_dispatch` in the critical path. Release authorization is policy code (`allowed_signers` / `allowed_gpg_fingerprints` checked against the tag signature), not a human approval. |
+| Remove human intervention | Tag push triggers `release-orchestrator.yml` end-to-end; there is no `workflow_dispatch` in the critical path. Release authorization is policy code (`allowed_signers` / `allowed_gpg_keys.asc` checked against the tag signature), not a human approval. |
 | Fix flaky tests immediately | reusable-ci's own test suite is CI-pinned and required-green per release; the Go test conventions that keep it deterministic (parallel-safe fixtures, injected clocks, tool-presence skips instead of fails) are documented in [docs/testing.md](testing.md). On the adopter side the corresponding obligation is the same: a release whose tests sometimes pass and sometimes fail is not a deterministic pipeline. |
 
 ### What Renovate already pins
@@ -583,7 +606,6 @@ Two things are NOT byte-stable, by design — verifiers must compare contents, n
 
 - **GHA cache** (`cache-from/cache-to: type=gha,scope=...`) is per-arch-scoped to keep matrix legs from evicting each other. A cache hit re-uses prior layer mtimes; on cache miss the new mtimes are clamped to `SOURCE_DATE_EPOCH`. The image-config digest is stable in both paths.
 - **`actions/upload-artifact`** wraps uploaded files in a zip whose internal timestamps drift across runs. The **content inside** is byte-identical; only the transport wrapper differs. When hashing artefacts handed off between stages, hash the unpacked content, not the bundle.
-- **`publish-dev-container.yml`** intentionally does not pin `SOURCE_DATE_EPOCH`. Dev images are transient by design — no SLSA, no SBOM attestation, no reproducibility contract.
 
 ### Verifying reproducibility yourself
 
@@ -758,9 +780,10 @@ gh attestation download oci://ghcr.io/<owner>/<repo>@sha256:PLATFORM_DIGEST \
 
 #### 3. Checksum and SBOM ZIP Verification
 
-Release asset checksums are generated before the SBOM ZIP is created. Verify
-the checksum manifest for normal release assets, then verify the SBOM ZIP's
-detached signature directly when SBOM signing is enabled:
+The release workflow creates the SBOM ZIP before generating checksums, so the
+checksum manifest covers both normal release assets and the SBOM ZIP. Verify the
+signed checksum manifest first, then verify release files with `sha256sum`. The
+SBOM ZIP also has its own detached signature when release signing is enabled:
 
 ```bash
 # Download checksums and signature
@@ -769,7 +792,7 @@ gh release download v1.0.0 -p "checksums.sha256*"
 # Verify GPG signature on checksums
 gpg --verify checksums.sha256.asc checksums.sha256
 
-# Verify regular release asset integrity
+# Verify release asset and SBOM ZIP integrity for files you downloaded
 sha256sum -c checksums.sha256 --ignore-missing
 
 # Verify the SBOM ZIP signature when present
@@ -828,15 +851,17 @@ syft packages PROJECT-VERSION-abc1234-build-sbom.cyclonedx.json -o json | \
 
 ### SBOM Generation Workflow
 
-SBOMs are generated automatically during the release process:
+SBOMs are generated and packaged automatically during the release process:
 
 1. **Build workflows** → Generate Build SBOMs when the effective `sboms` includes `build`
 2. **Release SBOM step** → Generates analyzed-artifact SBOMs for built artefacts
 3. **Container publish** → Generates analyzed-container SBOMs for pushed images
-4. **Release step** → Packages all selected SBOMs into a ZIP archive
-5. **Signing** → GPG signs SBOM archive and checksums
-6. **Upload** → ZIP archive to GitHub Release
-7. **Attestation** → Container SBOM attached to image via `actions/attest-sbom`
+4. **Release assembly** → Stages the canonical release assets and SBOM inputs in `release-files/`
+5. **SBOM ZIP** → Packages all selected SBOM inputs into a ZIP archive
+6. **Checksums** → Hashes staged release assets and the SBOM ZIP
+7. **Signing** → Signs staged release assets, the SBOM ZIP, and checksums
+8. **Upload** → Uploads the staged assets, signatures, SBOM ZIP, and checksums to the release
+9. **Attestation** → Container SBOM attached to image via `actions/attest-sbom`
 
 ### SBOM Format Comparison
 

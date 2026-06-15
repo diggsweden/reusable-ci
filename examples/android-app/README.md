@@ -28,8 +28,8 @@ Artifact configuration for release builds (used with release-workflow.yml).
 ### `release-workflow.yml`
 Production release workflow triggered by version tags. Creates GitHub Release with changelog, version bump, and optionally publishes to Google Play.
 
-### `release-dev-workflow.yml`
-Manual dev/testing release workflow that builds and uploads to Google Play internal track. This mirrors the iOS `release-dev-workflow.yml` which uploads to TestFlight.
+### `release-snapshot-workflow.yml`
+Manual snapshot/testing release workflow that builds and uploads to Google Play internal track. This mirrors the iOS `release-snapshot-workflow.yml` which uploads to TestFlight.
 
 ## Features
 
@@ -227,16 +227,16 @@ The workflow generates separate artifacts for each variant:
 | Workflow | iOS | Android |
 |----------|-----|---------|
 | **Release (Production)** | Tag-triggered, version bump, changelog, TestFlight, GitHub Release | Tag-triggered, version bump, changelog, Google Play, GitHub Release |
-| **Release Dev (Testing)** | Manual trigger, build + TestFlight only | Manual trigger, build + Google Play internal track |
+| **Release Snapshot (Testing)** | Manual trigger, build + TestFlight only | Manual trigger, build + Google Play internal track |
 
-### Release Dev Workflow
+### Release Snapshot Workflow
 
-The `release-dev-workflow.yml` is for testing builds before a formal release:
+The `release-snapshot-workflow.yml` is for testing builds before a formal release:
 
 ```yaml
 # Manual trigger - no version bump, no changelog, no GitHub release
 # Just build and upload to Google Play internal track
-name: Release Dev Workflow
+name: Release Snapshot Workflow
 on:
   workflow_dispatch:
 

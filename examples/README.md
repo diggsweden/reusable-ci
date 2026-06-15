@@ -207,22 +207,22 @@ pip install yamllint
 yamllint .reusable-ci/artifacts.yml
 ```
 
-### 2. Test with Dev Workflow
+### 2. Test with Snapshot Workflow
 
-Create `.github/workflows/release-dev-workflow.yml`:
+Create `.github/workflows/release-snapshot-workflow.yml`:
 ```yaml
 on:
   push:
     branches: [feat/test-config]
 
 jobs:
-  dev-release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@v3.0.0
+  snapshot-release:
+    uses: diggsweden/reusable-ci/.github/workflows/release-snapshot-orchestrator.yml@v3.0.0
     with:
       reusable-ci-binary-ref: v3.0.0
       artifacts-config: .reusable-ci/artifacts.yml
     permissions:
-      contents: write
+      contents: read
       packages: write
     secrets: inherit
 ```

@@ -212,23 +212,23 @@ config:
 
 ### Release Process
 
-1a. **Tag your release:**
+1. **Request a release** — push a SIGNED request tag:
 
    ```bash
-   git tag -s v1.0.0 -m "Release v1.0.0"
-   git push origin v1.0.0
+   git tag -s release-request/v1.0.0 -m "Release v1.0.0"
+   git push origin release-request/v1.0.0
    ```
 
-1b. **or, tag your SNAPSHOT release if your workflow trigger includes snapshot tags:**
+   reusable-ci verifies your signature (against the committed allowlist, when
+   enabled), bumps the version + changelog, then **creates the immutable
+   `v1.0.0` release tag once** at the bump commit — no tag is force-pushed or
+   mutated. Your signed `release-request/v1.0.0` tag remains as the
+   authorisation anchor, and the bot's release commit records you as the
+   original tagger (`Release-Authorized-By` / `Co-authored-by` trailers).
 
-   ```bash
-   git tag -s v1.0.0-SNAPSHOT -m "v1.0.0-SNAPSHOT"
-   git push origin v1.0.0-SNAPSHOT
-   ```
-
-   The reusable-ci example release workflows use `v*.*.*`, which already matches
-   SemVer prerelease tags such as `v1.0.0-SNAPSHOT`. Add a snapshot-specific
-   pattern only if your own workflow uses stricter tag filters.
+   The reusable-ci example release workflows trigger on `release-request/v*`.
+   (SNAPSHOT/dev builds are a separate `workflow_dispatch` flow — see the
+   snapshot orchestrator — and do not use release-request tags.)
 
 2. **Workflow automatically:**
    - Builds library with sources and javadoc
@@ -269,7 +269,7 @@ To consume `-SNAPSHOT` versions, add snapshot repository to `~/.m2/settings.xml`
       <repositories>
         <repository>
           <id>maven-snapshots</id>
-          <url>https://s01.oss.sonatype.org/content/repositories/snapshots/</url>
+          <url>https://central.sonatype.com/repository/maven-snapshots/</url>
           <releases>
             <enabled>false</enabled>
           </releases>
@@ -359,8 +359,8 @@ Your `package.json` must include:
 1. **Tag your release:**
 
    ```bash
-   git tag -s v1.0.0 -m "Release v1.0.0"
-   git push origin v1.0.0
+   git tag -s release-request/v1.0.0 -m "Release v1.0.0"
+   git push origin release-request/v1.0.0
    ```
 
 2. **Workflow automatically:**
@@ -636,8 +636,8 @@ base64 -i exportOptions.plist -o exportOptions.txt
 1. **Tag your release:**
 
    ```bash
-   git tag -s v1.0.0 -m "Release v1.0.0"
-   git push origin v1.0.0
+   git tag -s release-request/v1.0.0 -m "Release v1.0.0"
+   git push origin release-request/v1.0.0
    ```
 
 2. **Workflow automatically:**
@@ -811,8 +811,8 @@ config:
 1. **Tag your release:**
 
    ```bash
-   git tag -s v1.0.0 -m "Release v1.0.0"
-   git push origin v1.0.0
+   git tag -s release-request/v1.0.0 -m "Release v1.0.0"
+   git push origin release-request/v1.0.0
    ```
 
 2. **Workflow automatically:**

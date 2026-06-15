@@ -1,3 +1,8 @@
+# Secrets, Permissions, and Validation
+
+Required secrets, permissions, and validation matrices for reusable-ci
+workflows. For the generated command surface, see [CLI Reference](cli-reference.md).
+
 ## Environment Variables Matrix
 
 | Variable/Secret | Required For | When Checked | Expected Value | Notes |
@@ -13,7 +18,7 @@
 
 Release authorisation is not a secret. It lives in the repo as
 `.reusable-ci/allowed_signers` (SSH) and
-`.reusable-ci/allowed_gpg_fingerprints` (GPG). See [verification.md](verification.md#release-authorisation).
+`.reusable-ci/allowed_gpg_keys.asc` (GPG). See [verification.md](verification.md#release-authorisation).
 
 ## Prerequisites Check Matrix
 
@@ -42,8 +47,8 @@ Release authorisation is not a secret. It lives in the repo as
 | | `id-token: write` | OIDC for SLSA | No attestation |
 | | `attestations: write` | Attach SBOMs | No SBOM attachment |
 | | `actions: read` | Read workflow | SLSA generation fails |
-| **Dev Workflow** | `contents: read` | Read code | Cannot checkout |
-| | `packages: write` | Push images | Cannot push to ghcr.io |
+| **Snapshot Workflow** | `contents: read` | Read code | Cannot checkout |
+| | `packages: write` | Publish npm snapshot to GitHub Packages | Cannot publish package |
 
 ## Getting Access to Secrets
 
@@ -109,18 +114,6 @@ Results appear in the Code Scanning tab grouped by category:
 SARIF files are also saved as workflow artifacts (`sarif-dependency-review`, `sarif-opengrep`, `sarif-scorecard`, `sarif-container-scan`) regardless of whether the token is configured.
 
 ---
-
-## Prerequisites
-
-Some features require GitHub secrets:
-- **GPG signing** needs GPG keys
-- **Maven Central** needs Sonatype credentials  
-- **Container registries** use GITHUB_TOKEN (automatic)
-
-Configure these as repository or organization secrets in your GitHub
-setup. Orgs with central secret management may expose them as
-org-level secrets and grant per-repo access; otherwise wire them at
-the repo level.
 
 ## Local Testing
 

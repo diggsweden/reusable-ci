@@ -21,7 +21,7 @@ run `just gen-cli-reference` after any CLI change.
 
 ## Why a `reusable-ci` binary
 
-The three-line summary from the port plan:
+In short:
 
 1. **One Go binary, one surface.** Every workflow operation is a
    `reusable-ci <group> <subcmd>` call. The binary is baked into the

@@ -182,7 +182,6 @@ jobs:
       project-type: npm
       reusable-ci-binary-ref: abcdef0123456789abcdef0123456789abcdef01
       runtime-image: ghcr.io/diggsweden/reusable-ci-runtime-base:sha-abcdef0
-      runtime-image-security: ghcr.io/diggsweden/reusable-ci-runtime:sha-abcdef0
 ```
 
 The `:sha-<short-sha>` value is the seven-character commit prefix from the

@@ -1,3 +1,5 @@
+# Components Reference
+
 ## Available Components
 
 This document describes reusable workflow components and how they relate to the supported orchestrator entrypoints.
@@ -7,7 +9,7 @@ This document describes reusable workflow components and how they relate to the 
 **Recommended stable GitHub entrypoints:**
 - `pullrequest-orchestrator.yml`
 - `release-orchestrator.yml`
-- `release-dev-orchestrator.yml`
+- `release-snapshot-orchestrator.yml`
 
 Leaf helper workflows such as `build-*`, `publish-*`, `lint-*`, `security-*`, `validate-*`, and selected release helpers can still be used directly by advanced consumers and are suitable for custom orchestration. The examples below use external consumer refs; inside this repository's own workflows, the same components are called with local `./.github/workflows/...` paths.
 
@@ -30,7 +32,7 @@ The YAML blocks in this page are **job-level snippets**. Place them under
 `jobs.<job-id>` in your workflow and add the permissions/secrets required by the
 component you call.
 
-Stage workflows such as `pullrequest-quality-stage.yml`, `release-prepare-stage.yml`, `release-build-stage.yml`, `release-publish-stage.yml`, `release-dev-build-stage.yml`, and `release-dev-publish-stage.yml` are internal composition helpers. Advanced consumers may still use them, but they should be treated as less stable direct-use contracts than the orchestrators and leaf helpers.
+Stage workflows such as `pullrequest-quality-stage.yml`, `release-prepare-stage.yml`, `release-build-stage.yml`, `release-publish-stage.yml`, `release-snapshot-build-stage.yml`, and `release-snapshot-publish-stage.yml` are internal composition helpers. Advanced consumers may still use them, but they should be treated as less stable direct-use contracts than the orchestrators and leaf helpers.
 
 **When to use components:**
 - You need fine-grained control over builds, publishing, validation, or security checks
@@ -58,7 +60,6 @@ See [Workflow Guide](workflows.md) for orchestrator documentation and [Artifacts
 | Component | Purpose | Features | Build Time | Use When |
 |-----------|---------|----------|------------|----------|
 | **publish-container** | Production multi-platform container builds | SLSA attestation, SBOM, vulnerability scanning, native split-runner multi-arch (no QEMU) | ~5-10 min | Production releases |
-| **publish-dev-container** | Fast dev container builds, single- or multi-platform | Dev tags, no SLSA or vulnerability scan, optional analyzed-container SBOM, native split-runner when multi-arch | ~3-5 min | Development/testing |
 
 #### Release Tools
 
@@ -216,21 +217,9 @@ with:
   artifact-types: maven
   platforms: "linux/amd64,linux/arm64"
   enable-slsa: true
-  enable-analyzed-container-sbom: true   # was `enable-sbom: true` in v2; rename
+  enable-analyzed-container-sbom: true   # CycloneDX SBOM of the built image
   enable-scan: true
   registry: "ghcr.io"
-```
-
-#### `publish-dev-container.yml`
-Fast development container builds. Supports multiple registries.
-```yaml
-uses: diggsweden/reusable-ci/.github/workflows/publish-dev-container.yml@v3.0.0
-with:
-  reusable-ci-binary-ref: v3.0.0
-  container-file: "Containerfile"  # or "Dockerfile"
-  registry: "ghcr.io"
-  artifact-types: maven
-  working-directory: "."
 ```
 
 ### Other Components
@@ -286,12 +275,6 @@ with:
 
 These workflows are automatically called by `pullrequest-orchestrator.yml`.
 
-#### `lint-misc.yml`
-Performs miscellaneous validation checks.
-```yaml
-uses: diggsweden/reusable-ci/.github/workflows/lint-misc.yml@v3.0.0
-```
-
 #### `lint-nanolinter.yml`
 Runs `nanolinter` against the consumer's `just lint` plan (tools pinned in
 `.mise.toml`, installed via `mise`). Security findings upload to GitHub Code
@@ -333,16 +316,16 @@ uses: diggsweden/reusable-ci/.github/workflows/security-openssf-scorecard.yml@v3
 |----------|---------|-------------|
 | `pullrequest-orchestrator.yml` | Pull request quality control plane | Every repository |
 | `release-orchestrator.yml` | Production release control plane | Production releases |
-| `release-dev-orchestrator.yml` | Lightweight dev release control plane | Development branches |
+| `release-snapshot-orchestrator.yml` | Lightweight snapshot release control plane (npm/SBOM-only) | Development branches |
 
-### Dev vs Production Release
+### Snapshot vs Production Release
 
-| Aspect | Dev | Production |
-|--------|-----|------------|
+| Aspect | Snapshot | Production |
+|--------|----------|------------|
 | Build time | ~3-5 min | ~12-15 min |
-| Container image | ✓ with dev tag; optional analyzed-container SBOM | ✓ + SLSA + SBOM + vulnerability scan |
+| Container image | — (builds none; a release-built image is promoted to `:dev` by the promotion ladder) | ✓ + SLSA + SBOM + vulnerability scan |
 | Build artifacts | ✓ for artifact-first ecosystems | ✓ |
 | SBOMs | Default `none`; opt in with `sboms` | Default `all` |
-| NPM publish | ✓ (dev tag) | ✓ |
+| NPM publish | ✓ (snapshot tag) | ✓ |
 | Maven publish | — | ✓ (libraries only) |
 | GitHub Release | — | ✓ |

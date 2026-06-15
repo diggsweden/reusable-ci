@@ -10,17 +10,18 @@ Run `go run ./cmd/gen-cli-reference > docs/cli-reference.md` to refresh.
 
 This document is the canonical surface of the `reusable-ci` binary.
 
-Every command supports `--help`. Global flags (`--quiet`, `--log-level`, `--format`, `--json`)
-are accepted on every subcommand.
+Every command supports `--help`. Global flags (`--quiet`, `--log-level`, `--format`, `--json`,
+`--provider`, `--runner`) are accepted on every subcommand.
 
 ## Command groups
 
+- [`artifact`](#reusable-ci-artifact) — upload/download per-run CI artifacts (forge-neutral)
 - [`build`](#reusable-ci-build) — toolchain build wrappers (go, cargo, maven, npm, gradle, gradle-android, xcode-ios, swift)
 - [`config`](#reusable-ci-config) — artifacts.yml schema helpers
 - [`container`](#reusable-ci-container) — container-image helpers (name resolution, manifests, namespace policy, tag/label metadata, …)
 - [`doctor`](#reusable-ci-doctor) — run setup-validation checks against the current repository (artifacts.yml present + valid, release-authorization allowlist when required, workflow id-token permission for sigstore, workflows pin reusable-ci to a tag)
-- [`plan`](#reusable-ci-plan) — typed release, dev-release, and pull-request plan composition
-- [`platform`](#reusable-ci-platform) — introspect the CI runtime (debug workspace, resolve refs)
+- [`plan`](#reusable-ci-plan) — typed release, snapshot-release, and pull-request plan composition
+- [`platform`](#reusable-ci-platform) — introspect the CI runtime (debug workspace, resolve refs, check out a repo)
 - [`publish`](#reusable-ci-publish) — publish-side pre-flight validators and output helpers
 - [`release`](#reusable-ci-release) — release-flow helpers (GPG lifecycle, signing, checksums, notes, create, attachments, …)
 - [`report`](#reusable-ci-report) — write step-summary blocks (build, publish, status, lifecycle)
@@ -28,6 +29,37 @@ are accepted on every subcommand.
 - [`security`](#reusable-ci-security) — security scanners and report converters
 - [`validate`](#reusable-ci-validate) — input / state validators (tag, workflow, auth, secret, …)
 - [`version`](#reusable-ci-version) — version-bump and tag-management helpers
+
+## `reusable-ci artifact`
+
+upload/download per-run CI artifacts (forge-neutral)
+
+### `reusable-ci artifact download`
+
+download a named run artifact into a directory
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--name` | exact artifact name to download (omit with --pattern) | `$ARTIFACT_NAME` |
+| `--pattern` | glob over artifact names; downloads every match (alternative to --name) | `$ARTIFACT_PATTERN` |
+| `--merge-multiple` | with --pattern: flatten all matches into --dir instead of --dir/<name>/ | `$ARTIFACT_MERGE_MULTIPLE` |
+| `--dir` | destination directory | `$ARTIFACT_DIR` |
+| `--run-id` | run the artifact belongs to (default: current run) | `$CI_RUN_ID`, `$FORGEJO_RUN_ID`, `$GITHUB_RUN_ID` |
+| `--repository` | owner/repo the run belongs to (default: current repo) | `$REPOSITORY`, `$CI_REPO`, `$GITHUB_REPOSITORY` |
+
+### `reusable-ci artifact upload`
+
+upload files as a named artifact into the current workflow run
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--name` | logical artifact name | `$ARTIFACT_NAME` |
+| `--dir` | directory whose contents are uploaded (or use --file/--path) | `$ARTIFACT_DIR` |
+| `--file` | explicit file to upload (repeatable, flattened to basename) | `$ARTIFACT_FILES` |
+| `--path` | glob pattern preserving structure (*, **, [set], !exclude; repeatable or newline-separated) — the upload-artifact path: contract | `$ARTIFACT_PATHS` |
+| `--retention-days` | retention in days (0 = forge default) | `$ARTIFACT_RETENTION_DAYS` |
+| `--if-no-files` | when nothing matches: error \| warn \| ignore | `$ARTIFACT_IF_NO_FILES` |
+| `--include-hidden` | include dotfiles/hidden files (off by default, matching upload-artifact) | `$ARTIFACT_INCLUDE_HIDDEN` |
 
 ## `reusable-ci build`
 
@@ -47,7 +79,7 @@ cross-compile Rust binaries into dist/
 | `--binary-name` | explicit binary name (defaults to the Cargo.toml [[bin]] target or package name) | `$BINARY_NAME` |
 | `--platforms` | comma-separated GOOS/GOARCH targets to cross-compile (each must have a Rust target triple mapping) | `$PLATFORMS` |
 | `--version` | release version (one of --version or --ref-name is required; use 'dev' for local builds) | `$VERSION` |
-| `--ref-name` | git ref name used to derive the version when --version is empty | `$REF_NAME`, `$GITHUB_REF_NAME` |
+| `--ref-name` | git ref name used to derive the version when --version is empty | `$REF_NAME`, `$CI_REF_NAME`, `$GITHUB_REF_NAME` |
 
 #### `reusable-ci build cargo fetch`
 
@@ -67,7 +99,7 @@ read Cargo.toml metadata and emit Cargo build outputs
 | `--artifact-name` | explicit artifact-name override | `$ARTIFACT_NAME` |
 | `--binary-name` | explicit binary-name override (skips the Cargo.toml [[bin]]/package heuristic) | `$BINARY_NAME` |
 | `--version` | explicit version override (skips the --ref-name and Cargo.toml fallbacks) | `$VERSION` |
-| `--ref-name` | git ref name used to derive the version when --version is empty | `$REF_NAME`, `$GITHUB_REF_NAME` |
+| `--ref-name` | git ref name used to derive the version when --version is empty | `$REF_NAME`, `$CI_REF_NAME`, `$GITHUB_REF_NAME` |
 
 #### `reusable-ci build cargo test`
 
@@ -94,8 +126,8 @@ cross-compile Go binaries into dist/
 | `--main-package` | main package import path relative to --working-dir | `$MAIN_PACKAGE` |
 | `--platforms` | comma-separated GOOS/GOARCH targets to cross-compile | `$PLATFORMS` |
 | `--version` | release version baked into the binary via -ldflags (one of --version or --ref-name is required; use 'dev' for local builds) | `$VERSION` |
-| `--ref-name` | git ref name used to derive the version when --version is empty (mirrors 'build go metadata') | `$REF_NAME`, `$GITHUB_REF_NAME` |
-| `--commit` | commit SHA baked into the binary via -ldflags | `$GITHUB_SHA`, `$CI_COMMIT_SHA` |
+| `--ref-name` | git ref name used to derive the version when --version is empty (mirrors 'build go metadata') | `$REF_NAME`, `$CI_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--commit` | commit SHA baked into the binary via -ldflags | `$CI_COMMIT`, `$CI_COMMIT_SHA`, `$GITHUB_SHA` |
 
 #### `reusable-ci build go download`
 
@@ -115,7 +147,7 @@ read go.mod metadata and emit Go build outputs
 | `--artifact-name` | explicit artifact-name override (skips the module-basename heuristic) | `$ARTIFACT_NAME` |
 | `--binary-name` | explicit binary-name override (skips the module-basename heuristic) | `$BINARY_NAME` |
 | `--version` | explicit version override (skips the --ref-name heuristic) | `$VERSION` |
-| `--ref-name` | git ref name used to derive the version when --version is empty | `$REF_NAME`, `$GITHUB_REF_NAME` |
+| `--ref-name` | git ref name used to derive the version when --version is empty | `$REF_NAME`, `$CI_REF_NAME`, `$GITHUB_REF_NAME` |
 
 #### `reusable-ci build go sbom`
 
@@ -178,9 +210,9 @@ compute upload-artifact names (debug/release/aab/sbom)
 |------|-------------|----------|
 | `--include-date` | append a YYYYMMDD-HHMMSS stamp to the artifact name | `$INCLUDE_DATE_STAMP` |
 | `--prefix` | optional prefix prepended to every artifact name | `$ARTIFACT_NAME_PREFIX` |
-| `--repo-name` | repository basename used in the default name | `$REPOSITORY_NAME` |
+| `--repository-name` | repository basename used in the default name | `$REPOSITORY_NAME` |
 | `--flavor` | Android product flavor; included in the name when set | `$PRODUCT_FLAVOR` |
-| `--override` | explicit name override; bypasses all heuristics | `$ARTIFACT_NAME` |
+| `--name-override` | explicit artifact-name override; bypasses all heuristics | `$ARTIFACT_NAME` |
 
 #### `reusable-ci build gradle-android compile`
 
@@ -213,7 +245,7 @@ compute the gradle task list from flavor / build-types / include-aab / build-mod
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--override` | explicit task list override; bypasses the build-type heuristics | `$GRADLE_TASKS_OVERRIDE` |
+| `--tasks-override` | explicit task list override; bypasses the build-type heuristics | `$GRADLE_TASKS_OVERRIDE` |
 | `--flavor` | Android product flavor inserted into the task names | `$PRODUCT_FLAVOR` |
 | `--build-types` | comma-separated Android build types to assemble | `$BUILD_TYPES` |
 | `--include-aab` | also emit bundleRelease (produces an AAB) | `$INCLUDE_AAB` |
@@ -282,7 +314,7 @@ read package.json metadata and emit CI outputs
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--working-dir` | directory containing package.json | `$WORKING_DIRECTORY` |
-| `--package-scope` | expected scope (e.g. @diggsweden); errors when package.json disagrees | `$PACKAGE_SCOPE` |
+| `--scope` | expected scope (e.g. @diggsweden); errors when package.json disagrees | `$SCOPE`, `$PACKAGE_SCOPE` |
 
 #### `reusable-ci build npm pack`
 
@@ -342,7 +374,7 @@ compute and emit the IPA artifact name
 | `--artifact-name` | explicit name override; overrides repo/tag heuristics | `$ARTIFACT_NAME` |
 | `--repository-name` | repository basename used to derive the default name | `$REPOSITORY_NAME` |
 | `--include-tag` | append the tag to the artifact name | `$INCLUDE_TAG` |
-| `--ref-name` | ref/tag appended when --include-tag is set | `$REF_NAME`, `$GITHUB_REF_NAME` |
+| `--ref-name` | ref/tag appended when --include-tag is set | `$REF_NAME`, `$CI_REF_NAME`, `$GITHUB_REF_NAME` |
 
 #### `reusable-ci build xcode-ios export-ipa`
 
@@ -376,7 +408,7 @@ decode optional XCCONFIG_BASE64 and emit xcconfig-path
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--base64` | base64-encoded .xcconfig body; empty value is a no-op | `$XCCONFIG_BASE64` |
-| `--temp-dir` | directory the decoded .xcconfig is written to | `$RUNNER_TEMP`, `$CI_TEMP_DIR` |
+| `--temp-dir` | directory the decoded .xcconfig is written to | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
 
 #### `reusable-ci build xcode-ios version-info`
 
@@ -425,6 +457,103 @@ container-image helpers (name resolution, manifests, namespace policy, tag/label
 
 extract a top-level \*.tgz / \*.tar.gz with --strip-components=1 then remove it (no-op when none present)
 
+### `reusable-ci container ledger`
+
+release-image ledger: record image entries and re-validate at the trust boundary
+
+#### `reusable-ci container ledger add`
+
+validate one image entry and append it to the ledger
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
+| `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--kind` | image role, e.g. distroless, alpine, base | n/a |
+| `--ref` | digest-pinned image ref (registry/path@sha256:<64 hex>) | n/a |
+| `--digest` | image digest (sha256:<64 hex>) | n/a |
+| `--sbom` | CycloneDX SBOM path (dist/image-sbom*.cyclonedx.json) | n/a |
+| `--image-name` | image registry/path (no tag); with --tag, derives --final-tag=<image>:<tag> and --candidate-tag=<image>:staging-<tag> so callers don't hand-assemble both (explicit flags still win) | n/a |
+| `--final-tag` | immutable release tag ref (scoped to --tag); derived from --image-name when omitted | n/a |
+| `--flavor` | optional base-image flavour | n/a |
+| `--candidate-tag` | optional staging tag ref (scoped to staging-<tag>); derived from --image-name when omitted | n/a |
+| `--base-ref` | optional digest-pinned base image | n/a |
+| `--base-input-id` | optional base-image input identifier (SLSA lineage) | n/a |
+| `--capture-digest` | resolve the digest from the registry (single source of truth) instead of --ref/--digest; reads the candidate or final tag | n/a |
+
+#### `reusable-ci container ledger cleanup`
+
+delete each entry's staging candidate tag after verifying the promoted final tag (leaves candidates in place if unverified)
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
+| `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--dry-run` | preview registry mutations (copies/deletes) without performing them | n/a |
+
+#### `reusable-ci container ledger merge`
+
+merge several per-container ledger files into one (drops exact duplicates); for promoting a multi-container release as a single unit
+
+**Usage:** `reusable-ci container ledger merge <path>... (files, or directories searched for release-images.json)`
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
+
+#### `reusable-ci container ledger promote`
+
+promote each entry's candidate image to the stage's moving pointer (&lt;base&gt;:&lt;stage&gt;) on the same digest, verifying after each copy; the immutable :&lt;version&gt; tag is build-only
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
+| `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--stage` | promotion stage: 'release' adds the <base>:release pointer and enforces the release scope; a named stage ('dev', 'staging') adds <base>:<stage> on the same digest and needs no --tag. The immutable :<version> tag is build-only. | `$PROMOTE_STAGE` |
+| `--stage-repo` | rehome the promotion onto a destination registry/namespace PREFIX (e.g. a sovereign codeberg.org/owner); each image lands at <prefix>/<image-name>, so a multi-container release never collides. A different registry is a cross-registry promotion that copies the signature via cosign | `$PROMOTE_STAGE_REPO` |
+| `--dry-run` | preview registry mutations (copies/deletes) without performing them | n/a |
+
+#### `reusable-ci container ledger rollback`
+
+undo a stage's promotion: delete that stage's pointer tag(s) (e.g. :dev/:staging/:release) that still serve the entry's digest; the immutable :&lt;version&gt; tag is never touched
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
+| `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--stage` | promotion stage: 'release' adds the <base>:release pointer and enforces the release scope; a named stage ('dev', 'staging') adds <base>:<stage> on the same digest and needs no --tag. The immutable :<version> tag is build-only. | `$PROMOTE_STAGE` |
+| `--stage-repo` | rehome the promotion onto a destination registry/namespace PREFIX (e.g. a sovereign codeberg.org/owner); each image lands at <prefix>/<image-name>, so a multi-container release never collides. A different registry is a cross-registry promotion that copies the signature via cosign | `$PROMOTE_STAGE_REPO` |
+| `--dry-run` | preview registry mutations (copies/deletes) without performing them | n/a |
+
+#### `reusable-ci container ledger validate`
+
+re-validate every entry in the ledger against the release tag (trust-boundary check)
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
+| `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+
+#### `reusable-ci container ledger verify-digests`
+
+re-verify each entry's recorded digest against what the registry serves (candidate_tag → final_tag → digest ref); distinct from `validate`, which checks entries against the release tag offline
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
+| `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+
+### `reusable-ci container login`
+
+write registry credentials to the shared OCI auth config (docker, podman, buildah, skopeo, cosign) — a node-less, forge-neutral replacement for docker/login-action
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--registry` | registry host (e.g. ghcr.io, codeberg.org) | `$CONTAINER_REGISTRY` |
+| `--username` | registry username | `$REGISTRY_USERNAME` |
+| `--password-file` | file containing the password ("-" reads stdin); defaults to $REGISTRY_PASSWORD. The password never appears in argv. | n/a |
+| `--auth-file` | override the auth config path (default: $REGISTRY_AUTH_FILE, else $DOCKER_CONFIG/config.json, else ~/.docker/config.json) | n/a |
+
 ### `reusable-ci container manifest`
 
 merge / inspect multi-platform container manifest lists
@@ -435,7 +564,7 @@ inspect a pushed manifest list and emit image/digest outputs
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--image` | fully-qualified image reference (registry/owner/name:tag) to inspect | `$CONTAINER_IMAGE` |
+| `--image-ref` | fully-qualified image reference (registry/owner/name:tag) to inspect | `$IMAGE_REF` |
 | `--tags` | newline-separated tags whose digest output is emitted to the sink | `$TAGS` |
 
 #### `reusable-ci container manifest merge`
@@ -466,7 +595,7 @@ compute Docker tags + OCI labels from declarative tag rules
 |------|-------------|----------|
 | `--image-name` | single base image ref, e.g. ghcr.io/owner/repo | `$IMAGE_NAME` |
 | `--tag-rules` | newline-separated csv tag-rule lines | `$TAG_RULES` |
-| `--flavor` | only `latest=false` is honoured; other entries are refused | `$FLAVOR` |
+| `--flavor` | only latest=false is honoured; other entries are refused | `$FLAVOR` |
 | `--emit-labels` | also emit org.opencontainers.image.* labels | `$EMIT_LABELS` |
 | `--oci-description` | override for org.opencontainers.image.description | `$OCI_DESCRIPTION` |
 | `--oci-license` | override for org.opencontainers.image.licenses (SPDX id) | `$OCI_LICENSE` |
@@ -488,10 +617,9 @@ compute the canonical image reference and emit name=&lt;value&gt;
 |------|-------------|----------|
 | `--registry` | registry hostname (e.g. ghcr.io) | `$CONTAINER_REGISTRY` |
 | `--image-name` | explicit image name override (defaults to <owner>/<repo>) | `$IMAGE_NAME` |
-| `--repository` | "owner/repo" used to build the default image name | `$REPOSITORY`, `$GITHUB_REPOSITORY` |
-| `--repository-owner` | owner portion used to lowercase-normalize the registry path | `$REPOSITORY_OWNER`, `$GITHUB_REPOSITORY_OWNER` |
+| `--repository` | "owner/repo" used to build the default image name | `$REPOSITORY`, `$CI_REPO`, `$GITHUB_REPOSITORY` |
+| `--repository-owner` | owner segment used to prefix bare image names on docker.io (Docker Hub); the derived reference is always lowercased for OCI compliance | `$REPOSITORY_OWNER`, `$GITHUB_REPOSITORY_OWNER` |
 | `--name` | optional sub-name for multi-container projects | `$CONTAINER_NAME` |
-| `--name-suffix` | suffix appended to the repository segment of the derived image name (e.g. `-dev`). Used by the dev-release flow to push to a separate namespace so dev tags don't share a registry path with production releases. Ignored when --image-name is set. | `$IMAGE_NAME_SUFFIX` |
 
 ### `reusable-ci container sign`
 
@@ -512,7 +640,7 @@ rename extracted binaries with a -linux-&lt;arch&gt; suffix
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--dir` | directory holding the extracted binaries | `$EXTRACTED_BINARIES_DIR` |
+| `--binaries-dir` | directory holding the extracted binaries | `$BINARIES_DIR` |
 | `--arch` | target CPU architecture appended to each binary name (e.g. amd64, arm64) | `$ARCH` |
 | `--expected-names` | comma-separated allow-list of base filenames to rename (default: all binaries in --dir) | `$EXPECTED_BINARY_NAMES` |
 
@@ -540,14 +668,15 @@ verify a Containerfile path exists (or glob-resolves uniquely), emit containerfi
 
 #### `reusable-ci container validate namespace`
 
-verify an image lives in the allowed ghcr.io namespace (no-op on other registries)
+verify an image lives in the allowed namespace for an enforced registry (no-op for registries not in --enforce-namespace-on)
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--image-name` | Sets image name. | `$IMAGE_NAME` |
-| `--repository` | Sets repository. | `$REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--repository` | Sets repository. | `$REPOSITORY`, `$CI_REPO`, `$GITHUB_REPOSITORY` |
 | `--registry` | Sets registry. | `$CONTAINER_REGISTRY` |
 | `--enforce-namespace` | Sets enforce namespace. | `$ENFORCE_NAMESPACE` |
+| `--enforce-namespace-on` | registries whose namespace policy this deployment enforces (default ghcr.io); set to your registry when self-hosting so the check runs instead of silently passing | `$ENFORCE_NAMESPACE_ON` |
 
 ### `reusable-ci container write-digest-marker`
 
@@ -566,35 +695,11 @@ run setup-validation checks against the current repository (artifacts.yml presen
 |------|-------------|----------|
 | `--root` | repository root to inspect (default: cwd) | `$REUSABLE_CI_DOCTOR_ROOT` |
 | `--artifacts` | override the artifacts.yml lookup (default: <root>/.reusable-ci/artifacts.yml) | `$REUSABLE_CI_DOCTOR_ARTIFACTS` |
+| `--reusable-ci-repo` | owner/repo this binary belongs to, for the workflow-pin check (default: derived from the binary's own module path) | `$REUSABLE_CI_REPO_SLUG` |
 
 ## `reusable-ci plan`
 
-typed release, dev-release, and pull-request plan composition
-
-### `reusable-ci plan dev-release`
-
-compose typed dev-release and stage plan contracts
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--config-plan-json` | typed config-plan JSON (output of 'config parse-artifacts') | `$CONFIG_PLAN_JSON` |
-| `--project-type` | primary ecosystem of the project (maven/npm/go/cargo/…) | `$PROJECT_TYPE` |
-| `--branch` | git branch the dev-release is being built from | `$BRANCH` |
-| `--release-sha` | commit SHA the dev-release is anchored to | `$RELEASE_SHA` |
-| `--release-actor` | user triggering the dev-release | `$RELEASE_ACTOR` |
-| `--release-repository` | "owner/repo" the dev-release is published from | `$RELEASE_REPOSITORY` |
-| `--working-dir` | default working directory when no per-artifact override is in the plan | `$WORKING_DIRECTORY` |
-| `--java-version` | JDK version installed by the publish job (Maven/Gradle paths) | `$JAVA_VERSION` |
-| `--node-version` | Node.js version installed by the publish job (npm path) | `$NODE_VERSION` |
-| `--rust-toolchain` | Rust toolchain installed by the publish job (cargo path) | `$RUST_TOOLCHAIN` |
-| `--registry` | container registry the dev image is pushed to | `$REGISTRY` |
-| `--reusable-ci-binary-ref` | git ref of the reusable-ci binary used in the plan | `$REUSABLE_CI_BINARY_REF` |
-| `--npm-registry` | npm registry URL the dev tarball is published to | `$NPM_REGISTRY` |
-| `--package-scope` | npm package scope (e.g. @diggsweden) routed to the registry | `$PACKAGE_SCOPE` |
-| `--sboms` | sboms enum gating which CISA layers the dev-release produces | `$SBOMS` |
-| `--publish-npm` | include the npm dev-publish step in the plan | `$PUBLISH_NPM` |
-| `--use-ci-token` | use the CI platform token in place of an explicit registry password | `$USE_CI_TOKEN` |
-| `--publish-container` | include the container dev-publish step in the plan | `$PUBLISH_CONTAINER` |
+typed release, snapshot-release, and pull-request plan composition
 
 ### `reusable-ci plan file-pattern`
 
@@ -626,20 +731,62 @@ compose typed release and stage plan contracts
 |------|-------------|----------|
 | `--config-plan-json` | typed config-plan JSON (output of 'config parse-artifacts') | `$CONFIG_PLAN_JSON` |
 | `--branch` | git branch the release is being built from | `$BRANCH` |
-| `--ref-name` | release tag (e.g. v1.2.3) | `$CI_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--tag` | release tag (e.g. v1.2.3) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 | `--file-pattern` | git pathspecs the version-bump commit stages | `$FILE_PATTERN` |
 | `--release-type` | type override (release/snapshot); auto-detected from the tag when empty | `$RELEASE_TYPE` |
 | `--release-publisher` | platform that publishes the release (github-cli, gitlab-cli, …) | `$RELEASE_PUBLISHER` |
-| `--release-require-allowlisted-signer` | require the tag signer's fingerprint to appear in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_fingerprints (GPG) | `$RELEASE_REQUIRE_ALLOWLISTED_SIGNER` |
+| `--release-require-allowlisted-signer` | require the tag signer to be allowlisted in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_keys.asc (GPG) | `$RELEASE_REQUIRE_ALLOWLISTED_SIGNER` |
 | `--release-draft` | create the GitHub Release as a draft | `$RELEASE_DRAFT` |
 | `--release-sboms` | sboms enum gating which CISA layers the release attaches | `$RELEASE_SBOMS` |
 | `--release-sign-artifacts` | sign release artifacts with the release GPG key | `$RELEASE_SIGN_ARTIFACTS` |
 | `--changelog-creator` | tool that generates the changelog (git-cliff, …) | `$CHANGELOG_CREATOR` |
 | `--changelog-skip-version-bump` | skip the version-bump commit (caller already committed) | `$CHANGELOG_SKIP_VERSION_BUMP` |
 
+### `reusable-ci plan snapshot-release`
+
+compose typed snapshot-release and stage plan contracts
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--config-plan-json` | typed config-plan JSON (output of 'config parse-artifacts') | `$CONFIG_PLAN_JSON` |
+| `--project-type` | primary ecosystem of the project (maven/npm/go/cargo/…) | `$PROJECT_TYPE` |
+| `--branch` | git branch the snapshot-release is being built from | `$BRANCH` |
+| `--release-sha` | commit SHA the snapshot-release is anchored to | `$RELEASE_SHA` |
+| `--release-actor` | user triggering the snapshot-release | `$RELEASE_ACTOR` |
+| `--release-repository` | "owner/repo" the snapshot-release is published from | `$RELEASE_REPOSITORY` |
+| `--working-dir` | default working directory when no per-artifact override is in the plan | `$WORKING_DIRECTORY` |
+| `--java-version` | JDK version installed by the publish job (Maven/Gradle paths) | `$JAVA_VERSION` |
+| `--node-version` | Node.js version installed by the publish job (npm path) | `$NODE_VERSION` |
+| `--rust-toolchain` | Rust toolchain installed by the publish job (cargo path) | `$RUST_TOOLCHAIN` |
+| `--registry` | registry forwarded to the snapshot plan context (snapshot flow is npm/SBOM-only) | `$REGISTRY` |
+| `--reusable-ci-binary-ref` | git ref of the reusable-ci binary used in the plan | `$REUSABLE_CI_BINARY_REF` |
+| `--npm-registry` | npm registry URL the dev tarball is published to | `$NPM_REGISTRY` |
+| `--scope` | npm package scope (e.g. @diggsweden) routed to the registry | `$SCOPE`, `$PACKAGE_SCOPE` |
+| `--sboms` | sboms enum gating which CISA layers the snapshot-release produces | `$SBOMS` |
+| `--publish-npm` | include the npm dev-publish step in the plan | `$PUBLISH_NPM` |
+| `--use-ci-token` | use the CI platform token in place of an explicit registry password | `$USE_CI_TOKEN` |
+
 ## `reusable-ci platform`
 
-introspect the CI runtime (debug workspace, resolve refs)
+introspect the CI runtime (debug workspace, resolve refs, check out a repo)
+
+### `reusable-ci platform checkout`
+
+exact, credential-free, sha256-aware checkout of a repository into the workspace
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--repository` | owner/name to check out | `$REPOSITORY`, `$CI_REPO`, `$GITHUB_REPOSITORY` |
+| `--server-url` | forge base URL (e.g. https://codeberg.org) | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$GITHUB_SERVER_URL` |
+| `--ref` | commit SHA, refs/tags/…, refs/heads/…, or a bare tag/branch name (default: triggering commit) | `$CI_COMMIT`, `$CI_COMMIT_SHA`, `$GITHUB_SHA` |
+| `--workspace` | target directory (default: current directory) | `$CI_WORKSPACE`, `$GITHUB_WORKSPACE` |
+| `--token` | clone token; empty for an anonymous checkout | `$CI_TOKEN`, `$FORGEJO_TOKEN`, `$GITHUB_TOKEN` |
+| `--object-format` | override the forge-reported object format (sha1\|sha256); skips the metadata lookup | `$CHECKOUT_OBJECT_FORMAT` |
+| `--fetch-base` | extra branch to also fetch (diff/commit-range checks) | `$CHECKOUT_FETCH_BASE` |
+| `--fetch-tags` | also fetch all tags (the JS actions/checkout fetch-tags:true; needed for git-cliff/changelog) | `$CHECKOUT_FETCH_TAGS` |
+| `--sparse` | cone-mode sparse-checkout dir(s), e.g. scripts/bootstrap; restricts the working tree to these subtrees (repeatable / comma-separated) | `$CHECKOUT_SPARSE` |
+| `--path` | subdirectory to check out into, relative to $GITHUB_WORKSPACE (the JS actions/checkout path:); alternative to --workspace | `$CHECKOUT_PATH` |
+| `--output-key` | key written to the output sink for the resolved SHA | `$OUTPUT_KEY` |
 
 ### `reusable-ci platform debug-workspace`
 
@@ -657,7 +804,7 @@ resolve a remote git ref to a commit SHA output
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--remote-url` | remote git URL queried with 'git ls-remote' | `$REMOTE_URL` |
-| `--ref` | ref to resolve (tag, branch, or full refs/X/Y) | `$REF` |
+| `--ref` | ref to resolve (tag, branch, or full refs/X/Y) | `$REF`, `$GITHUB_REF` |
 | `--output-key` | key written to the platform output sink | `$OUTPUT_KEY` |
 
 ## `reusable-ci publish`
@@ -674,7 +821,7 @@ find an IPA artifact and emit ipa-file
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--dir` | directory scanned for an .ipa artifact | `$ARTIFACTS_DIR` |
+| `--artifacts-dir` | directory scanned for an .ipa artifact | `$ARTIFACTS_DIR` |
 
 #### `reusable-ci publish appstore parse-upload-result`
 
@@ -702,7 +849,7 @@ find an AAB artifact and emit aab-file
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--dir` | directory scanned for an .aab artifact | `$ARTIFACTS_DIR` |
+| `--artifacts-dir` | directory scanned for an .aab artifact | `$ARTIFACTS_DIR` |
 
 #### `reusable-ci publish google-play validate-credentials`
 
@@ -736,7 +883,7 @@ find a top-level npm tarball and emit tarball
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--dir` | directory scanned for the npm tarball (where 'npm pack' ran) | `$WORKING_DIRECTORY` |
+| `--working-dir` | directory scanned for the npm tarball (where 'npm pack' ran) | `$WORKING_DIRECTORY` |
 
 #### `reusable-ci publish npm validate-tarball`
 
@@ -767,6 +914,22 @@ compose a .npmrc with registry + scope, emitting the literal ${NODE_AUTH_TOKEN} 
 
 release-flow helpers (GPG lifecycle, signing, checksums, notes, create, attachments, …)
 
+### `reusable-ci release assemble`
+
+stage the canonical release file set and write release-assembly.json
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--config-plan-json` | typed config plan JSON emitted by config parse-artifacts | `$CONFIG_PLAN_JSON` |
+| `--artifact-transfer-plan-json` | typed artifact-transfer plan JSON used by release download-artifacts | `$ARTIFACT_TRANSFER_PLAN_JSON` |
+| `--attach-artifacts` | comma/newline-separated workspace-relative extra release asset globs | `$ATTACH_ARTIFACTS` |
+| `--project-name` | project slug used for computed release asset names | `$PROJECT_NAME` |
+| `--version` | release version used for computed release asset names | `$VERSION` |
+| `--output` | assembly manifest path | `$RELEASE_ASSEMBLY` |
+| `--release-files-dir` | staging directory for final release files | `$RELEASE_FILES_DIR` |
+| `--release-artifacts-dir` | downloaded release artifact directory | `$RELEASE_ARTIFACTS_DIR` |
+| `--sbom-dir` | downloaded analyzed-container SBOM directory | `$SBOM_DIR` |
+
 ### `reusable-ci release attachments`
 
 plan and upload release attachments
@@ -787,7 +950,7 @@ expand a glob pattern and attach matching files to the platform release (gh rele
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--tag` | tag of the existing release to attach to (e.g. v1.2.3) | `$REF_NAME`, `$TAG_NAME` |
+| `--tag` | tag of the existing release to attach to (e.g. v1.2.3) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 | `--pattern` | comma-separated globs to expand and upload | `$ATTACH_PATTERN` |
 | `--working-dir` | directory the globs are resolved relative to | `$WORKING_DIRECTORY` |
 
@@ -798,6 +961,7 @@ compute SHA256 over release artefacts, attached patterns, and SBOM layers
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--output` | manifest path (default: checksums.sha256) | `$OUTPUT_FILE` |
+| `--assembly` | release assembly manifest to checksum exactly | `$RELEASE_ASSEMBLY` |
 | `--release-artifacts-dir` | directory whose files are each hashed into the manifest | `$RELEASE_ARTIFACTS_DIR` |
 | `--attach-artifacts` | comma-separated globs for additional files to checksum (paths kept verbatim) | `$ATTACH_ARTIFACTS` |
 | `--sbom-dir` | directory of SBOM layer files to include in the manifest | `$SBOM_DIR` |
@@ -808,16 +972,17 @@ create a release on the detected platform with assembled assets
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--tag` | tag the release is created from (e.g. v1.2.3) | `$TAG_NAME` |
-| `--repository` | "owner/repo" on GitHub; "group/project[/sub]" on GitLab | `$REPOSITORY` |
+| `--tag` | tag the release is created from (e.g. v1.2.3) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--repository` | "owner/repo" on GitHub; "group/project[/sub]" on GitLab | `$REPOSITORY`, `$CI_REPO`, `$GITHUB_REPOSITORY` |
 | `--release-name` | human-readable release title (defaults to the tag) | `$RELEASE_NAME` |
 | `--draft` | create the release as a draft (not published until edited) | `$DRAFT` |
-| `--make-latest` | mark this release as 'latest' on the platform | `$MAKE_LATEST` |
+| `--make-latest` | platform latest handling: true, false, or legacy | `$MAKE_LATEST` |
 | `--attach-artifacts` | comma-separated globs of extra files to attach beyond release-dir | `$ATTACH_ARTIFACTS` |
 | `--release-notes-file` | path to the release-notes markdown body | `$RELEASE_NOTES_FILE` |
 | `--artifact-name` | project slug used in computed asset names (defaults to repo basename) | `$ARTIFACT_NAME` |
 | `--checksums-file` | path to the SHA256 manifest to attach | `$CI_CHECKSUMS_FILE` |
 | `--release-dir` | directory whose files are attached as release assets | `$RELEASE_DIR` |
+| `--assembly` | release assembly manifest to upload exactly | `$RELEASE_ASSEMBLY` |
 
 ### `reusable-ci release download-artifacts`
 
@@ -826,8 +991,8 @@ download release artifacts from the explicit artifact-transfer plan
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--artifact-transfer-plan-json` | typed transfer plan JSON listing which CI artifacts to download | `$ARTIFACT_TRANSFER_PLAN_JSON` |
-| `--run-id` | CI run ID artifacts are downloaded from | `$GITHUB_RUN_ID`, `$CI_RUN_ID` |
-| `--repository` | "owner/repo" the run belongs to | `$REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--run-id` | CI run ID artifacts are downloaded from | `$CI_RUN_ID`, `$FORGEJO_RUN_ID`, `$GITHUB_RUN_ID` |
+| `--repository` | "owner/repo" the run belongs to | `$REPOSITORY`, `$CI_REPO`, `$GITHUB_REPOSITORY` |
 
 ### `reusable-ci release gpg`
 
@@ -864,6 +1029,21 @@ prepare release-notes file from changelog artifact, fall back to a stub when mis
 | `--release-version` | release version used in the fallback header when no source file is found | `$RELEASE_VERSION` |
 | `--release-commit` | release commit SHA used in the fallback body | `$RELEASE_COMMIT` |
 
+### `reusable-ci release provenance`
+
+generate an in-toto/SLSA-v1.0 provenance statement from a checksums file (GitHub/Forgejo)
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--checksum-file` | GoReleaser checksums file ("-" reads stdin) | `$CHECKSUM_FILE` |
+| `--go-sum` | go.sum for resolved module deps (empty string to skip) | n/a |
+| `--workflow` | calling workflow filename, e.g. release.yml | `$WORKFLOW`, `$FORGEJO_WORKFLOW`, `$GITHUB_WORKFLOW` |
+| `--run-id` | Actions run id | `$CI_RUN_ID`, `$FORGEJO_RUN_ID`, `$GITHUB_RUN_ID` |
+| `--started-on` | RFC3339 build timestamp (default: $SOURCE_DATE_EPOCH) | n/a |
+| `--output` | output file ("-" for stdout) | n/a |
+| `--sign-key` | sign the statement with cosign sign-blob using this key ref (e.g. env://COSIGN_KEY); empty = generate only | n/a |
+| `--bundle` | signature bundle output path (default: <output>.bundle) | n/a |
+
 ### `reusable-ci release resolve`
 
 compute canonical artifact names / release metadata
@@ -884,7 +1064,7 @@ compute version / version-no-v / project-name from the release inputs
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--version` | release version (e.g. v1.2.3 or 1.2.3) | `$VERSION` |
-| `--repository` | "owner/repo" slug used to derive the default project name | `$REPOSITORY` |
+| `--repository` | "owner/repo" slug used to derive the default project name | `$REPOSITORY`, `$CI_REPO`, `$GITHUB_REPOSITORY` |
 | `--artifact-name` | explicit project name override (skips the repo-basename heuristic) | `$ARTIFACT_NAME` |
 
 ### `reusable-ci release sbom-zip`
@@ -897,10 +1077,13 @@ bundle all SBOM layers into &lt;project&gt;-&lt;version&gt;-sboms.zip; optionall
 | `--version` | release version baked into the zip filename | `$VERSION` |
 | `--sign` | additionally sign the resulting zip using the method selected by --method | `$SIGN_ARTIFACTS` |
 | `--sbom-dir` | directory holding the SBOM layers to bundle | `$SBOM_DIR` |
+| `--assembly` | release assembly manifest whose SBOM inputs should be bundled | `$RELEASE_ASSEMBLY` |
 | `--debug-allow-swap` | DEBUG ONLY — bypass the swap-refusal policy when /proc/swaps reports an active swap area; emits a loud Warning annotation. NOT FOR PRODUCTION RELEASES; the supported fix is to disable swap on the runner. See docs/verification.md#swap-policy. | n/a |
-| `--method` | signing backend: gpg (default; uses $GPG_PRIVATE_KEY), sigstore (keyless cosign + OIDC), or kms (cosign + --key) | `$SIGN_METHOD` |
+| `--method` | signing backend: gpg (default; key from --private-key-file or $GPG_PRIVATE_KEY), sigstore (keyless cosign + OIDC), or kms (cosign + --key) | `$SIGN_METHOD` |
 | `--key` | cosign --key reference for --method=kms: KMS URI (awskms:///alias/X, hashivault://transit/keys/X, gcpkms://..., azurekms://...), PKCS#11 URI, or local key-file path. Forbidden for --method=gpg/sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: auto-detected — GitHub Actions / GitLab CI / $CI_SERVER_URL). Forbidden for --method=gpg/kms. | `$SIGN_OIDC_ISSUER` |
+| `--private-key-file` | path to the armored GPG private key for --method=gpg ("-" for stdin; defaults to $GPG_PRIVATE_KEY). Lets the key be passed via file/stdin instead of the environment. Forbidden for --method=sigstore/kms. | n/a |
+| `--passphrase-file` | path to the GPG passphrase for --method=gpg ("-" for stdin; defaults to $GPG_PASSPHRASE). Forbidden for --method=sigstore/kms. | n/a |
 
 ### `reusable-ci release sign`
 
@@ -909,20 +1092,42 @@ detach-sign checksums.sha256, release artifacts, and attached artifacts. Method 
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--checksums-file` | SHA256 manifest to sign (default: checksums.sha256) | `$CHECKSUMS_FILE` |
+| `--assembly` | release assembly manifest to sign exactly | `$RELEASE_ASSEMBLY` |
 | `--release-artifacts-dir` | directory whose files are each signed alongside the manifest | `$RELEASE_ARTIFACTS_DIR` |
 | `--attach-artifacts` | comma-separated globs for extra files to sign | `$ATTACH_ARTIFACTS` |
 | `--debug-allow-swap` | DEBUG ONLY — bypass the swap-refusal policy when /proc/swaps reports an active swap area; emits a loud Warning annotation. NOT FOR PRODUCTION RELEASES; the supported fix is to disable swap on the runner. See docs/verification.md#swap-policy. | n/a |
-| `--method` | signing backend: gpg (default; uses $GPG_PRIVATE_KEY), sigstore (keyless cosign + OIDC), or kms (cosign + --key) | `$SIGN_METHOD` |
+| `--method` | signing backend: gpg (default; key from --private-key-file or $GPG_PRIVATE_KEY), sigstore (keyless cosign + OIDC), or kms (cosign + --key) | `$SIGN_METHOD` |
 | `--key` | cosign --key reference for --method=kms: KMS URI (awskms:///alias/X, hashivault://transit/keys/X, gcpkms://..., azurekms://...), PKCS#11 URI, or local key-file path. Forbidden for --method=gpg/sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: auto-detected — GitHub Actions / GitLab CI / $CI_SERVER_URL). Forbidden for --method=gpg/kms. | `$SIGN_OIDC_ISSUER` |
+| `--private-key-file` | path to the armored GPG private key for --method=gpg ("-" for stdin; defaults to $GPG_PRIVATE_KEY). Lets the key be passed via file/stdin instead of the environment. Forbidden for --method=sigstore/kms. | n/a |
+| `--passphrase-file` | path to the GPG passphrase for --method=gpg ("-" for stdin; defaults to $GPG_PASSPHRASE). Forbidden for --method=sigstore/kms. | n/a |
 
 ### `reusable-ci release verify-changelog`
 
-verify a generated changelog file exists and print a preview
+verify the generated changelog artifact for this release exists and print a preview
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--changelog-file` | path to the generated changelog file to verify | `$CHANGELOG_FILE` |
+
+### `reusable-ci release verify-dist`
+
+verify a dist/ tree is structurally safe and matches an expected digest (cross-job integrity)
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--dist-dir` | directory to verify | n/a |
+| `--expected-digest` | expected dist digest (from the build job) | `$EXPECTED_DIGEST`, `$DIST_DIGEST` |
+
+### `reusable-ci release verify-tag`
+
+re-verify the release tag against the remote: checkout==release-sha, tag points to it, and not superseded
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--release-sha` | commit the release is built from | `$RELEASE_SHA` |
+| `--tag` | release tag (e.g. v1.2.3) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--repo-url` | remote repository URL for ls-remote | `$REPO_URL` |
 
 ## `reusable-ci report`
 
@@ -971,7 +1176,7 @@ append the Gradle (JVM) build summary block to the step summary
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--java-version` | JDK major version used for the build | `$JAVA_VERSION` |
-| `--gradle-tasks` | gradle tasks that ran (shown verbatim in the summary) | `$GRADLE_TASKS` |
+| `--tasks` | gradle tasks that ran (shown verbatim in the summary) | `$GRADLE_TASKS` |
 | `--skip-tests` | tests were skipped (toggles the test-status summary row) | `$SKIP_TESTS` |
 | `--version` | gradle project version (from gradle.properties) | `$VERSION` |
 
@@ -1015,30 +1220,13 @@ append the Xcode build summary block to the step summary
 | `--build-number` | CURRENT_PROJECT_VERSION baked into the IPA | `$BUILD_NUMBER` |
 | `--ipa-name` | filename of the produced IPA | `$IPA_NAME` |
 
-### `reusable-ci report dev-release`
-
-append the dev-release step-summary (job table, npm install snippet, and links)
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--project-type` | primary ecosystem (drives the npm-install snippet in the summary) | `$PROJECT_TYPE` |
-| `--release-ref` | git ref the dev-release was cut from | `$RELEASE_REF` |
-| `--release-sha` | commit SHA the dev-release was cut from | `$RELEASE_SHA` |
-| `--release-actor` | user who triggered the dev-release | `$RELEASE_ACTOR` |
-| `--release-repository` | "owner/repo" the dev-release was published from | `$RELEASE_REPOSITORY` |
-| `--run-url` | URL of the CI run linked from the summary | `$CI_RUN_URL` |
-| `--build-stage-result-json` | inline JSON of the dev-build stage result table | `$BUILD_STAGE_RESULT_JSON` |
-| `--publish-stage-result-json` | inline JSON of the dev-publish stage result table | `$PUBLISH_STAGE_RESULT_JSON` |
-| `--dev-artifacts-json` | inline JSON listing the dev artifacts shown in the summary | `$DEV_ARTIFACTS_JSON` |
-| `--server-url` | CI server base URL (used to build artifact/run links) | `$CI_SERVER_URL` |
-
 ### `reusable-ci report extracted-binaries`
 
 append the extracted container binaries summary block
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--dir` | directory containing the extracted binaries (scanned recursively) | `$EXTRACTED_BINARIES_DIR` |
+| `--binaries-dir` | directory containing the extracted binaries (scanned recursively) | `$BINARIES_DIR` |
 | `--artifact-name` | project slug shown in the step-summary header | `$ARTIFACT_NAME` |
 | `--display-name` | human-readable name override for the summary header | `$DISPLAY_NAME` |
 | `--extract-target` | Containerfile stage name the binaries were extracted from | `$EXTRACT_TARGET` |
@@ -1053,8 +1241,8 @@ append the PR step-summary (quality table + run link)
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--project-type` | primary ecosystem of the project (shown in the header) | `$PROJECT_TYPE` |
-| `--branch` | PR source branch | `$CI_BRANCH` |
-| `--commit` | head commit SHA of the PR | `$CI_COMMIT` |
+| `--source-branch` | PR source branch | `$CI_BRANCH` |
+| `--commit` | head commit SHA of the PR | `$CI_COMMIT`, `$CI_COMMIT_SHA`, `$GITHUB_SHA` |
 | `--actor` | user who opened/updated the PR | `$CI_ACTOR` |
 | `--run-url` | URL of the CI run linked from the summary | `$CI_RUN_URL` |
 | `--quality-stage-result-json` | inline JSON of the quality-stage result table | `$QUALITY_STAGE_RESULT_JSON` |
@@ -1082,7 +1270,7 @@ append the GitHub Packages publish summary block to the step summary
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--repository` | "owner/repo" the package was published from | `$REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--repository` | "owner/repo" the package was published from | `$REPOSITORY`, `$CI_REPO`, `$GITHUB_REPOSITORY` |
 | `--package-type` | GitHub Packages package type (maven/npm/container/…) | `$PACKAGE_TYPE` |
 
 #### `reusable-ci report publish google-play`
@@ -1120,11 +1308,31 @@ append the release step-summary (job table + release/packages/run links)
 | `--release-actor` | user who triggered the release | `$RELEASE_ACTOR` |
 | `--run-url` | URL of the CI run linked from the summary | `$CI_RUN_URL` |
 | `--create-release-result` | outcome of the create-release step (success/failure/skipped) | `$CREATE_RELEASE_RESULT` |
+| `--promote-snapshot-result` | outcome of the image promote-dev job (success/failure/skipped) | `$PROMOTE_DEV_RESULT` |
+| `--promote-staging-result` | outcome of the image promote-staging job (success/failure/skipped) | `$PROMOTE_STAGING_RESULT` |
+| `--promote-release-result` | outcome of the image promote-release job (success/failure/skipped) | `$PROMOTE_RELEASE_RESULT` |
 | `--prepare-stage-result-json` | inline JSON of the prepare-stage result table | `$PREPARE_STAGE_RESULT_JSON` |
 | `--build-stage-result-json` | inline JSON of the build-stage result table | `$BUILD_STAGE_RESULT_JSON` |
 | `--publish-stage-result-json` | inline JSON of the publish-stage result table | `$PUBLISH_STAGE_RESULT_JSON` |
-| `--server-url` | CI server base URL (used to build release/run links) | `$CI_SERVER_URL` |
-| `--repository` | "owner/repo" used in the release link | `$CI_REPO`, `$GITHUB_REPOSITORY` |
+| `--server-url` | CI server base URL (used to build release/run links) | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$GITHUB_SERVER_URL` |
+| `--repository` | "owner/repo" used in the release link | `$REPOSITORY`, `$CI_REPO`, `$GITHUB_REPOSITORY` |
+
+### `reusable-ci report snapshot-release`
+
+append the snapshot-release step-summary (job table, npm install snippet, and links)
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--project-type` | primary ecosystem (drives the npm-install snippet in the summary) | `$PROJECT_TYPE` |
+| `--release-ref` | git ref the snapshot-release was cut from | `$RELEASE_REF` |
+| `--release-sha` | commit SHA the snapshot-release was cut from | `$RELEASE_SHA` |
+| `--release-actor` | user who triggered the snapshot-release | `$RELEASE_ACTOR` |
+| `--release-repository` | "owner/repo" the snapshot-release was published from | `$RELEASE_REPOSITORY` |
+| `--run-url` | URL of the CI run linked from the summary | `$CI_RUN_URL` |
+| `--build-stage-result-json` | inline JSON of the dev-build stage result table | `$BUILD_STAGE_RESULT_JSON` |
+| `--publish-stage-result-json` | inline JSON of the dev-publish stage result table | `$PUBLISH_STAGE_RESULT_JSON` |
+| `--snapshot-artifacts-json` | inline JSON listing the snapshot artifacts shown in the summary | `$SNAPSHOT_ARTIFACTS_JSON` |
+| `--server-url` | CI server base URL (used to build artifact/run links) | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$GITHUB_SERVER_URL` |
 
 ### `reusable-ci report status`
 
@@ -1146,13 +1354,13 @@ append the release prerequisites validation report (tag/commit info, secrets, va
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--tag` | tag the release is anchored to (e.g. v1.2.3) | `$TAG_NAME` |
+| `--tag` | tag the release is anchored to (e.g. v1.2.3) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 | `--commit-sha` | commit SHA the tag points at | `$COMMIT_SHA` |
-| `--ref-type` | trigger ref type (tag/branch/…) | `$REF_TYPE` |
+| `--ref-type` | trigger ref type (tag/branch/…) | `$REF_TYPE`, `$GITHUB_REF_TYPE` |
 | `--config-plan-json` | typed config-plan JSON used to describe targets in the summary | `$CONFIG_PLAN_JSON` |
 | `--project-types` | comma-separated ecosystems detected in the project | `$PROJECT_TYPES` |
 | `--build-types` | comma-separated build types planned (library/application/...) | `$BUILD_TYPES` |
-| `--container-registry` | container registry the release will push to | `$CONTAINER_REGISTRY` |
+| `--registry` | container registry the release will push to | `$CONTAINER_REGISTRY` |
 | `--sign-artifacts` | GPG signing was requested for release artifacts | `$SIGN_ARTIFACTS` |
 | `--require-allowlisted-signer` | the signer-allowlist gate is enforced for non-SNAPSHOT releases | `$REQUIRE_ALLOWLISTED_SIGNER` |
 | `--job-status` | validator job outcome (success/failure/cancelled) | `$JOB_STATUS` |
@@ -1228,7 +1436,7 @@ generate every requested CISA layer (build / analyzed-artifact / analyzed-contai
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--project-type` | ecosystem driving the syft scan (auto/maven/gradle/npm/go/cargo/…) | n/a |
-| `--layers` | comma-separated CISA layers to produce (build,source,analyzed-container,…) | n/a |
+| `--layers` | comma-separated CISA layers to produce (build, analyzed-artifact, analyzed-container) | n/a |
 | `--version` | release version embedded in the SBOM filenames | n/a |
 | `--name` | project slug used as the SBOM filename prefix | n/a |
 | `--working-dir` | directory syft scans | n/a |
@@ -1253,9 +1461,9 @@ generate the analyzed-container SBOM for a multi-artifact container release
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--artifact-types` | comma-separated ecosystems embedded in the multi-artifact container SBOM | `$ARTIFACT_TYPES` |
-| `--ref-name` | git ref name (leading "v" is stripped) used in the SBOM filename | `$CI_REF_NAME`, `$GITHUB_REF_NAME` |
-| `--repository` | "owner/repo" used to derive the project slug | `$CI_REPO`, `$GITHUB_REPOSITORY` |
-| `--image-name` | fully-qualified image reference syft analyses (e.g. registry/org/app) | `$IMAGE_NAME` |
+| `--ref-name` | git ref name (leading "v" is stripped) used in the SBOM filename | `$REF_NAME`, `$CI_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--repository` | "owner/repo" used to derive the project slug | `$REPOSITORY`, `$CI_REPO`, `$GITHUB_REPOSITORY` |
+| `--image-name` | base image name without tag/digest (e.g. registry/org/app); paired with --image-digest to form the syft target | `$IMAGE_NAME` |
 | `--image-digest` | sha256:… digest pinning the exact image manifest to analyse | `$IMAGE_DIGEST` |
 
 ## `reusable-ci security`
@@ -1303,9 +1511,9 @@ upload a SARIF file to the platform's code-scanning surface (GitHub Code Scannin
 |------|-------------|----------|
 | `--sarif-file` | SARIF file to upload to Code Scanning ("-" reads stdin) | `$SARIF_FILE` |
 | `--token-file` | path to a file containing the code-scanning token (use "-" for stdin; defaults to $CODE_SCANNING_TOKEN) | n/a |
-| `--repository` | "owner/repo" the SARIF findings are attributed to | `$GITHUB_REPOSITORY` |
-| `--sha` | commit SHA the SARIF findings are attributed to | `$GITHUB_SHA` |
-| `--ref` | fully-qualified ref (refs/heads/X or refs/tags/X) for attribution | `$GITHUB_REF` |
+| `--repository` | "owner/repo" the SARIF findings are attributed to | `$REPOSITORY`, `$CI_REPO`, `$GITHUB_REPOSITORY` |
+| `--commit` | commit SHA the SARIF findings are attributed to | `$CI_COMMIT`, `$CI_COMMIT_SHA`, `$GITHUB_SHA` |
+| `--ref` | fully-qualified ref (refs/heads/X or refs/tags/X) for attribution | `$REF`, `$GITHUB_REF` |
 | `--category` | Code Scanning category label (groups multi-scanner results) | `$SARIF_CATEGORY` |
 
 ### `reusable-ci security scan`
@@ -1384,7 +1592,7 @@ probe the configured release-bot token's repo + branch access
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--repository` | "owner/repo" on GitHub; "group/project[/sub]" on GitLab | `$REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--repository` | "owner/repo" on GitHub; "group/project[/sub]" on GitLab | `$REPOSITORY`, `$CI_REPO`, `$GITHUB_REPOSITORY` |
 
 #### `reusable-ci validate auth registry`
 
@@ -1403,7 +1611,7 @@ validate a release-bot token against the platform API
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--token-file` | path to a file containing the release-bot token (use "-" for stdin; defaults to $RELEASE_TOKEN) | n/a |
-| `--repository` | "owner/repo" on GitHub; "group/project[/sub]" on GitLab | `$REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--repository` | "owner/repo" on GitHub; "group/project[/sub]" on GitLab | `$REPOSITORY`, `$CI_REPO`, `$GITHUB_REPOSITORY` |
 
 ### `reusable-ci validate cargo`
 
@@ -1416,7 +1624,7 @@ verify Cargo.lock/toolchain state for every planned Cargo artefact (both build-m
 
 ### `reusable-ci validate changelog`
 
-verify a changelog file's presence (or read its content into the output sink)
+validate the committed source changelog (e.g. CHANGELOG.md) is present, optionally reading its content into the output sink
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1459,12 +1667,12 @@ run all release-prerequisite validators concurrently and append a summary table
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--tag` | tag being released (e.g. v1.2.3) | `$REF_NAME`, `$TAG_NAME` |
-| `--ref-type` | trigger ref type ("tag" required for releases) | `$REF_TYPE` |
-| `--ref` | fully-qualified ref (refs/tags/X) for prefix verification | `$REF` |
-| `--branch` | branch the tag commit must be reachable from | `$TARGET_BRANCH`, `$BRANCH` |
-| `--repository` | "owner/repo" on GitHub; "group/project[/sub]" on GitLab | `$REPOSITORY` |
-| `--require-allowlisted-signer` | require tag signer fingerprint to appear in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_fingerprints (GPG) | `$REQUIRE_ALLOWLISTED_SIGNER` |
+| `--tag` | tag being released (e.g. v1.2.3) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--ref-type` | trigger ref type ("tag" required for releases) | `$REF_TYPE`, `$GITHUB_REF_TYPE` |
+| `--ref` | fully-qualified ref (refs/tags/X) for prefix verification | `$REF`, `$GITHUB_REF` |
+| `--target-branch` | branch the tag commit must be reachable from | `$TARGET_BRANCH`, `$BRANCH` |
+| `--repository` | "owner/repo" on GitHub; "group/project[/sub]" on GitLab | `$REPOSITORY`, `$CI_REPO`, `$GITHUB_REPOSITORY` |
+| `--require-allowlisted-signer` | require the tag signer to be allowlisted in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_keys.asc (GPG) | `$REQUIRE_ALLOWLISTED_SIGNER` |
 | `--sign-artifacts` | require a GPG public key (release-artifact signing is enabled) | `$SIGN_ARTIFACTS` |
 | `--has-maven-central` | the plan targets Maven Central (enables credential check) | `$HAS_MAVEN_CENTRAL_TARGET` |
 | `--has-cargo` | the plan targets crates.io (enables Cargo prerequisites check) | `$HAS_CARGO_TARGET` |
@@ -1477,7 +1685,7 @@ require that the trigger is a tag push
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--ref-type` | trigger ref type ("tag" required for releases) | `$REF_TYPE`, `$GITHUB_REF_TYPE` |
-| `--ref-name` | trigger ref name (the tag or branch) | `$REF_NAME`, `$GITHUB_REF_NAME` |
+| `--ref-name` | trigger ref name (the tag or branch) | `$REF_NAME`, `$CI_REF_NAME`, `$GITHUB_REF_NAME` |
 | `--ref` | fully-qualified ref (refs/tags/X); when set the prefix is also checked | `$REF`, `$GITHUB_REF` |
 
 ### `reusable-ci validate secret`
@@ -1511,7 +1719,7 @@ verify the tag commit is reachable from origin/&lt;branch&gt;
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--tag` | tag name (e.g. v1.2.3) | `$TAG_NAME`, `$REF_NAME` |
+| `--tag` | tag name (e.g. v1.2.3) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 | `--branch` | branch the tag commit must be reachable from (default: repo default branch) | `$BRANCH` |
 
 #### `reusable-ci validate tag format`
@@ -1520,7 +1728,7 @@ validate a tag against the project's permissive semver pattern
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--tag` | tag name (e.g. v1.2.3) | `$TAG_NAME`, `$REF_NAME` |
+| `--tag` | tag name (e.g. v1.2.3) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 
 #### `reusable-ci validate tag signature`
 
@@ -1528,12 +1736,12 @@ verify a tag is annotated and cryptographically signed (GPG or SSH)
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--tag` | tag name (e.g. v1.2.3) | `$TAG_NAME`, `$REF_NAME` |
-| `--repository` | repository slug used in error messages and SSH allowed-signers lookup | `$REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--tag` | tag name (e.g. v1.2.3) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--repository` | repository slug used in error messages and SSH allowed-signers lookup | `$REPOSITORY`, `$CI_REPO`, `$GITHUB_REPOSITORY` |
 | `--release-gpg-public-key` | armored GPG public key to import before verification | `$RELEASE_GPG_PUBLIC_KEY` |
-| `--require-allowlisted-signer` | require the signer to appear in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_fingerprints (GPG); missing/empty allowlist fails closed | `$REQUIRE_ALLOWLISTED_SIGNER` |
+| `--require-allowlisted-signer` | require the signer to appear in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_keys.asc (GPG); missing/empty allowlist or unverifiable signature fails closed | `$REQUIRE_ALLOWLISTED_SIGNER` |
 | `--allowed-signers-file` | override the default SSH allowed_signers path (default: .reusable-ci/allowed_signers) | `$ALLOWED_SIGNERS_FILE` |
-| `--allowed-gpg-fingerprints-file` | override the default GPG fingerprints path (default: .reusable-ci/allowed_gpg_fingerprints) | `$ALLOWED_GPG_FINGERPRINTS_FILE` |
+| `--allowed-gpg-keys-file` | override the default armored allowed-GPG-keys bundle path (default: .reusable-ci/allowed_gpg_keys.asc); its keys are both verification material and the authorised set | `$ALLOWED_GPG_KEYS_FILE` |
 
 #### `reusable-ci validate tag uniqueness`
 
@@ -1541,11 +1749,20 @@ fail when other tags point to the same commit (git-cliff guard)
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--tag` | tag name (e.g. v1.2.3) | `$TAG_NAME`, `$REF_NAME` |
+| `--tag` | tag name (e.g. v1.2.3) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 
 ### `reusable-ci validate workflow`
 
 scan reusable workflow YAML for structural rules
+
+#### `reusable-ci validate workflow contract-residue`
+
+reject removed v3-incompatible output contracts and aliases
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--root` | repository root to scan | n/a |
+| `--path` | path under root to scan (repeatable); defaults to source/workflow/doc roots | n/a |
 
 #### `reusable-ci validate workflow input-defaults`
 
@@ -1554,15 +1771,6 @@ verify reusable workflow_call input defaults are literal values, not expressions
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--root` | repository root containing .github/workflows | n/a |
-
-#### `reusable-ci validate workflow v3-contracts`
-
-reject removed v3-incompatible output contracts and aliases
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--root` | repository root to scan | n/a |
-| `--path` | path under root to scan (repeatable); defaults to source/workflow/doc roots | n/a |
 
 ## `reusable-ci version`
 
@@ -1593,18 +1801,27 @@ stage a file pattern, commit with --signoff, push to a branch (no-op when nothin
 | `--message` | commit message subject (signoff is appended automatically) | `$COMMIT_MESSAGE` |
 | `--file-pattern` | whitespace-separated git pathspecs to stage | `$FILE_PATTERN` |
 
-### `reusable-ci version generate-dev`
+### `reusable-ci version generate-snapshot`
 
-print a development version tag (`&lt;base&gt;-dev-&lt;branch&gt;-&lt;short-sha&gt;`) to stdout
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--ref-name` | source branch / ref to sanitise into the dev-version suffix | `$CI_REF_NAME`, `$GITHUB_REF_NAME` |
-
-### `reusable-ci version move-tag`
-
-verify the latest tag is at HEAD~1, re-create it signed at HEAD, and push --force
+print a development version tag (`&lt;base&gt;-snapshot-&lt;branch&gt;-&lt;short-sha&gt;`) to stdout
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
+| `--ref-name` | source branch / ref to sanitise into the snapshot-version suffix | `$REF_NAME`, `$CI_REF_NAME`, `$GITHUB_REF_NAME` |
+
+### `reusable-ci version release-context`
+
+derive release-tag, version and original-tagger commit trailers from the pushed request ref (release-request/vX.Y.Z); emits CI outputs so workflows don't parse refs in bash
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--ref` | the pushed ref (e.g. release-request/v1.2.3) | `$GITHUB_REF_NAME`, `$REF_NAME` |
+
+### `reusable-ci version tag-release`
+
+create the final release tag once at HEAD (the bump commit) and push it without --force; refuses to move an existing tag
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--tag` | final release tag to create (e.g. v1.2.3) | `$RELEASE_TAG`, `$TAG_NAME` |
 | `--no-sign` | skip GPG signing (intended for tests; production always signs) | n/a |

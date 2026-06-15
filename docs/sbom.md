@@ -10,7 +10,7 @@ reusable-ci produces Software Bills of Materials at multiple points in the pipel
 
 ## Quick start
 
-By default a release enables all SBOM layers supported by each artefact: Build (from the language's CycloneDX tool), Analyzed-artifact (Syft on the built artefact or extracted binary), and Analyzed-container when the artefact feeds a published container image. Dev builds skip SBOM generation by default for speed.
+By default a release enables all SBOM layers supported by each artefact: Build (from the language's CycloneDX tool), Analyzed-artifact (Syft on the built artefact or extracted binary), and Analyzed-container when the artefact feeds a published container image. Snapshot builds skip SBOM generation by default for speed.
 
 If those defaults are right for you, **you don't need to configure anything** — leave `sboms` unset everywhere.
 
@@ -21,11 +21,11 @@ To change them, set the `sboms` field. That's the entire user-facing surface.
 A single string field, accepted in two places:
 
 - **Per-artefact** in `artifacts.yml` — what kinds of SBOMs that artefact produces during build/container stages.
-- **Per-orchestrator-call** (input on `release-orchestrator.yml`, `release-dev-orchestrator.yml`, `release-create-github.yml`) — a global cap for release/dev SBOM aggregation.
+- **Per-orchestrator-call** (input on `release-orchestrator.yml`, `release-snapshot-orchestrator.yml`, `release-create-github.yml`) — a global cap for release/snapshot SBOM aggregation.
 
 The per-artefact value controls build-time Build SBOMs and container SBOM
 generation. The orchestrator value is resolved against the pipeline-wide union
-and controls what the release/dev aggregation step includes. It does not rewrite
+and controls what the release/snapshot aggregation step includes. It does not rewrite
 each artefact's parsed `effective-sboms`.
 
 ### Accepted values
@@ -47,7 +47,7 @@ each artefact's parsed `effective-sboms`.
 |---|---|---|
 | Per-artefact (`artifacts.yml`) | `all` for SBOM-capable ecosystems (`maven`, `npm`, `gradle`, `gradle-android`, `cargo`, `go`, `python`; `python` is schema-reserved but does not have workflows yet); `none` for `xcode-ios` and `meta` | Match historical "SBOMs on by default for buildable types" |
 | Release orchestrator (`release.sboms`) | `all` | Release fires on tag push, once per release; SBOMs expected for compliance |
-| Release-dev orchestrator (`sboms`) | `none` | Dev fires per-PR; SBOMs add 30–60 s/run that most reviews don't need |
+| Snapshot orchestrator (`sboms`) | `none` | Snapshot fires per push/dispatch; SBOMs add 30–60 s/run that most reviews don't need |
 
 The asymmetric defaults are deliberate. Override either side explicitly when your case differs.
 
@@ -79,16 +79,16 @@ jobs:
       artifacts-config: .reusable-ci/artifacts.yml
       release.sboms: build      # release-orchestrator dot-prefix convention
 
-# Dev flow: turn on full SBOM generation for testing
+# Snapshot flow: turn on full SBOM generation for testing
 jobs:
-  release-dev:
-    uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@<sha>
+  release-snapshot:
+    uses: diggsweden/reusable-ci/.github/workflows/release-snapshot-orchestrator.yml@<sha>
     with:
       artifacts-config: .reusable-ci/artifacts.yml
-      sboms: all                # release-dev-orchestrator uses flat names
+      sboms: all                # release-snapshot-orchestrator uses flat names
 ```
 
-The orchestrator-input naming asymmetry (`release.sboms` vs `sboms`) is a pre-existing convention: `release-orchestrator.yml` groups its inputs with a `release.` prefix (`release.signartifacts`, `release.draft`, …); the dev orchestrator does not. SBOMs follow the local convention of each orchestrator.
+The orchestrator-input naming asymmetry (`release.sboms` vs `sboms`) is a pre-existing convention: `release-orchestrator.yml` groups its inputs with a `release.` prefix (`release.signartifacts`, `release.draft`, …); the snapshot orchestrator does not. SBOMs follow the local convention of each orchestrator.
 
 > **Mandatory by default:** Build SBOM generation is mandatory. Each builder runs the cyclonedx plugin without `continue-on-error`, so a tool failure fails the workflow. Opt out explicitly with `enable-build-sbom: false` per builder, or with `release.sboms: none` at the orchestrator. There is no silent SBOM-missing release. See [Failure semantics](#failure-semantics).
 
@@ -150,8 +150,8 @@ This split — artefact-first ecosystems (maven/npm/gradle/go/cargo artifact-fir
 
 The per-artefact `sboms` value drives both **build-time plugin execution** and **release-bundle inclusion**:
 
-- Each builder workflow (`build-maven.yml`, `build-gradle-app.yml`, `build-gradle-android.yml`, `build-npm.yml`, `build-go.yml`) accepts a `enable-build-sbom: bool` input. `release-build-stage.yml` derives this from `contains(matrix.artifact["effective-sboms"], 'build')` per artefact.
-- If `build` is in the artefact's effective sboms, the cyclonedx plugin step runs. Otherwise it's skipped entirely — saves CI time, no upload, no downstream artefact. The orchestrator-level `sboms` input caps aggregate release/dev SBOM packaging later; it does not change this build-time decision.
+- Each builder workflow (`build-maven.yml`, `build-gradle-app.yml`, `build-gradle-android.yml`, `build-npm.yml`, `build-go.yml`, `build-cargo.yml`) accepts an `enable-build-sbom: bool` input. `release-build-stage.yml` derives this from `contains(matrix.artifact["effective-sboms"], 'build')` per artefact.
+- If `build` is in the artefact's effective sboms, the cyclonedx plugin step runs. Otherwise it's skipped entirely — saves CI time, no upload, no downstream artefact. The orchestrator-level `sboms` input caps aggregate release/snapshot SBOM packaging later; it does not change this build-time decision.
 - Analyzed-artifact and analyzed-container layers are gated similarly at release-time aggregation in `release-create-github.yml`.
 
 Setting `sboms: none` on an artefact really means "skip everything for this artefact" — both the build-time plugin and the release-bundle inclusion. Useful for toy artefacts in a monorepo that you don't want spending CI minutes on.
@@ -168,9 +168,9 @@ To skip the container scan: set the source artefact's `sboms` to exclude `analyz
 
 This replaces the v2.x `containers[].enable-sbom: bool` field, which is no longer recognized in v3 (silently ignored — hard cutover, no alias). See CHANGELOG for migration.
 
-> **Note — release-dev handles container SBOMs at container publish time.** When dev `sboms` includes `analyzed-container` (or `all`), `release-dev-publish-stage.yml` passes that through to `publish-dev-container.yml`. The later `reusable-ci sbom generate` step explicitly excludes `analyzed-container` because it only handles artifact-level layers (`build`, `analyzed-artifact`).
+> **Note — the snapshot flow builds no containers.** `release-snapshot-publish-stage.yml` produces only artifact-level SBOMs (`build`, `analyzed-artifact`) for npm/cargo/go; there is no container build or `analyzed-container` SBOM on the snapshot path. Container images (and their `analyzed-container` SBOMs) are built once on the release path by `publish-container.yml`.
 
-Dev SBOM aggregation uses the dev orchestrator's single-project control plane. Multi-artifact release SBOM packaging is handled by the production release orchestrator.
+Snapshot SBOM aggregation uses the snapshot orchestrator's single-project control plane. Multi-artifact release SBOM packaging is handled by the production release orchestrator.
 
 ### Source layer is not generated
 
