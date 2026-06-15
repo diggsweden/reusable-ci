@@ -166,6 +166,7 @@ jobs:
           VERSION="${{ steps.relctx.outputs.version }}" reusable-ci version bump
       - name: Download Full Changelog
         env:
+          GH_TOKEN: ${{ github.token }}
           ARTIFACT_NAME: full-changelog
           ARTIFACT_DIR: ${{ inputs['working-directory'] }}
         run: reusable-ci artifact download
@@ -174,6 +175,7 @@ jobs:
         run: reusable-ci validate changelog --path CHANGELOG.md --required
       - name: Download Minimal Changelog
         env:
+          GH_TOKEN: ${{ github.token }}
           ARTIFACT_NAME: minimal-changelog
           ARTIFACT_DIR: ${{ inputs['working-directory'] }}
         run: reusable-ci artifact download

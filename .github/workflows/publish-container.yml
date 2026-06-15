@@ -457,6 +457,7 @@ jobs:
       - name: Download Maven artifacts
         if: &if_has_maven_artifacts ${{ contains(fromJson(inputs['artifact-types-json']), 'maven') || contains(format(',{0},', inputs['artifact-types']), ',maven,') }}
         env:
+          GH_TOKEN: ${{ github.token }}
           ARTIFACT_NAME: ${{ inputs['maven-artifact-name'] || 'maven-build-artifacts' }}
           ARTIFACT_DIR: ./
         run: reusable-ci artifact download
@@ -466,6 +467,7 @@ jobs:
       - name: Download NPM artifacts
         if: &if_has_npm_artifacts ${{ contains(fromJson(inputs['artifact-types-json']), 'npm') || contains(format(',{0},', inputs['artifact-types']), ',npm,') }}
         env:
+          GH_TOKEN: ${{ github.token }}
           ARTIFACT_NAME: ${{ inputs['npm-artifact-name'] || 'npm-build-artifacts' }}
           ARTIFACT_DIR: ./
         run: reusable-ci artifact download
@@ -481,6 +483,7 @@ jobs:
       - name: Download Gradle artifacts
         if: &if_has_gradle_artifacts ${{ contains(fromJson(inputs['artifact-types-json']), 'gradle') || contains(format(',{0},', inputs['artifact-types']), ',gradle,') }}
         env:
+          GH_TOKEN: ${{ github.token }}
           ARTIFACT_NAME: ${{ inputs['gradle-artifact-name'] || 'gradle-build-artifacts' }}
           ARTIFACT_DIR: build/libs/
         run: reusable-ci artifact download
@@ -490,6 +493,7 @@ jobs:
       - name: Download Go artifacts
         if: &if_has_go_artifacts ${{ (contains(fromJson(inputs['artifact-types-json']), 'go') || contains(format(',{0},', inputs['artifact-types']), ',go,')) && inputs['go-artifact-name'] != '' }}
         env:
+          GH_TOKEN: ${{ github.token }}
           ARTIFACT_NAME: ${{ format('{0}-go-build-artifacts', inputs['go-artifact-name']) }}
           ARTIFACT_DIR: ${{ inputs.context }}/dist/
         run: reusable-ci artifact download
@@ -502,6 +506,7 @@ jobs:
       - name: Download Cargo artifacts
         if: &if_has_cargo_artifacts ${{ (contains(fromJson(inputs['artifact-types-json']), 'cargo') || contains(format(',{0},', inputs['artifact-types']), ',cargo,')) && inputs['cargo-artifact-name'] != '' }}
         env:
+          GH_TOKEN: ${{ github.token }}
           ARTIFACT_NAME: ${{ format('{0}-cargo-build-artifacts', inputs['cargo-artifact-name']) }}
           ARTIFACT_DIR: ${{ inputs.context }}/dist/
         run: reusable-ci artifact download
@@ -603,12 +608,12 @@ jobs:
       # digest. Same root cause applies to SARIF + SBOM uploads below.
       - name: Upload digest
         if: *if_push_image
-        env:
-          ARTIFACT_NAME: digests-${{ github.run_id }}-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
-          ARTIFACT_PATHS: /tmp/digests/*
-          ARTIFACT_IF_NO_FILES: error
-          ARTIFACT_RETENTION_DAYS: "1"
-        run: reusable-ci artifact upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digests-${{ github.run_id }}-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: "1"
       - name: Install trivy
         if: &if_scan_enabled ${{ inputs['enable-scan'] && inputs['push-image'] }}
         run: |
@@ -632,20 +637,20 @@ jobs:
         run: reusable-ci security scan container --severity "$SCAN_SEVERITY"
       - name: Save container scan SARIF artifact
         if: *if_scan_enabled
-        env:
-          ARTIFACT_NAME: sarif-container-scan-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
-          ARTIFACT_PATHS: trivy-results.sarif
-          ARTIFACT_RETENTION_DAYS: "5"
-          ARTIFACT_IF_NO_FILES: ignore
-        run: reusable-ci artifact upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sarif-container-scan-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
+          path: trivy-results.sarif
+          retention-days: "5"
+          if-no-files-found: ignore
       - name: Save GitLab container-scanning report
         if: ${{ inputs['enable-scan'] && inputs['push-image'] && hashFiles('gl-container-scanning-report.json') != '' }}
-        env:
-          ARTIFACT_NAME: gitlab-container-scanning-report-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
-          ARTIFACT_PATHS: gl-container-scanning-report.json
-          ARTIFACT_RETENTION_DAYS: "5"
-          ARTIFACT_IF_NO_FILES: ignore
-        run: reusable-ci artifact upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gitlab-container-scanning-report-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
+          path: gl-container-scanning-report.json
+          retention-days: "5"
+          if-no-files-found: ignore
       - name: Upload container scan results to Code Scanning
         if: *if_scan_enabled
         env:
@@ -677,14 +682,14 @@ jobs:
         # Per-(container, arch) suffix avoids artifact name collision across the
         # workflow run; every leg's SBOM lands as a separate release-attached
         # artefact.
-        env:
-          ARTIFACT_NAME: analyzed-container-sbom-${{ github.run_id }}-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
-          ARTIFACT_PATHS: |
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: analyzed-container-sbom-${{ github.run_id }}-${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
+          path: |
             *-analyzed-container-sbom.spdx.json
             *-analyzed-container-sbom.cyclonedx.json
-          ARTIFACT_RETENTION_DAYS: "30"
-          ARTIFACT_IF_NO_FILES: warn
-        run: reusable-ci artifact upload
+          retention-days: "30"
+          if-no-files-found: warn
       - name: Find Container SBOM file
         if: &if_sbom_and_slsa_enabled ${{ inputs['enable-analyzed-container-sbom'] && inputs['push-image'] && inputs['enable-slsa'] }}
         id: find-sbom
@@ -738,12 +743,12 @@ jobs:
             --expected-names "$EXPECTED_NAMES"
       - name: Upload extracted binaries${{ inputs.name && format(' ({0})', inputs.name) || '' }}
         if: ${{ inputs['extract-binary-target'] != '' }}
-        env:
-          ARTIFACT_NAME: ${{ inputs.name != '' && format('{0}-binaries-{1}', inputs.name, steps.arch.outputs.suffix) || format('container-binaries-{0}', steps.arch.outputs.suffix) }}
-          ARTIFACT_PATHS: ./extracted-binaries/**
-          ARTIFACT_RETENTION_DAYS: "30"
-          ARTIFACT_IF_NO_FILES: error
-        run: reusable-ci artifact upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.name != '' && format('{0}-binaries-{1}', inputs.name, steps.arch.outputs.suffix) || format('container-binaries-{0}', steps.arch.outputs.suffix) }}
+          path: ./extracted-binaries/**
+          retention-days: "30"
+          if-no-files-found: error
       - name: Write binary extraction summary
         if: ${{ inputs['extract-binary-target'] != '' }}
         env:
@@ -794,6 +799,7 @@ jobs:
         run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
       - name: Download digests
         env:
+          GH_TOKEN: ${{ github.token }}
           ARTIFACT_DIR: /tmp/digests
           ARTIFACT_PATTERN: digests-${{ github.run_id }}-${{ inputs.name || 'container' }}-*
           ARTIFACT_MERGE_MULTIPLE: "true"
@@ -878,11 +884,11 @@ jobs:
       - name: Upload release-image ledger
         if: ${{ needs.prep.outputs['ref-clean'] == 'true' }}
         continue-on-error: true
-        env:
-          ARTIFACT_NAME: release-images-ledger${{ inputs.name && format('-{0}', inputs.name) || '' }}
-          ARTIFACT_PATHS: dist/release-images.json
-          ARTIFACT_IF_NO_FILES: error
-        run: reusable-ci artifact upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-images-ledger${{ inputs.name && format('-{0}', inputs.name) || '' }}
+          path: dist/release-images.json
+          if-no-files-found: error
 
   # SLSA L3 provenance attestation against the manifest list digest.
   # actions/attest-build-provenance is a SHA-pinnable first-party

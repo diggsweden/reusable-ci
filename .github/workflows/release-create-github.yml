@@ -171,6 +171,7 @@ jobs:
       - name: Download Release Changelog
         continue-on-error: true
         env:
+          GH_TOKEN: ${{ github.token }}
           ARTIFACT_NAME: release-changelog
           ARTIFACT_DIR: .
         run: reusable-ci artifact download
@@ -262,16 +263,16 @@ jobs:
         run: reusable-ci release create
       - name: Upload release artifacts summary
         if: always()
-        env:
-          ARTIFACT_NAME: release-artifacts-${{ github.run_id }}
-          ARTIFACT_PATHS: |
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-artifacts-${{ github.run_id }}
+          path: |
             .reusable-ci/release-assembly.json
             release-files/
             ReleasenotesTmp
             release-notes.md
-          ARTIFACT_RETENTION_DAYS: "30"
-          ARTIFACT_IF_NO_FILES: ignore
-        run: reusable-ci artifact upload
+          retention-days: "30"
+          if-no-files-found: ignore
       - name: Cleanup GPG key
         if: always()
         env:

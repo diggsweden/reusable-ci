@@ -158,14 +158,14 @@ jobs:
         run: >-
           reusable-ci sbom generate all --project-type "$PROJECT_TYPE" --layers "$LAYERS" --version "$SNAPSHOT_VERSION" --name "$PROJECT_NAME"
       - name: Upload Snapshot SBOMs
-        env:
-          ARTIFACT_NAME: snapshot-sboms-${{ github.run_id }}
-          ARTIFACT_PATHS: |
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: snapshot-sboms-${{ github.run_id }}
+          path: |
             *-sbom.cyclonedx.json
             *-sbom.spdx.json
-          ARTIFACT_RETENTION_DAYS: "7"
-          ARTIFACT_IF_NO_FILES: warn
-        run: reusable-ci artifact upload
+          retention-days: "7"
+          if-no-files-found: warn
   summarize-snapshot-publish-stage:
     name: Summarize Snapshot Publish Stage
     needs: [npm, cargo-container-first, go-container-first, sbom]
@@ -196,10 +196,10 @@ jobs:
           reusable-ci report status stage --extra "project_type=${PROJECT_TYPE}" --json-output-key artifacts-json --json-field "npm_package_name=${NPM_PACKAGE_NAME}" --json-field "npm_package_version=${NPM_PACKAGE_VERSION}" --json-field "npm_publish_status=${NPM_PUBLISH_STATUS}"
       - name: Upload snapshot publish stage manifests
         if: always() && hashFiles('.ci-results/*.json') != ''
-        env:
-          ARTIFACT_NAME: ci-results-snapshot-publish
-          ARTIFACT_PATHS: .ci-results/*.json
-          ARTIFACT_INCLUDE_HIDDEN: "true"
-          ARTIFACT_RETENTION_DAYS: "5"
-          ARTIFACT_IF_NO_FILES: ignore
-        run: reusable-ci artifact upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-results-snapshot-publish
+          path: .ci-results/*.json
+          include-hidden-files: "true"
+          retention-days: "5"
+          if-no-files-found: ignore

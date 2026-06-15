@@ -91,6 +91,7 @@ jobs:
         if: always()
         continue-on-error: true
         env:
+          GH_TOKEN: ${{ github.token }}
           ARTIFACT_NAME: nanolinter-step-summary
           ARTIFACT_DIR: .nl-summary
         run: reusable-ci artifact download
@@ -110,10 +111,10 @@ jobs:
         run: reusable-ci report status stage
       - name: Upload quality stage manifests
         if: always() && hashFiles('.ci-results/*.json') != ''
-        env:
-          ARTIFACT_NAME: ci-results-pr-quality
-          ARTIFACT_PATHS: .ci-results/*.json
-          ARTIFACT_INCLUDE_HIDDEN: "true"
-          ARTIFACT_RETENTION_DAYS: "5"
-          ARTIFACT_IF_NO_FILES: ignore
-        run: reusable-ci artifact upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-results-pr-quality
+          path: .ci-results/*.json
+          include-hidden-files: "true"
+          retention-days: "5"
+          if-no-files-found: ignore

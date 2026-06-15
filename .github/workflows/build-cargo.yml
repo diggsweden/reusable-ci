@@ -121,22 +121,22 @@ jobs:
           VERSION: ${{ steps.metadata.outputs.version }}
         run: reusable-ci build cargo compile
       - name: Upload Cargo artifacts
-        env:
-          ARTIFACT_NAME: ${{ inputs['artifact-name'] != '' && format('{0}-cargo-build-artifacts', inputs['artifact-name']) || 'cargo-build-artifacts' }}
-          ARTIFACT_PATHS: ${{ inputs['working-directory'] }}/dist/**
-          ARTIFACT_RETENTION_DAYS: "7"
-          ARTIFACT_IF_NO_FILES: error
-        run: reusable-ci artifact upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs['artifact-name'] != '' && format('{0}-cargo-build-artifacts', inputs['artifact-name']) || 'cargo-build-artifacts' }}
+          path: ${{ inputs['working-directory'] }}/dist/**
+          retention-days: "7"
+          if-no-files-found: error
       - name: Upload Cargo Build SBOM
         if: steps.sbom.outcome == 'success'
-        env:
-          ARTIFACT_NAME: ${{ inputs['artifact-name'] != '' && format('{0}-cargo-build-sbom', inputs['artifact-name']) || 'cargo-build-sbom' }}
-          ARTIFACT_PATHS: |
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs['artifact-name'] != '' && format('{0}-cargo-build-sbom', inputs['artifact-name']) || 'cargo-build-sbom' }}
+          path: |
             ${{ inputs['working-directory'] }}/bom.json
             ${{ inputs['working-directory'] }}/**/bom.json
-          ARTIFACT_RETENTION_DAYS: "7"
-          ARTIFACT_IF_NO_FILES: warn
-        run: reusable-ci artifact upload
+          retention-days: "7"
+          if-no-files-found: warn
       - name: Write SBOM status to step summary
         if: always()
         env:

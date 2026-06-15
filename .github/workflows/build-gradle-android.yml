@@ -241,14 +241,14 @@ jobs:
         # dispatch in release-build-stage.yml doesn't collide when multiple
         # flavors/modules build in parallel. Distinct from APK/AAB names so
         # the SBOM survives independently of app uploads.
-        env:
-          ARTIFACT_NAME: ${{ steps.artifact-names.outputs.sbom-name }}
-          ARTIFACT_PATHS: |
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.artifact-names.outputs.sbom-name }}
+          path: |
             ${{ inputs['working-directory'] }}/build/reports/bom.json
             ${{ inputs['working-directory'] }}/**/build/reports/bom.json
-          ARTIFACT_RETENTION_DAYS: "7"
-          ARTIFACT_IF_NO_FILES: warn
-        run: reusable-ci artifact upload
+          retention-days: "7"
+          if-no-files-found: warn
       - name: Write SBOM status to step summary
         if: always()
         env:
@@ -263,31 +263,31 @@ jobs:
         run: reusable-ci build gradle-android list-artifacts
       - name: Upload Debug APK
         if: contains(inputs['build-types'], 'debug')
-        env:
-          ARTIFACT_NAME: ${{ steps.artifact-names.outputs.debug-name }}
-          ARTIFACT_PATHS: |
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.artifact-names.outputs.debug-name }}
+          path: |
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/apk/**/debug/*.apk
-          ARTIFACT_RETENTION_DAYS: "7"
-          ARTIFACT_IF_NO_FILES: warn
-        run: reusable-ci artifact upload
+          retention-days: "7"
+          if-no-files-found: warn
       - name: Upload Release APK
         if: contains(inputs['build-types'], 'release')
-        env:
-          ARTIFACT_NAME: ${{ steps.artifact-names.outputs.release-name }}
-          ARTIFACT_PATHS: |
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.artifact-names.outputs.release-name }}
+          path: |
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/apk/**/release/*.apk
-          ARTIFACT_RETENTION_DAYS: "7"
-          ARTIFACT_IF_NO_FILES: warn
-        run: reusable-ci artifact upload
+          retention-days: "7"
+          if-no-files-found: warn
       - name: Upload AAB
         if: ${{ inputs['include-aab'] && contains(inputs['build-types'], 'release') }}
-        env:
-          ARTIFACT_NAME: ${{ steps.artifact-names.outputs.aab-name }}
-          ARTIFACT_PATHS: |
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.artifact-names.outputs.aab-name }}
+          path: |
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/bundle/**/*.aab
-          ARTIFACT_RETENTION_DAYS: "7"
-          ARTIFACT_IF_NO_FILES: error
-        run: reusable-ci artifact upload
+          retention-days: "7"
+          if-no-files-found: error
       - name: Generate build summary
         env:
           BUILD_MODULE: ${{ inputs['build-module'] }}

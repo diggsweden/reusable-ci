@@ -142,6 +142,7 @@ jobs:
       - name: Download quality stage manifests
         if: always()
         env:
+          GH_TOKEN: ${{ github.token }}
           ARTIFACT_NAME: ci-results-pr-quality
           ARTIFACT_DIR: .ci-results
         run: reusable-ci artifact download

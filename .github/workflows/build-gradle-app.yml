@@ -117,14 +117,14 @@ jobs:
         # Root and subproject JARs. Single-module projects put jars under
         # `build/libs/`; multi-module projects put them under
         # `<subproject>/build/libs/`. Both globs cover the common layouts.
-        env:
-          ARTIFACT_NAME: ${{ inputs['artifact-name'] && format('{0}-build-artifacts', inputs['artifact-name']) || 'gradle-build-artifacts' }}
-          ARTIFACT_PATHS: |
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs['artifact-name'] && format('{0}-build-artifacts', inputs['artifact-name']) || 'gradle-build-artifacts' }}
+          path: |
             ${{ inputs['working-directory'] }}/build/libs/*.jar
             ${{ inputs['working-directory'] }}/**/build/libs/*.jar
-          ARTIFACT_RETENTION_DAYS: "7"
-          ARTIFACT_IF_NO_FILES: error
-        run: reusable-ci artifact upload
+          retention-days: "7"
+          if-no-files-found: error
       # SBOM artifact is paired with the build artifact name so parallel
       # matrix uploads (release-build-stage dispatches build-gradle per
       # artifact) don't collide on a single fixed SBOM name. Default falls
@@ -133,16 +133,16 @@ jobs:
       # build/reports/cyclonedx/bom.json is retained for older plugin versions.
       - name: Upload Gradle Build SBOM
         if: steps.sbom.outcome == 'success'
-        env:
-          ARTIFACT_NAME: ${{ inputs['artifact-name'] && format('{0}-build-sbom', inputs['artifact-name']) || 'gradle-build-sbom' }}
-          ARTIFACT_PATHS: |
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs['artifact-name'] && format('{0}-build-sbom', inputs['artifact-name']) || 'gradle-build-sbom' }}
+          path: |
             ${{ inputs['working-directory'] }}/build/reports/bom.json
             ${{ inputs['working-directory'] }}/**/build/reports/bom.json
             ${{ inputs['working-directory'] }}/build/reports/cyclonedx/bom.json
             ${{ inputs['working-directory'] }}/**/build/reports/cyclonedx/bom.json
-          ARTIFACT_RETENTION_DAYS: "7"
-          ARTIFACT_IF_NO_FILES: warn
-        run: reusable-ci artifact upload
+          retention-days: "7"
+          if-no-files-found: warn
       - name: Write SBOM status to step summary
         if: always()
         env:

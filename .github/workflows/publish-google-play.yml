@@ -132,6 +132,7 @@ jobs:
 
       - name: Download AAB artifact
         env:
+          GH_TOKEN: ${{ github.token }}
           ARTIFACT_NAME: ${{ inputs['aab-artifact-name'] }}
           ARTIFACT_DIR: artifacts/
         run: reusable-ci artifact download

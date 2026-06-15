@@ -122,6 +122,7 @@ jobs:
       - name: Download scorecard SARIF artifact
         continue-on-error: true
         env:
+          GH_TOKEN: ${{ github.token }}
           ARTIFACT_NAME: sarif-scorecard
           ARTIFACT_DIR: .
         run: reusable-ci artifact download

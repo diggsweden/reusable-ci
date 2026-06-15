@@ -114,6 +114,7 @@ jobs:
         run: reusable-ci release gpg import
       - name: Download build artifacts
         env:
+          GH_TOKEN: ${{ github.token }}
           ARTIFACT_NAME: ${{ inputs['artifact-source'] }}
           ARTIFACT_DIR: ${{ inputs['working-directory'] }}/
         run: reusable-ci artifact download

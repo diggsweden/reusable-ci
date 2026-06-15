@@ -270,23 +270,23 @@ jobs:
 
       - name: Upload IPA artifact
         if: ${{ inputs['enable-code-signing'] }}
-        env:
-          ARTIFACT_NAME: ${{ steps.artifact-names.outputs.ipa-name }}
-          ARTIFACT_PATHS: |
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.artifact-names.outputs.ipa-name }}
+          path: |
             ${{ inputs['working-directory'] }}/build/export/*.ipa
-          ARTIFACT_RETENTION_DAYS: "7"
-          ARTIFACT_IF_NO_FILES: error
-        run: reusable-ci artifact upload
+          retention-days: "7"
+          if-no-files-found: error
 
       - name: Upload archive (unsigned builds)
         if: ${{ !inputs['enable-code-signing'] }}
-        env:
-          ARTIFACT_NAME: ${{ steps.artifact-names.outputs.ipa-name }}-archive
-          ARTIFACT_PATHS: |
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.artifact-names.outputs.ipa-name }}-archive
+          path: |
             ${{ inputs['working-directory'] }}/build/app.xcarchive
-          ARTIFACT_RETENTION_DAYS: "7"
-          ARTIFACT_IF_NO_FILES: error
-        run: reusable-ci artifact upload
+          retention-days: "7"
+          if-no-files-found: error
 
       - name: Generate build summary
         env:

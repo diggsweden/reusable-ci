@@ -167,6 +167,7 @@ jobs:
       # if no ledger artifacts exist (best-effort build emission).
       - name: Download release-image ledgers
         env:
+          GH_TOKEN: ${{ github.token }}
           ARTIFACT_PATTERN: ${{ inputs['ledger-artifact-pattern'] }}
           ARTIFACT_DIR: ledgers
         run: reusable-ci artifact download
