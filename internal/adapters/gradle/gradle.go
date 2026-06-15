@@ -36,7 +36,7 @@ func (a *Adapter) RunInDirInherit(ctx context.Context, dir string, stdout, stder
 
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
-		return safeexec.WrapError(err, a.bin(), firstArgOf(args))
+		return safeexec.WrapError(err, a.bin(), safeexec.FirstArg(args))
 	}
 
 	return nil
@@ -48,14 +48,4 @@ func (a *Adapter) bin() string {
 	}
 
 	return "./gradlew"
-}
-
-// firstArgOf returns the leading positional argument for use in
-// human-readable error context. Empty when args is empty.
-func firstArgOf(args []string) string {
-	if len(args) == 0 {
-		return ""
-	}
-
-	return args[0]
 }

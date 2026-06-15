@@ -45,6 +45,7 @@ type Signer struct {
 // Wrong passphrase → ErrPermissionDenied.
 // Multiple entities in the armor → the first is used (matches gpg's
 // `--default-key` precedence when only one fingerprint is configured).
+//
 //nolint:cyclop // keyring parse + key-type + passphrase + identity dispatch.
 func NewSignerFromArmor(armor []byte, passphrase string) (*Signer, error) {
 	armor = bytes.TrimSpace(armor)
@@ -125,6 +126,40 @@ func ReadMetadata(armor []byte) (domaingpg.Metadata, error) {
 	}
 
 	return entityMetadata(list[0]), nil
+}
+
+// PrimaryFingerprints parses an armored public-key bundle (one or more
+// "PGP PUBLIC KEY BLOCK" sections concatenated) and returns the
+// 40-char uppercase-hex primary-key fingerprint of every key in it.
+//
+// It turns a committed `.reusable-ci/allowed_gpg_keys.asc` keyring into
+// the GPG signer allowlist: the same file is both the verification key
+// material (passed to VerifyTagSignature) and the set of authorised
+// fingerprints, so the two can never drift apart.
+//
+// Empty armor → empty slice, nil error (caller treats "no keys" as
+// "no allowlist from this source").
+func PrimaryFingerprints(armor []byte) ([]string, error) {
+	armor = bytes.TrimSpace(armor)
+	if len(armor) == 0 {
+		return nil, nil
+	}
+
+	list, err := openpgp.ReadArmoredKeyRing(bytes.NewReader(armor))
+	if err != nil {
+		return nil, fmt.Errorf("parse armored key ring: %w: %w", err, errs.ErrMalformedInput)
+	}
+
+	fps := make([]string, 0, len(list))
+	for _, entity := range list {
+		if entity.PrimaryKey == nil {
+			continue
+		}
+
+		fps = append(fps, strings.ToUpper(fmt.Sprintf("%X", entity.PrimaryKey.Fingerprint)))
+	}
+
+	return fps, nil
 }
 
 // entityMetadata extracts the typed metadata from an openpgp.Entity.

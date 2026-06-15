@@ -40,8 +40,8 @@ func (p *Provider) FetchRepoMetadata(ctx context.Context, repo string) (*provide
 	url := strings.TrimRight(apiBase, "/") + "/repos/" + repo
 
 	body, err := getJSON(ctx, p.HTTPClient, url, map[string]string{
-		"Accept":               acceptJSONHeader, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		"X-GitHub-Api-Version": apiVersionHeader, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"Accept":               acceptJSONHeader,                  //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"X-GitHub-Api-Version": apiVersionHeader,                  //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"Authorization":        bearerHeader(get("GITHUB_TOKEN")), //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	})
 	if err != nil {
@@ -63,6 +63,9 @@ func (p *Provider) FetchRepoMetadata(ctx context.Context, repo string) (*provide
 		return nil, fmt.Errorf("github decode repo response: %w", err)
 	}
 
+	// ObjectFormat is intentionally left empty: the GitHub REST API exposes
+	// no object_format (GitHub repos are sha1), and an empty value tells the
+	// caller to default to sha1.
 	return &provider.RepoMetadata{
 		Description: r.Description,
 		HTMLURL:     r.HTMLURL,

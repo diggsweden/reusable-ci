@@ -71,11 +71,29 @@ func (p *Provider) FetchRepoMetadata(_ context.Context, _ string) (*provider.Rep
 	return &provider.RepoMetadata{}, nil
 }
 
+// Describe returns generic local self-description. No setup URL or OIDC
+// issuer is known — operators supply tokens and --oidc-issuer
+// explicitly in local mode.
+func (p *Provider) Describe() provider.Info {
+	return provider.Info{
+		DisplayName: "local",
+		ScopesHint:  "Provide a token with the appropriate permissions.",
+	}
+}
+
+// Capabilities reports no forge features: local mode has no API to call.
+func (p *Provider) Capabilities() provider.Capabilities {
+	return provider.Capabilities{}
+}
+
 // Compile-time conformance checks. local.Provider satisfies the
-// always-available base + RepoMetadataFetcher. It deliberately does
-// not satisfy TokenValidator / ReleaseCreator / ReleaseAssetUploader /
-// SARIFUploader — those CLI surfaces gate on platform.
+// always-available base + RepoMetadataFetcher + self-description roles.
+// It deliberately does not satisfy TokenValidator / ReleaseCreator /
+// ReleaseAssetUploader / SARIFUploader — those CLI surfaces gate on
+// platform.
 var (
 	_ provider.Provider            = (*Provider)(nil)
 	_ provider.RepoMetadataFetcher = (*Provider)(nil)
+	_ provider.Describer           = (*Provider)(nil)
+	_ provider.CapabilityReporter  = (*Provider)(nil)
 )

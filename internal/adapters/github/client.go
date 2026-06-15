@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	gogithub "github.com/google/go-github/v76/github"
 
@@ -24,11 +23,12 @@ import (
 )
 
 // defaultHTTPClient returns a Client backed by the retry transport. The
-// 30s timeout caps total per-request wall time including retries; the
+// timeout caps total per-request wall time including retries (default
+// 30s, overridable via REUSABLE_CI_HTTP_TIMEOUT for slow links); the
 // transport's own MaxCumulativeDelay caps in-process sleep separately.
 func defaultHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout:   30 * time.Second,
+		Timeout:   httpretry.ClientTimeout(),
 		Transport: httpretry.NewTransport(httpretry.Config{}),
 	}
 }

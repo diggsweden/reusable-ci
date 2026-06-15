@@ -7,6 +7,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +16,8 @@ import (
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/internal/adapters/github"
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/internal/domain/release"
 	"github.com/diggsweden/reusable-ci/internal/testutil/fakegitserver"
 )
@@ -139,5 +143,214 @@ func TestArtifactDownloader_RejectsBadInput(t *testing.T) {
 	err := github.ArtifactDownloader{}.DownloadArtifact(context.Background(), release.ArtifactDownloadInput{})
 	if err == nil {
 		t.Fatal("expected error with nil Provider")
+	}
+}
+
+// serveArtifactZip wires the three REST endpoints (list → 302 → blob) that
+// return the given zip for artifact id 42 named "build-artifacts".
+func serveArtifactZip(t *testing.T, zipBody []byte) *fakegitserver.Server {
+	t.Helper()
+
+	srv := fakegitserver.New(t)
+	srv.OnGet("/repos/owner/repo/actions/runs/9876/artifacts", func(_ fakegitserver.Request) fakegitserver.Response {
+		return fakegitserver.Response{Status: http.StatusOK, Body: `{"total_count":1,"artifacts":[{"id":42,"name":"build-artifacts"}]}`}
+	})
+	srv.OnGet("/repos/owner/repo/actions/artifacts/42/zip", func(_ fakegitserver.Request) fakegitserver.Response {
+		return fakegitserver.Response{Status: http.StatusFound, Header: http.Header{"Location": []string{srv.URL() + "/blob/42"}}}
+	})
+	srv.OnGet("/blob/42", func(_ fakegitserver.Request) fakegitserver.Response {
+		return fakegitserver.Response{Status: http.StatusOK, Body: string(zipBody)}
+	})
+
+	return srv
+}
+
+// TestProvider_DownloadRunArtifact exercises the RunArtifactDownloader role
+// (the forge-neutral entry point) and asserts the byte/file totals.
+func TestProvider_DownloadRunArtifact(t *testing.T) {
+	t.Parallel()
+
+	zipBody := buildZip(t, map[string]string{"hello.txt": "world", "nested/inside.json": `{"ok":true}`})
+	srv := serveArtifactZip(t, zipBody)
+
+	p := &github.Provider{
+		Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
+		APIBaseOverride: srv.URL(),
+	}
+
+	dir := t.TempDir()
+
+	info, err := p.DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{
+		Name:  "build-artifacts",
+		Dir:   dir,
+		RunID: "9876",
+	})
+	if err != nil {
+		t.Fatalf("DownloadRunArtifact: %v", err)
+	}
+
+	if info.FileCount != 2 || info.Bytes != int64(len("world")+len(`{"ok":true}`)) {
+		t.Errorf("info = %+v, want 2 files / %d bytes", info, len("world")+len(`{"ok":true}`))
+	}
+}
+
+// servePatternArtifacts wires a run listing two glob-matching artifacts
+// (sbom-a id 42, sbom-b id 43) plus a non-matching one (other id 99), each
+// with its own one-file zip.
+func servePatternArtifacts(t *testing.T) *fakegitserver.Server {
+	t.Helper()
+
+	srv := fakegitserver.New(t)
+	srv.OnGet("/repos/owner/repo/actions/runs/9876/artifacts", func(_ fakegitserver.Request) fakegitserver.Response {
+		return fakegitserver.Response{Status: http.StatusOK, Body: `{"total_count":3,"artifacts":[{"id":42,"name":"sbom-a"},{"id":43,"name":"sbom-b"},{"id":99,"name":"other"}]}`}
+	})
+
+	for id, payload := range map[int]string{42: "AAA", 43: "BBB"} {
+		zipBody := buildZip(t, map[string]string{"file.txt": payload})
+		blob := fmt.Sprintf("/blob/%d", id)
+		srv.OnGet(fmt.Sprintf("/repos/owner/repo/actions/artifacts/%d/zip", id), func(_ fakegitserver.Request) fakegitserver.Response {
+			return fakegitserver.Response{Status: http.StatusFound, Header: http.Header{"Location": []string{srv.URL() + blob}}}
+		})
+		srv.OnGet(blob, func(_ fakegitserver.Request) fakegitserver.Response {
+			return fakegitserver.Response{Status: http.StatusOK, Body: string(zipBody)}
+		})
+	}
+
+	return srv
+}
+
+// TestProvider_DownloadRunArtifact_RejectsHostileForgeName proves the
+// pattern-download path fails closed on a forge-supplied artifact name that
+// would traverse out of Dir or carry control characters — before any blob is
+// fetched, and writing nothing outside the destination.
+func TestProvider_DownloadRunArtifact_RejectsHostileForgeName(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "traversal", body: `{"total_count":1,"artifacts":[{"id":7,"name":".."}]}`},
+		{name: "control_char", body: `{"total_count":1,"artifacts":[{"id":7,"name":"evil\u001bX"}]}`},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := fakegitserver.New(t)
+			srv.OnGet("/repos/owner/repo/actions/runs/9876/artifacts", func(_ fakegitserver.Request) fakegitserver.Response {
+				return fakegitserver.Response{Status: http.StatusOK, Body: testCase.body}
+			})
+
+			p := &github.Provider{
+				Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
+				APIBaseOverride: srv.URL(),
+			}
+
+			dir := t.TempDir()
+
+			_, err := p.DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Pattern: "*", Dir: dir, RunID: "9876"})
+			if !errors.Is(err, errs.ErrValidation) {
+				t.Fatalf("err = %v, want ErrValidation (hostile forge name rejected)", err)
+			}
+
+			if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+				t.Errorf("a rejected download must write nothing into dir; got %v", entries)
+			}
+		})
+	}
+}
+
+// TestProvider_DownloadRunArtifact_PatternMergeMultiple downloads every
+// artifact matching the glob and flattens them into the destination.
+func TestProvider_DownloadRunArtifact_PatternMergeMultiple(t *testing.T) {
+	t.Parallel()
+
+	srv := servePatternArtifacts(t)
+	p := &github.Provider{
+		Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
+		APIBaseOverride: srv.URL(),
+	}
+
+	dir := t.TempDir()
+
+	info, err := p.DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{
+		Pattern:       "sbom-*",
+		MergeMultiple: true,
+		Dir:           dir,
+		RunID:         "9876",
+	})
+	if err != nil {
+		t.Fatalf("DownloadRunArtifact: %v", err)
+	}
+
+	// Both matches contributed one file each (the non-match "other" is skipped).
+	if info.FileCount != 2 {
+		t.Errorf("FileCount = %d, want 2 (both sbom-* matches, merged)", info.FileCount)
+	}
+
+	// Merge flattens into dir — the single file.txt is the last writer's content.
+	if _, statErr := os.Stat(filepath.Join(dir, "file.txt")); statErr != nil {
+		t.Errorf("merged file.txt missing: %v", statErr)
+	}
+}
+
+// TestProvider_DownloadRunArtifact_PatternSeparateDirs places each match
+// under its own <name>/ subdirectory.
+func TestProvider_DownloadRunArtifact_PatternSeparateDirs(t *testing.T) {
+	t.Parallel()
+
+	srv := servePatternArtifacts(t)
+	p := &github.Provider{
+		Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
+		APIBaseOverride: srv.URL(),
+	}
+
+	dir := t.TempDir()
+
+	if _, err := p.DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{
+		Pattern: "sbom-*",
+		Dir:     dir,
+		RunID:   "9876",
+	}); err != nil {
+		t.Fatalf("DownloadRunArtifact: %v", err)
+	}
+
+	for name, want := range map[string]string{"sbom-a": "AAA", "sbom-b": "BBB"} {
+		got, err := os.ReadFile(filepath.Join(dir, name, "file.txt")) //nolint:gosec // test fixture
+		if err != nil {
+			t.Fatalf("%s/file.txt: %v", name, err)
+		}
+
+		if string(got) != want {
+			t.Errorf("%s/file.txt = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// TestProvider_DownloadRunArtifact_RejectsZipTraversal proves the shared
+// SafeJoin guard now protects the GitHub zip path too: a malicious entry
+// escaping the destination is refused and writes nothing outside.
+func TestProvider_DownloadRunArtifact_RejectsZipTraversal(t *testing.T) {
+	t.Parallel()
+
+	zipBody := buildZip(t, map[string]string{"../escape.txt": "evil"})
+	srv := serveArtifactZip(t, zipBody)
+
+	p := &github.Provider{
+		Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
+		APIBaseOverride: srv.URL(),
+	}
+
+	dir := t.TempDir()
+
+	_, err := p.DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Name: "build-artifacts", Dir: dir, RunID: "9876"})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation (zip traversal rejected)", err)
+	}
+
+	if _, statErr := os.Stat(filepath.Join(filepath.Dir(dir), "escape.txt")); statErr == nil {
+		t.Error("zip traversal wrote a file outside the destination")
 	}
 }

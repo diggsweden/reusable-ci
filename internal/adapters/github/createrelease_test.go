@@ -376,7 +376,7 @@ func TestCreateRelease_NoExistingRelease(t *testing.T) {
 	if err := p.CreateRelease(context.Background(), "owner/repo", provider.ReleaseSpec{
 		Tag:        "v1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Name:       "v1.0.0",
-		MakeLatest: true,
+		MakeLatest: provider.MakeLatestTrue,
 	}); err != nil {
 		t.Fatalf("CreateRelease: %v", err)
 	}
@@ -421,7 +421,7 @@ func TestCreateRelease_DeletesExistingDraftOrPrerelease(t *testing.T) {
 
 			if err := p.CreateRelease(context.Background(), "owner/repo", provider.ReleaseSpec{
 				Tag:        "v1.0.0",
-				MakeLatest: true,
+				MakeLatest: provider.MakeLatestTrue,
 			}); err != nil {
 				t.Fatalf("CreateRelease: %v", err)
 			}
@@ -445,7 +445,7 @@ func TestCreateRelease_RefusesExistingStable(t *testing.T) {
 
 	err := p.CreateRelease(context.Background(), "owner/repo", provider.ReleaseSpec{
 		Tag:        "v1.0.0",
-		MakeLatest: true,
+		MakeLatest: provider.MakeLatestTrue,
 	})
 	if err == nil || !strings.Contains(err.Error(), "cannot overwrite") {
 		t.Fatalf("err = %v, want refusal", err)
@@ -471,7 +471,7 @@ func TestCreateRelease_PostsDraftPrereleaseAndMakeLatestFlags(t *testing.T) {
 		Name:       "Major",
 		Draft:      true,
 		Prerelease: true,
-		MakeLatest: false,
+		MakeLatest: provider.MakeLatestFalse,
 	}); err != nil {
 		t.Fatalf("CreateRelease: %v", err)
 	}
@@ -519,7 +519,7 @@ func TestCreateRelease_ForwardsNotesFileBody(t *testing.T) {
 		Tag:        "v3.0.0",
 		Name:       "v3.0.0",
 		NotesFile:  notesPath,
-		MakeLatest: true,
+		MakeLatest: provider.MakeLatestTrue,
 	}); err != nil {
 		t.Fatalf("CreateRelease: %v", err)
 	}

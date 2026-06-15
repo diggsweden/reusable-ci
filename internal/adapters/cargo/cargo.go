@@ -48,7 +48,7 @@ func (a *Adapter) RunInherit(ctx context.Context, dir string, stdout, stderr io.
 
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
-		return safeexec.WrapError(err, a.bin(), firstArgOf(args))
+		return safeexec.WrapError(err, a.bin(), safeexec.FirstArg(args))
 	}
 
 	return nil
@@ -69,7 +69,7 @@ func (a *Adapter) Run(ctx context.Context, in domainbuild.GoRunInput) error {
 	}
 
 	if err := cmd.Run(); err != nil {
-		return safeexec.WrapError(err, a.bin(), firstArgOf(in.Args))
+		return safeexec.WrapError(err, a.bin(), safeexec.FirstArg(in.Args))
 	}
 
 	return nil
@@ -81,14 +81,4 @@ func (a *Adapter) bin() string {
 	}
 
 	return "cargo"
-}
-
-// firstArgOf returns the leading positional argument for use in
-// human-readable error context. Empty when args is empty.
-func firstArgOf(args []string) string {
-	if len(args) == 0 {
-		return ""
-	}
-
-	return args[0]
 }

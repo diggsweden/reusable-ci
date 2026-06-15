@@ -110,17 +110,31 @@ func TestRefTagAndPushHelpers(t *testing.T) {
 	first := ig.HeadSHA()
 	ig.AddTag("v1.0.0", "release")
 	second := ig.AddCommit("second commit")
-	if err := r.MoveTag(ctx, "v1.0.0", false); err != nil {
+
+	// CreateTag is create-once at the given ref (HEAD here).
+	if err := r.CreateTag(ctx, "v1.1.0", "HEAD", false); err != nil {
 		t.Fatal(err)
+	}
+
+	// Creating the same tag again must error — no -f, a tag is never moved.
+	if err := r.CreateTag(ctx, "v1.1.0", "HEAD", false); err == nil {
+		t.Fatal("CreateTag of an existing tag must error (create-once)")
+	}
+
+	if got, err := r.TagExists(ctx, "v1.1.0"); err != nil || !got {
+		t.Fatalf("TagExists(v1.1.0) = %v, err=%v, want true", got, err)
+	}
+	if got, err := r.TagExists(ctx, "v9.9.9"); err != nil || got {
+		t.Fatalf("TagExists(v9.9.9) = %v, err=%v, want false", got, err)
 	}
 
 	if got, err := r.RevParse(ctx, "HEAD"); err != nil || got != second {
 		t.Fatalf("RevParse HEAD = %q, err=%v, want %q", got, err, second)
 	}
-	if got, err := r.DescribeLatestTag(ctx); err != nil || got != "v1.0.0" {
+	if got, err := r.DescribeLatestTag(ctx); err != nil || got != "v1.1.0" {
 		t.Fatalf("DescribeLatestTag = %q, err=%v", got, err)
 	}
-	if got, err := r.TagSHA(ctx, "v1.0.0"); err != nil || got != second {
+	if got, err := r.TagSHA(ctx, "v1.1.0"); err != nil || got != second {
 		t.Fatalf("TagSHA = %q, err=%v, want %q", got, err, second)
 	}
 	if got, err := r.ShortSHA(ctx, "HEAD", 7); err != nil || got != second[:7] {
@@ -130,8 +144,8 @@ func TestRefTagAndPushHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tags) != 1 || tags[0] != "v1.0.0" {
-		t.Fatalf("ListTags = %v, want [v1.0.0]", tags)
+	if len(tags) != 2 {
+		t.Fatalf("ListTags = %v, want 2 tags (v1.0.0, v1.1.0)", tags)
 	}
 	if tags, err := r.ListTags(ctx, "missing*"); err != nil || len(tags) != 0 {
 		t.Fatalf("ListTags missing = %v, err=%v", tags, err)
@@ -141,10 +155,10 @@ func TestRefTagAndPushHelpers(t *testing.T) {
 	if err := r.Push(ctx, "HEAD", "main", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.PushTag(ctx, "v1.0.0"); err != nil {
+	if err := r.PushTagNoForce(ctx, "v1.1.0"); err != nil {
 		t.Fatal(err)
 	}
-	remoteTag := ig.Git("ls-remote", "--tags", "origin", "v1.0.0")
+	remoteTag := ig.Git("ls-remote", "--tags", "origin", "v1.1.0")
 	if remoteTag == "" || strings.Contains(remoteTag, first) {
 		t.Errorf("remote tag output = %q", remoteTag)
 	}

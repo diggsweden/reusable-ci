@@ -12,11 +12,12 @@ package gpg
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
-	domain "github.com/diggsweden/reusable-ci/internal/domain/gpg"
+	domaingpg "github.com/diggsweden/reusable-ci/internal/domain/gpg"
 	"github.com/diggsweden/reusable-ci/internal/safeexec"
 )
 
@@ -48,7 +49,7 @@ func (a *Adapter) ImportKey(ctx context.Context, keyData []byte) error {
 
 // ListKeygrips returns `gpg --with-keygrip --with-colons --list-secret-keys`
 // output for a specific fingerprint. The caller pipes it to
-// domain.ParseKeygrips. Keygrips are the address gpg-agent uses for
+// domaingpg.ParseKeygrips. Keygrips are the address gpg-agent uses for
 // passphrase pre-seeding (one per signing-capable subkey).
 func (a *Adapter) ListKeygrips(ctx context.Context, fingerprint string) (string, error) {
 	return a.run(ctx, a.gpg(),
@@ -62,6 +63,13 @@ func (a *Adapter) ConfigureAgent(ctx context.Context) error {
 	home := os.Getenv("GNUPGHOME")
 	if home == "" {
 		home = filepath.Join(os.Getenv("HOME"), ".gnupg")
+		// Writing into the user's real default keyring home rather than an
+		// isolated GNUPGHOME. Say so (clig.dev §Configuration: tell the
+		// user when you touch config that isn't yours) — CI runners set
+		// GNUPGHOME; a developer who didn't may not expect ~/.gnupg to be
+		// modified. The written file carries a managed-by marker too.
+		slog.Warn("GNUPGHOME unset; writing gpg-agent.conf into the default keyring home",
+			"path", home, "hint", "set GNUPGHOME to isolate reusable-ci's gpg state")
 	}
 
 	if err := os.MkdirAll(home, 0o700); err != nil { //nolint:gosec // GNUPGHOME path comes from env, not external input.
@@ -73,7 +81,7 @@ func (a *Adapter) ConfigureAgent(ctx context.Context) error {
 	}
 
 	confPath := filepath.Join(home, "gpg-agent.conf")
-	if err := os.WriteFile(confPath, []byte(domain.AgentConfig), 0o600); err != nil { //nolint:gosec // GNUPGHOME path is env-controlled.
+	if err := os.WriteFile(confPath, []byte(domaingpg.AgentConfig), 0o600); err != nil { //nolint:gosec // GNUPGHOME path is env-controlled.
 		return fmt.Errorf("write gpg-agent.conf: %w", err)
 	}
 
@@ -88,7 +96,7 @@ func (a *Adapter) ConfigureAgent(ctx context.Context) error {
 // The hex-encoded passphrase is fed through stdin so it never appears in
 // `ps`. Improvement over the upstream action's argv-based form.
 func (a *Adapter) PresetPassphrase(ctx context.Context, keygrip, passphrase string) error {
-	hex := domain.HexEncodePassphrase(passphrase)
+	hex := domaingpg.HexEncodePassphrase(passphrase)
 
 	cmd := fmt.Sprintf("PRESET_PASSPHRASE %s -1 %s\n", keygrip, hex)
 	if _, err := a.runStdin(ctx, cmd, a.agent(), "/bye"); err != nil {
@@ -165,18 +173,10 @@ func finishRun(bin string, args []string, out []byte, err error) (string, error)
 		return strings.TrimRight(string(out), "\n"), nil
 	}
 
-	wrapped := safeexec.WrapError(err, bin, firstArgOf(args))
+	wrapped := safeexec.WrapError(err, bin, safeexec.FirstArg(args))
 	if len(out) == 0 {
 		return "", wrapped
 	}
 
 	return "", fmt.Errorf("%w\n%s", wrapped, safeexec.RedactKeyMaterial(out))
-}
-
-func firstArgOf(args []string) string {
-	if len(args) == 0 {
-		return ""
-	}
-
-	return args[0]
 }

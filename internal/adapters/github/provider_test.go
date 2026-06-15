@@ -31,12 +31,12 @@ func TestResolveContext_BranchPush(t *testing.T) {
 	t.Parallel()
 
 	p := &github.Provider{Env: envFunc(map[string]string{ //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		"GITHUB_REF":        "refs/heads/main", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		"GITHUB_REF_NAME":   "main", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		"GITHUB_REF_TYPE":   "branch", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"GITHUB_REF":        "refs/heads/main",                          //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"GITHUB_REF_NAME":   "main",                                     //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"GITHUB_REF_TYPE":   "branch",                                   //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"GITHUB_SHA":        "abcdef0123456789abcdef0123456789abcdef01", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		"GITHUB_EVENT_NAME": "push", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		"GITHUB_REPOSITORY": "owner/repo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"GITHUB_EVENT_NAME": "push",                                     //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"GITHUB_REPOSITORY": "owner/repo",                               //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"GITHUB_SERVER_URL": "https://github.com",
 	})}
 

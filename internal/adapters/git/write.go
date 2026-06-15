@@ -83,8 +83,8 @@ func (r *Repo) Commit(ctx context.Context, in domaingit.CommitInput) error {
 	return err
 }
 
-// Push runs `git push origin <localRef>:<remoteBranch>`. Pass
-// force=true for tag re-pushes (move-tag).
+// Push runs `git push origin <localRef>:<remoteBranch>`. force=true is
+// used for the branch push in the release flow (the bump commit).
 func (r *Repo) Push(ctx context.Context, localRef, remoteBranch string, force bool) error {
 	args := []string{"push"}
 	if force {
@@ -97,25 +97,32 @@ func (r *Repo) Push(ctx context.Context, localRef, remoteBranch string, force bo
 	return err
 }
 
-// PushTag is a convenience wrapper for `git push --force origin <tag>`.
-func (r *Repo) PushTag(ctx context.Context, tag string) error {
-	_, err := r.Run(ctx, "push", "--force", "origin", tag)
-
-	return err
-}
-
-// MoveTag deletes-and-recreates an annotated tag at HEAD. Equivalent
-// to `git tag -f [-s] <tag> -m <tag>`. signed=true adds -s (GPG
-// signing) — production behaviour. Tests pass signed=false to skip
-// the GPG dependency in their isolated repos.
-func (r *Repo) MoveTag(ctx context.Context, tag string, signed bool) error {
-	args := []string{"tag", "-f"} //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+// CreateTag creates an annotated tag at ref WITHOUT -f (create-once):
+// `git tag [-s] <tag> -m <tag> [<ref>]`. Because there is no -f, git
+// errors if the tag already exists — the create-once release path relies
+// on that so a release tag is never clobbered or moved. ref empty → HEAD.
+func (r *Repo) CreateTag(ctx context.Context, tag, ref string, signed bool) error {
+	args := []string{"tag"}
 	if signed {
 		args = append(args, "-s")
 	}
 
 	args = append(args, tag, "-m", tag)
+	if ref != "" {
+		args = append(args, ref)
+	}
+
 	_, err := r.Run(ctx, args...)
+
+	return err
+}
+
+// PushTagNoForce pushes a tag without --force: `git push origin <tag>`.
+// The remote rejects a non-fast-forward update, so this can only create a
+// new tag, never overwrite one — the immutability guarantee for release
+// tags.
+func (r *Repo) PushTagNoForce(ctx context.Context, tag string) error {
+	_, err := r.Run(ctx, "push", "origin", tag)
 
 	return err
 }

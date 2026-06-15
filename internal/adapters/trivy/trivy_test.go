@@ -6,10 +6,12 @@ package trivy_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/internal/adapters/trivy"
+	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/testutil/mockbinary"
 )
 
@@ -48,5 +50,17 @@ func TestAdapter_RunInheritReturnsExitCode(t *testing.T) {
 	code, err := a.RunInherit(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, "image", "alpine")
 	if err != nil || code != 5 {
 		t.Fatalf("code=%d err=%v", code, err)
+	}
+}
+
+func TestAdapter_RunInheritMissingBinaryClassifies(t *testing.T) {
+	// A non-exit failure (trivy absent from PATH) must classify as
+	// ErrDependencyUnavailable (EX_UNAVAILABLE 69), not fall through to
+	// the unclassified internal-bug default.
+	a := &trivy.Adapter{Bin: "trivy-does-not-exist-xyz"}
+
+	_, err := a.RunInherit(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, "image", "alpine")
+	if !errors.Is(err, errs.ErrDependencyUnavailable) {
+		t.Errorf("err = %v, want wrapped errs.ErrDependencyUnavailable", err)
 	}
 }

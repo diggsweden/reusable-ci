@@ -27,7 +27,7 @@ import (
 //   - Read-only object lookups (rev-parse, tag-uniqueness, ancestor checks,
 //     tag-object inspection) run in-process via go-git. One process for
 //     the whole sequence, typed results, structured errors.
-//   - Network ops (push, fetch) and signing-driven ops (commit, MoveTag,
+//   - Network ops (push, fetch) and signing-driven ops (commit, CreateTag,
 //     VerifyTag) remain subprocess. These integrate with SSH agent,
 //     credential helpers, and gpg-agent — pure-Go equivalents would
 //     reimplement that integration with weaker security/UX.

@@ -63,6 +63,71 @@ func (r *Repo) ShortSHA(ctx context.Context, ref string, n int) (string, error) 
 	return r.Run(ctx, "rev-parse", fmt.Sprintf("--short=%d", n), ref)
 }
 
+// RemoteTagCommit resolves a tag to the commit it points to on the
+// remote (`git ls-remote`), peeling annotated tags. Querying the remote
+// — not the local checkout — is the point: it re-verifies the published
+// tag at the trust boundary. Returns ErrValidation when the tag is
+// absent on the remote.
+func (r *Repo) RemoteTagCommit(ctx context.Context, repoURL, tag string) (string, error) {
+	out, err := r.Run(ctx, "ls-remote", "--tags", repoURL, refsTagsPrefix+tag+"^{}", refsTagsPrefix+tag)
+	if err != nil {
+		return "", err
+	}
+
+	var peeled, plain string
+
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		switch {
+		case strings.HasSuffix(fields[1], "^{}"):
+			peeled = fields[0]
+		case fields[1] == refsTagsPrefix+tag:
+			plain = fields[0]
+		}
+	}
+
+	if peeled != "" {
+		return peeled, nil
+	}
+
+	if plain != "" {
+		return plain, nil
+	}
+
+	return "", fmt.Errorf("remote tag %q not found on %s: %w", tag, repoURL, errs.ErrValidation)
+}
+
+// RemoteVersionTags returns the `v*` tags present on the remote
+// (`git ls-remote --tags --refs`). The git-side `v*` glob is coarse IO
+// narrowing only; deciding which of these are valid release tags (and
+// which is highest) is the domain's job — see domain/version.
+func (r *Repo) RemoteVersionTags(ctx context.Context, repoURL string) ([]string, error) {
+	out, err := r.Run(ctx, "ls-remote", "--tags", "--refs", repoURL, refsTagsPrefix+"v*")
+	if err != nil {
+		return nil, err
+	}
+
+	var tags []string
+
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		tags = append(tags, strings.TrimPrefix(fields[1], refsTagsPrefix))
+	}
+
+	return tags, nil
+}
+
+// refsTagsPrefix is the git ref namespace for tags.
+const refsTagsPrefix = "refs/tags/"
+
 // ListTags returns `git tag -l <pattern>` as a slice (one tag per
 // line). Empty slice when nothing matches.
 func (r *Repo) ListTags(ctx context.Context, pattern string) ([]string, error) {
@@ -81,6 +146,19 @@ func (r *Repo) ListTags(ctx context.Context, pattern string) ([]string, error) {
 	}
 
 	return strings.Split(out, "\n"), nil
+}
+
+// TagExists reports whether a local tag with this exact name exists.
+// `git tag -l <exact>` lists the tag only when it exists, so a non-empty
+// result is an exact-match existence check. Used by the create-once
+// release-tag path to refuse clobbering/moving an existing tag.
+func (r *Repo) TagExists(ctx context.Context, tag string) (bool, error) {
+	out, err := r.Run(ctx, "tag", "-l", tag)
+	if err != nil {
+		return false, err
+	}
+
+	return strings.TrimSpace(out) != "", nil
 }
 
 // TagsPointingAt returns tag names whose target commit is commit.
@@ -356,13 +434,13 @@ func (r *Repo) TaggerInfo(ctx context.Context, tag string) (string, string, erro
 		return who, date, nil
 	}
 
-	tagger, err := r.Run(ctx, "for-each-ref", "refs/tags/"+tag,
+	tagger, err := r.Run(ctx, "for-each-ref", refsTagsPrefix+tag,
 		"--format=%(taggername) <%(taggeremail)>")
 	if err != nil {
 		return "", "", err
 	}
 
-	date, err := r.Run(ctx, "for-each-ref", "refs/tags/"+tag,
+	date, err := r.Run(ctx, "for-each-ref", refsTagsPrefix+tag,
 		"--format=%(taggerdate:iso8601)")
 	if err != nil {
 		return "", "", err

@@ -18,6 +18,8 @@ package httpretry
 import (
 	"context"
 	"io"
+	"log/slog"
+
 	// math/rand/v2 is deliberate: this package's only random use is
 	// retry-backoff jitter in backoff(); not security-sensitive.
 	// crypto/rand would burn entropy for a non-cryptographic purpose.
@@ -114,6 +116,7 @@ func NewTransport(cfg Config) *Transport {
 // retried only on transport-level errors and 502/503/504 responses,
 // where the server has stated it didn't accept the request. 429 is
 // retried for every method — it explicitly invites a retry.
+//
 //nolint:cyclop // retry loop with one branch per backoff/abort/replay/result class.
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	var (
@@ -157,6 +160,15 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if cumulative+delay > t.cfg.MaxCumulativeDelay {
 			break
 		}
+
+		// Make the retry observable: a flaky-but-recovering downstream
+		// is otherwise silent. Debug-gated, so it's noise-free normally
+		// and visible under --log-level=debug.
+		slog.Debug("http retry",
+			"attempt", attempt+1, "max", t.cfg.MaxAttempts,
+			"reason", retryReason, "delay", delay,
+			"method", req.Method, "host", req.URL.Host)
+
 		// Honour context cancellation while waiting.
 		if !t.sleep(req.Context(), delay) {
 			return nil, req.Context().Err()

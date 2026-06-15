@@ -27,6 +27,7 @@ import (
 // The HTTP transport is the shared retry-aware client, so transient
 // 502/503/429 responses become silent retries with backoff instead of
 // the release step failing wholesale.
+//
 //nolint:cyclop // REST flow: ensure tag → cleanup existing → create release → upload assets.
 func (p *Provider) CreateRelease(ctx context.Context, repo string, spec provider.ReleaseSpec) error {
 	if spec.Tag == "" {
@@ -61,9 +62,9 @@ func (p *Provider) CreateRelease(ctx context.Context, repo string, spec provider
 		return err
 	}
 
-	makeLatest := "true"
-	if !spec.MakeLatest {
-		makeLatest = "false"
+	makeLatest := string(spec.MakeLatest)
+	if makeLatest == "" {
+		makeLatest = string(provider.MakeLatestTrue)
 	}
 
 	req := &gogithub.RepositoryRelease{

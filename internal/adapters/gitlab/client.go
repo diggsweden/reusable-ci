@@ -9,18 +9,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/diggsweden/reusable-ci/internal/adapters/httpretry"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 )
 
-// defaultHTTPClient returns a Client backed by the retry transport.
-// 30s caps total per-request wall time; the transport's
+// defaultHTTPClient returns a Client backed by the retry transport. The
+// timeout caps total per-request wall time (default 30s, overridable via
+// REUSABLE_CI_HTTP_TIMEOUT for slow links); the transport's
 // MaxCumulativeDelay caps in-process sleep separately.
 func defaultHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout:   30 * time.Second,
+		Timeout:   httpretry.ClientTimeout(),
 		Transport: httpretry.NewTransport(httpretry.Config{}),
 	}
 }

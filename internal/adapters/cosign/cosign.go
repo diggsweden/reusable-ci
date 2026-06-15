@@ -24,6 +24,12 @@ import (
 // Adapter wraps the cosign binary. Bin is overridable for tests.
 type Adapter struct {
 	Bin string // empty → "cosign"
+
+	// Env, when non-nil, replaces the cosign subprocess environment
+	// (exec.Cmd.Env) wholesale. nil → inherit the parent environment
+	// (the default). Set via NewIsolated to restrict which secrets the
+	// signing subprocess can read.
+	Env []string
 }
 
 // New returns an Adapter using the system cosign.
@@ -71,6 +77,7 @@ type SignBlobInput struct {
 //     missing artefact, etc.).
 //   - cosign's exit-error otherwise; the underlying *exec.ExitError
 //     is preserved via %w so callers can extract the exit code.
+//
 //nolint:cyclop // input validation + argv build + run + classify — phases of one operation.
 func (a *Adapter) SignBlob(ctx context.Context, in SignBlobInput, errOut io.Writer) error {
 	if err := in.validate(); err != nil {
@@ -128,6 +135,7 @@ type VerifyBlobInput struct {
 // (Keyless vs. KeyRef) and providing the matching identity
 // constraints (certificate-identity-regexp + oidc-issuer for
 // keyless, pubkey for KMS).
+//
 //nolint:cyclop // input validation + argv build + run + classify — phases of one operation.
 func (a *Adapter) VerifyBlob(ctx context.Context, in VerifyBlobInput, errOut io.Writer) error {
 	if err := in.validate(); err != nil {
@@ -281,12 +289,52 @@ func (a *Adapter) VerifyImage(ctx context.Context, in VerifyImageInput, errOut i
 	return a.run(ctx, errOut, args...)
 }
 
+// CopyImageInput drives `cosign copy`, which copies an image together
+// with its registry-attached signatures and attestations from Source to
+// Dest, preserving the digest. This is the cross-registry promotion
+// primitive: a same-repo moving tag shares the digest-addressed signature,
+// but a different repo/registry does not, so the signature must travel
+// with the image.
+type CopyImageInput struct {
+	// Source is the image to copy from (a tag or digest ref).
+	Source string
+
+	// Dest is the destination ref (registry/path:tag). The destination
+	// registry/repo differs from Source for a genuine cross-registry copy.
+	Dest string
+}
+
+// CopyImage runs `cosign copy --force <source> <dest>`. --force makes the
+// promotion idempotent: re-promoting the same digest (the build-once
+// invariant) overwrites the destination tag rather than failing. Both the
+// source and destination registries must be authenticated in the
+// environment (e.g. a docker login / token for each).
+//
+// No --only is passed ON PURPOSE: `cosign copy` then carries the FULL evidence
+// set — the image, its signatures, attestations (incl. SLSA provenance), and
+// SBOMs — so the cross-registry/sovereign destination receives complete
+// evidence, not just the image. Do not add --only without re-checking that the
+// promoted image still verifies downstream.
+//
+// Returns errs.ErrUsage on inconsistent input; cosign's exit error
+// otherwise. errOut receives a redacted view of cosign's stderr.
+func (a *Adapter) CopyImage(ctx context.Context, in CopyImageInput, errOut io.Writer) error {
+	if err := in.validate(); err != nil {
+		return err
+	}
+
+	return a.run(ctx, errOut, "copy", "--force", in.Source, in.Dest)
+}
+
 // run invokes cosign with args. cosign's stderr is captured into a
 // buffer, run through safeexec.RedactKeyMaterial, and forwarded to
 // errOut. This keeps a hypothetical regression in cosign that echoes
 // key material on error from leaking into CI logs.
 func (a *Adapter) run(ctx context.Context, errOut io.Writer, args ...string) error {
 	cmd := safeexec.Command(ctx, a.bin(), args...)
+	if a.Env != nil {
+		cmd.Env = a.Env
+	}
 
 	var stderr bytes.Buffer
 
@@ -339,6 +387,19 @@ func (in SignImageInput) validate() error {
 
 	if !in.Keyless && in.OIDCIssuer != "" {
 		return fmt.Errorf("cosign sign image: --oidc-issuer only applies to keyless mode: %w", errs.ErrUsage)
+	}
+
+	return nil
+}
+
+// validate enforces CopyImageInput consistency before the subprocess runs.
+func (in CopyImageInput) validate() error {
+	if in.Source == "" {
+		return fmt.Errorf("cosign copy: source image reference is empty: %w", errs.ErrUsage)
+	}
+
+	if in.Dest == "" {
+		return fmt.Errorf("cosign copy: destination image reference is empty: %w", errs.ErrUsage)
 	}
 
 	return nil

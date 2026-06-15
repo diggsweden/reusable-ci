@@ -38,7 +38,11 @@ func (a *Adapter) RunInherit(ctx context.Context, stdout, stderr io.Writer, args
 		return exitErr.ExitCode(), nil
 	}
 
-	return -1, err
+	// A non-exit failure (most commonly trivy missing from PATH) is an
+	// external-dependency problem, not an internal bug — classify it so it
+	// surfaces as EX_UNAVAILABLE (69) rather than the unclassified
+	// EX_SOFTWARE (70).
+	return -1, safeexec.WrapError(err, a.bin(), safeexec.FirstArg(args))
 }
 
 func (a *Adapter) bin() string {

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -313,5 +314,48 @@ func TestRoundTrip_RewindsBodyOnRetry(t *testing.T) {
 
 	if !strings.Contains(got[0], "hello") {
 		t.Errorf("body content lost: %q", got[0])
+	}
+}
+
+// TestRoundTrip_LogsRetryAtDebug asserts retries are observable: a
+// flaky-but-recovering downstream emits a debug log per retry (reason +
+// status), so an operator running --log-level=debug can see retry counts.
+func TestRoundTrip_LogsRetryAtDebug(t *testing.T) {
+	// Swaps the global slog default, so no t.Parallel().
+	var logBuf bytes.Buffer
+
+	prev := slog.Default()
+
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	flaky := &flakyServer{failuresBeforeSuccess: 1}
+
+	srv := httptest.NewServer(flaky.Handler())
+	defer srv.Close()
+
+	transport := httpretry.NewTransport(httpretry.Config{
+		MaxAttempts: 3,
+		BaseDelay:   time.Nanosecond,
+		MaxDelay:    time.Nanosecond,
+	})
+	client := &http.Client{Transport: transport}
+
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	_ = resp.Body.Close()
+
+	out := logBuf.String()
+	if !strings.Contains(out, "http retry") {
+		t.Errorf("expected a 'http retry' debug log; got: %q", out)
+	}
+
+	if !strings.Contains(out, "reason=") || !strings.Contains(out, "503") {
+		t.Errorf("retry log missing reason/status detail: %q", out)
 	}
 }

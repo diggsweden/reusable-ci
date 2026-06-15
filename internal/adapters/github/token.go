@@ -37,8 +37,8 @@ func (p *Provider) ValidateToken(ctx context.Context, token, repo string) error 
 	url := strings.TrimRight(apiBase, "/") + "/repos/" + repo
 
 	_, err := getJSON(ctx, p.HTTPClient, url, map[string]string{
-		"Accept":               acceptJSONHeader, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		"X-GitHub-Api-Version": apiVersionHeader, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"Accept":               acceptJSONHeader,    //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"X-GitHub-Api-Version": apiVersionHeader,    //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"Authorization":        bearerHeader(token), //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	})
 	if err != nil {

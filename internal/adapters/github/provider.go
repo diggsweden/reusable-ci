@@ -84,10 +84,16 @@ func (p *Provider) envFunc() func(string) string {
 // Compile-time conformance checks. github.Provider implements every
 // provider role — it is the only adapter that does so today.
 var (
-	_ provider.Provider             = (*Provider)(nil)
-	_ provider.RepoMetadataFetcher  = (*Provider)(nil)
-	_ provider.TokenValidator       = (*Provider)(nil)
-	_ provider.ReleaseCreator       = (*Provider)(nil)
-	_ provider.ReleaseAssetUploader = (*Provider)(nil)
-	_ provider.SARIFUploader        = (*Provider)(nil)
+	_ provider.Provider              = (*Provider)(nil)
+	_ provider.RepoMetadataFetcher   = (*Provider)(nil)
+	_ provider.TokenValidator        = (*Provider)(nil)
+	_ provider.ReleaseCreator        = (*Provider)(nil)
+	_ provider.ReleaseAssetUploader  = (*Provider)(nil)
+	_ provider.SARIFUploader         = (*Provider)(nil)
+	_ provider.Describer             = (*Provider)(nil)
+	_ provider.CapabilityReporter    = (*Provider)(nil)
+	_ provider.TokenAdviser          = (*Provider)(nil)
+	_ provider.ProvenanceProfiler    = (*Provider)(nil)
+	_ provider.RunArtifactDownloader = (*Provider)(nil)
+	_ provider.RunArtifactUploader   = (*Provider)(nil)
 )

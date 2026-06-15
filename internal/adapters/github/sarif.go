@@ -15,7 +15,9 @@ import (
 
 // UploadSARIF posts a SARIF report to the GitHub Code Scanning API.
 // The SARIF body is gzip-then-base64 encoded as the API requires, then
-// wrapped in the JSON payload shape {commit_sha, ref, sarif, tool_name?}.
+// wrapped in the JSON payload shape {commit_sha, ref, sarif}. The analysis
+// category lives inside the SARIF (each run's automationDetails.id), so the
+// payload carries no separate tool_name/category.
 //
 // Skip semantics (return nil): caller-side — empty Token or empty
 // SARIF body. This method always attempts the POST; failures propagate.
@@ -38,9 +40,6 @@ func (p *Provider) UploadSARIF(ctx context.Context, up provider.SARIFUpload) err
 		"ref":        up.Ref,
 		"sarif":      encoded,
 	}
-	if up.Category != "" {
-		payload["tool_name"] = up.Category
-	}
 
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -60,7 +59,7 @@ func (p *Provider) UploadSARIF(ctx context.Context, up provider.SARIFUpload) err
 
 	return postJSON(ctx, p.HTTPClient, url, map[string]string{
 		"Authorization": "token " + up.Token, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		"Accept":        acceptJSONHeader, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		"Accept":        acceptJSONHeader,    //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"Content-Type":  "application/json",
 	}, body)
 }

@@ -48,6 +48,38 @@ func TestSignBlob_KeylessArgvShape(t *testing.T) {
 	}
 }
 
+func TestCopyImage_ArgvShape(t *testing.T) {
+	bins := mockbinary.New(t)
+	bins.Add("cosign", ":")
+
+	a := &cosign.Adapter{Bin: bins.Path("cosign")}
+
+	err := a.CopyImage(context.Background(), cosign.CopyImageInput{
+		Source: "codeberg.org/o/r:staging-v1.2.3",
+		Dest:   "ghcr.io/o/r:release",
+	}, nil)
+	if err != nil {
+		t.Fatalf("CopyImage: %v", err)
+	}
+
+	want := []string{"copy", "--force", "codeberg.org/o/r:staging-v1.2.3", "ghcr.io/o/r:release"}
+	if got := bins.Invocations("cosign")[0].Args; !slices.Equal(got, want) {
+		t.Errorf("argv:\n got=%v\nwant=%v", got, want)
+	}
+}
+
+func TestCopyImage_RejectsEmptyRefs(t *testing.T) {
+	a := cosign.New()
+
+	if err := a.CopyImage(context.Background(), cosign.CopyImageInput{Dest: "ghcr.io/o/r:release"}, nil); err == nil {
+		t.Error("empty source must be rejected")
+	}
+
+	if err := a.CopyImage(context.Background(), cosign.CopyImageInput{Source: "codeberg.org/o/r:v1"}, nil); err == nil {
+		t.Error("empty dest must be rejected")
+	}
+}
+
 func TestSignBlob_KeylessNoIssuerOmitsFlag(t *testing.T) {
 	bins := mockbinary.New(t)
 	bins.Add("cosign", ":")

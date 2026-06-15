@@ -32,6 +32,7 @@ import (
 // GitLab parity for release creation is intentionally minimal — full
 // asset-upload support is follow-up work for when the GitLab catalog
 // wires real publishing.
+//
 //nolint:cyclop // REST flow: list → delete-if-exists → create → upload links.
 func (p *Provider) CreateRelease(ctx context.Context, repo string, spec provider.ReleaseSpec) error {
 	if spec.Tag == "" {
