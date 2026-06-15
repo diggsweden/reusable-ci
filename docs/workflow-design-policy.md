@@ -220,26 +220,22 @@ Replaced in the workflows (node-less, and so forge-portable):
   config read by docker, podman/buildah, skopeo, and cosign). The one remaining
   use is the provenance job, where the only alternative is to *add*
   `actions/checkout` to bootstrap — no net win.
-- `actions/{up,down}load-artifact` → `artifact upload`/`download`. The verbs read
-  and write the **same** GitHub artifact v4 store as the actions (interop both
-  ways) and are identical on GitHub and Forgejo. Flag mapping: `name:`→`--name`
-  / `$ARTIFACT_NAME`; `path:`→`--path` / `$ARTIFACT_PATHS` for uploads (glob with
-  `*`/`**`/`[set]`/`!exclude`, multi-line blocks, and lowest-common-ancestor root
-  so directory structure is preserved — the `@actions/glob` contract reimplemented
-  in Go) or `--dir` / `$ARTIFACT_DIR` for download destinations; `pattern:`/
-  `merge-multiple:`→`--pattern`/`--merge-multiple`; `include-hidden-files:`→
-  `--include-hidden` (off by default, matching upload-artifact);
-  `retention-days:`/`if-no-files-found:` map 1:1. Workflows pass these via `env:`
-  (so GitHub expressions never hit the shell). `artifact upload` drives the v4
-  "results" backend via the runner-provided `ACTIONS_RUNTIME_TOKEN` +
-  `ACTIONS_RESULTS_URL`, so it is **untestable off-runner** — verify on a real CI
-  run. Four kept exceptions, all where the binary cannot be present:
-  reusable-ci's own self-build (`build-cli.yml`, the job that *produces* the
-  binary), the `self-runtime-container.yml` "Download CLI dist" steps (they fetch
-  the binary itself — chicken-and-egg), the `lint-nanolinter.yml` panel upload (a
-  non-root node-less flavour image where reusable-ci is installed only
-  conditionally, late, and off `PATH`), and the OpenSSF Scorecard `analysis` job
-  upload (must stay pure-actions for the scorecard publish webapp).
+- `actions/download-artifact` → `artifact download` (node-less, forge-portable).
+  Download uses the GitHub REST artifacts API, which a `run:` step *can* reach, so
+  the CLI verb stays. Flag mapping via `env:`: `name:`→`$ARTIFACT_NAME`; `path:`→
+  `$ARTIFACT_DIR`; `pattern:`→`$ARTIFACT_PATTERN`; `merge-multiple:`→
+  `$ARTIFACT_MERGE_MULTIPLE`. The REST call needs auth, and `$GITHUB_TOKEN` is
+  **not** auto-present in run steps, so each download step passes
+  `GH_TOKEN: ${{ github.token }}`.
+- Artifact **upload** stays `actions/upload-artifact` — deliberately **not** a CLI
+  verb on GitHub. Upload goes only through the Actions "results" service, gated by
+  `ACTIONS_RUNTIME_TOKEN`, which the runner injects into *actions* but **never into
+  `run:` steps** — a run-step CLI cannot authenticate (and there is no REST upload
+  endpoint). The `reusable-ci artifact upload` verb still exists for Forgejo (whose
+  runner *does* expose the runtime token to run steps) and for interop with the v4
+  store, but every GitHub workflow uploads via the action. `with:` mapping is 1:1:
+  `name`, `path` (glob `*`/`**`/`[set]`/`!exclude`, multi-line), `if-no-files-found`,
+  `retention-days`, `include-hidden-files`.
 
 Verb exists, but adoption is gated on a CI proof (not yet swapped):
 - `actions/checkout` → `platform checkout` (`--fetch-tags`, `--sparse` cone +
