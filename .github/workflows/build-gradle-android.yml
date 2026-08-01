@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
-# SPDX-License-Identifier: CC0-1.0
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 # Gradle Android Builder
 # 
 # Purpose: Builds Android applications with multiple product flavors and build types,
@@ -18,7 +18,7 @@
 #   - AAB (Android App Bundle) generation
 #   - Date-stamped artifact names
 #   - Custom artifact naming (playstore names, prefixes)
-#   - Configurable JDK distribution (temurin, zulu, adopt, corretto)
+#   - Runtime image with pinned JDK, Gradle, and Android SDK tooling
 #   - Android app signing
 #
 # Outputs:
@@ -39,10 +39,6 @@ on:
   workflow_call:
     inputs:
       # === REQUIRED ===
-      java-version:
-        description: "Java version (e.g., 17, 21)"
-        required: true
-        type: string
       build-module:
         description: "Gradle module to build (e.g., app)"
         required: true
@@ -64,7 +60,7 @@ on:
         default: true
         type: boolean
       gradle-tasks:
-        description: "Override the derived gradle task list (e.g., 'assembleDemoRelease bundleDemoRelease'). When set, takes precedence over product-flavor/build-types/include-aab. Leave empty to derive tasks from those inputs."
+        description: "Override the derived gradle task list (e.g., 'assembleDemoRelease app:bundleDemoRelease'). When set, takes precedence over product-flavor/build-types/include-aab. Leave empty to derive tasks from those inputs."
         required: false
         default: ""
         type: string
@@ -84,12 +80,6 @@ on:
         required: false
         default: true
         type: boolean
-      # === JDK CONFIGURATION ===
-      jdk-distribution:
-        description: "JDK distribution (temurin, zulu, adopt, corretto)"
-        required: false
-        default: "temurin"
-        type: string
       # === BUILD CONFIGURATION ===
       enable-signing:
         description: "Enable Android app signing"
@@ -116,11 +106,28 @@ on:
         required: false
         default: true
         type: boolean
-      reusable-ci-ref:
-        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+      runtime-image:
+        description: "reusable-ci runtime image carrying JDK + Gradle + Android SDK. Optional override; default uses the matching v3.0.0 runtime image."
         required: false
-        default: "main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-android-35:v3.0.0"
         type: string
+    # All `required: false` — `secrets: inherit` callers unchanged.
+    secrets:
+      ANDROID_KEYSTORE:
+        description: "Base64-encoded Android signing keystore (.jks/.keystore)"
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        description: "Password for ANDROID_KEYSTORE"
+        required: false
+      ANDROID_KEY_ALIAS:
+        description: "Alias of the signing key inside ANDROID_KEYSTORE"
+        required: false
+      ANDROID_KEY_PASSWORD:
+        description: "Password for the key referenced by ANDROID_KEY_ALIAS"
+        required: false
+      SECRETS_PROPERTIES_BASE64:
+        description: "Base64-encoded secrets.properties file (Google Maps API keys, etc.)"
+        required: false
     outputs:
       debug-name:
         description: "Uploaded artefact name for the debug APK"
@@ -139,192 +146,129 @@ permissions:
 jobs:
   build-variants:
     name: Build Gradle Android
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     outputs:
-      debug-name: ${{ steps.artifact-names.outputs.debug-name }}
-      release-name: ${{ steps.artifact-names.outputs.release-name }}
-      aab-name: ${{ steps.artifact-names.outputs.aab-name }}
-      sbom-name: ${{ steps.artifact-names.outputs.sbom-name }}
+      debug-name: ${{ steps.build.outputs.debug-name }}
+      release-name: ${{ steps.build.outputs.release-name }}
+      aab-name: ${{ steps.build.outputs.aab-name }}
+      sbom-name: ${{ steps.build.outputs.sbom-name }}
     steps:
+      # Defense-in-depth: refuse PR-context triggers. ANDROID_KEYSTORE +
+      # SECRETS_PROPERTIES_BASE64 land in env for this job; must never
+      # run with PR-HEAD code. reusable-ci is pre-baked.
+      - name: Refuse PR-context trigger (publish/release secrets in scope)
+        run: reusable-ci validate event-context
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CHECKOUT_REF: ${{ inputs.branch }}
+          # All branch refs + tags needed: many Android build.gradle.kts files
+          # read git history to derive versionCode (e.g.
+          # `git rev-list --count origin/main`), which needs refs/remotes/origin/*.
+          CHECKOUT_FETCH_ALL_REFS: "true"
+        run: reusable-ci platform checkout
+      - name: Cache Gradle
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          ref: ${{ inputs.branch }}
-          # Full history needed: many Android build.gradle.kts files read git
-          # history to derive versionCode (e.g. git rev-list --count origin/main).
-          # Matches build-gradle-app.yml.
-          fetch-depth: 0
-      - name: Checkout .github repository for scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
-      - name: Generate artifact names
-        id: artifact-names
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-android-${{ hashFiles(format('{0}/gradle/wrapper/gradle-wrapper.properties', inputs['working-directory']), format('{0}/**/*.gradle*', inputs['working-directory']), format('{0}/**/gradle.properties', inputs['working-directory'])) }}
+          restore-keys: gradle-android-
+      - name: Build Android project
+        id: build
+        # One step owns the whole build sequence (artifact-names → keystore →
+        # metadata → tasks → secrets.properties → build → SBOM → status); the
+        # binary threads the keystore path + tasks internally and branches on
+        # --enable-signing, so the same `build gradle-android run` runs on
+        # GitLab. Signing passwords stay env vars the gradle build reads; only
+        # platform-transport (checkout, cache, upload) wraps it.
+        working-directory: ${{ inputs['working-directory'] }}
         env:
           INCLUDE_DATE_STAMP: ${{ inputs['include-date-stamp'] }}
           ARTIFACT_NAME_PREFIX: ${{ inputs['artifact-name-prefix'] }}
           REPOSITORY_NAME: ${{ github.event.repository.name }}
           PRODUCT_FLAVOR: ${{ inputs['product-flavor'] }}
           ARTIFACT_NAME: ${{ inputs['artifact-name'] }}
-        run: |
-          bash .github-shared/scripts/android/generate-artifact-names.sh \
-            "$INCLUDE_DATE_STAMP" \
-            "$ARTIFACT_NAME_PREFIX" \
-            "$REPOSITORY_NAME" \
-            "$PRODUCT_FLAVOR" \
-            "$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
-      - name: Set up JDK
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
-        with:
-          distribution: ${{ inputs['jdk-distribution'] }}
-          java-version: ${{ inputs['java-version'] }}
-          cache: 'gradle'
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
-      - name: Make gradlew executable
-        working-directory: ${{ inputs['working-directory'] }}
-        run: chmod +x ./gradlew
-      - name: Decode Android keystore
-        if: ${{ inputs['enable-signing'] }}
-        working-directory: ${{ inputs['working-directory'] }}
-        env:
+          ENABLE_SIGNING: ${{ inputs['enable-signing'] }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE }}
-        run: |
-          bash .github-shared/scripts/android/decode-keystore.sh >> "$GITHUB_ENV"
-      - name: Get version info
-        id: version-info
-        working-directory: ${{ inputs['working-directory'] }}
-        run: bash .github-shared/scripts/android/get-version-info.sh >> "$GITHUB_OUTPUT"
-      - name: Determine build tasks
-        id: build-tasks
-        env:
-          GRADLE_TASKS_OVERRIDE: ${{ inputs['gradle-tasks'] }}
-          PRODUCT_FLAVOR: ${{ inputs['product-flavor'] }}
-          BUILD_TYPES: ${{ inputs['build-types'] }}
-          INCLUDE_AAB: ${{ inputs['include-aab'] }}
-          BUILD_MODULE: ${{ inputs['build-module'] }}
-        run: |
-          if [[ -n "$GRADLE_TASKS_OVERRIDE" ]]; then
-            printf "tasks=%s\n" "$GRADLE_TASKS_OVERRIDE" >> "$GITHUB_OUTPUT"
-            printf "Building with explicit tasks: %s\n" "$GRADLE_TASKS_OVERRIDE"
-          else
-            bash .github-shared/scripts/android/resolve-build-tasks.sh \
-              "$PRODUCT_FLAVOR" \
-              "$BUILD_TYPES" \
-              "$INCLUDE_AAB" \
-              "$BUILD_MODULE" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Decode secrets properties
-        # Standard Android pattern: gradle scripts read secrets.properties for
-        # build-time secrets (API keys, signing config, etc.). Mirrors the
-        # pre-split build-gradle-app.yml step.
-        working-directory: ${{ inputs['working-directory'] }}
-        env:
-          SECRETS_PROPERTIES: ${{ secrets.SECRETS_PROPERTIES_BASE64 }}
-        run: |
-          if [ -n "$SECRETS_PROPERTIES" ]; then
-            printf "%s" "$SECRETS_PROPERTIES" | base64 -d > secrets.properties
-          fi
-      - name: Run Gradle build
-        working-directory: ${{ inputs['working-directory'] }}
-        env:
+          SECRETS_PROPERTIES_BASE64: ${{ secrets.SECRETS_PROPERTIES_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          GRADLE_TASKS_OVERRIDE: ${{ inputs['gradle-tasks'] }}
+          BUILD_TYPES: ${{ inputs['build-types'] }}
+          INCLUDE_AAB: ${{ inputs['include-aab'] }}
+          BUILD_MODULE: ${{ inputs['build-module'] }}
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
-          GRADLE_TASKS: ${{ steps.build-tasks.outputs.tasks }}
-        run: bash .github-shared/scripts/android/build-gradle.sh
-      - name: Generate Build SBOM
-        id: sbom
-        if: ${{ inputs['enable-build-sbom'] }}
-        continue-on-error: true
-        working-directory: ${{ inputs['working-directory'] }}
-        env:
+          ENABLE_BUILD_SBOM: ${{ inputs['enable-build-sbom'] }}
           # renovate: datasource=maven depName=org.cyclonedx:cyclonedx-gradle-plugin
           CYCLONEDX_GRADLE_VERSION: "3.2.1"
-        run: bash "${{ github.workspace }}/.github-shared/scripts/sbom/build/gradle/generate-gradle-sbom.sh"
+        run: reusable-ci build gradle-android run
       - name: Upload Build SBOM
         if: ${{ hashFiles(format('{0}/**/build/reports/bom.json', inputs['working-directory'])) != '' }}
+        # Variant-scoped name (from generate-artifact-names.sh) so matrix
+        # dispatch in release-build-stage.yml doesn't collide when multiple
+        # flavors/modules build in parallel. Distinct from APK/AAB names so
+        # the SBOM survives independently of app uploads.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          # Variant-scoped name (from generate-artifact-names.sh) so matrix
-          # dispatch in release-build-stage.yml doesn't collide when multiple
-          # flavors/modules build in parallel. Distinct from APK/AAB names so
-          # the SBOM survives independently of app uploads.
-          name: ${{ steps.artifact-names.outputs.sbom-name }}
+          name: ${{ steps.build.outputs.sbom-name }}
           path: |
             ${{ inputs['working-directory'] }}/build/reports/bom.json
             ${{ inputs['working-directory'] }}/**/build/reports/bom.json
-          retention-days: 7
+          retention-days: "7"
           if-no-files-found: warn
-      - name: Write SBOM status to step summary
-        if: always()
-        env:
-          SBOM_OUTCOME: ${{ steps.sbom.outcome }}
-          WORKDIR: ${{ inputs['working-directory'] }}
-        run: |
-          # shellcheck disable=SC2016  # backticks inside single quotes are intentional markdown
-          {
-            printf '### Build SBOM\n'
-            if [[ "$SBOM_OUTCOME" == "success" ]]; then
-              bom=$(find "$WORKDIR" -path '*/build/reports/bom.json' 2>/dev/null | sort | head -1)
-              if [[ -n "$bom" ]]; then
-                printf -- '- ✅ CycloneDX: `%s`\n' "$bom"
-              else
-                printf -- '- ⚠️ Generated but file not located — check plugin output path\n'
-              fi
-            else
-              printf -- '- ⚠️ Generation step did not succeed (continued as advisory)\n'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         env:
           BUILD_MODULE: ${{ inputs['build-module'] }}
-        run: bash .github-shared/scripts/android/list-built-artifacts.sh
+        run: reusable-ci build gradle-android list-artifacts
       - name: Upload Debug APK
         if: contains(inputs['build-types'], 'debug')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ steps.artifact-names.outputs.debug-name }}
+          name: ${{ steps.build.outputs.debug-name }}
           path: |
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/apk/**/debug/*.apk
-          retention-days: 7
+          retention-days: "7"
+          if-no-files-found: warn
       - name: Upload Release APK
         if: contains(inputs['build-types'], 'release')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ steps.artifact-names.outputs.release-name }}
+          name: ${{ steps.build.outputs.release-name }}
           path: |
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/apk/**/release/*.apk
-          retention-days: 7
+          retention-days: "7"
+          if-no-files-found: warn
       - name: Upload AAB
         if: ${{ inputs['include-aab'] && contains(inputs['build-types'], 'release') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ steps.artifact-names.outputs.aab-name }}
+          name: ${{ steps.build.outputs.aab-name }}
           path: |
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/bundle/**/*.aab
-          retention-days: 7
+          retention-days: "7"
+          if-no-files-found: error
       - name: Generate build summary
         env:
-          JAVA_VERSION: ${{ inputs['java-version'] }}
-          JDK_DIST: ${{ inputs['jdk-distribution'] }}
           BUILD_MODULE: ${{ inputs['build-module'] }}
           FLAVOR: ${{ inputs['product-flavor'] }}
           BUILD_TYPES: ${{ inputs['build-types'] }}
           INCLUDE_AAB: ${{ inputs['include-aab'] }}
           SIGNING: ${{ inputs['enable-signing'] }}
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
-          VERSION: ${{ steps.version-info.outputs.version }}
-          VERSION_CODE: ${{ steps.version-info.outputs.version-code }}
-          DEBUG_NAME: ${{ steps.artifact-names.outputs.debug-name }}
-          RELEASE_NAME: ${{ steps.artifact-names.outputs.release-name }}
-          AAB_NAME: ${{ steps.artifact-names.outputs.aab-name }}
-        run: bash .github-shared/scripts/summary/write-android-build-summary.sh >> "$GITHUB_STEP_SUMMARY"
+          VERSION: ${{ steps.build.outputs.version }}
+          VERSION_CODE: ${{ steps.build.outputs.version-code }}
+          DEBUG_NAME: ${{ steps.build.outputs.debug-name }}
+          RELEASE_NAME: ${{ steps.build.outputs.release-name }}
+          AAB_NAME: ${{ steps.build.outputs.aab-name }}
+          JAVA_VERSION: "25"
+          JDK_DIST: "Temurin"
+        run: reusable-ci report build android

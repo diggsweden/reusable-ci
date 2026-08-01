@@ -1,0 +1,20 @@
+reusable-ci is dual-licensed. You may use, modify, and redistribute it under
+the terms of EITHER:
+
+  - the European Union Public Licence v1.2 (EUPL-1.2), OR
+  - the GNU General Public License v3.0 or any later version
+    (GPL-3.0-or-later),
+
+at your option.
+
+The full license texts are in the LICENSES/ directory:
+
+  - LICENSES/EUPL-1.2.txt
+  - LICENSES/GPL-3.0-or-later.txt
+
+This project follows the REUSE specification (https://reuse.software): every
+file carries an SPDX license identifier, either in its header or in REUSE.toml.
+Most source files are marked `EUPL-1.2 OR GPL-3.0-or-later`; configuration,
+documentation, example templates, and test data are marked `CC0-1.0` (public
+domain) so they can be reused without obligation. Consult each file's SPDX
+identifier for its precise terms.

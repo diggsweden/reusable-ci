@@ -1,0 +1,110 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+#
+# GitLab CI/CD Catalog component: upload an IPA to App Store Connect. The GitLab
+# counterpart of .github/workflows/publish-apple-appstore.yml.
+#
+# App Store Connect is an EXTERNAL service and the upload uses Apple's own CLI
+# (`xcrun altool`), so this flow is forge-neutral — identical to GitHub, just on
+# a GitLab macOS runner. Sequence: validate event-context → find the IPA →
+# prepare the API key → (optional) altool --validate-app → altool --upload-app →
+# parse the result → write the summary. The binary does find-ipa /
+# prepare-credentials / parse-upload-result; altool does the validate + upload.
+#
+# RUNNER: requires a macOS runner with Xcode (altool). Set --runner-tags to your
+# macOS runner's tags (e.g. saas-macos-medium-m1 on GitLab SaaS) and --macos-image
+# to the desired image.
+#
+# ARTIFACT CONTRACT: the built IPA must already be in artifacts/ in the working
+# directory — provide it via GitLab native artifact passing (`needs:`/
+# `dependencies:` on the build-xcode job). The GitLab provider has no run-artifact
+# API, so `reusable-ci artifact download` is not used here.
+#
+# REQUIRED CI/CD VARIABLES (set masked + protected):
+#   APP_STORE_CONNECT_API_KEY_ID               App Store Connect API key ID
+#   APP_STORE_CONNECT_ISSUER_ID                API issuer ID (UUID)
+#   APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64   base64-encoded .p8 private key
+#
+# Consume (pin a released version):
+#   include:
+#     - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/publish-apple-appstore@1.0.0
+#       inputs:
+#         platform: ios
+#         runner-tags: [saas-macos-medium-m1]
+spec:
+  inputs:
+    stage:
+      default: publish
+      description: Pipeline stage the publish runs in.
+    job-name:
+      default: publish-apple-appstore
+      description: Name of the generated job.
+    artifact-name:
+      default: ""
+      description: Logical name of the build artifact consumed (reported; the IPA must be present via GitLab artifact passing).
+    version:
+      default: ""
+      description: Release version (reported in the summary).
+    project-type:
+      default: xcode_ios
+      description: Ecosystem of the artifact (accepted for fan-out symmetry).
+    platform:
+      default: ios
+      options: ["ios", "macos", "tvos"]
+      description: App Store platform passed to altool --type.
+    skip-validation:
+      type: boolean
+      default: false
+      description: Skip the altool --validate-app step before upload.
+    runner-tags:
+      type: array
+      default: ["saas-macos-medium-m1"]
+      description: Tags selecting the macOS runner (must have Xcode/altool).
+    macos-image:
+      default: "macos-15-xcode-16"
+      description: macOS runner image.
+---
+"$[[ inputs.job-name ]]":
+  stage: $[[ inputs.stage ]]
+  tags: $[[ inputs.runner-tags ]]
+  image: $[[ inputs.macos-image ]]
+  variables:
+    PLATFORM: "$[[ inputs.platform ]]"
+    SKIP_VALIDATION: "$[[ inputs.skip-validation ]]"
+    # find-ipa / parse-upload-result emit IPA_FILE / REQUEST_ID into this dotenv;
+    # GitLab only auto-loads it for *downstream* jobs, so we source it within the
+    # job before the steps that read those values.
+    CI_OUTPUT: "$CI_PROJECT_DIR/appstore-publish.env"
+    CI_SUMMARY_FILE: "$CI_PROJECT_DIR/appstore-publish-summary.md"
+  script:
+    # Defense-in-depth: refuse MR-context triggers — App Store Connect
+    # credentials are in this job's env and must never run with MR-HEAD code.
+    - reusable-ci validate event-context
+    # find-ipa locates the IPA under artifacts/ and emits IPA_FILE; source it.
+    - reusable-ci publish appstore find-ipa
+    - 'set -a; [ -f "$CI_OUTPUT" ] && . "$CI_OUTPUT"; set +a'
+    - reusable-ci publish appstore prepare-credentials
+    - |
+      if [ "$SKIP_VALIDATION" != "true" ]; then
+        xcrun altool --validate-app \
+          --file "$IPA_FILE" --type "$PLATFORM" \
+          --apiKey "$APP_STORE_CONNECT_API_KEY_ID" \
+          --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID" \
+          --output-format json
+      fi
+    - |
+      set -eo pipefail
+      xcrun altool --output-format json --upload-app \
+        --file "$IPA_FILE" --type "$PLATFORM" \
+        --apiKey "$APP_STORE_CONNECT_API_KEY_ID" \
+        --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID" \
+        | tee upload-result.json
+    # parse-upload-result emits REQUEST_ID; re-source for the summary.
+    - reusable-ci publish appstore parse-upload-result
+    - 'set -a; [ -f "$CI_OUTPUT" ] && . "$CI_OUTPUT"; set +a'
+    - reusable-ci report publish appstore
+  artifacts:
+    when: always
+    paths:
+      - upload-result.json

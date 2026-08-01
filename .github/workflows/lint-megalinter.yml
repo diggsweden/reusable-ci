@@ -1,0 +1,133 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+# Description:
+# Alternative PR lint surface — runs MegaLinter against the consumer repository
+# and uploads its security findings to GitHub Code Scanning as SARIF. The peer
+# of lint-nanolinter.yml: selected by `lint-engine: megalinter` on the
+# pullrequest orchestrator. nanolinter and megalinter are mutually exclusive
+# (the PR plan runs at most one), so this never runs alongside nanolinter.
+#
+# MegaLinter is the heavier, governance-recognised engine: it runs its 100+
+# bundled linters from the pinned `oxsecurity/megalinter` image. Unlike the
+# node-less nanolinter flavour image, this job runs on a standard runner with a
+# writable workspace, so MegaLinter writes its own job-summary panel directly —
+# no artifact-shipping is needed.
+#
+# Contract (identical to lint-nanolinter.yml): run as a gate → emit SARIF →
+# reusable-ci enrich + upload to Code Scanning. The SARIF glue is engine-
+# agnostic (it reads the scanner name from the SARIF tool.driver), so MegaLinter
+# findings land in Code Scanning exactly like nanolinter's.
+#
+# Adopter configuration is MegaLinter-native: a `.mega-linter.yml` at the repo
+# root is read automatically — the reason this engine exists for teams that
+# standardise on MegaLinter.
+#
+# NOTE: the MegaLinter container invocation below is the first cut and wants
+# live validation on a real PR before v3.0.0 (flavour/digest pin, diff-vs-full
+# behaviour, docker-socket needs of individual linters).
+name: Lint MegaLinter
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      megalinter-image:
+        description: "MegaLinter image to lint in (pin by @sha256; pick a flavour at https://megalinter.io/flavors/)"
+        required: false
+        default: "oxsecurity/megalinter:v8"
+        type: string
+      reusable-ci-binary-ref:
+        description: "reusable-ci version installed (cosign-verified) for the SARIF enrich/upload commands. Use a published release tag (vN.N.N or vN.N.N-pre) so the bootstrap scripts + signature resolve."
+        required: false
+        default: "v3.0.0"
+        type: string
+      upload-sarif:
+        description: "Upload MegaLinter's security SARIF to GitHub Code Scanning"
+        required: false
+        default: true
+        type: boolean
+      sarif-category:
+        description: "Code Scanning category label for the MegaLinter security SARIF"
+        required: false
+        default: "megalinter-security"
+        type: string
+    secrets:
+      CODE_SCANNING_TOKEN:
+        description: "Token with security-events:write for SARIF upload"
+        required: false
+permissions:
+  contents: read
+jobs:
+  megalinter-lint:
+    name: MegaLinter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      # MegaLinter writes its SARIF here under the mounted workspace.
+      SARIF_FILE: megalinter-reports/megalinter-report.sarif
+    steps:
+      - name: Checkout repository
+        # Full history so MegaLinter can scope to the PR diff against the base.
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+      - name: Run MegaLinter (security gate)
+        # Runs the pinned MegaLinter container over the workspace. SARIF_REPORTER
+        # emits the SARIF the steps below upload; DISABLE_ERRORS=false makes a
+        # blocking finding fail the container (the lint gate). The step fails
+        # directly so the red lands HERE; the SARIF steps still run via
+        # `if: always()`, so findings reach Code Scanning even on a failed gate.
+        env:
+          MEGALINTER_IMAGE: ${{ inputs['megalinter-image'] }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock:rw \
+            -v "${GITHUB_WORKSPACE}:/tmp/lint:rw" \
+            -e SARIF_REPORTER=true \
+            -e DISABLE_ERRORS=false \
+            -e GITHUB_TOKEN \
+            "$MEGALINTER_IMAGE"
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            printf '::error::MegaLinter found blocking lint issues — see the MegaLinter summary above (this is a lint gate on your code, not a workflow error).\n'
+          fi
+          exit "$rc"
+      - name: Install cosign
+        # Needed by the reusable-ci bootstrap installer's fail-closed signature
+        # check (the nanolinter flavour image bakes cosign; a standard runner
+        # does not).
+        if: always() && inputs.upload-sarif && hashFiles(env.SARIF_FILE) != ''
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Install reusable-ci (cosign-verified, SARIF tooling)
+        id: install
+        # SARIF glue only, via the canonical cosign-verified bootstrap installer
+        # at $BINARY_REF — the same fail-closed (REUSABLE_CI_REQUIRE_COSIGN=1)
+        # install path the rest of the suite uses.
+        if: always() && inputs.upload-sarif && hashFiles(env.SARIF_FILE) != ''
+        env:
+          BINARY_REF: ${{ inputs.reusable-ci-binary-ref }}
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          raw="https://raw.githubusercontent.com/diggsweden/reusable-ci/${BINARY_REF}/scripts/bootstrap"
+          curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-common.sh" "$raw/install-common.sh"
+          curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-reusable-ci.sh" "$raw/install-reusable-ci.sh"
+          REUSABLE_CI_REQUIRE_COSIGN=1 bash "$work/install-reusable-ci.sh" "$BINARY_REF"
+      - name: Enrich + upload MegaLinter SARIF to Code Scanning
+        # Gated on install success: if reusable-ci couldn't be installed this
+        # skips honestly rather than faking success. continue-on-error so a
+        # transient Code Scanning API failure doesn't turn the lint gate red —
+        # the gate is the "Run MegaLinter" step above.
+        if: always() && inputs.upload-sarif && steps.install.outcome == 'success'
+        continue-on-error: true
+        env:
+          CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
+          SARIF_CATEGORY: ${{ inputs.sarif-category }}
+        run: |
+          set -euo pipefail
+          [ -f "$SARIF_FILE" ] || exit 0
+          reusable-ci security report enrich-sarif
+          reusable-ci security report upload-sarif

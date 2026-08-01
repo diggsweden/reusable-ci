@@ -1,33 +1,33 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
-# SPDX-License-Identifier: CC0-1.0
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 #
 # Cargo SBOM
 #
 # Generates a CycloneDX Build SBOM for a Rust project or workspace using
 # cargo-cyclonedx, and uploads it as `cargo-build-sbom` by default.
-# Workspaces get one bom.json per crate; the aggregator in
-# scripts/sbom/generate-sboms.sh picks the aggregate (root crate) BOM — the
-# one with the smallest path depth — when consolidating.
+# Workspaces get one bom.json per crate; reusable-ci sbom assemble --plan
+# picks the aggregate (root crate) BOM, the one with the smallest path depth,
+# when consolidating.
 #
-# This workflow handles the platform-agnostic concerns for cargo artefacts.
-# It deliberately does not invoke `cargo build` or `cargo test`: rust binaries
-# are platform-specific and are produced inside the Containerfile during
-# publish-container.yml's matrix dispatch (see docs/sbom.md for the artefact-first
-# vs container-first framing). cargo-cyclonedx resolves the dependency graph from
-# Cargo.lock, so the SBOM is accurate without compiling.
+# This workflow targets container-first cargo artefacts (build-mode:
+# container-first). It deliberately does not invoke `cargo build` or
+# `cargo test`: in container-first the compile happens inside the
+# Containerfile during publish-container.yml's matrix dispatch.
+# cargo-cyclonedx resolves the dependency graph from Cargo.lock, so the
+# SBOM is accurate without compiling.
 #
-# `cargo install --locked --version` pins cargo-cyclonedx to a reproducible
-# version so the SBOM tool itself can't drift under us.
+# Artefact-first cargo (build-mode: artifact-first) does not use this
+# workflow — `build-cargo.yml` runs `cargo cyclonedx` inline alongside
+# the cross-compile, mirroring `build-go.yml`'s shape. See docs/sbom.md.
+#
+# Runs inside the reusable-ci-runtime-rust image — Rust toolchain and
+# cargo-cyclonedx are baked in, so no `cargo install` happens per run.
 #
 name: Cargo SBOM
 on:
   workflow_call:
     inputs:
-      rust-toolchain:
-        description: "Rust toolchain version (e.g., 1.90, stable)"
-        required: true
-        type: string
       working-directory:
         description: "Working directory"
         required: false
@@ -48,90 +48,70 @@ on:
         required: false
         default: true
         type: boolean
-      reusable-ci-ref:
-        description: "Ref of diggsweden/reusable-ci to source shared scripts from"
+      runtime-image:
+        description: "reusable-ci runtime image carrying the Rust toolchain. Optional override; default uses the matching v3.0.0 runtime image."
         required: false
-        default: "main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-rust-stable:v3.0.0"
         type: string
 permissions:
   contents: read
 jobs:
   sbom-cargo:
     name: Cargo SBOM
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.branch }}
-      - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
-          fetch-depth: 1
-      - name: Install Rust toolchain
         env:
-          WORKDIR: ${{ inputs['working-directory'] }}
-          TOOLCHAIN: ${{ inputs['rust-toolchain'] }}
-        run: bash .github-shared/scripts/cargo/install-toolchain.sh
-      # Caches ~/.cargo (registry, git, installed bins) + target/. Keyed by
-      # Cargo.lock so cache invalidates when dependencies change.
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+          GITHUB_TOKEN: ${{ github.token }}
+          CHECKOUT_REF: ${{ inputs.branch }}
+        run: reusable-ci platform checkout
+      # Cache only what cargo-cyclonedx actually consults: the crates.io
+      # registry index/cache and the git db (for git-source dependencies).
+      # No target/ — this workflow doesn't compile. CARGO_HOME is fixed
+      # at /usr/local/cargo by the runtime image.
+      - name: Cache cargo registry
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          workspaces: ${{ inputs['working-directory'] }}
+          path: |
+            /usr/local/cargo/registry/index
+            /usr/local/cargo/registry/cache
+            /usr/local/cargo/git/db
+          key: cargo-sbom-${{ runner.os }}-${{ hashFiles(format('{0}/Cargo.lock', inputs['working-directory'])) }}
+          restore-keys: |
+            cargo-sbom-${{ runner.os }}-
       - name: Generate Build SBOM
         id: sbom
         if: ${{ inputs['enable-build-sbom'] }}
-        continue-on-error: true
         working-directory: ${{ inputs['working-directory'] }}
-        env:
-          # renovate: datasource=crate depName=cargo-cyclonedx
-          CARGO_CYCLONEDX_VERSION: "0.5.9"
-        run: |
-          cargo install --locked cargo-cyclonedx --version "${CARGO_CYCLONEDX_VERSION}"
-          # --all covers every workspace member; single-crate projects get one
-          # bom.json at the crate root. --override-filename normalises the name.
-          cargo cyclonedx --all --format json --override-filename bom
+        # Binary-owned: runs cargo-cyclonedx (baked into the runtime image) —
+        # `--all` covers every workspace member, `--override-filename bom`
+        # normalises the name — the same invocation, now under the `sbom` surface.
+        run: reusable-ci sbom build --project-type cargo
       - name: Upload Cargo SBOM
         if: steps.sbom.outcome == 'success'
+        # When called from release-build-stage.yml's per-artefact matrix,
+        # artifact-name is set to the cargo artefact's user-chosen name
+        # (e.g. "hsm-worker") so each upload is unique. Direct callers
+        # who don't pass artifact-name fall back to the bare default,
+        # which is fine for single-cargo-artefact projects.
+        # SBOM generation is advisory (beta); a missing bom.json warns, not fails.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          # When called from release-build-stage.yml's per-artefact matrix,
-          # artifact-name is set to the cargo artefact's user-chosen name
-          # (e.g. "hsm-worker") so each upload is unique. Direct callers
-          # who don't pass artifact-name fall back to the bare default,
-          # which is fine for single-cargo-artefact projects.
           name: ${{ inputs['artifact-name'] != '' && format('{0}-cargo-build-sbom', inputs['artifact-name']) || 'cargo-build-sbom' }}
           path: |
             ${{ inputs['working-directory'] }}/bom.json
             ${{ inputs['working-directory'] }}/**/bom.json
-          retention-days: 7
-          # SBOM generation is advisory (beta); a missing bom.json should not
-          # fail the workflow.
+          retention-days: "7"
           if-no-files-found: warn
       - name: Write SBOM status to step summary
         if: always()
         env:
+          SBOM_KIND: cargo
           SBOM_OUTCOME: ${{ steps.sbom.outcome }}
-          WORKDIR: ${{ inputs['working-directory'] }}
-        run: |
-          {
-            printf '### Build SBOM\n'
-            if [[ "$SBOM_OUTCOME" == "success" ]]; then
-              count=$(find "$WORKDIR" -name bom.json -not -path '*/target/*' 2>/dev/null | wc -l)
-              if (( count > 0 )); then
-                printf -- '- ✅ CycloneDX: %s bom.json file(s)\n' "$count"
-              else
-                printf -- '- ⚠️ cargo-cyclonedx reported success but produced no bom.json\n'
-              fi
-            else
-              printf -- '- ⚠️ Generation step did not succeed (continued as advisory)\n'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: reusable-ci report status sbom-count

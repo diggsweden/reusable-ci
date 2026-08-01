@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+#
+# Example: the MegaLinter PR lint gate on GitLab CI — the analog of an example
+# PR workflow that sets `lint-engine: megalinter` on GitHub. MegaLinter is the
+# heavier, governance-recognised alternative to nanolinter; a project includes
+# one lint component, not both.
+#
+# Version is pinned to a Catalog release (GitLab recommends pinning over moving
+# targets like ~latest or a branch). Pick the MegaLinter flavour for your stack.
+stages:
+  - test
+
+include:
+  - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/megalinter@1.0.0
+    inputs:
+      megalinter-image: "oxsecurity/megalinter-java:v8"

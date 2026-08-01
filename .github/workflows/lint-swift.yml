@@ -1,16 +1,17 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
-# SPDX-License-Identifier: CC0-1.0
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 # Swift Lint Workflow
-# 
+#
 # Purpose: Runs Swift code linting and formatting checks using swift-format
 # and optionally SwiftLint for iOS/macOS projects.
 #
 # How it works:
 # 1. Checks out the repository
 # 2. Installs swift-format (and optionally SwiftLint)
-# 3. Runs linting on all Swift files
-# 4. Reports violations and fails if errors are found
+# 3. Runs linting via `reusable-ci build swift …` — Go owns the file
+#    enumeration, exit-code handling, and step-summary rendering.
+# 4. Aggregates results via `reusable-ci report swift-lint`.
 #
 # Features:
 #   - swift-format linting (Google Swift Style Guide)
@@ -65,6 +66,16 @@ on:
         required: false
         default: "macos-26"
         type: string
+      reusable-ci-binary-ref:
+        description: "reusable-ci ref/version installed on the macOS runner (default: v3.0.0)"
+        required: false
+        default: "v3.0.0"
+        type: string
+      runtime-image:
+        description: "reusable-ci runtime image used by the Linux summary job. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+        type: string
 permissions:
   contents: read
 jobs:
@@ -77,10 +88,13 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 1
-
+      - name: Install reusable-ci binary
+        uses: diggsweden/reusable-ci/.github/actions/install-reusable-ci@v3.0.0
+        with:
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
       - name: Install swift-format
         env:
           SWIFT_FORMAT_VERSION: ${{ inputs['swift-format-version'] }}
@@ -91,64 +105,11 @@ jobs:
             brew install swift-format
           fi
           swift-format --version
-
-      - name: Find Swift files
-        id: find-files
-        working-directory: ${{ inputs['working-directory'] }}
-        env:
-          FILE_PATTERN: ${{ inputs['file-pattern'] }}
-        run: |
-          FILE_COUNT=$(git ls-files -- "$FILE_PATTERN" | wc -l | tr -d ' ')
-
-          if [ "$FILE_COUNT" -eq 0 ]; then
-            printf "found=false\n" >> "$GITHUB_OUTPUT"
-            printf "No Swift files found matching pattern: %s\n" "$FILE_PATTERN"
-            exit 0
-          fi
-
-          printf "found=true\n" >> "$GITHUB_OUTPUT"
-          printf "count=%s\n" "${FILE_COUNT}" >> "$GITHUB_OUTPUT"
-          printf "Found %s Swift files to lint\n" "${FILE_COUNT}"
-
       - name: Run swift-format lint
-        if: steps.find-files.outputs.found == 'true'
-        working-directory: ${{ inputs['working-directory'] }}
         env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
           FILE_PATTERN: ${{ inputs['file-pattern'] }}
-        run: |
-          set +e
-
-          # Get list of Swift files
-          SWIFT_FILES=$(git ls-files -- "$FILE_PATTERN")
-          FILE_COUNT=$(printf "%s" "$SWIFT_FILES" | wc -l | tr -d ' ')
-
-          printf "Running swift-format on %s files...\n" "${FILE_COUNT}"
-
-          # Run swift-format on all files at once (avoid array issues on macOS)
-          printf "%s" "$SWIFT_FILES" | xargs swift-format lint -s > lint-output.txt 2>&1
-          LINT_EXIT_CODE=$?
-
-          cat lint-output.txt
-
-          if [ $LINT_EXIT_CODE -ne 0 ]; then
-            printf "::error::swift-format found formatting issues\n"
-            {
-              printf "## Swift Format Issues 🔴\n"
-              printf "\n"
-              printf '```\n'
-              cat lint-output.txt
-              printf '```\n'
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          else
-            printf "✓ swift-format passed\n"
-            {
-              printf "## Swift Format ✅\n"
-              printf "\n"
-              printf "All Swift files are properly formatted.\n"
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
-
+        run: reusable-ci build swift format-lint
   swiftlint:
     name: SwiftLint
     if: ${{ inputs['enable-swiftlint'] }}
@@ -158,117 +119,35 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 1
-
+      - name: Install reusable-ci binary
+        uses: diggsweden/reusable-ci/.github/actions/install-reusable-ci@v3.0.0
+        with:
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
       - name: Install SwiftLint
         run: |
           brew install swiftlint
           swiftlint version
-
       - name: Run SwiftLint
-        working-directory: ${{ inputs['working-directory'] }}
         env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
           SWIFTLINT_CONFIG_PATH: ${{ inputs['swiftlint-config'] }}
           FAIL_ON_WARNING: ${{ inputs['fail-on-warning'] }}
-        run: |
-          set +e
-
-          if [ -f "$SWIFTLINT_CONFIG_PATH" ]; then
-            printf "Using SwiftLint configuration: %s\n" "$SWIFTLINT_CONFIG_PATH"
-            swiftlint lint --config "$SWIFTLINT_CONFIG_PATH" --reporter github-actions-logging > swiftlint-output.txt 2>&1
-          else
-            printf "No SwiftLint configuration found, using defaults\n"
-            swiftlint lint --reporter github-actions-logging > swiftlint-output.txt 2>&1
-          fi
-
-          SWIFTLINT_EXIT_CODE=$?
-
-          cat swiftlint-output.txt
-
-          if [ $SWIFTLINT_EXIT_CODE -ne 0 ]; then
-            if [ "$FAIL_ON_WARNING" = "true" ]; then
-              printf "::error::SwiftLint found issues\n"
-              {
-                printf "## SwiftLint Issues 🔴\n"
-                printf "\n"
-                printf '```\n'
-                cat swiftlint-output.txt
-                printf '```\n'
-              } >> "$GITHUB_STEP_SUMMARY"
-              exit 1
-            else
-              printf "::warning::SwiftLint found issues but fail-on-warning is false\n"
-              {
-                printf "## SwiftLint Warnings ⚠️\n"
-                printf "\n"
-                printf '```\n'
-                cat swiftlint-output.txt
-                printf '```\n'
-              } >> "$GITHUB_STEP_SUMMARY"
-            fi
-          else
-            printf "✓ SwiftLint passed\n"
-            {
-              printf "## SwiftLint ✅\n"
-              printf "\n"
-              printf "No SwiftLint violations found.\n"
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
-
+        run: reusable-ci build swift swiftlint
   summary:
     name: Lint Summary
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [swift-format-lint, swiftlint]
     if: always()
+    container:
+      image: ${{ inputs['runtime-image'] }}
     steps:
-      - name: Check results
+      - name: Aggregate results
         env:
           ENABLE_SWIFTFORMAT: ${{ inputs['enable-swiftformat'] }}
           SWIFTFORMAT_RESULT: ${{ needs.swift-format-lint.result }}
           ENABLE_SWIFTLINT: ${{ inputs['enable-swiftlint'] }}
           SWIFTLINT_RESULT: ${{ needs.swiftlint.result }}
-        run: |
-          {
-            printf "## Swift Linting Summary\n"
-            printf "\n"
-            printf "| Linter | Status |\n"
-            printf "|--------|--------|\n"
-
-            if [ "$ENABLE_SWIFTFORMAT" = "true" ]; then
-              if [ "$SWIFTFORMAT_RESULT" = "success" ]; then
-                printf "| swift-format | ✓ Pass |\n"
-              elif [ "$SWIFTFORMAT_RESULT" = "skipped" ]; then
-                printf "| swift-format | − Skipped |\n"
-              else
-                printf "| swift-format | ✗ Fail |\n"
-              fi
-            else
-              printf "| swift-format | 🔸 Disabled |\n"
-            fi
-
-            if [ "$ENABLE_SWIFTLINT" = "true" ]; then
-              if [ "$SWIFTLINT_RESULT" = "success" ]; then
-                printf "| SwiftLint | ✓ Pass |\n"
-              elif [ "$SWIFTLINT_RESULT" = "skipped" ]; then
-                printf "| SwiftLint | − Skipped |\n"
-              else
-                printf "| SwiftLint | ✗ Fail |\n"
-              fi
-            else
-              printf "| SwiftLint | 🔸 Disabled |\n"
-            fi
-
-            if { [ "$ENABLE_SWIFTFORMAT" = "true" ] && [ "$SWIFTFORMAT_RESULT" = "failure" ]; } || \
-               { [ "$ENABLE_SWIFTLINT" = "true" ] && [ "$SWIFTLINT_RESULT" = "failure" ]; }; then
-              printf "\n"
-              printf "### ✗ Linting failed\n"
-              printf "Please fix the issues above.\n"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          if { [ "$ENABLE_SWIFTFORMAT" = "true" ] && [ "$SWIFTFORMAT_RESULT" = "failure" ]; } || \
-             { [ "$ENABLE_SWIFTLINT" = "true" ] && [ "$SWIFTLINT_RESULT" = "failure" ]; }; then
-            exit 1
-          fi
+        run: reusable-ci report swift-lint

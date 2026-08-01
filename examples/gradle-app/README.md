@@ -4,9 +4,9 @@ SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 SPDX-License-Identifier: CC0-1.0
 -->
 
-# Gradle JVM Library Example
+# Gradle JVM Build Example
 
-Gradle JVM library with Maven Central publishing. For Android applications, see [examples/android-app](../android-app/) — that path uses `project-type: gradle-android` and routes to `build-gradle-android.yml`, which understands product flavors, AABs, and Google Play publishing.
+Gradle JVM build example. For Android applications, see [examples/android-app](../android-app/) — that path uses `project-type: gradle-android` and routes to `build-gradle-android.yml`, which understands product flavors, AABs, and Google Play publishing.
 
 ## Project Structure
 
@@ -16,8 +16,9 @@ my-gradle-lib/
 ├── build.gradle(.kts)
 ├── gradle.properties
 ├── settings.gradle(.kts)
+├── .reusable-ci/
+│   └── artifacts.yml
 └── .github/
-    ├── artifacts.yml
     └── workflows/
         ├── pullrequest-workflow.yml
         └── release-workflow.yml
@@ -25,14 +26,14 @@ my-gradle-lib/
 
 ## Configuration Files
 
-### `.github/artifacts.yml`
+### `.reusable-ci/artifacts.yml`
 
 See [artifacts.yml](artifacts.yml) in this directory.
 
 Key points:
 - `project-type: gradle` → routes to `build-gradle-app.yml` (JVM-only; no Android SDK, no APK/AAB).
-- `build-type: library` → library publishing contract (adds sources/javadoc artifacts if the consumer's Gradle script is configured for them).
-- `publish-to: [maven-central]` → release flow dispatches the Maven Central publisher.
+- `config.gradle-tasks: build` → runs the project's normal Gradle build.
+- Gradle publishing is not wired to reusable-ci's Maven Central publisher today. If you need Gradle publishing, run your own Gradle publishing task in a project-owned workflow until reusable-ci has a Gradle-aware publisher.
 
 ### `.github/workflows/release-workflow.yml`
 
@@ -42,16 +43,17 @@ See [release-workflow.yml](release-workflow.yml) in this directory. Uses the rel
 
 1. **Copy files to your repository:**
    ```bash
-   mkdir -p .github/workflows
-   cp examples/gradle-app/artifacts.yml .github/
+   mkdir -p .github/workflows .reusable-ci
+   cp examples/gradle-app/artifacts.yml .reusable-ci/
    cp examples/gradle-app/release-workflow.yml .github/workflows/
    cp examples/gradle-app/pullrequest-workflow.yml .github/workflows/
    ```
 
 2. **Customize for your project:**
    - Update `name` in `artifacts.yml`.
-   - Adjust `gradle-tasks` if your publish task differs (`build publish` assumes a configured `publishing { ... }` block).
+   - Adjust `gradle-tasks` if your build task differs.
    - Set `version=` in `gradle.properties` (the workflow reads this for the build summary).
+   - **Set `preserveFileTimestamps = false` AND `reproducibleFileOrder = true` on every `AbstractArchiveTask`** — required for reproducible archives; `validate jvm-reproducibility` fails the release if either is missing. See [Reproducible Builds](../../docs/verification.md#reproducible-builds) for the exact snippet.
 
 3. **Create first release:**
    ```bash

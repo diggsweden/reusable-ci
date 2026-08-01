@@ -1,0 +1,294 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+name: Snapshot Release Build Stage
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      snapshot-release-plan-json:
+        required: true
+        type: string
+      snapshot-build-stage-plan-json:
+        required: true
+        type: string
+      reusable-ci-binary-ref:
+        required: false
+        default: "v3.0.0"
+        type: string
+      runtime-image:
+        description: "reusable-ci runtime image for the summarize job (base is sufficient)"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+        type: string
+      runtime-image-java:
+        description: "reusable-ci runtime image for Maven/Gradle jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
+        type: string
+      runtime-image-node:
+        description: "reusable-ci runtime image for NPM jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-node-24:v3.0.0"
+        type: string
+      runtime-image-go:
+        description: "reusable-ci runtime image for Go jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-go-1.26:v3.0.0"
+        type: string
+      runtime-image-android:
+        description: "reusable-ci runtime image for Gradle Android jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-android-35:v3.0.0"
+        type: string
+      runtime-image-rust:
+        description: "reusable-ci runtime image for Cargo jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-rust-stable:v3.0.0"
+        type: string
+      sboms:
+        description: "Snapshot's SBOM opt-in. When 'none' (default), per-build SBOMs are off even if artifacts.yml requests them."
+        required: false
+        default: "none"
+        type: string
+    # Mirrors release-build-stage: forwards to build-{maven,npm,
+    # gradle-app,gradle-android,go,xcode-ios}. Android + iOS leaves
+    # are the only ones with specific secrets.
+    secrets:
+      ANDROID_KEYSTORE:
+        description: "Base64-encoded Android signing keystore (.jks/.keystore)"
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        description: "Password for ANDROID_KEYSTORE"
+        required: false
+      ANDROID_KEY_ALIAS:
+        description: "Alias of the signing key inside ANDROID_KEYSTORE"
+        required: false
+      ANDROID_KEY_PASSWORD:
+        description: "Password for the key referenced by ANDROID_KEY_ALIAS"
+        required: false
+      SECRETS_PROPERTIES_BASE64:
+        description: "Base64-encoded Android secrets.properties"
+        required: false
+      IOS_SIGNING_CERTIFICATE_BASE64:
+        description: "Base64-encoded .p12 code-signing certificate"
+        required: false
+      IOS_SIGNING_CERTIFICATE_PASSPHRASE:
+        description: "Passphrase for IOS_SIGNING_CERTIFICATE_BASE64"
+        required: false
+      PROVISIONING_PROFILE_BASE64:
+        description: "Base64-encoded provisioning profile"
+        required: false
+      KEYCHAIN_PASSWORD:
+        description: "Ephemeral macOS keychain password generated for the build"
+        required: false
+      XCCONFIG_BASE64:
+        description: "Base64-encoded xcconfig file"
+        required: false
+    outputs:
+      stage-ran:
+        description: Snapshot build stage ran at least one ecosystem path
+        value: ${{ jobs.summarize-snapshot-build-stage.outputs.stage-ran }}
+      stage-result:
+        description: Normalized snapshot build stage result
+        value: ${{ jobs.summarize-snapshot-build-stage.outputs.stage-result }}
+      result-json:
+        description: Snapshot build stage result payload
+        value: ${{ jobs.summarize-snapshot-build-stage.outputs.result-json }}
+permissions:
+  contents: read
+jobs:
+  maven:
+    name: Build Maven Snapshot - ${{ matrix.artifact.name }}
+    if: ${{ fromJson(inputs['snapshot-build-stage-plan-json']).targets.maven.runs }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs['snapshot-build-stage-plan-json']).targets.maven.items }}
+      fail-fast: false
+    permissions:
+      contents: read
+    # build-maven uses only auto-provided GITHUB_TOKEN.
+    uses: ./.github/workflows/build-maven.yml
+    with:
+      working-directory: ${{ matrix.artifact.working_directory }}
+      branch: ${{ fromJson(inputs['snapshot-release-plan-json']).context.branch }}
+      build-type: ${{ matrix.artifact.build_type == 'library' && 'lib' || 'app' }}
+      profile: ${{ matrix.artifact.build_type == 'library' && (matrix.artifact.maven.maven_profile || 'central-release') || '' }}
+      artifact-name: ${{ matrix.artifact.name }}
+      enable-build-sbom: ${{ inputs.sboms != 'none' && contains(matrix.artifact.effective_sboms, 'build') }}
+      runtime-image: ${{ inputs['runtime-image-java'] }}
+  npm:
+    name: Build NPM Snapshot - ${{ matrix.artifact.name }}
+    if: ${{ fromJson(inputs['snapshot-build-stage-plan-json']).targets.npm.runs }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs['snapshot-build-stage-plan-json']).targets.npm.items }}
+      fail-fast: false
+    permissions:
+      contents: read
+    # build-npm uses only auto-provided GITHUB_TOKEN.
+    uses: ./.github/workflows/build-npm.yml
+    with:
+      working-directory: ${{ matrix.artifact.working_directory }}
+      branch: ${{ fromJson(inputs['snapshot-release-plan-json']).context.branch }}
+      artifact-name: ${{ matrix.artifact.name }}
+      enable-build-sbom: ${{ inputs.sboms != 'none' && contains(matrix.artifact.effective_sboms, 'build') }}
+      runtime-image: ${{ inputs['runtime-image-node'] }}
+  gradle:
+    name: Build Gradle Snapshot - ${{ matrix.artifact.name }}
+    if: ${{ fromJson(inputs['snapshot-build-stage-plan-json']).targets.gradle.runs }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs['snapshot-build-stage-plan-json']).targets.gradle.items }}
+      fail-fast: false
+    permissions:
+      contents: read
+    # build-gradle-app uses only auto-provided GITHUB_TOKEN.
+    uses: ./.github/workflows/build-gradle-app.yml
+    with:
+      working-directory: ${{ matrix.artifact.working_directory }}
+      branch: ${{ fromJson(inputs['snapshot-release-plan-json']).context.branch }}
+      artifact-name: ${{ matrix.artifact.name }}
+      gradle-tasks: ${{ matrix.artifact.gradle.gradle_tasks }}
+      enable-build-sbom: ${{ inputs.sboms != 'none' && contains(matrix.artifact.effective_sboms, 'build') }}
+      runtime-image: ${{ inputs['runtime-image-java'] }}
+  go:
+    name: Build Go Snapshot - ${{ matrix.artifact.name }}
+    if: ${{ fromJson(inputs['snapshot-build-stage-plan-json']).targets.go.runs }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs['snapshot-build-stage-plan-json']).targets.go.items }}
+      fail-fast: false
+    permissions:
+      contents: read
+    # build-go uses only auto-provided GITHUB_TOKEN.
+    uses: ./.github/workflows/build-go.yml
+    with:
+      working-directory: ${{ matrix.artifact.working_directory }}
+      branch: ${{ fromJson(inputs['snapshot-release-plan-json']).context.branch }}
+      artifact-name: ${{ matrix.artifact.name }}
+      main-package: ${{ matrix.artifact.go.main_package || '.' }}
+      binary-name: ${{ matrix.artifact.go.binary_name || '' }}
+      platforms: ${{ matrix.artifact.go.platforms || 'linux/amd64,linux/arm64,darwin/amd64,darwin/arm64' }}
+      build-tags: ${{ matrix.artifact.go.build_tags || '' }}
+      ldflags: ${{ matrix.artifact.go.ldflags || '' }}
+      skip-tests: ${{ matrix.artifact.go.skip_tests || false }}
+      enable-build-sbom: ${{ inputs.sboms != 'none' && contains(matrix.artifact.effective_sboms, 'build') }}
+      runtime-image: ${{ inputs['runtime-image-go'] }}
+  gradle-android:
+    name: Build Gradle Android Snapshot - ${{ matrix.artifact.name }}
+    if: ${{ fromJson(inputs['snapshot-build-stage-plan-json']).targets.gradle_android.runs }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs['snapshot-build-stage-plan-json']).targets.gradle_android.items }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets:
+      ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      SECRETS_PROPERTIES_BASE64: ${{ secrets.SECRETS_PROPERTIES_BASE64 }}
+    uses: ./.github/workflows/build-gradle-android.yml
+    with:
+      working-directory: ${{ matrix.artifact.working_directory }}
+      build-module: ${{ matrix.artifact.gradle_android.build_module }}
+      branch: ${{ fromJson(inputs['snapshot-release-plan-json']).context.branch }}
+      product-flavor: ${{ matrix.artifact.gradle_android.product_flavor || '' }}
+      build-types: ${{ matrix.artifact.gradle_android.build_types || 'debug,release' }}
+      include-aab: ${{ matrix.artifact.gradle_android.include_aab != false }}
+      artifact-name: ${{ matrix.artifact.name }}
+      enable-signing: ${{ matrix.artifact.gradle_android.enable_android_signing }}
+      enable-build-sbom: ${{ inputs.sboms != 'none' && contains(matrix.artifact.effective_sboms, 'build') }}
+      runtime-image: ${{ inputs['runtime-image-android'] }}
+  xcode-ios:
+    name: Build Xcode Snapshot - ${{ matrix.artifact.name }}
+    if: ${{ fromJson(inputs['snapshot-build-stage-plan-json']).targets.xcode_ios.runs }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs['snapshot-build-stage-plan-json']).targets.xcode_ios.items }}
+      fail-fast: false
+    permissions:
+      contents: read
+    secrets:
+      IOS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.IOS_SIGNING_CERTIFICATE_BASE64 }}
+      IOS_SIGNING_CERTIFICATE_PASSPHRASE: ${{ secrets.IOS_SIGNING_CERTIFICATE_PASSPHRASE }}
+      PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      XCCONFIG_BASE64: ${{ secrets.XCCONFIG_BASE64 }}
+    uses: ./.github/workflows/build-xcode-ios.yml
+    with:
+      xcode-version: ${{ matrix.artifact.xcode_ios.xcode_version }}
+      scheme: ${{ matrix.artifact.xcode_ios.scheme }}
+      workspace: ${{ matrix.artifact.xcode_ios.workspace }}
+      project: ${{ matrix.artifact.xcode_ios.project }}
+      branch: ${{ fromJson(inputs['snapshot-release-plan-json']).context.branch }}
+      configuration: ${{ matrix.artifact.xcode_ios.configuration || 'Release' }}
+      enable-code-signing: ${{ matrix.artifact.xcode_ios.enable_code_signing != false }}
+      export-options-var: ${{ matrix.artifact.xcode_ios.export_options_var || 'EXPORT_OPTIONS_BASE64' }}
+      use-xcodegen: ${{ matrix.artifact.xcode_ios.use_xcodegen || false }}
+      xcodegen-spec: ${{ matrix.artifact.xcode_ios.xcodegen_spec || 'project.yml' }}
+      artifact-name: ${{ matrix.artifact.name }}
+      include-tag: false
+      build-number: ${{ matrix.artifact.xcode_ios.build_number }}
+      working-directory: ${{ matrix.artifact.working_directory }}
+      macos-version: ${{ matrix.artifact.xcode_ios.macos_version || 'macos-26' }}
+      reusable-ci-binary-ref: ${{ inputs['reusable-ci-binary-ref'] }}
+  cargo:
+    name: Build Cargo Snapshot - ${{ matrix.artifact.name }}
+    if: ${{ fromJson(inputs['snapshot-build-stage-plan-json']).targets.cargo.runs }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs['snapshot-build-stage-plan-json']).targets.cargo.items }}
+      fail-fast: false
+    permissions:
+      contents: read
+    # build-cargo uses only auto-provided GITHUB_TOKEN.
+    uses: ./.github/workflows/build-cargo.yml
+    with:
+      working-directory: ${{ matrix.artifact.working_directory }}
+      branch: ${{ fromJson(inputs['snapshot-release-plan-json']).context.branch }}
+      artifact-name: ${{ matrix.artifact.name }}
+      binary-name: ${{ matrix.artifact.cargo.binary_name || '' }}
+      platforms: ${{ matrix.artifact.cargo.platforms || 'linux/amd64' }}
+      skip-tests: ${{ matrix.artifact.cargo.skip_tests || false }}
+      enable-build-sbom: ${{ inputs.sboms != 'none' && contains(matrix.artifact.effective_sboms, 'build') }}
+      runtime-image: ${{ inputs['runtime-image-rust'] }}
+  # Container-first cargo and container-first Go produce nothing at the
+  # snapshot build-stage level. Their manifest-derived Build SBOMs and actual
+  # compiles (inside the Containerfile) both run in release-snapshot-publish-stage,
+  # alongside the container build — mirrors the prod release-build-stage
+  # split.
+  summarize-snapshot-build-stage:
+    name: Summarize Snapshot Build Stage
+    needs: [maven, npm, gradle, go, cargo, gradle-android, xcode-ios]
+    if: always()
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      contents: read
+    outputs:
+      stage-ran: ${{ steps.summary.outputs.stage-ran }}
+      stage-result: ${{ steps.summary.outputs.stage-result }}
+      result-json: ${{ steps.summary.outputs.result-json }}
+    steps:
+      - name: Normalize snapshot build stage result
+        id: summary
+        env:
+          STAGE_PLAN_JSON: ${{ inputs['snapshot-build-stage-plan-json'] }}
+          JOB_RESULTS: ${{ toJson(needs) }}
+          # Materialise the project_type via env so the shell never
+          # interpolates an attacker-controlled JSON value directly.
+          PROJECT_TYPE: ${{ fromJson(inputs['snapshot-release-plan-json']).context.project_type }}
+        run: >-
+          reusable-ci report stage-result --extra "project_type=${PROJECT_TYPE}"
+      - name: Upload snapshot build stage manifests
+        if: always() && hashFiles('.ci-results/*.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-results-snapshot-build
+          path: .ci-results/*.json
+          include-hidden-files: "true"
+          retention-days: "5"
+          if-no-files-found: ignore

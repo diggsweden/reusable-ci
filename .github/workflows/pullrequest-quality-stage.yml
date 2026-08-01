@@ -1,155 +1,144 @@
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
 #
-# SPDX-License-Identifier: CC0-1.0
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 name: Pull Request Quality Stage
 on:
   workflow_call:
     inputs:
-      pr-context-json:
+      pr-plan-json:
         required: true
         type: string
-      pr-policy-json:
+      quality-stage-plan-json:
         required: true
         type: string
-      reusable-ci-ref:
+      runtime-image:
+        description: "reusable-ci runtime image for the status/summary jobs (base is sufficient)"
         required: false
-        default: "main"
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
         type: string
+      nanolinter-image:
+        description: "nanolinter flavour image the nanolinter lint job runs in (pin by @sha256)"
+        required: false
+        default: "codeberg.org/itiquette/nanolinter:full"
+        type: string
+      required-lints:
+        description: "Mandated lint floor passed to `nanolinter verify --require` (comma-separated check ids forced to run + block)."
+        required: false
+        default: "secrets,sast"
+        type: string
+      megalinter-image:
+        description: "MegaLinter image the megalinter lint job runs in (pin by @sha256)"
+        required: false
+        default: "oxsecurity/megalinter:v8"
+        type: string
+      reusable-ci-binary-ref:
+        description: "reusable-ci version the lint job installs (cosign-verified) for SARIF tooling"
+        required: false
+        default: "v3.0.0"
+        type: string
+    # Aggregator: forwards CODE_SCANNING_TOKEN to the nanolinter job for
+    # its security-SARIF upload; other lint jobs use the auto GITHUB_TOKEN.
+    secrets:
+      CODE_SCANNING_TOKEN:
+        description: "Token with security-events:write for SARIF upload"
+        required: false
 permissions:
   contents: read
 jobs:
-  commit-lint:
-    name: Commit Lint
-    if: ${{ fromJson(inputs['pr-policy-json']).commitlint }}
-    uses: ./.github/workflows/lint-commit.yml
-    with:
-      base-branch: ${{ fromJson(inputs['pr-context-json']).base_branch }}
-  license-lint:
-    name: License Lint
-    if: ${{ fromJson(inputs['pr-policy-json']).licenselint }}
-    uses: ./.github/workflows/lint-license.yml
-  dependency-review:
-    name: Dependency Review
-    if: ${{ fromJson(inputs['pr-policy-json']).dependencyreview }}
+  nanolinter:
+    name: Nanolinter
+    if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.nanolinter.runs }}
     permissions:
       contents: read
-    secrets: inherit
-    uses: ./.github/workflows/security-dependency-review.yml
+    secrets:
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
+    uses: ./.github/workflows/lint-nanolinter.yml
     with:
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
-  sast-opengrep:
-    name: OpenGrep SAST
-    if: ${{ fromJson(inputs['pr-policy-json']).sastopengrep }}
-    permissions:
-      contents: read
-    secrets: inherit
-    uses: ./.github/workflows/security-opengrep.yml
-    with:
-      opengrep-rules: ${{ fromJson(inputs['pr-context-json']).sast_opengrep_rules }}
-      fail-on-severity: ${{ fromJson(inputs['pr-context-json']).sast_opengrep_fail_on_severity }}
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
-  megalint:
+      nanolinter-image: ${{ inputs['nanolinter-image'] }}
+      required-lints: ${{ inputs['required-lints'] }}
+      reusable-ci-binary-ref: ${{ inputs['reusable-ci-binary-ref'] }}
+  megalinter:
     name: MegaLinter
-    if: ${{ fromJson(inputs['pr-policy-json']).megalint }}
+    if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.megalinter.runs }}
     permissions:
       contents: read
-    secrets: inherit
-    uses: ./.github/workflows/lint-mega.yml
+    secrets:
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
+    uses: ./.github/workflows/lint-megalinter.yml
     with:
-      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
-  publiccode-lint:
-    name: Publiccode Lint
-    if: ${{ fromJson(inputs['pr-policy-json']).publiccodelint }}
-    uses: ./.github/workflows/lint-publiccode.yml
-  devbase-check-lint:
-    name: Devbase Check
-    if: ${{ fromJson(inputs['pr-policy-json']).devbasecheck }}
-    permissions:
-      contents: read
-    uses: ./.github/workflows/lint-devbase.yml
-  swift-lint:
+      megalinter-image: ${{ inputs['megalinter-image'] }}
+      reusable-ci-binary-ref: ${{ inputs['reusable-ci-binary-ref'] }}
+  swift:
     name: Swift Lint
-    if: ${{ fromJson(inputs['pr-policy-json']).swift }}
+    if: ${{ fromJson(inputs['quality-stage-plan-json']).targets.swift.runs }}
     permissions:
       contents: read
     uses: ./.github/workflows/lint-swift.yml
     with:
-      enable-swiftformat: ${{ fromJson(inputs['pr-policy-json']).swiftformat }}
-      enable-swiftlint: ${{ fromJson(inputs['pr-policy-json']).swiftlint }}
+      enable-swiftformat: ${{ fromJson(inputs['pr-plan-json']).policy.swift_format }}
+      enable-swiftlint: ${{ fromJson(inputs['pr-plan-json']).policy.swift_lint }}
+      runtime-image: ${{ inputs['runtime-image'] }}
   quality-status:
     name: Status
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ inputs['runtime-image'] }}
     if: always()
-    needs: [commit-lint, license-lint, dependency-review, sast-opengrep, megalint, publiccode-lint, devbase-check-lint, swift-lint]
+    needs: [nanolinter, megalinter, swift]
     steps:
-      - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
       - name: Check quality results
         env:
-          CHECK_COMMITLINT: Commit Lint|${{ fromJson(inputs['pr-policy-json']).commitlint }}|${{ needs.commit-lint.result }}|true
-          CHECK_LICENSLINT: License Lint|${{ fromJson(inputs['pr-policy-json']).licenselint }}|${{ needs.license-lint.result }}|true
-          CHECK_DEPENDENCYREVIEW: Dependency Review|${{ fromJson(inputs['pr-policy-json']).dependencyreview }}|${{ needs.dependency-review.result }}|false
-          CHECK_SASTOPENGREP: OpenGrep SAST|${{ fromJson(inputs['pr-policy-json']).sastopengrep }}|${{ needs.sast-opengrep.result }}|false
-          CHECK_MEGALINT: MegaLinter|${{ fromJson(inputs['pr-policy-json']).megalint }}|${{ needs.megalint.result }}|true
-          CHECK_PUBLICCODELINT: Publiccode Lint|${{ fromJson(inputs['pr-policy-json']).publiccodelint }}|${{ needs.publiccode-lint.result }}|true
-          CHECK_DEVBASECHECK: Devbase Check|${{ fromJson(inputs['pr-policy-json']).devbasecheck }}|${{ needs.devbase-check-lint.result }}|false
-          CHECK_SWIFT: Swift Lint|${{ fromJson(inputs['pr-policy-json']).swift }}|${{ needs.swift-lint.result }}|false
+          CHECK_NANOLINTER: Nanolinter|${{ fromJson(inputs['quality-stage-plan-json']).targets.nanolinter.runs }}|${{ needs.nanolinter.result }}
+          CHECK_MEGALINTER: MegaLinter|${{ fromJson(inputs['quality-stage-plan-json']).targets.megalinter.runs }}|${{ needs.megalinter.result }}
+          CHECK_SWIFT: Swift Lint|${{ fromJson(inputs['quality-stage-plan-json']).targets.swift.runs }}|${{ needs.swift.result }}
         run: |
-          bash .github-shared/scripts/summary/write-quality-check-status.sh \
-            "$CHECK_COMMITLINT" \
-            "$CHECK_LICENSLINT" \
-            "$CHECK_DEPENDENCYREVIEW" \
-            "$CHECK_SASTOPENGREP" \
-            "$CHECK_MEGALINT" \
-            "$CHECK_PUBLICCODELINT" \
-            "$CHECK_DEVBASECHECK" \
+          reusable-ci report status quality-check \
+            "$CHECK_NANOLINTER" \
+            "$CHECK_MEGALINTER" \
             "$CHECK_SWIFT"
   summarize-quality-stage:
     name: Summary
-    needs: [commit-lint, license-lint, dependency-review, sast-opengrep, megalint, publiccode-lint, devbase-check-lint, swift-lint, quality-status]
+    needs: [nanolinter, megalinter, swift, quality-status]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ inputs['runtime-image'] }}
     permissions:
       contents: read
     steps:
-      - name: Checkout reusable-ci scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: diggsweden/reusable-ci
-          ref: ${{ inputs['reusable-ci-ref'] }}
-          path: .github-shared
-          sparse-checkout: scripts
+      - name: Render nanolinter results panel
+        # The nanolinter job runs in a non-root, node-less flavour image and can't
+        # write its own $GITHUB_STEP_SUMMARY (RUNNER_TEMP is unwritable there), so
+        # it ships nanolinter's "Linting Results" markdown as an artifact. This
+        # runtime-base job CAN write the panel, so render it here for end users.
+        # Best-effort: continue-on-error so a missing artifact never fails Summary.
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: nanolinter-step-summary
+          ARTIFACT_DIR: .nl-summary
+        run: reusable-ci artifact download
+      - name: Emit nanolinter panel to job summary
+        if: always()
+        continue-on-error: true
+        run: |
+          f=.nl-summary/nl-step-summary.md
+          if [ -f "$f" ]; then
+            cat "$f" >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Normalize PR quality stage result
         id: summary
         env:
-          COMMITLINT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).commitlint }}
-          LICENSLINT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).licenselint }}
-          DEPENDENCYREVIEW_ENABLED: ${{ fromJson(inputs['pr-policy-json']).dependencyreview }}
-          SASTOPENGREP_ENABLED: ${{ fromJson(inputs['pr-policy-json']).sastopengrep }}
-          MEGALINT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).megalint }}
-          PUBLICCODELINT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).publiccodelint }}
-          DEVBASECHECK_ENABLED: ${{ fromJson(inputs['pr-policy-json']).devbasecheck }}
-          SWIFT_ENABLED: ${{ fromJson(inputs['pr-policy-json']).swift }}
-          COMMITLINT_RESULT: ${{ needs.commit-lint.result }}
-          LICENSLINT_RESULT: ${{ needs.license-lint.result }}
-          DEPENDENCYREVIEW_RESULT: ${{ needs.dependency-review.result }}
-          SASTOPENGREP_RESULT: ${{ needs.sast-opengrep.result }}
-          MEGALINT_RESULT: ${{ needs.megalint.result }}
-          PUBLICCODELINT_RESULT: ${{ needs.publiccode-lint.result }}
-          DEVBASECHECK_RESULT: ${{ needs.devbase-check-lint.result }}
-          SWIFT_RESULT: ${{ needs.swift-lint.result }}
-        run: bash .github-shared/scripts/summary/write-pr-quality-stage-result.sh
+          STAGE_PLAN_JSON: ${{ inputs['quality-stage-plan-json'] }}
+          JOB_RESULTS: ${{ toJson(needs) }}
+        run: reusable-ci report stage-result
       - name: Upload quality stage manifests
         if: always() && hashFiles('.ci-results/*.json') != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ci-results-pr-quality
           path: .ci-results/*.json
-          include-hidden-files: true
-          retention-days: 5
+          include-hidden-files: "true"
+          retention-days: "5"
           if-no-files-found: ignore

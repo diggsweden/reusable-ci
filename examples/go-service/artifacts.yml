@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+
+# Example: Go service shipped as a multi-arch container image.
+#
+# container-first: sbom-go.yml emits the Build SBOM from go.mod/go.sum in the
+# publish stage, while the Containerfile compiles the service for each target
+# platform through buildx's TARGETOS/TARGETARCH values.
+artifacts:
+  - name: my-service
+    project-type: go
+    working-directory: .
+    config:
+      build-mode: container-first
+
+containers:
+  - name: my-service
+    from: [my-service]
+    container-file: Containerfile
+    context: .
+    target: runtime
+    platforms: linux/amd64,linux/arm64
+    extract:
+      binary:
+        target: export-binary
+        names: [my-service]

@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+# SPDX-License-Identifier: CC0-1.0
+#
+# crate-ci/typos configuration. Each entry below is a legitimate
+# domain term that the default dictionary mis-flags.
+
+[default.extend-words]
+# GnuPG `--with-colons` output uses `fpr:` as the row prefix for
+# the public-key fingerprint (see gnupg/doc/DETAILS in the upstream
+# repo). The codebase parses that format and names local variables
+# after the field.
+fpr = "fpr"
+
+# `anc` and `desc` are the matching short locals used in the
+# ancestor/descendant resolution helper in internal/adapters/git.
+# Keeping them symmetric reads better than longer names.
+anc = "anc"
+
+# "HashiCorp Vault" and the `hashivault://` cosign KMS URI scheme
+# appear in publishing / verification docs. The typos dictionary
+# trips on the leading "Hashi" substring.
+Hashi = "Hashi"
+hashivault = "hashivault"
+
+# `upport` is the trailing fragment of `[sS]upport` in
+# templates/gitcliff/keepachangelog.toml — a git-cliff regex character
+# class that matches commit messages beginning with "Support" or
+# "support". typos tokenises after the bracket and flags `upport` as
+# a misspelling of "support"; the regex is the correct shape.
+upport = "upport"

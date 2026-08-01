@@ -6,11 +6,9 @@ artifacts:
   - name: my-android-app-demo
     project-type: gradle-android
     working-directory: .
-    build-type: application
     publish-to:
       - google-play
     config:
-      java-version: 21
       build-module: app
       # Declarative variant selection: the orchestrator derives gradle tasks
       # (e.g., assembleDemoRelease, bundleDemoRelease) from these.

@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+#
+# Example: the PR quality orchestration on GitLab CI — the analog of GitHub's
+# pullrequest-orchestrator.
+#
+# On GitLab the "orchestrator" is the consumer pipeline itself: a fixed quality
+# job set (lint ∥ scan ∥ test) is a STATIC graph, so it is composed by
+# `include:`-ing the Catalog components and wiring stages/rules — no generated
+# child pipeline, fully idiomatic (see gitlabsupportplan.md "Orchestration
+# model"). Today the PR quality set is the nanolinter gate; add further quality
+# components to the same `quality` stage as they land.
+#
+# The gate is the pipeline status: if a quality job fails, the pipeline (and the
+# merge request) goes red. nanolinter additionally publishes its findings to the
+# MR Security tab via artifacts:reports:sast.
+#
+# Scope to PR context: run on merge requests and on the default branch, the
+# GitLab equivalent of GitHub `on: pull_request` + push to the protected branch.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+stages:
+  - quality
+
+include:
+  - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/nanolinter@1.0.0
+    inputs:
+      stage: quality
+      # Pick the nanolinter flavour matching your stack (pin by @sha256).
+      nanolinter-image: "codeberg.org/itiquette/nanolinter:java"

@@ -4,6 +4,12 @@
 
 version = 1
 
+# Root dual-license notice (points to LICENSES/); the notice itself is CC0.
+[[annotations]]
+path = "LICENSE"
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
 # misc - test explicit paths first
 [[annotations]]
 path = "README.md"
@@ -55,7 +61,32 @@ path = "CHANGELOG.md"
 SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
 SPDX-License-Identifier = "CC0-1.0"
 
+# JSON Schema for artifacts.yml — JSON has no comment syntax for an
+# inline SPDX header, so the licensing claim lives here.
+[[annotations]]
+path = ".reusable-ci/artifacts.schema.json"
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
 [[annotations]]
 path = ".gitignore"
 SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+# Go-generated build manifests; no SPDX headers possible.
+[[annotations]]
+path = ["go.mod", "go.sum"]
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+# Go test fixtures (fuzz seeds, golden JSON, sample inputs). These are
+# inert data, not source — REUSE compliance applies to source.
+[[annotations]]
+path = [
+  "internal/domain/build/testdata/**",
+  "internal/domain/pipeline/testdata/**",
+  "internal/domain/provenance/testdata/**",
+  "internal/testutil/fixtures/testdata/**",
+]
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
 SPDX-License-Identifier = "CC0-1.0"

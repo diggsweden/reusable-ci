@@ -1,0 +1,147 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+#
+# release-binary
+#
+# Runs after Self Release completes (workflow_run trigger) on every
+# v* tag, OR manually via workflow_dispatch. The two-workflow split
+# is intentional: Self Release drives the orchestrator (changelog,
+# release notes, GitHub Release creation) while this workflow
+# produces the multi-arch binary tarballs and uploads them to the
+# already-existing release.
+#
+# Builds linux/darwin × amd64/arm64 archives via goreleaser and
+# uploads them as a GitHub release with checksums.txt plus a Sigstore
+# v3 bundle (checksums.txt.bundle). The bundle is produced by cosign
+# keyless signing — no long-lived key — and is verified by
+# scripts/bootstrap/install-reusable-ci.sh when cosign is on PATH.
+#
+# Reproducibility: SOURCE_DATE_EPOCH is set from the commit timestamp
+# and goreleaser embeds {{.CommitDate}} into the binary's version
+# string, making rebuilds of the same tag byte-identical.
+name: Release binary
+# workflow_run is the standard way to chain after Self Release.
+# Authorisation is enforced by the goreleaser job's `if:` gate below
+# (conclusion == 'success'), which requires the upstream Self Release
+# to have completed successfully — that in turn only runs on signed
+# tag pushes. See comment block in the goreleaser job.
+on:
+  workflow_run:
+    workflows: ["Self Release"]
+    types: [completed]
+    # No `branches:` filter on purpose. Self Release is itself gated
+    # to tag pushes (push: tags: [v*.*.*]), so a successful Self
+    # Release run implies a tag context. A branches filter here would
+    # match against workflow_run.head_branch, which is empty for
+    # tag-triggered upstream workflows — silently blocking the
+    # production tag-push path. The conclusion check in the goreleaser
+    # job's `if:` is the actual gate.
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  goreleaser:
+    name: GoReleaser
+    # Only run when Self Release succeeded — failed/cancelled
+    # orchestrator runs must not publish binaries to a half-built
+    # release.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write # release upload
+      id-token: write # Sigstore keyless OIDC (cosign sign-blob: checksums + provenance)
+    steps:
+      - name: Harden runner (egress=block, explicit allowlist)
+        # release-binary is the highest-trust job in the project —
+        # the binary uploaded here is what consumers download. Egress
+        # is fully knowable in advance: github + goproxy + sigstore +
+        # the goreleaser-action's curl download. Block everything else
+        # so a compromised dependency in the Go module graph can't
+        # quietly exfiltrate during the build.
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 uploads.github.com:443 proxy.golang.org:443 sum.golang.org:443 storage.googleapis.com:443 fulcio.sigstore.dev:443 rekor.sigstore.dev:443 tuf-repo-cdn.sigstore.dev:443 ghcr.io:443
+      # workflow_run context is safe here: the goreleaser job's `if:` only
+      # proceeds when the upstream Self Release succeeded, which itself
+      # only triggers on signed tag pushes (`push: tags: [v*.*.*]`). The
+      # head_sha is from that tag-push commit, not contributor input.
+      # nosemgrep: yaml.github-actions.security.workflow-run-target-code-checkout.workflow-run-target-code-checkout
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # workflow_run does not set ref to the tag; pin to the
+          # commit SHA the upstream workflow ran on so we tag the
+          # right tree.
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Install cosign
+        # goreleaser's signs: block shells out to cosign; install it
+        # explicitly with version pinning rather than relying on a
+        # runner-provided default. Renovate keeps the pin current.
+        # v4.x installer is required for cosign v3.x (v3 ships a .sigstore.json
+        # bundle, not the detached .sig the v3.7.0 installer fails to fetch).
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v3.1.1'
+      - name: Install syft
+        # goreleaser's sboms: block shells out to syft. Same pin
+        # rationale as cosign — explicit version is reviewable in
+        # PR and gets caught by Renovate, not by surprise runner
+        # rollouts.
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          syft-version: 'v1.45.1'
+      - name: Set SOURCE_DATE_EPOCH from commit
+        # Pins the binary's embedded date and the tarball mtimes to
+        # the commit timestamp. Without this, two builds of the same
+        # tag minutes apart would differ — sabotaging reproducibility
+        # before any consumer can verify it.
+        run: |
+          source_date_epoch="$(git log -1 --format=%ct HEAD)"
+          printf 'SOURCE_DATE_EPOCH=%s\n' "$source_date_epoch" >> "$GITHUB_ENV"
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate + sign SLSA provenance (cosign sign-blob, keyless)
+        # Portable, forge-neutral replacement for actions/attest-build-provenance.
+        # reusable-ci generates the in-toto / SLSA-v1.0 statement from goreleaser's
+        # checksums (its subjects cover every tarball + SBOM) and signs it keyless
+        # with cosign sign-blob → a Sigstore bundle. No GitHub attestation API; the
+        # provenance verifies on any forge:
+        #   cosign verify-blob --bundle reusable-ci.intoto.jsonl \
+        #     --certificate-identity-regexp '^https://github.com/diggsweden/reusable-ci/\.github/workflows/release-binary\.yml@.*' \
+        #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        #     reusable-ci.intoto.json
+        # Uses the binary goreleaser just built (self-consistent), then attaches
+        # the statement + bundle to the release.
+        env:
+          SIGN_METHOD: sigstore
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          archive="$(find dist -name 'reusable-ci_*_linux_amd64.tar.gz' | head -1)"
+          tar -xzf "$archive" -C "$RUNNER_TEMP" reusable-ci
+          "$RUNNER_TEMP/reusable-ci" release provenance \
+            --checksum-file dist/checksums.txt \
+            --output dist/reusable-ci.intoto.json \
+            --bundle dist/reusable-ci.intoto.jsonl
+          tag="$(git describe --tags --exact-match HEAD)"
+          gh release upload "$tag" \
+            dist/reusable-ci.intoto.json \
+            dist/reusable-ci.intoto.jsonl \
+            --clobber

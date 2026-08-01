@@ -12,8 +12,9 @@
 # Three named stages:
 # - builder: compiles the binary. Cache mounts (--mount=type=cache)
 #   persist cargo's registry and target/ across runs via the GHA cache
-#   backend, used by every other ecosystem in reusable-ci. Multi-arch via
-#   buildkit + QEMU; the rust:bookworm-slim base ships per-arch variants.
+#   backend, used by every other ecosystem in reusable-ci. Multi-arch builds
+#   use native per-architecture runners; rust:bookworm-slim ships per-arch
+#   variants.
 # - export-binary: scratch image with the binary at the root. Used by
 #   reusable-ci's `extract.binary.target: export-binary` to upload the
 #   binary as a CI artefact (see ../artifacts.yml).

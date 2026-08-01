@@ -1,0 +1,83 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+#
+# Example: forge-neutral stage-result aggregation on GitLab CI.
+#
+# This is the GitLab half of how reusable-ci aggregates a stage's outcome. The
+# aggregation logic is shared across forges (`reusable-ci report stage-result`);
+# only how each job's outcome is *collected* differs, because GitLab jobs cannot
+# read a sibling's status:
+#   - GitHub/Forgejo: the summary job passes `toJson(needs)` to the same command.
+#   - GitLab (here): each job records its OWN outcome with `report job-result`,
+#     and the summary job collects the records.
+#
+# Flow:
+#   1. Each quality job records its result in `after_script` — that is where
+#      $CI_JOB_STATUS holds the final outcome (success/failed/canceled) — to
+#      $CI_RESULTS_DIR/jobs/<job>.json, kept as an artifact.
+#   2. The summary job `needs:` them (so GitLab pulls their job-record artifacts)
+#      and runs `report stage-result`, which collects the records and aggregates
+#      them against the stage plan into <stage>-result.json.
+#
+# A job that crashes/cancels before its after_script leaves no record; against
+# the stage plan that target is fail-closed to failure, so the stage can never be
+# declared success behind a missing job.
+#
+# Jobs run in the reusable-ci runtime image, which carries the binary.
+stages:
+  - quality
+  - summary
+
+variables:
+  RUNTIME_IMAGE: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+  # Where job records and the stage manifest live (this is also the default).
+  CI_RESULTS_DIR: .ci-results
+
+# Shared shape for participating quality jobs: record this job's own outcome,
+# and carry the record forward as an artifact for the summary job.
+.records-outcome:
+  image: $RUNTIME_IMAGE
+  stage: quality
+  after_script:
+    - reusable-ci report job-result --name "$CI_JOB_NAME" --status "$CI_JOB_STATUS"
+  artifacts:
+    when: always
+    paths:
+      - .ci-results/jobs/
+
+lint:
+  extends: .records-outcome
+  script:
+    - echo "run the lint gate here"
+
+scan:
+  extends: .records-outcome
+  script:
+    - echo "run the security scan here"
+
+quality-summary:
+  image: $RUNTIME_IMAGE
+  stage: summary
+  needs:
+    - lint
+    - scan
+  variables:
+    # The plan names the targets this stage was expected to run; the job names
+    # above match the target names, so the collected records line up.
+    STAGE_PLAN_JSON: '{"version":1,"stage":"quality","targets":{"lint":{"runs":true},"scan":{"runs":true}}}'
+    # GitLab has no built-in per-step output file, so stage-result's scalar
+    # outputs (stage-result, stage-ran, …) go to a dotenv report the job
+    # declares below — the GitLab equivalent of $GITHUB_OUTPUT.
+    CI_OUTPUT: stage.env
+  script:
+    # No --job-results and no --result: results are collected from the per-job
+    # records under $CI_RESULTS_DIR/jobs/, then aggregated against the plan.
+    - reusable-ci report stage-result --extra project_type=demo
+    - cat .ci-results/quality-result.json
+  artifacts:
+    when: always
+    paths:
+      - .ci-results/
+    reports:
+      dotenv: stage.env

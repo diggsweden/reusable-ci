@@ -1,0 +1,146 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+#
+# ⚠️  EXPERIMENTAL — ROADMAP, NOT YET EXERCISED IN CI. ⚠️
+#
+# Isolated, KMS-signing provenance stage for a SLSA Build L3 container pipeline
+# on private / self-hosted infrastructure. Pure Sigstore (cosign + a KMS key) —
+# no forge-specific machinery, so the same shape works on GitHub / Forgejo /
+# GitLab. See docs/verification.md → "SLSA Build L3 (experimental)".
+#
+# WHY THIS IS A SEPARATE WORKFLOW (the L3 trust boundary):
+#   This workflow is the ONLY holder of the KMS signing credential. The build
+#   job that produced <image> MUST run as a SEPARATE identity with NO access to
+#   the KMS key, on an EPHEMERAL runner. The only thing that crosses the
+#   boundary is the image DIGEST — immutable and self-verifying — so a
+#   compromised build step cannot forge provenance: it has no signing key, and
+#   this attestor re-reads the registry instead of trusting build-supplied
+#   metadata about the subject.
+#
+# OPERATOR OBLIGATIONS (inherent to SLSA L3 — the platform must provide the
+# isolation; reusable-ci only wires the signer):
+#   1. KMS sign permission scoped to THIS workflow's identity only (never the
+#      build job). e.g. an OpenBao/Vault policy, or a cloud IAM role bound to a
+#      protected environment / protected branch.
+#   2. Ephemeral runners (fresh environment per job) — point `runs-on` at an
+#      ephemeral pool.
+#
+# VERIFY (the KMS public key IS the builder identity):
+#   cosign verify-attestation --key kms-builder.pub \
+#     --type slsaprovenance <registry>/<image>@sha256:...
+#
+# The build remains unchanged: it still signs the image + attests the SBOM with
+# the portable L2 flow in publish-container.yml. This workflow only upgrades the
+# PROVENANCE to an isolated, non-forgeable (L3-in-substance) signature.
+name: SLSA Attestor (experimental)
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: "Image digest reference to attest (registry/image@sha256:...). Immutable digest only — never a tag."
+        required: true
+        type: string
+      kms-key:
+        description: "cosign KMS key URI (hashivault://…, awskms://…, gcpkms://…, azurekms://…, pkcs11:…)."
+        required: true
+        type: string
+      builder-id:
+        description: "SLSA provenance builder.id — the operator's documented builder identity. Defaults to the KMS key URI."
+        required: false
+        type: string
+        default: ""
+      predicate-type:
+        description: "Predicate type to attest (slsaprovenance | <uri>)."
+        required: false
+        type: string
+        default: "slsaprovenance"
+      registry:
+        description: "Registry host for login (where the attestation is pushed)."
+        required: false
+        type: string
+        default: "ghcr.io"
+      runs-on:
+        description: "Runner label. Point this at an EPHEMERAL pool — isolation is required for L3."
+        required: false
+        type: string
+        default: "ubuntu-24.04"
+      reusable-ci-binary-ref:
+        description: "reusable-ci ref/version whose bootstrap installers + CLI to use."
+        required: false
+        type: string
+        default: "v3.0.0-pre"
+    secrets:
+      registry-password:
+        description: "Registry password/token for pushing the attestation. Falls back to the job's GITHUB_TOKEN on GHCR."
+        required: false
+      kms-auth-env:
+        description: |
+          Operator KMS authentication, as newline-separated KEY=VALUE pairs,
+          appended to the environment before signing — e.g.
+          "VAULT_ADDR=https://bao.example.org\nVAULT_TOKEN=…" for OpenBao/Vault.
+          For cloud KMS prefer OIDC: fork this workflow to add `id-token: write`
+          + your cloud's credential-configuration action instead of a token here.
+        required: false
+
+# No id-token: KMS signing uses the key, not keyless OIDC. The smaller the
+# surface this isolated signer requests, the better.
+permissions:
+  contents: read
+  packages: write # push the signed attestation to the registry
+
+jobs:
+  attest:
+    name: Attest provenance (cosign + KMS)
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - name: Checkout reusable-ci bootstrap installers
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+      - name: Install reusable-ci binary
+        env:
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
+      - name: Configure KMS authentication
+        env:
+          KMS_AUTH_ENV: ${{ secrets.kms-auth-env }}
+        run: |
+          # Operator-supplied KEY=VALUE lines (e.g. VAULT_ADDR/VAULT_TOKEN).
+          # The value is the operator's own secret — scoped to this isolated job.
+          if [ -n "$KMS_AUTH_ENV" ]; then
+            printf '%s\n' "$KMS_AUTH_ENV" >> "$GITHUB_ENV"
+          fi
+      - name: Log in to registry
+        env:
+          CONTAINER_REGISTRY: ${{ inputs.registry }}
+          REGISTRY_USERNAME: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.registry-password || github.token }}
+        run: reusable-ci container login
+      - name: Attest SLSA provenance (cosign + KMS)
+        env:
+          SIGN_METHOD: kms
+          SIGN_KEY: ${{ inputs.kms-key }}
+          BUILDER_ID: ${{ inputs.builder-id || inputs.kms-key }}
+          PREDICATE_TYPE: ${{ inputs.predicate-type }}
+          IMAGE_REF: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          # cosign installs to a temp dir and is on PATH only within this step,
+          # so install and attest together (same pattern as publish-container).
+          # shellcheck disable=SC1091
+          source .github-shared/scripts/bootstrap/install-cosign.sh
+          install_cosign
+          reusable-ci container attest \
+            --type "$PREDICATE_TYPE" \
+            --method kms \
+            --key "$SIGN_KEY" \
+            --builder-id "$BUILDER_ID" \
+            "$IMAGE_REF"

@@ -1,0 +1,66 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+#
+# GitLab CI/CD Catalog component: npm release build.
+#
+# The GitLab counterpart of .github/workflows/build-npm.yml. The whole sequence
+# (metadata → ci → test → build → SBOM → pack → summary) lives in the binary as
+# `reusable-ci build npm run`, so this job is a single line — the same sequence
+# GitHub runs. GitLab clones the repo for the job; the runtime-node image carries
+# Node + npm + reusable-ci. The packed tarball and bom.json are published as
+# artifacts.
+#
+# Consume (pin a released version):
+#   include:
+#     - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/build-npm@1.0.0
+spec:
+  inputs:
+    stage:
+      default: build
+      description: Pipeline stage the build runs in.
+    job-name:
+      default: build-npm
+      description: Name of the generated job.
+    working-directory:
+      default: "."
+      description: Directory containing package.json.
+    scope:
+      default: ""
+      description: Expected package scope (e.g. @diggsweden); errors when package.json disagrees.
+    skip-tests:
+      type: boolean
+      default: false
+      description: Skip the (soft) npm test run.
+    enable-build-sbom:
+      type: boolean
+      default: true
+      description: Generate the CycloneDX Build SBOM with cyclonedx-npm.
+    sbom-tool-version:
+      # renovate: datasource=npm depName=@cyclonedx/cyclonedx-npm
+      default: "4.2.1"
+      description: Pinned @cyclonedx/cyclonedx-npm version run via npx.
+    node-version:
+      default: "24"
+      description: Node major version, reported in the build summary.
+    runtime-image:
+      default: "ghcr.io/diggsweden/reusable-ci-runtime-node-24:v3.0.0"
+      description: reusable-ci runtime image carrying Node + npm (pin by @sha256).
+---
+"$[[ inputs.job-name ]]":
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.runtime-image ]]
+  variables:
+    WORKING_DIRECTORY: "$[[ inputs.working-directory ]]"
+    SCOPE: "$[[ inputs.scope ]]"
+    SKIP_TESTS: "$[[ inputs.skip-tests ]]"
+    ENABLE_BUILD_SBOM: "$[[ inputs.enable-build-sbom ]]"
+    CYCLONEDX_VERSION: "$[[ inputs.sbom-tool-version ]]"
+    NODE_VERSION: "$[[ inputs.node-version ]]"
+    CI_SUMMARY_FILE: "$CI_PROJECT_DIR/npm-build-summary.md"
+  script:
+    - reusable-ci build npm run
+  artifacts:
+    paths:
+      - $[[ inputs.working-directory ]]/*.tgz
+      - $[[ inputs.working-directory ]]/bom.json

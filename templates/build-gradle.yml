@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+#
+# GitLab CI/CD Catalog component: Gradle (JVM) release build.
+#
+# The GitLab counterpart of .github/workflows/build-gradle-app.yml. The whole
+# sequence (gradlew chmod → metadata → tasks → SBOM → summaries) lives in the
+# binary as `reusable-ci build gradle run`, so this job is a single line — the
+# same sequence GitHub runs. gradle runs in the job's working directory (we cd
+# into it). GitLab clones the repo for the job; the runtime-java image carries a
+# JDK + reusable-ci. JARs land under build/libs/ and the Build SBOM under
+# build/reports/, which the job publishes as artifacts.
+#
+# Consume (pin a released version):
+#   include:
+#     - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/build-gradle@1.0.0
+#       inputs:
+#         gradle-tasks: "build"
+spec:
+  inputs:
+    stage:
+      default: build
+      description: Pipeline stage the build runs in.
+    job-name:
+      default: build-gradle
+      description: Name of the generated job.
+    working-directory:
+      default: "."
+      description: Directory containing ./gradlew and gradle.properties.
+    gradle-tasks:
+      default: "assemble"
+      description: Whitespace-separated gradle tasks to run.
+    skip-tests:
+      type: boolean
+      default: false
+      description: Append -x test to skip the test task.
+    enable-build-sbom:
+      type: boolean
+      default: true
+      description: Generate the cyclonedx-gradle-plugin Build SBOM.
+    sbom-tool-version:
+      # renovate: datasource=maven depName=org.cyclonedx:cyclonedx-gradle-plugin
+      default: "3.2.1"
+      description: Pinned cyclonedx-gradle-plugin version.
+    java-version:
+      default: "25"
+      description: JDK major version, reported in the build summary.
+    runtime-image:
+      default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
+      description: reusable-ci runtime image carrying a JDK + gradle wrapper support (pin by @sha256).
+---
+"$[[ inputs.job-name ]]":
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.runtime-image ]]
+  variables:
+    GRADLE_TASKS: "$[[ inputs.gradle-tasks ]]"
+    SKIP_TESTS: "$[[ inputs.skip-tests ]]"
+    ENABLE_BUILD_SBOM: "$[[ inputs.enable-build-sbom ]]"
+    CYCLONEDX_GRADLE_VERSION: "$[[ inputs.sbom-tool-version ]]"
+    JAVA_VERSION: "$[[ inputs.java-version ]]"
+    CI_SUMMARY_FILE: "$CI_PROJECT_DIR/gradle-build-summary.md"
+  script:
+    # gradle runs in the current directory, so cd into the project first.
+    - cd "$[[ inputs.working-directory ]]"
+    - reusable-ci build gradle run
+  artifacts:
+    paths:
+      - $[[ inputs.working-directory ]]/build/libs/
+      - $[[ inputs.working-directory ]]/**/build/libs/
+      - $[[ inputs.working-directory ]]/build/reports/

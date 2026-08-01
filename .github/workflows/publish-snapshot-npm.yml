@@ -1,0 +1,224 @@
+# SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+# Development NPM Package Publisher
+#
+# Purpose: Publishes pre-built npm packages for development and testing.
+#
+# Runs inside reusable-ci-runtime-node; Node, npm, corepack, and the
+# reusable-ci binary are baked in. The .npmrc is configured inline because the
+# runtime image has no setup-node action wiring it for us.
+#
+# Supported Registries:
+# - GitHub Packages (npm.pkg.github.com) - Default, uses GITHUB_TOKEN
+# - npmjs.org - Set use-ci-token=false, provide registry-password
+# - Any custom npm registry
+#
+# How it works:
+# 1. Downloads pre-built artifacts from build-npm.yml
+# 2. Generates snapshot version: ${BASE_VERSION}-snapshot-${BRANCH}-${SHORT_SHA}
+# 3. Checks if version already exists in registry (idempotent — same SHA = same content)
+# 4. If already published: logs warning, skips remaining steps, exits successfully
+# 5. Applies version to package.json (no git commit)
+# 6. Creates npm pack tarball
+# 7. Publishes to registry with 'snapshot' tag
+# 8. Uploads tarball as workflow artifact
+#
+# Security controls:
+# - Minimal - optimized for speed
+# - Packages tagged with 'snapshot' not 'latest'
+# - No SBOM, no signing, no attestation
+#
+# Dependencies:
+# - Requires build-npm.yml to have run first
+# - Downloads artifact-source (defaults to npm-build-artifacts)
+#
+# Registry Authentication:
+#   GitHub Packages (default): Uses GITHUB_TOKEN (no secrets needed)
+#   Other registries: Set use-ci-token=false and provide registry-password secret
+#
+# Required Secrets:
+#   registry-password: Required when use-ci-token=false (for npmjs.org, etc)
+#
+# Required Permissions:
+#   contents: read
+#   packages: write  # Only if publishing to GitHub Packages
+#
+# Outputs:
+#   package-name: Published package name
+#   package-version: Published snapshot version
+#   tarball: Tarball filename
+name: Publish Snapshot NPM
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      branch:
+        description: "Branch, tag, or SHA to checkout. Empty preserves actions/checkout's event default."
+        required: false
+        default: ""
+        type: string
+      registry:
+        description: "NPM registry URL"
+        required: false
+        default: "https://npm.pkg.github.com"
+        type: string
+      package-scope:
+        description: "Required package scope, e.g. @<github-repository-owner> (@diggsweden for DiggSweden repositories). Leave empty to skip validation."
+        required: false
+        default: ""
+        type: string
+      artifact-source:
+        description: "Name of the NPM build artifact to download"
+        required: false
+        default: "npm-build-artifacts"
+        type: string
+      use-ci-token:
+        description: "Use GITHUB_TOKEN for authentication (GitHub Packages only)"
+        required: false
+        default: true
+        type: boolean
+      runtime-image:
+        description: "reusable-ci runtime image carrying Node. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-node-24:v3.0.0"
+        type: string
+      egress-policy:
+        description: "Egress policy for the Harden Runner step. Default `audit` (visibility-only). Promote to `block` for strict posture — pair with `egress-allowed-endpoints` covering at minimum: github.com:443, api.github.com:443, objects.githubusercontent.com:443, *.actions.githubusercontent.com:443, plus the registry host this caller publishes to (e.g. npm.pkg.github.com:443, registry.npmjs.org:443, or a private registry)."
+        required: false
+        default: "audit"
+        type: string
+      egress-allowed-endpoints:
+        description: "Multi-line space/newline-separated list of `host:port` endpoints permitted under `egress-policy: block`. Ignored when policy is `audit`."
+        required: false
+        default: ""
+        type: string
+    secrets:
+      registry-password:
+        description: "NPM registry auth token (required when use-ci-token=false)"
+        required: false
+    outputs:
+      package-name:
+        description: "Published package name"
+        value: ${{ jobs.build-and-publish.outputs.package-name }}
+      package-version:
+        description: "Published snapshot version"
+        value: ${{ jobs.build-and-publish.outputs.package-version }}
+      tarball:
+        description: "Tarball filename"
+        value: ${{ jobs.build-and-publish.outputs.tarball }}
+      publish-status:
+        description: "Publish outcome: published or already-exists"
+        value: ${{ jobs.build-and-publish.outputs.publish-status }}
+permissions:
+  contents: read
+jobs:
+  build-and-publish:
+    name: Build & Publish Snapshot NPM Package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      package-name: ${{ steps.meta.outputs.name }}
+      package-version: ${{ steps.tags.outputs.snapshot-version }}
+      tarball: ${{ steps.pack.outputs.tarball }}
+      publish-status: ${{ steps.check-registry.outputs['already-published'] == 'true' && 'already-exists' || 'published' }}
+    steps:
+      - name: Harden GitHub runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: ${{ inputs['egress-policy'] }}
+          allowed-endpoints: ${{ inputs['egress-allowed-endpoints'] }}
+      # Defense-in-depth: refuse PR-context triggers. NPM_TOKEN lives
+      # in env on this job and must never run with PR-HEAD code.
+      # reusable-ci is pre-baked in the runtime image.
+      - name: Refuse PR-context trigger (publish/release secrets in scope)
+        run: reusable-ci validate event-context
+      - name: Checkout repository
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CHECKOUT_REF: ${{ inputs.branch || github.ref }}
+          CHECKOUT_FETCH_ALL_REFS: "true"
+        run: reusable-ci platform checkout
+      # Compose ~/.npmrc with the literal ${NODE_AUTH_TOKEN} placeholder so
+      # npm expands it at publish time from the env var on the publish step.
+      # Validates the registry URL (must be http/https) and scope name format.
+      - name: Configure npm registry
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          SCOPE: ${{ inputs['package-scope'] }}
+        run: reusable-ci publish npm write-npmrc --output ~/.npmrc
+      - name: Read package metadata
+        id: meta
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          PACKAGE_SCOPE: ${{ inputs.package-scope }}
+        run: reusable-ci build npm metadata
+      - name: Download NPM build artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: ${{ inputs['artifact-source'] }}
+          ARTIFACT_DIR: ${{ inputs.working-directory }}/
+        run: reusable-ci artifact download
+      - name: Extract tarball contents
+        working-directory: ${{ inputs.working-directory }}
+        run: reusable-ci publish npm validate-tarball
+      - name: Check registry authentication configuration
+        env:
+          USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
+          REGISTRY: ${{ inputs.registry }}
+          CI_REGISTRY: "https://npm.pkg.github.com"
+          REGISTRY_PASSWORD: ${{ secrets['registry-password'] }}
+        run: reusable-ci validate auth registry
+      - name: Generate snapshot version tag
+        id: tags
+        run: reusable-ci version generate-snapshot
+      - name: Check if version already published
+        id: check-registry
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          NODE_AUTH_TOKEN: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+          VERSION: ${{ steps.tags.outputs.snapshot-version }}
+          NPM_REGISTRY: ${{ inputs.registry }}
+        run: reusable-ci publish npm validate-version
+      - name: Apply snapshot version to package.json
+        if: steps.check-registry.outputs['already-published'] != 'true'
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          SNAPSHOT_VERSION: ${{ steps.tags.outputs.snapshot-version }}
+        run: |
+          npm version "$SNAPSHOT_VERSION" --no-git-tag-version --allow-same-version
+          printf "Applied version: %s\n" "$SNAPSHOT_VERSION"
+      - name: Pack tarball
+        if: steps.check-registry.outputs['already-published'] != 'true'
+        id: pack
+        working-directory: ${{ inputs.working-directory }}
+        run: reusable-ci build npm pack
+      - name: Upload tarball as artifact
+        if: steps.check-registry.outputs['already-published'] != 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-snapshot-package-${{ github.run_id }}
+          path: ${{ inputs.working-directory }}/${{ steps.pack.outputs.tarball }}
+          retention-days: "7"
+          if-no-files-found: warn
+      - name: Publish to NPM registry
+        if: steps.check-registry.outputs['already-published'] != 'true'
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          NODE_AUTH_TOKEN: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
+          NPM_REGISTRY: ${{ inputs.registry }}
+          PACKAGE_NAME: ${{ steps.meta.outputs.name }}
+          SNAPSHOT_VERSION: ${{ steps.tags.outputs.snapshot-version }}
+        run: |
+          printf "Publishing %s@%s to %s with tag 'snapshot'\n" "$PACKAGE_NAME" "$SNAPSHOT_VERSION" "$NPM_REGISTRY"
+          npm publish --tag snapshot
+          printf "✅ Published successfully\n"

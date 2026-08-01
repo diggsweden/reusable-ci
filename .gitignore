@@ -1,5 +1,41 @@
-.vscode
+# Editor / IDE local state
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
 
-# Bats test libraries (installed via setup-bats-libs.sh)
-tests/libs/
-.claude
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Go build & test output (justfile writes both, goreleaser writes dist/)
+/bin/
+/dist/
+
+# Go test artefacts (stray binaries from `go test -c`, coverage profiles)
+*.test
+*.out
+
+# Linter / formatter caches (rumdl, golangci-lint, nanolinter, mise local)
+.rumdl_cache/
+.golangci-lint-cache/
+.nanolinter/
+.mise.local.toml
+
+# Transient: prebuilt reusable-ci binary injected into the image build (CLI_SOURCE=prebuilt)
+cli-prebuilt/
+
+# Runtime CI output (ManifestSink stage-result manifests; $CI_RESULTS_DIR)
+.ci-results/
+
+# Generated scan / ledger outputs (regenerated per run; never source).
+# `gl-*-report.json` + `trivy-*results*` are scanner outputs; nested dist/
+# dirs hold `container ledger` artefacts (the root /dist/ rule misses them).
+gl-dependency-scanning-report.json
+gl-container-scanning-report.json
+trivy-results.json
+trivy-results.sarif
+trivy-dependency-results.sarif
+dist/

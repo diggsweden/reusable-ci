@@ -1,0 +1,97 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+#
+# GitLab CI/CD Catalog component: Android (Gradle) release build.
+#
+# The GitLab counterpart of .github/workflows/build-gradle-android.yml. The whole
+# sequence (artifact-names → keystore → metadata → tasks → secrets → build → SBOM)
+# lives in the binary as `reusable-ci build gradle-android run`, so this job is a
+# single line. gradle runs in the job's working directory (we cd in). The signing
+# keystore is decoded outside the project dir; signing passwords stay CI
+# variables the gradle build reads. APK/AAB land under <module>/build/outputs and
+# the SBOM under build/reports/, which the job publishes as artifacts.
+#
+# Signing CI variables (set on the project/group, masked): ANDROID_KEYSTORE_BASE64,
+# ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD,
+# SECRETS_PROPERTIES_BASE64.
+#
+# Consume (pin a released version):
+#   include:
+#     - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/build-gradle-android@1.0.0
+#       inputs:
+#         build-module: app
+#         enable-signing: true
+spec:
+  inputs:
+    stage:
+      default: build
+      description: Pipeline stage the build runs in.
+    job-name:
+      default: build-gradle-android
+      description: Name of the generated job.
+    working-directory:
+      default: "."
+      description: Directory containing ./gradlew and gradle.properties.
+    build-module:
+      default: app
+      description: Gradle module to build (e.g. app).
+    product-flavor:
+      default: ""
+      description: Android product flavor (empty for none).
+    build-types:
+      default: "debug,release"
+      description: Comma-separated Android build types to assemble.
+    include-aab:
+      type: boolean
+      default: true
+      description: Also build the release AAB.
+    gradle-tasks:
+      default: ""
+      description: Override the derived gradle task list.
+    enable-signing:
+      type: boolean
+      default: false
+      description: Decode the keystore and sign the release build.
+    skip-tests:
+      type: boolean
+      default: false
+      description: Skip the test task.
+    enable-build-sbom:
+      type: boolean
+      default: true
+      description: Generate the cyclonedx-gradle-plugin Build SBOM.
+    sbom-tool-version:
+      # renovate: datasource=maven depName=org.cyclonedx:cyclonedx-gradle-plugin
+      default: "3.2.1"
+      description: Pinned cyclonedx-gradle-plugin version.
+    runtime-image:
+      default: "ghcr.io/diggsweden/reusable-ci-runtime-android-35:v3.0.0"
+      description: reusable-ci runtime image carrying JDK + Gradle + Android SDK (pin by @sha256).
+---
+"$[[ inputs.job-name ]]":
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.runtime-image ]]
+  variables:
+    INCLUDE_DATE_STAMP: "true"
+    REPOSITORY_NAME: "$CI_PROJECT_NAME"
+    PRODUCT_FLAVOR: "$[[ inputs.product-flavor ]]"
+    BUILD_TYPES: "$[[ inputs.build-types ]]"
+    INCLUDE_AAB: "$[[ inputs.include-aab ]]"
+    GRADLE_TASKS_OVERRIDE: "$[[ inputs.gradle-tasks ]]"
+    BUILD_MODULE: "$[[ inputs.build-module ]]"
+    ENABLE_SIGNING: "$[[ inputs.enable-signing ]]"
+    SKIP_TESTS: "$[[ inputs.skip-tests ]]"
+    ENABLE_BUILD_SBOM: "$[[ inputs.enable-build-sbom ]]"
+    CYCLONEDX_GRADLE_VERSION: "$[[ inputs.sbom-tool-version ]]"
+    CI_OUTPUT: "$CI_PROJECT_DIR/android-build.env"
+    CI_SUMMARY_FILE: "$CI_PROJECT_DIR/android-build-summary.md"
+  script:
+    - cd "$[[ inputs.working-directory ]]"
+    - reusable-ci build gradle-android run
+  artifacts:
+    reports:
+      dotenv: "$CI_PROJECT_DIR/android-build.env"
+    paths:
+      - $[[ inputs.working-directory ]]/$[[ inputs.build-module ]]/build/outputs/
+      - $[[ inputs.working-directory ]]/build/reports/

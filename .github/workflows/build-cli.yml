@@ -1,0 +1,149 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+#
+# build-cli — single source of truth for the reusable-ci CLI binary.
+#
+# Builds linux/darwin × amd64/arm64 with goreleaser (cosign-signed, SBOMs,
+# SLSA build-provenance) ONCE and uploads the dist/ artifact for callers to
+# consume in the SAME run: the runtime-image build bakes the byte-identical
+# linux binary (Containerfile CLI_SOURCE=prebuilt), and a publish job uploads
+# the tarballs to a release. It deliberately does NOT publish (--skip=publish);
+# publishing is the caller's job, so one build feeds both the rolling pre-release
+# channel and (later) tagged releases — eliminating the drift between the CLI
+# in the image and the CLI in the release tarball.
+#
+# Reproducibility: SOURCE_DATE_EPOCH + goreleaser's {{.CommitDate}} make
+# rebuilds of the same commit byte-identical.
+name: Build CLI
+on: # yamllint disable-line rule:truthy
+  workflow_call:
+    inputs:
+      version-tag:
+        description: "Version tag goreleaser stamps (e.g. v3.0.0-pre or vX.Y.Z); the leading v is stripped in archive names."
+        required: true
+        type: string
+      artifact-name:
+        description: "Name for the uploaded dist/ artifact (intra-run handoff to the image + publish jobs)."
+        required: false
+        default: cli-dist
+        type: string
+      artifact-retention-days:
+        description: "Retention for the dist/ artifact."
+        required: false
+        default: 1
+        type: number
+      sign:
+        description: "Cosign-sign + SBOM + attest (true for publishable builds; false for PR build-only feedback, needs no OIDC)."
+        required: false
+        default: true
+        type: boolean
+    outputs:
+      version:
+        description: "Resolved version (version-tag without the leading v), e.g. 3.0.0-pre."
+        value: ${{ jobs.build.outputs.version }}
+      artifact-name:
+        description: "Echoes the dist/ artifact name for callers to download."
+        value: ${{ inputs.artifact-name }}
+permissions:
+  contents: read
+jobs:
+  build:
+    name: GoReleaser (build only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # Sigstore keyless OIDC (cosign sign-blob: checksums + provenance)
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - name: Harden runner
+        # audit (not block), consistent with every other job in
+        # self-runtime-container.yml. The CLI's supply-chain trust is cosign
+        # keyless signing + SLSA build-provenance + the consumer-side identity
+        # pin — not egress. A block-list here is brittle: tool downloads
+        # (cosign, syft, goreleaser, GitHub release-asset S3 redirects) hit
+        # shifting CDN/host endpoints. harden-runner still records all egress.
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Install cosign
+        # goreleaser's signs: block shells out to cosign for keyless blob
+        # signing of checksums.txt. v4.x installer is required for cosign v3.x:
+        # v3 releases ship a .sigstore.json bundle, not the detached .sig that
+        # the v3.7.0 installer tries (and fails) to download. Skipped for
+        # build-only (PR) runs, which need no signing and no OIDC.
+        if: ${{ inputs.sign }}
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v3.1.1'
+      - name: Install syft
+        # goreleaser's sboms: block shells out to syft (one CycloneDX doc per
+        # archive). Pin matches release-binary.yml.
+        if: ${{ inputs.sign }}
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          syft-version: 'v1.45.1'
+      - name: Set SOURCE_DATE_EPOCH from commit
+        # Pins the embedded date + tarball mtimes to the commit timestamp so
+        # rebuilds of the same commit are byte-identical.
+        run: printf 'SOURCE_DATE_EPOCH=%s\n' "$(git log -1 --format=%ct HEAD)" >> "$GITHUB_ENV"
+      - name: Resolve version
+        id: version
+        env:
+          TAG: ${{ inputs.version-tag }}
+        run: printf 'value=%s\n' "${TAG#v}" >> "$GITHUB_OUTPUT"
+      - name: Run goreleaser
+        # skip=publish: this workflow only produces dist/; the caller publishes
+        #   (pre-release via REST, or the tagged release in Phase 2).
+        # skip=validate: pre-release runs have no real git tag on HEAD; the version is
+        #   forced via GORELEASER_CURRENT_TAG instead.
+        # Build-only runs (sign=false, e.g. PRs) additionally skip sign+sbom, so
+        # no cosign/syft/OIDC is needed. Both branches of the expression are
+        # non-empty on purpose: an empty string is falsy in GitHub Actions, so
+        # `sign && '' || ...` would wrongly take the fallback and skip signing.
+        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean --skip=${{ inputs.sign && 'publish,validate' || 'publish,validate,sign,sbom' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ inputs.version-tag }}
+      - name: Generate + sign SLSA provenance (cosign sign-blob, keyless)
+        # Portable, forge-neutral replacement for actions/attest-build-provenance
+        # (see release-binary.yml for the full rationale + verify recipe).
+        # reusable-ci generates the SLSA-v1.0 statement from checksums and signs
+        # it keyless with cosign sign-blob → a Sigstore bundle. No GitHub
+        # attestation API. The statement + bundle ride in dist/ (uploaded below);
+        # the publishing job attaches them to the release. Uses the binary
+        # goreleaser just built (self-consistent).
+        if: ${{ inputs.sign }}
+        env:
+          SIGN_METHOD: sigstore
+        run: |
+          set -euo pipefail
+          archive="$(find dist -name 'reusable-ci_*_linux_amd64.tar.gz' | head -1)"
+          tar -xzf "$archive" -C "$RUNNER_TEMP" reusable-ci
+          "$RUNNER_TEMP/reusable-ci" release provenance \
+            --checksum-file dist/checksums.txt \
+            --output dist/reusable-ci.intoto.json \
+            --bundle dist/reusable-ci.intoto.jsonl
+      - name: Upload dist artifact
+        # Run-scoped handoff: the image build and the publish job download this.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: ${{ inputs.artifact-retention-days }}

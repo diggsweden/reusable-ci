@@ -1,0 +1,80 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+#
+# GitLab CI/CD Catalog component: Maven release build (application or library).
+#
+# The GitLab counterpart of .github/workflows/build-maven.yml. The whole sequence
+# (install → metadata → app/lib build → SBOM → summaries) lives in the binary as
+# `reusable-ci build maven run`, which branches on --build-type, so this job is a
+# single line — the same sequence GitHub runs. mvn runs in the job's working
+# directory (we cd into it). GitLab clones the repo for the job; the runtime-java
+# image carries Maven + reusable-ci. JARs/POMs land under target/ and the Build
+# SBOM as target/bom.json, which the job publishes as artifacts.
+#
+# Consume (pin a released version):
+#   include:
+#     - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/build-maven@1.0.0
+#       inputs:
+#         build-type: app
+spec:
+  inputs:
+    stage:
+      default: build
+      description: Pipeline stage the build runs in.
+    job-name:
+      default: build-maven
+      description: Name of the generated job.
+    working-directory:
+      default: "."
+      description: Directory containing pom.xml.
+    build-type:
+      default: app
+      options: ["app", "lib"]
+      description: Build shape — "app" (clean package) or "lib" (sources + javadoc).
+    profile:
+      default: ""
+      description: Maven profile to activate (library builds).
+    cli-opts:
+      default: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
+      description: Extra args forwarded to mvn.
+    skip-tests:
+      type: boolean
+      default: false
+      description: Skip the Maven test phase.
+    enable-build-sbom:
+      type: boolean
+      default: true
+      description: Generate the cyclonedx-maven-plugin Build SBOM.
+    sbom-tool-version:
+      # renovate: datasource=maven depName=org.cyclonedx:cyclonedx-maven-plugin
+      default: "2.9.1"
+      description: Pinned org.cyclonedx:cyclonedx-maven-plugin version.
+    java-version:
+      default: "25"
+      description: JDK major version, reported in the build summary.
+    runtime-image:
+      default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
+      description: reusable-ci runtime image carrying Maven (pin by @sha256).
+---
+"$[[ inputs.job-name ]]":
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.runtime-image ]]
+  variables:
+    BUILD_TYPE: "$[[ inputs.build-type ]]"
+    MAVEN_PROFILE: "$[[ inputs.profile ]]"
+    MAVEN_CLI_OPTS: "$[[ inputs.cli-opts ]]"
+    SKIP_TESTS: "$[[ inputs.skip-tests ]]"
+    ENABLE_BUILD_SBOM: "$[[ inputs.enable-build-sbom ]]"
+    CYCLONEDX_MAVEN_VERSION: "$[[ inputs.sbom-tool-version ]]"
+    JAVA_VERSION: "$[[ inputs.java-version ]]"
+    CI_SUMMARY_FILE: "$CI_PROJECT_DIR/maven-build-summary.md"
+  script:
+    # mvn runs in the current directory, so cd into the project before the
+    # consolidated build (which reads pom.xml from ".").
+    - cd "$[[ inputs.working-directory ]]"
+    - reusable-ci build maven run
+  artifacts:
+    paths:
+      - $[[ inputs.working-directory ]]/target/
+      - $[[ inputs.working-directory ]]/**/target/

@@ -1,0 +1,123 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+# Cargo Builder
+#
+# Builds artifact-first Rust binaries and uploads them for release / container
+# consumption. Output filenames carry the platform suffix so GitHub Release
+# assets have unique basenames. Mirrors build-go.yml structurally so callers
+# can reason about both ecosystems uniformly. Build-layer SBOM (cargo-cyclonedx)
+# runs inline; container-first Rust crates remain on sbom-cargo.yml at publish
+# stage, exactly as before.
+name: Build Cargo
+on:
+  workflow_call: # yamllint disable-line rule:truthy
+    inputs:
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+      branch:
+        description: "Branch to checkout"
+        required: false
+        default: "main"
+        type: string
+      artifact-name:
+        description: "Artifact name for uploads (defaults to 'cargo-build-artifacts')"
+        required: false
+        default: ""
+        type: string
+      binary-name:
+        description: "Output binary name (defaults to the Cargo.toml [[bin]] target or package name)"
+        required: false
+        default: ""
+        type: string
+      platforms:
+        description: "Comma-separated GOOS/GOARCH targets. Each must map to a Rust target triple supported by the runtime image."
+        required: false
+        default: "linux/amd64"
+        type: string
+      version:
+        description: "Release version baked into the binary (defaults to github.ref_name without leading v)"
+        required: false
+        default: ""
+        type: string
+      skip-tests:
+        description: "Skip cargo test during release build"
+        required: false
+        default: false
+        type: boolean
+      enable-build-sbom:
+        description: "Generate CycloneDX Build SBOM with cargo-cyclonedx"
+        required: false
+        default: true
+        type: boolean
+      runtime-image:
+        description: "reusable-ci runtime image carrying the Rust toolchain. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-rust-stable:v3.0.0"
+        type: string
+permissions:
+  contents: read
+jobs:
+  build-cargo:
+    name: Build Cargo Project
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CHECKOUT_REF: ${{ inputs.branch }}
+          CHECKOUT_FETCH_ALL_REFS: "true"
+        run: reusable-ci platform checkout
+      - name: Cache cargo registry and target dir
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            /usr/local/cargo/registry/index
+            /usr/local/cargo/registry/cache
+            /usr/local/cargo/git/db
+            ${{ inputs['working-directory'] }}/target
+          key: cargo-build-${{ runner.os }}-${{ hashFiles(format('{0}/Cargo.lock', inputs['working-directory'])) }}
+          restore-keys: |
+            cargo-build-${{ runner.os }}-
+      - name: Build Cargo project
+        # One step owns the whole build sequence (metadata → fetch → test → SBOM
+        # → compile → status); the binary threads metadata internally and the
+        # same `build cargo run` runs identically on GitLab. cargo-cyclonedx is
+        # baked into the runtime image. Only platform-transport steps (checkout,
+        # cache, upload) wrap it.
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+          ARTIFACT_NAME: ${{ inputs['artifact-name'] }}
+          BINARY_NAME: ${{ inputs['binary-name'] }}
+          VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+          PLATFORMS: ${{ inputs.platforms }}
+          SKIP_TESTS: ${{ inputs['skip-tests'] }}
+          ENABLE_BUILD_SBOM: ${{ inputs['enable-build-sbom'] }}
+        run: reusable-ci build cargo run
+      - name: Upload Cargo artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs['artifact-name'] != '' && format('{0}-cargo-build-artifacts', inputs['artifact-name']) || 'cargo-build-artifacts' }}
+          path: ${{ inputs['working-directory'] }}/dist/**
+          retention-days: "7"
+          if-no-files-found: error
+      - name: Upload Cargo Build SBOM
+        if: ${{ inputs['enable-build-sbom'] }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs['artifact-name'] != '' && format('{0}-cargo-build-sbom', inputs['artifact-name']) || 'cargo-build-sbom' }}
+          path: |
+            ${{ inputs['working-directory'] }}/bom.json
+            ${{ inputs['working-directory'] }}/**/bom.json
+          retention-days: "7"
+          if-no-files-found: warn

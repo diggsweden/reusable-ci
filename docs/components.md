@@ -1,3 +1,5 @@
+# Components Reference
+
 ## Available Components
 
 This document describes reusable workflow components and how they relate to the supported orchestrator entrypoints.
@@ -7,11 +9,30 @@ This document describes reusable workflow components and how they relate to the 
 **Recommended stable GitHub entrypoints:**
 - `pullrequest-orchestrator.yml`
 - `release-orchestrator.yml`
-- `release-dev-orchestrator.yml`
+- `release-snapshot-orchestrator.yml`
 
-Leaf helper workflows such as `build-*`, `publish-*`, `lint-*`, `security-*`, `validate-*`, and selected release helpers can still be used directly by advanced consumers and are suitable for repo-local custom orchestration.
+Leaf helper workflows such as `build-*`, `publish-*`, `lint-*`, `security-*`, `validate-*`, and selected release helpers can still be used directly by advanced consumers and are suitable for custom orchestration. The examples below use external consumer refs; inside this repository's own workflows, the same components are called with local `./.github/workflows/...` paths.
 
-Stage workflows such as `pullrequest-quality-stage.yml`, `release-prepare-stage.yml`, `release-build-stage.yml`, `release-publish-stage.yml`, `release-dev-build-stage.yml`, and `release-dev-publish-stage.yml` are internal composition helpers. Advanced consumers may still use them, but they should be treated as less stable direct-use contracts than the orchestrators and leaf helpers.
+> **Trigger constraint for direct callers of publish / release / signing leaves.**
+> Every reusable workflow that handles signing, package-registry, or
+> platform-API secrets refuses to run on `pull_request`,
+> `pull_request_target`, `pull_request_review`,
+> `pull_request_review_comment`, or `issue_comment` triggers. The guard
+> step (`reusable-ci validate event-context`) runs as the first
+> secret-touching step of every privileged leaf. Direct callers must
+> wire their caller workflow under `push`, `workflow_dispatch`,
+> `release`, `schedule`, `workflow_run`, or `merge_group`; the
+> [threat model](threat-model.md#what-reusable-ci-defends-against)
+> describes the property in full. Adopters with a legitimate
+> PR-context publish need (preview deploys) override per-call-site
+> via the `--allowed-events` flag on the guard step — never as an
+> env-var bypass.
+
+The YAML blocks in this page are **job-level snippets**. Place them under
+`jobs.<job-id>` in your workflow and add the permissions/secrets required by the
+component you call.
+
+Stage workflows such as `pullrequest-quality-stage.yml`, `release-prepare-stage.yml`, `release-build-stage.yml`, `release-publish-stage.yml`, `release-snapshot-build-stage.yml`, and `release-snapshot-publish-stage.yml` are internal composition helpers. Advanced consumers may still use them, but they should be treated as less stable direct-use contracts than the orchestrators and leaf helpers.
 
 **When to use components:**
 - You need fine-grained control over builds, publishing, validation, or security checks
@@ -31,29 +52,28 @@ See [Workflow Guide](workflows.md) for orchestrator documentation and [Artifacts
 
 | Component | Purpose | Output | Required Secrets | Use When |
 |-----------|---------|--------|------------------|----------|
-| **publish-github** | Publishes Maven/NPM/Gradle to GitHub Packages | Artifacts in GitHub Packages | GITHUB_TOKEN | Default publishing target |
-| **publish-maven-central** | Publishes Maven libraries to Maven Central | Public Maven artifacts | MAVENCENTRAL_USERNAME, MAVENCENTRAL_PASSWORD | Public libraries (requires build-type: library) |
+| **publish-maven-github** | Publishes Maven libraries/NPM to GitHub Packages | Artifacts in GitHub Packages | GITHUB_TOKEN | When supported artifacts include `publish-to: [forge-packages]` |
+| **publish-maven-central** | Publishes Maven libraries to Maven Central | Public Maven artifacts | MAVEN_CENTRAL_USERNAME, MAVEN_CENTRAL_PASSWORD | Public libraries (requires build-type: library) |
 
 #### Container Builders
 
 | Component | Purpose | Features | Build Time | Use When |
 |-----------|---------|----------|------------|----------|
 | **publish-container** | Production multi-platform container builds | SLSA attestation, SBOM, vulnerability scanning, native split-runner multi-arch (no QEMU) | ~5-10 min | Production releases |
-| **publish-dev-container** | Fast dev container builds, single- or multi-platform | Basic image only, SHA-based tags, native split-runner when multi-arch | ~3-5 min | Development/testing |
 
 #### Release Tools
 
 | Component | Purpose | Creates/Updates | Required Secrets | Use When |
 |-----------|---------|----------------|------------------|----------|
-| **release-github** | GitHub release creation | GitHub release, changelog, signatures | RELEASE_BOT_TOKEN, GPG keys | Any production release |
-| **version-bump** | Version management | Updated version files | GITHUB_TOKEN, RELEASE_BOT_TOKEN | Before releases |
+| **release-create-github** | GitHub release creation | GitHub release, changelog, signatures | RELEASE_TOKEN, GPG keys | Any production release |
+| **version-bump** | Version management | Updated version files | GITHUB_TOKEN, RELEASE_TOKEN | Before releases |
 | **generate-changelog** | Changelog generation | Formatted changelog | GITHUB_TOKEN | Before releases |
 
 #### Validators
 
 | Component | Purpose | Validates | Blocks On | Use When |
 |-----------|---------|-----------|-----------|----------|
-| **release-prerequisites** | Pre-release checks | Version match, permissions, secrets | Any validation failure | Before any release |
+| **validate-release-prerequisites** | Pre-release checks | Version match, permissions, secrets | Any validation failure | Before any release |
 
 > **Note:** To request a new component or publisher, open an issue in the reusable-ci repository.
 
@@ -62,28 +82,75 @@ See [Workflow Guide](workflows.md) for orchestrator documentation and [Artifacts
 #### `build-maven.yml`
 Builds Maven projects (apps or libraries).
 ```yaml
-uses: ./.github/workflows/build-maven.yml
+uses: diggsweden/reusable-ci/.github/workflows/build-maven.yml@v3.0.0
 with:
-  build-type: application   # "application" or "library"
-  java-version: "25"        # JDK version
+  build-type: app           # "app" or "lib"
   working-directory: "."    # Path to pom.xml
 ```
+
+Direct callers use `app`/`lib`. In `artifacts.yml`, use
+`application`/`library`; the orchestrator maps those values to this workflow's
+input.
 
 #### `build-npm.yml`
 Builds NPM projects.
 ```yaml
-uses: ./.github/workflows/build-npm.yml
+uses: diggsweden/reusable-ci/.github/workflows/build-npm.yml@v3.0.0
 with:
-  node-version: "24"        # Node.js version
   working-directory: "."    # Path to package.json
+```
+
+#### `build-go.yml`
+Builds artifact-first Go binaries, generates a native CycloneDX Build SBOM with
+`cyclonedx-gomod`, and uploads `dist/<goos>-<goarch>/<binary>-<goos>-<goarch>`.
+```yaml
+uses: diggsweden/reusable-ci/.github/workflows/build-go.yml@v3.0.0
+with:
+  working-directory: "."
+  main-package: ./cmd/my-cli
+  binary-name: my-cli
+  platforms: linux/amd64,linux/arm64,darwin/amd64,darwin/arm64
+```
+
+#### `sbom-go.yml`
+Generates the native CycloneDX Build SBOM for container-first Go projects with
+`cyclonedx-gomod`. It does not compile; the project's Containerfile owns
+`go build`.
+```yaml
+uses: diggsweden/reusable-ci/.github/workflows/sbom-go.yml@v3.0.0
+with:
+  working-directory: "."
+```
+
+#### `build-cargo.yml`
+Builds artefact-first Rust binaries via `cargo build --release --target …`,
+cross-compiles per platform into `dist/<goos>-<goarch>/<binary>-<goos>-<goarch>`
+(matching Go's shape), and emits an inline CycloneDX Build SBOM with
+`cargo-cyclonedx`. Used for Cargo artefacts with `config.build-mode:
+artifact-first`. Container-first cargo continues to use `sbom-cargo.yml`.
+```yaml
+uses: diggsweden/reusable-ci/.github/workflows/build-cargo.yml@v3.0.0
+with:
+  working-directory: "."
+  binary-name: my-cli
+  platforms: linux/amd64,linux/arm64
+```
+
+#### `sbom-cargo.yml`
+Generates the lockfile-derived CycloneDX Build SBOM for container-first Rust
+projects with `cargo-cyclonedx`. It does not compile; the project's
+Containerfile owns `cargo build`.
+```yaml
+uses: diggsweden/reusable-ci/.github/workflows/sbom-cargo.yml@v3.0.0
+with:
+  working-directory: "."
 ```
 
 #### `build-gradle-app.yml`
 Builds Gradle JVM projects — libraries, applications, plugins — and uploads their JARs. Android is out of scope; use `build-gradle-android.yml` for APKs/AABs with flavors and Google Play publishing.
 ```yaml
-uses: ./.github/workflows/build-gradle-app.yml
+uses: diggsweden/reusable-ci/.github/workflows/build-gradle-app.yml@v3.0.0
 with:
-  java-version: "25"           # JDK version
   working-directory: "."       # Path to build.gradle
   gradle-tasks: "build"        # Gradle tasks to run
   skip-tests: false            # Skip `test` task
@@ -93,9 +160,8 @@ with:
 #### `build-gradle-android.yml`
 Builds Android applications with multiple product flavors and build types. Sole Android path: sets up the Android SDK, handles keystore decoding for signing, and produces split APK/AAB artifacts with Google Play-friendly naming.
 ```yaml
-uses: ./.github/workflows/build-gradle-android.yml
+uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@v3.0.0
 with:
-  java-version: "25"              # JDK version
   build-module: "app"             # Gradle module
   product-flavor: "demo"          # Product flavor (demo, prod, etc.)
   build-types: "debug,release"    # Build types to create
@@ -116,12 +182,14 @@ with:
 
 ### Publish Workflows
 
-#### `publish-github.yml`
-Publishes artifacts to GitHub Packages (Maven/NPM/Gradle).
+#### `publish-maven-github.yml`
+Publishes Maven libraries and NPM artifacts to GitHub Packages. Maven apps and
+Gradle publishing are not wired today; use a project-owned publishing workflow
+until reusable-ci adds those publishers.
 ```yaml
-uses: ./.github/workflows/publish-maven-github.yml
+uses: diggsweden/reusable-ci/.github/workflows/publish-maven-github.yml@v3.0.0
 with:
-  package-type: maven          # maven, npm, or gradle
+  package-type: maven          # maven or npm
   artifact-source: maven-build-artifacts  # Name of workflow artifact
   working-directory: "."
 ```
@@ -129,7 +197,7 @@ with:
 #### `publish-maven-central.yml`
 Publishes Maven libraries to Maven Central.
 ```yaml
-uses: ./.github/workflows/publish-maven-central.yml
+uses: diggsweden/reusable-ci/.github/workflows/publish-maven-central.yml@v3.0.0
 with:
   artifact-source: maven-build-artifacts  # Name of workflow artifact
   working-directory: "."
@@ -141,26 +209,17 @@ with:
 #### `publish-container.yml`
 Production container builds with full security features. Supports multiple registries.
 ```yaml
-uses: ./.github/workflows/publish-container.yml
+uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@v3.0.0
 with:
+  reusable-ci-binary-ref: v3.0.0
   container-file: "Containerfile"
   context: "."
+  artifact-types: maven
   platforms: "linux/amd64,linux/arm64"
   enable-slsa: true
-  enable-analyzed-container-sbom: true   # was `enable-sbom: true` in v2; rename
+  enable-analyzed-container-sbom: true   # CycloneDX SBOM of the built image
   enable-scan: true
   registry: "ghcr.io"
-```
-
-#### `publish-dev-container.yml`
-Fast development container builds. Supports multiple registries.
-```yaml
-uses: ./.github/workflows/publish-dev-container.yml
-with:
-  container-file: "Containerfile"  # or "Dockerfile"
-  registry: "ghcr.io"
-  project-type: maven
-  working-directory: "."
 ```
 
 ### Other Components
@@ -168,7 +227,7 @@ with:
 #### `version-bump.yml`
 Handles version bumping and updates version files.
 ```yaml
-uses: ./.github/workflows/version-bump.yml
+uses: diggsweden/reusable-ci/.github/workflows/version-bump.yml@v3.0.0
 with:
   project-type: maven      # Determines version file (pom.xml vs package.json)
   branch: main             # Base branch for comparison
@@ -178,10 +237,10 @@ with:
 #### `generate-changelog.yml`
 Generates changelog from git commits.
 ```yaml
-uses: ./.github/workflows/generate-changelog.yml
+uses: diggsweden/reusable-ci/.github/workflows/generate-changelog.yml@v3.0.0
 with:
   branch: main             # Base branch for changelog comparison
-  config-file: ""          # Optional: Custom changelog config
+  changelog-config: ""     # Optional: custom git-cliff config
 ```
 
 #### `release-create-github.yml`
@@ -200,104 +259,79 @@ Usually called by `release-orchestrator.yml`, but can also be used directly by a
 Orchestrates all quality checks for pull requests. Composes a control-plane interface, delegates to the quality stage, and produces a top-level summary.
 
 ```yaml
-uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@v3.0.0
 with:
-  project-type: maven              # Required: maven, npm, gradle, gradle-android, xcode-ios, cargo, python, go
+  project-type: maven              # Required: maven, npm, gradle, gradle-android, xcode-ios, cargo, go (python reserved)
   base-branch: ""                  # Optional: auto-detects PR target
-  linters.commitlint: true         # Deprecated v3.0: migrate to devbasecheck
-  linters.licenselint: true        # Deprecated v3.0: migrate to devbasecheck
-  linters.dependencyreview: true   # Dependency vulnerability review
-  security.sast-opengrep: true     # OpenGrep SAST (default; set false to opt out)
-  security.sast-opengrep-rules: p/default
-  security.sast-opengrep-fail-on-severity: high
-  linters.megalint: true           # Deprecated v3.0: migrate to devbasecheck
-  linters.publiccodelint: false    # Publiccode.yml validation
-  linters.devbasecheck: false      # Recommended: replaces deprecated linters
-  linters.swiftformat: false       # Swift format for iOS/macOS
+  lint-engine: nanolinter          # General lint engine: nanolinter (default) | megalinter | none — mutually exclusive
+  required-lints: secrets,sast     # Mandated lint floor: forced to run + block via `nanolinter verify --require`, unskippable per project
+  megalinter-image: oxsecurity/megalinter:v8  # MegaLinter flavour image when lint-engine=megalinter (pin by @sha256)
+  linters.swiftformat: false       # Swift format for iOS/macOS (separate macOS job, orthogonal to the engine)
   linters.swiftlint: false         # SwiftLint for iOS/macOS
-  linters.clippy: false            # cargo clippy for Rust
-  linters.rustfmt: false           # cargo fmt --check for Rust
-  linters.cargoaudit: false        # cargo audit (RUSTSEC) for Rust
-  reusable-ci-ref: v2.7.0           # Match the pinned workflow release
+  reusable-ci-binary-ref: v3.0.0   # Match the pinned workflow release
 ```
 
-**Behavior:** The orchestrator remains the supported entrypoint. Internally it delegates to the quality stage, which writes a normalized manifest consumed by the top-level PR summary. See [PR Quality Stage Result Contract](workflows.md#pr-quality-stage-result-contract) for the internal schema.
+**Behavior:** The orchestrator remains the supported entrypoint. Internally it delegates to the quality stage, which writes a normalized manifest consumed by the top-level PR summary. See [Stage Result Contract](workflows.md#stage-result-contract) for the internal schema.
 
 ### Lint Workflows
 
-These workflows are automatically called by `pullrequest-orchestrator.yml`.
+These workflows are automatically called by `pullrequest-orchestrator.yml`. The
+`lint-engine` input picks the single general engine (mutually exclusive — two
+would duplicate Code Scanning findings); Swift/iOS checks run separately in
+`lint-swift.yml` regardless of the engine.
 
-#### `lint-commit.yml`
-Validates commit messages follow conventional commit format using [gommitlint](https://codeberg.org/itiquette/gommitlint).
+#### `lint-nanolinter.yml` (default)
+Runs `nanolinter verify` against the consumer's `nanolinter.toml` verify plan,
+inside the nanolinter flavour image (which bakes nanolinter and its check
+toolchain — no `just`/`justfile` required). Fast, node-less. Security findings
+upload to GitHub Code Scanning as SARIF.
 ```yaml
-uses: ./.github/workflows/lint-commit.yml
+uses: diggsweden/reusable-ci/.github/workflows/lint-nanolinter.yml@v3.0.0
 ```
 
-#### `lint-license.yml`
-Checks license compliance using REUSE specifications.
-```yaml
-uses: ./.github/workflows/lint-license.yml
-```
+**Mandated lint floor.** The job passes `nanolinter verify --require
+"$REQUIRED_LINTS"` (default `secrets,sast`), which forces those checks to *run*
+and *block* regardless of the project's `nanolinter.toml` — a project cannot
+drop them from `[verify].checks`, exclude them, nor downgrade them to advisory
+via `[policy].warn`/`warn_all`. So "every project runs SAST and secret
+detection" is enforced, not merely recommended. Override the set with the
+`required-lints` input (org-level; a project can only add via its own config —
+by `extends`-ing a base with `[policy].require` — never remove). Set
+`required-lints: ""` to disable the floor.
 
-#### `lint-mega.yml`
-Runs MegaLinter for multi-language code quality checks.
-```yaml
-uses: ./.github/workflows/lint-mega.yml
-```
+Swift/iOS linting runs separately in `lint-swift.yml` (macOS) — nanolinter has
+no native macOS binary.
 
-#### `lint-misc.yml`
-Performs miscellaneous validation checks.
+#### `lint-megalinter.yml`
+Runs MegaLinter from the pinned `oxsecurity/megalinter` image — the heavier,
+governance-recognised alternative for teams standardising on MegaLinter. Reads
+the project's own `.mega-linter.yml`. Selected with `lint-engine: megalinter`;
+its security findings reach Code Scanning as SARIF (category
+`megalinter-security`) through the same enrich/upload path. Heavier and slower
+than nanolinter, so nanolinter stays the default.
 ```yaml
-uses: ./.github/workflows/lint-misc.yml
+uses: diggsweden/reusable-ci/.github/workflows/lint-megalinter.yml@v3.0.0
 ```
-
-#### `lint-publiccode.yml`
-Validates publiccode.yml file format.
-```yaml
-uses: ./.github/workflows/lint-publiccode.yml
-```
-
-#### `lint-devbase.yml`
-Runs quality checks using devbase-check. Client justfile overrides work both locally and in CI.
-```yaml
-uses: ./.github/workflows/lint-devbase.yml
-with:
-  devbase-check-version: ""  # Optional: override pinned version
-```
-
-**Features:**
-- Same `verify.sh` script runs locally and in CI
-- Client justfile overrides (e.g., `lint-license: @echo "Skipping"`) work in CI
-- Generates GitHub Actions summary with pass/fail per linter
-- Version-pinned devbase-check with Renovate auto-updates
 
 ### Security Workflows
 
 These workflows are automatically called by `pullrequest-orchestrator.yml`.
 
-#### `security-dependency-review.yml`
-Reviews dependencies for known vulnerabilities.
-```yaml
-uses: ./.github/workflows/security-dependency-review.yml
-```
+> **SAST + dependency scanning** are no longer standalone workflows. The
+> selected lint engine runs them as part of its plan: `nanolinter` (default)
+> runs OpenGrep SAST, OSV dependency scanning, secret detection, and trivy-fs
+> (configure in `nanolinter.toml`); `megalinter` runs its own SAST/secrets
+> linters (configure in `.mega-linter.yml`). Either uploads its findings to
+> GitHub Code Scanning as SARIF via `lint-nanolinter.yml` / `lint-megalinter.yml`.
 
-#### `security-opengrep.yml`
-Runs OpenGrep SAST and emits portable outputs for GitHub and GitLab-style integrations.
-```yaml
-uses: ./.github/workflows/security-opengrep.yml
-with:
-  opengrep-rules: p/default
-  fail-on-severity: high
-```
-
-The workflow runs directly on the GitHub runner in this branch. The runtime container path is introduced later on the GitLab prep branch.
-
-SARIF is always generated and saved as a workflow artifact. To publish results into GitHub Security / Code Scanning, configure the org or repo secret `SARIF_UPLOAD_TOKEN` and pass secrets with `secrets: inherit`.
+SARIF is uploaded to GitHub Code Scanning when the org or repo secret
+`CODE_SCANNING_TOKEN` is configured and secrets are passed with `secrets:
+inherit`; it is always also saved as a workflow artifact.
 
 #### `security-openssf-scorecard.yml`
 Generates OpenSSF security scorecard for the repository.
 ```yaml
-uses: ./.github/workflows/security-openssf-scorecard.yml
+uses: diggsweden/reusable-ci/.github/workflows/security-openssf-scorecard.yml@v3.0.0
 ```
 
 ---
@@ -310,15 +344,16 @@ uses: ./.github/workflows/security-openssf-scorecard.yml
 |----------|---------|-------------|
 | `pullrequest-orchestrator.yml` | Pull request quality control plane | Every repository |
 | `release-orchestrator.yml` | Production release control plane | Production releases |
-| `release-dev-orchestrator.yml` | Lightweight dev release control plane | Development branches |
+| `release-snapshot-orchestrator.yml` | Lightweight snapshot release control plane (npm/SBOM-only) | Development branches |
 
-### Dev vs Production Release
+### Snapshot vs Production Release
 
-| Aspect | Dev | Production |
-|--------|-----|------------|
+| Aspect | Snapshot | Production |
+|--------|----------|------------|
 | Build time | ~3-5 min | ~12-15 min |
-| Container image | ✓ | ✓ + SLSA + SBOM |
-| Build artifacts | ✓ (JARs/tarballs) | ✓ |
-| NPM publish | ✓ (dev tag) | ✓ |
+| Container image | — (builds none; a release-built image is promoted to `:dev` by the promotion ladder) | ✓ + SLSA + SBOM + vulnerability scan |
+| Build artifacts | ✓ for artifact-first ecosystems | ✓ |
+| SBOMs | Default `none`; opt in with `sboms` | Default `all` |
+| NPM publish | ✓ (snapshot tag) | ✓ |
 | Maven publish | — | ✓ (libraries only) |
 | GitHub Release | — | ✓ |

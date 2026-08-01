@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+#
+# Example: plan-driven release build fan-out on GitLab CI.
+#
+# GitHub expands the per-artifact build matrix natively
+# (strategy: matrix over fromJson(plan)). GitLab cannot expand a runtime-computed
+# matrix, so the fan-out is materialised: a prepare job generates a child
+# pipeline from the SAME plan JSON, and a trigger job runs it. Each generated job
+# is one `include:` of a thin build-<eco> component (the same `reusable-ci build
+# <eco> run` sequence GitHub runs) — see templates/build-*.yml.
+stages:
+  - prepare
+  - build
+
+# Stage 0: compute the build-stage plan from artifacts.yml, then materialise a
+# GitLab child pipeline that includes one build-<eco> component per artifact.
+generate-build-pipeline:
+  stage: prepare
+  image: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
+  variables:
+    CI_OUTPUT: plan.env
+  script:
+    # `config parse-artifacts` → `plan release` emits build-stage-plan-json into
+    # the dotenv; the generator turns it into the child pipeline.
+    - reusable-ci config parse-artifacts
+    - reusable-ci plan release --tag "$CI_COMMIT_TAG"
+    - |
+      reusable-ci plan gitlab-build-pipeline \
+        --component-ref 1.0.0 \
+        --version "$CI_COMMIT_TAG" \
+        --output build-pipeline.yml
+  artifacts:
+    reports:
+      dotenv: plan.env
+    paths:
+      - build-pipeline.yml
+
+# Stage 1: run the generated child pipeline (the actual per-artifact builds).
+build:
+  stage: build
+  needs:
+    - generate-build-pipeline
+  trigger:
+    include:
+      - artifact: build-pipeline.yml
+        job: generate-build-pipeline
+    strategy: depend

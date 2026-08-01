@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+
+# The bootstrap install scripts source install-common.sh via a dynamic
+# $(dirname "${BASH_SOURCE[0]}") path that shellcheck cannot resolve statically
+# (the `# shellcheck source=` directives mark intent, but the file lives beside
+# each script, not at the lint cwd). Following it adds nothing — install-common.sh
+# is itself linted directly — so silence the "not following" note rather than
+# wiring a source-path that would re-lint the same file transitively.
+disable=SC1091

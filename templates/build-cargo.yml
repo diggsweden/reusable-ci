@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+#
+# GitLab CI/CD Catalog component: artifact-first Cargo (Rust) release build.
+#
+# The GitLab counterpart of .github/workflows/build-cargo.yml. The whole sequence
+# (metadata → fetch → test → SBOM → compile → status) lives in the binary as
+# `reusable-ci build cargo run`, so this job is a single line — the same sequence
+# GitHub runs. GitLab clones the repo for the job; the runtime-rust image carries
+# cargo + cargo-cyclonedx + reusable-ci. Binaries land in dist/ and the Build
+# SBOM as bom.json, which the job publishes as artifacts.
+#
+# Consume (pin a released version):
+#   include:
+#     - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/build-cargo@1.0.0
+#       inputs:
+#         version: "$CI_COMMIT_TAG"
+spec:
+  inputs:
+    stage:
+      default: build
+      description: Pipeline stage the build runs in.
+    job-name:
+      default: build-cargo
+      description: Name of the generated job.
+    working-directory:
+      default: "."
+      description: Directory containing Cargo.toml.
+    artifact-name:
+      default: ""
+      description: Artifact-name override (also names the SBOM).
+    platforms:
+      default: "linux/amd64,linux/arm64"
+      description: Comma-separated GOOS/GOARCH targets (mapped to Rust triples).
+    version:
+      default: ""
+      description: Release version baked into the binary; defaults to the ref name.
+    skip-tests:
+      type: boolean
+      default: false
+      description: Skip 'cargo test' during the release build.
+    enable-build-sbom:
+      type: boolean
+      default: true
+      description: Generate the cargo-cyclonedx Build SBOM.
+    runtime-image:
+      default: "ghcr.io/diggsweden/reusable-ci-runtime-rust:v3.0.0"
+      description: reusable-ci runtime image carrying cargo + cargo-cyclonedx (pin by @sha256).
+---
+"$[[ inputs.job-name ]]":
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.runtime-image ]]
+  variables:
+    WORKING_DIRECTORY: "$[[ inputs.working-directory ]]"
+    ARTIFACT_NAME: "$[[ inputs.artifact-name ]]"
+    PLATFORMS: "$[[ inputs.platforms ]]"
+    VERSION: "$[[ inputs.version ]]"
+    SKIP_TESTS: "$[[ inputs.skip-tests ]]"
+    ENABLE_BUILD_SBOM: "$[[ inputs.enable-build-sbom ]]"
+    REF_NAME: "$CI_COMMIT_REF_NAME"
+    CI_SUMMARY_FILE: "$CI_PROJECT_DIR/cargo-build-summary.md"
+  script:
+    - reusable-ci build cargo run
+  artifacts:
+    paths:
+      - $[[ inputs.working-directory ]]/dist/
+      - $[[ inputs.working-directory ]]/bom.json

@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+#
+# reusable-ci's OWN GitLab pipeline (the GitLab analog of .github/workflows/
+# self-*.yml), distinct from the consumable components under templates/. It:
+#   1. self-tests each component from this checkout (`include: local`, so the
+#      template is exercised at $CI_COMMIT_SHA without a published release);
+#   2. publishes the components to the CI/CD Catalog on a semver tag, using the
+#      `release` keyword (required by GitLab — not the Releases API).
+#
+# Prerequisite for publication: mark the project as a CI/CD Catalog project
+# (Settings > CI/CD > Catalog) and give it a description. See gitlabsupportplan.md.
+stages:
+  - test
+  - release
+
+include:
+  - local: templates/nanolinter.yml
+    inputs:
+      job-name: selftest-nanolinter
+      # reusable-ci is a Go + just project; use the Go flavour to self-test.
+      nanolinter-image: "codeberg.org/itiquette/nanolinter:full"
+      # Keep the self-test hermetic: the SAST step would pull a *published*
+      # reusable-ci release to convert the SARIF, which tests an external
+      # artifact rather than this checkout. The conversion itself is covered by
+      # the Go unit tests (internal/domain/security/sast_test.go); consumers get
+      # it on by default. This only exercises the component render + lint gate.
+      enable-gitlab-sast: false
+
+# Publish to the CI/CD Catalog when a semver tag is pushed.
+create-release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^\d+\.\d+\.\d+$/
+  script:
+    - echo "Releasing $CI_COMMIT_TAG to the CI/CD Catalog"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    description: "reusable-ci GitLab CI/CD Catalog components — $CI_COMMIT_TAG"

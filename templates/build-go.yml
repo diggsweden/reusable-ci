@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+#
+# GitLab CI/CD Catalog component: artifact-first Go release build.
+#
+# The GitLab counterpart of .github/workflows/build-go.yml. Because the whole
+# build sequence (metadata → deps → test → SBOM → compile → summary) lives in the
+# binary as `reusable-ci build go run`, this job is a single line — the same
+# sequence GitHub runs, with no re-encoding. GitLab clones the repo for the job,
+# so there is no checkout step; the runtime-go image carries Go + cyclonedx-gomod
+# + reusable-ci. Binaries land in dist/ and the Build SBOM under
+# .reusable-ci/go-build-sbom/, which the job publishes as artifacts.
+#
+# Consume (pin a released version):
+#   include:
+#     - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/build-go@1.0.0
+#       inputs:
+#         version: "$CI_COMMIT_TAG"
+spec:
+  inputs:
+    stage:
+      default: build
+      description: Pipeline stage the build runs in.
+    job-name:
+      default: build-go
+      description: Name of the generated job.
+    working-directory:
+      default: "."
+      description: Directory containing go.mod.
+    artifact-name:
+      default: ""
+      description: Artifact-name override (also names the SBOM); defaults to the module basename.
+    platforms:
+      default: "linux/amd64,linux/arm64"
+      description: Comma-separated GOOS/GOARCH targets to cross-compile.
+    version:
+      default: ""
+      description: Release version baked via -ldflags; defaults to the ref name (e.g. the tag).
+    skip-tests:
+      type: boolean
+      default: false
+      description: Skip 'go test ./...' during the release build.
+    enable-build-sbom:
+      type: boolean
+      default: true
+      description: Generate the CycloneDX Build SBOM with cyclonedx-gomod.
+    runtime-image:
+      default: "ghcr.io/diggsweden/reusable-ci-runtime-go-1.26:v3.0.0"
+      description: reusable-ci runtime image carrying Go + cyclonedx-gomod (pin by @sha256).
+---
+"$[[ inputs.job-name ]]":
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.runtime-image ]]
+  variables:
+    WORKING_DIRECTORY: "$[[ inputs.working-directory ]]"
+    ARTIFACT_NAME: "$[[ inputs.artifact-name ]]"
+    PLATFORMS: "$[[ inputs.platforms ]]"
+    VERSION: "$[[ inputs.version ]]"
+    SKIP_TESTS: "$[[ inputs.skip-tests ]]"
+    ENABLE_BUILD_SBOM: "$[[ inputs.enable-build-sbom ]]"
+    # Derive the version from the tag/branch when --version is empty, and render
+    # the build summary into the GitLab job summary.
+    REF_NAME: "$CI_COMMIT_REF_NAME"
+    CI_SUMMARY_FILE: "$CI_PROJECT_DIR/go-build-summary.md"
+  script:
+    - reusable-ci build go run
+  artifacts:
+    paths:
+      - $[[ inputs.working-directory ]]/dist/
+      - $[[ inputs.working-directory ]]/.reusable-ci/go-build-sbom/

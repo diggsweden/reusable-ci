@@ -19,23 +19,16 @@ concurrency:
 
 jobs:
   pr-checks:
-    uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+    uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@v3.0.0
     secrets: inherit
     permissions:
       contents: read
       packages: read
     with:
-      reusable-ci-ref: v2.7.0
+      reusable-ci-binary-ref: v3.0.0
       project-type: maven
-      # Recommended: Use devbase-check (lightweight, just+mise-based)
-      linters.devbasecheck: true
-      linters.commitlint: false
-      linters.licenselint: false
-      linters.megalint: false
-      # OpenGrep SAST is enabled by default. Opt out if needed:
-      # security.sast-opengrep: false
-      # security.sast-opengrep-rules: p/default
-      # security.sast-opengrep-fail-on-severity: high
+      # Default lint engine: nanolinter (runs `nanolinter verify` from your nanolinter.toml)
+      lint-engine: nanolinter
 
   # Optional: Add project-specific tests
   # test:

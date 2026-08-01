@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+#
+# Example: the default PR lint gate (nanolinter) on GitLab CI — the analog of an
+# example PR workflow that enables `lint-engine: nanolinter` on GitHub.
+#
+# Version is pinned to a Catalog release (GitLab recommends pinning over moving
+# targets like ~latest or a branch). Pick the nanolinter flavour for your stack.
+stages:
+  - test
+
+include:
+  - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/nanolinter@1.0.0
+    inputs:
+      nanolinter-image: "codeberg.org/itiquette/nanolinter:java"

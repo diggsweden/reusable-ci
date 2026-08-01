@@ -1,0 +1,95 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+#
+# GitLab CI/CD Catalog component: publish a Maven library to Maven Central
+# (Sonatype). The GitLab counterpart of .github/workflows/publish-maven-central.yml.
+#
+# Maven Central is an EXTERNAL registry, so this flow is forge-neutral: the
+# upload is `mvn deploy` (driven by the binary's `publish maven-central deploy`),
+# identical to what GitHub runs. Sequence: validate event-context → import the
+# release GPG key → verify the sources/javadoc JARs → resolve metadata → deploy
+# (the Maven profile drives GPG signing via maven-gpg-plugin) → write the
+# summary. GPG key is cleaned up in after_script.
+#
+# ARTIFACT CONTRACT: the built library (sources + javadoc JARs under */target/)
+# must already be in the working directory. Provide it via GitLab native artifact
+# passing — `needs:`/`dependencies:` on the build-maven job, or run this in the
+# same pipeline as the build. (Unlike GitHub/Forgejo, the GitLab provider has no
+# run-artifact API, so `reusable-ci artifact download` is not used here.)
+#
+# REQUIRED CI/CD VARIABLES (set masked + protected in the project/group):
+#   MAVEN_CENTRAL_USERNAME  Sonatype OSSRH portal username
+#   MAVEN_CENTRAL_PASSWORD  Sonatype OSSRH portal token (NOT the account password)
+#   GPG_PRIVATE_KEY         armored OpenPGP private key used to sign artefacts
+#   GPG_PASSPHRASE          passphrase for GPG_PRIVATE_KEY
+# The binary reads these from the environment directly — they are never placed
+# on argv.
+#
+# Consume (pin a released version):
+#   include:
+#     - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/publish-maven-central@1.0.0
+#       inputs:
+#         profile: central-release
+spec:
+  inputs:
+    stage:
+      default: publish
+      description: Pipeline stage the publish runs in.
+    job-name:
+      default: publish-maven-central
+      description: Name of the generated job.
+    artifact-name:
+      default: ""
+      description: Logical name of the build artifact consumed (reported in the summary; the JARs must be present via GitLab artifact passing).
+    version:
+      default: ""
+      description: Release version (reported in the summary; metadata is the source of truth).
+    project-type:
+      default: maven
+      description: Ecosystem of the artifact (accepted for fan-out symmetry; Maven Central is Maven-only).
+    working-directory:
+      default: "."
+      description: Directory containing the pom.xml.
+    profile:
+      default: central-release
+      description: Maven profile activated for the deploy (drives GPG signing).
+    settings-path:
+      default: ""
+      description: Path to a Maven settings.xml passed via -s (optional).
+    cli-opts:
+      default: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
+      description: Extra args forwarded to mvn.
+    runtime-image:
+      default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
+      description: reusable-ci runtime image carrying JDK + Maven (pin by @sha256).
+---
+"$[[ inputs.job-name ]]":
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.runtime-image ]]
+  variables:
+    MAVEN_CLI_OPTS: "$[[ inputs.cli-opts ]]"
+    MAVEN_PROFILE: "$[[ inputs.profile ]]"
+    SETTINGS_PATH: "$[[ inputs.settings-path ]]"
+    # Within-job outputs (metadata's version/is-snapshot) land in this dotenv;
+    # GitLab only auto-loads it for *downstream* jobs, so we source it for the
+    # summary step below.
+    CI_OUTPUT: "$CI_PROJECT_DIR/maven-central-publish.env"
+    CI_SUMMARY_FILE: "$CI_PROJECT_DIR/maven-central-publish-summary.md"
+  script:
+    # Defense-in-depth: refuse PR-context triggers — Maven Central + GPG
+    # credentials are in this job's env and must never run with MR-HEAD code.
+    - reusable-ci validate event-context
+    - reusable-ci release gpg import
+    # mvn runs in the current directory, so cd into the project.
+    - cd "$[[ inputs.working-directory ]]"
+    - reusable-ci publish maven-central validate-artifacts
+    - reusable-ci build maven metadata
+    # The profile activates GPG signing + deploys to the configured repository.
+    - reusable-ci publish maven-central deploy
+    # Load VERSION / IS_SNAPSHOT emitted by metadata so the summary can read them.
+    - 'set -a; [ -f "$CI_OUTPUT" ] && . "$CI_OUTPUT"; set +a'
+    - reusable-ci report publish maven-central
+  after_script:
+    # Best-effort key teardown; the ephemeral runner is destroyed regardless.
+    - reusable-ci release gpg cleanup || true

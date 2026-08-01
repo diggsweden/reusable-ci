@@ -1,0 +1,76 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+#
+# GitLab CI/CD Catalog component: publish to the forge-native package registry.
+# On GitLab that is the project's GitLab Package Registry; the GitHub counterpart
+# (.github/workflows/publish-maven-github.yml) publishes the same forge-packages
+# target to GitHub Packages. The config target is forge-neutral (publish_to:
+# forge-packages) and resolves to whichever forge the pipeline runs on.
+#
+# This component covers the MAVEN case (the dominant one). npm/Gradle to the
+# GitLab registry follow the same shape and are a straightforward extension
+# (dispatch on --project-type); not wired here yet.
+#
+# The deploy is binary-owned: `reusable-ci publish forge-packages deploy`
+# auto-detects GitLab, resolves the registry URL + Job-Token auth from the
+# CI_* env, writes a 0600 settings.xml (token never on argv), and runs mvn
+# deploy. The same command publishes to GitHub Packages / Forgejo on those
+# forges — one sequence, no per-forge inline mvn.
+#
+# ARTIFACT CONTRACT: the built JARs must already be under */target/ in the
+# working directory — provide them via GitLab native artifact passing
+# (`needs:`/`dependencies:` on the build-maven job). The GitLab provider has no
+# run-artifact API, so `reusable-ci artifact download` is not used here.
+#
+# Consume (pin a released version):
+#   include:
+#     - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/publish-forge-packages@1.0.0
+spec:
+  inputs:
+    stage:
+      default: publish
+      description: Pipeline stage the publish runs in.
+    job-name:
+      default: publish-forge-packages
+      description: Name of the generated job.
+    artifact-name:
+      default: ""
+      description: Logical name of the build artifact consumed (reported; JARs must be present via GitLab artifact passing).
+    version:
+      default: ""
+      description: Release version (reported in the summary).
+    project-type:
+      default: maven
+      options: ["maven", "npm"]
+      description: Package ecosystem — "maven" (mvn deploy) or "npm" (npm publish the *.tgz). Set runtime-image to match.
+    working-directory:
+      default: "."
+      description: Directory containing the pom.xml (maven) or the packed *.tgz (npm).
+    cli-opts:
+      default: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
+      description: Extra args forwarded to mvn (maven only).
+    runtime-image:
+      default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
+      description: reusable-ci runtime image — JDK+Maven for maven, Node for npm (pin by @sha256).
+---
+"$[[ inputs.job-name ]]":
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.runtime-image ]]
+  variables:
+    MAVEN_CLI_OPTS: "$[[ inputs.cli-opts ]]"
+    PACKAGE_TYPE: "$[[ inputs.project-type ]]"
+    # Within-job outputs (metadata's version/is-snapshot) for the summary.
+    CI_OUTPUT: "$CI_PROJECT_DIR/forge-packages-publish.env"
+    CI_SUMMARY_FILE: "$CI_PROJECT_DIR/forge-packages-publish-summary.md"
+  script:
+    # Defense-in-depth: refuse MR-context triggers — CI_JOB_TOKEN is in scope.
+    - reusable-ci validate event-context
+    - cd "$[[ inputs.working-directory ]]"
+    # Maven metadata feeds the summary version; npm has no pom, so skip it there.
+    - if [ "$PACKAGE_TYPE" = "maven" ]; then reusable-ci build maven metadata; fi
+    # Binary-owned: resolves the GitLab registry + credentialed settings.xml/.npmrc + deploy.
+    - reusable-ci publish forge-packages deploy --project-type "$PACKAGE_TYPE"
+    # Load VERSION / IS_SNAPSHOT for the summary (registry-name resolves to the forge).
+    - 'set -a; [ -f "$CI_OUTPUT" ] && . "$CI_OUTPUT"; set +a'
+    - reusable-ci report publish forge-packages --package-type "$PACKAGE_TYPE"

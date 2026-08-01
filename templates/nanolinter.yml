@@ -1,0 +1,112 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+#
+# GitLab CI/CD Catalog component: the default PR lint gate (nanolinter).
+#
+# nanolinter is the project lint gate used on the GitHub pull-request quality
+# stage; it bakes a whole check toolchain (opengrep SAST, osv-scanner, secrets,
+# trivy-fs, ecosystem linters) into a flavour image and runs `nanolinter verify`.
+# We do NOT run opengrep standalone — it ships inside nanolinter.
+#
+# This is the thin GitLab adapter around that gate (the analog of
+# .github/workflows/lint-nanolinter.yml). Two things happen:
+#   1. `nanolinter verify` runs the full toolchain and fails the job on blocking
+#      findings — that exit IS the lint gate.
+#   2. The security SARIF is converted to the GitLab SAST schema and published as
+#      `artifacts:reports:sast`, so blocking findings land on the merge-request
+#      Security tab (the GitLab analog of GitHub Code Scanning). The conversion
+#      uses `reusable-ci security report to-gitlab-sast`; reusable-ci is not baked
+#      into the flavour image, so it is installed at runtime via the canonical
+#      cosign-verified bootstrap installer (curl + cosign are baked in).
+#
+# Consume (pin a released version):
+#   include:
+#     - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/nanolinter@1.0.0
+#       inputs:
+#         nanolinter-image: "codeberg.org/itiquette/nanolinter:java"
+spec:
+  inputs:
+    stage:
+      default: test
+      description: Pipeline stage the lint gate runs in.
+    job-name:
+      default: nanolinter
+      description: Name of the generated job.
+    nanolinter-image:
+      default: "codeberg.org/itiquette/nanolinter:full"
+      description: nanolinter flavour image matching the project's ecosystem (pin by @sha256).
+    required-lints:
+      default: "secrets,sast"
+      description: >-
+        Mandated lint floor — comma-separated check ids passed to `nanolinter verify --require`. These checks are forced to run AND block regardless of the project's nanolinter.toml, so they cannot be silently skipped. Empty disables the floor.
+    enable-gitlab-sast:
+      type: boolean
+      default: true
+      description: >-
+        Convert nanolinter's SARIF to a GitLab SAST report and publish it as artifacts:reports:sast (populates the MR Security tab; display needs GitLab Ultimate). When false, the SARIF is kept as a plain artifact only.
+    reusable-ci-ref:
+      default: "v3.0.0"
+      description: >-
+        reusable-ci release tag installed (cosign-verified) for the SARIF → GitLab-SAST conversion. Use a published release tag so the bootstrap scripts + Sigstore signature resolve.
+---
+"$[[ inputs.job-name ]]":
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.nanolinter-image ]]
+  variables:
+    # opengrep (inside nanolinter) hardcodes paths under the image's home; the
+    # flavour image's /home/nanolinter is writable, so cosign's sigstore cache
+    # needs no redirection either.
+    HOME: /home/nanolinter
+    REQUIRED_LINTS: "$[[ inputs.required-lints ]]"
+    ENABLE_GITLAB_SAST: "$[[ inputs.enable-gitlab-sast ]]"
+    RC_REF: "$[[ inputs.reusable-ci-ref ]]"
+    SARIF_FILE: nanolinter-security.sarif
+    GL_SAST_FILE: gl-sast-report.json
+    RC_BIN: /tmp/rc-bin/reusable-ci
+  script:
+    - |
+      set -uo pipefail
+
+      # --- Lint gate --------------------------------------------------------
+      # `nanolinter verify` runs the full plan and exits non-zero on blocking
+      # findings. Capture the exit but keep going, so the SAST report is still
+      # produced + published even when the gate is red (artifacts: when: always).
+      #
+      # Mandated lint floor: --require forces these checks to run AND block
+      # regardless of the project's nanolinter.toml, so they cannot be skipped
+      # (e.g. secrets, sast). Empty input → no floor.
+      require_args=()
+      [ -n "$REQUIRED_LINTS" ] && require_args=(--require "$REQUIRED_LINTS")
+      nanolinter verify "${require_args[@]}" --report sarif-security --out "$SARIF_FILE"
+      gate=$?
+      if [ "$gate" -ne 0 ]; then
+        echo "nanolinter found blocking lint issues — see the per-check output above (a lint gate on your code, not a pipeline error)."
+      fi
+
+      # --- SARIF -> GitLab SAST --------------------------------------------
+      # Convert nanolinter's unified SARIF to the GitLab SAST schema for the MR
+      # Security tab. reusable-ci is installed cosign-verified (fail closed:
+      # REUSABLE_CI_REQUIRE_COSIGN=1) and called by absolute path — its PATH
+      # export does not survive the installer subprocess. Best-effort: a SARIF
+      # tooling failure must not turn the lint gate red, so it never changes the
+      # exit code (the gate below is the only thing that gates).
+      if [ "$ENABLE_GITLAB_SAST" = "true" ] && [ -f "$SARIF_FILE" ]; then
+        work="$(mktemp -d)"
+        raw="https://raw.githubusercontent.com/diggsweden/reusable-ci/${RC_REF}/scripts/bootstrap"
+        curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-common.sh" "$raw/install-common.sh" &&
+          curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-reusable-ci.sh" "$raw/install-reusable-ci.sh" &&
+          REUSABLE_CI_REQUIRE_COSIGN=1 REUSABLE_CI_INSTALL_DIR="$(dirname "$RC_BIN")" \
+            bash "$work/install-reusable-ci.sh" "$RC_REF" &&
+          "$RC_BIN" security report to-gitlab-sast --input "$SARIF_FILE" --output "$GL_SAST_FILE" ||
+          echo "WARN: GitLab-SAST conversion skipped (reusable-ci install or convert failed); SARIF kept as plain artifact."
+      fi
+
+      # The lint gate is the only thing that decides the job result.
+      exit "$gate"
+  artifacts:
+    when: always
+    paths:
+      - nanolinter-security.sarif
+    reports:
+      sast: gl-sast-report.json
