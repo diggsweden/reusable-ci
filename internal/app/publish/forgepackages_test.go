@@ -1,0 +1,122 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+
+package publish_test
+
+import (
+	"context"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	apppublish "github.com/diggsweden/reusable-ci/v3/internal/app/publish"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+)
+
+var errNoRegistry = errors.New("no registry")
+
+type fakeRegistryResolver struct {
+	reg provider.ForgeMavenRegistry
+	err error
+}
+
+func (f fakeRegistryResolver) ResolveForgeMavenRegistry() (provider.ForgeMavenRegistry, error) {
+	return f.reg, f.err
+}
+
+func TestForgePackagesDeploy_BuildsMvnArgsFromResolvedRegistry(t *testing.T) {
+	t.Parallel()
+
+	mvn := &fakePublishMaven{}
+	resolver := fakeRegistryResolver{reg: provider.ForgeMavenRegistry{
+		ServerID: "gitlab-maven", URL: "https://gl/api/v4/projects/1/packages/maven",
+		AuthScheme: provider.MavenAuthJobTokenHeader, Token: "jt",
+	}}
+
+	err := apppublish.ForgePackagesDeploy(context.Background(), mvn, resolver, io.Discard, io.Discard,
+		apppublish.ForgePackagesDeployInput{CLIOpts: []string{"-B"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(mvn.runs) != 1 {
+		t.Fatalf("expected 1 mvn run, got %d", len(mvn.runs))
+	}
+
+	got := strings.Join(mvn.runs[0], " ")
+	for _, want := range []string{"-B", "deploy", "-DskipTests", "--settings", "-DaltDeploymentRepository=gitlab-maven::default::https://gl/api/v4/projects/1/packages/maven"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("mvn args missing %q: %v", want, mvn.runs[0])
+		}
+	}
+}
+
+type fakeNPMRegistryResolver struct {
+	reg provider.ForgeNPMRegistry
+	err error
+}
+
+func (f fakeNPMRegistryResolver) ResolveForgeNPMRegistry() (provider.ForgeNPMRegistry, error) {
+	return f.reg, f.err
+}
+
+type fakeNPMPublish struct {
+	dir  string
+	args []string
+}
+
+func (f *fakeNPMPublish) RunInherit(_ context.Context, dir string, _, _ io.Writer, args ...string) error {
+	f.dir = dir
+	f.args = args
+
+	return nil
+}
+
+func TestForgePackagesNPMPublish_PublishesTheTarball(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pkg-1.0.0.tgz"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	npmOps := &fakeNPMPublish{}
+	resolver := fakeNPMRegistryResolver{reg: provider.ForgeNPMRegistry{Registry: "https://gl/api/v4/projects/1/packages/npm/", Token: "jt"}}
+
+	err := apppublish.ForgePackagesNPMPublish(context.Background(), npmOps, resolver, io.Discard, io.Discard,
+		apppublish.ForgePackagesNPMPublishInput{WorkingDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := strings.Join(npmOps.args, " ")
+	if !strings.Contains(got, "publish") || !strings.Contains(got, "pkg-1.0.0.tgz") || !strings.Contains(got, "--userconfig") {
+		t.Errorf("npm args = %v", npmOps.args)
+	}
+}
+
+func TestForgePackagesNPMPublish_NoTarballIsMissingInput(t *testing.T) {
+	t.Parallel()
+
+	err := apppublish.ForgePackagesNPMPublish(context.Background(), &fakeNPMPublish{},
+		fakeNPMRegistryResolver{reg: provider.ForgeNPMRegistry{Registry: "https://r/"}}, io.Discard, io.Discard,
+		apppublish.ForgePackagesNPMPublishInput{WorkingDir: t.TempDir()})
+
+	if !errors.Is(err, errs.ErrMissingInput) {
+		t.Errorf("no tarball should be ErrMissingInput, got %v", err)
+	}
+}
+
+func TestForgePackagesDeploy_ResolverErrorIsReturned(t *testing.T) {
+	t.Parallel()
+
+	err := apppublish.ForgePackagesDeploy(context.Background(), &fakePublishMaven{}, fakeRegistryResolver{err: errNoRegistry}, io.Discard, io.Discard, apppublish.ForgePackagesDeployInput{})
+
+	if !errors.Is(err, errNoRegistry) {
+		t.Errorf("expected resolver error to propagate, got %v", err)
+	}
+}

@@ -1,0 +1,138 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+
+package build
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	appsummary "github.com/diggsweden/reusable-ci/v3/internal/app/summary"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
+)
+
+// AndroidReleaseBuildInput drives AndroidReleaseBuild. It embeds the shared
+// ReleaseBuildOptions and adds the Android-specific knobs — every variation
+// that used to be a separate workflow step (artifact-name composition, keystore
+// signing, secrets.properties, task resolution, the pinned SBOM plugin) folded
+// in as configuration.
+type AndroidReleaseBuildInput struct {
+	ReleaseBuildOptions
+
+	// Artifact-name composition (ArtifactName from the embed is the override).
+	IncludeDateStamp   bool
+	ArtifactNamePrefix string
+	RepoName           string
+	ProductFlavor      string
+
+	// Signing. The keystore base64 is decoded to a 0600 file outside the
+	// project dir; the per-key passwords stay env vars the gradle build reads.
+	EnableSigning           bool
+	KeystoreBase64          string
+	SecretsPropertiesBase64 string
+
+	// Build-task selection (GradleTasksOverride wins; else resolved).
+	GradleTasksOverride string
+	BuildTypes          string
+	IncludeAAB          bool
+	BuildModule         string
+
+	// SBOMToolVersion pins the cyclonedx-gradle-plugin.
+	SBOMToolVersion string
+}
+
+// AndroidReleaseBuild runs the whole Android release build as one step: compose
+// artifact names, make the wrapper executable, decode the signing keystore (when
+// enabled), resolve metadata + build tasks, write secrets.properties, run the
+// gradle build, generate the Build SBOM, and append the SBOM status.
+//
+// It is the Android sibling of GradleReleaseBuild — the binary-owned build
+// sequence (Design Rule 1). The keystore path is threaded to the gradle build
+// in-process via the environment (matching how the build script reads it); the
+// resolved artifact names + version are emitted on the sink as the job outputs
+// downstream upload/publish jobs consume.
+//
+//nolint:varnamelen,cyclop // idiomatic short names (w/in); linear build sequence with one branch per optional step (signing/secrets/sbom).
+func AndroidReleaseBuild(ctx context.Context, sink ci.OutputSink, summarySink ci.SummarySink, ops GradleOps, annot output.Annotator, w, stderr io.Writer, in AndroidReleaseBuildInput) error {
+	if err := AndroidArtifactNames(ctx, sink, stderr, AndroidArtifactNamesInput{
+		IncludeDate: in.IncludeDateStamp,
+		Prefix:      in.ArtifactNamePrefix,
+		RepoName:    in.RepoName,
+		Flavor:      in.ProductFlavor,
+		Override:    in.ArtifactName,
+	}); err != nil {
+		return fmt.Errorf("compose artifact names: %w", err)
+	}
+
+	if err := makeGradlewExecutable(in.Dir); err != nil {
+		return err
+	}
+
+	if in.EnableSigning {
+		// Decode outside the working dir (Dir empty → RUNNER_TEMP/mktemp) so no
+		// artifact upload can pick the keystore up. gradle reads the path from
+		// the environment, alongside the per-key password secrets.
+		path, err := decodeAndroidKeystore(AndroidDecodeKeystoreInput{Base64: in.KeystoreBase64})
+		if err != nil {
+			return err
+		}
+
+		if err := os.Setenv("ANDROID_KEYSTORE_PATH", path); err != nil {
+			return fmt.Errorf("set ANDROID_KEYSTORE_PATH: %w", err)
+		}
+	}
+
+	if err := AndroidVersionInfo(ctx, sink, stderr, annot, AndroidVersionInfoInput{Dir: in.Dir}); err != nil {
+		return fmt.Errorf("resolve version: %w", err)
+	}
+
+	tasks := strings.TrimSpace(in.GradleTasksOverride)
+	if tasks == "" {
+		tasks = build.ResolveAndroidBuildTasks(build.ResolveAndroidBuildTasksInput{
+			Flavor:      in.ProductFlavor,
+			BuildTypes:  in.BuildTypes,
+			IncludeAAB:  in.IncludeAAB,
+			BuildModule: in.BuildModule,
+		})
+	}
+
+	if in.SecretsPropertiesBase64 != "" {
+		if err := AndroidWriteSecretsProperties(w, AndroidWriteSecretsPropertiesInput{Base64: in.SecretsPropertiesBase64, Dir: in.Dir}); err != nil {
+			return fmt.Errorf("write secrets.properties: %w", err)
+		}
+	}
+
+	if err := AndroidGradleBuild(ctx, ops, w, stderr, AndroidGradleBuildInput{Tasks: tasks, SkipTests: in.SkipTests}); err != nil {
+		return fmt.Errorf("gradle build: %w", err)
+	}
+
+	return androidSBOMStep(ctx, summarySink, ops, in, w, stderr)
+}
+
+func androidSBOMStep(ctx context.Context, summarySink ci.SummarySink, ops GradleOps, in AndroidReleaseBuildInput, w, stderr io.Writer) error { //nolint:varnamelen // idiomatic short names — testing/http/io conventions.
+	outcome := outcomeSkipped
+
+	if in.EnableBuildSBOM {
+		outcome = outcomeSuccess
+		if err := GradleSBOM(ctx, ops, w, stderr, GradleSBOMInput{CycloneDXVersion: in.SBOMToolVersion, WorkingDir: in.Dir}); err != nil {
+			outcome = outcomeFailure
+
+			_, _ = fmt.Fprintf(stderr, "WARN: gradle-android Build SBOM generation failed (continuing): %v\n", err)
+		}
+	}
+
+	if err := appsummary.BuildSBOMStatus(ctx, summarySink, appsummary.BuildSBOMStatusInput{
+		Ecosystem: "gradle-android",
+		Outcome:   outcome,
+		WorkDir:   defaultDir(in.Dir),
+	}); err != nil {
+		return fmt.Errorf("write SBOM status: %w", err)
+	}
+
+	return nil
+}
