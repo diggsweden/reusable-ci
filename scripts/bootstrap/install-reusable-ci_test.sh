@@ -35,50 +35,50 @@ FAIL=0
 # the expected value. Stdout/stderr from cmd are suppressed unless the
 # expectation is violated (then they're shown for debugging).
 assert_exit() {
-  local name="$1" expected="$2"
-  shift 2
-  local out rc=0
-  out="$("$@" 2>&1)" || rc=$?
-  if [[ "$rc" == "$expected" ]]; then
-    printf '  PASS: %s\n' "$name"
-    PASS=$((PASS + 1))
-  else
-    printf '  FAIL: %s (expected exit=%s, got %s)\n' "$name" "$expected" "$rc" >&2
-    printf '    output: %s\n' "$out" >&2
-    FAIL=$((FAIL + 1))
-  fi
+	local name="$1" expected="$2"
+	shift 2
+	local out rc=0
+	out="$("$@" 2>&1)" || rc=$?
+	if [[ "$rc" == "$expected" ]]; then
+		printf '  PASS: %s\n' "$name"
+		PASS=$((PASS + 1))
+	else
+		printf '  FAIL: %s (expected exit=%s, got %s)\n' "$name" "$expected" "$rc" >&2
+		printf '    output: %s\n' "$out" >&2
+		FAIL=$((FAIL + 1))
+	fi
 }
 
 # path_without_cosign returns PATH with no directory that contains an
 # executable named `cosign`. Used to simulate the "cosign absent" case
 # without modifying the developer's environment.
 path_without_cosign() {
-  local clean=""
-  # IFS is scoped to this function via `local`; it doesn't leak to the
-  # rest of the script. This is the form the rule's remediation
-  # recommends ("set IFS locally using e.g. IFS=',' read -a").
-  local IFS=':' # nosemgrep: bash.lang.security.ifs-tampering.ifs-tampering
-  local -a parts
-  read -ra parts <<<"$PATH"
-  for p in "${parts[@]}"; do
-    if [[ -d "$p" && ! -x "$p/cosign" ]]; then
-      clean="${clean}${clean:+:}${p}"
-    fi
-  done
-  printf '%s' "$clean"
+	local clean=""
+	# IFS is scoped to this function via `local`; it doesn't leak to the
+	# rest of the script. This is the form the rule's remediation
+	# recommends ("set IFS locally using e.g. IFS=',' read -a").
+	local IFS=':' # nosemgrep: bash.lang.security.ifs-tampering.ifs-tampering
+	local -a parts
+	read -ra parts <<<"$PATH"
+	for p in "${parts[@]}"; do
+		if [[ -d "$p" && ! -x "$p/cosign" ]]; then
+			clean="${clean}${clean:+:}${p}"
+		fi
+	done
+	printf '%s' "$clean"
 }
 
 # stub_cosign writes a fake cosign binary into $1/bin that exits with
 # the supplied code for verify-blob (any other subcommand exits 0).
 stub_cosign() {
-  local dir="$1" verify_exit="$2"
-  mkdir -p "$dir/bin"
-  cat >"$dir/bin/cosign" <<EOF
+	local dir="$1" verify_exit="$2"
+	mkdir -p "$dir/bin"
+	cat >"$dir/bin/cosign" <<EOF
 #!/bin/sh
 if [ "\$1" = "verify-blob" ]; then exit ${verify_exit}; fi
 exit 0
 EOF
-  chmod +x "$dir/bin/cosign"
+	chmod +x "$dir/bin/cosign"
 }
 
 # Each test is a function that prepares a tmpdir, invokes verify_*,
@@ -87,78 +87,78 @@ EOF
 # /tmp which the OS reaps.
 
 t_cosign_absent_soft_skip() (
-  local tmp
-  tmp="$(mktemp -d)"
-  printf 'fake\n' >"$tmp/checksums.txt"
-  PATH="$(path_without_cosign)" REUSABLE_CI_REQUIRE_COSIGN=0 \
-    verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
+	local tmp
+	tmp="$(mktemp -d)"
+	printf 'fake\n' >"$tmp/checksums.txt"
+	PATH="$(path_without_cosign)" REUSABLE_CI_REQUIRE_COSIGN=0 \
+		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
 )
 
 t_cosign_absent_fail_closed() (
-  local tmp
-  tmp="$(mktemp -d)"
-  printf 'fake\n' >"$tmp/checksums.txt"
-  PATH="$(path_without_cosign)" REUSABLE_CI_REQUIRE_COSIGN=1 \
-    verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
+	local tmp
+	tmp="$(mktemp -d)"
+	printf 'fake\n' >"$tmp/checksums.txt"
+	PATH="$(path_without_cosign)" REUSABLE_CI_REQUIRE_COSIGN=1 \
+		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
 )
 
 t_bundle_absent_soft_skip() (
-  local tmp
-  tmp="$(mktemp -d)"
-  printf 'fake\n' >"$tmp/checksums.txt"
-  stub_cosign "$tmp" 0
-  PATH="$tmp/bin:$(path_without_cosign)" REUSABLE_CI_REQUIRE_COSIGN=0 \
-    verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
+	local tmp
+	tmp="$(mktemp -d)"
+	printf 'fake\n' >"$tmp/checksums.txt"
+	stub_cosign "$tmp" 0
+	PATH="$tmp/bin:$(path_without_cosign)" REUSABLE_CI_REQUIRE_COSIGN=0 \
+		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
 )
 
 t_bundle_absent_fail_closed() (
-  local tmp
-  tmp="$(mktemp -d)"
-  printf 'fake\n' >"$tmp/checksums.txt"
-  stub_cosign "$tmp" 0
-  PATH="$tmp/bin:$(path_without_cosign)" REUSABLE_CI_REQUIRE_COSIGN=1 \
-    verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
+	local tmp
+	tmp="$(mktemp -d)"
+	printf 'fake\n' >"$tmp/checksums.txt"
+	stub_cosign "$tmp" 0
+	PATH="$tmp/bin:$(path_without_cosign)" REUSABLE_CI_REQUIRE_COSIGN=1 \
+		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
 )
 
 t_cosign_verify_passes() (
-  local tmp
-  tmp="$(mktemp -d)"
-  printf 'fake\n' >"$tmp/checksums.txt"
-  printf 'fake bundle\n' >"$tmp/checksums.txt.bundle"
-  stub_cosign "$tmp" 0
-  PATH="$tmp/bin:$(path_without_cosign)" \
-    verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/checksums.txt.bundle"
+	local tmp
+	tmp="$(mktemp -d)"
+	printf 'fake\n' >"$tmp/checksums.txt"
+	printf 'fake bundle\n' >"$tmp/checksums.txt.bundle"
+	stub_cosign "$tmp" 0
+	PATH="$tmp/bin:$(path_without_cosign)" \
+		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/checksums.txt.bundle"
 )
 
 t_cosign_verify_rejects() (
-  local tmp
-  tmp="$(mktemp -d)"
-  printf 'tampered\n' >"$tmp/checksums.txt"
-  printf 'fake bundle\n' >"$tmp/checksums.txt.bundle"
-  stub_cosign "$tmp" 1
-  PATH="$tmp/bin:$(path_without_cosign)" \
-    verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/checksums.txt.bundle"
+	local tmp
+	tmp="$(mktemp -d)"
+	printf 'tampered\n' >"$tmp/checksums.txt"
+	printf 'fake bundle\n' >"$tmp/checksums.txt.bundle"
+	stub_cosign "$tmp" 1
+	PATH="$tmp/bin:$(path_without_cosign)" \
+		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/checksums.txt.bundle"
 )
 
 t_sha256_rejects_tampered() (
-  local tmp
-  tmp="$(mktemp -d)"
-  printf 'genuine\n' >"$tmp/app.tgz"
-  printf '0000000000000000000000000000000000000000000000000000000000000000  app.tgz\n' >"$tmp/checksums.txt"
-  verify_reusable_ci_sha256 "$tmp/app.tgz" "$tmp/checksums.txt"
+	local tmp
+	tmp="$(mktemp -d)"
+	printf 'genuine\n' >"$tmp/app.tgz"
+	printf '0000000000000000000000000000000000000000000000000000000000000000  app.tgz\n' >"$tmp/checksums.txt"
+	verify_reusable_ci_sha256 "$tmp/app.tgz" "$tmp/checksums.txt"
 )
 
 t_sha256_accepts_genuine() (
-  local tmp hash
-  tmp="$(mktemp -d)"
-  printf 'genuine\n' >"$tmp/app.tgz"
-  if command -v sha256sum &>/dev/null; then
-    hash="$(sha256sum "$tmp/app.tgz" | awk '{print $1}')"
-  else
-    hash="$(shasum -a 256 "$tmp/app.tgz" | awk '{print $1}')"
-  fi
-  printf '%s  app.tgz\n' "$hash" >"$tmp/checksums.txt"
-  verify_reusable_ci_sha256 "$tmp/app.tgz" "$tmp/checksums.txt"
+	local tmp hash
+	tmp="$(mktemp -d)"
+	printf 'genuine\n' >"$tmp/app.tgz"
+	if command -v sha256sum &>/dev/null; then
+		hash="$(sha256sum "$tmp/app.tgz" | awk '{print $1}')"
+	else
+		hash="$(shasum -a 256 "$tmp/app.tgz" | awk '{print $1}')"
+	fi
+	printf '%s  app.tgz\n' "$hash" >"$tmp/checksums.txt"
+	verify_reusable_ci_sha256 "$tmp/app.tgz" "$tmp/checksums.txt"
 )
 
 # _reusable_ci_cosign_identity: the two trust domains must each accept their own
@@ -169,29 +169,29 @@ PRE_SAN_MAIN='https://github.com/diggsweden/reusable-ci/.github/workflows/build-
 REL_SAN='https://github.com/diggsweden/reusable-ci/.github/workflows/release-binary.yml@refs/tags/v3.1.0'
 
 t_identity_pre_accepts_dev_branches() (
-  id="$(_reusable_ci_cosign_identity v3.0.0-pre)"
-  printf '%s\n' "$PRE_SAN_FEAT" | grep -Eq "$id" && printf '%s\n' "$PRE_SAN_MAIN" | grep -Eq "$id"
+	id="$(_reusable_ci_cosign_identity v3.0.0-pre)"
+	printf '%s\n' "$PRE_SAN_FEAT" | grep -Eq "$id" && printf '%s\n' "$PRE_SAN_MAIN" | grep -Eq "$id"
 )
 
 t_identity_pre_rejects_release_signer() (
-  # A pre-release ref must NOT trust a production-tag signature.
-  id="$(_reusable_ci_cosign_identity v3.0.0-pre)"
-  ! printf '%s\n' "$REL_SAN" | grep -Eq "$id"
+	# A pre-release ref must NOT trust a production-tag signature.
+	id="$(_reusable_ci_cosign_identity v3.0.0-pre)"
+	! printf '%s\n' "$REL_SAN" | grep -Eq "$id"
 )
 
 t_identity_release_accepts_tag_signer() (
-  id="$(_reusable_ci_cosign_identity v3.1.0)"
-  printf '%s\n' "$REL_SAN" | grep -Eq "$id"
+	id="$(_reusable_ci_cosign_identity v3.1.0)"
+	printf '%s\n' "$REL_SAN" | grep -Eq "$id"
 )
 
 t_identity_release_rejects_pre_signer() (
-  # A production ref must NOT trust a pre-release branch signature.
-  id="$(_reusable_ci_cosign_identity v3.1.0)"
-  ! printf '%s\n' "$PRE_SAN_MAIN" | grep -Eq "$id"
+	# A production ref must NOT trust a pre-release branch signature.
+	id="$(_reusable_ci_cosign_identity v3.1.0)"
+	! printf '%s\n' "$PRE_SAN_MAIN" | grep -Eq "$id"
 )
 
 t_identity_override_wins() (
-  [[ "$(REUSABLE_CI_COSIGN_IDENTITY='OVERRIDE-IDENTITY' _reusable_ci_cosign_identity v3.0.0-pre)" == 'OVERRIDE-IDENTITY' ]]
+	[[ "$(REUSABLE_CI_COSIGN_IDENTITY='OVERRIDE-IDENTITY' _reusable_ci_cosign_identity v3.0.0-pre)" == 'OVERRIDE-IDENTITY' ]]
 )
 
 printf 'install-reusable-ci.sh test suite\n'
@@ -214,5 +214,5 @@ assert_exit "REUSABLE_CI_COSIGN_IDENTITY override wins" 0 t_identity_override_wi
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 
 if [[ "$FAIL" -gt 0 ]]; then
-  exit 1
+	exit 1
 fi

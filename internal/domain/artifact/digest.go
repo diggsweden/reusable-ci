@@ -1,0 +1,107 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+
+package artifact
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"io/fs"
+	"sort"
+	"strings"
+)
+
+// Digest computes a canonical, reproducible content digest over the regular
+// files under root. It is the tamper-evidence primitive for the build -> sign
+// hand-off: the producing job records it, and the consuming (signing) job
+// re-derives it and aborts on mismatch, so a job in between cannot alter the
+// artifact unnoticed.
+//
+// The scheme is a manifest hash, deliberately independent of any tar/filesystem
+// quirk so the value is identical on every runner and OS:
+//
+//	for each regular file, sorted by its root-relative slash path P:
+//	    write  "<P>\x00<mode>\x00<size>\x00<sha256(content)>\n"
+//	digest = sha256(concatenation), rendered as 64 lowercase hex chars.
+//
+// <mode> is "0755" when any execute bit is set, else "0644" (so an executable
+// release binary digests differently from a non-executable file of identical
+// content). Directories, symlinks and other non-regular entries are excluded.
+func Digest(fsys fs.FS, root string) (string, error) {
+	files, err := regularFilesSorted(fsys, root)
+	if err != nil {
+		return "", err
+	}
+
+	manifest := sha256.New()
+	prefix := strings.TrimSuffix(root, "/") + "/"
+
+	for _, path := range files {
+		info, err := fs.Stat(fsys, path)
+		if err != nil {
+			return "", fmt.Errorf("stat %s: %w", path, err)
+		}
+
+		content, err := fileSHA256(fsys, path)
+		if err != nil {
+			return "", err
+		}
+
+		mode := "0644"
+		if info.Mode()&0o111 != 0 {
+			mode = "0755"
+		}
+
+		rel := strings.TrimPrefix(path, prefix)
+		if root == "." {
+			rel = path
+		}
+
+		_, _ = fmt.Fprintf(manifest, "%s\x00%s\x00%d\x00%s\n", rel, mode, info.Size(), content)
+	}
+
+	return hex.EncodeToString(manifest.Sum(nil)), nil
+}
+
+func regularFilesSorted(fsys fs.FS, root string) ([]string, error) {
+	var files []string
+
+	err := fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if d.IsDir() || !d.Type().IsRegular() {
+			return nil
+		}
+
+		files = append(files, path)
+
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walk %s: %w", root, err)
+	}
+
+	sort.Strings(files)
+
+	return files, nil
+}
+
+func fileSHA256(fsys fs.FS, path string) (string, error) {
+	file, err := fsys.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open %s: %w", path, err)
+	}
+
+	defer func() { _ = file.Close() }()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return "", fmt.Errorf("hash %s: %w", path, err)
+	}
+
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}

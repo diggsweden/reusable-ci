@@ -4,6 +4,7 @@
 package provenance_test
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -158,4 +159,82 @@ func TestPredicate_RequiresContext(t *testing.T) {
 	if _, err := provenance.Predicate(provenance.Input{}); !errors.Is(err, errs.ErrUsage) {
 		t.Errorf("empty input should be usage error, got %v", err)
 	}
+}
+
+// TestPredicate_BaseLineage proves base-image lineage is expressed in standard
+// SLSA fields — flavor/base_input_id in externalParameters and the base image
+// as a resolvedDependency annotated role=base-image — so no bespoke predicate
+// type is needed.
+func TestPredicate_BaseLineage(t *testing.T) {
+	t.Parallel()
+
+	body, err := provenance.Predicate(provenance.Input{
+		BuildType:   provenance.ContainerBuildType,
+		BuilderID:   "https://codeberg.org/itiquette/forgejo-ci/.forgejo/workflows/sign-container-images.yml@refs/tags/v1.2.3",
+		SourceURI:   "git+https://codeberg.org/itiquette/forgejo-ci",
+		Ref:         "refs/tags/v1.2.3",
+		ImageName:   "codeberg.org/itiquette/ci-builder-rust",
+		Flavor:      "rust",
+		BaseInputID: strings.Repeat("a", 64),
+		ResolvedDeps: []provenance.Dependency{
+			provenance.SourceDependency("https://codeberg.org/itiquette/forgejo-ci", "refs/tags/v1.2.3", strings.Repeat("c", 40)),
+			provenance.BaseImageDependency("docker.io/library/debian:trixie-slim", "sha256:"+strings.Repeat("b", 64)),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got struct {
+		BuildDefinition struct {
+			ExternalParameters   map[string]string `json:"externalParameters"`
+			ResolvedDependencies []struct {
+				URI         string            `json:"uri"`
+				Digest      map[string]string `json:"digest"`
+				Annotations map[string]string `json:"annotations"`
+			} `json:"resolvedDependencies"`
+		} `json:"buildDefinition"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal predicate: %v", err)
+	}
+
+	ext := got.BuildDefinition.ExternalParameters
+	if ext["flavor"] != "rust" {
+		t.Errorf("externalParameters.flavor = %q, want rust", ext["flavor"])
+	}
+
+	if ext["base_input_id"] != strings.Repeat("a", 64) {
+		t.Errorf("externalParameters.base_input_id = %q, want %q", ext["base_input_id"], strings.Repeat("a", 64))
+	}
+
+	var base *struct {
+		URI         string            `json:"uri"`
+		Digest      map[string]string `json:"digest"`
+		Annotations map[string]string `json:"annotations"`
+	}
+
+	for i, dep := range got.BuildDefinition.ResolvedDependencies {
+		if dep.Annotations["role"] == "base-image" {
+			base = &got.BuildDefinition.ResolvedDependencies[i]
+		}
+	}
+
+	if base == nil {
+		t.Fatal("no resolvedDependency annotated role=base-image")
+	}
+
+	if base.URI != "docker.io/library/debian:trixie-slim" {
+		t.Errorf("base uri = %q", base.URI)
+	}
+
+	if base.Digest["sha256"] != strings.Repeat("b", 64) {
+		t.Errorf("base sha256 = %q, want %q (sha256: prefix must be stripped)", base.Digest["sha256"], strings.Repeat("b", 64))
+	}
+
+	// Pin the CLI's canonical base-lineage predicate bytes — the verify side of
+	// forgejo-ci's golden-baseline-base-lineage-predicate. The two goldens are
+	// NOT byte-identical (bash jq vs Go json.Marshal); each side is locked
+	// independently and the flip is atomic, per the migration map's flip strategy.
+	golden.Equal(t, "provenance_base_lineage_predicate.json", body)
 }

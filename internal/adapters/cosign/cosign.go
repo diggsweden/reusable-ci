@@ -387,6 +387,91 @@ func (a *Adapter) VerifyImage(ctx context.Context, in VerifyImageInput, errOut i
 	return a.run(ctx, errOut, args...)
 }
 
+// VerifyAttestationInput drives `cosign verify-attestation <image-ref>`. It
+// checks a signed in-toto attestation (SLSA provenance or an SBOM) of the given
+// predicate type, attached to the image in the registry, against the signing
+// identity. The attestation is read from the registry — no local path needed.
+type VerifyAttestationInput struct {
+	ImageRef string
+
+	// PredicateType is cosign's --type: slsaprovenance1 (SLSA v1.0) | cyclonedx
+	// | spdx | a predicate-type URI. Bare "slsaprovenance" is the obsolete v0.2.
+	PredicateType string
+
+	// Keyless verification: requires CertIdentityRegexp + CertOIDCIssuer.
+	// KeyRef must be empty.
+	Keyless            bool
+	CertIdentityRegexp string
+	CertOIDCIssuer     string
+
+	// KMS verification: requires KeyRef. The identity fields must be empty.
+	KeyRef string
+}
+
+// VerifyAttestation runs `cosign verify-attestation --type <type>` against an
+// OCI image reference. Exit 0 → an attestation of that type verifies and the
+// identity constraints match. errOut receives the redacted cosign stderr.
+func (a *Adapter) VerifyAttestation(ctx context.Context, in VerifyAttestationInput, errOut io.Writer) error {
+	if err := in.validate(); err != nil {
+		return err
+	}
+
+	args := []string{"verify-attestation", "--type", in.PredicateType}
+
+	switch {
+	case in.Keyless:
+		args = append(args,
+			"--certificate-identity-regexp", in.CertIdentityRegexp,
+			"--certificate-oidc-issuer", in.CertOIDCIssuer,
+		)
+	default:
+		args = append(args, "--key", in.KeyRef)
+	}
+
+	args = append(args, in.ImageRef)
+
+	return a.run(ctx, errOut, args...)
+}
+
+func (in VerifyAttestationInput) validate() error {
+	if in.ImageRef == "" {
+		return fmt.Errorf("cosign verify-attestation: image reference is empty: %w", errs.ErrUsage)
+	}
+
+	if !strings.Contains(in.ImageRef, "@sha256:") {
+		return fmt.Errorf(
+			"cosign verify-attestation: image reference %q must be a digest reference (registry/image@sha256:...); verifying a mutable tag is unsafe: %w",
+			in.ImageRef, errs.ErrUsage,
+		)
+	}
+
+	if in.PredicateType == "" {
+		return fmt.Errorf("cosign verify-attestation: predicate type is empty: %w", errs.ErrUsage)
+	}
+
+	if in.Keyless {
+		if in.CertIdentityRegexp == "" {
+			return fmt.Errorf("cosign verify-attestation (keyless): cert-identity-regexp is empty: %w", errs.ErrUsage)
+		}
+
+		if in.CertOIDCIssuer == "" {
+			return fmt.Errorf("cosign verify-attestation (keyless): cert-oidc-issuer is empty: %w", errs.ErrUsage)
+		}
+
+		if in.KeyRef != "" {
+			return fmt.Errorf("cosign verify-attestation: keyless mode forbids --key (got %q): %w", in.KeyRef, errs.ErrUsage)
+		}
+
+		return nil
+	}
+
+	if in.KeyRef == "" {
+		return fmt.Errorf("cosign verify-attestation: non-keyless mode requires --key: %w", errs.ErrUsage)
+	}
+
+	return nil
+}
+
 // CopyImageInput drives `cosign copy`, which copies an image together
 // with its registry-attached signatures and attestations from Source to
 // Dest, preserving the digest. This is the cross-registry promotion

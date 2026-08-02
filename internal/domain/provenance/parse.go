@@ -96,3 +96,18 @@ func SourceDependency(repositoryURL, ref, sha string) Dependency {
 		Digest:     sha,
 	}
 }
+
+// BaseImageDependency returns the resolvedDependency entry for the base image a
+// container was built FROM: uri=<ref>, digest sha256=<digest hex>, annotated
+// role="base-image". This is the SLSA-standard expression of base-image lineage
+// — a verifier reads it with `cosign verify-attestation --type slsaprovenance1`,
+// so no bespoke predicate type is required. The digest is the cryptographic
+// truth of which base was used; pass it without the "sha256:" prefix.
+func BaseImageDependency(ref, digest string) Dependency {
+	return Dependency{
+		URI:         ref,
+		DigestType:  "sha256",
+		Digest:      strings.TrimPrefix(digest, "sha256:"),
+		Annotations: map[string]string{"role": "base-image"},
+	}
+}

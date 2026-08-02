@@ -6,7 +6,8 @@
 // FORGE-NEUTRAL inputs. One shape serves both attestation paths:
 //
 //   - Predicate(...) → the bare predicate JSON that `cosign attest --type
-//     slsaprovenance` wraps, binding the subject (an OCI image) itself.
+//     slsaprovenance1` wraps, binding the subject (an OCI image) itself.
+//     (cosign's bare "slsaprovenance" alias is SLSA v0.2; this is v1.0.)
 //   - Build(...) + Statement.JSON() → the full statement (predicate +
 //     explicit subjects) that `cosign sign-blob` signs for release blobs.
 //
@@ -47,11 +48,16 @@ type Subject struct {
 }
 
 // Dependency is one resolvedDependencies entry: a package URI and a single
-// named digest (e.g. "gitCommit" for the source, "gomod_h1" for a Go module).
+// named digest (e.g. "gitCommit" for the source, "gomod_h1" for a Go module,
+// "sha256" for a base image). Annotations carry optional, forge-neutral
+// metadata about the input (e.g. role="base-image" for the base a container
+// was built FROM) — the SLSA-standard home for base-image lineage, so no
+// bespoke predicate type is needed.
 type Dependency struct {
-	URI        string
-	DigestType string
-	Digest     string
+	URI         string
+	DigestType  string
+	Digest      string
+	Annotations map[string]string
 }
 
 // Input is everything the builder needs; all values are pre-resolved.
@@ -78,6 +84,15 @@ type Input struct {
 	// ImageName is the built image (optional; externalParameters.image).
 	ImageName string
 
+	// Flavor is the build variant (e.g. a ci-builder flavor like "rust").
+	// Optional; emitted as externalParameters.flavor.
+	Flavor string
+
+	// BaseInputID is a content identifier (sha256 hex) for this build's base
+	// inputs — the standard, forge-neutral home for forgejo-ci's per-flavor
+	// base_input_id. Optional; emitted as externalParameters.base_input_id.
+	BaseInputID string
+
 	// InvocationID is the unique run identifier (run/job URL).
 	InvocationID string
 
@@ -91,8 +106,9 @@ type Input struct {
 }
 
 type resourceDescriptor struct {
-	URI    string            `json:"uri,omitempty"`
-	Digest map[string]string `json:"digest,omitempty"`
+	URI         string            `json:"uri,omitempty"`
+	Digest      map[string]string `json:"digest,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 type buildDefinitionJSON struct {
@@ -169,9 +185,21 @@ func buildPredicate(in Input) predicateJSON {
 		ext["image"] = in.ImageName
 	}
 
+	if in.Flavor != "" {
+		ext["flavor"] = in.Flavor
+	}
+
+	if in.BaseInputID != "" {
+		ext["base_input_id"] = in.BaseInputID
+	}
+
 	deps := make([]resourceDescriptor, 0, len(in.ResolvedDeps))
 	for _, d := range in.ResolvedDeps {
-		deps = append(deps, resourceDescriptor{URI: d.URI, Digest: map[string]string{d.DigestType: d.Digest}})
+		deps = append(deps, resourceDescriptor{
+			URI:         d.URI,
+			Digest:      map[string]string{d.DigestType: d.Digest},
+			Annotations: d.Annotations,
+		})
 	}
 
 	return predicateJSON{

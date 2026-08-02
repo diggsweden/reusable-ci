@@ -297,7 +297,7 @@ func ledgerAddCmd() *cli.Command {
 			&cli.StringFlag{Name: "sbom", Usage: "CycloneDX SBOM path (dist/image-sbom*.cyclonedx.json)"},
 			&cli.StringFlag{Name: "image-name", Usage: "image registry/path (no tag); with --tag, derives --final-tag=<image>:<tag> and --candidate-tag=<image>:staging-<tag> so callers don't hand-assemble both (explicit flags still win)"}, //nolint:goconst // flag name; matches the package convention.
 			&cli.StringFlag{Name: "final-tag", Usage: "immutable release tag ref (scoped to --tag); derived from --image-name when omitted"},
-			&cli.StringFlag{Name: "flavor", Usage: "optional base-image flavour"},
+			&cli.StringFlag{Name: flagFlavor, Usage: "optional base-image flavour"},
 			&cli.StringFlag{Name: "candidate-tag", Usage: "optional staging tag ref (scoped to staging-<tag>); derived from --image-name when omitted"},
 			&cli.StringFlag{Name: "base-ref", Usage: "optional digest-pinned base image"},
 			&cli.StringFlag{Name: "base-input-id", Usage: "optional base-image input identifier (SLSA lineage)"},
@@ -324,7 +324,7 @@ func ledgerAddCmd() *cli.Command {
 
 			entry := imageledger.Entry{
 				Kind:         cmd.String("kind"),
-				Flavor:       cmd.String("flavor"),
+				Flavor:       cmd.String(flagFlavor),
 				Ref:          cmd.String("ref"),
 				Digest:       cmd.String(flagDigest),
 				SBOM:         cmd.String("sbom"),

@@ -29,29 +29,34 @@ import (
 // replacement for GitHub's actions/attest-* and for relying on
 // BuildKit's unsigned in-index attestations.
 //
-// For --type slsaprovenance with no --predicate, the SLSA v1.0 predicate
+// For --type slsaprovenance1 with no --predicate, the SLSA v1.0 predicate
 // is generated from the CI environment (GitHub/Forgejo `GITHUB_*`,
-// GitLab `CI_*`), so the workflow call stays a one-liner.
+// GitLab `CI_*`), so the workflow call stays a one-liner. Only SLSA v1.0 is
+// supported; cosign's obsolete "slsaprovenance" (v0.2) alias is rejected.
 func attestCmd() *cli.Command {
 	return &cli.Command{
 		Name:      "attest",
-		Usage:     "attach a signed in-toto attestation (slsaprovenance | cyclonedx | spdx) to an OCI image with cosign; registry-attached, verifiable with cosign verify-attestation",
+		Usage:     "attach a signed in-toto attestation (slsaprovenance1 | cyclonedx | spdx) to an OCI image with cosign; registry-attached, verifiable with cosign verify-attestation",
 		ArgsUsage: "<registry/image@sha256:...>",
 		Description: `EXAMPLES:
-   # SLSA provenance (predicate generated from the CI environment), keyless
-   reusable-ci container attest ghcr.io/org/app@sha256:abc... --type slsaprovenance --method sigstore
+   # SLSA v1.0 provenance (predicate generated from the CI environment), keyless
+   reusable-ci container attest ghcr.io/org/app@sha256:abc... --type slsaprovenance1 --method sigstore
 
    # Attach a CycloneDX SBOM as a signed attestation
    reusable-ci container attest ghcr.io/org/app@sha256:abc... --type cyclonedx --predicate sbom.cdx.json --method sigstore`,
 		Flags: append(
 			append(
 				[]cli.Flag{
-					&cli.StringFlag{Name: "type", Sources: cli.EnvVars("PREDICATE_TYPE"), Usage: "predicate type: slsaprovenance | cyclonedx | spdx | <uri>"},
-					&cli.StringFlag{Name: "predicate", Sources: cli.EnvVars("PREDICATE_PATH"), Usage: "predicate JSON file; for --type=slsaprovenance it is generated from the CI env when omitted"},
+					&cli.StringFlag{Name: "type", Sources: cli.EnvVars("PREDICATE_TYPE"), Usage: "predicate type: slsaprovenance1 (SLSA v1.0; the obsolete v0.2 'slsaprovenance' is rejected) | cyclonedx | spdx | <uri>"},
+					&cli.StringFlag{Name: "predicate", Sources: cli.EnvVars("PREDICATE_PATH"), Usage: "predicate JSON file; for --type=slsaprovenance1 it is generated from the CI env when omitted"},
 				},
 				signflags.Cosign(signflags.CosignOpts{})...,
 			),
 			&cli.StringFlag{Name: "builder-id", Sources: cli.EnvVars("BUILDER_ID"), Usage: "override the SLSA provenance builder.id (e.g. an operator's documented KMS builder identity for an isolated L3 attestor); defaults to the CI-derived workflow identity"},
+			&cli.StringFlag{Name: flagFlavor, Sources: cli.EnvVars("BUILD_FLAVOR"), Usage: "build variant recorded as externalParameters.flavor (e.g. a ci-builder flavor like \"rust\")"},
+			&cli.StringFlag{Name: "base-input-id", Sources: cli.EnvVars("BASE_INPUT_ID"), Usage: "sha256 content id of this build's base inputs, recorded as externalParameters.base_input_id (the SLSA-standard home for base lineage)"},
+			&cli.StringFlag{Name: "base-ref", Sources: cli.EnvVars("BASE_IMAGE_REF"), Usage: "the base image this was built FROM, recorded as a resolvedDependency annotated role=base-image (requires --base-digest)"},
+			&cli.StringFlag{Name: "base-digest", Sources: cli.EnvVars("BASE_IMAGE_DIGEST"), Usage: "sha256 digest of --base-ref (with or without the sha256: prefix)"},
 			&cli.BoolFlag{Name: "recursive", Value: true, Sources: cli.EnvVars("ATTEST_RECURSIVE"), Usage: "also attest each per-arch child of a manifest list (one provenance for the whole release). Default true."},
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -68,6 +73,18 @@ func attestCmd() *cli.Command {
 			prov := provenanceFromEnv(image)
 			if bid := cmd.String("builder-id"); bid != "" {
 				prov.BuilderID = bid
+			}
+
+			prov.Flavor = cmd.String(flagFlavor)
+			prov.BaseInputID = cmd.String("base-input-id")
+
+			baseRef, baseDigest := cmd.String("base-ref"), cmd.String("base-digest")
+			if (baseRef == "") != (baseDigest == "") {
+				return fmt.Errorf("container attest: --base-ref and --base-digest must be set together: %w", errs.ErrUsage)
+			}
+
+			if baseRef != "" {
+				prov.ResolvedDeps = append(prov.ResolvedDeps, provenance.BaseImageDependency(baseRef, baseDigest))
 			}
 
 			return appcontainer.AttestImage(ctx, cosign.New(), os.Stderr, appcontainer.AttestImageInput{

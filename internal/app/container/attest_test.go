@@ -62,7 +62,7 @@ func TestAttestImage_GeneratesSLSAProvenance(t *testing.T) {
 
 	err := appcontainer.AttestImage(context.Background(), att, &bytes.Buffer{}, appcontainer.AttestImageInput{
 		Image: "ghcr.io/o/r@sha256:abc", Method: domainrelease.SignMethodSigstore,
-		PredicateType: "slsaprovenance",
+		PredicateType: "slsaprovenance1",
 		Provenance: provenance.Input{
 			BuildType: provenance.ContainerBuildType,
 			BuilderID: "https://github.com/o/r/.github/workflows/x.yml@refs/tags/v1",
@@ -78,6 +78,26 @@ func TestAttestImage_GeneratesSLSAProvenance(t *testing.T) {
 
 	if !strings.Contains(att.predicateRaw, "buildDefinition") || !strings.Contains(att.predicateRaw, "deadbeef") {
 		t.Errorf("generated predicate missing SLSA fields:\n%s", att.predicateRaw)
+	}
+
+	// The generated predicate is SLSA v1.0, so cosign must be told
+	// "slsaprovenance1" — bare "slsaprovenance" is cosign's v0.2 alias and
+	// would mislabel the statement and break v1.0 verifiers.
+	if att.got.PredicateType != "slsaprovenance1" {
+		t.Errorf("cosign PredicateType = %q, want slsaprovenance1 (v1.0)", att.got.PredicateType)
+	}
+}
+
+// TestAttestImage_RejectsSLSAv02 proves only SLSA v1.0 is supported: cosign's
+// obsolete bare "slsaprovenance" (v0.2) alias is refused with a usage error.
+func TestAttestImage_RejectsSLSAv02(t *testing.T) {
+	t.Parallel()
+
+	err := appcontainer.AttestImage(context.Background(), &fakeAttestor{}, &bytes.Buffer{}, appcontainer.AttestImageInput{
+		Image: "ghcr.io/o/r@sha256:abc", Method: domainrelease.SignMethodSigstore, PredicateType: "slsaprovenance",
+	})
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage (v0.2 unsupported)", err)
 	}
 }
 

@@ -46,6 +46,10 @@ const flagRegistry = "registry"
 // goconst's literal budget across the container package.
 const flagDigest = "digest"
 
+// flagFlavor is the shared "flavor" flag name (build-variant), named once to
+// stay under goconst's literal budget across the container package.
+const flagFlavor = "flavor"
+
 // New returns the `container` subgroup command tree.
 func New() *cli.Command {
 	return &cli.Command{
@@ -95,6 +99,7 @@ EXAMPLES:
 			if password == "" {
 				if forgeUser, forgeToken := forgeRegistryCreds(registry); forgeToken != "" {
 					password = forgeToken
+
 					if username == "" {
 						username = forgeUser
 					}
@@ -256,7 +261,7 @@ func metadataCmd() *cli.Command {
 				Usage: "single base image ref, e.g. ghcr.io/owner/repo"},
 			&cli.StringFlag{Name: "tag-rules", Sources: cli.EnvVars("TAG_RULES"),
 				Usage: "newline-separated csv tag-rule lines"},
-			&cli.StringFlag{Name: "flavor", Sources: cli.EnvVars("FLAVOR"),
+			&cli.StringFlag{Name: flagFlavor, Sources: cli.EnvVars("FLAVOR"),
 				Usage: "only latest=false is honoured; other entries are refused"},
 			&cli.BoolFlag{Name: "emit-labels", Sources: cli.EnvVars("EMIT_LABELS"),
 				Usage: "also emit org.opencontainers.image.* labels"},
@@ -270,7 +275,7 @@ func metadataCmd() *cli.Command {
 				_, err := appcontainer.ComputeMetadata(ctx, d.Provider, d.RepoMetadataFetcher(), d.OutputSink, appcontainer.ComputeMetadataInput{
 					ImageName:   cmd.String("image-name"),
 					TagRules:    cmd.String("tag-rules"),
-					Flavor:      cmd.String("flavor"),
+					Flavor:      cmd.String(flagFlavor),
 					EmitLabels:  cmd.Bool("emit-labels"),
 					Description: cmd.String("oci-description"),
 					License:     cmd.String("oci-license"),

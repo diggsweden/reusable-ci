@@ -13,6 +13,9 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 )
 
+// flagRoot is the shared "root" flag name across the validate subcommands.
+const flagRoot = "root"
+
 // workflowGroup wires `reusable-ci validate workflow <verb>` — every
 // subcommand here scans the repository's reusable workflow YAML for a
 // structural rule (literal-default inputs, removed v3 contracts).
@@ -34,11 +37,11 @@ func workflowInputDefaultsCmd() *cli.Command {
 		Description: `EXAMPLE:
    reusable-ci validate workflow input-defaults --root .`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "root", Value: ".", Usage: "repository root containing .github/workflows"},
+			&cli.StringFlag{Name: flagRoot, Value: ".", Usage: "repository root containing .github/workflows"},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			return appvalidate.WorkflowInputDefaults(os.Stderr, deps.Annotator(cmd), appvalidate.WorkflowInputDefaultsInput{
-				Root: cmd.String("root"),
+				Root: cmd.String(flagRoot),
 			})
 		},
 	}
@@ -51,12 +54,12 @@ func workflowContractResidueCmd() *cli.Command {
 		Description: `EXAMPLE:
    reusable-ci validate workflow contract-residue --root .`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "root", Value: ".", Usage: "repository root to scan"},
+			&cli.StringFlag{Name: flagRoot, Value: ".", Usage: "repository root to scan"},
 			&cli.StringSliceFlag{Name: "path", Usage: "path under root to scan (repeatable); defaults to source/workflow/doc roots"},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			return appvalidate.ContractResidue(os.Stderr, deps.Annotator(cmd), appvalidate.ContractResidueInput{
-				Root:  cmd.String("root"),
+				Root:  cmd.String(flagRoot),
 				Paths: cmd.StringSlice("path"),
 			})
 		},

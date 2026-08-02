@@ -35,9 +35,9 @@ name: Bump Version
 on:
   workflow_call: # yamllint disable-line rule:truthy
     outputs:
-      release-sha:
-        description: "Commit SHA the release tag was moved to (the release commit)"
-        value: ${{ jobs.bump-version.outputs.release-sha }}
+      bump-sha:
+        description: "Informational: the bump commit SHA this leg produced. The release tag is NOT created here — release-prepare-stage.yml's tag-release job creates it once, after the whole matrix, at the branch HEAD carrying every artifact's bump."
+        value: ${{ jobs.bump-version.outputs.bump-sha }}
     inputs:
       branch:
         description: "Branch to checkout and work on (default: main)"
@@ -144,7 +144,7 @@ jobs:
     permissions:
       contents: write
     outputs:
-      release-sha: ${{ steps.tag-release.outputs.release-sha }}
+      bump-sha: ${{ steps.bump-sha.outputs.sha }}
     steps:
       # Defense-in-depth: refuse PR-context triggers. RELEASE_TOKEN and
       # RELEASE_GPG_PRIVATE_KEY are consumed by this job; must never run
@@ -174,7 +174,7 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
           GIT_USER_SIGNINGKEY: "true"
           GIT_COMMIT_GPGSIGN: "true"
-          GIT_CONFIG_GLOBAL: "true"
+          REUSABLE_CI_GIT_CONFIG_GLOBAL: "true"
         run: reusable-ci release gpg import
       - name: Set up SSH signing
         if: ${{ inputs['git-signing-method'] == 'ssh' }}
@@ -183,7 +183,7 @@ jobs:
           COMMIT_AUTHOR_NAME: ${{ inputs['committer-name'] }}
           COMMIT_AUTHOR_EMAIL: ${{ inputs['committer-email'] }}
           GIT_COMMIT_GPGSIGN: "true"
-          GIT_CONFIG_GLOBAL: "true"
+          REUSABLE_CI_GIT_CONFIG_GLOBAL: "true"
         run: reusable-ci release ssh setup
       - name: Bump project version
         env:
@@ -236,12 +236,14 @@ jobs:
             [skip ci]
           FILE_PATTERN: ${{ steps.file-pattern.outputs.pattern }}
         run: reusable-ci version commit-push
-      - name: Create release tag (create-once, no force)
-        id: tag-release
-        env:
-          RELEASE_TAG: ${{ steps.relctx.outputs.release-tag }}
-          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-        run: reusable-ci version tag-release
+      # The release tag is NOT created here. In a multi-artifact release each
+      # matrix leg bumps a different artifact; tagging per leg would either
+      # fail (tag exists) or point at an early leg's commit, missing later
+      # bumps. release-prepare-stage.yml's tag-release job creates the tag
+      # once, after the whole matrix, at the branch HEAD carrying every bump.
+      - name: Capture bump commit SHA (informational)
+        id: bump-sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Cleanup GPG key
         if: ${{ always() && inputs['git-signing-method'] != 'ssh' }}
         env:

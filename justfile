@@ -160,7 +160,7 @@ lint-shell *args:
 
 [group('lint')]
 lint-shell-fmt *args:
-    @nanolinter lint shell-fmt {{args}}
+    @nanolinter lint shell-format {{args}}
 
 [group('lint')]
 lint-actions *args:

@@ -67,9 +67,9 @@ remote-reachability checks); that is intentional where the check cross-checks
 something rather than asserting a local fact.`,
 		Commands: slices.Concat(
 			cmdmeta.WithCategory("Release pre-flight gates",
-				prerequisitesCmd(), refTypeCmd(), eventContextCmd(), tagGroup(), workflowGroup(), changelogCmd()),
+				prerequisitesCmd(), refTypeCmd(), eventContextCmd(), isolationCmd(), jobGraphCmd(), tagGroup(), workflowGroup(), changelogCmd()),
 			cmdmeta.WithCategory("Auth & secrets", authGroup(), secretGroup()),
-			cmdmeta.WithCategory("Signature verification", artifactSignatureCmd(), containerSignatureCmd()),
+			cmdmeta.WithCategory("Signature verification", artifactSignatureCmd(), containerSignatureCmd(), containerAttestationCmd()),
 			cmdmeta.WithCategory("Ecosystem checks", cargoCmd(), jvmReproducibilityCmd()),
 		),
 	}

@@ -5,6 +5,8 @@ package forgejo_test
 
 import (
 	"context"
+	"crypto/md5" //nolint:gosec // asserting the protocol's transport checksum, not security.
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -339,5 +342,108 @@ func mustWrite(t *testing.T, path, body string) {
 
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestUploadRunArtifact_BackendProtocolContract pins the four upload details the
+// artifact backend (Codeberg) rejects uploads without: CreateArtifact carries
+// RetentionDays; the per-file PUT joins itemPath with '&' when the container URL
+// already has a query (as the backend's fileContainerResourceUrl does, via
+// ?retentionDays=N); each PUT sends x-actions-results-md5 = base64(md5(body));
+// and a zero-byte file gets Content-Range "bytes 0--1/0".
+func TestUploadRunArtifact_BackendProtocolContract(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "data.bin"), "payload")
+	mustWrite(t, filepath.Join(dir, "empty"), "")
+
+	type putRec struct{ rawQuery, md5, contentRange string }
+
+	var (
+		mu         sync.Mutex
+		createDays int64
+		puts       = map[string]putRec{}
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/artifacts"):
+			var body struct {
+				RetentionDays int64 `json:"RetentionDays"`
+			}
+
+			_ = json.NewDecoder(r.Body).Decode(&body)
+
+			mu.Lock()
+			createDays = body.RetentionDays
+			mu.Unlock()
+
+			// Mirror Codeberg: the container URL already carries a query.
+			writeJSON(w, jsonObj{"fileContainerResourceUrl": "http://" + r.Host + "/upload?retentionDays=1"})
+
+		case r.Method == http.MethodPut && r.URL.Path == "/upload":
+			_, _ = io.Copy(io.Discard, r.Body)
+
+			mu.Lock()
+			puts[r.URL.Query().Get("itemPath")] = putRec{
+				rawQuery:     r.URL.RawQuery,
+				md5:          r.Header.Get("x-actions-results-md5"),
+				contentRange: r.Header.Get("Content-Range"),
+			}
+			mu.Unlock()
+
+			w.WriteHeader(http.StatusCreated)
+
+		case r.Method == http.MethodPatch:
+			w.WriteHeader(http.StatusOK)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	p := &forgejo.Provider{
+		Env: envMap(map[string]string{
+			"ACTIONS_RUNTIME_URL":   srv.URL,
+			"ACTIONS_RUNTIME_TOKEN": runtimeToken,
+			"FORGEJO_RUN_ID":        "7",
+		}),
+		HTTPClient: srv.Client(),
+	}
+
+	if _, err := p.UploadRunArtifact(context.Background(), provider.RunArtifactUpload{Name: "dist", Dir: dir, RetentionDays: 5}); err != nil {
+		t.Fatal(err)
+	}
+
+	if createDays != 5 {
+		t.Errorf("CreateArtifact RetentionDays = %d, want 5", createDays)
+	}
+
+	md5b64 := func(content string) string {
+		sum := md5.Sum([]byte(content)) //nolint:gosec // protocol checksum.
+
+		return base64.StdEncoding.EncodeToString(sum[:])
+	}
+
+	data := puts["dist/data.bin"]
+	if !strings.Contains(data.rawQuery, "retentionDays=1&itemPath=") {
+		t.Errorf("PUT query = %q, want itemPath joined with '&' after the existing query", data.rawQuery)
+	}
+
+	if data.md5 != md5b64("payload") {
+		t.Errorf("data.bin md5 = %q, want %q", data.md5, md5b64("payload"))
+	}
+
+	if data.contentRange != "bytes 0-6/7" {
+		t.Errorf("data.bin Content-Range = %q, want bytes 0-6/7", data.contentRange)
+	}
+
+	empty := puts["dist/empty"]
+	if empty.contentRange != "bytes 0--1/0" {
+		t.Errorf("empty Content-Range = %q, want bytes 0--1/0", empty.contentRange)
+	}
+
+	if empty.md5 != md5b64("") {
+		t.Errorf("empty md5 = %q, want %q (md5 of empty)", empty.md5, md5b64(""))
 	}
 }

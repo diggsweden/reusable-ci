@@ -15,22 +15,22 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-common.sh"
 readonly SYFT_VERSION="v1.45.1"
 
 install_syft() {
-  if command -v syft &>/dev/null; then
-    ci_print_already_installed "Syft" "$(syft version --output json 2>/dev/null | grep -o '"version":"[^"]*"' | cut -d'"' -f4)"
-    return 0
-  fi
+	if command -v syft &>/dev/null; then
+		ci_print_already_installed "Syft" "$(syft version --output json 2>/dev/null | grep -o '"version":"[^"]*"' | cut -d'"' -f4)"
+		return 0
+	fi
 
-  local install_dir
-  install_dir="$(ci_install_dir syft)"
-  mkdir -p "$install_dir"
+	local install_dir
+	install_dir="$(ci_install_dir syft)"
+	mkdir -p "$install_dir"
 
-  printf "Installing Syft SBOM generator (version: %s)...\n" "${SYFT_VERSION}"
-  if ! curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b "$install_dir" "${SYFT_VERSION}"; then
-    printf "ERROR: Failed to install Syft %s\n" "${SYFT_VERSION}" >&2
-    return 1
-  fi
+	printf "Installing Syft SBOM generator (version: %s)...\n" "${SYFT_VERSION}"
+	if ! curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b "$install_dir" "${SYFT_VERSION}"; then
+		printf "ERROR: Failed to install Syft %s\n" "${SYFT_VERSION}" >&2
+		return 1
+	fi
 
-  ci_prepend_path "$install_dir"
-  ci_require_command syft Syft || return 1
-  ci_print_installed "Syft" "$(syft version --output json 2>/dev/null | grep -o '"version":"[^"]*"' | cut -d'"' -f4)"
+	ci_prepend_path "$install_dir"
+	ci_require_command syft Syft || return 1
+	ci_print_installed "Syft" "$(syft version --output json 2>/dev/null | grep -o '"version":"[^"]*"' | cut -d'"' -f4)"
 }

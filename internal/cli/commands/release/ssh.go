@@ -57,8 +57,8 @@ func sshSetupCmd() *cli.Command {
 				Usage: "write user.email"},
 			&cli.BoolFlag{Name: "git-commit-sign", Sources: cli.EnvVars("GIT_COMMIT_GPGSIGN"),
 				Usage: "additionally write commit.gpgsign=true"},
-			&cli.BoolFlag{Name: "git-config-global", Sources: cli.EnvVars("GIT_CONFIG_GLOBAL"),
-				Usage: "use --global on the git config writes"},
+			&cli.BoolFlag{Name: "git-config-global", Sources: cli.EnvVars("REUSABLE_CI_GIT_CONFIG_GLOBAL"),
+				Usage: "use --global on the git config writes (env $REUSABLE_CI_GIT_CONFIG_GLOBAL — NOT git's reserved $GIT_CONFIG_GLOBAL, which is a path)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			privateKey, err := secret.Resolve(cmd.String("private-key-file"), "SSH_SIGNING_KEY")

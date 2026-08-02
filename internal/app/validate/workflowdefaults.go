@@ -85,7 +85,7 @@ func workflowInputDefaultsInFS(w io.Writer, annot output.Annotator, in workflowI
 
 	files := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yml" {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ymlExt {
 			continue
 		}
 

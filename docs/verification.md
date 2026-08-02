@@ -203,7 +203,7 @@ all verifiable on **any** registry or forge (GitHub / Forgejo / GitLab) with the
 | Evidence | How it is produced | How to verify |
 | --- | --- | --- |
 | **Signature** (integrity + identity) | `reusable-ci container sign` (cosign, `--recursive` over per-arch children) | `cosign verify` / `reusable-ci validate container-signature` |
-| **SLSA v1.0 provenance** (how/where it was built) | `reusable-ci container attest --type slsaprovenance` — a **signed** in-toto attestation; predicate generated from the CI environment | `cosign verify-attestation --type slsaprovenance` |
+| **SLSA v1.0 provenance** (how/where it was built) | `reusable-ci container attest --type slsaprovenance1` — a **signed** in-toto attestation; predicate generated from the CI environment | `cosign verify-attestation --type slsaprovenance1` |
 | **SBOM** (what is inside) | `container attest --type cyclonedx` — a **signed** in-toto attestation, one per per-arch image digest (syft) | `cosign verify-attestation --type cyclonedx` |
 
 Why a **signed** cosign attestation rather than BuildKit's in-index provenance:
@@ -218,7 +218,7 @@ Verify provenance (sigstore-keyless example):
 
 ```bash
 cosign verify-attestation \
-  --type slsaprovenance \
+  --type slsaprovenance1 \
   --certificate-identity-regexp '^https://github.com/<owner>/<repo>/\.github/workflows/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   <registry>/<owner>/<image>@sha256:...
@@ -287,7 +287,7 @@ use:
 
 ```bash
 cosign verify-attestation --key kms-builder.pub \
-  --type slsaprovenance <registry>/<image>@sha256:...
+  --type slsaprovenance1 <registry>/<image>@sha256:...
 ```
 
 This is **L3-in-substance, verifiable against your own builder key**, on any
@@ -1061,7 +1061,7 @@ or forge — the primary, portable path:
 
 ```bash
 cosign verify-attestation \
-  --type slsaprovenance \
+  --type slsaprovenance1 \
   --certificate-identity-regexp '^https://github.com/diggsweden/.+' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   ghcr.io/diggsweden/my-app@sha256:PLATFORM_DIGEST

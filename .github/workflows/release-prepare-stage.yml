@@ -74,8 +74,8 @@ on:
         description: Prepare stage result payload
         value: ${{ jobs.summarize-prepare-stage.outputs.result-json }}
       release-sha:
-        description: Commit SHA the release tag was moved to
-        value: ${{ jobs.version-bump.outputs.release-sha }}
+        description: Commit SHA the release tag points to (the final HEAD carrying every artifact's bump)
+        value: ${{ jobs.tag-release.outputs.release-sha }}
 permissions:
   contents: read
 jobs:
@@ -113,9 +113,73 @@ jobs:
       # sed-only and uses base.
       runtime-image: >-
         ${{ (contains(fromJson('["maven","gradle","gradle-android"]'), matrix.artifact.project_type) && inputs['runtime-image-java']) || (matrix.artifact.project_type == 'npm' && inputs['runtime-image-node']) || (matrix.artifact.project_type == 'cargo' && inputs['runtime-image-rust']) || inputs['runtime-image'] }}
+  # Tag once, after the whole bump matrix, at the branch HEAD that now carries
+  # every artifact's bump. Separated out of version-bump.yml so multi-artifact
+  # releases get a single, deterministic release tag (per-leg tagging would fail
+  # on the second leg or tag an early commit). Runs on the no-bump path too
+  # (version-bump skipped) to tag the existing HEAD.
+  tag-release:
+    name: Tag Release
+    needs: [version-bump]
+    if: ${{ !cancelled() && needs.version-bump.result != 'failure' }}
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      contents: write
+    outputs:
+      release-sha: ${{ steps.tag-release.outputs.release-sha }}
+    steps:
+      - name: Refuse PR-context trigger (release secrets in scope)
+        run: reusable-ci validate event-context
+      - name: Checkout repository (branch carries every leg's bump)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CHECKOUT_REF: ${{ inputs.branch }}
+          CHECKOUT_FETCH_ALL_REFS: "true"
+        run: reusable-ci platform checkout
+      - name: Derive release context from request tag
+        id: relctx
+        run: reusable-ci version derive-release
+      # Signing setup mirrors version-bump.yml so `git tag -s` can sign the tag.
+      # TODO: extract a shared composite action once this flow is CI-proven, to
+      # remove the duplication between the two jobs.
+      - name: Import GPG key
+        id: import-gpg
+        if: ${{ inputs['git-signing-method'] != 'ssh' }}
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          GIT_USER_SIGNINGKEY: "true"
+          GIT_COMMIT_GPGSIGN: "true"
+          REUSABLE_CI_GIT_CONFIG_GLOBAL: "true"
+        run: reusable-ci release gpg import
+      - name: Set up SSH signing
+        if: ${{ inputs['git-signing-method'] == 'ssh' }}
+        env:
+          SSH_SIGNING_KEY: ${{ secrets.RELEASE_SSH_SIGNING_KEY }}
+          COMMIT_AUTHOR_NAME: ${{ inputs['committer-name'] }}
+          COMMIT_AUTHOR_EMAIL: ${{ inputs['committer-email'] }}
+          GIT_COMMIT_GPGSIGN: "true"
+          REUSABLE_CI_GIT_CONFIG_GLOBAL: "true"
+        run: reusable-ci release ssh setup
+      - name: Create release tag (create-once, no force) at final HEAD
+        id: tag-release
+        env:
+          RELEASE_TAG: ${{ steps.relctx.outputs.release-tag }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: reusable-ci version tag-release
+      - name: Cleanup GPG key
+        if: ${{ always() && inputs['git-signing-method'] != 'ssh' }}
+        env:
+          GPG_FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
+        run: reusable-ci release gpg cleanup
+      - name: Cleanup SSH signing key
+        if: ${{ always() && inputs['git-signing-method'] == 'ssh' }}
+        run: reusable-ci release ssh cleanup
   summarize-prepare-stage:
     name: Summarize Prepare Stage
-    needs: [version-bump]
+    needs: [version-bump, tag-release]
     if: always()
     runs-on: ubuntu-24.04
     container:

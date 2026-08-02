@@ -287,7 +287,7 @@ func shouldScanContractResidueFile(file string) bool {
 	}
 
 	switch path.Ext(file) {
-	case ".go", ".yml", ".yaml", ".md", ".sh", ".json", ".toml", ".txt":
+	case ".go", ymlExt, ".yaml", ".md", ".sh", ".json", ".toml", ".txt":
 		return true
 	default:
 		return false

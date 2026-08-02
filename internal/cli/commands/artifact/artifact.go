@@ -22,6 +22,9 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
+// flagDir is the shared --dir flag name across the artifact subcommands.
+const flagDir = "dir"
+
 // New returns the `artifact` subgroup command tree.
 func New() *cli.Command {
 	return &cli.Command{
@@ -30,6 +33,7 @@ func New() *cli.Command {
 		Commands: []*cli.Command{
 			uploadCmd(),
 			downloadCmd(),
+			digestCmd(),
 		},
 	}
 }
@@ -49,7 +53,7 @@ func uploadCmd() *cli.Command {
    reusable-ci artifact upload --name logs --file build.log --file test.log --retention-days 7`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "name", Required: true, Sources: cli.EnvVars("ARTIFACT_NAME"), Usage: "logical artifact name"},
-			&cli.StringFlag{Name: "dir", Sources: cli.EnvVars("ARTIFACT_DIR"), Usage: "directory whose contents are uploaded (or use --file/--path)"},
+			&cli.StringFlag{Name: flagDir, Sources: cli.EnvVars("ARTIFACT_DIR"), Usage: "directory whose contents are uploaded (or use --file/--path)"},
 			&cli.StringSliceFlag{Name: "file", Sources: cli.EnvVars("ARTIFACT_FILES"), Usage: "explicit file to upload (repeatable, flattened to basename)"},
 			&cli.StringSliceFlag{Name: "path", Sources: cli.EnvVars("ARTIFACT_PATHS"), Usage: "glob pattern preserving structure (*, **, [set], !exclude; repeatable or newline-separated) — the upload-artifact path: contract"},
 			&cli.IntFlag{Name: "retention-days", Sources: cli.EnvVars("ARTIFACT_RETENTION_DAYS"), Usage: "retention in days (0 = forge default)"},
@@ -65,7 +69,7 @@ func uploadCmd() *cli.Command {
 
 				_, err = appartifact.Upload(ctx, up, dep.OutputSink, os.Stderr, provider.RunArtifactUpload{
 					Name:          cmd.String("name"),
-					Dir:           cmd.String("dir"),
+					Dir:           cmd.String(flagDir),
 					Files:         cmd.StringSlice("file"),
 					Paths:         cmd.StringSlice("path"),
 					RetentionDays: cmd.Int("retention-days"),
@@ -96,7 +100,7 @@ func downloadCmd() *cli.Command {
 			&cli.StringFlag{Name: "name", Sources: cli.EnvVars("ARTIFACT_NAME"), Usage: "exact artifact name to download (omit with --pattern)"},
 			&cli.StringFlag{Name: "pattern", Sources: cli.EnvVars("ARTIFACT_PATTERN"), Usage: "glob over artifact names; downloads every match (alternative to --name)"},
 			&cli.BoolFlag{Name: "merge-multiple", Sources: cli.EnvVars("ARTIFACT_MERGE_MULTIPLE"), Usage: "with --pattern: flatten all matches into --dir instead of --dir/<name>/"},
-			&cli.StringFlag{Name: "dir", Value: ".", Sources: cli.EnvVars("ARTIFACT_DIR"), Usage: "destination directory"},
+			&cli.StringFlag{Name: flagDir, Value: ".", Sources: cli.EnvVars("ARTIFACT_DIR"), Usage: "destination directory"},
 			&cli.StringFlag{Name: "run-id", Sources: cienv.RunID(), Usage: "run the artifact belongs to (default: current run)"},
 			&cli.StringFlag{Name: "repository", Sources: cienv.Repository(), Usage: "owner/repo the run belongs to (default: current repo)"},
 		},
@@ -111,7 +115,7 @@ func downloadCmd() *cli.Command {
 					Name:          cmd.String("name"),
 					Pattern:       cmd.String("pattern"),
 					MergeMultiple: cmd.Bool("merge-multiple"),
-					Dir:           cmd.String("dir"),
+					Dir:           cmd.String(flagDir),
 					RunID:         cmd.String("run-id"),
 					Repository:    cmd.String("repository"),
 				})

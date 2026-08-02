@@ -21,35 +21,35 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-common.sh"
 readonly COSIGN_VERSION="v3.1.1"
 
 install_cosign() {
-  if command -v cosign &>/dev/null; then
-    ci_print_already_installed "cosign" "$(cosign version 2>/dev/null | grep -o 'GitVersion:[^ ]*' | head -1)"
-    return 0
-  fi
+	if command -v cosign &>/dev/null; then
+		ci_print_already_installed "cosign" "$(cosign version 2>/dev/null | grep -o 'GitVersion:[^ ]*' | head -1)"
+		return 0
+	fi
 
-  local install_dir arch url
-  install_dir="$(ci_install_dir cosign)"
-  mkdir -p "$install_dir"
+	local install_dir arch url
+	install_dir="$(ci_install_dir cosign)"
+	mkdir -p "$install_dir"
 
-  case "$(uname -m)" in
-  x86_64 | amd64) arch=amd64 ;;
-  aarch64 | arm64) arch=arm64 ;;
-  *)
-    printf "ERROR: unsupported arch for cosign: %s\n" "$(uname -m)" >&2
-    return 1
-    ;;
-  esac
+	case "$(uname -m)" in
+	x86_64 | amd64) arch=amd64 ;;
+	aarch64 | arm64) arch=arm64 ;;
+	*)
+		printf "ERROR: unsupported arch for cosign: %s\n" "$(uname -m)" >&2
+		return 1
+		;;
+	esac
 
-  url="https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-${arch}"
+	url="https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-${arch}"
 
-  printf "Installing cosign (version: %s)...\n" "${COSIGN_VERSION}"
-  if ! curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL "$url" -o "${install_dir}/cosign"; then
-    printf "ERROR: Failed to download cosign %s\n" "${COSIGN_VERSION}" >&2
-    return 1
-  fi
+	printf "Installing cosign (version: %s)...\n" "${COSIGN_VERSION}"
+	if ! curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL "$url" -o "${install_dir}/cosign"; then
+		printf "ERROR: Failed to download cosign %s\n" "${COSIGN_VERSION}" >&2
+		return 1
+	fi
 
-  chmod 0755 "${install_dir}/cosign"
+	chmod 0755 "${install_dir}/cosign"
 
-  ci_prepend_path "$install_dir"
-  ci_require_command cosign cosign || return 1
-  ci_print_installed "cosign" "$(cosign version 2>/dev/null | grep -o 'GitVersion:[^ ]*' | head -1)"
+	ci_prepend_path "$install_dir"
+	ci_require_command cosign cosign || return 1
+	ci_print_installed "cosign" "$(cosign version 2>/dev/null | grep -o 'GitVersion:[^ ]*' | head -1)"
 }

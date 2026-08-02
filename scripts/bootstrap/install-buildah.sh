@@ -22,42 +22,42 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-common.sh"
 # images), prefixing sudo when not root. Fails closed with an actionable
 # message on an unsupported distro.
 ci_pkg_install() {
-  local sudo=()
-  if [ "$(id -u)" -ne 0 ]; then
-    sudo=(sudo)
-  fi
+	local sudo=()
+	if [ "$(id -u)" -ne 0 ]; then
+		sudo=(sudo)
+	fi
 
-  if command -v apt-get &>/dev/null; then
-    "${sudo[@]}" apt-get update -qq && "${sudo[@]}" apt-get install -y -qq "$@"
-  elif command -v apk &>/dev/null; then
-    "${sudo[@]}" apk add --no-cache "$@"
-  elif command -v dnf &>/dev/null; then
-    "${sudo[@]}" dnf install -y -q "$@"
-  elif command -v yum &>/dev/null; then
-    "${sudo[@]}" yum install -y -q "$@"
-  else
-    printf 'ERROR: no supported package manager (apt/apk/dnf/yum); bake %s into the runner image\n' "$*" >&2
-    return 1
-  fi
+	if command -v apt-get &>/dev/null; then
+		"${sudo[@]}" apt-get update -qq && "${sudo[@]}" apt-get install -y -qq "$@"
+	elif command -v apk &>/dev/null; then
+		"${sudo[@]}" apk add --no-cache "$@"
+	elif command -v dnf &>/dev/null; then
+		"${sudo[@]}" dnf install -y -q "$@"
+	elif command -v yum &>/dev/null; then
+		"${sudo[@]}" yum install -y -q "$@"
+	else
+		printf 'ERROR: no supported package manager (apt/apk/dnf/yum); bake %s into the runner image\n' "$*" >&2
+		return 1
+	fi
 }
 
 install_buildah() {
-  if command -v buildah &>/dev/null && command -v podman &>/dev/null; then
-    ci_print_already_installed "buildah/podman" "$(buildah --version 2>/dev/null | head -1)"
-    return 0
-  fi
+	if command -v buildah &>/dev/null && command -v podman &>/dev/null; then
+		ci_print_already_installed "buildah/podman" "$(buildah --version 2>/dev/null | head -1)"
+		return 0
+	fi
 
-  printf 'Installing buildah + podman...\n'
-  if ! ci_pkg_install buildah podman; then
-    printf 'ERROR: failed to install buildah/podman\n' >&2
-    return 1
-  fi
+	printf 'Installing buildah + podman...\n'
+	if ! ci_pkg_install buildah podman; then
+		printf 'ERROR: failed to install buildah/podman\n' >&2
+		return 1
+	fi
 
-  ci_require_command buildah buildah || return 1
-  ci_require_command podman podman || return 1
-  ci_print_installed "buildah/podman" "$(buildah --version 2>/dev/null | head -1)"
+	ci_require_command buildah buildah || return 1
+	ci_require_command podman podman || return 1
+	ci_print_installed "buildah/podman" "$(buildah --version 2>/dev/null | head -1)"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  install_buildah "$@"
+	install_buildah "$@"
 fi

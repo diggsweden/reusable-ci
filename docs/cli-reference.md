@@ -35,6 +35,14 @@ Every command supports `--help`. Global flags (`--quiet`, `--log-level`, `--form
 
 upload/download per-run CI artifacts
 
+### `reusable-ci artifact digest`
+
+print a canonical, reproducible content digest of a directory (build-&gt;sign tamper-evidence)
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--dir` | directory whose contents are digested (required) | `$ARTIFACT_DIR` |
+
 ### `reusable-ci artifact download`
 
 download a named run artifact into a directory
@@ -377,18 +385,22 @@ container-image helpers (name resolution, manifests, namespace policy, tag/label
 
 ### `reusable-ci container attest`
 
-attach a signed in-toto attestation (slsaprovenance | cyclonedx | spdx) to an OCI image with cosign; registry-attached, verifiable with cosign verify-attestation
+attach a signed in-toto attestation (slsaprovenance1 | cyclonedx | spdx) to an OCI image with cosign; registry-attached, verifiable with cosign verify-attestation
 
 **Usage:** `reusable-ci container attest <registry/image@sha256:...>`
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--type` | predicate type: slsaprovenance \| cyclonedx \| spdx \| <uri> | `$PREDICATE_TYPE` |
-| `--predicate` | predicate JSON file; for --type=slsaprovenance it is generated from the CI env when omitted | `$PREDICATE_PATH` |
+| `--type` | predicate type: slsaprovenance1 (SLSA v1.0; the obsolete v0.2 'slsaprovenance' is rejected) \| cyclonedx \| spdx \| <uri> | `$PREDICATE_TYPE` |
+| `--predicate` | predicate JSON file; for --type=slsaprovenance1 it is generated from the CI env when omitted | `$PREDICATE_PATH` |
 | `--method` | signing backend: sigstore (keyless cosign + OIDC) or kms (cosign + --key). | `$SIGN_METHOD` |
 | `--key` | cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
 | `--builder-id` | override the SLSA provenance builder.id (e.g. an operator's documented KMS builder identity for an isolated L3 attestor); defaults to the CI-derived workflow identity | `$BUILDER_ID` |
+| `--flavor` | build variant recorded as externalParameters.flavor (e.g. a ci-builder flavor like "rust") | `$BUILD_FLAVOR` |
+| `--base-input-id` | sha256 content id of this build's base inputs, recorded as externalParameters.base_input_id (the SLSA-standard home for base lineage) | `$BASE_INPUT_ID` |
+| `--base-ref` | the base image this was built FROM, recorded as a resolvedDependency annotated role=base-image (requires --base-digest) | `$BASE_IMAGE_REF` |
+| `--base-digest` | sha256 digest of --base-ref (with or without the sha256: prefix) | `$BASE_IMAGE_DIGEST` |
 | `--recursive` | also attest each per-arch child of a manifest list (one provenance for the whole release). Default true. | `$ATTEST_RECURSIVE` |
 
 ### `reusable-ci container build`
@@ -1073,7 +1085,7 @@ import a GPG private key, optionally cache the passphrase, optionally configure 
 | `--passphrase-file` | path to a file containing the GPG passphrase (use "-" for stdin; defaults to $GPG_PASSPHRASE) | n/a |
 | `--git-user-signingkey` | write user.signingkey/name/email from the imported key | `$GIT_USER_SIGNINGKEY` |
 | `--git-commit-gpgsign` | additionally write commit.gpgsign=true | `$GIT_COMMIT_GPGSIGN` |
-| `--git-config-global` | use --global on the git config writes | `$GIT_CONFIG_GLOBAL` |
+| `--git-config-global` | use --global on the git config writes (env $REUSABLE_CI_GIT_CONFIG_GLOBAL — NOT git's reserved $GIT_CONFIG_GLOBAL, which is a path) | `$REUSABLE_CI_GIT_CONFIG_GLOBAL` |
 
 ### `reusable-ci release notes`
 
@@ -1182,7 +1194,7 @@ write the SSH signing key and configure git (gpg.format=ssh, user.signingkey)
 | `--author-name` | write user.name | `$COMMIT_AUTHOR_NAME` |
 | `--author-email` | write user.email | `$COMMIT_AUTHOR_EMAIL` |
 | `--git-commit-sign` | additionally write commit.gpgsign=true | `$GIT_COMMIT_GPGSIGN` |
-| `--git-config-global` | use --global on the git config writes | `$GIT_CONFIG_GLOBAL` |
+| `--git-config-global` | use --global on the git config writes (env $REUSABLE_CI_GIT_CONFIG_GLOBAL — NOT git's reserved $GIT_CONFIG_GLOBAL, which is a path) | `$REUSABLE_CI_GIT_CONFIG_GLOBAL` |
 
 ### `reusable-ci release verify-changelog`
 
@@ -1726,6 +1738,20 @@ validate the committed source changelog (e.g. CHANGELOG.md) is present, optional
 | `--path` | changelog file path (required) | n/a |
 | `--required` | fail when the file is missing (full-changelog mode) | n/a |
 
+### `reusable-ci validate container-attestation`
+
+verify a signed in-toto attestation (slsaprovenance1 | cyclonedx | spdx) on an OCI image (sigstore or kms). Reads from the registry — no local sidecar.
+
+**Usage:** `reusable-ci validate container-attestation <registry/image@sha256:...>`
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--type` | predicate type to verify: slsaprovenance1 (SLSA v1.0; the obsolete v0.2 'slsaprovenance' is rejected) \| cyclonedx \| spdx \| <uri> | `$PREDICATE_TYPE` |
+| `--method` | verification method: sigstore or kms. gpg is rejected — OpenPGP cannot verify OCI attestations. | `$SIGN_METHOD` |
+| `--cert-identity-regexp` | regexp the Fulcio cert identity must match for --method=sigstore (matched against the full identity URL; example: ^https://github\.com/<owner>/<repo>/) | `$CERT_IDENTITY_REGEXP` |
+| `--cert-oidc-issuer` | OIDC issuer URL the Fulcio cert must claim for --method=sigstore | `$CERT_OIDC_ISSUER` |
+| `--key` | cosign --key reference for --method=kms verification: KMS URI or local pubkey file path | `$SIGN_KEY` |
+
 ### `reusable-ci validate container-signature`
 
 verify a cosign signature on an OCI image (sigstore or kms). Reads from the registry — no local sidecar.
@@ -1747,6 +1773,24 @@ refuse to run when the workflow trigger is outside the publish/release allowlist
 |------|-------------|----------|
 | `--event-name` | trigger event being checked; read from $FORGEJO_EVENT_NAME / $GITHUB_EVENT_NAME on CI | `$FORGEJO_EVENT_NAME`, `$GITHUB_EVENT_NAME` |
 | `--allowed-events` | comma/space/newline-separated allowlist override (default: push,workflow_dispatch,release,schedule,workflow_run,merge_group) | `$ALLOWED_EVENTS` |
+
+### `reusable-ci validate isolation`
+
+assert SLSA Build L3 job isolation (build job has no signing secrets; checkouts don't persist credentials)
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--workflow` | path to the workflow file to check (required) | n/a |
+| `--build-job` | the artifact-producing job that must not see signing secrets | n/a |
+| `--signing-secret` | signing secret name forbidden in the build job (repeatable) | n/a |
+
+### `reusable-ci validate job-graph`
+
+reject reusable-call jobs that read a skippable producer's outputs (masks the real failure)
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--root` | repository root containing .github/workflows | n/a |
 
 ### `reusable-ci validate jvm-reproducibility`
 

@@ -6,6 +6,8 @@ package forgejo
 import (
 	"bytes"
 	"context"
+	"crypto/md5" //nolint:gosec // protocol-mandated transport checksum (x-actions-results-md5), not security.
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +28,40 @@ import (
 // Forgejo implements (the v3 / Azure-pipelines container API). The shell
 // download-consumer this replaces runs against this version on Codeberg.
 const runArtifactAPIVersion = "6.0-preview"
+
+// defaultForgejoRetentionDays is sent when the caller leaves retention
+// unspecified. Forgejo's CreateArtifact rejects an absent RetentionDays with
+// HTTP 500, so the upload always sends a positive value; "0 = forge default"
+// therefore maps to this backend minimum. Callers wanting longer pass
+// --retention-days.
+const defaultForgejoRetentionDays = 1
+
+// appendItemPath joins the itemPath query onto a container URL. Forgejo's
+// CreateArtifact returns a fileContainerResourceUrl that already carries
+// "?retentionDays=N", so itemPath must be appended with '&' when a query is
+// already present — a naive second '?' leaves Forgejo unable to parse itemPath
+// and it fails the upload as "Invalid artifact hash".
+func appendItemPath(containerURL, itemPath string) string {
+	sep := "?"
+	if strings.Contains(containerURL, "?") {
+		sep = "&"
+	}
+
+	return containerURL + sep + "itemPath=" + url.QueryEscape(itemPath)
+}
+
+// fileMD5Base64 returns base64(md5(content)) — the value Forgejo's upload
+// handler matches against the chunk it receives via x-actions-results-md5
+// ("md5 not match" otherwise). md5 here is the protocol's transport checksum,
+// not a security primitive.
+func fileMD5Base64(r io.Reader) (string, error) {
+	hasher := md5.New() //nolint:gosec // protocol-mandated transport checksum, not security.
+	if _, err := io.Copy(hasher, r); err != nil {
+		return "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(hasher.Sum(nil)), nil
+}
 
 // DownloadRunArtifact fetches a current-run artifact by name via the
 // Forgejo Actions runtime service: list artifacts → resolve the file
@@ -219,7 +255,7 @@ func (p *Provider) resolveMatchingContainers(ctx context.Context, runtimeURL, to
 // downloadContainer lists the container's file entries and writes each one
 // safely under dir, returning the byte/file totals.
 func (p *Provider) downloadContainer(ctx context.Context, containerURL, token, name, dir string) (provider.RunArtifactInfo, error) {
-	itemURL := containerURL + "?itemPath=" + url.QueryEscape(name)
+	itemURL := appendItemPath(containerURL, name)
 
 	var container struct {
 		Value []struct {
@@ -401,21 +437,17 @@ func (p *Provider) UploadRunArtifact(ctx context.Context, in provider.RunArtifac
 		return p.handleNoFiles(in)
 	}
 
-	env := p.envFunc()
-
-	runID := firstNonEmpty(env, "FORGEJO_RUN_ID", "GITHUB_RUN_ID")
-	if runID == "" {
-		return provider.RunArtifactInfo{}, fmt.Errorf("FORGEJO_RUN_ID/GITHUB_RUN_ID is required: %w", errs.ErrUsage)
+	creds, err := p.resolveRuntimeCreds()
+	if err != nil {
+		return provider.RunArtifactInfo{}, err
 	}
 
-	runtimeURL := strings.TrimRight(env("ACTIONS_RUNTIME_URL"), "/")
-	token := env("ACTIONS_RUNTIME_TOKEN")
-
-	if credErr := validateRuntimeCreds(runtimeURL, token); credErr != nil {
-		return provider.RunArtifactInfo{}, credErr
+	retentionDays := in.RetentionDays
+	if retentionDays <= 0 {
+		retentionDays = defaultForgejoRetentionDays
 	}
 
-	containerURL, err := p.createContainer(ctx, runtimeURL, token, runID, in.Name)
+	containerURL, err := p.createContainer(ctx, creds.url, creds.token, creds.runID, in.Name, retentionDays)
 	if err != nil {
 		return provider.RunArtifactInfo{}, err
 	}
@@ -423,18 +455,49 @@ func (p *Provider) UploadRunArtifact(ctx context.Context, in provider.RunArtifac
 	var total int64
 
 	for _, item := range files {
-		if err := p.putFile(ctx, containerURL, token, item); err != nil {
+		if err := p.putFile(ctx, containerURL, creds.token, item); err != nil {
 			return provider.RunArtifactInfo{}, err
 		}
 
 		total += item.size
 	}
 
-	if err := p.finalizeArtifact(ctx, runtimeURL, token, runID, in.Name, total); err != nil {
+	if err := p.finalizeArtifact(ctx, creds.url, creds.token, creds.runID, in.Name, total); err != nil {
 		return provider.RunArtifactInfo{}, err
 	}
 
 	return provider.RunArtifactInfo{Name: in.Name, Bytes: total, FileCount: len(files)}, nil
+}
+
+// runtimeUploadCreds are the Actions runtime endpoint, token, and run id the
+// artifact upload needs, resolved from the runner environment.
+type runtimeUploadCreds struct {
+	url   string
+	token string
+	runID string
+}
+
+// resolveRuntimeCreds reads and validates the Actions runtime credentials from
+// the runner environment.
+func (p *Provider) resolveRuntimeCreds() (runtimeUploadCreds, error) {
+	env := p.envFunc()
+
+	runID := firstNonEmpty(env, "FORGEJO_RUN_ID", "GITHUB_RUN_ID")
+	if runID == "" {
+		return runtimeUploadCreds{}, fmt.Errorf("FORGEJO_RUN_ID/GITHUB_RUN_ID is required: %w", errs.ErrUsage)
+	}
+
+	creds := runtimeUploadCreds{
+		url:   strings.TrimRight(env("ACTIONS_RUNTIME_URL"), "/"),
+		token: env("ACTIONS_RUNTIME_TOKEN"),
+		runID: runID,
+	}
+
+	if err := validateRuntimeCreds(creds.url, creds.token); err != nil {
+		return runtimeUploadCreds{}, err
+	}
+
+	return creds, nil
 }
 
 // handleNoFiles applies the IfNoFiles policy when nothing matched.
@@ -471,8 +534,12 @@ func collectUploadFiles(in provider.RunArtifactUpload) ([]uploadFile, error) {
 
 // createContainer POSTs the artifact creation request and returns the file
 // container URL the per-file PUTs target.
-func (p *Provider) createContainer(ctx context.Context, runtimeURL, token, runID, name string) (string, error) {
-	body, _ := json.Marshal(map[string]string{"Type": "actions_storage", "Name": name}) //nolint:errchkjson // fixed string keys/values are always encodable.
+func (p *Provider) createContainer(ctx context.Context, runtimeURL, token, runID, name string, retentionDays int) (string, error) {
+	body, _ := json.Marshal(struct { //nolint:errchkjson // fixed-shape struct is always encodable.
+		Type          string `json:"Type"`
+		Name          string `json:"Name"`
+		RetentionDays int    `json:"RetentionDays"`
+	}{Type: "actions_storage", Name: name, RetentionDays: retentionDays})
 	createURL := fmt.Sprintf("%s/_apis/pipelines/workflows/%s/artifacts?api-version=%s", runtimeURL, runID, runArtifactAPIVersion)
 
 	resp, err := p.runtimeSend(ctx, http.MethodPost, createURL, token, "application/json", bytes.NewReader(body), int64(len(body)), nil)
@@ -501,8 +568,10 @@ func (p *Provider) createContainer(ctx context.Context, runtimeURL, token, runID
 	return created.FileContainerResourceURL, nil
 }
 
-// putFile streams one file into the container at its item path. The
-// Content-Range header is the v3 whole-file form for non-empty files.
+// putFile streams one file into the container at its item path. It sends the
+// whole-file Content-Range (the empty-file form "bytes 0--1/0" for zero-byte
+// files, which Forgejo's range parser requires) plus the x-actions-results-md5
+// digest of the body, which Forgejo verifies against the bytes it receives.
 func (p *Provider) putFile(ctx context.Context, containerURL, token string, item uploadFile) error {
 	file, err := os.Open(item.abs) //nolint:gosec // item.abs comes from a caller-provided dir/file list.
 	if err != nil {
@@ -511,12 +580,26 @@ func (p *Provider) putFile(ctx context.Context, containerURL, token string, item
 
 	defer func() { _ = file.Close() }()
 
-	putURL := containerURL + "?itemPath=" + url.QueryEscape(item.itemPath)
+	md5b64, err := fileMD5Base64(file)
+	if err != nil {
+		return fmt.Errorf("md5 %q: %w", item.abs, err)
+	}
 
-	headers := map[string]string{}
+	if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
+		return fmt.Errorf("rewind %q: %w", item.abs, seekErr)
+	}
+
+	headers := map[string]string{"x-actions-results-md5": md5b64}
 	if item.size > 0 {
 		headers["Content-Range"] = fmt.Sprintf("bytes 0-%d/%d", item.size-1, item.size)
+	} else {
+		// Forgejo's saveUploadChunk Sscanf's Content-Range and 500s ("Error save
+		// upload chunk") on a missing one; the canonical client sends start 0,
+		// end uploadFileSize-1 = -1, total 0 for a zero-byte file.
+		headers["Content-Range"] = "bytes 0--1/0"
 	}
+
+	putURL := appendItemPath(containerURL, item.itemPath)
 
 	resp, err := p.runtimeSend(ctx, http.MethodPut, putURL, token, "application/octet-stream", file, item.size, headers)
 	if err != nil {

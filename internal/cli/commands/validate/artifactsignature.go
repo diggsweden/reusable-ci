@@ -48,7 +48,7 @@ func artifactSignatureCmd() *cli.Command {
 				Usage:   "path to the signature sidecar (default: <artefact>.sig or <artefact>.asc, auto-detected)",
 			},
 			&cli.StringFlag{
-				Name:    "method",
+				Name:    flagMethod,
 				Sources: cli.EnvVars("SIGN_METHOD"),
 				Usage:   "force verification method (gpg|sigstore|kms); omit to auto-detect from sidecar files",
 			},
@@ -67,27 +67,27 @@ func artifactSignatureCmd() *cli.Command {
 			// in the v3 bundle — no separate --certificate file
 			// to supply; just the identity constraints).
 			&cli.StringFlag{
-				Name:    "cert-identity-regexp",
+				Name:    flagCertIdentityRegexp,
 				Sources: cli.EnvVars("CERT_IDENTITY_REGEXP"),
-				Usage:   "regexp the Fulcio cert identity must match for --method=sigstore (matched against the full identity URL; example: ^https://github\\.com/<owner>/<repo>/)",
+				Usage:   usageCertIdentityRegexp,
 			},
 			&cli.StringFlag{
-				Name:    "cert-oidc-issuer",
+				Name:    flagCertOIDCIssuer,
 				Sources: cli.EnvVars("CERT_OIDC_ISSUER"),
 				Usage:   "OIDC issuer URL the Fulcio cert must claim for --method=sigstore (e.g. https://token.actions.githubusercontent.com)",
 			},
 			// KMS / file-key flag
 			&cli.StringFlag{
-				Name:    "key",
+				Name:    flagKey,
 				Sources: cli.EnvVars("SIGN_KEY"),
 				Usage:   "cosign --key reference for --method=kms verification: KMS URI, PKCS#11 URI, or local pubkey file path",
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			method := domainrelease.SignMethod(cmd.String("method"))
-			keyRef := cmd.String("key")
-			identityRegexp := cmd.String("cert-identity-regexp")
-			oidcIssuer := cmd.String("cert-oidc-issuer")
+			method := domainrelease.SignMethod(cmd.String(flagMethod))
+			keyRef := cmd.String(flagKey)
+			identityRegexp := cmd.String(flagCertIdentityRegexp)
+			oidcIssuer := cmd.String(flagCertOIDCIssuer)
 
 			// Default the keyless verification identity from the detected
 			// forge when the operator didn't pin one. Skipped for KMS

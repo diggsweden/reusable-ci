@@ -1,20 +1,30 @@
 # TODO
 
-## MegaLinter lint route (`linters.megalinter`)
+## Multi-artifact version-bump race — implemented, pending a CI release run
 
-The PR orchestrator's lint route is `linters.nanolinter`. A second route,
-`linters.megalinter`, is still to add: wire a `linters.megalinter` input + a
-`nanolinter`-style planner target + a `lint-megalinter.yml` reusable workflow
-that runs MegaLinter (its own container/action, not the mise toolchain). Its
-execution model differs from nanolinter (which runs the consumer's `just
-lint`), so it needs its own job design.
+The fix is in place but **not yet validated by a real release**:
 
-## Multi-artifact version-bump race condition
+- `version-bump.yml` no longer creates the tag — the `bump-version` job ends at
+  `commit-push` and emits an informational `bump-sha`. Signing setup + cleanup
+  stay (the bump commit is signed).
+- `release-prepare-stage.yml` has a single `tag-release` job (`needs:
+  version-bump`) that checks out the branch (HEAD now carries every leg's bump),
+  sets up signing, runs `reusable-ci version tag-release` once, and is the source
+  of the stage's `release-sha`. Runs on the no-bump path too.
 
-The `execute-version-bump` job in `release-prepare-stage.yml` uses a matrix strategy.
-When multiple artifacts each run their own version-bump, they race on `git push` and
-`git tag --force`. The `release-sha` output from a matrix reusable workflow call takes
-the value from the last-completing matrix leg, which may not be deterministic.
+This makes the tag point at the commit containing *all* bumps and the
+`release-sha` deterministic, with no Go change.
 
-Single-artifact projects (the common case) are unaffected. For multi-artifact projects,
-consider serializing version-bump or consolidating it into a single job.
+**Remaining:**
+
+1. **CI validation** — release-critical workflow change; the new job's signing
+   setup + tag creation need a real release run (multi-artifact and no-bump
+   paths) before it can be trusted. actionlint and the Go workflow-contract test
+   pass, but neither exercises the live ceremony.
+2. **Contract note** — `version-bump.yml`'s output was renamed `release-sha` →
+   `bump-sha`, and a direct (non-orchestrator) caller of `version-bump.yml` no
+   longer gets a tag. Fine for the orchestrator path; flag for any external
+   direct callers.
+3. **Maintainability follow-up** — the GPG/SSH signing setup is duplicated
+   between `version-bump.yml` and the new `tag-release` job. Extract a shared
+   composite action (the forgejo-ci pattern) once the flow is CI-proven.
