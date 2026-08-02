@@ -36,6 +36,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cmdmeta"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/planfile"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/secret"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -362,29 +363,35 @@ func resolveNameCmd() *cli.Command {
 	}
 }
 
+// planScopeMetadata is the plan-file scope of `container metadata` in
+// $REUSABLE_CI_PLAN (flag > plan > env > default).
+const planScopeMetadata = "container metadata"
+
 func metadataCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "metadata",
 		Usage: "compute image tags + OCI labels from declarative tag rules",
 		Description: "Reads TAG_RULES (newline csv lines), evaluates them " +
 			"against the resolved provider event context, and writes tags/labels/version/json " +
-			"to the platform output sink.\n\n" +
+			"to the platform output sink. Every flag may also be fed from the " +
+			"$REUSABLE_CI_PLAN plan file under the \"container metadata\" scope " +
+			"(flag > plan > env > default).\n\n" +
 			"EXAMPLES:\n" +
 			"   # Semver tags + OCI labels from a tag rule\n" +
 			"   reusable-ci container metadata --image-name ghcr.io/org/app \\\n" +
 			"     --tag-rules \"type=semver,pattern={{version}}\" --emit-labels",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "image-name", Required: true, Sources: cli.EnvVars("IMAGE_NAME"),
+			&cli.StringFlag{Name: "image-name", Required: true, Sources: planfile.Vars(planScopeMetadata, "image-name", "IMAGE_NAME"),
 				Usage: "single base image ref, e.g. ghcr.io/owner/repo"},
-			&cli.StringFlag{Name: "tag-rules", Sources: cli.EnvVars("TAG_RULES"),
+			&cli.StringFlag{Name: "tag-rules", Sources: planfile.Vars(planScopeMetadata, "tag-rules", "TAG_RULES"),
 				Usage: "newline-separated csv tag-rule lines"},
-			&cli.StringFlag{Name: flagFlavor, Sources: cli.EnvVars("FLAVOR"),
+			&cli.StringFlag{Name: flagFlavor, Sources: planfile.Vars(planScopeMetadata, flagFlavor, "FLAVOR"),
 				Usage: "only latest=false is honoured; other entries are refused"},
-			&cli.BoolFlag{Name: "emit-labels", Sources: cli.EnvVars("EMIT_LABELS"),
+			&cli.BoolFlag{Name: "emit-labels", Sources: planfile.Vars(planScopeMetadata, "emit-labels", "EMIT_LABELS"),
 				Usage: "also emit org.opencontainers.image.* labels"},
-			&cli.StringFlag{Name: "oci-description", Sources: cli.EnvVars("OCI_DESCRIPTION"),
+			&cli.StringFlag{Name: "oci-description", Sources: planfile.Vars(planScopeMetadata, "oci-description", "OCI_DESCRIPTION"),
 				Usage: "override for org.opencontainers.image.description"},
-			&cli.StringFlag{Name: "oci-license", Sources: cli.EnvVars("OCI_LICENSE"),
+			&cli.StringFlag{Name: "oci-license", Sources: planfile.Vars(planScopeMetadata, "oci-license", "OCI_LICENSE"),
 				Usage: "override for org.opencontainers.image.licenses (SPDX id)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {

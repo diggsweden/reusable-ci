@@ -6,7 +6,11 @@
 // apart. Each caller supplies only its command-specific nuance.
 package signflags
 
-import "github.com/urfave/cli/v3"
+import (
+	"github.com/urfave/cli/v3"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/planfile"
+)
 
 // CosignOpts carries the per-command nuance appended to the shared cosign
 // signing-flag usage. The flag names, SIGN_* env sources, KMS/PKCS#11 key
@@ -18,6 +22,10 @@ type CosignOpts struct {
 	MethodNote string
 	// KeyNote is appended to the --key usage.
 	KeyNote string
+	// PlanScope, when non-empty, additionally resolves each flag from that
+	// $REUSABLE_CI_PLAN plan-file scope (flag > plan > env > default).
+	// Empty keeps the plain SIGN_* env chains.
+	PlanScope string
 }
 
 // Cosign returns the cosign-only signing flags (--method / --key /
@@ -29,20 +37,30 @@ func Cosign(opts CosignOpts) []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{
 			Name:    "method",
-			Sources: cli.EnvVars("SIGN_METHOD"),
+			Sources: sources(opts.PlanScope, "method", "SIGN_METHOD"),
 			Usage:   join("signing backend: sigstore (keyless cosign + OIDC) or kms (cosign + --key).", opts.MethodNote),
 		},
 		&cli.StringFlag{
 			Name:    "key",
-			Sources: cli.EnvVars("SIGN_KEY"),
+			Sources: sources(opts.PlanScope, "key", "SIGN_KEY"),
 			Usage:   join("cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore.", opts.KeyNote),
 		},
 		&cli.StringFlag{
 			Name:    "oidc-issuer",
-			Sources: cli.EnvVars("SIGN_OIDC_ISSUER"),
+			Sources: sources(opts.PlanScope, "oidc-issuer", "SIGN_OIDC_ISSUER"),
 			Usage:   "OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms.",
 		},
 	}
+}
+
+// sources resolves a flag from the plan-file scope first when the calling
+// verb is plan-scoped; an empty scope keeps the plain env chain.
+func sources(planScope, key string, envNames ...string) cli.ValueSourceChain {
+	if planScope == "" {
+		return cli.EnvVars(envNames...)
+	}
+
+	return planfile.Vars(planScope, key, envNames...)
 }
 
 // join appends a command-specific note to a shared usage base, if present.

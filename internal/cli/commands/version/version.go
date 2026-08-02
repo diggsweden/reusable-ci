@@ -18,6 +18,7 @@ import (
 	appversion "github.com/diggsweden/reusable-ci/v3/internal/app/version"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/dryrun"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
 
@@ -53,6 +54,7 @@ func commitPushCmd() *cli.Command {
 			&cli.StringFlag{Name: "message", Required: true, Sources: cli.EnvVars("COMMIT_MESSAGE"), Usage: "commit message subject (signoff is appended automatically)"},
 			&cli.StringFlag{Name: "file-pattern", Required: true, Sources: cli.EnvVars("FILE_PATTERN"), Usage: "whitespace-separated git pathspecs to stage"},
 			&cli.StringFlag{Name: flagToken, Sources: cienv.ReleaseToken(), Usage: "token authenticating the push; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`)."}, //nolint:lll // single-line flag declaration for grep-ability, matching the package convention.
+			dryrun.Flag("git mutations (author config, commit, push)"),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return appversion.CommitPush(ctx, git.New(), os.Stderr, appversion.CommitPushInput{
@@ -62,6 +64,7 @@ func commitPushCmd() *cli.Command {
 				Message:     cmd.String("message"),
 				FilePattern: cmd.String("file-pattern"),
 				Token:       cmd.String(flagToken),
+				DryRun:      dryrun.Enabled(cmd),
 			})
 		},
 	}
@@ -229,11 +232,12 @@ func tagReleaseCmd() *cli.Command {
 				Usage:   "create a signed tag; set TAG_RELEASE_SIGNED=false for unsigned annotated test tags",
 			},
 			&cli.StringFlag{Name: flagToken, Sources: cienv.ReleaseToken(), Usage: "token authenticating the tag push; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`)."}, //nolint:lll // single-line flag declaration for grep-ability, matching the package convention.
+			dryrun.Flag("git mutations (tag create, tag push)"),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
 				_, err := appversion.TagRelease(ctx, git.New(),
-					appversion.TagReleaseInput{Tag: cmd.String(flagTag), Signed: cmd.Bool("signed") && !cmd.Bool("no-sign"), Token: cmd.String(flagToken)},
+					appversion.TagReleaseInput{Tag: cmd.String(flagTag), Signed: cmd.Bool("signed") && !cmd.Bool("no-sign"), Token: cmd.String(flagToken), DryRun: dryrun.Enabled(cmd)},
 					d.OutputSink, os.Stderr)
 
 				return err

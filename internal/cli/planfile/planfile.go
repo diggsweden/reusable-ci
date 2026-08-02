@@ -21,6 +21,8 @@
 package planfile
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -37,6 +39,10 @@ const EnvVar = "REUSABLE_CI_PLAN"
 // warnedPaths remembers plan paths already reported as unreadable or
 // malformed, so a broken plan warns once instead of once per flag.
 var warnedPaths sync.Map //nolint:gochecknoglobals // once-per-path warn guard.
+
+// loggedPaths remembers plan paths whose use has been announced, so the
+// audit line (path + content digest) appears once per run, not per flag.
+var loggedPaths sync.Map //nolint:gochecknoglobals // once-per-path audit log.
 
 // Chain returns fallback with a plan-file source for (scope, key)
 // resolved FIRST, giving flag > plan > env > default.
@@ -57,6 +63,13 @@ type source struct {
 	key   string
 }
 
+// Scope exposes the command path this source reads, for the guard test
+// that pins every plan source's scope to its command's real path.
+func (s source) Scope() string { return s.scope }
+
+// PlanKey exposes the plan key this source reads, for the same guard.
+func (s source) PlanKey() string { return s.key }
+
 // Lookup reads the plan named by $REUSABLE_CI_PLAN and resolves
 // [scope][key]. Any absence (no env var, no file, no scope, no key) is a
 // clean miss so the next source in the chain wins; an unreadable or
@@ -75,6 +88,12 @@ func (s source) Lookup() (string, bool) {
 		return "", false
 	}
 
+	// Audit line: which plan fed this run, verifiable by digest.
+	if _, loaded := loggedPaths.LoadOrStore(path, true); !loaded {
+		sum := sha256.Sum256(raw)
+		slog.Info("using plan file", "path", path, "sha256", hex.EncodeToString(sum[:]))
+	}
+
 	var plan map[string]map[string]any
 	if err := json.Unmarshal(raw, &plan); err != nil {
 		warnOnce(path, "plan file is not a {scope: {flag: value}} JSON object", err)
@@ -87,7 +106,17 @@ func (s source) Lookup() (string, bool) {
 		return "", false
 	}
 
-	return stringify(value)
+	str, ok := stringify(value)
+	if !ok {
+		// A structured value can't feed a scalar flag; a plan produced by
+		// `plan write` never contains one, so this is a stale or foreign
+		// plan — warn instead of silently missing.
+		warnOnce(path+"#"+s.scope+"."+s.key, "plan value is not a scalar; ignoring", nil)
+
+		return "", false
+	}
+
+	return str, true
 }
 
 func (s source) String() string {

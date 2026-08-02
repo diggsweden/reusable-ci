@@ -9,8 +9,8 @@ SPDX-License-Identifier: CC0-1.0
 The single GitLab planning doc: architecture, design rules, the
 capability/orchestration model, the delivery model, and the work still ahead.
 For the authoritative per-forge maturity, see [`providers.md`](providers.md)
-(gitlab is 🟡 *partial — release creation, token validation, repo metadata;
-no asset upload, SARIF, or provenance profile*).
+(gitlab is 🟡 *partial — release creation, asset upload/linking, token
+validation, repo metadata; no SARIF ingestion or provenance profile*).
 
 **More of the shared core already runs on GitLab than the phases below imply.**
 Readable from the code:

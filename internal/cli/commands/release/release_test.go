@@ -5,12 +5,15 @@ package release_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 
 	releasecmd "github.com/diggsweden/reusable-ci/v3/internal/cli/commands/release"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/ghaenv"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testenv"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
@@ -69,6 +72,78 @@ func TestNotesCmd_UsesDefaultsAndWritesFallbackContentFromEnv(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("release-notes.md missing %q:\n%s", want, body)
 		}
+	}
+}
+
+// TestPublishCmd_DryRunReconcileNeedsNoForge proves the reconcile-strategy
+// preview: on the local platform (no forge) a real publish fails with
+// ErrUnsupported, while --dry-run succeeds because the narrating decorator
+// replaces the forge publisher — the forge mutation path is never entered.
+func TestPublishCmd_DryRunReconcileNeedsNoForge(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	fsys.Chdir()
+	fsys.WriteFile("dist/release-notes.md", []byte("notes\n"))
+	fsys.WriteFile("dist/asset.tgz", []byte("asset\n"))
+
+	testenv.New(t) // isolated env => local platform, no forge roles
+
+	args := make([]string, 0, 9)
+	args = append(args,
+		"release", "publish", "--tag", "v1.2.3", "--repository", "owner/repo",
+		"--asset", "dist/asset.tgz")
+
+	err := releasecmd.New().Run(context.Background(), append(args, "--dry-run"))
+	if err != nil {
+		t.Fatalf("dry-run publish should not need a forge: %v", err)
+	}
+
+	// Flag off: byte-identical behavior — the forge publisher is required
+	// and the local platform cannot provide it.
+	err = releasecmd.New().Run(context.Background(), args)
+	if !errors.Is(err, errs.ErrUnsupported) {
+		t.Fatalf("err = %v, want ErrUnsupported without --dry-run on local", err)
+	}
+}
+
+// TestPublishCmd_DryRunRecreateNeedsNoForge is the recreate-strategy twin.
+func TestPublishCmd_DryRunRecreateNeedsNoForge(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	fsys.Chdir()
+	fsys.WriteFile("dist/release-notes.md", []byte("notes\n"))
+
+	testenv.New(t)
+
+	args := make([]string, 0, 9)
+	args = append(args,
+		"release", "publish", "--strategy", "recreate", "--tag", "v1.2.3",
+		"--repository", "owner/repo")
+
+	err := releasecmd.New().Run(context.Background(), append(args, "--dry-run"))
+	if err != nil {
+		t.Fatalf("dry-run recreate publish should not need a forge: %v", err)
+	}
+
+	err = releasecmd.New().Run(context.Background(), args)
+	if !errors.Is(err, errs.ErrUnsupported) {
+		t.Fatalf("err = %v, want ErrUnsupported without --dry-run on local", err)
+	}
+}
+
+// TestPublishCmd_DryRunStillFailsOnMissingAsset proves asset existence and
+// manifest resolution still run under --dry-run, so config errors surface.
+func TestPublishCmd_DryRunStillFailsOnMissingAsset(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	fsys.Chdir()
+	fsys.WriteFile("dist/release-notes.md", []byte("notes\n"))
+
+	testenv.New(t)
+
+	err := releasecmd.New().Run(context.Background(), []string{
+		"release", "publish", "--dry-run", "--tag", "v1.2.3",
+		"--repository", "owner/repo", "--asset", "dist/missing.tgz",
+	})
+	if !errors.Is(err, errs.ErrMissingInput) {
+		t.Fatalf("err = %v, want ErrMissingInput for a missing asset in dry-run", err)
 	}
 }
 

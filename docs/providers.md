@@ -137,7 +137,7 @@ Honest maturity per forge, so you know what to rely on:
 | Forge | Status |
 |---|---|
 | **github** | ✅ Established production path (the original target). |
-| **gitlab** | 🟡 Partial — release creation, token validation, and repo metadata; **no** asset upload, SARIF, or provenance profile. |
+| **gitlab** | 🟡 Partial — release creation, asset upload/linking (project uploads + release links), token validation, and repo metadata; **no** SARIF ingestion (GitLab consumes the JSON SAST report instead) or provenance profile. |
 | **forgejo** | 🟡 Adapter fully implemented (release create + asset upload, token + bot-permission probes, repo metadata, capabilities) and unit-tested against an httptest Gitea server, **but not yet validated against a live instance or wired into forgejo-ci** — that is the next integration step. |
 | **local** | ✅ Dev/test fallback; forge-API commands gate with a typed "unsupported" error. |
 

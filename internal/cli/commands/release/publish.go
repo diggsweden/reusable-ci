@@ -6,6 +6,7 @@ package release
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/urfave/cli/v3"
@@ -14,7 +15,9 @@ import (
 	apprelease "github.com/diggsweden/reusable-ci/v3/internal/app/release"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/dryrun"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
 
@@ -40,6 +43,7 @@ func publishCmd() *cli.Command {
 		&cli.StringFlag{Name: flagChecksumsFile, Value: domainrelease.ChecksumsFile, Sources: cli.EnvVars("CI_CHECKSUMS_FILE"), Usage: "path to the SHA256 manifest to attach (recreate only)"},
 		&cli.StringFlag{Name: "release-dir", Value: domainrelease.DefaultReleaseArtifactsDir, Sources: cli.EnvVars("RELEASE_DIR"), Usage: "directory whose files are attached as release assets (recreate only)"},
 		&cli.StringFlag{Name: flagAssembly, Sources: cli.EnvVars("RELEASE_ASSEMBLY"), Usage: "release assembly manifest to upload exactly (recreate only)"},
+		dryrun.Flag("forge release mutations (create/update, delete, asset uploads)"),
 	}, releaseFilesFlags()...)
 
 	return &cli.Command{
@@ -78,7 +82,7 @@ EXAMPLES:
 
 func runPublishReconcile(ctx context.Context, cmd *cli.Command) error {
 	return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
-		publisher, err := d.RequireReleasePublisher()
+		publisher, err := publishReconcilePublisher(d, dryrun.Enabled(cmd))
 		if err != nil {
 			return err
 		}
@@ -110,7 +114,7 @@ func runPublishReconcile(ctx context.Context, cmd *cli.Command) error {
 // existing release for the tag and recreate it with the computed assets.
 func runPublishRecreate(ctx context.Context, cmd *cli.Command) error {
 	return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
-		creator, err := d.RequireReleaseCreator()
+		creator, err := publishRecreateCreator(d, dryrun.Enabled(cmd))
 		if err != nil {
 			return err
 		}
@@ -129,4 +133,64 @@ func runPublishRecreate(ctx context.Context, cmd *cli.Command) error {
 			AssemblyFile:     cmd.String(flagAssembly),
 		})
 	})
+}
+
+// publishReconcilePublisher picks the forge publisher, or — in dry-run —
+// the narrating preview decorator, which needs no forge (mirroring the
+// ledger's dry-run registry). App-layer validation and asset/manifest
+// resolution run unchanged either way, so config errors still surface.
+func publishReconcilePublisher(d *deps.Deps, dryRun bool) (provider.ReleasePublisher, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	if dryRun {
+		return dryRunReleaseForge{out: os.Stderr}, nil
+	}
+
+	return d.RequireReleasePublisher()
+}
+
+// publishRecreateCreator is the recreate-strategy counterpart of
+// publishReconcilePublisher.
+func publishRecreateCreator(d *deps.Deps, dryRun bool) (provider.ReleaseCreator, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	if dryRun {
+		return dryRunReleaseForge{out: os.Stderr}, nil
+	}
+
+	return d.RequireReleaseCreator()
+}
+
+// dryRunReleaseForge previews the forge release mutations without a forge
+// client: it narrates the create/update (reconcile) or delete-and-recreate
+// API calls and each asset upload, then performs nothing — the publish
+// counterpart of the ledger's dryRunRegistry decorator. Each asset line
+// re-checks existence at narration time so the preview shows exactly what
+// a real run would upload.
+type dryRunReleaseForge struct {
+	out io.Writer
+}
+
+func (f dryRunReleaseForge) PublishRelease(_ context.Context, repo string, spec provider.ReleaseSpec) error {
+	_, _ = fmt.Fprintf(f.out, "[dry-run] would create or update release %s (%q, draft=%t, prerelease=%t) on %s and reconcile its assets\n",
+		spec.Tag, spec.Name, spec.Draft, spec.Prerelease, repo)
+	f.narrateAssetUploads(spec.Assets)
+
+	return nil
+}
+
+func (f dryRunReleaseForge) CreateRelease(_ context.Context, repo string, spec provider.ReleaseSpec) error {
+	_, _ = fmt.Fprintf(f.out, "[dry-run] would delete any existing release for tag %s on %s\n", spec.Tag, repo)
+	_, _ = fmt.Fprintf(f.out, "[dry-run] would create release %s (%q, draft=%t, prerelease=%t, make-latest=%s) on %s\n",
+		spec.Tag, spec.Name, spec.Draft, spec.Prerelease, spec.MakeLatest, repo)
+	f.narrateAssetUploads(spec.Assets)
+
+	return nil
+}
+
+func (f dryRunReleaseForge) narrateAssetUploads(assets []string) {
+	for _, asset := range assets {
+		note := ""
+		if info, err := os.Stat(asset); err != nil || !info.Mode().IsRegular() {
+			note = " (missing on disk)"
+		}
+
+		_, _ = fmt.Fprintf(f.out, "[dry-run] would upload asset %s%s\n", asset, note)
+	}
 }

@@ -41,15 +41,20 @@ type ChangelogReleaseInput struct {
 	CommitMessageFile string // empty defaults to commit-msg.txt
 	AuthorName        string // empty defaults to Itiquette Release Bot
 	AuthorEmail       string // empty defaults to itiquette-release-bot@pm.me
-	SigningKeyPath    string // SSH private key path already written to a temp dir
+	SigningKeyPath    string // SSH private key path already written to a temp dir; optional in dry-run (the signing setup only serves the skipped push)
 	TagSigned         bool
 	Token             string
+	DryRun            bool // preview: narrate the git config/commit/push/tag/checkout mutations instead of performing them
 }
 
 // ChangelogRelease commits a pre-rendered CHANGELOG.md with SSH git signing,
 // pushes the release bump to main without force, creates the final tag once,
 // and checks out that tag. Consumer-owned template rendering stays outside this
 // function; this owns only the trusted signing/tagging mutation sequence.
+//
+// DryRun keeps every validation and the changelog status inspection, then
+// narrates and skips each git mutation (signing/remote config, stage, commit,
+// push, tag create/push, checkout).
 func ChangelogRelease(ctx context.Context, repo changelogReleaseOps, sink ci.OutputSink, out io.Writer, in ChangelogReleaseInput) (*TagReleaseOutput, error) {
 	if err := validateChangelogReleaseInput(in); err != nil {
 		return nil, err
@@ -62,7 +67,11 @@ func ChangelogRelease(ctx context.Context, repo changelogReleaseOps, sink ci.Out
 		return nil, err
 	}
 
-	if err = configureChangelogReleaseGit(ctx, repo, in); err != nil {
+	if in.DryRun {
+		// The signing/remote git config only serves the commit and push that
+		// dry-run skips — leave the checkout's config and remote untouched.
+		_, _ = fmt.Fprintln(out, "[dry-run] skipping git signing config and SSH remote setup (commit and push are skipped)")
+	} else if err = configureChangelogReleaseGit(ctx, repo, in); err != nil {
 		return nil, err
 	}
 
@@ -70,9 +79,15 @@ func ChangelogRelease(ctx context.Context, repo changelogReleaseOps, sink ci.Out
 		return nil, err
 	}
 
-	res, err := TagRelease(ctx, repo, TagReleaseInput{Tag: in.Tag, Signed: in.TagSigned, Remote: in.RemoteName, Token: in.Token}, sink, out)
+	res, err := TagRelease(ctx, repo, TagReleaseInput{Tag: in.Tag, Signed: in.TagSigned, Remote: in.RemoteName, Token: in.Token, DryRun: in.DryRun}, sink, out)
 	if err != nil {
 		return nil, err
+	}
+
+	if in.DryRun {
+		_, _ = fmt.Fprintf(out, "[dry-run] would checkout %s\n", in.Tag)
+
+		return res, nil
 	}
 
 	if err = repo.Checkout(ctx, in.Tag); err != nil {
@@ -93,6 +108,14 @@ func commitChangelogIfChanged(ctx context.Context, repo changelogReleaseOps, out
 
 	if err := requireRegularFile("commit-msg.txt must be generated before loading the SSH signing key", in.CommitMessageFile); err != nil {
 		return err
+	}
+
+	if in.DryRun {
+		_, _ = fmt.Fprintf(out, "[dry-run] would stage %s\n", in.ChangelogPath)
+		_, _ = fmt.Fprintf(out, "[dry-run] would create the signed changelog commit from %s\n", in.CommitMessageFile)
+		_, _ = fmt.Fprintf(out, "[dry-run] would push %s to %s (no force)\n", in.Branch, in.RemoteName)
+
+		return nil
 	}
 
 	if err := repo.AddPathspecsStrict(ctx, []string{in.ChangelogPath}); err != nil {
@@ -140,7 +163,9 @@ func validateChangelogReleaseInput(in ChangelogReleaseInput) error {
 		return fmt.Errorf("commit-changelog: repository is required: %w", errs.ErrUsage)
 	case strings.ContainsAny(in.Repository, "\n\r"):
 		return fmt.Errorf("commit-changelog: repository must be a single-line owner/name value: %w", errs.ErrValidation)
-	case in.SigningKeyPath == "":
+	case in.SigningKeyPath == "" && !in.DryRun:
+		// The signing key only serves the commit/push that dry-run skips,
+		// so a preview may run without one.
 		return fmt.Errorf("commit-changelog: signing key path is required: %w", errs.ErrUsage)
 	}
 

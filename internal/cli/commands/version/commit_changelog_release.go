@@ -16,6 +16,7 @@ import (
 	appversion "github.com/diggsweden/reusable-ci/v3/internal/app/version"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/dryrun"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/secret"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/safeexec"
@@ -44,6 +45,7 @@ func commitChangelogReleaseCmd() *cli.Command {
 			&cli.BoolFlag{Name: "no-sign", Usage: "skip final tag signing (intended for tests; production always signs)"},
 			&cli.BoolFlag{Name: "signed", Value: true, Sources: cli.EnvVars("TAG_RELEASE_SIGNED"), Usage: "create a signed final tag; set TAG_RELEASE_SIGNED=false for unsigned annotated test tags"},
 			&cli.StringFlag{Name: flagToken, Sources: cienv.ReleaseToken(), Usage: "optional token for HTTP remotes; the Forgejo release flow uses the SSH key instead"},
+			dryrun.Flag("git mutations (changelog commit, push, release tag, checkout)"),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
@@ -59,9 +61,22 @@ func commitChangelogReleaseCmd() *cli.Command {
 					AuthorEmail:       cmd.String("author-email"),
 					TagSigned:         cmd.Bool("signed") && !cmd.Bool("no-sign"),
 					Token:             cmd.String(flagToken),
+					DryRun:            dryrun.Enabled(cmd),
 				}
 
 				if err := appversion.ChangelogReleasePreflight(in); err != nil {
+					return err
+				}
+
+				if in.DryRun {
+					// The SSH signing key, pinned host key, and GIT_SSH_COMMAND
+					// only serve the commit/push that dry-run skips — set none
+					// of it up (and leave the commit-message files in place for
+					// the real run).
+					_, _ = fmt.Fprintln(os.Stderr, "[dry-run] skipping SSH signing key and host-key setup (commit and push are skipped)")
+
+					_, err := appversion.ChangelogRelease(ctx, repo, d.OutputSink, os.Stderr, in)
+
 					return err
 				}
 

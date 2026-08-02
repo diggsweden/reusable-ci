@@ -86,37 +86,37 @@ EOF
 # assert_exit means we don't need explicit cleanup — tmpdirs leak to
 # /tmp which the OS reaps.
 
-t_cosign_absent_soft_skip() (
+t_cosign_absent_fails_by_default() (
 	local tmp
 	tmp="$(mktemp -d)"
 	printf 'fake\n' >"$tmp/checksums.txt"
-	PATH="$(path_without_cosign)" REUSABLE_CI_REQUIRE_COSIGN=0 \
+	PATH="$(path_without_cosign)" \
 		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
 )
 
-t_cosign_absent_fail_closed() (
+t_cosign_absent_allow_unsigned_optout() (
 	local tmp
 	tmp="$(mktemp -d)"
 	printf 'fake\n' >"$tmp/checksums.txt"
-	PATH="$(path_without_cosign)" REUSABLE_CI_REQUIRE_COSIGN=1 \
+	PATH="$(path_without_cosign)" REUSABLE_CI_ALLOW_UNSIGNED=1 \
 		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
 )
 
-t_bundle_absent_soft_skip() (
+t_bundle_absent_fails_by_default() (
 	local tmp
 	tmp="$(mktemp -d)"
 	printf 'fake\n' >"$tmp/checksums.txt"
 	stub_cosign "$tmp" 0
-	PATH="$tmp/bin:$(path_without_cosign)" REUSABLE_CI_REQUIRE_COSIGN=0 \
+	PATH="$tmp/bin:$(path_without_cosign)" \
 		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
 )
 
-t_bundle_absent_fail_closed() (
+t_bundle_absent_allow_unsigned_optout() (
 	local tmp
 	tmp="$(mktemp -d)"
 	printf 'fake\n' >"$tmp/checksums.txt"
 	stub_cosign "$tmp" 0
-	PATH="$tmp/bin:$(path_without_cosign)" REUSABLE_CI_REQUIRE_COSIGN=1 \
+	PATH="$tmp/bin:$(path_without_cosign)" REUSABLE_CI_ALLOW_UNSIGNED=1 \
 		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
 )
 
@@ -161,12 +161,46 @@ t_sha256_accepts_genuine() (
 	verify_reusable_ci_sha256 "$tmp/app.tgz" "$tmp/checksums.txt"
 )
 
+t_binary_pin_unset_is_noop() (
+	local tmp
+	tmp="$(mktemp -d)"
+	printf 'binary\n' >"$tmp/reusable-ci"
+	REUSABLE_CI_BINARY_SHA256="" verify_reusable_ci_binary_pin "$tmp/reusable-ci"
+)
+
+t_binary_pin_accepts_match() (
+	local tmp hash
+	tmp="$(mktemp -d)"
+	printf 'binary\n' >"$tmp/reusable-ci"
+	if command -v sha256sum &>/dev/null; then
+		hash="$(sha256sum "$tmp/reusable-ci" | awk '{print $1}')"
+	else
+		hash="$(shasum -a 256 "$tmp/reusable-ci" | awk '{print $1}')"
+	fi
+	REUSABLE_CI_BINARY_SHA256="$hash" verify_reusable_ci_binary_pin "$tmp/reusable-ci"
+)
+
+t_binary_pin_rejects_and_removes() (
+	local tmp
+	tmp="$(mktemp -d)"
+	printf 'binary\n' >"$tmp/reusable-ci"
+	if REUSABLE_CI_BINARY_SHA256="0000000000000000000000000000000000000000000000000000000000000000" \
+		verify_reusable_ci_binary_pin "$tmp/reusable-ci"; then
+		return 1
+	fi
+	# fail-closed also removes the mismatching binary
+	[[ ! -f "$tmp/reusable-ci" ]]
+)
+
 # _reusable_ci_cosign_identity: the two trust domains must each accept their own
 # signer's SAN and reject the other's. These grep the SANs against the actual
 # returned regex, so they validate the regex, not just a substring.
 PRE_SAN_FEAT='https://github.com/diggsweden/reusable-ci/.github/workflows/build-cli.yml@refs/heads/feat/refactor-go'
 PRE_SAN_MAIN='https://github.com/diggsweden/reusable-ci/.github/workflows/build-cli.yml@refs/heads/main'
 REL_SAN='https://github.com/diggsweden/reusable-ci/.github/workflows/release-binary.yml@refs/tags/v3.1.0'
+# A tag-signed build-cli SAN: NOT accepted until the build-once cutover
+# flips the single release identity to build-cli.yml.
+REL_SAN_BUILD_CLI='https://github.com/diggsweden/reusable-ci/.github/workflows/build-cli.yml@refs/tags/v3.1.0'
 
 t_identity_pre_accepts_dev_branches() (
 	id="$(_reusable_ci_cosign_identity v3.0.0-pre)"
@@ -184,6 +218,13 @@ t_identity_release_accepts_tag_signer() (
 	printf '%s\n' "$REL_SAN" | grep -Eq "$id"
 )
 
+t_identity_release_rejects_build_cli_tag_signer() (
+	# One signer at a time: a build-cli tag signature is rejected until
+	# the build-once cutover flips the release identity to it.
+	id="$(_reusable_ci_cosign_identity v3.1.0)"
+	! printf '%s\n' "$REL_SAN_BUILD_CLI" | grep -Eq "$id"
+)
+
 t_identity_release_rejects_pre_signer() (
 	# A production ref must NOT trust a pre-release branch signature.
 	id="$(_reusable_ci_cosign_identity v3.1.0)"
@@ -197,17 +238,21 @@ t_identity_override_wins() (
 printf 'install-reusable-ci.sh test suite\n'
 printf '=================================\n'
 
-assert_exit "cosign absent + REQUIRE_COSIGN=0 → soft-skip" 0 t_cosign_absent_soft_skip
-assert_exit "cosign absent + REQUIRE_COSIGN=1 → fail closed" 1 t_cosign_absent_fail_closed
-assert_exit "bundle absent + REQUIRE_COSIGN=0 → soft-skip" 0 t_bundle_absent_soft_skip
-assert_exit "bundle absent + REQUIRE_COSIGN=1 → fail closed" 1 t_bundle_absent_fail_closed
+assert_exit "cosign absent → fail closed by default" 1 t_cosign_absent_fails_by_default
+assert_exit "cosign absent + ALLOW_UNSIGNED=1 → conscious opt-out" 0 t_cosign_absent_allow_unsigned_optout
+assert_exit "bundle absent → fail closed by default" 1 t_bundle_absent_fails_by_default
+assert_exit "bundle absent + ALLOW_UNSIGNED=1 → conscious opt-out" 0 t_bundle_absent_allow_unsigned_optout
 assert_exit "cosign verify-blob exit 0 → accept" 0 t_cosign_verify_passes
 assert_exit "cosign verify-blob exit non-0 → reject (tampered)" 1 t_cosign_verify_rejects
 assert_exit "sha256 verify rejects tampered tarball" 1 t_sha256_rejects_tampered
 assert_exit "sha256 verify accepts genuine tarball" 0 t_sha256_accepts_genuine
+assert_exit "binary pin unset → no-op" 0 t_binary_pin_unset_is_noop
+assert_exit "binary pin match → accept" 0 t_binary_pin_accepts_match
+assert_exit "binary pin mismatch → fail closed and remove" 0 t_binary_pin_rejects_and_removes
 assert_exit "pre-release identity accepts build-cli dev-branch SAN" 0 t_identity_pre_accepts_dev_branches
 assert_exit "pre-release identity rejects release-binary SAN" 0 t_identity_pre_rejects_release_signer
 assert_exit "release identity accepts release-binary tag SAN" 0 t_identity_release_accepts_tag_signer
+assert_exit "release identity rejects build-cli tag SAN (single signer)" 0 t_identity_release_rejects_build_cli_tag_signer
 assert_exit "release identity rejects pre-release build-cli SAN" 0 t_identity_release_rejects_pre_signer
 assert_exit "REUSABLE_CI_COSIGN_IDENTITY override wins" 0 t_identity_override_wins
 

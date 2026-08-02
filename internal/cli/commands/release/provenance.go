@@ -20,6 +20,7 @@ import (
 	apprelease "github.com/diggsweden/reusable-ci/v3/internal/app/release"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/planfile"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/signflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -34,6 +35,10 @@ import (
 // via `container attest` — so it works on any forge whose provider can
 // resolve the event context (repository, ref, commit). No per-forge
 // provenance profile.
+// planScopeProvenance is the plan-file scope of `release provenance` in
+// $REUSABLE_CI_PLAN (flag > plan > env > default).
+const planScopeProvenance = "release provenance"
+
 func provenanceCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "provenance",
@@ -43,24 +48,27 @@ Statement (SLSA Provenance v1.0). Sign the output with cosign sign-blob.
 
 Context (repository, ref, commit) is read from the active provider; the
 workflow, run id, and build timestamp come from flags/env. The build
-timestamp defaults to $SOURCE_DATE_EPOCH for reproducibility.
+timestamp defaults to $SOURCE_DATE_EPOCH for reproducibility. Every flag
+may also be fed from the $REUSABLE_CI_PLAN plan file under the
+"release provenance" scope (flag > plan > env > default).
 
 EXAMPLE:
    reusable-ci release provenance --checksum-file checksums.sha256 --method sigstore --output provenance.json`,
 		Flags: append(
 			[]cli.Flag{
-				&cli.StringFlag{Name: flagChecksumFile, Value: cliio.StdSentinel, Sources: cli.EnvVars("CHECKSUM_FILE"), Usage: "GoReleaser checksums file (\"-\" reads stdin)"},
-				&cli.StringFlag{Name: "go-sum", Value: "go.sum", Sources: cli.EnvVars("GO_SUM_FILE"), Usage: "go.sum for resolved module deps (empty string to skip)"},
-				&cli.StringFlag{Name: "profile", Value: provenanceProfileGenericName, Usage: "provenance profile: generic or forgejo-actions"},
-				&cli.StringFlag{Name: "workflow", Sources: cli.EnvVars("FORGEJO_WORKFLOW"), Usage: "workflow filename/path for the forgejo-actions profile"},
-				&cli.StringFlag{Name: "started-on", Usage: "RFC3339 build timestamp (default: $SOURCE_DATE_EPOCH)"},
-				&cli.StringFlag{Name: "started-on-commit", Usage: "commit/ref whose commit timestamp becomes the RFC3339 build timestamp"},
-				&cli.StringFlag{Name: flagOutput, Value: cliio.StdSentinel, Usage: "output file (\"-\" for stdout)"},
-				&cli.StringFlag{Name: "bundle", Usage: "signature bundle output path (default: <output>.bundle)"},
+				&cli.StringFlag{Name: flagChecksumFile, Value: cliio.StdSentinel, Sources: planfile.Vars(planScopeProvenance, flagChecksumFile, "CHECKSUM_FILE"), Usage: "GoReleaser checksums file (\"-\" reads stdin)"},
+				&cli.StringFlag{Name: "go-sum", Value: "go.sum", Sources: planfile.Vars(planScopeProvenance, "go-sum", "GO_SUM_FILE"), Usage: "go.sum for resolved module deps (empty string to skip)"},
+				&cli.StringFlag{Name: "profile", Value: provenanceProfileGenericName, Sources: planfile.Vars(planScopeProvenance, "profile"), Usage: "provenance profile: generic or forgejo-actions"},
+				&cli.StringFlag{Name: "workflow", Sources: planfile.Vars(planScopeProvenance, "workflow", "FORGEJO_WORKFLOW"), Usage: "workflow filename/path for the forgejo-actions profile"},
+				&cli.StringFlag{Name: "started-on", Sources: planfile.Vars(planScopeProvenance, "started-on"), Usage: "RFC3339 build timestamp (default: $SOURCE_DATE_EPOCH)"},
+				&cli.StringFlag{Name: "started-on-commit", Sources: planfile.Vars(planScopeProvenance, "started-on-commit"), Usage: "commit/ref whose commit timestamp becomes the RFC3339 build timestamp"},
+				&cli.StringFlag{Name: flagOutput, Value: cliio.StdSentinel, Sources: planfile.Vars(planScopeProvenance, flagOutput), Usage: "output file (\"-\" for stdout)"},
+				&cli.StringFlag{Name: "bundle", Sources: planfile.Vars(planScopeProvenance, "bundle"), Usage: "signature bundle output path (default: <output>.bundle)"},
 			},
 			signflags.Cosign(signflags.CosignOpts{
 				MethodNote: "Omit to generate the statement only (signs when --method or --key is set).",
 				KeyNote:    "Empty = generate only.",
+				PlanScope:  planScopeProvenance,
 			})...,
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {

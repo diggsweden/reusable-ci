@@ -25,6 +25,7 @@ func New() *cli.Command {
 			prCmd(),
 			gitlabBuildPipelineCmd(),
 			gitlabPublishPipelineCmd(),
+			writeCmd(),
 		},
 	}
 }

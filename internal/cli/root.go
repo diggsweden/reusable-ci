@@ -183,6 +183,9 @@ func newRoot(info BuildInfo, versionString string) *cli.Command {
 		Name:    "reusable-ci",
 		Usage:   "forge-neutral CI/CD commands for pull-request and release pipelines",
 		Version: versionString,
+		// Ships urfave/cli's `completion <bash|zsh|fish|powershell>` helper
+		// for interactive use; hidden from help and the generated reference.
+		EnableShellCompletion: true,
 		// Description appears under the NAME block in help. It states what the
 		// tool is, distinguishes the commands meant to be run directly from the
 		// ones the reusable workflows invoke internally, and lists the former,

@@ -33,6 +33,7 @@ type TagReleaseInput struct {
 	Signed bool
 	Remote string // empty defaults to origin
 	Token  string // optional; authenticates the tag push when the checkout did not persist credentials
+	DryRun bool   // preview: narrate the tag create/push instead of performing them; validation still runs
 }
 
 // TagReleaseOutput is emitted as release-sha=<hash> on the OutputSink.
@@ -49,6 +50,10 @@ type TagReleaseOutput struct {
 // It refuses if the final tag already exists — release tags are immutable
 // and created exactly once; this never moves or clobbers a tag, and the
 // push is non-force so the remote rejects any clobber too.
+//
+// DryRun runs every validation (input shape, local/remote tag-exists) and
+// then narrates the create/push instead of performing them. The release-sha
+// output is still emitted — it is HEAD, the commit the tag would point at.
 func TagRelease(ctx context.Context, repo tagReleaseOps, in TagReleaseInput, sink ci.OutputSink, w io.Writer) (*TagReleaseOutput, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if err := validateTagReleaseInput(in); err != nil {
 		return nil, err
@@ -63,17 +68,9 @@ func TagRelease(ctx context.Context, repo tagReleaseOps, in TagReleaseInput, sin
 		return nil, err
 	}
 
-	if createErr := repo.CreateTag(ctx, in.Tag, "HEAD", in.Signed); createErr != nil {
-		return nil, fmt.Errorf("tag-release: create tag: %w", createErr)
-	}
-
-	if pushErr := repo.PushTagNoForce(ctx, in.Tag, in.Token); pushErr != nil {
-		return nil, fmt.Errorf("tag-release: push tag: %w", pushErr)
-	}
-
-	releaseSHA, err := repo.RevParse(ctx, "HEAD")
+	releaseSHA, err := createAndPushReleaseTag(ctx, repo, in, remote, w)
 	if err != nil {
-		return nil, fmt.Errorf("tag-release: rev-parse HEAD: %w", err)
+		return nil, err
 	}
 
 	if sink != nil {
@@ -82,9 +79,53 @@ func TagRelease(ctx context.Context, repo tagReleaseOps, in TagReleaseInput, sin
 		}
 	}
 
-	_, _ = fmt.Fprintf(w, "Release tag %s created at %s\n", in.Tag, releaseSHA)
+	if !in.DryRun {
+		_, _ = fmt.Fprintf(w, "Release tag %s created at %s\n", in.Tag, releaseSHA)
+	}
 
 	return &TagReleaseOutput{Tag: in.Tag, ReleaseSHA: releaseSHA}, nil
+}
+
+// createAndPushReleaseTag performs the two git mutations (tag create, tag
+// push) — or, in dry-run, narrates and skips them — and returns the SHA the
+// tag points (or would point) at. The branch sits here, right at the adapter
+// calls, so the validation/planning path above it is never duplicated.
+func createAndPushReleaseTag(ctx context.Context, repo tagReleaseOps, in TagReleaseInput, remote string, w io.Writer) (string, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	if in.DryRun {
+		releaseSHA, err := repo.RevParse(ctx, "HEAD")
+		if err != nil {
+			return "", fmt.Errorf("tag-release: rev-parse HEAD: %w", err)
+		}
+
+		_, _ = fmt.Fprintf(w, "[dry-run] would create %s %s at HEAD (%s)\n", tagKind(in.Signed), in.Tag, releaseSHA)
+		_, _ = fmt.Fprintf(w, "[dry-run] would push tag %s to %s (no force)\n", in.Tag, remote)
+
+		return releaseSHA, nil
+	}
+
+	if createErr := repo.CreateTag(ctx, in.Tag, "HEAD", in.Signed); createErr != nil {
+		return "", fmt.Errorf("tag-release: create tag: %w", createErr)
+	}
+
+	if pushErr := repo.PushTagNoForce(ctx, in.Tag, in.Token); pushErr != nil {
+		return "", fmt.Errorf("tag-release: push tag: %w", pushErr)
+	}
+
+	releaseSHA, err := repo.RevParse(ctx, "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("tag-release: rev-parse HEAD: %w", err)
+	}
+
+	return releaseSHA, nil
+}
+
+// tagKind names the tag flavour for the dry-run narration.
+func tagKind(signed bool) string {
+	if signed {
+		return "signed tag"
+	}
+
+	return "annotated tag"
 }
 
 // validateTagReleaseInput rejects missing, multi-line, or non-stable-semver tags.

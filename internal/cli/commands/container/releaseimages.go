@@ -18,6 +18,7 @@ import (
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/dryrun"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/secret"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/signflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
@@ -187,7 +188,7 @@ func releaseImagesPromote(ctx context.Context, cmd *cli.Command, common releaseI
 	}
 
 	// Release promotion never rehomes registries, so no signature copier.
-	reg, sigCopier := promotionRegistries(ociregistry.WithAuthFile(authFile), cmd.Bool("dry-run"), nil)
+	reg, sigCopier := promotionRegistries(ociregistry.WithAuthFile(authFile), dryrun.Enabled(cmd), nil)
 
 	return runLedgerPromotion(ctx, promotionRun{
 		reg:            reg,
@@ -245,7 +246,7 @@ func releaseImagesRollbackCmd() *cli.Command {
 					return err
 				}
 
-				if cmd.Bool("dry-run") {
+				if dryrun.Enabled(cmd) {
 					reg := newDryRunRegistry(ociregistry.WithAuthFile(authFile), os.Stderr)
 
 					return runPromotionJournalRollback(ctx, reg, records, common.ReleaseTag, "release images")
@@ -293,7 +294,7 @@ func releaseImagesCleanupCmd() *cli.Command {
 					return err
 				}
 
-				if cmd.Bool("dry-run") {
+				if dryrun.Enabled(cmd) {
 					reg := newDryRunRegistry(ociregistry.WithAuthFile(authFile), os.Stderr)
 
 					return runLedgerCleanup(ctx, reg, entries, common.ReleaseTag, "release images")

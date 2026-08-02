@@ -104,7 +104,7 @@ jobs:
       - name: Install reusable-ci (cosign-verified, SARIF tooling)
         id: install
         # SARIF glue only, via the canonical cosign-verified bootstrap installer
-        # at $BINARY_REF — the same fail-closed (REUSABLE_CI_REQUIRE_COSIGN=1)
+        # at $BINARY_REF — the same fail-closed
         # install path the rest of the suite uses.
         if: always() && inputs.upload-sarif && hashFiles(env.SARIF_FILE) != ''
         env:
@@ -115,7 +115,7 @@ jobs:
           raw="https://raw.githubusercontent.com/diggsweden/reusable-ci/${BINARY_REF}/scripts/bootstrap"
           curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-common.sh" "$raw/install-common.sh"
           curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-reusable-ci.sh" "$raw/install-reusable-ci.sh"
-          REUSABLE_CI_REQUIRE_COSIGN=1 bash "$work/install-reusable-ci.sh" "$BINARY_REF"
+          bash "$work/install-reusable-ci.sh" "$BINARY_REF"
       - name: Enrich + upload MegaLinter SARIF to Code Scanning
         # Gated on install success: if reusable-ci couldn't be installed this
         # skips honestly rather than faking success. continue-on-error so a

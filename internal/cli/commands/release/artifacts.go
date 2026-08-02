@@ -17,6 +17,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cmdmeta"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/planfile"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/secret"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
@@ -57,6 +58,19 @@ func requireNoSwapWithWarning(cmd *cli.Command) error {
 	return nil
 }
 
+// signSources builds a flag source chain that resolves from the
+// $REUSABLE_CI_PLAN scope first when the calling verb is plan-scoped;
+// an empty planScope keeps the plain env chain (`release sbom-zip` is
+// not plan-wired). With no env names and no scope it yields an empty
+// chain, identical to leaving Sources unset.
+func signSources(planScope, key string, envNames ...string) cli.ValueSourceChain {
+	if planScope == "" {
+		return cli.EnvVars(envNames...)
+	}
+
+	return planfile.Vars(planScope, key, envNames...)
+}
+
 // signMethodFlags returns the per-invocation signing-method flag set
 // shared by `release sign` and `release sbom-zip --sign`. Three
 // methods exist (see docs/verification.md#signing-methods):
@@ -65,31 +79,36 @@ func requireNoSwapWithWarning(cmd *cli.Command) error {
 //     $GPG_PRIVATE_KEY
 //   - sigstore: keyless cosign + OIDC via the runner
 //   - kms: cosign + explicit key reference (KMS URI / PKCS#11 / local key)
-func signMethodFlags() []cli.Flag {
+//
+// A non-empty planScope additionally resolves every flag from that
+// $REUSABLE_CI_PLAN scope (flag > plan > env > default).
+func signMethodFlags(planScope string) []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{
 			Name:    "method",
-			Sources: cli.EnvVars("SIGN_METHOD"),
+			Sources: signSources(planScope, "method", "SIGN_METHOD"),
 			Value:   string(domainrelease.DefaultSignMethod),
 			Usage:   "signing backend: gpg (default; key from --private-key-file or $GPG_PRIVATE_KEY), sigstore (keyless cosign + OIDC), or kms (cosign + --key)",
 		},
 		&cli.StringFlag{
 			Name:    "key",
-			Sources: cli.EnvVars("SIGN_KEY"),
+			Sources: signSources(planScope, "key", "SIGN_KEY"),
 			Usage:   "cosign --key reference for --method=kms: KMS URI (awskms:///alias/X, hashivault://transit/keys/X, gcpkms://..., azurekms://...), PKCS#11 URI, or local key-file path. Forbidden for --method=gpg/sigstore.",
 		},
 		&cli.StringFlag{
 			Name:    "oidc-issuer",
-			Sources: cli.EnvVars("SIGN_OIDC_ISSUER"),
+			Sources: signSources(planScope, "oidc-issuer", "SIGN_OIDC_ISSUER"),
 			Usage:   "OIDC issuer URL for --method=sigstore (default: auto-detected — GitHub Actions / GitLab CI / $CI_SERVER_URL). Forbidden for --method=gpg/kms.",
 		},
 		&cli.StringFlag{
-			Name:  flagPrivateKeyFile,
-			Usage: "path to the armored GPG private key for --method=gpg (\"-\" for stdin; defaults to $GPG_PRIVATE_KEY). Lets the key be passed via file/stdin instead of the environment. Forbidden for --method=sigstore/kms.",
+			Name:    flagPrivateKeyFile,
+			Sources: signSources(planScope, flagPrivateKeyFile),
+			Usage:   "path to the armored GPG private key for --method=gpg (\"-\" for stdin; defaults to $GPG_PRIVATE_KEY). Lets the key be passed via file/stdin instead of the environment. Forbidden for --method=sigstore/kms.",
 		},
 		&cli.StringFlag{
-			Name:  flagPassphraseFile,
-			Usage: "path to the GPG passphrase for --method=gpg (\"-\" for stdin; defaults to $GPG_PASSPHRASE). Forbidden for --method=sigstore/kms.",
+			Name:    flagPassphraseFile,
+			Sources: signSources(planScope, flagPassphraseFile),
+			Usage:   "path to the GPG passphrase for --method=gpg (\"-\" for stdin; defaults to $GPG_PASSPHRASE). Forbidden for --method=sigstore/kms.",
 		},
 	}
 }
@@ -262,26 +281,34 @@ func forbidGPGKeyFiles(method domainrelease.SignMethod, keyFile, passFile string
 	return nil
 }
 
+// planScopeSign is the plan-file scope of `release sign` in
+// $REUSABLE_CI_PLAN (flag > plan > env > default).
+const planScopeSign = "release sign"
+
 func signCmd() *cli.Command {
 	flags := append([]cli.Flag{
-		&cli.StringFlag{Name: flagChecksumsFile, Sources: cli.EnvVars("CHECKSUMS_FILE"), Usage: "SHA256 manifest to sign (default: checksums.sha256)"},
-		&cli.BoolFlag{Name: "no-checksums-file", Usage: "do not sign the default or configured checksums file"},
-		&cli.BoolFlag{Name: "checksums-from-manifest", Usage: "use and validate the single checksums file from --manifest before signing it"},
-		&cli.StringFlag{Name: flagAssembly, Sources: cli.EnvVars("RELEASE_ASSEMBLY"), Usage: "release assembly manifest to sign exactly"},
-		&cli.StringFlag{Name: flagReleaseArtifactsDir, Sources: cli.EnvVars("RELEASE_ARTIFACTS_DIR"), Usage: "directory whose files are each signed alongside the manifest"},
-		&cli.BoolFlag{Name: "no-release-artifacts-dir", Usage: "do not sign the default or configured release artifacts directory"},
-		&cli.StringFlag{Name: flagAttachArtifacts, Sources: cli.EnvVars("ATTACH_ARTIFACTS"), Usage: "comma-separated globs for extra files to sign"},
-		&cli.StringSliceFlag{Name: "file", Usage: "exact file to sign in place (repeatable; sidecar stays next to the file)"},
-		&cli.StringFlag{Name: flagManifest, Value: apprelease.DefaultReleaseFilesManifest, Sources: cli.EnvVars("RELEASE_FILES_MANIFEST"), Usage: "release file manifest used by --manifest-section and --checksums-from-manifest"},
-		&cli.StringFlag{Name: flagDistDir, Value: defaultDistDir, Usage: "dist directory used with --manifest"},
-		&cli.StringSliceFlag{Name: "manifest-section", Usage: "release file manifest section to sign exactly (repeatable): assets, checksums, sboms, evidence, provenance"},
+		&cli.StringFlag{Name: flagChecksumsFile, Sources: planfile.Vars(planScopeSign, flagChecksumsFile, "CHECKSUMS_FILE"), Usage: "SHA256 manifest to sign (default: checksums.sha256)"},
+		&cli.BoolFlag{Name: "no-checksums-file", Sources: planfile.Vars(planScopeSign, "no-checksums-file"), Usage: "do not sign the default or configured checksums file"},
+		&cli.BoolFlag{Name: "checksums-from-manifest", Sources: planfile.Vars(planScopeSign, "checksums-from-manifest"), Usage: "use and validate the single checksums file from --manifest before signing it"},
+		&cli.StringFlag{Name: flagAssembly, Sources: planfile.Vars(planScopeSign, flagAssembly, "RELEASE_ASSEMBLY"), Usage: "release assembly manifest to sign exactly"},
+		&cli.StringFlag{Name: flagReleaseArtifactsDir, Sources: planfile.Vars(planScopeSign, flagReleaseArtifactsDir, "RELEASE_ARTIFACTS_DIR"), Usage: "directory whose files are each signed alongside the manifest"},
+		&cli.BoolFlag{Name: "no-release-artifacts-dir", Sources: planfile.Vars(planScopeSign, "no-release-artifacts-dir"), Usage: "do not sign the default or configured release artifacts directory"},
+		&cli.StringFlag{Name: flagAttachArtifacts, Sources: planfile.Vars(planScopeSign, flagAttachArtifacts, "ATTACH_ARTIFACTS"), Usage: "comma-separated globs for extra files to sign"},
+		&cli.StringSliceFlag{Name: "file", Sources: planfile.Vars(planScopeSign, "file"), Usage: "exact file to sign in place (repeatable; sidecar stays next to the file)"},
+		&cli.StringFlag{Name: flagManifest, Value: apprelease.DefaultReleaseFilesManifest, Sources: planfile.Vars(planScopeSign, flagManifest, "RELEASE_FILES_MANIFEST"), Usage: "release file manifest used by --manifest-section and --checksums-from-manifest"},
+		&cli.StringFlag{Name: flagDistDir, Value: defaultDistDir, Sources: planfile.Vars(planScopeSign, flagDistDir), Usage: "dist directory used with --manifest"},
+		&cli.StringSliceFlag{Name: "manifest-section", Sources: planfile.Vars(planScopeSign, "manifest-section"), Usage: "release file manifest section to sign exactly (repeatable): assets, checksums, sboms, evidence, provenance"},
 		debugAllowSwapFlag(),
-	}, signMethodFlags()...)
+	}, signMethodFlags(planScopeSign)...)
 
 	return &cli.Command{
 		Name:  "sign",
 		Usage: "detach-sign checksums.sha256, release artifacts, and attached artifacts. Method selectable via --method: gpg (default; .asc sidecar), sigstore (keyless cosign; .bundle sidecar), or kms (cosign + --key; .bundle sidecar).",
-		Description: `EXAMPLES:
+		Description: `Every flag except --debug-allow-swap (deliberately argv-only) may also be
+fed from the $REUSABLE_CI_PLAN plan file under the "release sign" scope
+(flag > plan > env > default).
+
+EXAMPLES:
    # GPG-sign the checksums + every file in dist/ (key from $GPG_PRIVATE_KEY)
    reusable-ci release sign --method=gpg --release-artifacts-dir dist
 
@@ -416,7 +443,7 @@ func sbomZipCmd() *cli.Command {
 		},
 		&cli.StringFlag{Name: flagAssembly, Sources: cli.EnvVars("RELEASE_ASSEMBLY"), Usage: "release assembly manifest whose SBOM inputs should be bundled"},
 		debugAllowSwapFlag(),
-	}, signMethodFlags()...)
+	}, signMethodFlags("")...)
 
 	return &cli.Command{
 		Name:  "sbom-zip",

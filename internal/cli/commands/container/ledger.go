@@ -21,6 +21,7 @@ import (
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/dryrun"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/signflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
@@ -218,11 +219,10 @@ func promotionRollbackReg(d *deps.Deps, dryRun bool) (imageledger.PromotionRollb
 	}, nil
 }
 
-// dryRunFlag previews registry mutations without performing them.
+// dryRunFlag previews registry mutations without performing them. The flag
+// spelling and usage template live in the shared internal/cli/dryrun package.
 func dryRunFlag() cli.Flag {
-	// Long-flag only: the rest of the CLI exposes no short flags, so a lone
-	// -n would imply a short-flag convention that does not exist elsewhere.
-	return &cli.BoolFlag{Name: "dry-run", Usage: "preview registry mutations (copies/deletes) without performing them"}
+	return dryrun.Flag("registry mutations (copies/deletes)")
 }
 
 // dryRunRegistry previews ledger mutations without touching the
@@ -1016,7 +1016,7 @@ func ledgerPromoteCmd() *cli.Command {
 				realSigCopier = cosignSigCopier{cosign: cosign.New(), out: os.Stderr}
 			}
 
-			reg, sigCopier := promotionRegistries(ociregistry.New(), cmd.Bool("dry-run"), realSigCopier)
+			reg, sigCopier := promotionRegistries(ociregistry.New(), dryrun.Enabled(cmd), realSigCopier)
 
 			return runLedgerPromotion(ctx, promotionRun{
 				reg:            reg,
@@ -1129,7 +1129,7 @@ func ledgerCleanupCmd() *cli.Command {
 					return err
 				}
 
-				reg, err := cleanupReg(d, cmd.Bool("dry-run"))
+				reg, err := cleanupReg(d, dryrun.Enabled(cmd))
 				if err != nil {
 					return err
 				}
@@ -1176,7 +1176,7 @@ func ledgerRollbackFromJournal(ctx context.Context, cmd *cli.Command, dep *deps.
 		return err
 	}
 
-	reg, err := promotionRollbackReg(dep, cmd.Bool("dry-run"))
+	reg, err := promotionRollbackReg(dep, dryrun.Enabled(cmd))
 	if err != nil {
 		return err
 	}
@@ -1192,7 +1192,7 @@ func ledgerRollbackFromLedger(ctx context.Context, cmd *cli.Command, dep *deps.D
 		return err
 	}
 
-	reg, err := cleanupReg(dep, cmd.Bool("dry-run"))
+	reg, err := cleanupReg(dep, dryrun.Enabled(cmd))
 	if err != nil {
 		return err
 	}

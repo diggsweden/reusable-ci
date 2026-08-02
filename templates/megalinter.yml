@@ -83,7 +83,7 @@ spec:
       # --- SARIF -> GitLab SAST --------------------------------------------
       # Convert MegaLinter's SARIF to the GitLab SAST schema for the MR Security
       # tab. reusable-ci is installed cosign-verified (fail closed:
-      # REUSABLE_CI_REQUIRE_COSIGN=1) and called by absolute path. Best-effort: a
+      # fail-closed by default) and called by absolute path. Best-effort: a
       # SARIF-tooling failure (e.g. no cosign in the image) must not turn the
       # lint gate red, so it never changes the exit code.
       if [ "$ENABLE_GITLAB_SAST" = "true" ] && [ -f "$SARIF_FILE" ]; then
@@ -91,7 +91,7 @@ spec:
         raw="https://raw.githubusercontent.com/diggsweden/reusable-ci/${RC_REF}/scripts/bootstrap"
         curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-common.sh" "$raw/install-common.sh" &&
           curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-reusable-ci.sh" "$raw/install-reusable-ci.sh" &&
-          REUSABLE_CI_REQUIRE_COSIGN=1 REUSABLE_CI_INSTALL_DIR="$(dirname "$RC_BIN")" \
+          REUSABLE_CI_INSTALL_DIR="$(dirname "$RC_BIN")" \
             bash "$work/install-reusable-ci.sh" "$RC_REF" &&
           "$RC_BIN" security report to-gitlab-sast --input "$SARIF_FILE" --output "$GL_SAST_FILE" ||
           echo "WARN: GitLab-SAST conversion skipped (reusable-ci install or convert failed; the image may lack cosign); SARIF kept as plain artifact."

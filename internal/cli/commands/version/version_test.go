@@ -5,6 +5,7 @@ package version_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -12,6 +13,41 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testenv"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
+
+// TestVersionMutatingVerbsHaveDryRun is the guardrail: every version verb
+// that pushes to the remote must expose --dry-run so operators can preview
+// the git mutations before performing them (matching the ledger convention).
+func TestVersionMutatingVerbsHaveDryRun(t *testing.T) {
+	t.Parallel()
+
+	required := map[string]bool{"tag-release": true, "commit-push": true, "commit-changelog-release": true}
+
+	for _, sub := range versioncmd.New().Commands {
+		if !required[sub.Name] {
+			continue
+		}
+
+		found := false
+
+		for _, flag := range sub.Flags {
+			if slices.Contains(flag.Names(), "dry-run") {
+				found = true
+
+				break
+			}
+		}
+
+		if !found {
+			t.Errorf("version %q is a mutating verb and must expose --dry-run", sub.Name)
+		}
+
+		delete(required, sub.Name)
+	}
+
+	for name := range required {
+		t.Errorf("expected version subcommand %q not found", name)
+	}
+}
 
 func TestBumpCmd_RequiresProjectTypeAndVersion(t *testing.T) {
 	cmd := versioncmd.New()

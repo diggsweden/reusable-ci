@@ -68,6 +68,7 @@ bootstrap remain owned by the caller.`,
 			baseImagesVerifyExistingCmd(),
 			baseImagesPromoteCmd(),
 			baseImagesCleanupStagingCmd(),
+			baseImagesFreshnessCmd(),
 		},
 	}
 }

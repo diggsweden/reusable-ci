@@ -423,6 +423,14 @@ jobs:
       id-token: write # keyless cosign signing of the per-arch CycloneDX SBOM attestation
     env:
       CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
+      # Job-wide plan file: the "Write build plan" step records the container
+      # build inputs here (strict-validated), and every `reusable-ci container
+      # build` in this job reads it — flag > plan > env > default — so the
+      # build steps run without per-step env blocks. A literal /tmp path
+      # (same pattern as /tmp/digests below) because the runner context —
+      # $RUNNER_TEMP — is not available in job-level env; deliberately
+      # OUTSIDE the workspace so it can never leak into the build context.
+      REUSABLE_CI_PLAN: /tmp/reusable-ci-plan.json
     steps:
       - name: Harden GitHub runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -559,10 +567,9 @@ jobs:
       # from `reusable-ci container metadata` via `reusable-ci container manifest
       # merge` once both arches' digests exist). Emits digest=<sha256>. When
       # push-image is false this is a build-only validation (load into local
-      # storage, no push, no digest). SOURCE_DATE_EPOCH (from `prep`) clamps the
-      # image/layer timestamps so a rebuild of the same tag yields the same digest.
-      # Installed BEFORE the build so `container build` (ENABLE_SCAN) can scan the
-      # just-pushed image in-process (build → scan name@digest), instead of
+      # storage, no push, no digest).
+      # Installed BEFORE the build so `container build` (plan key `scan`) can scan
+      # the just-pushed image in-process (build → scan name@digest), instead of
       # round-tripping the digest through a second step's env. Gated identically
       # to the scan it feeds (enable-scan AND push-image).
       - name: Install trivy
@@ -571,8 +578,13 @@ jobs:
           # shellcheck disable=SC1091
           source .github-shared/scripts/bootstrap/install-trivy.sh
           install_trivy
-      - name: Build and scan by digest
-        id: build
+      # Compute the build's inputs ONCE and record them in the job-wide
+      # $REUSABLE_CI_PLAN plan file. Writing is strict — every --set key must
+      # be a real `container build` flag, so a typo fails here instead of
+      # silently falling through to a default. The env block exists only to
+      # hand the (possibly multiline) values to this one step; the build step
+      # and any future consumer read the plan env-free.
+      - name: Write build plan
         env:
           BUILD_CONTEXT: ${{ inputs.context }}
           CONTAINER_FILE: ${{ steps.containerfile.outputs.containerfile }}
@@ -580,6 +592,8 @@ jobs:
           BUILD_PLATFORM: ${{ matrix.platform }}
           BUILD_MODE: ${{ inputs['push-image'] && 'push-by-digest' || 'load' }}
           IMAGE_REF: ${{ needs.prep.outputs.image-name }}
+          # SOURCE_DATE_EPOCH (from `prep`) clamps the image/layer timestamps
+          # so a rebuild of the same tag yields the same digest.
           SOURCE_DATE_EPOCH: ${{ needs.prep.outputs.source-date-epoch }}
           LABELS: ${{ needs.prep.outputs.labels }}
           BUILD_ARGS: ${{ inputs['build-args'] }}
@@ -592,15 +606,41 @@ jobs:
           BUILD_CACHE_REPO: ${{ inputs['push-image'] && inputs['build-cache'] && format('{0}/{1}/buildcache', inputs.registry, github.repository_owner) || '' }}
           BUILD_CACHE_SCOPE: ${{ inputs.name || 'container' }}-${{ steps.arch.outputs.suffix }}
           BUILD_CACHE_PUSH: ${{ inputs['push-image'] && inputs['build-cache'] }}
-          # The internal scan self-gates on the pushed digest (push mode only).
-          # trivy pulls the per-arch image remotely (no local daemon load), so
-          # the platform is pinned per leg; SARIF + GitLab reports are written
-          # for the upload steps below. Matches the prior enable-scan &&
-          # push-image gate (load mode produces no digest → no scan).
+          # The internal scan self-gates on the pushed digest (push mode only);
+          # SARIF + GitLab reports are written for the upload steps below.
+          # Matches the prior enable-scan && push-image gate (load mode
+          # produces no digest → no scan).
           ENABLE_SCAN: ${{ inputs['enable-scan'] }}
           SCAN_SEVERITY: ${{ inputs['scan-severity'] }}
+        # `plan write` picks the destination up from $REUSABLE_CI_PLAN (job
+        # env), so the writer and every reader name the same file.
+        run: |
+          reusable-ci plan write --scope "container build" \
+            --set "context=${BUILD_CONTEXT}" \
+            --set "file=${CONTAINER_FILE}" \
+            --set "target=${BUILD_TARGET}" \
+            --set "platform=${BUILD_PLATFORM}" \
+            --set "mode=${BUILD_MODE}" \
+            --set "image-ref=${IMAGE_REF}" \
+            --set "source-date-epoch=${SOURCE_DATE_EPOCH}" \
+            --set "labels=${LABELS}" \
+            --set "build-args=${BUILD_ARGS}" \
+            --set "secrets=${BUILD_SECRETS}" \
+            --set "cache-repo=${BUILD_CACHE_REPO}" \
+            --set "cache-scope=${BUILD_CACHE_SCOPE}" \
+            --set "cache-push=${BUILD_CACHE_PUSH}" \
+            --set "scan=${ENABLE_SCAN}" \
+            --set "scan-severity=${SCAN_SEVERITY}"
+      - name: Build and scan by digest
+        id: build
+        env:
+          # NOT a `container build` flag (so not in the plan): the in-process
+          # trivy scan inherits TRIVY_PLATFORM from the env — trivy pulls the
+          # per-arch image remotely (no local daemon load), so the platform is
+          # pinned per leg.
           TRIVY_PLATFORM: ${{ matrix.platform }}
-        # buildah emits no BuildKit in-index attestations (which are unsigned and
+        # All build/scan flags come from the plan written above. buildah emits
+        # no BuildKit in-index attestations (which are unsigned and
         # proprietary). Every piece of evidence is instead a SIGNED cosign in-toto
         # attestation: SLSA provenance on the merged index in the `merge` job
         # (--recursive over per-arch children), and the CycloneDX SBOM per-arch
@@ -725,6 +765,12 @@ jobs:
       - name: Extract binaries${{ inputs.name && format(' ({0})', inputs.name) || '' }}
         if: ${{ inputs['extract-binary-target'] != '' }}
         env:
+          # This is a DIFFERENT build than the job's plan describes (local
+          # export of the extract stage: no push, no cache, no scan, no
+          # labels). Blanking REUSABLE_CI_PLAN opts this step out of the
+          # job-level plan (plan would otherwise shadow these env vars), so
+          # the env block below keeps feeding `container build` directly.
+          REUSABLE_CI_PLAN: ""
           BUILD_CONTEXT: ${{ inputs.context }}
           CONTAINER_FILE: ${{ steps.containerfile.outputs.containerfile }}
           BUILD_TARGET: ${{ inputs['extract-binary-target'] }}

@@ -575,6 +575,15 @@ collect verified and built base-image metadata for signing and promotion
 | `--source-sha` | source commit sha for decision JSON | `$SOURCE_SHA` |
 | `--decision-output` | optional path to write compact base decision JSON | `$BASE_DECISION_OUTPUT` |
 
+#### `reusable-ci container base-images freshness`
+
+compare pinned base-image digests with their upstream source tags
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--checks-json` | JSON array of checks: [{"name":..., "pinned-ref":..., "source-tag":...}] (required) | `$FRESHNESS_CHECKS_JSON` |
+| `--enforce` | fail on stale or unfetchable digests (false: warn only; config errors still fail) | `$FRESHNESS_ENFORCE` |
+
 #### `reusable-ci container base-images input-field`
 
 print one field from base-inputs JSON for a flavor
@@ -1429,6 +1438,16 @@ compose typed snapshot-release and stage plan contracts
 | `--publish-npm` | include the npm dev-publish step in the plan | `$PUBLISH_NPM` |
 | `--use-ci-token` | use the CI platform token in place of an explicit registry password | `$USE_CI_TOKEN` |
 
+### `reusable-ci plan write`
+
+write or extend the plan file that feeds command flags
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--scope` | command path the values feed, e.g. "container build" (required) | `$PLAN_SCOPE` |
+| `--set` | flag=value pair to record (repeatable) (required) | n/a |
+| `--plan-file` | plan file to create or merge into | `$REUSABLE_CI_PLAN` |
+
 ## `reusable-ci platform`
 
 CI-runtime git + workspace operations (check out a repo, resolve a ref, inspect the workspace)
@@ -1841,6 +1860,7 @@ create or update a release and its assets on the detected platform
 | `--checksums-file` | path to the SHA256 manifest to attach (recreate only) | `$CI_CHECKSUMS_FILE` |
 | `--release-dir` | directory whose files are attached as release assets (recreate only) | `$RELEASE_DIR` |
 | `--assembly` | release assembly manifest to upload exactly (recreate only) | `$RELEASE_ASSEMBLY` |
+| `--dry-run` | preview forge release mutations (create/update, delete, asset uploads) without performing them | n/a |
 | `--dist-dir` | dist directory containing GoReleaser artifacts.json and release files | n/a |
 | `--manifest` | release file manifest path | `$RELEASE_FILES_MANIFEST` |
 
@@ -2859,6 +2879,7 @@ SSH-sign a pre-rendered changelog commit, push main without force, create the fi
 | `--no-sign` | skip final tag signing (intended for tests; production always signs) | n/a |
 | `--signed` | create a signed final tag; set TAG_RELEASE_SIGNED=false for unsigned annotated test tags | `$TAG_RELEASE_SIGNED` |
 | `--token` | optional token for HTTP remotes; the Forgejo release flow uses the SSH key instead | `$RELEASE_TOKEN`, `$CI_TOKEN`, `$FORGEJO_TOKEN`, `$GITHUB_TOKEN` |
+| `--dry-run` | preview git mutations (changelog commit, push, release tag, checkout) without performing them | n/a |
 
 ### `reusable-ci version commit-push`
 
@@ -2872,6 +2893,7 @@ stage a file pattern, commit with --signoff, push to a branch (no-op when nothin
 | `--message` | commit message subject (signoff is appended automatically) (required) | `$COMMIT_MESSAGE` |
 | `--file-pattern` | whitespace-separated git pathspecs to stage (required) | `$FILE_PATTERN` |
 | `--token` | token authenticating the push; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`). | `$RELEASE_TOKEN`, `$CI_TOKEN`, `$FORGEJO_TOKEN`, `$GITHUB_TOKEN` |
+| `--dry-run` | preview git mutations (author config, commit, push) without performing them | n/a |
 
 ### `reusable-ci version derive-release`
 
@@ -2929,3 +2951,4 @@ create the final release tag once at HEAD (the bump commit) and push it without 
 | `--no-sign` | skip GPG signing (intended for tests; production always signs) | n/a |
 | `--signed` | create a signed tag; set TAG_RELEASE_SIGNED=false for unsigned annotated test tags | `$TAG_RELEASE_SIGNED` |
 | `--token` | token authenticating the tag push; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`). | `$RELEASE_TOKEN`, `$CI_TOKEN`, `$FORGEJO_TOKEN`, `$GITHUB_TOKEN` |
+| `--dry-run` | preview git mutations (tag create, tag push) without performing them | n/a |

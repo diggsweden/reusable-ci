@@ -18,6 +18,17 @@ import (
 	apptoolchain "github.com/diggsweden/reusable-ci/v3/internal/app/toolchain"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/planfile"
+)
+
+// Plan-file scopes of the flag-heavy toolchain verbs in $REUSABLE_CI_PLAN
+// (flag > plan > env > default). One const per command; the scope string is
+// the command path.
+const (
+	planScopeInstallMise              = "toolchain install-mise"
+	planScopeInstallMiseTools         = "toolchain install-mise-tools"
+	planScopeInstallChangelogRenderer = "toolchain install-changelog-renderer"
+	planScopeSetupMiseEnv             = "toolchain setup-mise-env"
 )
 
 // Shared flag names, defaults and usage strings across the toolchain
@@ -111,14 +122,16 @@ func installMiseToolsCmd() *cli.Command {
 		Description: `Runs the setup-toolchain mise install sequence: sanitize child env,
 install declared backend runtimes (uv/go/rust/rustup) first, optionally install a
 caller-selected tool subset, and retry the final mise install. Tokens are inherited
-only as mise-specific env vars and are never passed on argv.`,
+only as mise-specific env vars and are never passed on argv. Every flag may also be
+fed from the $REUSABLE_CI_PLAN plan file under the "toolchain install-mise-tools"
+scope (flag > plan > env > default).`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: flagMiseRoot, Value: ".", Sources: cli.EnvVars("MISE_PROJECT_ROOT"), Usage: usageMiseRoot},
-			&cli.StringFlag{Name: flagLocked, Value: lockedDefault, Sources: cli.EnvVars("MISE_LOCKED_INSTALL"), Usage: "whether mise install should use locked mode: true|false"},
-			&cli.StringFlag{Name: "tools", Sources: cli.EnvVars("TOOLS_SUBSET", "MISE_TOOLS"), Usage: "whitespace-separated mise tool selectors to install instead of the full config"},
-			&cli.StringFlag{Name: "mise-bin", Sources: cli.EnvVars("MISE_BIN"), Usage: "mise binary path (default: $HOME/.local/bin/mise when present, else mise from PATH)"},
-			&cli.IntFlag{Name: "retry-attempts", Value: 3, Sources: cli.EnvVars("MISE_INSTALL_RETRY_ATTEMPTS"), Usage: "attempts for the final mise install"},
-			&cli.IntFlag{Name: "retry-delay-seconds", Value: 10, Sources: cli.EnvVars("MISE_INSTALL_RETRY_DELAY_SECONDS"), Usage: "seconds between final mise install retry attempts"},
+			&cli.StringFlag{Name: flagMiseRoot, Value: ".", Sources: planfile.Vars(planScopeInstallMiseTools, flagMiseRoot, "MISE_PROJECT_ROOT"), Usage: usageMiseRoot},
+			&cli.StringFlag{Name: flagLocked, Value: lockedDefault, Sources: planfile.Vars(planScopeInstallMiseTools, flagLocked, "MISE_LOCKED_INSTALL"), Usage: "whether mise install should use locked mode: true|false"},
+			&cli.StringFlag{Name: "tools", Sources: planfile.Vars(planScopeInstallMiseTools, "tools", "TOOLS_SUBSET", "MISE_TOOLS"), Usage: "whitespace-separated mise tool selectors to install instead of the full config"},
+			&cli.StringFlag{Name: "mise-bin", Sources: planfile.Vars(planScopeInstallMiseTools, "mise-bin", "MISE_BIN"), Usage: "mise binary path (default: $HOME/.local/bin/mise when present, else mise from PATH)"},
+			&cli.IntFlag{Name: "retry-attempts", Value: 3, Sources: planfile.Vars(planScopeInstallMiseTools, "retry-attempts", "MISE_INSTALL_RETRY_ATTEMPTS"), Usage: "attempts for the final mise install"},
+			&cli.IntFlag{Name: "retry-delay-seconds", Value: 10, Sources: planfile.Vars(planScopeInstallMiseTools, "retry-delay-seconds", "MISE_INSTALL_RETRY_DELAY_SECONDS"), Usage: "seconds between final mise install retry attempts"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			runner := mise.New()
@@ -142,19 +155,21 @@ func installChangelogRendererCmd() *cli.Command {
 		Description: `Installs pinned mise, creates an isolated mise data/cache/state tree,
 installs either git-chglog or git-cliff with mise --no-config, symlinks the real
 renderer binary into ~/.local/bin, and appends that bin directory to the runner
-PATH file for subsequent steps.`,
+PATH file for subsequent steps. Every flag may also be fed from the
+$REUSABLE_CI_PLAN plan file under the "toolchain install-changelog-renderer"
+scope (flag > plan > env > default).`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "backend", Required: true, Sources: cli.EnvVars("CHANGELOG_BACKEND"), Usage: "changelog renderer backend: git-chglog or git-cliff"},
-			&cli.StringFlag{Name: "git-chglog-version", Sources: cli.EnvVars("GIT_CHGLOG_VERSION"), Usage: "pinned git-chglog version"},
-			&cli.StringFlag{Name: "git-cliff-version", Sources: cli.EnvVars("GIT_CLIFF_VERSION"), Usage: "pinned git-cliff version"},
-			&cli.StringFlag{Name: "mise-version", Required: true, Sources: cli.EnvVars("MISE_VERSION"), Usage: "mise version without leading v"},
-			&cli.StringFlag{Name: "mise-linux-x64-sha256", Required: true, Sources: cli.EnvVars("MISE_LINUX_X64_MUSL_TAR_GZ_SHA256"), Usage: "SHA-256 of mise-v<version>-linux-x64-musl.tar.gz"},
-			&cli.StringFlag{Name: "mise-linux-arm64-sha256", Required: true, Sources: cli.EnvVars("MISE_LINUX_ARM64_MUSL_TAR_GZ_SHA256"), Usage: "SHA-256 of mise-v<version>-linux-arm64-musl.tar.gz"},
-			&cli.StringFlag{Name: "mise-base-url", Sources: cli.EnvVars("MISE_RELEASE_BASE_URL"), Usage: "override mise release base URL for tests/mirrors"},
-			&cli.StringFlag{Name: flagBinHome, Sources: cli.EnvVars("TOOLCHAIN_BIN_HOME"), Usage: "directory where the renderer symlink is written (default: $HOME/.local/bin)"},
-			&cli.StringFlag{Name: flagPathFile, Required: true, Sources: cli.EnvVars("FORGEJO_PATH", "GITHUB_PATH"), Usage: "runner path file to append the bin directory to"},
-			&cli.StringFlag{Name: "runner-temp", Sources: cienv.TempDir(), Usage: "runner temp directory for the isolated mise tree"},
-			&cli.StringFlag{Name: "run-id", Sources: cienv.RunID(), Usage: "run identifier used to name the isolated mise tree"},
+			&cli.StringFlag{Name: "backend", Required: true, Sources: planfile.Vars(planScopeInstallChangelogRenderer, "backend", "CHANGELOG_BACKEND"), Usage: "changelog renderer backend: git-chglog or git-cliff"},
+			&cli.StringFlag{Name: "git-chglog-version", Sources: planfile.Vars(planScopeInstallChangelogRenderer, "git-chglog-version", "GIT_CHGLOG_VERSION"), Usage: "pinned git-chglog version"},
+			&cli.StringFlag{Name: "git-cliff-version", Sources: planfile.Vars(planScopeInstallChangelogRenderer, "git-cliff-version", "GIT_CLIFF_VERSION"), Usage: "pinned git-cliff version"},
+			&cli.StringFlag{Name: "mise-version", Required: true, Sources: planfile.Vars(planScopeInstallChangelogRenderer, "mise-version", "MISE_VERSION"), Usage: "mise version without leading v"},
+			&cli.StringFlag{Name: "mise-linux-x64-sha256", Required: true, Sources: planfile.Vars(planScopeInstallChangelogRenderer, "mise-linux-x64-sha256", "MISE_LINUX_X64_MUSL_TAR_GZ_SHA256"), Usage: "SHA-256 of mise-v<version>-linux-x64-musl.tar.gz"},
+			&cli.StringFlag{Name: "mise-linux-arm64-sha256", Required: true, Sources: planfile.Vars(planScopeInstallChangelogRenderer, "mise-linux-arm64-sha256", "MISE_LINUX_ARM64_MUSL_TAR_GZ_SHA256"), Usage: "SHA-256 of mise-v<version>-linux-arm64-musl.tar.gz"},
+			&cli.StringFlag{Name: "mise-base-url", Sources: planfile.Vars(planScopeInstallChangelogRenderer, "mise-base-url", "MISE_RELEASE_BASE_URL"), Usage: "override mise release base URL for tests/mirrors"},
+			&cli.StringFlag{Name: flagBinHome, Sources: planfile.Vars(planScopeInstallChangelogRenderer, flagBinHome, "TOOLCHAIN_BIN_HOME"), Usage: "directory where the renderer symlink is written (default: $HOME/.local/bin)"},
+			&cli.StringFlag{Name: flagPathFile, Required: true, Sources: planfile.Vars(planScopeInstallChangelogRenderer, flagPathFile, "FORGEJO_PATH", "GITHUB_PATH"), Usage: "runner path file to append the bin directory to"},
+			&cli.StringFlag{Name: "runner-temp", Sources: planfile.Chain(planScopeInstallChangelogRenderer, "runner-temp", cienv.TempDir()), Usage: "runner temp directory for the isolated mise tree"},
+			&cli.StringFlag{Name: "run-id", Sources: planfile.Chain(planScopeInstallChangelogRenderer, "run-id", cienv.RunID()), Usage: "run identifier used to name the isolated mise tree"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			runner := mise.New()
@@ -182,12 +197,14 @@ func setupMiseEnvCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "setup-mise-env",
 		Usage: "write setup-toolchain mise PATH/env file entries",
+		Description: `Every flag may also be fed from the $REUSABLE_CI_PLAN plan file under
+the "toolchain setup-mise-env" scope (flag > plan > env > default).`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "cache", Value: "true", Sources: cli.EnvVars("SETUP_CACHE"), Usage: "setup-toolchain cache mode: true|false"},
-			&cli.StringFlag{Name: flagBinHome, Sources: cli.EnvVars("TOOLCHAIN_BIN_HOME"), Usage: "directory containing exposed tool symlinks (default: $HOME/.local/bin)"},
-			&cli.StringFlag{Name: flagPathFile, Required: true, Sources: cli.EnvVars("FORGEJO_PATH", "GITHUB_PATH"), Usage: "runner path file to append PATH entries to"},
-			&cli.StringFlag{Name: "env-file", Required: true, Sources: cli.EnvVars("FORGEJO_ENV", "GITHUB_ENV"), Usage: "runner env file receiving MISE_* directory exports"},
-			&cli.StringFlag{Name: "runner-temp", Sources: cienv.TempDir(), Usage: "runner temp directory for isolated mise dirs"},
+			&cli.StringFlag{Name: "cache", Value: "true", Sources: planfile.Vars(planScopeSetupMiseEnv, "cache", "SETUP_CACHE"), Usage: "setup-toolchain cache mode: true|false"},
+			&cli.StringFlag{Name: flagBinHome, Sources: planfile.Vars(planScopeSetupMiseEnv, flagBinHome, "TOOLCHAIN_BIN_HOME"), Usage: "directory containing exposed tool symlinks (default: $HOME/.local/bin)"},
+			&cli.StringFlag{Name: flagPathFile, Required: true, Sources: planfile.Vars(planScopeSetupMiseEnv, flagPathFile, "FORGEJO_PATH", "GITHUB_PATH"), Usage: "runner path file to append PATH entries to"},
+			&cli.StringFlag{Name: "env-file", Required: true, Sources: planfile.Vars(planScopeSetupMiseEnv, "env-file", "FORGEJO_ENV", "GITHUB_ENV"), Usage: "runner env file receiving MISE_* directory exports"},
+			&cli.StringFlag{Name: "runner-temp", Sources: planfile.Chain(planScopeSetupMiseEnv, "runner-temp", cienv.TempDir()), Usage: "runner temp directory for isolated mise dirs"},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			return apptoolchain.SetupMiseEnv(apptoolchain.SetupMiseEnvInput{
@@ -257,13 +274,15 @@ func installMiseCmd() *cli.Command {
 		Description: `Installs mise from the official linux-<arch>-musl release
 archive after verifying a caller-owned SHA-256 pin. The version and checksums are
 passed as flags so the consuming CI template owns its pin/update policy while
-reusable-ci owns the download, checksum, archive-shape, and install mechanics.`,
+reusable-ci owns the download, checksum, archive-shape, and install mechanics.
+Every flag may also be fed from the $REUSABLE_CI_PLAN plan file under the
+"toolchain install-mise" scope (flag > plan > env > default).`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "version", Required: true, Sources: cli.EnvVars("MISE_VERSION"), Usage: "mise version without leading v"},
-			&cli.StringFlag{Name: "linux-x64-sha256", Required: true, Sources: cli.EnvVars("MISE_LINUX_X64_MUSL_TAR_GZ_SHA256"), Usage: "SHA-256 of mise-v<version>-linux-x64-musl.tar.gz"},
-			&cli.StringFlag{Name: "linux-arm64-sha256", Required: true, Sources: cli.EnvVars("MISE_LINUX_ARM64_MUSL_TAR_GZ_SHA256"), Usage: "SHA-256 of mise-v<version>-linux-arm64-musl.tar.gz"},
-			&cli.StringFlag{Name: "dest-dir", Sources: cli.EnvVars("MISE_INSTALL_DEST_DIR"), Usage: "installation directory (default: $HOME/.local/bin)"},
-			&cli.StringFlag{Name: "base-url", Sources: cli.EnvVars("MISE_RELEASE_BASE_URL"), Usage: "override release base URL for tests/mirrors (default: GitHub mise releases)"},
+			&cli.StringFlag{Name: "version", Required: true, Sources: planfile.Vars(planScopeInstallMise, "version", "MISE_VERSION"), Usage: "mise version without leading v"},
+			&cli.StringFlag{Name: "linux-x64-sha256", Required: true, Sources: planfile.Vars(planScopeInstallMise, "linux-x64-sha256", "MISE_LINUX_X64_MUSL_TAR_GZ_SHA256"), Usage: "SHA-256 of mise-v<version>-linux-x64-musl.tar.gz"},
+			&cli.StringFlag{Name: "linux-arm64-sha256", Required: true, Sources: planfile.Vars(planScopeInstallMise, "linux-arm64-sha256", "MISE_LINUX_ARM64_MUSL_TAR_GZ_SHA256"), Usage: "SHA-256 of mise-v<version>-linux-arm64-musl.tar.gz"},
+			&cli.StringFlag{Name: "dest-dir", Sources: planfile.Vars(planScopeInstallMise, "dest-dir", "MISE_INSTALL_DEST_DIR"), Usage: "installation directory (default: $HOME/.local/bin)"},
+			&cli.StringFlag{Name: "base-url", Sources: planfile.Vars(planScopeInstallMise, "base-url", "MISE_RELEASE_BASE_URL"), Usage: "override release base URL for tests/mirrors (default: GitHub mise releases)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			_, err := apptoolchain.InstallMise(ctx, nil, os.Stderr, apptoolchain.InstallMiseInput{

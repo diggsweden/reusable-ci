@@ -1,0 +1,289 @@
+{
+  "pullrequest-orchestrator.yml": {
+    "inputs": {
+      "base-branch": {
+        "required": false,
+        "type": "string"
+      },
+      "lint-engine": {
+        "required": false,
+        "type": "string"
+      },
+      "linters.swiftformat": {
+        "required": false,
+        "type": "boolean"
+      },
+      "linters.swiftlint": {
+        "required": false,
+        "type": "boolean"
+      },
+      "megalinter-image": {
+        "required": false,
+        "type": "string"
+      },
+      "nanolinter-image": {
+        "required": false,
+        "type": "string"
+      },
+      "project-type": {
+        "required": true,
+        "type": "string"
+      },
+      "required-lints": {
+        "required": false,
+        "type": "string"
+      },
+      "reusable-ci-binary-ref": {
+        "required": false,
+        "type": "string"
+      },
+      "runtime-image": {
+        "required": false,
+        "type": "string"
+      }
+    },
+    "secrets": [
+      "CODE_SCANNING_TOKEN"
+    ]
+  },
+  "release-orchestrator.yml": {
+    "inputs": {
+      "artifacts-config": {
+        "required": false,
+        "type": "string"
+      },
+      "branch": {
+        "required": false,
+        "type": "string"
+      },
+      "changelog-creator": {
+        "required": false,
+        "type": "string"
+      },
+      "changelog.config": {
+        "required": false,
+        "type": "string"
+      },
+      "changelog.skipversionbump": {
+        "required": false,
+        "type": "boolean"
+      },
+      "committer-email": {
+        "required": false,
+        "type": "string"
+      },
+      "committer-name": {
+        "required": false,
+        "type": "string"
+      },
+      "file-pattern": {
+        "required": false,
+        "type": "string"
+      },
+      "promote-release-environment": {
+        "required": false,
+        "type": "string"
+      },
+      "promote-release-registry": {
+        "required": false,
+        "type": "string"
+      },
+      "promote-release-registry-username": {
+        "required": false,
+        "type": "string"
+      },
+      "promote-release-repo": {
+        "required": false,
+        "type": "string"
+      },
+      "promote-staging-environment": {
+        "required": false,
+        "type": "string"
+      },
+      "release-publisher": {
+        "required": false,
+        "type": "string"
+      },
+      "release-type": {
+        "required": false,
+        "type": "string"
+      },
+      "release.attachartifacts": {
+        "required": false,
+        "type": "string"
+      },
+      "release.draft": {
+        "required": false,
+        "type": "boolean"
+      },
+      "release.requireallowlistedsigner": {
+        "required": false,
+        "type": "boolean"
+      },
+      "release.sboms": {
+        "required": false,
+        "type": "string"
+      },
+      "release.signartifacts": {
+        "required": false,
+        "type": "boolean"
+      },
+      "reusable-ci-binary-ref": {
+        "required": false,
+        "type": "string"
+      },
+      "runtime-image": {
+        "required": false,
+        "type": "string"
+      },
+      "runtime-image-android": {
+        "required": false,
+        "type": "string"
+      },
+      "runtime-image-full": {
+        "required": false,
+        "type": "string"
+      },
+      "runtime-image-go": {
+        "required": false,
+        "type": "string"
+      },
+      "runtime-image-java": {
+        "required": false,
+        "type": "string"
+      },
+      "runtime-image-node": {
+        "required": false,
+        "type": "string"
+      },
+      "runtime-image-rust": {
+        "required": false,
+        "type": "string"
+      }
+    },
+    "secrets": [
+      "ANDROID_KEYSTORE",
+      "ANDROID_KEYSTORE_PASSWORD",
+      "ANDROID_KEY_ALIAS",
+      "ANDROID_KEY_PASSWORD",
+      "APP_STORE_CONNECT_API_KEY_ID",
+      "APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64",
+      "APP_STORE_CONNECT_ISSUER_ID",
+      "CODE_SCANNING_TOKEN",
+      "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON",
+      "IOS_SIGNING_CERTIFICATE_BASE64",
+      "IOS_SIGNING_CERTIFICATE_PASSPHRASE",
+      "KEYCHAIN_PASSWORD",
+      "MAVEN_CENTRAL_PASSWORD",
+      "MAVEN_CENTRAL_USERNAME",
+      "NPM_TOKEN",
+      "PROMOTE_RELEASE_REGISTRY_PASSWORD",
+      "PROVISIONING_PROFILE_BASE64",
+      "RELEASE_GPG_PASSPHRASE",
+      "RELEASE_GPG_PRIVATE_KEY",
+      "RELEASE_GPG_PUBLIC_KEY",
+      "RELEASE_SSH_SIGNING_KEY",
+      "RELEASE_TOKEN",
+      "REUSABLE_CI_BUILD_SECRETS_JSON",
+      "SECRETS_PROPERTIES_BASE64",
+      "XCCONFIG_BASE64"
+    ]
+  },
+  "release-snapshot-orchestrator.yml": {
+    "inputs": {
+      "artifacts-config": {
+        "required": false,
+        "type": "string"
+      },
+      "java-version": {
+        "required": false,
+        "type": "string"
+      },
+      "node-version": {
+        "required": false,
+        "type": "string"
+      },
+      "npm-registry": {
+        "required": false,
+        "type": "string"
+      },
+      "package-scope": {
+        "required": false,
+        "type": "string"
+      },
+      "project-type": {
+        "required": false,
+        "type": "string"
+      },
+      "publish-npm": {
+        "required": false,
+        "type": "boolean"
+      },
+      "registry": {
+        "required": false,
+        "type": "string"
+      },
+      "reusable-ci-binary-ref": {
+        "required": false,
+        "type": "string"
+      },
+      "runtime-image": {
+        "required": false,
+        "type": "string"
+      },
+      "runtime-image-android": {
+        "required": false,
+        "type": "string"
+      },
+      "runtime-image-full": {
+        "required": false,
+        "type": "string"
+      },
+      "runtime-image-go": {
+        "required": false,
+        "type": "string"
+      },
+      "runtime-image-java": {
+        "required": false,
+        "type": "string"
+      },
+      "runtime-image-node": {
+        "required": false,
+        "type": "string"
+      },
+      "runtime-image-rust": {
+        "required": false,
+        "type": "string"
+      },
+      "rust-toolchain": {
+        "required": false,
+        "type": "string"
+      },
+      "sboms": {
+        "required": false,
+        "type": "string"
+      },
+      "use-ci-token": {
+        "required": false,
+        "type": "boolean"
+      },
+      "working-directory": {
+        "required": false,
+        "type": "string"
+      }
+    },
+    "secrets": [
+      "ANDROID_KEYSTORE",
+      "ANDROID_KEYSTORE_PASSWORD",
+      "ANDROID_KEY_ALIAS",
+      "ANDROID_KEY_PASSWORD",
+      "IOS_SIGNING_CERTIFICATE_BASE64",
+      "IOS_SIGNING_CERTIFICATE_PASSPHRASE",
+      "KEYCHAIN_PASSWORD",
+      "PROVISIONING_PROFILE_BASE64",
+      "SECRETS_PROPERTIES_BASE64",
+      "XCCONFIG_BASE64",
+      "registry-password"
+    ]
+  }
+}

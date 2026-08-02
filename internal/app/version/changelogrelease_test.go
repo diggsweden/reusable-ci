@@ -176,6 +176,94 @@ func TestChangelogRelease_UnchangedSkipsCommitButTags(t *testing.T) {
 	}
 }
 
+func TestChangelogRelease_DryRunSkipsGitMutationsAndNarrates(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "CHANGELOG.md", "# v1.2.3\n")
+	writeFile(t, dir, "commit-msg.txt", "chore(release): bump to v1.2.3\n")
+	t.Chdir(dir)
+
+	repo := &fakeChangelogReleaseRepo{status: " M CHANGELOG.md"}
+
+	var out bytes.Buffer
+
+	// No SigningKeyPath: the signing key only serves the skipped push, so
+	// a dry-run preview may run without one.
+	res, err := appversion.ChangelogRelease(context.Background(), repo, fakeoutputsink.New(t), &out, appversion.ChangelogReleaseInput{
+		Tag:        "v1.2.3",
+		Repository: "itiquette/example",
+		TagSigned:  true,
+		DryRun:     true,
+	})
+	if err != nil {
+		t.Fatalf("ChangelogRelease: %v", err)
+	}
+
+	// (a) No git mutation is invoked: config, remote, stage, commit,
+	// branch push, tag create/push, checkout all skipped.
+	if len(repo.cfg) != 0 || repo.remoteURL != "" {
+		t.Errorf("dry-run must not touch git config/remote: cfg=%v remote=%q", repo.cfg, repo.remoteURL)
+	}
+
+	if len(repo.added) != 0 || repo.commit.MessageFile != "" || repo.pushedBranch != "" {
+		t.Errorf("dry-run must not stage/commit/push: %+v", repo)
+	}
+
+	if repo.tagged != "" || repo.pushedTag != "" || repo.checkedOut != "" {
+		t.Errorf("dry-run must not tag/checkout: %+v", repo)
+	}
+
+	// (b) Each skipped mutation is narrated.
+	for _, want := range []string{
+		"[dry-run] skipping git signing config and SSH remote setup (commit and push are skipped)",
+		"[dry-run] would stage CHANGELOG.md",
+		"[dry-run] would create the signed changelog commit from commit-msg.txt",
+		"[dry-run] would push main to origin (no force)",
+		"[dry-run] would create signed tag v1.2.3 at HEAD",
+		"[dry-run] would push tag v1.2.3 to origin (no force)",
+		"[dry-run] would checkout v1.2.3",
+	} {
+		if !bytes.Contains(out.Bytes(), []byte(want)) {
+			t.Errorf("output %q missing narration %q", out.String(), want)
+		}
+	}
+
+	if res.ReleaseSHA != "0123456789abcdef0123456789abcdef01234567" {
+		t.Fatalf("release sha = %q, want the HEAD the tag would point at", res.ReleaseSHA)
+	}
+}
+
+// TestChangelogRelease_DryRunStillFailsValidation proves the preview keeps
+// the full validation surface: file preconditions and tag shape still fail.
+func TestChangelogRelease_DryRunStillFailsValidation(t *testing.T) {
+	t.Run("missing commit message file", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "CHANGELOG.md", "# changed\n")
+		t.Chdir(dir)
+
+		_, err := appversion.ChangelogRelease(context.Background(), &fakeChangelogReleaseRepo{status: " M CHANGELOG.md"}, nil, &bytes.Buffer{}, appversion.ChangelogReleaseInput{
+			Tag:        "v1.2.3",
+			Repository: "itiquette/example",
+			DryRun:     true,
+		})
+		if !errors.Is(err, errs.ErrMissingInput) {
+			t.Fatalf("err = %v, want ErrMissingInput", err)
+		}
+	})
+
+	t.Run("non-stable tag", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := appversion.ChangelogRelease(context.Background(), &fakeChangelogReleaseRepo{}, nil, &bytes.Buffer{}, appversion.ChangelogReleaseInput{
+			Tag:        "v1.2.3-rc1",
+			Repository: "itiquette/example",
+			DryRun:     true,
+		})
+		if !errors.Is(err, errs.ErrValidation) {
+			t.Fatalf("err = %v, want ErrValidation", err)
+		}
+	})
+}
+
 func TestChangelogRelease_RequiresCommitMessageWhenChangelogChanged(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "CHANGELOG.md", "# changed\n")

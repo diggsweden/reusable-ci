@@ -114,6 +114,58 @@ func TestTagRelease_CreatesUnsignedAnnotatedTagWhenRequested(t *testing.T) {
 	}
 }
 
+func TestTagRelease_DryRunSkipsMutationsAndNarrates(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeTagReleaseRepo{}
+
+	var out bytes.Buffer
+
+	res, err := appversion.TagRelease(context.Background(), repo,
+		appversion.TagReleaseInput{Tag: "v3.5.7", Signed: true, Token: "bot-token", DryRun: true}, fakeoutputsink.New(t), &out)
+	if err != nil {
+		t.Fatalf("TagRelease: %v", err)
+	}
+
+	// (a) The git mutations are not invoked.
+	if repo.created != "" || repo.pushed != "" {
+		t.Errorf("dry-run must not create/push tags: created=%q pushed=%q", repo.created, repo.pushed)
+	}
+
+	// (b) Each skipped mutation is narrated.
+	for _, want := range []string{
+		"[dry-run] would create signed tag v3.5.7 at HEAD (deadbeefdeadbeefdeadbeefdeadbeefdeadbeef)",
+		"[dry-run] would push tag v3.5.7 to origin (no force)",
+	} {
+		if !bytes.Contains(out.Bytes(), []byte(want)) {
+			t.Errorf("output %q missing narration %q", out.String(), want)
+		}
+	}
+
+	if bytes.Contains(out.Bytes(), []byte("Release tag v3.5.7 created")) {
+		t.Errorf("dry-run must not claim the tag was created: %q", out.String())
+	}
+
+	// The preview still reports the SHA the tag would point at.
+	if res.Tag != "v3.5.7" || res.ReleaseSHA != "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" {
+		t.Errorf("output = %+v, want tag + HEAD sha", res)
+	}
+}
+
+// TestTagRelease_DryRunStillRefusesWhenTagExists proves validation is not
+// weakened by the preview: the create-once refusal fires in dry-run too.
+func TestTagRelease_DryRunStillRefusesWhenTagExists(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeTagReleaseRepo{exists: true}
+
+	_, err := appversion.TagRelease(context.Background(), repo,
+		appversion.TagReleaseInput{Tag: "v3.5.7", Signed: true, DryRun: true}, nil, &bytes.Buffer{})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation (create-once refusal in dry-run)", err)
+	}
+}
+
 func TestTagRelease_RefusesWhenTagExists(t *testing.T) {
 	t.Parallel()
 

@@ -59,6 +59,34 @@ resolve_reusable_ci_dist() {
 	printf 'reusable-ci_%s_%s_%s.tar.gz' "$version" "$os" "$arch"
 }
 
+# verify_reusable_ci_binary_pin enforces an exact SHA-256 pin on the
+# INSTALLED BINARY when REUSABLE_CI_BINARY_SHA256 is set (the same pin
+# variable forgejo-ci's signer toolchain asserts). This is defense in
+# depth on top of cosign + checksums.txt — and the only integrity check
+# that also covers the go-install fallback path. Fail-closed: on
+# mismatch the binary is removed and the install errors.
+verify_reusable_ci_binary_pin() {
+	local binary="$1"
+	local pin="${REUSABLE_CI_BINARY_SHA256:-}"
+	[[ -z "$pin" ]] && return 0
+	local got
+	if command -v sha256sum &>/dev/null; then
+		got="$(sha256sum "$binary" | awk '{print $1}')"
+	elif command -v shasum &>/dev/null; then
+		got="$(shasum -a 256 "$binary" | awk '{print $1}')"
+	else
+		printf 'ERROR: REUSABLE_CI_BINARY_SHA256 set but no sha256 helper available\n' >&2
+		rm -f "$binary"
+		return 1
+	fi
+	if [[ "$got" != "$pin" ]]; then
+		printf 'ERROR: installed reusable-ci does not match REUSABLE_CI_BINARY_SHA256:\n  got:  %s\n  want: %s\n' "$got" "$pin" >&2
+		rm -f "$binary"
+		return 1
+	fi
+	printf 'Binary pin: reusable-ci sha256 %s verified\n' "$pin"
+}
+
 # is_reusable_ci_release_ref reports whether ref looks like a published semver
 # tag (vN.N.N with optional -suffix). Branch names and SHAs fall through.
 is_reusable_ci_release_ref() {
@@ -92,10 +120,10 @@ verify_reusable_ci_sha256() {
 }
 
 # verify_reusable_ci_cosign verifies the Sigstore v3 bundle alongside
-# the checksums file. Gated on cosign being on PATH — when cosign is
-# absent, the verification is skipped with an INFO message rather
-# than failing, so existing consumers don't break when this script
-# is updated faster than their tooling.
+# the checksums file. FAIL-CLOSED: a missing cosign binary or a missing
+# signature bundle is an error. The only escape is an explicit
+# REUSABLE_CI_ALLOW_UNSIGNED=1, for environments that consciously accept
+# an unverified download (SHA-256 is still enforced either way).
 #
 # Identity is pinned to the diggsweden/reusable-ci workflow that produced the
 # signature. Two trust domains, selected by ref (see _reusable_ci_cosign_identity):
@@ -103,10 +131,6 @@ verify_reusable_ci_sha256() {
 #   *-pre      -> build-cli.yml on a development branch (rolling pre-release channel)
 # A signature from any other workflow/ref fails the check even if cosign accepts
 # the bundle. REUSABLE_CI_COSIGN_IDENTITY overrides both.
-#
-# Operators can force-require cosign verification by setting
-# REUSABLE_CI_REQUIRE_COSIGN=1; the function then errors when cosign
-# is absent or verification fails, instead of soft-skipping.
 _reusable_ci_cosign_identity() {
 	local ref="$1"
 	if [[ -n "${REUSABLE_CI_COSIGN_IDENTITY:-}" ]]; then
@@ -114,6 +138,8 @@ _reusable_ci_cosign_identity() {
 	elif [[ "$ref" == *-pre ]]; then
 		printf '%s' '^https://github.com/diggsweden/reusable-ci/\.github/workflows/build-cli\.yml@refs/heads/(main|feat/refactor-go)$'
 	else
+		# One release signer at a time. When build-once moves signing to
+		# build-cli.yml, flip this line in that same release.
 		printf '%s' '^https://github.com/diggsweden/reusable-ci/\.github/workflows/release-binary\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+.*$'
 	fi
 }
@@ -122,23 +148,23 @@ verify_reusable_ci_cosign() {
 	local checksums="$1" bundle="$2" ref="${3:-}"
 
 	if ! command -v cosign &>/dev/null; then
-		if [[ "${REUSABLE_CI_REQUIRE_COSIGN:-0}" == "1" ]]; then
-			printf 'ERROR: cosign not on PATH and REUSABLE_CI_REQUIRE_COSIGN=1\n' >&2
-			return 1
+		if [[ "${REUSABLE_CI_ALLOW_UNSIGNED:-0}" == "1" ]]; then
+			printf 'WARN: cosign not on PATH; proceeding UNSIGNED because REUSABLE_CI_ALLOW_UNSIGNED=1 (SHA-256 still enforced).\n' >&2
+			return 0
 		fi
 
-		printf 'INFO: cosign not on PATH; skipping Sigstore signature verification (SHA-256 still enforced). Set REUSABLE_CI_REQUIRE_COSIGN=1 to fail closed.\n' >&2
-		return 0
+		printf 'ERROR: cosign not on PATH; install cosign (scripts/bootstrap/install-cosign.sh) or set REUSABLE_CI_ALLOW_UNSIGNED=1 to consciously skip signature verification\n' >&2
+		return 1
 	fi
 
 	if [[ ! -f "$bundle" ]]; then
-		if [[ "${REUSABLE_CI_REQUIRE_COSIGN:-0}" == "1" ]]; then
-			printf 'ERROR: %s missing and REUSABLE_CI_REQUIRE_COSIGN=1\n' "$bundle" >&2
-			return 1
+		if [[ "${REUSABLE_CI_ALLOW_UNSIGNED:-0}" == "1" ]]; then
+			printf 'WARN: %s missing; proceeding UNSIGNED because REUSABLE_CI_ALLOW_UNSIGNED=1.\n' "$(basename "$bundle")" >&2
+			return 0
 		fi
 
-		printf 'INFO: %s not present (older release predates Sigstore signing); skipping signature verification.\n' "$(basename "$bundle")" >&2
-		return 0
+		printf 'ERROR: %s missing; the release carries no signature bundle. Set REUSABLE_CI_ALLOW_UNSIGNED=1 to consciously accept an unsigned download\n' "$bundle" >&2
+		return 1
 	fi
 
 	local identity issuer
@@ -190,9 +216,9 @@ install_reusable_ci_release() {
 		printf 'WARN: failed to download %s\n' "$sums_url" >&2
 		return 1
 	fi
-	# Sigstore v3 bundle is best-effort: older releases predate it.
-	# 404 is not an error; verify_reusable_ci_cosign soft-skips when
-	# the file is absent (unless REUSABLE_CI_REQUIRE_COSIGN=1).
+	# The download itself is allowed to 404 so the verifier owns the
+	# decision: a missing bundle FAILS verify_reusable_ci_cosign unless
+	# REUSABLE_CI_ALLOW_UNSIGNED=1 consciously accepts it.
 	curl "${curl_retry[@]}" -sSfL -o "$tmp/checksums.txt.bundle" "$bundle_url" >/dev/null 2>&1 || true
 	if ! verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/checksums.txt.bundle" "$ref"; then
 		return 1
@@ -242,6 +268,8 @@ install_reusable_ci() {
 	else
 		install_reusable_ci_go_install "$ref" "$install_dir" || return 1
 	fi
+
+	verify_reusable_ci_binary_pin "$install_dir/reusable-ci" || return 1
 
 	ci_prepend_path "$install_dir"
 	if [[ -n "${GITHUB_PATH:-}" ]]; then

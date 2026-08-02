@@ -185,7 +185,7 @@ jobs:
         # SARIF glue only, installed via the canonical bootstrap installer (curl +
         # cosign, both baked into the flavour image). curl-fetches the two scripts
         # at $BINARY_REF (no node for actions/checkout), then runs them fail-closed
-        # (REUSABLE_CI_REQUIRE_COSIGN=1 → SHA-256 + cosign build-identity, or the
+        # (fail-closed by default: SHA-256 + cosign build-identity, or the
         # step fails). cosign keyless writes its sigstore TUF cache under $HOME/XDG
         # (both read-only in the image) so point them at a writable mktemp dir.
         # GITHUB_PATH is set empty so the installer skips the PATH append the
@@ -207,7 +207,7 @@ jobs:
           # script); --retry rides out transient 5xx/timeouts (e.g. raw CDN 504s).
           curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-common.sh" "$raw/install-common.sh"
           curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-reusable-ci.sh" "$raw/install-reusable-ci.sh"
-          GITHUB_PATH="" REUSABLE_CI_REQUIRE_COSIGN=1 REUSABLE_CI_INSTALL_DIR="$(dirname "$RC_BIN")" \
+          GITHUB_PATH="" REUSABLE_CI_INSTALL_DIR="$(dirname "$RC_BIN")" \
             bash "$work/install-reusable-ci.sh" "$BINARY_REF"
       - name: Enrich nanolinter SARIF for GitHub dedupe
         # Gated on the install step succeeding: if reusable-ci couldn't be installed

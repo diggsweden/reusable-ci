@@ -38,23 +38,34 @@ type CommitPushInput struct {
 	Message     string
 	FilePattern string // space-separated git pathspecs
 	Token       string // optional; authenticates the push when the checkout did not persist credentials
+	DryRun      bool   // preview: narrate the config/commit/push mutations instead of performing them
 }
 
 // CommitPush stages the file pattern, commits with --signoff (idempotent
 // no-op when nothing changed), and pushes to origin/<Branch>. GPG
 // signing is inherited from the repo-local git config written by
 // GPGImport (commit.gpgsign=true).
+//
+// DryRun still stages the pattern and checks the index — that is the
+// planning step that decides whether a commit would happen at all — but the
+// author config write and the commit/push are narrated and skipped.
 func CommitPush(ctx context.Context, repo commitPushOps, out io.Writer, in CommitPushInput) error {
 	if err := requireFields(in); err != nil {
 		return err
 	}
 
-	if err := repo.Config(ctx, "user.name", in.AuthorName); err != nil {
-		return fmt.Errorf("set user.name: %w", err)
-	}
+	if in.DryRun {
+		// The repo-local user.name/user.email writes only serve the skipped
+		// commit — leave the checkout's config untouched in a preview.
+		_, _ = fmt.Fprintln(out, "[dry-run] skipping git author config (commit is skipped)")
+	} else {
+		if err := repo.Config(ctx, "user.name", in.AuthorName); err != nil {
+			return fmt.Errorf("set user.name: %w", err)
+		}
 
-	if err := repo.Config(ctx, "user.email", in.AuthorEmail); err != nil {
-		return fmt.Errorf("set user.email: %w", err)
+		if err := repo.Config(ctx, "user.email", in.AuthorEmail); err != nil {
+			return fmt.Errorf("set user.email: %w", err)
+		}
 	}
 
 	// strings.Fields gives us bash-equivalent word-splitting on whitespace.
@@ -68,6 +79,13 @@ func CommitPush(ctx context.Context, repo commitPushOps, out io.Writer, in Commi
 
 	if !hasChanges {
 		_, _ = fmt.Fprintln(out, "No staged changes — skipping commit and push.")
+
+		return nil
+	}
+
+	if in.DryRun {
+		_, _ = fmt.Fprintf(out, "[dry-run] would commit staged changes as %s <%s> (signoff)\n", in.AuthorName, in.AuthorEmail)
+		_, _ = fmt.Fprintf(out, "[dry-run] would push HEAD to origin/%s\n", in.Branch)
 
 		return nil
 	}

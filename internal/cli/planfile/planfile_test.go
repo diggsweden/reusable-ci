@@ -84,4 +84,10 @@ func TestPlanPrecedence(t *testing.T) {
 		t.Setenv("BUILD_CONTEXT", "from-env")
 		require.Equal(t, "from-env", resolveFlag(t, newFlag()))
 	})
+
+	t.Run("structured value warns and falls through", func(t *testing.T) {
+		writePlan(t, `{"container build": {"context": {"nested": true}}}`)
+		t.Setenv("BUILD_CONTEXT", "from-env")
+		require.Equal(t, "from-env", resolveFlag(t, newFlag()))
+	})
 }
