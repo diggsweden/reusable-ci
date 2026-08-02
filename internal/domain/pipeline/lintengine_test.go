@@ -18,7 +18,7 @@ func TestParseLintEngine(t *testing.T) {
 		"nanolinter":   pipeline.LintEngineNanolinter,
 		"  MegaLinter": pipeline.LintEngineMegalinter, // case- and space-insensitive
 		"none":         pipeline.LintEngineNone,
-		"":             pipeline.LintEngineNanolinter, // empty defaults to the preferred engine
+		"":             pipeline.LintEngineNone, // empty defaults to none — no consumer linter baked in
 	}
 	for in, want := range cases {
 		got, err := pipeline.ParseLintEngine(in)

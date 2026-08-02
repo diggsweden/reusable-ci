@@ -22,8 +22,6 @@ import (
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
 
-var hex64RE = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
 // imageDigestResolver is the registry surface ledger signing needs:
 // resolve a tag or ref to its manifest digest.
 type imageDigestResolver interface {
@@ -323,7 +321,7 @@ func validateLedgerSignRepositories(entry imageledger.Entry, constraints ledgerS
 // attested externalParameters.base_input_id lineage field.
 func validateLedgerSignBase(entry imageledger.Entry) error {
 	if entry.ImageKind == imageledger.ImageKindBase && entry.BaseRef == "" {
-		if !hex64RE.MatchString(entry.BaseInputID) {
+		if !domaincontainer.ValidSHA256Hex(entry.BaseInputID) {
 			return fmt.Errorf("imageledger: base entries must declare base_input_id as a sha256 hex digest: %q: %w", entry.BaseInputID, errs.ErrValidation)
 		}
 
@@ -335,11 +333,11 @@ func validateLedgerSignBase(entry imageledger.Entry) error {
 	}
 
 	if entry.BaseRef != "" {
-		if _, digest, ok := strings.Cut(entry.BaseRef, "@sha256:"); !ok || !hex64RE.MatchString(digest) {
+		if _, digest, ok := strings.Cut(entry.BaseRef, "@sha256:"); !ok || !domaincontainer.ValidSHA256Hex(digest) {
 			return fmt.Errorf("imageledger: base_ref must be a registry path pinned by @sha256:<64 hex>: %q: %w", entry.BaseRef, errs.ErrValidation)
 		}
 
-		if !hex64RE.MatchString(entry.BaseInputID) {
+		if !domaincontainer.ValidSHA256Hex(entry.BaseInputID) {
 			return fmt.Errorf("imageledger: base_input_id must be a sha256 hex digest: %q: %w", entry.BaseInputID, errs.ErrValidation)
 		}
 	}

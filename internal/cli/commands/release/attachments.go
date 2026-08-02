@@ -11,6 +11,7 @@ import (
 
 	apprelease "github.com/diggsweden/reusable-ci/v3/internal/app/release"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/commonflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
@@ -64,7 +65,7 @@ func attachmentsUploadCmd() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagTag, Required: true, Sources: cienv.Tag(), Usage: "tag of the existing release to attach to (e.g. v1.2.3)"},
 			&cli.StringFlag{Name: "pattern", Sources: cli.EnvVars("ATTACH_PATTERN"), Usage: "comma-separated globs to expand and upload"},
-			&cli.StringFlag{Name: "working-dir", Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory the globs are resolved relative to"},
+			commonflags.WorkingDir("directory the globs are resolved relative to"),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {

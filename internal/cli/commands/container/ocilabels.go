@@ -24,7 +24,7 @@ func releaseLabelsCmd() *cli.Command {
 Shell callers can mapfile/readarray the output and pass the resulting array to
 buildah bud without reimplementing label policy in shell.`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "title", Required: true, Sources: cli.EnvVars("OCI_LABEL_TITLE"), Usage: "org.opencontainers.image.title"},
+			&cli.StringFlag{Name: flagTitle, Required: true, Sources: cli.EnvVars("OCI_LABEL_TITLE"), Usage: "org.opencontainers.image.title"},
 			&cli.StringFlag{Name: flagVersion, Required: true, Sources: cli.EnvVars("OCI_LABEL_VERSION"), Usage: "org.opencontainers.image.version"},
 			&cli.StringFlag{Name: "created", Required: true, Sources: cli.EnvVars("OCI_LABEL_CREATED"), Usage: "org.opencontainers.image.created (RFC 3339)"},
 			&cli.StringFlag{Name: flagRevision, Required: true, Sources: cli.EnvVars("OCI_LABEL_REVISION"), Usage: "org.opencontainers.image.revision"},

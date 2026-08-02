@@ -97,9 +97,8 @@ func DeriveTags(imageName, releaseTag string) (string, string) {
 //
 //nolint:gochecknoglobals // compiled regex table — read-only.
 var (
-	imageRefRE  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?@sha256:[0-9a-f]{64}$`)
-	sha256HexRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	tagRefRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
+	imageRefRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?@sha256:[0-9a-f]{64}$`)
+	tagRefRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
 	// sbomRE accepts any relative CycloneDX path, matching the filenames
 	// the sbom package emits (domain/sbom/filenames.go), rather than a
 	// single fixed name. Anchored to a leaf-relative path (no leading '/').
@@ -315,7 +314,7 @@ func (e Entry) validateSBOMSHA256() error {
 		return fmt.Errorf("imageledger: sbom_sha256 requires sbom to name the file it pins: %w", errs.ErrValidation)
 	}
 
-	if !sha256HexRE.MatchString(e.SBOMSHA256) {
+	if !container.ValidSHA256Hex(e.SBOMSHA256) {
 		return fmt.Errorf("imageledger: sbom_sha256 must be 64 lowercase hex characters: %q: %w", e.SBOMSHA256, errs.ErrValidation)
 	}
 

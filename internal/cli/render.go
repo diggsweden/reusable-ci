@@ -68,6 +68,18 @@ func renderSubtree(b *strings.Builder, cmd *cli.Command, breadcrumb []string, le
 		_, _ = fmt.Fprintln(b)
 	}
 
+	// The Description holds the long help — decision guides ("which verb do I
+	// want?") and EXAMPLE blocks. It is preformatted terminal text, so render it
+	// verbatim in a fenced block rather than as markdown; this is the one place a
+	// reader browses the whole surface, so the examples belong here, not only in
+	// `--help`. No Description contains a code fence (guarded), so ``` is safe.
+	if desc := strings.TrimRight(cmd.Description, "\n"); desc != "" {
+		_, _ = fmt.Fprintln(b, "```")
+		_, _ = fmt.Fprintln(b, desc)
+		_, _ = fmt.Fprintln(b, "```")
+		_, _ = fmt.Fprintln(b)
+	}
+
 	if cmd.ArgsUsage != "" {
 		_, _ = fmt.Fprintf(b, "**Usage:** `%s %s`\n\n", strings.Join(breadcrumb, " "), cmd.ArgsUsage)
 	}

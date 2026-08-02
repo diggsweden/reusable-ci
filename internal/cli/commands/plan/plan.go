@@ -40,7 +40,7 @@ func prCmd() *cli.Command {
 			&cli.StringFlag{Name: "project-type", Sources: cli.EnvVars("PROJECT_TYPE"), Usage: "primary ecosystem of the project (maven/npm/go/cargo/…)"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			&cli.StringFlag{Name: "base-branch", Sources: cli.EnvVars("BASE_BRANCH"), Usage: "base branch the PR targets (used for diff-mode scans)"},
 			&cli.StringFlag{Name: "reusable-ci-binary-ref", Sources: cli.EnvVars("REUSABLE_CI_BINARY_REF"), Usage: "git ref of the reusable-ci binary used in the plan (pinned for reproducibility)"},
-			&cli.StringFlag{Name: "lint-engine", Value: "nanolinter", Sources: cli.EnvVars("LINT_ENGINE"), Usage: "general lint engine to run: nanolinter (default), megalinter, or none (mutually exclusive)"},
+			&cli.StringFlag{Name: "lint-engine", Sources: cli.EnvVars("LINT_ENGINE"), Usage: "general lint engine to run: nanolinter, megalinter, or none (default none; mutually exclusive)"},
 			&cli.BoolFlag{Name: "linter-swiftformat", Sources: cli.EnvVars("LINTER_SWIFTFORMAT"), Usage: "include the swift-format lint gate in the plan"},
 			&cli.BoolFlag{Name: "linter-swiftlint", Sources: cli.EnvVars("LINTER_SWIFTLINT"), Usage: "include the swiftlint lint gate in the plan"},
 		},

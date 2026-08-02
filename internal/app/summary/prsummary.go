@@ -48,11 +48,16 @@ func PRSummary(ctx context.Context, sink ci.SummarySink, in PRSummaryInput) erro
 	get := func(key string) string {
 		return string(quality.TargetResult(key))
 	}
-	// At most one lint engine runs (they are mutually exclusive), so the engine
-	// that actually executed is the one whose result is not skipped. Label the
-	// single Lint row accordingly; default to Nanolinter when none ran.
-	lintLabel, lintResult := "Nanolinter", get(pipeline.TargetNanolinter)
-	if mega := get(pipeline.TargetMegalinter); lintEngineRan(mega) {
+	// At most one lint engine runs (they are mutually exclusive). Name the single
+	// Lint row after whichever engine actually executed; when none did (engine
+	// "none"), keep a neutral "Lint" label rather than implying a specific product.
+	nano, mega := get(pipeline.TargetNanolinter), get(pipeline.TargetMegalinter)
+	lintLabel, lintResult := "Lint", nano
+
+	switch {
+	case lintEngineRan(nano):
+		lintLabel = "Nanolinter"
+	case lintEngineRan(mega):
 		lintLabel, lintResult = "MegaLinter", mega
 	}
 

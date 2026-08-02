@@ -17,6 +17,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/npm"
 	appversion "github.com/diggsweden/reusable-ci/v3/internal/app/version"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/commonflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/dryrun"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
@@ -96,12 +97,7 @@ func bumpCmd() *cli.Command {
 				Sources:  cli.EnvVars("VERSION"),
 				Usage:    "new version-of-record (without a leading 'v')",
 			},
-			&cli.StringFlag{
-				Name:    "working-dir",
-				Value:   ".",
-				Sources: cli.EnvVars("WORKING_DIRECTORY"),
-				Usage:   "directory containing the project root",
-			},
+			commonflags.WorkingDir("directory containing the project root"),
 			&cli.StringFlag{
 				Name:    "gradle-version-file",
 				Sources: cli.EnvVars("GRADLE_VERSION_FILE"),

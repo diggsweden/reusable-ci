@@ -191,7 +191,7 @@ func sweepStaleStagingVersions(ctx context.Context, registry imageDigestResolver
 func reusableBaseArchFinalTags(expectedRepository string, inputs []BaseInput) (map[string]string, error) {
 	finalTags := make(map[string]string, len(inputs)*2)
 	for idx, input := range inputs {
-		if input.Flavor == "" || !hex64RE.MatchString(input.BaseInputID) || !hex64RE.MatchString(input.ContentID) {
+		if input.Flavor == "" || !domaincontainer.ValidSHA256Hex(input.BaseInputID) || !domaincontainer.ValidSHA256Hex(input.ContentID) {
 			return nil, fmt.Errorf("base images cleanup: base-inputs-json entry %d must include flavor, sha256 content_id, and sha256 base_input_id: %w", idx, errs.ErrValidation)
 		}
 
@@ -281,7 +281,7 @@ func validBaseStagingVersion(version string) bool {
 
 	parts := strings.SplitN(strings.TrimPrefix(version, "staging-"), "-", 2)
 
-	return len(parts) == 2 && hex64RE.MatchString(parts[0]) && baseImageFlavorRE.MatchString(parts[1])
+	return len(parts) == 2 && domaincontainer.ValidSHA256Hex(parts[0]) && baseImageFlavorRE.MatchString(parts[1])
 }
 
 func isBaseArchStagingVersion(version string) bool {

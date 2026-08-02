@@ -63,7 +63,7 @@ func New() *cli.Command {
 		Commands: slices.Concat(
 			cmdmeta.WithCategory("Build & sign", setupBuildahCmd(), buildCmd(), buildPushOCIImageCmd(), imageGroup(), signerImageGroup(), loginCmd(), logoutCmd(), signCmd(), attestCmd()),
 			cmdmeta.WithCategory("Image metadata & manifests", refGroup(), metadataCmd(), containerfileArgDefaultCmd(), releaseLabelsCmd(), releaseIdentityMatchesCmd(), imageLabelsJSONCmd(), imageEvidenceCmd(), platformPlanCmd(), manifestGroup(), writeDigestMarkerCmd()),
-			cmdmeta.WithCategory("Release promotion", ledgerGroup(), releaseImageGroup(), releaseImagesGroup(), baseImagesGroup()),
+			cmdmeta.WithCategory("Release promotion", ledgerGroup(), releaseImagesGroup(), baseImagesGroup()),
 			cmdmeta.WithCategory("Validation", validateGroup()),
 			cmdmeta.WithCategory("Workflow plumbing", materializeBuildSecretsCmd(), extractNPMTarballCmd(), suffixBinariesCmd()),
 		),

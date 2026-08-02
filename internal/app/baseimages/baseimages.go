@@ -22,10 +22,6 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-// hex64RE matches a lower-case sha256 hex digest (content IDs,
-// base-input IDs, SBOM digests).
-var hex64RE = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
 var (
 	baseImageFlavorRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 	baseImageDigestRefRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+@sha256:[0-9a-f]{64}$`)
@@ -135,7 +131,7 @@ func validateBaseImageCommon(expectedRepository, expectedSource, expectedWorkflo
 		return fmt.Errorf("base images: Cosign public key path is required: %w", errs.ErrMissingInput)
 	}
 
-	if baseInputID != "" && !hex64RE.MatchString(baseInputID) {
+	if baseInputID != "" && !domaincontainer.ValidSHA256Hex(baseInputID) {
 		return fmt.Errorf("base images: base-input-id must be a sha256 hex digest: %w", errs.ErrValidation)
 	}
 
@@ -173,7 +169,7 @@ func normalizePromoteBaseImage(image BaseImageMetadata, fallbackBaseInputID, exp
 // validatePromoteBaseInputID checks the metadata's base_input_id shape and,
 // when a fallback/expected ID is supplied, that it matches.
 func validatePromoteBaseInputID(image BaseImageMetadata, fallbackBaseInputID string) error {
-	if !hex64RE.MatchString(image.BaseInputID) {
+	if !domaincontainer.ValidSHA256Hex(image.BaseInputID) {
 		return fmt.Errorf("base image metadata has missing or invalid base_input_id\n  flavor: %s: %w", image.Flavor, errs.ErrValidation)
 	}
 

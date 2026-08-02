@@ -23,6 +23,19 @@ var digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 // ValidDigest reports whether s is a canonical `sha256:<64-hex>` digest.
 func ValidDigest(s string) bool { return digestRE.MatchString(s) }
 
+// sha256HexRE matches a bare sha256 as 64 lowercase hex characters, without the
+// `sha256:` algorithm prefix — the shape a content ID (base-input-id), an SBOM
+// content pin, or a digest's hex tail takes. Kept beside digestRE so the two
+// hash-shape invariants are single-sourced together rather than re-derived in
+// every package that records or re-validates ledger entries.
+//
+//nolint:gochecknoglobals // compiled regex, read-only.
+var sha256HexRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// ValidSHA256Hex reports whether s is 64 lowercase hex characters — a bare
+// sha256 with no `sha256:` prefix.
+func ValidSHA256Hex(s string) bool { return sha256HexRE.MatchString(s) }
+
 // StripTag removes a trailing `:tag` from an OCI reference, keeping the
 // registry/path. A `:` that precedes the final `/` (a host:port, e.g.
 // `localhost:5000/img`) is left alone, and registry-less refs (`alpine:3.21`)

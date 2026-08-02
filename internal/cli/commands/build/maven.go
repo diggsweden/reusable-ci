@@ -12,6 +12,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/maven"
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/commonflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 )
 
@@ -80,7 +81,7 @@ func mavenMetadataCmd() *cli.Command {
 		Description: `EXAMPLE:
    reusable-ci build maven metadata --working-dir .`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "working-dir", Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory containing the pom.xml to parse"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			commonflags.WorkingDir("directory containing the pom.xml to parse"),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {

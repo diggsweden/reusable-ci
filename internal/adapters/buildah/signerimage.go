@@ -13,7 +13,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/safeexec"
 )
 
-// BuildSignerImage builds the forgejo-ci signer image for one architecture into
+// BuildSignerImage builds one architecture of a two-phase multi-arch image into
 // local buildah storage under the supplied local tag.
 func (a *Adapter) BuildSignerImage(ctx context.Context, req container.SignerImageBuildToolRequest, out io.Writer) error {
 	args := a.global("bud",
@@ -24,7 +24,13 @@ func (a *Adapter) BuildSignerImage(ctx context.Context, req container.SignerImag
 		"--platform", req.Platform,
 		"--label", "org.opencontainers.image.source="+req.SourceURL,
 		"--label", "org.opencontainers.image.revision="+req.Revision,
-		"--label", "org.opencontainers.image.title=forgejo-ci signer",
+	)
+
+	if req.Title != "" {
+		args = append(args, "--label", "org.opencontainers.image.title="+req.Title)
+	}
+
+	args = append(args,
 		"--tag", req.LocalImage,
 		"--file", req.Containerfile,
 		req.Context,

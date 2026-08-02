@@ -56,6 +56,7 @@ release-only promotion policy. Lower-level ` + "`container ledger`" + ` verbs re
 available for custom workflows; reusable workflows should use this group.`,
 		Commands: []*cli.Command{
 			releaseImagesSignCmd(),
+			releaseImagesVerifyCmd(),
 			releaseImagesPromoteCmd(),
 			releaseImagesRollbackCmd(),
 			releaseImagesCleanupCmd(),

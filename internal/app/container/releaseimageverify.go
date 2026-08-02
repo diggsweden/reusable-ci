@@ -23,9 +23,9 @@ const (
 	ReleaseImageStatusReattestable = "reattestable"
 )
 
-// ReleaseImageVerifyExistingInput drives `container release-image
-// verify-existing`: the digest-pinned ref plus the release identity the
-// signed evidence must match.
+// ReleaseImageVerifyExistingInput drives `container release-images verify`:
+// the digest-pinned ref plus the release identity the signed evidence must
+// match.
 type ReleaseImageVerifyExistingInput struct {
 	Ref string
 
@@ -193,7 +193,7 @@ func validateReleaseImageVerifyBase(in ReleaseImageVerifyExistingInput) error {
 		return fmt.Errorf("release image verify: --expected-base-ref must be digest-pinned: %s: %w", in.ExpectedBaseRef, errs.ErrValidation)
 	}
 
-	if in.ExpectedBaseInputID != "" && !hex64RE.MatchString(in.ExpectedBaseInputID) {
+	if in.ExpectedBaseInputID != "" && !domaincontainer.ValidSHA256Hex(in.ExpectedBaseInputID) {
 		return fmt.Errorf("release image verify: --expected-base-input-id must be a sha256 hex digest: %w", errs.ErrValidation)
 	}
 

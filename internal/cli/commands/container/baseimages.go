@@ -19,13 +19,11 @@ import (
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
+	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-var (
-	baseImagesHex64RE            = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	baseImagesRepositorySuffixRE = regexp.MustCompile(`^(-[A-Za-z0-9][A-Za-z0-9._-]*)?$`)
-)
+var baseImagesRepositorySuffixRE = regexp.MustCompile(`^(-[A-Za-z0-9][A-Za-z0-9._-]*)?$`)
 
 type baseImagesCommon struct {
 	ServerURL          string
@@ -45,14 +43,14 @@ type baseImagesCommon struct {
 func baseImagesGroup() *cli.Command {
 	return &cli.Command{
 		Name:  "base-images",
-		Usage: "sign, verify, and promote forgejo-ci base-image caches",
+		Usage: "sign, verify, and promote base-image caches",
 		Description: `Workflow-facing base-image boundary. The commands validate
 flavor/base-input metadata, verify Cosign signatures plus CycloneDX and SLSA
 lineage attestations, sign digest-pinned base images, and promote verified
 candidate images to immutable final base tags. Checkout and pinned-binary
 bootstrap remain owned by the caller.`,
 		Commands: []*cli.Command{
-			baseImagesVerifyExistingCmd(),
+			baseImagesVerifyCmd(),
 			baseImagesPromoteCmd(),
 			baseImagesCleanupStagingCmd(),
 			baseImagesFreshnessCmd(),
@@ -71,7 +69,7 @@ func baseImagesRepositoryFlags() []cli.Flag {
 		&cli.StringFlag{Name: "repository-suffix", Sources: cli.EnvVars("REPOSITORY_SUFFIX"), Usage: "optional suffix appended to the repository package name, e.g. -base"},
 		&cli.StringFlag{Name: "expected-repository", Sources: cli.EnvVars("EXPECTED_REPOSITORY", "BASE_IMAGES_EXPECTED_REPOSITORY"), Usage: "exact base-image repository allowed for tags/refs (default: host/lower(owner/repo)<suffix>)"},
 		&cli.StringFlag{Name: "expected-source", Sources: cli.EnvVars("EXPECTED_SOURCE", "BASE_IMAGES_EXPECTED_SOURCE"), Usage: "source repository URL expected in SLSA lineage (default: <server-url>/<repository>)"},
-		&cli.StringFlag{Name: "caller-workflow", Sources: cli.EnvVars("EXPECTED_WORKFLOW", "CALLER_WORKFLOW"), Usage: "workflow filename expected in SLSA lineage"},
+		&cli.StringFlag{Name: "expected-workflow", Sources: cli.EnvVars("EXPECTED_WORKFLOW"), Usage: "workflow filename expected in SLSA lineage"},
 		&cli.StringFlag{Name: flagRegistry, Sources: cli.EnvVars("CONTAINER_REGISTRY"), Usage: "registry host for promotion auth (default: host from --server-url)"},
 	}
 }
@@ -117,9 +115,9 @@ func baseImagesCommonFromCmd(cmd *cli.Command, requireRegistry, requirePublicKey
 		return baseImagesCommon{}, err
 	}
 
-	workflow := strings.TrimSpace(cmd.String("caller-workflow"))
+	workflow := strings.TrimSpace(cmd.String("expected-workflow"))
 	if unsafeWorkflowPath(workflow) {
-		return baseImagesCommon{}, fmt.Errorf("base images: unsafe caller-workflow path: %s: %w", workflow, errs.ErrUsage)
+		return baseImagesCommon{}, fmt.Errorf("base images: unsafe expected-workflow path: %s: %w", workflow, errs.ErrUsage)
 	}
 
 	publicKeyPath, publicKeySHA256, err := baseImagesPublicKeyFromCmd(cmd, requirePublicKey)
@@ -252,7 +250,7 @@ func withBaseImagesDockerConfig(fn func(authFile string) error) error {
 }
 
 func validateBaseImagesPublicKey(path, want string) error {
-	if !baseImagesHex64RE.MatchString(want) {
+	if !domaincontainer.ValidSHA256Hex(want) {
 		return fmt.Errorf("base images: cosign-public-key-sha256 must be a sha256 hex digest: %w", errs.ErrValidation)
 	}
 

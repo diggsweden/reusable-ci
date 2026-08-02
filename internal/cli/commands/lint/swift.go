@@ -13,6 +13,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/swiftformat"
 	swiftlintad "github.com/diggsweden/reusable-ci/v3/internal/adapters/swiftlint"
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/commonflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 )
 
@@ -34,7 +35,7 @@ func swiftFormatLintCmd() *cli.Command {
 		Description: `EXAMPLE:
    reusable-ci build swift format-lint --working-dir .`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "working-dir", Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory the file walk is rooted at"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			commonflags.WorkingDir("directory the file walk is rooted at"),
 			&cli.StringFlag{Name: "file-pattern", Value: "*.swift", Sources: cli.EnvVars("FILE_PATTERN"), Usage: "git pathspec pattern matched against tracked files"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -57,7 +58,7 @@ func swiftLintLintCmd() *cli.Command {
 		Description: `EXAMPLE:
    reusable-ci build swift swiftlint --config .swiftlint.yml --fail-on-warning`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "working-dir", Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory the linter is rooted at"},
+			commonflags.WorkingDir("directory the linter is rooted at"),
 			&cli.StringFlag{Name: "config", Sources: cli.EnvVars("SWIFTLINT_CONFIG_PATH"), Usage: "path to a .swiftlint.yml config file (passed via --config)"},
 			&cli.BoolFlag{Name: "fail-on-warning", Sources: cli.EnvVars("FAIL_ON_WARNING"), Usage: "warnings cause a non-zero exit"},
 		},

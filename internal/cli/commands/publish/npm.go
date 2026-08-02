@@ -11,6 +11,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/npm"
 	apppublish "github.com/diggsweden/reusable-ci/v3/internal/app/publish"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/commonflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 )
@@ -68,7 +69,7 @@ func npmFindTarballCmd() *cli.Command {
 		Description: `EXAMPLE:
    reusable-ci publish npm find-tarball --working-dir .`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "working-dir", Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory scanned for the npm tarball (where 'npm pack' ran)"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			commonflags.WorkingDir("directory scanned for the npm tarball (where 'npm pack' ran)"),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
@@ -93,7 +94,7 @@ func npmValidateVersionCmd() *cli.Command {
 		Description: `EXAMPLE:
    reusable-ci publish npm validate-version --name @examplescope/app --version 1.2.3`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "working-dir", Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory containing package.json (used when --name is omitted)"},
+			commonflags.WorkingDir("directory containing package.json (used when --name is omitted)"),
 			&cli.StringFlag{Name: "name", Sources: cli.EnvVars("PACKAGE_NAME"), Usage: "package name (defaults to the value in package.json)"},
 			&cli.StringFlag{Name: "version", Sources: cli.EnvVars("VERSION"), Usage: "package version to check against the registry"},
 			&cli.StringFlag{Name: "registry", Sources: cli.EnvVars("NPM_REGISTRY"), Usage: "npm registry to query"},

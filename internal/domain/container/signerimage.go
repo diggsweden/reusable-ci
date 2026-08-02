@@ -3,8 +3,8 @@
 
 package container
 
-// SignerImageBuildToolRequest is the buildah-level request for one signer-image
-// architecture build.
+// SignerImageBuildToolRequest is the buildah-level request for one
+// architecture build of a two-phase multi-arch image.
 type SignerImageBuildToolRequest struct {
 	AuthFile      string
 	Platform      string
@@ -13,6 +13,7 @@ type SignerImageBuildToolRequest struct {
 	LocalImage    string
 	Containerfile string
 	Context       string
+	Title         string // org.opencontainers.image.title label; empty omits the label
 }
 
 // SignerImageManifestAddToolRequest is the buildah-level request for adding one

@@ -24,8 +24,11 @@ import (
 const (
 	defaultSignerImageContainerfile = "packaging/signer/Containerfile"
 	defaultSignerImageContext       = "."
-	defaultSignerImageLocalName     = "localhost/forgejo-ci-signer"
+	defaultSignerImageLocalName     = "localhost/signer"
 	defaultSignerImageAttempts      = 3
+	// defaultMultiarchImageName is the neutral metadata basename when --name is
+	// unset; a caller (e.g. a signer image) overrides it.
+	defaultMultiarchImageName = "image"
 )
 
 var (
@@ -33,8 +36,8 @@ var (
 	signerImageRefRe  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+@sha256:[0-9a-f]{64}$`)
 )
 
-// SignerImageTool is the buildah+skopeo surface needed by the forgejo-ci signer
-// image workflow.
+// SignerImageTool is the buildah+skopeo surface needed by the signer image
+// workflow.
 type SignerImageTool interface {
 	BuildSignerImage(ctx context.Context, req domaincontainer.SignerImageBuildToolRequest, out io.Writer) error
 	PushImage(ctx context.Context, authFile, localImage, dest string, out io.Writer) error
@@ -45,31 +48,37 @@ type SignerImageTool interface {
 	PushManifest(ctx context.Context, authFile, localManifest, dest string, out io.Writer) error
 }
 
-// SignerImageBuildArchInput drives one architecture build of the forgejo-ci
-// signer image.
+// SignerImageBuildArchInput drives one architecture build of the signer image.
 type SignerImageBuildArchInput struct {
-	AuthFile      string
-	Arch          string
-	SourceSHA     string
-	ServerURL     string
-	Repository    string
-	Containerfile string
-	Context       string
-	MetadataDir   string
-	RetryAttempts int
-	RetryDelay    time.Duration
+	AuthFile         string
+	Arch             string
+	SourceSHA        string
+	ServerURL        string
+	Repository       string
+	RepositorySuffix string // appended to lower(repository) to form the image repo (e.g. "-signer")
+	TagPrefix        string // prepended to the source-SHA image tag (e.g. "signer-")
+	Name             string // metadata basename shared with assemble; empty defaults to "image"
+	Title            string // org.opencontainers.image.title label; empty omits the label
+	Containerfile    string
+	Context          string
+	MetadataDir      string
+	RetryAttempts    int
+	RetryDelay       time.Duration
 }
 
-// SignerImageAssembleInput drives multi-arch signer manifest assembly.
+// SignerImageAssembleInput drives multi-arch manifest assembly.
 type SignerImageAssembleInput struct {
-	AuthFile      string
-	SourceSHA     string
-	ServerURL     string
-	Repository    string
-	Archs         []string
-	MetadataDir   string
-	RetryAttempts int
-	RetryDelay    time.Duration
+	AuthFile         string
+	SourceSHA        string
+	ServerURL        string
+	Repository       string
+	RepositorySuffix string
+	TagPrefix        string
+	Name             string
+	Archs            []string
+	MetadataDir      string
+	RetryAttempts    int
+	RetryDelay       time.Duration
 }
 
 // SignerImageArchMetadata is the JSON artifact uploaded by each arch job.
@@ -108,6 +117,7 @@ func BuildSignerImageArch(ctx context.Context, tool SignerImageTool, out io.Writ
 		LocalImage:    derived.LocalImage,
 		Containerfile: derived.Containerfile,
 		Context:       derived.Context,
+		Title:         in.Title,
 	}, out); err != nil {
 		return nil, err
 	}
@@ -131,11 +141,11 @@ func BuildSignerImageArch(ctx context.Context, tool SignerImageTool, out io.Writ
 		Ref:    derived.ImageRepository + "@" + digest,
 	}
 
-	if err := writeSignerJSON(filepath.Join(derived.MetadataDir, "signer-image-"+in.Arch+".json"), meta); err != nil {
+	if err := writeSignerJSON(filepath.Join(derived.MetadataDir, derived.Name+"-"+in.Arch+".json"), meta); err != nil {
 		return nil, err
 	}
 
-	_, _ = fmt.Fprintf(out, "Signer image architecture pushed: arch=%s digest=%s\n", in.Arch, digest)
+	_, _ = fmt.Fprintf(out, "Image architecture pushed: arch=%s digest=%s\n", in.Arch, digest)
 
 	return meta, nil
 }
@@ -182,7 +192,7 @@ func AssembleSignerImageManifest(ctx context.Context, tool SignerImageTool, sink
 		Ref:    derived.ImageRepository + "@" + digest,
 	}
 
-	if err = writeSignerJSON(filepath.Join(derived.MetadataDir, "signer-image.json"), meta); err != nil {
+	if err = writeSignerJSON(filepath.Join(derived.MetadataDir, derived.Name+".json"), meta); err != nil {
 		return nil, err
 	}
 
@@ -190,7 +200,7 @@ func AssembleSignerImageManifest(ctx context.Context, tool SignerImageTool, sink
 		return nil, err
 	}
 
-	_, _ = fmt.Fprintf(out, "Signer image manifest pushed: %s\n", meta.Ref)
+	_, _ = fmt.Fprintf(out, "Image manifest pushed: %s\n", meta.Ref)
 
 	return meta, nil
 }
@@ -199,7 +209,7 @@ func AssembleSignerImageManifest(ctx context.Context, tool SignerImageTool, sink
 // metadata artifact and adds it to the local manifest list.
 func addSignerArchManifests(ctx context.Context, tool SignerImageTool, out io.Writer, authFile string, derived signerImageManifestDerived) error {
 	for _, arch := range derived.Archs {
-		ref, err := signerArchRef(arch, derived.ImageRepository)
+		ref, err := signerArchRef(arch, derived.ImageRepository, derived.Name)
 		if err != nil {
 			return err
 		}
@@ -235,7 +245,7 @@ func emitSignerImageManifestOutputs(ctx context.Context, sink ci.OutputSink, sum
 	}
 
 	if summary != nil {
-		_ = summary.Append(ctx, fmt.Sprintf("### Signer image\n\n* Tag: `%s`\n* Digest: `%s`\n* Ref: `%s`\n", meta.Tag, meta.Digest, meta.Ref))
+		_ = summary.Append(ctx, fmt.Sprintf("### Image\n\n* Tag: `%s`\n* Digest: `%s`\n* Ref: `%s`\n", meta.Tag, meta.Digest, meta.Ref))
 	}
 
 	return nil
@@ -246,6 +256,7 @@ type signerImageArchDerived struct {
 	ImageTag        string
 	LocalImage      string
 	MetadataDir     string
+	Name            string
 	Platform        string
 	SourceURL       string
 	Containerfile   string
@@ -255,6 +266,7 @@ type signerImageArchDerived struct {
 type signerImageManifestDerived struct {
 	ImageRepository string
 	ManifestTag     string
+	Name            string
 	LocalManifest   string
 	MetadataDir     string
 	Archs           []string
@@ -269,16 +281,18 @@ func deriveSignerImageArch(in SignerImageBuildArchInput) (signerImageArchDerived
 		return signerImageArchDerived{}, err
 	}
 
-	imageRepo := signerImageRepository(in.ServerURL, in.Repository)
+	imageRepo := signerImageRepository(in.ServerURL, in.Repository, in.RepositorySuffix)
+	name := defaultSignerString(in.Name, defaultMultiarchImageName)
 	containerfile := defaultSignerString(in.Containerfile, defaultSignerImageContainerfile)
 	contextDir := defaultSignerString(in.Context, defaultSignerImageContext)
-	metadataDir := defaultSignerString(in.MetadataDir, "signer-image-arch-"+in.Arch)
+	metadataDir := defaultSignerString(in.MetadataDir, name+"-arch-"+in.Arch)
 
 	return signerImageArchDerived{
 		ImageRepository: imageRepo,
-		ImageTag:        fmt.Sprintf("%s:signer-%s-%s", imageRepo, in.SourceSHA, in.Arch),
+		ImageTag:        fmt.Sprintf("%s:%s%s-%s", imageRepo, in.TagPrefix, in.SourceSHA, in.Arch),
 		LocalImage:      fmt.Sprintf("%s:%s-%s", defaultSignerImageLocalName, in.SourceSHA, in.Arch),
 		MetadataDir:     metadataDir,
+		Name:            name,
 		Platform:        "linux/" + in.Arch,
 		SourceURL:       strings.TrimRight(in.ServerURL, "/") + "/" + in.Repository,
 		Containerfile:   containerfile,
@@ -302,13 +316,15 @@ func deriveSignerImageManifest(in SignerImageAssembleInput) (signerImageManifest
 		}
 	}
 
-	imageRepo := signerImageRepository(in.ServerURL, in.Repository)
+	imageRepo := signerImageRepository(in.ServerURL, in.Repository, in.RepositorySuffix)
+	name := defaultSignerString(in.Name, defaultMultiarchImageName)
 
 	return signerImageManifestDerived{
 		ImageRepository: imageRepo,
-		ManifestTag:     fmt.Sprintf("%s:signer-%s", imageRepo, in.SourceSHA),
+		ManifestTag:     fmt.Sprintf("%s:%s%s", imageRepo, in.TagPrefix, in.SourceSHA),
 		LocalManifest:   fmt.Sprintf("%s:manifest-%s", defaultSignerImageLocalName, in.SourceSHA),
-		MetadataDir:     defaultSignerString(in.MetadataDir, "signer-image-dist"),
+		MetadataDir:     defaultSignerString(in.MetadataDir, name+"-dist"),
+		Name:            name,
 		Archs:           archs,
 	}, nil
 }
@@ -342,32 +358,32 @@ func validateSignerArch(arch string) error {
 	}
 }
 
-func signerImageRepository(serverURL, repository string) string {
+func signerImageRepository(serverURL, repository, suffix string) string {
 	registryHost := strings.TrimPrefix(strings.TrimPrefix(serverURL, "https://"), "http://")
 
-	return registryHost + "/" + strings.ToLower(repository) + "-signer"
+	return registryHost + "/" + strings.ToLower(repository) + suffix
 }
 
-func signerArchRef(arch, imageRepository string) (string, error) {
-	metadataFile := filepath.Join("signer-image-arch-"+arch, "signer-image-"+arch+".json")
+func signerArchRef(arch, imageRepository, name string) (string, error) {
+	metadataFile := filepath.Join(name+"-arch-"+arch, name+"-"+arch+".json")
 
 	body, err := os.ReadFile(metadataFile) //nolint:gosec // workspace-local metadata artifact downloaded by the workflow.
 	if err != nil {
-		return "", fmt.Errorf("signer image metadata missing: %s: %w", metadataFile, err)
+		return "", fmt.Errorf("image metadata missing: %s: %w", metadataFile, err)
 	}
 
 	var meta SignerImageArchMetadata
 	if err := json.Unmarshal(body, &meta); err != nil {
-		return "", fmt.Errorf("parse signer image metadata %s: %w: %w", metadataFile, err, errs.ErrInvalidConfig)
+		return "", fmt.Errorf("parse image metadata %s: %w: %w", metadataFile, err, errs.ErrInvalidConfig)
 	}
 
 	ref := meta.Ref
 	if !signerImageRefRe.MatchString(ref) {
-		return "", fmt.Errorf("signer image ref must be digest-pinned: %s: %w", ref, errs.ErrValidation)
+		return "", fmt.Errorf("image ref must be digest-pinned: %s: %w", ref, errs.ErrValidation)
 	}
 
 	if !strings.HasPrefix(ref, imageRepository+"@sha256:") {
-		return "", fmt.Errorf("signer image ref must be under %s: %s: %w", imageRepository, ref, errs.ErrValidation)
+		return "", fmt.Errorf("image ref must be under %s: %s: %w", imageRepository, ref, errs.ErrValidation)
 	}
 
 	return ref, nil

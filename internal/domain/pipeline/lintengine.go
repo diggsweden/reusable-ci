@@ -17,9 +17,10 @@ import (
 // whichever engine runs.
 type LintEngine string
 
-// Recognised LintEngine values. nanolinter is the default (fast, node-less);
-// megalinter is the heavier governance-recognised alternative; none disables
-// general linting entirely.
+// Recognised LintEngine values. none is the default: a forge- and
+// consumer-neutral engine ships no particular linter as its out-of-box choice.
+// A consumer selects nanolinter (fast, node-less) or megalinter (heavier,
+// governance-recognised) explicitly; none disables general linting entirely.
 const (
 	LintEngineNanolinter LintEngine = "nanolinter"
 	LintEngineMegalinter LintEngine = "megalinter"
@@ -27,12 +28,13 @@ const (
 )
 
 // ParseLintEngine normalises (case- and whitespace-insensitive) and validates a
-// lint-engine string. Empty defaults to nanolinter (the preferred engine);
-// any other unrecognised value is a usage error.
+// lint-engine string. Empty defaults to none — the engine must not ship one
+// consumer's linter as its default, so a consumer opts into nanolinter or
+// megalinter explicitly; any other unrecognised value is a usage error.
 func ParseLintEngine(raw string) (LintEngine, error) {
 	switch engine := LintEngine(strings.ToLower(strings.TrimSpace(raw))); engine {
 	case "":
-		return LintEngineNanolinter, nil
+		return LintEngineNone, nil
 	case LintEngineNanolinter, LintEngineMegalinter, LintEngineNone:
 		return engine, nil
 	default:

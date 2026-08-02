@@ -44,6 +44,15 @@ upload/download per-run CI artifacts
 
 print a canonical, reproducible content digest of a directory (build-&gt;sign tamper-evidence)
 
+```
+Computes a runner- and OS-independent content digest over the regular files
+in a directory. The producing job records it; the signing job re-derives it and
+aborts on mismatch, so an intervening job cannot tamper with the artifact.
+
+EXAMPLE (as a workflow step):
+   DIGEST="$(reusable-ci artifact digest --dir ./dist)"
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--dir` | directory whose contents are digested (required) | `$ARTIFACT_DIR` |
@@ -51,6 +60,21 @@ print a canonical, reproducible content digest of a directory (build-&gt;sign ta
 ### `reusable-ci artifact download`
 
 download a named run artifact into a directory
+
+```
+Runs inside a CI job: the forge, repository, run and runner token come from
+the job environment (there is no --token flag). See `reusable-ci --help`.
+
+EXAMPLES (as a workflow step):
+   # Download one named artifact into the current directory
+   reusable-ci artifact download --name dist
+
+   # Download every artifact matching a glob, flattened into one directory
+   reusable-ci artifact download --pattern "sbom-*" --dir ./sboms --merge-multiple
+
+   # Download from a different run/repository (both default to the current ones)
+   reusable-ci artifact download --name dist --run-id 123 --repository examplescope/myapp
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -64,6 +88,21 @@ download a named run artifact into a directory
 ### `reusable-ci artifact upload`
 
 upload files as a named artifact into the current workflow run
+
+```
+Runs inside a CI job: the forge, repository, run and runner token come from
+the job environment (there is no --token flag). See `reusable-ci --help`.
+
+EXAMPLES (as a workflow step):
+   # Upload a directory under a logical name
+   reusable-ci artifact upload --name dist --dir ./dist
+
+   # Upload by glob, preserving directory structure
+   reusable-ci artifact upload --name reports --path "reports/**/*.xml"
+
+   # Upload explicit files with a fixed retention
+   reusable-ci artifact upload --name logs --file build.log --file test.log --retention-days 7
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -87,6 +126,11 @@ Cargo build helpers (artefact-first Rust projects)
 
 read Cargo.toml metadata and emit Cargo build outputs
 
+```
+EXAMPLE:
+   reusable-ci build cargo metadata --working-dir .
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--working-dir` | directory containing the Cargo.toml file | `$WORKING_DIRECTORY` |
@@ -98,6 +142,16 @@ read Cargo.toml metadata and emit Cargo build outputs
 #### `reusable-ci build cargo run`
 
 run the full Cargo release build (metadata, fetch, test, SBOM, compile, status)
+
+```
+Runs the whole Cargo build sequence in one step: resolve metadata, fetch
+   deps, test (unless --skip-tests), generate the Build SBOM with cargo-cyclonedx
+   (unless --no-build-sbom), and cross-compile per platform into dist/. The
+   forge job wraps this with checkout + artifact upload only.
+
+EXAMPLE:
+   reusable-ci build cargo run --working-dir . --platforms linux/amd64,linux/arm64 --version 1.2.3
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -118,6 +172,11 @@ Go build helpers
 
 download Go module dependencies
 
+```
+EXAMPLE:
+   reusable-ci build go download --working-dir .
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--working-dir` | directory containing the go.mod file | `$WORKING_DIRECTORY` |
@@ -125,6 +184,11 @@ download Go module dependencies
 #### `reusable-ci build go metadata`
 
 read go.mod metadata and emit Go build outputs
+
+```
+EXAMPLE:
+   reusable-ci build go metadata --working-dir .
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -137,6 +201,16 @@ read go.mod metadata and emit Go build outputs
 #### `reusable-ci build go run`
 
 run the full Go release build (metadata, deps, test, SBOM, compile, summary)
+
+```
+Runs the whole Go build sequence in one step: resolve metadata, download
+   dependencies, test (unless --skip-tests), generate the Build SBOM (unless
+   --no-build-sbom), cross-compile per platform into dist/, and write the build
+   summary. Binaries and the SBOM land at fixed paths the forge job uploads.
+
+EXAMPLE:
+   reusable-ci build go run --working-dir . --platforms linux/amd64,linux/arm64 --version 1.2.3
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -161,6 +235,11 @@ gradle (JVM) build wrappers
 
 read gradle.properties metadata and emit CI outputs
 
+```
+EXAMPLE:
+   reusable-ci build gradle metadata --working-dir .
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--working-dir` | directory containing gradle.properties / build.gradle | `$WORKING_DIRECTORY` |
@@ -168,6 +247,21 @@ read gradle.properties metadata and emit CI outputs
 #### `reusable-ci build gradle run`
 
 run the full Gradle release build (gradlew chmod, metadata, tasks, SBOM, summary)
+
+```
+Runs the whole Gradle build sequence in one step: make ./gradlew
+   executable, resolve metadata, run the gradle tasks (-x test unless
+   --skip-tests), generate the Build SBOM with the pinned cyclonedx-gradle-plugin
+   (unless --no-build-sbom), and write the summaries.
+
+   ./gradlew executes in the current directory, not --working-dir: run this from
+   the project root, or cd in first (the forge job does, then wraps it with
+   checkout + artifact upload). --working-dir only locates gradle.properties for
+   metadata.
+
+EXAMPLE:
+   cd app && reusable-ci build gradle run --tasks assemble --sbom-tool-version 3.2.1
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -186,6 +280,11 @@ android (gradle) build pipeline
 
 base64-decode the release keystore to release.keystore; prints ANDROID_KEYSTORE_PATH=&lt;path&gt; to stdout (workflow redirects to the runner's env file)
 
+```
+EXAMPLE:
+   ANDROID_KEYSTORE_BASE64="..." reusable-ci build gradle-android decode-keystore
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--base64-file` | file with the base64-encoded keystore body ("-" stdin; defaults to $ANDROID_KEYSTORE_BASE64) | n/a |
@@ -193,6 +292,11 @@ base64-decode the release keystore to release.keystore; prints ANDROID_KEYSTORE_
 #### `reusable-ci build gradle-android list-artifacts`
 
 list APK/AAB files under &lt;build-module&gt;/build/outputs
+
+```
+EXAMPLE:
+   reusable-ci build gradle-android list-artifacts --build-module app
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -202,9 +306,31 @@ list APK/AAB files under &lt;build-module&gt;/build/outputs
 
 read project metadata (versionName / versionCode from gradle.properties) and emit CI outputs
 
+```
+EXAMPLE:
+   # Run in the project root (reads gradle.properties; takes no flags)
+   reusable-ci build gradle-android metadata
+```
+
 #### `reusable-ci build gradle-android run`
 
 run the full Android release build (artifact-names, keystore, metadata, tasks, build, SBOM)
+
+```
+Runs the whole Android build sequence in one step: compose artifact names,
+   make ./gradlew executable, decode the signing keystore (when --enable-signing),
+   resolve metadata + tasks, write secrets.properties, run the gradle build, and
+   generate the Build SBOM. Signing passwords stay env vars the gradle build
+   reads; the keystore is decoded outside the project dir. Emits the artifact
+   names + version as outputs for downstream upload/publish jobs.
+
+   ./gradlew executes in the current directory, not --working-dir: run this from
+   the project root, or cd in first (the forge job does). --working-dir only
+   locates gradle.properties for metadata.
+
+EXAMPLE:
+   cd app && reusable-ci build gradle-android run --build-types release --include-aab --enable-signing
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -229,6 +355,11 @@ run the full Android release build (artifact-names, keystore, metadata, tasks, b
 
 base64-decode $SECRETS_PROPERTIES_BASE64 into secrets.properties (mode 0600); empty secret is a no-op
 
+```
+EXAMPLE:
+   SECRETS_PROPERTIES_BASE64="..." reusable-ci build gradle-android write-secrets-properties
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--base64-file` | file with the base64-encoded secrets.properties body ("-" stdin; defaults to $SECRETS_PROPERTIES_BASE64) | n/a |
@@ -241,6 +372,11 @@ maven build wrappers
 
 parse pom.xml for {version,groupId,artifactId} and emit CI outputs (falls back to `mvn help:evaluate` only for ${property} references)
 
+```
+EXAMPLE:
+   reusable-ci build maven metadata --working-dir .
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--working-dir` | directory containing the pom.xml to parse | `$WORKING_DIRECTORY` |
@@ -248,6 +384,21 @@ parse pom.xml for {version,groupId,artifactId} and emit CI outputs (falls back t
 #### `reusable-ci build maven run`
 
 run the full Maven release build (install, metadata, app/lib build, SBOM, summary)
+
+```
+Runs the whole Maven build sequence in one step: install modules to the
+   local repo, resolve metadata, build the application (--build-type app) or
+   library (--build-type lib), generate the Build SBOM with the pinned
+   cyclonedx-maven-plugin (unless --no-build-sbom), and write the summaries.
+
+   mvn executes in the current directory, not --working-dir: run this from the
+   project root, or cd into the module first (the forge job does, then wraps it
+   with checkout + artifact upload). --working-dir only locates the pom.xml for
+   metadata.
+
+EXAMPLE:
+   cd module && reusable-ci build maven run --build-type app --cli-opts "-B -ntp" --sbom-tool-version 2.9.1
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -268,6 +419,11 @@ NPM build helpers
 
 read package.json metadata and emit CI outputs
 
+```
+EXAMPLE:
+   reusable-ci build npm metadata --scope @org --working-dir .
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--working-dir` | directory containing package.json | `$WORKING_DIRECTORY` |
@@ -277,6 +433,11 @@ read package.json metadata and emit CI outputs
 
 run npm pack --json and emit the tarball output
 
+```
+EXAMPLE:
+   reusable-ci build npm pack --working-dir .
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--working-dir` | directory containing the package.json 'npm pack' runs against | `$WORKING_DIRECTORY` |
@@ -284,6 +445,17 @@ run npm pack --json and emit the tarball output
 #### `reusable-ci build npm run`
 
 run the full npm release build (metadata, ci, test, build, SBOM, pack, summary)
+
+```
+Runs the whole npm build sequence in one step: resolve metadata, npm ci,
+   test (soft, unless --skip-tests), run the build script, generate the Build
+   SBOM with the pinned cyclonedx-npm (unless --no-build-sbom), and npm pack. The
+   tarball is left at its default <name>-<version>.tgz path for the forge job to
+   upload.
+
+EXAMPLE:
+   reusable-ci build npm run --working-dir . --sbom-tool-version 4.2.1
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -303,6 +475,11 @@ xcode-ios build pipeline (macOS-only; workflows install reusable-ci on the macOS
 
 read project metadata (MARKETING_VERSION / CURRENT_PROJECT_VERSION from project.pbxproj) and emit CI outputs
 
+```
+EXAMPLE:
+   reusable-ci build xcode-ios metadata --project App.xcodeproj
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--project` | path to the .xcodeproj (defaults to a discovered one in working-dir) | `$PROJECT_PATH` |
@@ -311,6 +488,16 @@ read project metadata (MARKETING_VERSION / CURRENT_PROJECT_VERSION from project.
 #### `reusable-ci build xcode-ios run`
 
 run the iOS build-logic core (artifact-name, signing, metadata, xcconfig, archive, export, list)
+
+```
+Runs the reusable-ci iOS build sequence in one step: compose the artifact
+   name, set up code signing (when --enable-code-signing), resolve metadata,
+   decode the xcconfig, archive, export the IPA, and list artifacts. The macOS
+   host setup (xcode-select, brew, xcodegen) stays in the forge YAML.
+
+EXAMPLE:
+   reusable-ci build xcode-ios run --scheme MyApp --configuration Release --enable-code-signing
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -337,6 +524,13 @@ run the iOS build-logic core (artifact-name, signing, metadata, xcconfig, archiv
 
 decode base64 cert+profile, create a transient macOS keychain, install the profile
 
+```
+EXAMPLE:
+   # Cert/profile/keychain-password come from env or files (never argv)
+   IOS_SIGNING_CERTIFICATE_BASE64="..." PROVISIONING_PROFILE_BASE64="..." \
+   reusable-ci build xcode-ios setup-code-signing
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--cert-base64` | base64-encoded P12 signing certificate body | `$IOS_SIGNING_CERTIFICATE_BASE64` |
@@ -348,6 +542,11 @@ decode base64 cert+profile, create a transient macOS keychain, install the profi
 #### `reusable-ci build xcode-ios setup-xcconfig`
 
 decode optional XCCONFIG_BASE64 and emit xcconfig-path
+
+```
+EXAMPLE:
+   XCCONFIG_BASE64="..." reusable-ci build xcode-ios setup-xcconfig
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -362,6 +561,11 @@ artifacts.yml schema helpers
 
 expand an `sboms` enum value to a layer list (json or comma)
 
+```
+EXAMPLE:
+   reusable-ci config expand-sboms --value all --as comma --exclude analyzed-container
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--value` | sboms enum value to expand (e.g. "all", "build,source") (required) | `$SBOMS` |
@@ -372,6 +576,14 @@ expand an `sboms` enum value to a layer list (json or comma)
 
 parse artifacts.yml and emit the typed config plan contract
 
+```
+EXAMPLES:
+   # Parse artifacts.yml; the typed config plan lands on the
+   # configured OutputSink ($GITHUB_OUTPUT on GitHub, dotenv on
+   # GitLab, /dev/null in local mode).
+   reusable-ci config parse-artifacts --file artifacts.yml
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--file` | path to the artifacts.yml file to parse (required) | `$ARTIFACTS_CONFIG` |
@@ -379,6 +591,16 @@ parse artifacts.yml and emit the typed config plan contract
 ### `reusable-ci config validate`
 
 validate an artifacts.yml against the schema
+
+```
+EXAMPLES:
+   # Validate the conventional .reusable-ci/artifacts.yml (the default)
+   reusable-ci config validate
+
+   # Validate a specific file / via env var (workflow shape)
+   reusable-ci config validate --file path/to/artifacts.yml
+   ARTIFACTS_CONFIG=artifacts.yml reusable-ci config validate
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -391,6 +613,15 @@ container-image helpers (name resolution, manifests, namespace policy, tag/label
 ### `reusable-ci container attest`
 
 attach a signed in-toto attestation (slsaprovenance1 | cyclonedx | spdx) to an OCI image with cosign; registry-attached, verifiable with cosign verify-attestation
+
+```
+EXAMPLES:
+   # SLSA v1.0 provenance (predicate generated from the CI environment), keyless
+   reusable-ci container attest ghcr.io/org/app@sha256:abc... --type slsaprovenance1 --method sigstore
+
+   # Attach a CycloneDX SBOM as a signed attestation
+   reusable-ci container attest ghcr.io/org/app@sha256:abc... --type cyclonedx --predicate sbom.cdx.json --method sigstore
+```
 
 **Usage:** `reusable-ci container attest <registry/image@sha256:...>`
 
@@ -410,11 +641,26 @@ attach a signed in-toto attestation (slsaprovenance1 | cyclonedx | spdx) to an O
 
 ### `reusable-ci container base-images`
 
-sign, verify, and promote forgejo-ci base-image caches
+sign, verify, and promote base-image caches
+
+```
+Workflow-facing base-image boundary. The commands validate
+flavor/base-input metadata, verify Cosign signatures plus CycloneDX and SLSA
+lineage attestations, sign digest-pinned base images, and promote verified
+candidate images to immutable final base tags. Checkout and pinned-binary
+bootstrap remain owned by the caller.
+```
 
 #### `reusable-ci container base-images cleanup-staging`
 
 delete promoted and stale staging base-image tags safely
+
+```
+Deletes staging container package versions through the Forgejo
+package API, never by manifest digest. Final tags are resolved before and after
+each promoted candidate deletion; stale staging versions are swept only after
+their version names pass the base-image staging policy.
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -423,7 +669,7 @@ delete promoted and stale staging base-image tags safely
 | `--repository-suffix` | optional suffix appended to the repository package name, e.g. -base | `$REPOSITORY_SUFFIX` |
 | `--expected-repository` | exact base-image repository allowed for tags/refs (default: host/lower(owner/repo)<suffix>) | `$EXPECTED_REPOSITORY`, `$BASE_IMAGES_EXPECTED_REPOSITORY` |
 | `--expected-source` | source repository URL expected in SLSA lineage (default: <server-url>/<repository>) | `$EXPECTED_SOURCE`, `$BASE_IMAGES_EXPECTED_SOURCE` |
-| `--caller-workflow` | workflow filename expected in SLSA lineage | `$EXPECTED_WORKFLOW`, `$CALLER_WORKFLOW` |
+| `--expected-workflow` | workflow filename expected in SLSA lineage | `$EXPECTED_WORKFLOW` |
 | `--registry` | registry host for promotion auth (default: host from --server-url) | `$CONTAINER_REGISTRY` |
 | `--shared-core-images-json` | JSON array of shared-core base image metadata | `$SHARED_CORE_IMAGES_JSON` |
 | `--base-images-json` | JSON array of base image metadata | `$BASE_IMAGES_JSON` |
@@ -433,6 +679,23 @@ delete promoted and stale staging base-image tags safely
 #### `reusable-ci container base-images freshness`
 
 compare pinned base-image digests with their upstream source tags
+
+```
+Resolves each check's moving source tag in the registry and compares it
+with the digest the repo actually pins, emitting a stale-count output.
+Config errors (unpinned refs, malformed source tags) always fail.
+
+--enforce=true is the scheduled-cron mode: stale or unfetchable digests
+fail the run. --enforce=false is the release-path mode: pins are for
+reproducibility, so drift and registry blips only warn — currency stays
+enforced out of band by the cron and renovate.
+
+EXAMPLE:
+   reusable-ci container base-images freshness --enforce=false --checks-json '[
+     {"name":"DEBIAN_IMAGE",
+      "pinned-ref":"docker.io/library/debian:trixie-slim@sha256:<hex>",
+      "source-tag":"docker.io/library/debian:trixie-slim"}]'
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -450,7 +713,7 @@ verify base-image evidence and promote candidate refs to immutable final tags
 | `--repository-suffix` | optional suffix appended to the repository package name, e.g. -base | `$REPOSITORY_SUFFIX` |
 | `--expected-repository` | exact base-image repository allowed for tags/refs (default: host/lower(owner/repo)<suffix>) | `$EXPECTED_REPOSITORY`, `$BASE_IMAGES_EXPECTED_REPOSITORY` |
 | `--expected-source` | source repository URL expected in SLSA lineage (default: <server-url>/<repository>) | `$EXPECTED_SOURCE`, `$BASE_IMAGES_EXPECTED_SOURCE` |
-| `--caller-workflow` | workflow filename expected in SLSA lineage | `$EXPECTED_WORKFLOW`, `$CALLER_WORKFLOW` |
+| `--expected-workflow` | workflow filename expected in SLSA lineage | `$EXPECTED_WORKFLOW` |
 | `--registry` | registry host for promotion auth (default: host from --server-url) | `$CONTAINER_REGISTRY` |
 | `--cosign-public-key-path` | relative path to the trusted Cosign public key in the consumer checkout | `$COSIGN_PUBLIC_KEY_PATH` |
 | `--cosign-public-key-sha256` | expected sha256 digest of the trusted Cosign public key | `$COSIGN_PUBLIC_KEY_SHA256` |
@@ -459,7 +722,7 @@ verify base-image evidence and promote candidate refs to immutable final tags
 | `--registry-username` | registry username; the password is read from --registry-password-file or $REGISTRY_TOKEN / $REGISTRY_PASSWORD | `$REGISTRY_USER`, `$REGISTRY_USERNAME` |
 | `--registry-password-file` | file containing the registry password/token ("-" reads stdin); defaults to $REGISTRY_TOKEN then $REGISTRY_PASSWORD. The password never appears in argv. | n/a |
 
-#### `reusable-ci container base-images verify-existing`
+#### `reusable-ci container base-images verify`
 
 verify existing immutable final base-image tags and report missing flavors
 
@@ -470,7 +733,7 @@ verify existing immutable final base-image tags and report missing flavors
 | `--repository-suffix` | optional suffix appended to the repository package name, e.g. -base | `$REPOSITORY_SUFFIX` |
 | `--expected-repository` | exact base-image repository allowed for tags/refs (default: host/lower(owner/repo)<suffix>) | `$EXPECTED_REPOSITORY`, `$BASE_IMAGES_EXPECTED_REPOSITORY` |
 | `--expected-source` | source repository URL expected in SLSA lineage (default: <server-url>/<repository>) | `$EXPECTED_SOURCE`, `$BASE_IMAGES_EXPECTED_SOURCE` |
-| `--caller-workflow` | workflow filename expected in SLSA lineage | `$EXPECTED_WORKFLOW`, `$CALLER_WORKFLOW` |
+| `--expected-workflow` | workflow filename expected in SLSA lineage | `$EXPECTED_WORKFLOW` |
 | `--registry` | registry host for promotion auth (default: host from --server-url) | `$CONTAINER_REGISTRY` |
 | `--cosign-public-key-path` | relative path to the trusted Cosign public key in the consumer checkout | `$COSIGN_PUBLIC_KEY_PATH` |
 | `--cosign-public-key-sha256` | expected sha256 digest of the trusted Cosign public key | `$COSIGN_PUBLIC_KEY_SHA256` |
@@ -481,6 +744,34 @@ verify existing immutable final base-image tags and report missing flavors
 ### `reusable-ci container build`
 
 build a single native-platform container image with buildah, optionally pushing it by digest
+
+```
+Builds ONE native-platform image (the multi-arch index is assembled separately
+by `container manifest merge`) and, in push-by-digest mode, emits the pushed
+digest for that merge. Authentication is the shared {"auths"} config written by
+`container login`; secrets are read from the 0600 tmpfiles materialized by
+`container materialize-build-secrets` and mounted via `RUN --mount=type=secret`;
+the layer cache is a registry repo. Every flag may also be fed from the
+$REUSABLE_CI_PLAN plan file under the "container build" scope
+(flag > plan > env > default).
+
+MODES (--mode):
+   push-by-digest  build + push, emit the digest (no tag of its own) — publish-container
+   load            build into local storage under --image-ref, for smoke tests — self-runtime
+   local           export a stage's filesystem to --output-dir — binary extraction
+
+EXAMPLES:
+   # Build a single platform and push by digest (the publish-container path)
+   reusable-ci container build --file Containerfile --platform linux/amd64 \
+     --mode push-by-digest --image-ref ghcr.io/org/app
+
+   # Build into local storage for a smoke test
+   reusable-ci container build --mode load --image-ref app:test
+
+   # Build, push by digest, and scan the pushed image in-process
+   reusable-ci container build --mode push-by-digest --image-ref ghcr.io/org/app \
+     --platform linux/amd64 --scan --scan-severity CRITICAL,HIGH
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -506,6 +797,15 @@ build a single native-platform container image with buildah, optionally pushing 
 ### `reusable-ci container build-push-oci-image`
 
 build and push a multi-arch OCI image manifest list with buildah
+
+```
+Builds every platform from a JSON plan into one buildah
+manifest, applies the standard OCI release labels, pushes the manifest list, and
+emits image and digest outputs. This is the reusable-ci implementation of the
+forgejo-ci public build-push-oci-image action contract. Every flag may also be
+fed from the $REUSABLE_CI_PLAN plan file under the "container build-push-oci-image"
+scope (flag > plan > env > default).
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -534,6 +834,12 @@ build and push a multi-arch OCI image manifest list with buildah
 
 print an ARG default declared before the first FROM in a Containerfile
 
+```
+Reads a Containerfile/Dockerfile and prints the value from ARG NAME=...
+before the first FROM. This is intentionally a narrow helper for base-image
+defaults used by bespoke Buildah workflows, not a full Dockerfile frontend.
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--file` | Containerfile/Dockerfile path (required) | `$CONTAINERFILE` |
@@ -543,6 +849,12 @@ print an ARG default declared before the first FROM in a Containerfile
 
 extract a top-level \*.tgz / \*.tar.gz with --strip-components=1 then remove it (no-op when none present)
 
+```
+EXAMPLE:
+   # Run in the directory holding the packed tarball (takes no flags)
+   reusable-ci container extract-npm-tarball
+```
+
 ### `reusable-ci container image`
 
 single-image registry operations
@@ -550,6 +862,13 @@ single-image registry operations
 #### `reusable-ci container image push`
 
 push a local Buildah image to a registry ref and print the verified digest
+
+```
+Pushes one local Buildah image to --destination, verifies the
+raw manifest digest now served by the registry, emits digest/ref outputs, and
+prints the verified digest to stdout for shell command substitution. The registry
+digest is the source of truth; a valid Buildah digestfile must match it.
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -564,6 +883,13 @@ push a local Buildah image to a registry ref and print the verified digest
 
 print an existing image digest only when architecture and labels match
 
+```
+Inspects --ref and prints its digest to stdout only when the
+image has the required architecture and every --require-label key=value pair
+matches the image config labels. Intended for safe tag reuse in workflows: a
+non-matching or missing image exits non-zero and prints no digest.
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--ref` | registry image ref to inspect, e.g. registry.example/owner/app:staging-amd64 (required) | `$IMAGE_USABLE_DIGEST_REF` |
@@ -574,6 +900,22 @@ print an existing image digest only when architecture and labels match
 ### `reusable-ci container image-evidence`
 
 scan local OCI image evidence, including per-platform multi-arch layouts
+
+```
+Runs Trivy against a local OCI layout, never re-pulling the
+image from the registry. With --local-image-ref, the image is first exported
+from Buildah local storage to a temporary OCI layout, then scanned. When
+--sbom-output is set, Syft scans the same local layout and writes CycloneDX JSON.
+With --registry-digest-ref and one --platform, the selected registry image is
+first copied to a temporary OCI layout, then scanned locally.
+
+For multi-platform images, set repeated --platform values and
+--trivy-output-template. reusable-ci prefers --scan-layout when set, otherwise
+exports --local-manifest, otherwise pulls --registry-digest-ref or
+--registry-ref@--digest. Each platform is split into a single-platform OCI layout
+before Trivy runs, because Trivy's
+--input mode does not select a platform from a manifest list.
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -596,6 +938,12 @@ scan local OCI image evidence, including per-platform multi-arch layouts
 
 fetch an image's OCI config labels as compact JSON
 
+```
+Fetches the image config selected by --ref and prints its labels
+as a compact JSON object. --auth-file accepts the Docker/containers auth config
+written by `container login`.
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--ref` | image tag or digest ref to inspect (required) | `$IMAGE_REF` |
@@ -608,6 +956,21 @@ release-image ledger: record image entries and re-validate at the trust boundary
 #### `reusable-ci container ledger add`
 
 validate one image entry and append it to the ledger
+
+```
+EXAMPLES:
+   # Record a pushed image, capturing its digest from the registry
+   reusable-ci container ledger add --kind distroless \
+     --candidate-tag codeberg.org/owner/repo:staging-v1.2.3 \
+     --final-tag codeberg.org/owner/repo:v1.2.3 \
+     --sbom dist/image-sbom.cyclonedx.json --tag v1.2.3 --capture-digest
+
+   # Direct-push consumer with an explicit digest
+   reusable-ci container ledger add --kind alpine \
+     --ref codeberg.org/owner/repo@sha256:… --digest sha256:… \
+     --final-tag codeberg.org/owner/repo:v1.2.3-alpine \
+     --sbom dist/image-sbom-alpine.cyclonedx.json --tag v1.2.3
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -638,6 +1001,11 @@ validate one image entry and append it to the ledger
 
 delete each entry's staging candidate tag after verifying the promoted final tag (leaves candidates in place if unverified)
 
+```
+EXAMPLE:
+   reusable-ci container ledger cleanup --ledger release-images.json --tag v1.2.3
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
@@ -649,6 +1017,11 @@ delete each entry's staging candidate tag after verifying the promoted final tag
 
 merge several per-container ledger files into one (drops exact duplicates); for promoting a multi-container release as a single unit
 
+```
+EXAMPLE:
+   reusable-ci container ledger merge dist/container-a dist/container-b --ledger release-images.json
+```
+
 **Usage:** `reusable-ci container ledger merge <path>... (files, or directories searched for release-images.json)`
 
 | Flag | Description | Env vars |
@@ -658,6 +1031,15 @@ merge several per-container ledger files into one (drops exact duplicates); for 
 #### `reusable-ci container ledger promote`
 
 promote each entry's candidate image to the stage's moving pointer (&lt;base&gt;:&lt;stage&gt;) on the same digest, verifying after each copy; the immutable :&lt;version&gt; tag is build-only
+
+```
+EXAMPLES:
+   # Promote to the :release pointer (release scope requires --tag)
+   reusable-ci container ledger promote --ledger release-images.json --tag v1.2.3 --stage release
+
+   # Preview a staging promotion without touching the registry
+   reusable-ci container ledger promote --ledger release-images.json --stage staging --dry-run
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -675,6 +1057,11 @@ promote each entry's candidate image to the stage's moving pointer (&lt;base&gt;
 
 undo a stage's promotion: delete that stage's pointer tag(s) (e.g. :dev/:staging/:release) that still serve the entry's digest; the immutable :&lt;version&gt; tag is never touched
 
+```
+EXAMPLE:
+   reusable-ci container ledger rollback --ledger release-images.json --tag v1.2.3 --stage release
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
@@ -689,6 +1076,16 @@ undo a stage's promotion: delete that stage's pointer tag(s) (e.g. :dev/:staging
 #### `reusable-ci container ledger sign`
 
 sign and attest every release image recorded in the ledger
+
+```
+Signer-side release-image loop: validates the digest-first ledger,
+resolves each image by candidate_tag or digest ref, cosign-signs the immutable
+digest, generates a CycloneDX image SBOM with syft, attests that SBOM, enriches
+the release SLSA predicate with per-image/base-lineage fields, and attests it.
+
+This is the reusable-ci replacement for forgejo-ci's sign-promote-images.sh sign
+step; promotion remains a separate ledger promote operation.
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -708,6 +1105,11 @@ sign and attest every release image recorded in the ledger
 
 re-validate every entry in the ledger against the release tag (trust-boundary check)
 
+```
+EXAMPLE:
+   reusable-ci container ledger validate --ledger release-images.json --tag v1.2.3
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
@@ -718,6 +1120,11 @@ re-validate every entry in the ledger against the release tag (trust-boundary ch
 
 re-verify each entry's recorded digest against what the registry serves (candidate_tag → final_tag → digest ref); distinct from `validate`, which checks entries against the release tag offline
 
+```
+EXAMPLE:
+   reusable-ci container ledger verify-digests --ledger release-images.json --tag v1.2.3
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
@@ -726,6 +1133,16 @@ re-verify each entry's recorded digest against what the registry serves (candida
 ### `reusable-ci container login`
 
 write registry credentials to the shared OCI auth config used by docker, podman, buildah, skopeo, and cosign
+
+```
+Writes {"auths":{...}} to $REGISTRY_AUTH_FILE / $DOCKER_CONFIG/config.json /
+~/.docker/config.json (first that applies). The password is read from a file or
+stdin or $REGISTRY_PASSWORD — never argv — and the file is written 0600.
+
+EXAMPLES:
+   echo "$TOKEN" | reusable-ci container login --registry ghcr.io --registry-username "$GITHUB_ACTOR" --registry-password-file -
+   reusable-ci container login --registry codeberg.org --registry-username bot   # password from $REGISTRY_TOKEN / $REGISTRY_PASSWORD
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -742,6 +1159,17 @@ write registry credentials to the shared OCI auth config used by docker, podman,
 
 remove a registry's credential from the shared OCI auth config (the inverse of login) — for long-lived self-hosted runners where the auth file outlives the job
 
+```
+Deletes the {"auths":{"<registry>":…}} entry from $REGISTRY_AUTH_FILE /
+$DOCKER_CONFIG/config.json / ~/.docker/config.json (first that applies),
+preserving every other registry's credential. Idempotent: a missing config or
+an absent entry is a successful no-op, so it is safe under "if: always()".
+
+EXAMPLES:
+   reusable-ci container logout --registry ghcr.io
+   reusable-ci container logout   # defaults to $CONTAINER_REGISTRY, else ghcr.io
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--registry` | registry host to log out of (e.g. ghcr.io, codeberg.org) | `$CONTAINER_REGISTRY` |
@@ -755,6 +1183,13 @@ inspect, digest, merge, and push container manifests
 
 print the registry-served raw manifest digest and optionally verify a digestfile
 
+```
+Fetches the raw manifest for --ref, computes its sha256 digest,
+optionally verifies a Buildah --digestfile value against it, emits digest/ref
+outputs, and prints the verified digest to stdout. This works for single image
+manifests and multi-platform indexes alike.
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--ref` | registry image ref whose raw manifest digest should be computed (required) | `$IMAGE_REF`, `$MANIFEST_REF` |
@@ -767,6 +1202,11 @@ print the registry-served raw manifest digest and optionally verify a digestfile
 
 inspect a pushed manifest list and emit image/digest outputs
 
+```
+EXAMPLE:
+   reusable-ci container manifest inspect --image-ref ghcr.io/org/app:v1.2.3
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--image-ref` | fully-qualified image reference (registry/owner/name:tag) to inspect | `$IMAGE_REF` |
@@ -775,6 +1215,13 @@ inspect a pushed manifest list and emit image/digest outputs
 #### `reusable-ci container manifest merge`
 
 create a manifest list from digest marker files and tags
+
+```
+EXAMPLE:
+   # Assemble a multi-arch index from per-arch digest markers and apply tags
+   reusable-ci container manifest merge --image-name ghcr.io/org/app \
+     --tags "v1.2.3" --digests-dir /tmp/digests
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -785,6 +1232,13 @@ create a manifest list from digest marker files and tags
 #### `reusable-ci container manifest push`
 
 push a local Buildah manifest list to a registry ref and print the verified digest
+
+```
+Pushes a local Buildah manifest list to --destination, verifies
+the digest now served by the registry, emits digest/ref outputs, and prints the
+verified digest to stdout for shell command substitution. The registry digest is
+the source of truth; a valid Buildah digestfile must match it.
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -800,6 +1254,15 @@ push a local Buildah manifest list to a registry ref and print the verified dige
 
 unpack REUSABLE_CI_BUILD_SECRETS_JSON into mode-0600 tmpfiles and emit secret-mounts
 
+```
+Reads the JSON envelope of build-secret values forwarded by the caller workflow, writes each declared name to a per-secret tmpfile at mode 0600 under $RUNNER_TEMP/build-secrets, and emits a `secret-mounts` output (id=NAME,src=PATH lines) for `container build --secrets`. Used by publish-container.yml; never invoke directly from an adopter workflow.
+
+EXAMPLE:
+   BUILD_SECRET_NAMES="DB_PASSWORD" \
+   REUSABLE_CI_BUILD_SECRETS_JSON='{"DB_PASSWORD":"…"}' \
+   reusable-ci container materialize-build-secrets
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--names` | newline/comma/space-separated list of build-secret names from containers[].build-secrets | `$BUILD_SECRET_NAMES` |
@@ -810,6 +1273,15 @@ unpack REUSABLE_CI_BUILD_SECRETS_JSON into mode-0600 tmpfiles and emit secret-mo
 
 compute image tags + OCI labels from declarative tag rules
 
+```
+Reads TAG_RULES (newline csv lines), evaluates them against the resolved provider event context, and writes tags/labels/version/json to the platform output sink. Every flag may also be fed from the $REUSABLE_CI_PLAN plan file under the "container metadata" scope (flag > plan > env > default).
+
+EXAMPLES:
+   # Semver tags + OCI labels from a tag rule
+   reusable-ci container metadata --image-name ghcr.io/org/app \
+     --tag-rules "type=semver,pattern={{version}}" --emit-labels
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--image-name` | single base image ref, e.g. ghcr.io/owner/repo (required) | `$IMAGE_NAME` |
@@ -819,9 +1291,82 @@ compute image tags + OCI labels from declarative tag rules
 | `--oci-description` | override for org.opencontainers.image.description | `$OCI_DESCRIPTION` |
 | `--oci-license` | override for org.opencontainers.image.licenses (SPDX id) | `$OCI_LICENSE` |
 
+### `reusable-ci container multiarch-image`
+
+build a multi-arch OCI image in two phases (per-arch build, then manifest assemble)
+
+```
+Two-phase multi-arch image build for CI that fans architectures out
+across parallel jobs: each job runs build-arch (build+push one architecture,
+record its digest), then one job runs assemble (gather the per-arch digests into
+a multi-arch manifest). Use this when arch builds must run as separate jobs;
+container build-push-oci-image builds every platform in a single job instead.
+
+The repository suffix, tag prefix, metadata name, Containerfile, and image title
+are all parameters, so this serves any multi-arch image (a signer image, a base
+image, an app image) — the caller supplies the specifics.
+```
+
+#### `reusable-ci container multiarch-image assemble`
+
+assemble and push the multi-arch manifest from the per-arch builds
+
+```
+Reads <name>-arch-<arch>/<name>-<arch>.json metadata, validates
+that every source image is digest-pinned under the expected repository, assembles
+the multi-arch manifest, and emits image-ref, image-digest, and image-tag
+outputs.
+```
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--auth-file` | registry auth file used by buildah/skopeo | `$REUSABLE_CI_IMAGE_AUTH_FILE` |
+| `--source-sha` | git commit SHA used in image tags and the OCI revision label | `$SOURCE_SHA` |
+| `--server-url` | forge server URL used to derive the registry/repository | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
+| `--repository` | owner/repo used to derive the image repository | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--retry-attempts` | registry push attempts | `$IMAGE_RETRY_ATTEMPTS` |
+| `--retry-delay-seconds` | base delay between registry push retries | `$IMAGE_RETRY_DELAY_SECONDS` |
+| `--repository-suffix` | suffix appended to lower(owner/repo) to form the image repository (e.g. -signer) | `$IMAGE_REPOSITORY_SUFFIX` |
+| `--tag-prefix` | prefix prepended to the source-SHA image and manifest tags (e.g. signer-) | `$IMAGE_TAG_PREFIX` |
+| `--name` | basename for the per-arch/manifest metadata files and dirs shared across the two phases | `$IMAGE_METADATA_NAME` |
+| `--archs` | newline-separated architectures to include | `$IMAGE_ARCHS` |
+| `--metadata-dir` | directory for <name>.json (default <name>-dist) | `$IMAGE_METADATA_DIR` |
+
+#### `reusable-ci container multiarch-image build-arch`
+
+build and push one architecture of the multi-arch image
+
+```
+Builds one image architecture, pushes its temporary architecture
+tag, computes the registry-served manifest digest, and writes <name>-<arch>.json
+for the manifest assembly job.
+```
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--auth-file` | registry auth file used by buildah/skopeo | `$REUSABLE_CI_IMAGE_AUTH_FILE` |
+| `--source-sha` | git commit SHA used in image tags and the OCI revision label | `$SOURCE_SHA` |
+| `--server-url` | forge server URL used to derive the registry/repository | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
+| `--repository` | owner/repo used to derive the image repository | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--retry-attempts` | registry push attempts | `$IMAGE_RETRY_ATTEMPTS` |
+| `--retry-delay-seconds` | base delay between registry push retries | `$IMAGE_RETRY_DELAY_SECONDS` |
+| `--repository-suffix` | suffix appended to lower(owner/repo) to form the image repository (e.g. -signer) | `$IMAGE_REPOSITORY_SUFFIX` |
+| `--tag-prefix` | prefix prepended to the source-SHA image and manifest tags (e.g. signer-) | `$IMAGE_TAG_PREFIX` |
+| `--name` | basename for the per-arch/manifest metadata files and dirs shared across the two phases | `$IMAGE_METADATA_NAME` |
+| `--arch` | target architecture: amd64 or arm64 | `$IMAGE_ARCH` |
+| `--containerfile` | Containerfile to build | `$CONTAINERFILE` |
+| `--context` | directory for the build context | `$BUILD_CONTEXT` |
+| `--title` | org.opencontainers.image.title label value for the built image | `$IMAGE_TITLE` |
+| `--metadata-dir` | directory for <name>-<arch>.json (default <name>-arch-<arch>) | `$IMAGE_METADATA_DIR` |
+
 ### `reusable-ci container platform-plan`
 
 emit platform matrix JSON and per-platform suffix outputs
+
+```
+EXAMPLE:
+   reusable-ci container platform-plan --platforms "linux/amd64,linux/arm64"
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -852,6 +1397,13 @@ print an image repository/name with any tag or digest removed
 
 resolve an image index reference to one platform's digest-pinned ref
 
+```
+Fetches the raw manifest for --ref. Plain single-platform manifests
+return the canonical ref unchanged; multi-platform indexes return image@digest for
+the requested --platform. --auth-file accepts the Docker/containers auth config
+written by `container login`.
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--ref` | image tag or digest ref to inspect (required) | `$IMAGE_REF` |
@@ -861,6 +1413,12 @@ resolve an image index reference to one platform's digest-pinned ref
 #### `reusable-ci container ref resolve`
 
 compute the canonical image reference and emit name=&lt;value&gt;
+
+```
+EXAMPLES:
+   # Canonical ghcr.io reference for a repo (emits name=ghcr.io/org/app)
+   reusable-ci container ref resolve --registry ghcr.io --repository org/app --repository-owner org
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -874,6 +1432,12 @@ compute the canonical image reference and emit name=&lt;value&gt;
 
 print whether OCI labels identify the expected release
 
+```
+Reads a compact JSON object of image labels and prints true or
+false. The source label comparison is case-insensitive to tolerate forge owner
+case drift; revision, version, and ref.name are exact matches.
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--labels-json` | compact JSON object containing image labels (required) | n/a |
@@ -882,34 +1446,17 @@ print whether OCI labels identify the expected release
 | `--ref-name` | expected org.opencontainers.image.ref.name (required) | n/a |
 | `--source` | expected org.opencontainers.image.source (required) | n/a |
 
-### `reusable-ci container release-image`
-
-single release-image verification helpers
-
-#### `reusable-ci container release-image verify-existing`
-
-verify an existing digest-pinned release image before reusing it
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--cosign-public-key-path` | relative path to the trusted Cosign public key in the consumer checkout | `$COSIGN_PUBLIC_KEY_PATH` |
-| `--cosign-public-key-sha256` | expected sha256 digest of the trusted Cosign public key | `$COSIGN_PUBLIC_KEY_SHA256` |
-| `--ref` | digest-pinned image ref to verify (required) | `$IMAGE_REF` |
-| `--expected-tag` | release tag expected in SLSA workflow externalParameters.workflow.ref (required) | `$RELEASE_TAG` |
-| `--expected-commit` | source commit expected in SLSA resolvedDependencies[].digest.gitCommit (required) | `$RELEASE_SHA` |
-| `--expected-source` | source repository URL expected in SLSA workflow externalParameters.workflow.repository (required) | `$EXPECTED_SOURCE` |
-| `--expected-workflow` | workflow path expected in SLSA workflow externalParameters.workflow.path (required) | `$EXPECTED_WORKFLOW` |
-| `--expected-base-ref` | optional digest-pinned base ref expected in SLSA base lineage | `$EXPECTED_BASE_REF` |
-| `--expected-base-input-id` | optional sha256 base input ID expected in SLSA base lineage | `$EXPECTED_BASE_INPUT_ID` |
-| `--allow-reattest` | allow signed/SBOM-attested images with matching OCI identity labels to be re-attested | `$ALLOW_REATTEST` |
-| `--identity-version` | OCI org.opencontainers.image.version expected for --allow-reattest; defaults to --expected-tag | n/a |
-| `--identity-ref-name` | OCI org.opencontainers.image.ref.name expected for --allow-reattest; defaults to --expected-tag | n/a |
-| `--identity-source` | OCI org.opencontainers.image.source expected for --allow-reattest; defaults to --expected-source | n/a |
-| `--auth-file` | Docker/containers auth config for registry label reads and cosign verification | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
-
 ### `reusable-ci container release-images`
 
 high-level release-image signing, promotion, rollback, and cleanup boundary
+
+```
+Workflow-facing release-image boundary. These commands combine the
+digest-first image ledger with short-lived registry auth, signer-safe cosign
+environment isolation, Forgejo package-API tag deletion, and forgejo-ci's
+release-only promotion policy. Lower-level `container ledger` verbs remain
+available for custom workflows; reusable workflows should use this group.
+```
 
 #### `reusable-ci container release-images cleanup`
 
@@ -995,9 +1542,45 @@ sign and attest release images from the confined release-image ledger
 | `--key` | cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
 
+#### `reusable-ci container release-images verify`
+
+verify an existing digest-pinned release image before reusing it
+
+```
+Checks Cosign signature, CycloneDX SBOM attestation, and SLSA
+provenance fields for a digest-pinned release image. With --allow-reattest, a
+provenance mismatch may still return status "reattestable" when the image is
+signed, SBOM-attested, and its OCI release labels match the expected identity.
+The command prints one status token to stdout on success: verified or
+reattestable.
+```
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--cosign-public-key-path` | relative path to the trusted Cosign public key in the consumer checkout | `$COSIGN_PUBLIC_KEY_PATH` |
+| `--cosign-public-key-sha256` | expected sha256 digest of the trusted Cosign public key | `$COSIGN_PUBLIC_KEY_SHA256` |
+| `--ref` | digest-pinned image ref to verify (required) | `$IMAGE_REF` |
+| `--expected-tag` | release tag expected in SLSA workflow externalParameters.workflow.ref (required) | `$RELEASE_TAG` |
+| `--expected-commit` | source commit expected in SLSA resolvedDependencies[].digest.gitCommit (required) | `$RELEASE_SHA` |
+| `--expected-source` | source repository URL expected in SLSA workflow externalParameters.workflow.repository (required) | `$EXPECTED_SOURCE` |
+| `--expected-workflow` | workflow path expected in SLSA workflow externalParameters.workflow.path (required) | `$EXPECTED_WORKFLOW` |
+| `--expected-base-ref` | optional digest-pinned base ref expected in SLSA base lineage | `$EXPECTED_BASE_REF` |
+| `--expected-base-input-id` | optional sha256 base input ID expected in SLSA base lineage | `$EXPECTED_BASE_INPUT_ID` |
+| `--allow-reattest` | allow signed/SBOM-attested images with matching OCI identity labels to be re-attested | `$ALLOW_REATTEST` |
+| `--identity-version` | OCI org.opencontainers.image.version expected for --allow-reattest; defaults to --expected-tag | n/a |
+| `--identity-ref-name` | OCI org.opencontainers.image.ref.name expected for --allow-reattest; defaults to --expected-tag | n/a |
+| `--identity-source` | OCI org.opencontainers.image.source expected for --allow-reattest; defaults to --expected-source | n/a |
+| `--auth-file` | Docker/containers auth config for registry label reads and cosign verification | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
+
 ### `reusable-ci container release-labels`
 
 emit standard OCI release labels as Buildah --label argv tokens
+
+```
+Prints one argv token per line: alternating --label and key=value.
+Shell callers can mapfile/readarray the output and pass the resulting array to
+buildah bud without reimplementing label policy in shell.
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1017,6 +1600,17 @@ emit standard OCI release labels as Buildah --label argv tokens
 
 install Buildah runtime packages and configure job-local storage
 
+```
+Installs missing Buildah/fuse-overlayfs packages when requested,
+writes a job-local containers storage config, prefers overlay/fuse-overlayfs only
+after buildah info and an optional scratch-image probe succeed, and falls back to
+vfs. Emits CONTAINERS_STORAGE_CONF and TMPDIR to the runner env file for later CI
+steps.
+
+EXAMPLE:
+   reusable-ci container setup-buildah --extra-packages "jq skopeo" --summary
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--extra-packages` | whitespace-separated additional apt packages to install | `$SETUP_BUILDAH_EXTRA_PACKAGES` |
@@ -1034,6 +1628,15 @@ install Buildah runtime packages and configure job-local storage
 
 sign an OCI image with cosign (sigstore or kms). Registry-attached storage; signature lives next to the image, not on disk.
 
+```
+EXAMPLES:
+   # Keyless signing (sigstore / OIDC), e.g. from CI
+   reusable-ci container sign ghcr.io/org/app@sha256:abc... --method sigstore
+
+   # KMS-backed signing
+   reusable-ci container sign ghcr.io/org/app@sha256:abc... --method kms --key awskms:///alias/release
+```
+
 **Usage:** `reusable-ci container sign <registry/image@sha256:...>`
 
 | Flag | Description | Env vars |
@@ -1043,45 +1646,14 @@ sign an OCI image with cosign (sigstore or kms). Registry-attached storage; sign
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
 | `--recursive` | walk manifest-list children, signing each per-arch digest in addition to the list itself. Default true (production releases use multi-arch manifest lists). | `$SIGN_RECURSIVE` |
 
-### `reusable-ci container signer-image`
-
-build and assemble forgejo-ci signer images
-
-#### `reusable-ci container signer-image assemble`
-
-assemble and push the forgejo-ci signer multi-arch manifest
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--auth-file` | registry auth file used by buildah/skopeo | `$REUSABLE_CI_SIGNER_AUTH_FILE` |
-| `--source-sha` | git commit SHA used in signer image tags and OCI revision label | `$SOURCE_SHA` |
-| `--server-url` | forge server URL used to derive the registry/repository | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
-| `--repository` | owner/repo used to derive the signer image repository | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
-| `--retry-attempts` | registry push attempts | `$SIGNER_IMAGE_RETRY_ATTEMPTS` |
-| `--retry-delay-seconds` | base delay between registry push retries | `$SIGNER_IMAGE_RETRY_DELAY_SECONDS` |
-| `--archs` | newline-separated signer architectures to include | `$SIGNER_ARCHS` |
-| `--metadata-dir` | directory for signer-image.json | `$SIGNER_METADATA_DIR` |
-
-#### `reusable-ci container signer-image build-arch`
-
-build and push one forgejo-ci signer image architecture
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--auth-file` | registry auth file used by buildah/skopeo | `$REUSABLE_CI_SIGNER_AUTH_FILE` |
-| `--source-sha` | git commit SHA used in signer image tags and OCI revision label | `$SOURCE_SHA` |
-| `--server-url` | forge server URL used to derive the registry/repository | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
-| `--repository` | owner/repo used to derive the signer image repository | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
-| `--retry-attempts` | registry push attempts | `$SIGNER_IMAGE_RETRY_ATTEMPTS` |
-| `--retry-delay-seconds` | base delay between registry push retries | `$SIGNER_IMAGE_RETRY_DELAY_SECONDS` |
-| `--arch` | signer architecture: amd64 or arm64 | `$SIGNER_ARCH` |
-| `--containerfile` | signer image Containerfile | `$SIGNER_CONTAINERFILE` |
-| `--context` | signer image build context | `$SIGNER_CONTEXT` |
-| `--metadata-dir` | directory for signer-image-<arch>.json (default signer-image-arch-<arch>) | `$SIGNER_METADATA_DIR` |
-
 ### `reusable-ci container suffix-extracted-binaries`
 
 rename extracted binaries with a -linux-&lt;arch&gt; suffix
+
+```
+EXAMPLE:
+   reusable-ci container suffix-extracted-binaries --binaries-dir dist --arch amd64
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1097,6 +1669,11 @@ validate one aspect of the container build inputs
 
 verify project-type-specific artifacts are present, warn on COPY-instead-of-rebuild policy
 
+```
+EXAMPLE:
+   reusable-ci container validate artifacts --project-type maven --artifact-dir target --containerfile Containerfile
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--project-type` | ecosystem of the produced artifacts (maven/gradle/npm/go/cargo) (required) | `$PROJECT_TYPE` |
@@ -1107,6 +1684,11 @@ verify project-type-specific artifacts are present, warn on COPY-instead-of-rebu
 
 verify a Containerfile path exists (or glob-resolves uniquely), emit containerfile=&lt;path&gt;
 
+```
+EXAMPLE:
+   reusable-ci container validate containerfile --path Containerfile
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--path` | Containerfile path or glob (e.g. Containerfile, src/*Containerfile) (required) | `$CONTAINERFILE` |
@@ -1114,6 +1696,12 @@ verify a Containerfile path exists (or glob-resolves uniquely), emit containerfi
 #### `reusable-ci container validate namespace`
 
 verify an image lives in the allowed namespace for an enforced registry (no-op for registries not in --enforce-namespace-on)
+
+```
+EXAMPLE:
+   reusable-ci container validate namespace --image-name ghcr.io/org/app \
+     --repository org/app --registry ghcr.io --enforce-namespace org
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1127,6 +1715,14 @@ verify an image lives in the allowed namespace for an enforced registry (no-op f
 
 write a validated digest marker file for manifest merging
 
+```
+Workflow-internal: each per-arch build job records its pushed digest here so
+`container manifest merge` can assemble the multi-arch index.
+
+EXAMPLE:
+   DIGEST=sha256:abc... DIGESTS_DIR=/tmp/digests reusable-ci container write-digest-marker
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--digest` | sha256:… digest written into the per-arch marker file | `$DIGEST` |
@@ -1135,6 +1731,25 @@ write a validated digest marker file for manifest merging
 ## `reusable-ci doctor`
 
 run setup-validation checks against the current repository (artifacts.yml present + valid, release-authorization allowlist when required, workflow id-token permission for sigstore, workflows pin reusable-ci to a tag)
+
+```
+EXAMPLES:
+   # Run all checks in the current directory:
+   reusable-ci doctor
+
+   # Run against a specific repo root:
+   reusable-ci doctor --root /path/to/repo
+
+   # Use a custom artifacts.yml location:
+   reusable-ci doctor --artifacts-file ./custom/artifacts.yml
+
+   # Machine-readable report for a CI gate:
+   reusable-ci doctor --json | jq '.failures'
+
+Exit codes:
+   0   — all checks pass or are warnings
+   1   — at least one FAIL check (ExitCodeValidation)
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1154,6 +1769,11 @@ Swift/macOS lint wrappers (swift-format, swiftlint)
 
 enumerate Swift files via `git ls-files`, run `swift-format lint -s`, and write the step-summary block
 
+```
+EXAMPLE:
+   reusable-ci build swift format-lint --working-dir .
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--working-dir` | directory the file walk is rooted at | `$WORKING_DIRECTORY` |
@@ -1162,6 +1782,11 @@ enumerate Swift files via `git ls-files`, run `swift-format lint -s`, and write 
 #### `reusable-ci lint swift swiftlint`
 
 run `swiftlint lint` with optional --config and write the step-summary block
+
+```
+EXAMPLE:
+   reusable-ci build swift swiftlint --config .swiftlint.yml --fail-on-warning
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1177,6 +1802,16 @@ typed release, snapshot-release, and pull-request plan composition
 
 emit a GitLab child-pipeline YAML that fans the build stage out over the plan
 
+```
+Reads the typed build-stage plan and writes a GitLab child pipeline that
+   includes one build-<eco> component per running artifact. Consumed on GitLab
+   via trigger:{include:{artifact: <out>}}. The same plan JSON GitHub expands
+   natively with strategy: matrix.
+
+EXAMPLE:
+   reusable-ci plan gitlab-build-pipeline --component-ref 1.0.0 --output build-pipeline.yml
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--build-stage-plan-json` | typed build-stage plan JSON (from 'plan release') | `$BUILD_STAGE_PLAN_JSON` |
@@ -1188,6 +1823,17 @@ emit a GitLab child-pipeline YAML that fans the build stage out over the plan
 ### `reusable-ci plan gitlab-publish-pipeline`
 
 emit a GitLab child-pipeline YAML that fans the publish stage out over the plan
+
+```
+Reads the typed publish-stage plan and writes a GitLab child pipeline that
+   includes one publish-<target> component per running target item (Maven
+   Central, GitHub Packages, Google Play, App Store, container). Consumed via
+   trigger:{include:{artifact: <out>}}, the publish-side sibling of
+   gitlab-build-pipeline.
+
+EXAMPLE:
+   reusable-ci plan gitlab-publish-pipeline --component-ref 1.0.0 --output publish-pipeline.yml
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1201,18 +1847,30 @@ emit a GitLab child-pipeline YAML that fans the publish stage out over the plan
 
 compose typed pull-request quality plan contracts
 
+```
+EXAMPLE:
+   reusable-ci plan pr --project-type maven --base-branch main
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--project-type` | primary ecosystem of the project (maven/npm/go/cargo/…) | `$PROJECT_TYPE` |
 | `--base-branch` | base branch the PR targets (used for diff-mode scans) | `$BASE_BRANCH` |
 | `--reusable-ci-binary-ref` | git ref of the reusable-ci binary used in the plan (pinned for reproducibility) | `$REUSABLE_CI_BINARY_REF` |
-| `--lint-engine` | general lint engine to run: nanolinter (default), megalinter, or none (mutually exclusive) | `$LINT_ENGINE` |
+| `--lint-engine` | general lint engine to run: nanolinter, megalinter, or none (default none; mutually exclusive) | `$LINT_ENGINE` |
 | `--linter-swiftformat` | include the swift-format lint gate in the plan | `$LINTER_SWIFTFORMAT` |
 | `--linter-swiftlint` | include the swiftlint lint gate in the plan | `$LINTER_SWIFTLINT` |
 
 ### `reusable-ci plan release`
 
 compose typed release and stage plan contracts
+
+```
+CONFIG_PLAN_JSON is produced by `config parse-artifacts`.
+
+EXAMPLE:
+   CONFIG_PLAN_JSON="$(reusable-ci config parse-artifacts)" reusable-ci plan release --tag v1.2.3 --branch main
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1232,6 +1890,12 @@ compose typed release and stage plan contracts
 ### `reusable-ci plan snapshot-release`
 
 compose typed snapshot-release and stage plan contracts
+
+```
+EXAMPLE:
+   CONFIG_PLAN_JSON="$(reusable-ci config parse-artifacts)" \
+   reusable-ci plan snapshot-release --project-type npm --branch main
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1257,6 +1921,21 @@ compose typed snapshot-release and stage plan contracts
 
 write or extend the plan file that feeds command flags
 
+```
+The generated counterpart of hand-set env blocks: workflows compute
+their values once, write them into the plan with this verb, and export
+$REUSABLE_CI_PLAN so later commands read them (flag > plan > env >
+default). Writing is STRICT: the scope must name a real command and
+every key must be one of its flags, so a typo fails the workflow here
+instead of silently falling through to an env var or default. The plan
+is merged scope-by-scope, so each stage can add its own section, and
+the file's sha256 is printed and emitted for auditing.
+
+EXAMPLE:
+   reusable-ci plan write --scope "container build" \
+     --set context=. --set platform=linux/amd64 --set mode=push-by-digest
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--scope` | command path the values feed, e.g. "container build" (required) | `$PLAN_SCOPE` |
@@ -1270,6 +1949,17 @@ CI-runtime git + workspace operations (check out a repo, resolve a ref, inspect 
 ### `reusable-ci platform checkout`
 
 exact, credential-free, sha256-aware checkout of a repository into the workspace
+
+```
+Git-based checkout that works in minimal containers and for sha256 repositories. Resolves the object format from the forge, materializes the workspace at the given ref, and writes the resolved commit SHA to the output sink. The token (when set) is sent as transient HTTP Basic auth and never persisted to .git/config.
+
+EXAMPLES:
+   # Check out a tag of a repo into the current directory
+   reusable-ci platform checkout --repository org/app --ref v1.2.3
+
+   # Shallow checkout into a subdirectory
+   reusable-ci platform checkout --repository org/app --ref main --depth 1 --path app
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1291,6 +1981,12 @@ exact, credential-free, sha256-aware checkout of a repository into the workspace
 
 print workspace listing + .github-shared listing + GitHub action context
 
+```
+EXAMPLE:
+   # Print the workspace + action context for debugging (takes no required flags)
+   reusable-ci platform debug-workspace
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--action-repository` | the calling action's repository (printed in the debug block) | `$ACTION_REPOSITORY` |
@@ -1299,6 +1995,11 @@ print workspace listing + .github-shared listing + GitHub action context
 ### `reusable-ci platform resolve-ref`
 
 resolve a remote git ref to a commit SHA output
+
+```
+EXAMPLE:
+   reusable-ci platform resolve-ref --remote-url https://github.com/org/app --ref v1.2.3
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1318,6 +2019,11 @@ Apple App Store publish helpers
 
 find an IPA artifact and emit ipa-file
 
+```
+EXAMPLE:
+   reusable-ci publish appstore find-ipa --artifact-dir artifacts
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--artifact-dir` | directory scanned for an .ipa artifact | `$ARTIFACT_DIR` |
@@ -1326,6 +2032,11 @@ find an IPA artifact and emit ipa-file
 
 parse altool upload-result JSON and emit request-id
 
+```
+EXAMPLE:
+   reusable-ci publish appstore parse-upload-result --path upload-result.json
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--path` | path to the altool upload-result JSON to parse | `$UPLOAD_RESULT` |
@@ -1333,6 +2044,12 @@ parse altool upload-result JSON and emit request-id
 #### `reusable-ci publish appstore prepare-credentials`
 
 decode the App Store Connect API private key to private_keys/AuthKey_&lt;KEY_ID&gt;.p8 (mode 0600)
+
+```
+EXAMPLE:
+   # Key ID from $APP_STORE_CONNECT_API_KEY_ID; base64 key from env or --private-key-file
+   reusable-ci publish appstore prepare-credentials --output-dir private_keys
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1346,6 +2063,19 @@ publish to the forge-native package registry (GitHub Packages / GitLab Package R
 #### `reusable-ci publish forge-packages deploy`
 
 publish to the detected forge's own package registry (Maven or npm)
+
+```
+Resolves the forge-native registry for the active forge + ecosystem (URL +
+   auth), writes a credentialed settings.xml/.npmrc to a 0600 temp file (the
+   token never reaches argv), and runs the deploy — one binary-owned sequence
+   replacing the per-forge inline mvn/npm. The forge is auto-detected (override
+   with --provider). Runs in the current directory; cd into the project first.
+
+   --project-type maven: mvn deploy. --project-type npm: npm publish the *.tgz.
+
+EXAMPLE:
+   cd module && reusable-ci publish forge-packages deploy --project-type maven
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1361,6 +2091,11 @@ Google Play publish helpers
 
 find an AAB artifact and emit aab-file
 
+```
+EXAMPLE:
+   reusable-ci publish google-play find-aab --artifact-dir artifacts
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--artifact-dir` | directory scanned for an .aab artifact | `$ARTIFACT_DIR` |
@@ -1368,6 +2103,12 @@ find an AAB artifact and emit aab-file
 #### `reusable-ci publish google-play validate-credentials`
 
 validate GOOGLE_PLAY_SERVICE_ACCOUNT_JSON is present and looks like a Google service-account key
+
+```
+EXAMPLE:
+   # Credential from env, or --credentials-file ("-" for stdin)
+   reusable-ci publish google-play validate-credentials
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1381,6 +2122,11 @@ maven central pre-flight checks
 
 validate settings.xml (if set) and run `mvn deploy -P&lt;profile&gt; -DskipTests`
 
+```
+EXAMPLE:
+   reusable-ci publish maven-central deploy --profile release --settings-path settings.xml
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--cli-opts` | extra args forwarded to mvn (whitespace-separated, e.g. "-B -ntp") | `$MAVEN_CLI_OPTS` |
@@ -1391,6 +2137,12 @@ validate settings.xml (if set) and run `mvn deploy -P&lt;profile&gt; -DskipTests
 
 verify sources + javadoc JARs are present under \*/target/ before deploying to Maven Central
 
+```
+EXAMPLE:
+   # Run from the build root after a Maven build (takes no flags)
+   reusable-ci publish maven-central validate-artifacts
+```
+
 ### `reusable-ci publish npm`
 
 npm publish pre-flight checks
@@ -1398,6 +2150,11 @@ npm publish pre-flight checks
 #### `reusable-ci publish npm find-tarball`
 
 find a top-level npm tarball and emit tarball
+
+```
+EXAMPLE:
+   reusable-ci publish npm find-tarball --working-dir .
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1407,9 +2164,20 @@ find a top-level npm tarball and emit tarball
 
 extract the npm tarball produced by `npm pack`, verify dist/cli.js is present
 
+```
+EXAMPLE:
+   # Run in the directory holding the packed tarball (takes no flags)
+   reusable-ci publish npm validate-tarball
+```
+
 #### `reusable-ci publish npm validate-version`
 
 validate that package@version is unpublished (fails if the version already exists in the registry)
+
+```
+EXAMPLE:
+   reusable-ci publish npm validate-version --name @examplescope/app --version 1.2.3
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1421,6 +2189,11 @@ validate that package@version is unpublished (fails if the version already exist
 #### `reusable-ci publish npm write-npmrc`
 
 compose a .npmrc with registry + scope, emitting the literal ${NODE_AUTH_TOKEN} placeholder
+
+```
+EXAMPLE:
+   reusable-ci publish npm write-npmrc --registry https://registry.npmjs.org --scope @examplescope --output .npmrc
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1435,6 +2208,14 @@ release-flow helpers (GPG lifecycle, signing, checksums, notes, create, attachme
 ### `reusable-ci release assemble`
 
 stage the canonical release file set and write release-assembly.json
+
+```
+CONFIG_PLAN_JSON is produced by `config parse-artifacts`.
+
+EXAMPLE:
+   CONFIG_PLAN_JSON="$(reusable-ci config parse-artifacts)" \
+   reusable-ci release assemble --project-name app --version 1.2.3 --release-artifacts-dir dist
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1451,6 +2232,18 @@ stage the canonical release file set and write release-assembly.json
 ### `reusable-ci release assemble-dist`
 
 assemble a release dist/ hand-off from run artifacts and image ledgers
+
+```
+Downloads named current-run artifacts or a typed artifact-transfer plan,
+optionally merges per-image release ledgers into dist/release-images.json,
+prunes top-level directories on request, computes the canonical release hand-off
+digest, and writes a digest output for the signing job. Every flag may
+also be fed from the $REUSABLE_CI_PLAN plan file under the
+"release assemble-dist" scope (flag > plan > env > default).
+
+EXAMPLE:
+   reusable-ci release assemble-dist --artifact-names build-a --path dist/
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1472,6 +2265,11 @@ plan and upload release attachments
 
 emit effective release attachment globs including extracted binaries
 
+```
+EXAMPLE:
+   reusable-ci release attachments plan --user-attach "docs/*.pdf" --binaries-dir dist
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--user-attach` | comma-separated globs the workflow explicitly asks to attach | `$USER_ATTACH` |
@@ -1482,6 +2280,11 @@ emit effective release attachment globs including extracted binaries
 
 expand a glob pattern and attach matching files to the platform release (gh release upload --clobber)
 
+```
+EXAMPLE:
+   reusable-ci release attachments upload --tag v1.2.3 --pattern "dist/*.zip"
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--tag` | tag of the existing release to attach to (e.g. v1.2.3) (required) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
@@ -1491,6 +2294,11 @@ expand a glob pattern and attach matching files to the platform release (gh rele
 ### `reusable-ci release checksums`
 
 compute SHA256 over release artefacts, attached patterns, and SBOM layers
+
+```
+EXAMPLE:
+   reusable-ci release checksums --release-artifacts-dir dist --output checksums.sha256
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1504,6 +2312,20 @@ compute SHA256 over release artefacts, attached patterns, and SBOM layers
 
 print the current release dist/ hand-off digest
 
+```
+Computes the digest used by release verify-dist: the SHA-256 of
+the sorted sha256sum manifest for every regular file under --dist-dir. This is
+byte-compatible with forgejo-ci's dist-digest.sh and exists for compatibility
+while release hand-offs migrate to the reusable-ci binary.
+
+Set --manifest-root to override the path prefix written into the manifest; use
+--manifest-root . for artifact contents that are staged under different
+directory names by producer and verifier.
+
+EXAMPLE:
+   reusable-ci release dist-digest --dist-dir dist
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--dist-dir` | directory whose release hand-off digest is printed | n/a |
@@ -1512,6 +2334,16 @@ print the current release dist/ hand-off digest
 ### `reusable-ci release download-artifacts`
 
 download release artifacts from the explicit artifact-transfer plan
+
+```
+Runs inside a CI job: the forge, repository, run and runner token come from
+the job environment (there is no --token flag). See `reusable-ci --help`.
+
+ARTIFACT_TRANSFER_PLAN_JSON comes from the release orchestrator's plan step.
+
+EXAMPLE (as a workflow step):
+   reusable-ci release download-artifacts --run-id 123456 --repository org/app
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1590,6 +2422,11 @@ manage the release GPG key (import / cleanup)
 
 delete the imported GPG key and stop gpg-agent (idempotent; safe under if: always())
 
+```
+EXAMPLE:
+   reusable-ci release gpg cleanup --fingerprint 1234ABCD...
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--fingerprint` | GPG key fingerprint to delete from the local keyring | `$GPG_FINGERPRINT` |
@@ -1597,6 +2434,12 @@ delete the imported GPG key and stop gpg-agent (idempotent; safe under if: alway
 #### `reusable-ci release gpg import`
 
 import a GPG private key, optionally cache the passphrase, optionally configure git signing
+
+```
+EXAMPLE:
+   # Key + passphrase from files (or stdin via "-"); defaults to $GPG_PRIVATE_KEY / $GPG_PASSPHRASE
+   reusable-ci release gpg import --private-key-file key.asc --git-user-signingkey --git-commit-gpgsign
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1610,6 +2453,13 @@ import a GPG private key, optionally cache the passphrase, optionally configure 
 
 GPG detach-sign .deb/.rpm/.apk packages with binary .sig sidecars
 
+```
+Imports the supplied GPG private key into an ephemeral GNUPGHOME,
+verifies the imported key fingerprint, signs distro packages under --dir, and
+then removes the temporary keyring. The private key is passed to gpg via stdin;
+the passphrase is passed via gpg --passphrase-fd 0.
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--private-key-file` | path to armored GPG private key (use "-" for stdin; defaults to $GPG_PRIVATE_KEY or $GPG_SIGNING_KEY) | n/a |
@@ -1620,6 +2470,11 @@ GPG detach-sign .deb/.rpm/.apk packages with binary .sig sidecars
 ### `reusable-ci release notes`
 
 prepare release-notes file from changelog artifact, fall back to a stub when missing
+
+```
+EXAMPLE:
+   reusable-ci release notes --source-file CHANGELOG.md --target-file release-notes.md --release-version v1.2.3
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1632,6 +2487,15 @@ prepare release-notes file from changelog artifact, fall back to a stub when mis
 
 validate/prune a dist hand-off, compute its digest, and emit digest output before artifact upload
 
+```
+Validates and prepares the unsigned dist/ hand-off before upload:
+optionally prunes top-level directories, computes the canonical release dist
+digest, writes digest=<sha256> to the CI output sink, and logs the digest.
+
+EXAMPLE:
+   reusable-ci release prepare-dist --path dist/ --prune-dirs false
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--path` | directory to prepare for upload | `$DIST_DIR`, `$UPLOAD_DIST_PATH` |
@@ -1640,6 +2504,20 @@ validate/prune a dist hand-off, compute its digest, and emit digest output befor
 ### `reusable-ci release provenance`
 
 generate an in-toto/SLSA-v1.0 provenance statement from a checksums file
+
+```
+Reads GoReleaser-format checksums and emits a signed-ready in-toto
+Statement (SLSA Provenance v1.0). Sign the output with cosign sign-blob.
+
+Context (repository, ref, commit) is read from the active provider; the
+workflow, run id, and build timestamp come from flags/env. The build
+timestamp defaults to $SOURCE_DATE_EPOCH for reproducibility. Every flag
+may also be fed from the $REUSABLE_CI_PLAN plan file under the
+"release provenance" scope (flag > plan > env > default).
+
+EXAMPLE:
+   reusable-ci release provenance --checksum-file checksums.sha256 --method sigstore --output provenance.json
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1659,6 +2537,25 @@ generate an in-toto/SLSA-v1.0 provenance statement from a checksums file
 ### `reusable-ci release publish`
 
 create or update a release and its assets on the detected platform
+
+```
+The default --strategy=reconcile creates the release if missing and
+updates it and its assets in place. --strategy=recreate deletes any
+existing release first and recreates it with the computed asset set.
+
+EXAMPLES:
+   # Publish assets listed in the release file manifest
+   reusable-ci release publish --tag=v1.2.3 --repository=examplescope/myapp \
+       --release-name="myapp v1.2.3" --manifest=dist/release-files.json
+
+   # Publish an explicit asset list instead of reading the manifest
+   reusable-ci release publish --tag=v1.2.3 --repository=examplescope/myapp \
+       --release-notes-file=dist/release-notes.md --asset=dist/myapp.tar.gz --asset=dist/checksums.txt
+
+   # Delete-and-recreate with assets from an assembly manifest
+   reusable-ci release publish --strategy=recreate --tag=v1.2.3 \
+       --repository=examplescope/myapp --assembly=.reusable-ci/release-assembly.json
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1688,6 +2585,11 @@ compute canonical artifact names / release metadata
 
 print the canonical upload-artifact name pair for a project type
 
+```
+EXAMPLE:
+   reusable-ci release resolve artifact-name --project-type maven
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--project-type` | ecosystem driving the artifact naming (maven/gradle/npm/go/cargo/…) (required) | `$PROJECT_TYPE` |
@@ -1696,6 +2598,11 @@ print the canonical upload-artifact name pair for a project type
 #### `reusable-ci release resolve metadata`
 
 compute version / version-no-v / project-name from the release inputs
+
+```
+EXAMPLE:
+   reusable-ci release resolve metadata --version v1.2.3 --repository org/app
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1706,6 +2613,11 @@ compute version / version-no-v / project-name from the release inputs
 ### `reusable-ci release sbom-zip`
 
 bundle all SBOM layers into &lt;project&gt;-&lt;version&gt;-sboms.zip; optionally sign via --sign + --method
+
+```
+EXAMPLE:
+   reusable-ci release sbom-zip --project-name app --version 1.2.3 --sbom-dir sboms
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1724,6 +2636,22 @@ bundle all SBOM layers into &lt;project&gt;-&lt;version&gt;-sboms.zip; optionall
 ### `reusable-ci release sign`
 
 detach-sign checksums.sha256, release artifacts, and attached artifacts. Method selectable via --method: gpg (default; .asc sidecar), sigstore (keyless cosign; .bundle sidecar), or kms (cosign + --key; .bundle sidecar).
+
+```
+Every flag except --debug-allow-swap (deliberately argv-only) may also be
+fed from the $REUSABLE_CI_PLAN plan file under the "release sign" scope
+(flag > plan > env > default).
+
+EXAMPLES:
+   # GPG-sign the checksums + every file in dist/ (key from $GPG_PRIVATE_KEY)
+   reusable-ci release sign --method=gpg --release-artifacts-dir dist
+
+   # Keyless (cosign) sign on a forge with an OIDC issuer
+   reusable-ci release sign --method=sigstore --checksums-file checksums.sha256
+
+   # KMS-backed cosign signing
+   reusable-ci release sign --method=kms --key hashivault://transit/keys/release
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1765,6 +2693,11 @@ configure SSH-based git commit/tag signing (setup / cleanup)
 
 remove the SSH signing key file (idempotent; safe under if: always())
 
+```
+EXAMPLE:
+   reusable-ci release ssh cleanup
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--key-path` | key file to remove (default: $RUNNER_TEMP/reusable-ci-ssh-signing-key) | `$SSH_SIGNING_KEY_PATH` |
@@ -1772,6 +2705,12 @@ remove the SSH signing key file (idempotent; safe under if: always())
 #### `reusable-ci release ssh setup`
 
 write the SSH signing key and configure git (gpg.format=ssh, user.signingkey)
+
+```
+EXAMPLE:
+   # Key from a file (or stdin via "-"); defaults to $SSH_SIGNING_KEY
+   reusable-ci release ssh setup --private-key-file id_ed25519 --git-commit-sign
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1786,6 +2725,11 @@ write the SSH signing key and configure git (gpg.format=ssh, user.signingkey)
 
 verify the generated changelog artifact for this release exists and print a preview
 
+```
+EXAMPLE:
+   reusable-ci release verify-changelog --changelog-file CHANGELOG.md
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--changelog-file` | path to the generated changelog file to verify (required) | `$CHANGELOG_FILE` |
@@ -1793,6 +2737,20 @@ verify the generated changelog artifact for this release exists and print a prev
 ### `reusable-ci release verify-dist`
 
 verify a dist/ tree is structurally safe and matches an expected digest (cross-job integrity)
+
+```
+Rejects a dist/ that is a symlink, contains symlinks, contains
+non-regular entries, or has control characters in any path, then
+recomputes its canonical digest and fails on mismatch. The digest
+algorithm is byte-compatible with forgejo-ci's dist-digest.sh.
+
+Set --manifest-root to override the path prefix written into the manifest during
+digest recomputation; use --manifest-root . for artifact contents that are
+staged under different directory names by producer and verifier.
+
+EXAMPLE:
+   reusable-ci release verify-dist --dist-dir dist --expected-digest sha256:abc...
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1804,6 +2762,11 @@ verify a dist/ tree is structurally safe and matches an expected digest (cross-j
 
 verify an SSH-signed release-request tag authorizes creating a final release tag
 
+```
+EXAMPLE:
+   reusable-ci release verify-request --release-request release-request/v1.2.3 --tag v1.2.3 --allowed-signers-file .forgejo/release-request.allowed_signers
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--release-request` | release request tag (release-request/vMAJOR.MINOR.PATCH) (required) | `$RELEASE_REQUEST` |
@@ -1814,6 +2777,11 @@ verify an SSH-signed release-request tag authorizes creating a final release tag
 ### `reusable-ci release verify-tag`
 
 re-verify the release tag against the remote: checkout==release-sha, tag points to it, and not superseded
+
+```
+EXAMPLE:
+   reusable-ci release verify-tag --tag v1.2.3 --release-sha abc... --repo-url https://github.com/org/app
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1832,6 +2800,11 @@ append a per-ecosystem build summary to the step summary
 #### `reusable-ci report build android`
 
 append the Android variants build summary block to the step summary
+
+```
+EXAMPLE:
+   reusable-ci report build android --version 1.2.3 --version-code 42 --java-version 21
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1853,6 +2826,11 @@ append the Android variants build summary block to the step summary
 
 append the Go build summary block to the step summary
 
+```
+EXAMPLE:
+   reusable-ci report build go --binary-name app --version 1.2.3 --platforms linux/amd64,linux/arm64
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--binary-name` | name of the produced Go binary | `$BINARY_NAME` |
@@ -1865,6 +2843,11 @@ append the Go build summary block to the step summary
 
 append the Gradle (JVM) build summary block to the step summary
 
+```
+EXAMPLE:
+   reusable-ci report build gradle --version 1.2.3 --java-version 21 --tasks "build"
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--java-version` | JDK major version used for the build | `$JAVA_VERSION` |
@@ -1875,6 +2858,11 @@ append the Gradle (JVM) build summary block to the step summary
 #### `reusable-ci report build maven`
 
 append the Maven build summary block to the step summary
+
+```
+EXAMPLE:
+   reusable-ci report build maven --group-id com.example --artifact-id app --version 1.2.3 --java-version 21
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1890,6 +2878,11 @@ append the Maven build summary block to the step summary
 
 append the NPM build summary block to the step summary
 
+```
+EXAMPLE:
+   reusable-ci report build npm --package-name @org/app --version 1.2.3 --node-version 22
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--package-name` | npm package name from package.json | `$PACKAGE_NAME` |
@@ -1900,6 +2893,11 @@ append the NPM build summary block to the step summary
 #### `reusable-ci report build xcode`
 
 append the Xcode build summary block to the step summary
+
+```
+EXAMPLE:
+   reusable-ci report build xcode --scheme App --version 1.2.3 --configuration Release
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1916,6 +2914,11 @@ append the Xcode build summary block to the step summary
 
 append the extracted container binaries summary block
 
+```
+EXAMPLE:
+   reusable-ci report extracted-binaries --binaries-dir dist --artifact-name app
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--binaries-dir` | directory containing the extracted binaries (scanned recursively) | `$BINARIES_DIR` |
@@ -1930,6 +2933,18 @@ append the extracted container binaries summary block
 
 record this job's outcome for cross-job stage aggregation
 
+```
+Writes $CI_RESULTS_DIR/jobs/<name>.json with this job's outcome, for a
+   downstream `report stage-result` to aggregate. Run it as the job's
+   last, always-run step; --status takes the runner's own job status
+   (GitHub ${{ job.status }} / GitLab $CI_JOB_STATUS). The status is read
+   fail-closed: an unknown value records a failure, never a skip.
+
+EXAMPLE:
+   # GitHub: trailing 'if: always()' step
+   reusable-ci report job-result --name nanolinter --status "$JOB_STATUS"
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--name` | this job's name; must match the stage-plan target it aggregates against (required) | `$JOB_NAME` |
@@ -1938,6 +2953,11 @@ record this job's outcome for cross-job stage aggregation
 ### `reusable-ci report pr`
 
 append the PR step-summary (quality table + run link)
+
+```
+EXAMPLE:
+   reusable-ci report pr --project-type maven --source-branch feature/x --actor octocat
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1957,6 +2977,11 @@ append a per-target publish summary to the step summary
 
 append the App Store Connect upload summary block to the step summary
 
+```
+EXAMPLE:
+   reusable-ci report publish appstore --ipa-file App.ipa --platform ios
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--ipa-file` | uploaded .ipa file path (shown in the summary row) | `$IPA_FILE` |
@@ -1969,6 +2994,11 @@ append the App Store Connect upload summary block to the step summary
 
 append the forge-native package-registry publish summary block to the step summary
 
+```
+EXAMPLE:
+   reusable-ci report publish forge-packages --repository org/app --package-type maven
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--repository` | "owner/repo" the package was published from | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
@@ -1978,6 +3008,11 @@ append the forge-native package-registry publish summary block to the step summa
 #### `reusable-ci report publish google-play`
 
 append the Google Play upload summary block to the step summary
+
+```
+EXAMPLE:
+   reusable-ci report publish google-play --aab-file app.aab --track internal
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -1993,6 +3028,11 @@ append the Google Play upload summary block to the step summary
 
 append the Maven Central publish summary block to the step summary
 
+```
+EXAMPLE:
+   reusable-ci report publish maven-central --version 1.2.3
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--version` | published Maven version (used in the summary row) | `$VERSION` |
@@ -2001,6 +3041,11 @@ append the Maven Central publish summary block to the step summary
 ### `reusable-ci report release`
 
 append the release step-summary (job table + release/packages/run links)
+
+```
+EXAMPLE:
+   reusable-ci report release --release-version v1.2.3 --release-branch main
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2023,6 +3068,11 @@ append the release step-summary (job table + release/packages/run links)
 
 append the snapshot-release step-summary (job table, npm install snippet, and links)
 
+```
+EXAMPLE:
+   reusable-ci report snapshot-release --project-type npm --release-sha abc1234
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--project-type` | primary ecosystem (drives the npm-install snippet in the summary) | `$PROJECT_TYPE` |
@@ -2039,6 +3089,23 @@ append the snapshot-release step-summary (job table, npm install snippet, and li
 ### `reusable-ci report stage-result`
 
 compose a typed stage-result manifest from a stage plan and target results
+
+```
+Aggregates a stage's outcome from job records, against the stage plan.
+   The records come from the forge-native source: a --job-results map on
+   GitHub/Forgejo (the summary job passes toJson(needs)), or the per-job records
+   written by `report job-result` and collected from
+   $CI_RESULTS_DIR/jobs/ on GitLab. Either way a planned target with no record
+   is fail-closed to failure. --result supplies outcomes explicitly instead.
+
+EXAMPLE:
+   # GitHub/Forgejo: feed the needs map
+   JOB_RESULTS='{{ toJson(needs) }}' reusable-ci report stage-result --extra project_type=maven
+   # GitLab: aggregate the collected per-job records
+   reusable-ci report stage-result --extra project_type=maven
+   # or supply results explicitly
+   reusable-ci report stage-result --result maven=success --result npm=skipped
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2057,6 +3124,11 @@ append a stage / job / prerequisite status summary
 
 append the Build SBOM status block to the step summary
 
+```
+EXAMPLE:
+   reusable-ci report status build-sbom --ecosystem go --outcome success
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--ecosystem` | ecosystem the Build SBOM was generated for | `$ECOSYSTEM` |
@@ -2066,6 +3138,11 @@ append the Build SBOM status block to the step summary
 #### `reusable-ci report status prerequisites`
 
 append the release prerequisites validation report (tag/commit info, secrets, validations)
+
+```
+EXAMPLE:
+   reusable-ci report status prerequisites --tag v1.2.3 --ref-type tag --job-status success
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2092,11 +3169,21 @@ append the release prerequisites validation report (tag/commit info, secrets, va
 
 append a PR-quality summary block from "Name|enabled|result" args
 
+```
+EXAMPLE:
+   reusable-ci report status quality-check "nanolinter|true|success" "swiftlint|true|skipped"
+```
+
 **Usage:** `reusable-ci report status quality-check <Name|enabled|result> ...`
 
 #### `reusable-ci report status sbom-count`
 
 append SBOM status for multi-artifact bom.json outputs
+
+```
+EXAMPLE:
+   reusable-ci report status sbom-count --kind build --outcome success
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2107,6 +3194,11 @@ append SBOM status for multi-artifact bom.json outputs
 ### `reusable-ci report swift-lint`
 
 write the aggregated Swift lint table to the step summary and exit non-zero when an enabled linter failed
+
+```
+EXAMPLE:
+   reusable-ci report swift-lint --enable-swiftlint --swiftlint-result success
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2119,9 +3211,47 @@ write the aggregated Swift lint table to the step summary and exit non-zero when
 
 CISA-layered SBOM tooling (SPDX + CycloneDX via syft)
 
+```
+Which SBOM verb do I want?
+
+   assemble   PRODUCE a CISA layer set. One verb, three modes by flag/env:
+              (default)        single project — harvest-or-generate the build BOM
+                               + syft-scan artifacts/containers (--layers all).
+              --plan JSON      per-artifact matrix over a config plan (CI).
+              --image-name …   multi-artifact analyzed-container SBOM (CI).
+   build      GENERATE just the build-layer bom.json with the native tool
+              (go/cargo) — the toolchain-runner generate tier `sbom assemble` harvests.
+   find       LOCATE an already-produced SBOM file on disk (emits its path).
+
+Related, outside this group: `release sbom-zip` bundles assembled layers into a release zip.
+```
+
 ### `reusable-ci sbom assemble`
 
 assemble a project's CISA SBOM layer set (harvest the build BOM + syft-scan artifacts/containers)
+
+```
+Assembles the requested CISA layers into canonical SBOM filenames. Runs after
+the build: the 'build' layer harvests the language-native BOM your build emits
+(cyclonedx-gomod / build-go.yml, cyclonedx-maven-plugin, …); the scan layers
+syft-scan a built artifact or a container image.
+
+EXAMPLES:
+   # Assemble every layer for the auto-detected project (the default)
+   reusable-ci sbom assemble
+
+   # Just the build layer (harvested from the pre-produced bom.json) for npm
+   reusable-ci sbom assemble --project-type=npm --layers=build
+
+   # Build + analyzed-container for a Go service (--container-image is
+   # required whenever the analyzed-container layer is requested)
+   reusable-ci sbom assemble --project-type=go \
+       --layers=build,analyzed-container \
+       --container-image=ghcr.io/examplescope/myapp:v1.2.3
+
+   # Bundle the assembled layers into a release-attached zip
+   reusable-ci sbom assemble --project-type=maven --create-zip
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2148,6 +3278,18 @@ assemble a project's CISA SBOM layer set (harvest the build BOM + syft-scan arti
 
 generate the build-layer SBOM with the language-native tool (go/cargo)
 
+```
+Runs the ecosystem's native CycloneDX tool — cyclonedx-gomod (go) or
+   cargo-cyclonedx (cargo) — to produce the build-layer bom.json. These read the
+   lockfile, so no compiled artifact is needed. maven/gradle/npm emit the build
+   BOM as a build byproduct of `build <eco> run`, so they are not generated
+   here. The toolchain-free `sbom assemble` harvests what this produces (or, on
+   a runner that has the toolchain, generates it inline itself).
+
+EXAMPLE:
+   reusable-ci sbom build --project-type go --name myapp --working-dir .
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--project-type` | ecosystem: "go" or "cargo" (lockfile-read; maven/gradle/npm emit the BOM during the build) (required) | `$PROJECT_TYPE` |
@@ -2162,6 +3304,12 @@ locate an existing SBOM artefact on disk
 
 find a \*-analyzed-container-sbom.spdx.json file in cwd, emit sbom-file=&lt;basename&gt;
 
+```
+EXAMPLE:
+   # Run in the directory holding the SBOM (takes no flags)
+   reusable-ci sbom find container
+```
+
 ## `reusable-ci security`
 
 security scanners and report converters
@@ -2174,6 +3322,11 @@ transform or upload a security scan report
 
 populate partialFingerprints.primaryLocationLineHash on every SARIF result for GitHub Code Scanning dedupe
 
+```
+EXAMPLE:
+   reusable-ci security report enrich-sarif --sarif-file results.sarif
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--sarif-file` | SARIF file to read, enrich, and write back ("-" reads stdin) | `$SARIF_FILE` |
@@ -2181,6 +3334,11 @@ populate partialFingerprints.primaryLocationLineHash on every SARIF result for G
 #### `reusable-ci security report to-gitlab-container`
 
 convert Trivy JSON to a GitLab container-scanning report
+
+```
+EXAMPLE:
+   reusable-ci security report to-gitlab-container --input trivy.json --output gl-container-scanning.json
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2193,6 +3351,11 @@ convert Trivy JSON to a GitLab container-scanning report
 
 convert Trivy JSON to a GitLab dependency-scanning report
 
+```
+EXAMPLE:
+   reusable-ci security report to-gitlab-dep --input trivy.json --output gl-dependency-scanning.json
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--input` | Trivy JSON report to convert (required) | `$INPUT_FILE` |
@@ -2203,6 +3366,17 @@ convert Trivy JSON to a GitLab dependency-scanning report
 
 convert a generic SARIF file to a GitLab SAST report
 
+```
+Converts a generic SARIF v2.1.0 document (e.g. from nanolinter) into the
+   GitLab SAST report schema so a merge request's Security tab is populated via
+   artifacts:reports:sast. The scanner identity is read from the SARIF
+   tool.driver; severity comes from properties.security-severity (CVSS) when
+   present, otherwise from the SARIF level.
+
+EXAMPLE:
+   reusable-ci security report to-gitlab-sast --input results.sarif --output gl-sast-report.json
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--input` | SARIF report to convert (required) | `$INPUT_FILE` |
@@ -2211,6 +3385,11 @@ convert a generic SARIF file to a GitLab SAST report
 #### `reusable-ci security report upload-sarif`
 
 upload a SARIF file to the platform's code-scanning surface (GitHub Code Scanning; skipped on GitLab/Forgejo/local, which have no SARIF ingestion)
+
+```
+EXAMPLE:
+   reusable-ci security report upload-sarif --sarif-file results.sarif --category opengrep
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2229,6 +3408,17 @@ run a security scanner against the workspace or an image
 
 run `trivy image`, derive SARIF/GitLab reports, and fail when findings hit the severity threshold
 
+```
+EXAMPLES:
+   # Scan a digest-pinned image, failing on HIGH+ findings
+   reusable-ci security scan container \
+     --image-ref ghcr.io/owner/app@sha256:… --fail-on-severity HIGH
+
+   # Write the trivy JSON for a downstream step
+   reusable-ci security scan container --image-ref ghcr.io/owner/app:v1.2.3 \
+     --json-file dist/trivy.json
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--image-ref` | fully-qualified image (registry/owner/name@sha256:…) to scan (required) | `$IMAGE_REF` |
@@ -2241,6 +3431,13 @@ run `trivy image`, derive SARIF/GitLab reports, and fail when findings hit the s
 #### `reusable-ci security scan container-json`
 
 run `trivy image`, retry transient failures, and validate raw JSON output shape
+
+```
+Runs Trivy against one image/platform and validates that the raw
+JSON output is an object with a top-level Results array. It does not fail on
+vulnerability findings or derive SARIF/GitLab reports; use `security scan container` for a
+severity-gated scanner.
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2256,6 +3453,11 @@ run `trivy image`, retry transient failures, and validate raw JSON output shape
 
 scan project dependencies for known vulnerabilities (Trivy, diff-mode against base ref)
 
+```
+EXAMPLE:
+   reusable-ci security scan dependencies --fail-on-severity high --scan-mode full --scan-path .
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--fail-on-severity` | minimum severity that fails the scan (low/moderate/high/critical) | `$DEPENDENCIES_FAIL_ON_SEVERITY` |
@@ -2269,6 +3471,11 @@ scan project dependencies for known vulnerabilities (Trivy, diff-mode against ba
 #### `reusable-ci security scan opengrep`
 
 run an opengrep SAST scan, emit findings + JSON/SARIF/text/GitLab-SAST artifacts, write step summary
+
+```
+EXAMPLE:
+   reusable-ci security scan opengrep --config "p/owasp-top-ten,p/cwe" --fail-on-severity error
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2300,6 +3507,13 @@ emit setup-toolchain's stable tool-cache discriminator
 
 expose installed mise tool binaries to later CI steps
 
+```
+Lists installed mise tools, appends each existing mise bin-path to the
+runner path file, symlinks executable files into ~/.local/bin, and exposes
+rustup-managed cargo/rustc bins when the repository declares rustup and
+rust-toolchain.toml. Intended to run unconditionally after cache restore/install.
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--root` | repository root containing mise config | `$MISE_PROJECT_ROOT` |
@@ -2310,6 +3524,15 @@ expose installed mise tool binaries to later CI steps
 ### `reusable-ci toolchain install-changelog-renderer`
 
 install the pinned changelog renderer in an isolated mise tree
+
+```
+Installs pinned mise, creates an isolated mise data/cache/state tree,
+installs either git-chglog or git-cliff with mise --no-config, symlinks the real
+renderer binary into ~/.local/bin, and appends that bin directory to the runner
+PATH file for subsequent steps. Every flag may also be fed from the
+$REUSABLE_CI_PLAN plan file under the "toolchain install-changelog-renderer"
+scope (flag > plan > env > default).
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2329,6 +3552,15 @@ install the pinned changelog renderer in an isolated mise tree
 
 download, checksum-verify, and install the pinned mise binary
 
+```
+Installs mise from the official linux-<arch>-musl release
+archive after verifying a caller-owned SHA-256 pin. The version and checksums are
+passed as flags so the consuming CI template owns its pin/update policy while
+reusable-ci owns the download, checksum, archive-shape, and install mechanics.
+Every flag may also be fed from the $REUSABLE_CI_PLAN plan file under the
+"toolchain install-mise" scope (flag > plan > env > default).
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--version` | mise version without leading v (required) | `$MISE_VERSION` |
@@ -2340,6 +3572,15 @@ download, checksum-verify, and install the pinned mise binary
 ### `reusable-ci toolchain install-mise-tools`
 
 install mise-managed CI tools with runtime bootstrap and retry
+
+```
+Runs the setup-toolchain mise install sequence: sanitize child env,
+install declared backend runtimes (uv/go/rust/rustup) first, optionally install a
+caller-selected tool subset, and retry the final mise install. Tokens are inherited
+only as mise-specific env vars and are never passed on argv. Every flag may also be
+fed from the $REUSABLE_CI_PLAN plan file under the "toolchain install-mise-tools"
+scope (flag > plan > env > default).
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2363,6 +3604,11 @@ install apt bootstrap packages when apt-get is available
 
 write setup-toolchain mise PATH/env file entries
 
+```
+Every flag may also be fed from the $REUSABLE_CI_PLAN plan file under
+the "toolchain setup-mise-env" scope (flag > plan > env > default).
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--cache` | setup-toolchain cache mode: true\|false | `$SETUP_CACHE` |
@@ -2383,6 +3629,13 @@ trust the consumer repository mise config in the current directory
 
 validate setup-toolchain's mise install mode before token-bearing work
 
+```
+Checks the mise install policy used by CI setup wrappers: locked mode
+requires a committed mise.lock, unlocked repositories with mise config require the
+caller to confirm a GitHub rate-limit token is present, and locked backend tools
+must pin their runtime (uv for pipx, go for go, rust or rustup+rust-toolchain for cargo).
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--root` | repository root containing mise config | `$MISE_PROJECT_ROOT` |
@@ -2393,9 +3646,39 @@ validate setup-toolchain's mise install mode before token-bearing work
 
 fail-fast pre-flight validators (tag, workflow, auth, secret, …)
 
+```
+Verb convention across the CLI — three distinct concerns:
+
+   validate <x>      a fail-fast PRECONDITION gate run before you act. Mostly
+                     local (semver format, ref-type, secret presence), but some
+                     reach out read-only (`auth token` hits the platform API,
+                     `tag commit` checks remote reachability). The point is to gate
+                     the next step, not to be offline. (Here.)
+   release verify-*  RE-verify an already-produced or remote thing at the trust
+                     boundary, against tampering between jobs: `verify-tag` re-checks
+                     the remote tag still points to the release commit, `verify-dist`
+                     recomputes the dist digest. Lives under the command that owns
+                     the artefact, not here.
+   report status *   render a step-summary block (no checking).
+
+Some validate subcommands read "verify …" in their Usage (signature checks,
+remote-reachability checks); that is intentional where the check cross-checks
+something rather than asserting a local fact.
+```
+
 ### `reusable-ci validate artifact-signature`
 
 verify a release artefact's signature (gpg .asc, or cosign .bundle for sigstore/kms); method auto-detected from sidecars unless --method is set
+
+```
+EXAMPLES:
+   # GPG signature with an armored public key
+   reusable-ci validate artifact-signature --artifact app.tgz --method gpg --public-key-file release.asc
+
+   # Keyless (sigstore) signature, pinning the signer identity
+   reusable-ci validate artifact-signature --artifact app.tgz --method sigstore \
+     --cert-identity-regexp '^https://github\.com/org/' --cert-oidc-issuer https://token.actions.githubusercontent.com
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2416,6 +3699,11 @@ validate one aspect of release-flow authentication
 
 probe the configured release-bot token's repo + branch access
 
+```
+EXAMPLE:
+   reusable-ci validate auth bot-permissions --repository org/app
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--repository` | "owner/repo" on GitHub; "group/project[/sub]" on GitLab (required) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
@@ -2423,6 +3711,11 @@ probe the configured release-bot token's repo + branch access
 #### `reusable-ci validate auth registry`
 
 validate container/package registry authentication configuration before publishing
+
+```
+EXAMPLE:
+   reusable-ci validate auth registry --registry ghcr.io --use-ci-token
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2434,6 +3727,12 @@ validate container/package registry authentication configuration before publishi
 
 validate a release-bot token against the platform API
 
+```
+EXAMPLE:
+   # Token from $RELEASE_TOKEN (or --token-file -)
+   reusable-ci validate auth token --repository org/app
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--token-file` | path to a file containing the release-bot token (use "-" for stdin; defaults to $RELEASE_TOKEN) | n/a |
@@ -2442,6 +3741,13 @@ validate a release-bot token against the platform API
 ### `reusable-ci validate cargo`
 
 verify Cargo.lock/toolchain state for every planned Cargo artefact (both build-modes)
+
+```
+CONFIG_PLAN_JSON is produced by `config parse-artifacts`.
+
+EXAMPLE:
+   CONFIG_PLAN_JSON="$(reusable-ci config parse-artifacts)" reusable-ci validate cargo
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2452,6 +3758,13 @@ verify Cargo.lock/toolchain state for every planned Cargo artefact (both build-m
 
 validate the committed source changelog (e.g. CHANGELOG.md) is present, optionally reading its content into the output sink
 
+```
+Two modes — full (the file must exist; emits a line count) and minimal (file may be absent; emits content=<file body> or content="No changes for this release" via the OutputSink).
+
+EXAMPLE:
+   reusable-ci validate changelog --path CHANGELOG.md --required
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--path` | changelog file path (required) | n/a |
@@ -2460,6 +3773,13 @@ validate the committed source changelog (e.g. CHANGELOG.md) is present, optional
 ### `reusable-ci validate container-attestation`
 
 verify a signed in-toto attestation (slsaprovenance1 | cyclonedx | spdx) on an OCI image (sigstore or kms). Reads from the registry — no local sidecar.
+
+```
+EXAMPLE:
+   reusable-ci validate container-attestation ghcr.io/org/app@sha256:abc... \
+     --type slsaprovenance1 --method sigstore \
+     --cert-identity-regexp '^https://github\.com/org/' --cert-oidc-issuer https://token.actions.githubusercontent.com
+```
 
 **Usage:** `reusable-ci validate container-attestation <registry/image@sha256:...>`
 
@@ -2475,6 +3795,12 @@ verify a signed in-toto attestation (slsaprovenance1 | cyclonedx | spdx) on an O
 
 verify a cosign signature on an OCI image (sigstore or kms). Reads from the registry — no local sidecar.
 
+```
+EXAMPLE:
+   reusable-ci validate container-signature ghcr.io/org/app@sha256:abc... --method sigstore \
+     --cert-identity-regexp '^https://github\.com/org/' --cert-oidc-issuer https://token.actions.githubusercontent.com
+```
+
 **Usage:** `reusable-ci validate container-signature <registry/image@sha256:...>`
 
 | Flag | Description | Env vars |
@@ -2488,6 +3814,16 @@ verify a cosign signature on an OCI image (sigstore or kms). Reads from the regi
 
 refuse to run when the workflow trigger is outside the publish/release allowlist
 
+```
+Defense-in-depth guard placed at the entry of every privileged publish/release workflow. Reads the trigger event and refuses any trigger outside the allowlist — most importantly the pull_request* family, which would otherwise run with the caller's signing/package/API secrets attached to PR-HEAD code. Default allowlist: push, workflow_dispatch, release, schedule, workflow_run, merge_group. Adopters with legitimate PR-context publish needs (preview deploys) override via --allowed-events on the step.
+
+EXAMPLE:
+   # Reads $FORGEJO_EVENT_NAME / $GITHUB_EVENT_NAME, or the detected provider's
+   # event context (GitLab: normalized CI_PIPELINE_SOURCE); refuses pull_request*
+   # and other non-allowlisted triggers
+   reusable-ci validate event-context
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--event-name` | trigger event being checked; read from $FORGEJO_EVENT_NAME / $GITHUB_EVENT_NAME, or from the detected CI provider's event context (GitLab: normalized CI_PIPELINE_SOURCE) when unset | `$EVENT_NAME`, `$FORGEJO_EVENT_NAME`, `$GITHUB_EVENT_NAME` |
@@ -2496,6 +3832,22 @@ refuse to run when the workflow trigger is outside the publish/release allowlist
 ### `reusable-ci validate isolation`
 
 assert SLSA Build L3 job isolation (build job has no signing secrets; checkouts don't persist credentials)
+
+```
+Static SLSA Build L3 gate: the artifact-producing build job must have no
+access to signing secrets (those belong only to the separately-trusted signing
+job), and every actions/checkout step must set persist-credentials: false.
+
+When --sign-job is set, additional Forgejo release-signing invariants are
+checked: prepare release identity outputs, signer secret enumeration, dist-digest
+handoff wiring, prepare-secret-before-checkout ordering, and cache-free
+setup-toolchain use. --single-pin-subject additionally enforces that every
+matching cross-repo reference in the workflow directory uses one commit pin.
+
+EXAMPLE:
+   reusable-ci validate isolation --workflow .github/workflows/release.yml \
+     --build-job build --signing-secret RELEASE_GPG_PRIVATE_KEY --signing-secret COSIGN_PRIVATE_KEY
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2511,6 +3863,18 @@ assert SLSA Build L3 job isolation (build job has no signing secrets; checkouts 
 
 reject reusable-call jobs that read a skippable producer's outputs (masks the real failure)
 
+```
+A reusable-workflow-call job whose if/with reads needs.<P>.outputs where <P>
+is skippable (a non-always() if) makes the forge abort the whole run with a
+misleading "<P> is missing the output ..." that hides the real upstream failure.
+Make such producers run unconditionally (if: always()) and always emit the
+output, or annotate the consumer with '# job-graph-guard: allow reason=...'.
+
+EXAMPLE:
+   reusable-ci validate job-graph --root .
+   reusable-ci validate job-graph --workflow .forgejo/workflows/release.yml
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--root` | repository root containing .github/workflows | n/a |
@@ -2521,6 +3885,13 @@ reject reusable-call jobs that read a skippable producer's outputs (masks the re
 
 warn when Maven/Gradle artefacts lack reproducible-build settings (outputTimestamp / archive-task config)
 
+```
+CONFIG_PLAN_JSON is produced by `config parse-artifacts`.
+
+EXAMPLE:
+   CONFIG_PLAN_JSON="$(reusable-ci config parse-artifacts)" reusable-ci validate jvm-reproducibility
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--config-plan-json` | typed config-plan JSON (output of 'config parse-artifacts') | `$CONFIG_PLAN_JSON` |
@@ -2528,6 +3899,16 @@ warn when Maven/Gradle artefacts lack reproducible-build settings (outputTimesta
 ### `reusable-ci validate pin-reachability`
 
 reject forgejo-ci commit pins that are no longer reachable from main or any tag
+
+```
+Checks workflow files for forgejo-ci@<40-hex-sha> references and fails
+when a pin is not reachable from the configured main branch and is not the
+commit pointed to by any tag. This catches history-rewrite/orphaned-pin failures
+before object GC turns them into confusing runtime failures.
+
+EXAMPLE:
+   reusable-ci validate pin-reachability --workflow .forgejo/workflows/release.yml
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2541,6 +3922,11 @@ reject forgejo-ci commit pins that are no longer reachable from main or any tag
 ### `reusable-ci validate prerequisites`
 
 run all release-prerequisite validators concurrently and append a summary table
+
+```
+EXAMPLE:
+   reusable-ci validate prerequisites --tag v1.2.3 --ref-type tag --repository org/app
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2559,6 +3945,11 @@ run all release-prerequisite validators concurrently and append a summary table
 
 require that the trigger is a tag push
 
+```
+EXAMPLE:
+   reusable-ci validate ref-type --ref-type tag --ref-name v1.2.3
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--ref-type` | trigger ref type ("tag" required for releases) (required) | `$REF_TYPE`, `$FORGEJO_REF_TYPE`, `$GITHUB_REF_TYPE` |
@@ -2573,6 +3964,12 @@ validate that a release-related secret is present in the environment
 
 fail when RELEASE_GPG_PUBLIC_KEY is unset
 
+```
+EXAMPLE:
+   # Reads $RELEASE_GPG_PUBLIC_KEY
+   reusable-ci validate secret gpg-public-key
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--release-gpg-public-key` | armored GPG public key whose presence is asserted (defaults to $RELEASE_GPG_PUBLIC_KEY) | `$RELEASE_GPG_PUBLIC_KEY` |
@@ -2580,6 +3977,12 @@ fail when RELEASE_GPG_PUBLIC_KEY is unset
 #### `reusable-ci validate secret maven-central`
 
 verify $MAVEN_CENTRAL_USERNAME and $MAVEN_CENTRAL_PASSWORD are set
+
+```
+EXAMPLE:
+   # Reads $MAVEN_CENTRAL_USERNAME / $MAVEN_CENTRAL_PASSWORD
+   reusable-ci validate secret maven-central
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2594,6 +3997,11 @@ validate one aspect of a release tag
 
 verify the tag commit is reachable from origin/&lt;branch&gt;
 
+```
+EXAMPLE:
+   reusable-ci validate tag commit --tag v1.2.3 --branch main
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--tag` | tag name (e.g. v1.2.3) (required) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
@@ -2603,6 +4011,11 @@ verify the tag commit is reachable from origin/&lt;branch&gt;
 
 validate a tag against the project's permissive semver pattern
 
+```
+EXAMPLE:
+   reusable-ci validate tag format --tag v1.2.3
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--tag` | tag name (e.g. v1.2.3) (required) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
@@ -2610,6 +4023,11 @@ validate a tag against the project's permissive semver pattern
 #### `reusable-ci validate tag release-guard`
 
 validate a stable release tag or release-request tag and emit normalized outputs
+
+```
+EXAMPLE:
+   reusable-ci validate tag release-guard --tag release-request/v1.2.3
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2619,6 +4037,11 @@ validate a stable release tag or release-request tag and emit normalized outputs
 #### `reusable-ci validate tag signature`
 
 verify a tag is annotated and cryptographically signed (GPG or SSH)
+
+```
+EXAMPLE:
+   reusable-ci validate tag signature --tag v1.2.3 --repository org/app --require-allowlisted-signer
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2633,6 +4056,11 @@ verify a tag is annotated and cryptographically signed (GPG or SSH)
 
 fail when other tags point to the same commit (git-cliff guard)
 
+```
+EXAMPLE:
+   reusable-ci validate tag uniqueness --tag v1.2.3
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--tag` | tag name (e.g. v1.2.3) (required) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
@@ -2645,6 +4073,11 @@ scan reusable workflow YAML for structural rules
 
 reject removed v3-incompatible output contracts and aliases
 
+```
+EXAMPLE:
+   reusable-ci validate workflow contract-residue --root .
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--root` | repository root to scan | n/a |
@@ -2653,6 +4086,11 @@ reject removed v3-incompatible output contracts and aliases
 #### `reusable-ci validate workflow input-defaults`
 
 verify reusable workflow_call input defaults are literal values, not expressions
+
+```
+EXAMPLE:
+   reusable-ci validate workflow input-defaults --root .
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2666,6 +4104,18 @@ version-bump and tag-management helpers
 
 rewrite the version-of-record (Maven POM / package.json / gradle.properties / .xcconfig / Cargo.toml)
 
+```
+EXAMPLES:
+   # Bump a Maven project to 1.2.3 (updates pom.xml and every child)
+   reusable-ci version bump --project-type=maven --version=1.2.3
+
+   # Bump an NPM package; --working-dir locates the project root
+   reusable-ci version bump --project-type=npm --version=2.0.0 --working-dir=./app
+
+   # Bump a Cargo workspace (the [workspace.package].version field)
+   reusable-ci version bump --project-type=cargo --version=0.5.0
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--project-type` | ecosystem driving the bump (maven/gradle/npm/cargo/xcode-ios) (required) | `$PROJECT_TYPE` |
@@ -2678,6 +4128,11 @@ rewrite the version-of-record (Maven POM / package.json / gradle.properties / .x
 ### `reusable-ci version commit-changelog-release`
 
 SSH-sign a pre-rendered changelog commit, push main without force, create the final release tag once
+
+```
+EXAMPLE:
+   reusable-ci version commit-changelog-release --tag v1.2.3 --repository owner/repo
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2701,6 +4156,12 @@ SSH-sign a pre-rendered changelog commit, push main without force, create the fi
 
 stage a file pattern, commit with --signoff, push to a branch (no-op when nothing changed)
 
+```
+EXAMPLE:
+   reusable-ci version commit-push --branch main --message "chore: bump to 1.2.3" \
+     --file-pattern "pom.xml" --author-name ci-bot --author-email ci@example.com
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--branch` | remote branch to push the commit to (required) | `$BRANCH` |
@@ -2715,6 +4176,11 @@ stage a file pattern, commit with --signoff, push to a branch (no-op when nothin
 
 derive the release tag, version and original-tagger commit trailers from the pushed request ref (release-request/vX.Y.Z); emits CI outputs so workflows don't parse refs in bash
 
+```
+EXAMPLE:
+   reusable-ci version derive-release --ref release-request/v1.2.3
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--ref` | the pushed ref (e.g. release-request/v1.2.3) (required) | `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
@@ -2726,6 +4192,11 @@ derive the release tag, version and original-tagger commit trailers from the pus
 
 print the git pathspec the version-bump commit stages for a project type
 
+```
+EXAMPLE:
+   reusable-ci version file-pattern --project-type maven
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--project-type` | ecosystem whose default pathspec to emit (ignored if --custom-pattern is set) | `$PROJECT_TYPE` |
@@ -2735,6 +4206,12 @@ print the git pathspec the version-bump commit stages for a project type
 
 print a development version tag (`&lt;base&gt;-snapshot-&lt;branch&gt;-&lt;short-sha&gt;`) to stdout
 
+```
+EXAMPLE:
+   # Prints e.g. 1.2.3-snapshot-feature-x-abc1234 to stdout
+   reusable-ci version generate-snapshot --ref-name feature/x
+```
+
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--ref-name` | source branch / ref to sanitise into the snapshot-version suffix | `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
@@ -2742,6 +4219,13 @@ print a development version tag (`&lt;base&gt;-snapshot-&lt;branch&gt;-&lt;short
 ### `reusable-ci version render-changelog`
 
 render CHANGELOG.md and commit-msg.txt with git-chglog or git-cliff, preserving same-version recovery
+
+```
+EXAMPLE:
+   reusable-ci version render-changelog --backend git-chglog --tag v1.2.3 \
+     --changelog-config .chglog/config-keepachangelog.yml \
+     --commit-body-config .chglog/config-minimal.yml
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -2760,6 +4244,11 @@ render CHANGELOG.md and commit-msg.txt with git-chglog or git-cliff, preserving 
 ### `reusable-ci version tag-release`
 
 create the final release tag once at HEAD (the bump commit) and push it without --force; refuses to move an existing tag
+
+```
+EXAMPLE:
+   reusable-ci version tag-release --tag v1.2.3
+```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|

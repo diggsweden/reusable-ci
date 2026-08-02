@@ -91,13 +91,17 @@ func TestBuildSignerImageArch_WritesMetadataAndRetriesPush(t *testing.T) {
 	var out bytes.Buffer
 
 	meta, err := appcontainer.BuildSignerImageArch(context.Background(), tool, &out, appcontainer.SignerImageBuildArchInput{
-		AuthFile:      "auth.json",
-		Arch:          "amd64",
-		SourceSHA:     strings.Repeat("a", 40),
-		ServerURL:     "https://codeberg.org",
-		Repository:    "Itiquette/Forgejo-CI",
-		RetryAttempts: 2,
-		RetryDelay:    time.Nanosecond,
+		AuthFile:         "auth.json",
+		Arch:             "amd64",
+		SourceSHA:        strings.Repeat("a", 40),
+		ServerURL:        "https://codeberg.org",
+		Repository:       "Itiquette/Forgejo-CI",
+		RepositorySuffix: "-signer",
+		TagPrefix:        "signer-",
+		Name:             "signer-image",
+		Title:            "forgejo-ci signer",
+		RetryAttempts:    2,
+		RetryDelay:       time.Nanosecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +124,7 @@ func TestBuildSignerImageArch_WritesMetadataAndRetriesPush(t *testing.T) {
 		t.Fatalf("retry message missing from output: %q", out.String())
 	}
 
-	if len(tool.buildReqs) != 1 || tool.buildReqs[0].Platform != "linux/amd64" || tool.buildReqs[0].SourceURL != "https://codeberg.org/Itiquette/Forgejo-CI" {
+	if len(tool.buildReqs) != 1 || tool.buildReqs[0].Platform != "linux/amd64" || tool.buildReqs[0].SourceURL != "https://codeberg.org/Itiquette/Forgejo-CI" || tool.buildReqs[0].Title != "forgejo-ci signer" {
 		t.Fatalf("build request = %+v", tool.buildReqs)
 	}
 
@@ -142,16 +146,19 @@ func TestAssembleSignerImageManifest_WritesOutputsAndMetadata(t *testing.T) {
 	sink := fakeoutputsink.New(t)
 
 	meta, err := appcontainer.AssembleSignerImageManifest(context.Background(), tool, sink, nil, io.Discard, appcontainer.SignerImageAssembleInput{
-		AuthFile:   "auth.json",
-		SourceSHA:  strings.Repeat("b", 40),
-		ServerURL:  "https://codeberg.org",
-		Repository: "itiquette/forgejo-ci",
+		AuthFile:         "auth.json",
+		SourceSHA:        strings.Repeat("b", 40),
+		ServerURL:        "https://codeberg.org",
+		Repository:       "itiquette/forgejo-ci",
+		RepositorySuffix: "-signer",
+		TagPrefix:        "signer-",
+		Name:             "signer-image",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	wantManifest := "localhost/forgejo-ci-signer:manifest-" + strings.Repeat("b", 40)
+	wantManifest := "localhost/signer:manifest-" + strings.Repeat("b", 40)
 	if tool.removedManifest != wantManifest || tool.createdManifest != wantManifest {
 		t.Fatalf("manifest lifecycle remove=%q create=%q", tool.removedManifest, tool.createdManifest)
 	}
@@ -182,11 +189,14 @@ func TestAssembleSignerImageManifest_RejectsWrongRepositoryRef(t *testing.T) {
 	writeSignerArchMetadata(t, "amd64", "evil.example/itiquette/forgejo-ci-signer", strings.Repeat("1", 64))
 
 	_, err := appcontainer.AssembleSignerImageManifest(context.Background(), &fakeSignerImageTool{}, fakeoutputsink.New(t), nil, io.Discard, appcontainer.SignerImageAssembleInput{
-		AuthFile:   "auth.json",
-		SourceSHA:  strings.Repeat("b", 40),
-		ServerURL:  "https://codeberg.org",
-		Repository: "itiquette/forgejo-ci",
-		Archs:      []string{"amd64"},
+		AuthFile:         "auth.json",
+		SourceSHA:        strings.Repeat("b", 40),
+		ServerURL:        "https://codeberg.org",
+		Repository:       "itiquette/forgejo-ci",
+		RepositorySuffix: "-signer",
+		TagPrefix:        "signer-",
+		Name:             "signer-image",
+		Archs:            []string{"amd64"},
 	})
 	if !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), "must be under codeberg.org/itiquette/forgejo-ci-signer") {
 		t.Fatalf("err = %v", err)

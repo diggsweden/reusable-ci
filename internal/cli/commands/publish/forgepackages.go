@@ -14,6 +14,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/maven"
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/npm"
 	apppublish "github.com/diggsweden/reusable-ci/v3/internal/app/publish"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/commonflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
@@ -45,7 +46,7 @@ EXAMPLE:
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "project-type", Value: "maven", Sources: cli.EnvVars("PROJECT_TYPE"), Usage: "ecosystem: \"maven\" or \"npm\""},
 			&cli.StringFlag{Name: "cli-opts", Sources: cli.EnvVars("MAVEN_CLI_OPTS"), Usage: "extra args forwarded to mvn (maven only; whitespace-separated)"},
-			&cli.StringFlag{Name: "working-dir", Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory holding the packed *.tgz (npm only)"}, //nolint:goconst // shared flag name across commands.
+			commonflags.WorkingDir("directory holding the packed *.tgz (npm only)"),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error { //nolint:varnamelen // idiomatic short name for the deps handle.

@@ -13,6 +13,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
 	appsummary "github.com/diggsweden/reusable-ci/v3/internal/app/summary"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/commonflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
@@ -211,7 +212,7 @@ func statusBuildSBOMCmd() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "ecosystem", Sources: cli.EnvVars("ECOSYSTEM"), Usage: "ecosystem the Build SBOM was generated for"},
 			&cli.StringFlag{Name: "outcome", Sources: cli.EnvVars("SBOM_OUTCOME"), Usage: "SBOM step outcome (success/failure/skipped)"},
-			&cli.StringFlag{Name: "working-dir", Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory the bom.json was produced in"},
+			commonflags.WorkingDir("directory the bom.json was produced in"),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
@@ -235,7 +236,7 @@ func statusSBOMCountCmd() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "kind", Sources: cli.EnvVars("SBOM_KIND"), Usage: "SBOM kind (build/source/analyzed-container/…)"},
 			&cli.StringFlag{Name: "outcome", Sources: cli.EnvVars("SBOM_OUTCOME"), Usage: "SBOM step outcome (success/failure/skipped)"},
-			&cli.StringFlag{Name: "working-dir", Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory the bom.json files were produced in"},
+			commonflags.WorkingDir("directory the bom.json files were produced in"),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {

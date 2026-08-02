@@ -19,6 +19,7 @@ const (
 	flagBaseInputID             = "base-input-id"
 	flagBaseInputsJSON          = "base-inputs-json"
 	flagContainerfile           = "containerfile"
+	flagTitle                   = "title"
 	flagContentID               = "content-id"
 	flagContext                 = "context"
 	flagExpectedBaseRepository  = "expected-base-repository"
@@ -54,12 +55,12 @@ const (
 // release-images, base-images, signer-image): the same verb vocabulary is
 // deliberately used in every tree.
 const (
-	subCmdCleanup        = "cleanup"
-	subCmdPromote        = "promote"
-	subCmdRollback       = "rollback"
-	subCmdSign           = "sign"
-	subCmdValidate       = "validate"
-	subCmdVerifyExisting = "verify-existing"
+	subCmdCleanup  = "cleanup"
+	subCmdPromote  = "promote"
+	subCmdRollback = "rollback"
+	subCmdSign     = "sign"
+	subCmdValidate = "validate"
+	subCmdVerify   = "verify"
 )
 
 // Registry-credential strings shared with the regflags flag family; the

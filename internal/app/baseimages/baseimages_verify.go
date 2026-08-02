@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
@@ -109,7 +110,7 @@ func existingBaseInputID(baseInputs map[string]string, flavor, fallback string) 
 		baseInputID = fallback
 	}
 
-	if !hex64RE.MatchString(baseInputID) {
+	if !domaincontainer.ValidSHA256Hex(baseInputID) {
 		return "", fmt.Errorf("base images verify: missing or invalid base input ID for flavor: %s: %w", flavor, errs.ErrValidation)
 	}
 
@@ -143,7 +144,7 @@ func verifyOneExistingBaseImage(ctx context.Context, resolver baseImageRegistry,
 func baseInputIDByFlavor(inputs []BaseInput) (map[string]string, error) {
 	byFlavor := make(map[string]string, len(inputs))
 	for idx, input := range inputs {
-		if input.Flavor == "" || !hex64RE.MatchString(input.BaseInputID) {
+		if input.Flavor == "" || !domaincontainer.ValidSHA256Hex(input.BaseInputID) {
 			return nil, fmt.Errorf("base images verify: base-inputs-json entry %d must include flavor and sha256 base_input_id: %w", idx, errs.ErrValidation)
 		}
 

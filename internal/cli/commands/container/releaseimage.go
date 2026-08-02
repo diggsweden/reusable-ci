@@ -19,26 +19,17 @@ import (
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
+	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-func releaseImageGroup() *cli.Command {
+// releaseImagesVerifyCmd is the `container release-images verify` verb: it
+// re-checks one already-produced, digest-pinned release image at the trust
+// boundary. It lives under release-images (the public boundary) rather than in
+// a singleton release-image group.
+func releaseImagesVerifyCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "release-image",
-		Usage: "single release-image verification helpers",
-		Description: `Typed helpers for one digest-pinned release image. This group
-keeps consumer-specific build, smoke, and flavor orchestration in the caller
-while reusable-ci owns the shared signature/SBOM/provenance and safe
-re-attestation predicates.`,
-		Commands: []*cli.Command{
-			releaseImageVerifyExistingCmd(),
-		},
-	}
-}
-
-func releaseImageVerifyExistingCmd() *cli.Command {
-	return &cli.Command{
-		Name:  subCmdVerifyExisting,
+		Name:  subCmdVerify,
 		Usage: "verify an existing digest-pinned release image before reusing it",
 		Description: `Checks Cosign signature, CycloneDX SBOM attestation, and SLSA
 provenance fields for a digest-pinned release image. With --allow-reattest, a
@@ -114,7 +105,7 @@ func validateReleaseImagePublicKey(path, want string) error {
 		return nil
 	}
 
-	if !baseImagesHex64RE.MatchString(want) {
+	if !domaincontainer.ValidSHA256Hex(want) {
 		return fmt.Errorf("release image verify: cosign-public-key-sha256 must be a sha256 hex digest: %w", errs.ErrValidation)
 	}
 
