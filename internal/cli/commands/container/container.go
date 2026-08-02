@@ -8,8 +8,10 @@
 //   - validate.go — `validate <artifacts|containerfile|namespace>`
 //   - image.go — `image <push>`
 //   - manifest.go — `manifest <digest|inspect|merge|push>`
-//   - container.go (this file) — flat ops: resolve-name, platform-plan,
-//     metadata, write-digest-marker
+//   - container.go (this file) — flat ops: platform-plan, metadata,
+//     write-digest-marker
+//   - refhelpers.go — `ref <canonical|name|platform|resolve>` image-reference
+//     projections + containerfile-arg-default
 //   - tarball.go  — `extract-npm-tarball`
 //   - binaries.go — `suffix-extracted-binaries`
 //   - materialize_build_secrets.go — unpack the build-secrets envelope
@@ -33,11 +35,10 @@ import (
 	"github.com/urfave/cli/v3"
 
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
-	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cmdmeta"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/planfile"
-	"github.com/diggsweden/reusable-ci/v3/internal/cli/secret"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
@@ -61,7 +62,7 @@ func New() *cli.Command {
 		Usage: "container-image helpers (name resolution, manifests, namespace policy, tag/label metadata, …)",
 		Commands: slices.Concat(
 			cmdmeta.WithCategory("Build & sign", setupBuildahCmd(), buildCmd(), buildPushOCIImageCmd(), imageGroup(), signerImageGroup(), loginCmd(), logoutCmd(), signCmd(), attestCmd(), baseLineagePredicateCmd()),
-			cmdmeta.WithCategory("Image metadata & manifests", resolveNameCmd(), metadataCmd(), canonicalRefCmd(), imageNameForRefCmd(), platformRefCmd(), containerfileArgDefaultCmd(), releaseLabelsCmd(), releaseIdentityMatchesCmd(), imageLabelsJSONCmd(), imageEvidenceCmd(), platformPlanCmd(), manifestGroup(), writeDigestMarkerCmd()),
+			cmdmeta.WithCategory("Image metadata & manifests", refGroup(), metadataCmd(), containerfileArgDefaultCmd(), releaseLabelsCmd(), releaseIdentityMatchesCmd(), imageLabelsJSONCmd(), imageEvidenceCmd(), platformPlanCmd(), manifestGroup(), writeDigestMarkerCmd()),
 			cmdmeta.WithCategory("Release promotion", ledgerGroup(), releaseImageGroup(), releaseImagesGroup(), baseGraphGroup(), baseImagesGroup()),
 			cmdmeta.WithCategory("Validation", validateGroup()),
 			cmdmeta.WithCategory("Workflow plumbing", materializeBuildSecretsCmd(), extractNPMTarballCmd(), suffixBinariesCmd()),
@@ -78,13 +79,13 @@ func loginCmd() *cli.Command {
 stdin or $REGISTRY_PASSWORD — never argv — and the file is written 0600.
 
 EXAMPLES:
-   echo "$TOKEN" | reusable-ci container login --registry ghcr.io --username "$GITHUB_ACTOR" --password-file -
-   reusable-ci container login --registry codeberg.org --username bot   # password from $REGISTRY_PASSWORD`,
+   echo "$TOKEN" | reusable-ci container login --registry ghcr.io --registry-username "$GITHUB_ACTOR" --registry-password-file -
+   reusable-ci container login --registry codeberg.org --registry-username bot   # password from $REGISTRY_TOKEN / $REGISTRY_PASSWORD`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagRegistry, Value: domaincontainer.DefaultRegistry, Sources: cli.EnvVars("CONTAINER_REGISTRY"), Usage: "registry host (e.g. ghcr.io, codeberg.org)"},
 			&cli.StringFlag{Name: flagServerURL, Usage: "forge/server URL used to derive the registry host when --registry is empty or omitted"},
-			&cli.StringFlag{Name: "username", Sources: cli.EnvVars("REGISTRY_USERNAME"), Usage: credRegistryUsername},
-			&cli.StringFlag{Name: "password-file", Usage: "file containing the password (\"-\" reads stdin); defaults to $REGISTRY_PASSWORD. The password never appears in argv."},
+			regflags.Username(),
+			regflags.PasswordFile(),
 			&cli.StringFlag{Name: flagAuthFile, Usage: "override the auth config path (default: $REGISTRY_AUTH_FILE, else $DOCKER_CONFIG/config.json, else ~/.docker/config.json)"},
 			&cli.BoolFlag{Name: "create-auth-file", Sources: cli.EnvVars("REGISTRY_CREATE_AUTH_FILE"), Usage: "when --auth-file is empty, create a fresh job-local auth file under $RUNNER_TEMP"},
 			&cli.BoolFlag{Name: "export-env", Sources: cli.EnvVars("REGISTRY_EXPORT_AUTH_FILE_ENV"), Usage: "append REGISTRY_AUTH_FILE=<auth-file> to --env-file; requires an explicit or created auth file"},
@@ -97,14 +98,14 @@ EXAMPLES:
 					return err
 				}
 
-				username := cmd.String("username")
+				username := strings.TrimSpace(cmd.String(regflags.FlagUsername))
 
 				authFile, err := authFileForLogin(cmd.String(flagAuthFile), cmd.Bool("create-auth-file"))
 				if err != nil {
 					return err
 				}
 
-				password, err := secret.Resolve(cmd.String("password-file"), "REGISTRY_PASSWORD")
+				password, err := regflags.FileOrEnv(cmd.String(regflags.FlagPasswordFile), "REGISTRY_TOKEN", "REGISTRY_PASSWORD")
 				if err != nil {
 					return err
 				}
@@ -125,7 +126,7 @@ EXAMPLES:
 				}
 
 				if password == "" {
-					return errs.CredentialRequired(errs.Credential{What: credRegistryPassword, Flag: "password-file", Env: "REGISTRY_PASSWORD"})
+					return errs.CredentialRequired(errs.Credential{What: regflags.CredPassword, Flag: regflags.FlagPasswordFile, Env: "REGISTRY_TOKEN"})
 				}
 
 				if err := appcontainer.RegistryLogin(os.Stderr, appcontainer.RegistryLoginInput{
@@ -334,35 +335,6 @@ func platformPlanCmd() *cli.Command {
 	}
 }
 
-func resolveNameCmd() *cli.Command {
-	return &cli.Command{
-		Name:  "resolve-name",
-		Usage: "compute the canonical image reference and emit name=<value>",
-		Description: `EXAMPLES:
-   # Canonical ghcr.io reference for a repo (emits name=ghcr.io/org/app)
-   reusable-ci container resolve-name --registry ghcr.io --repository org/app --repository-owner org`,
-		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "registry", Required: true, Sources: cli.EnvVars("CONTAINER_REGISTRY"), Usage: "registry hostname (e.g. ghcr.io)"},
-			&cli.StringFlag{Name: "image-name", Sources: cli.EnvVars("IMAGE_NAME"), Usage: "explicit image name override (defaults to <owner>/<repo>)"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			&cli.StringFlag{Name: flagRepository, Required: true, Sources: cienv.Repository(), Usage: "\"owner/repo\" used to build the default image name"},
-			&cli.StringFlag{Name: "repository-owner", Required: true, Sources: cienv.RepositoryOwner(), Usage: "owner segment used to prefix bare image names on docker.io (Docker Hub); the derived reference is always lowercased for OCI compliance"},
-			&cli.StringFlag{Name: "name", Sources: cli.EnvVars("CONTAINER_NAME"),
-				Usage: "optional sub-name for multi-container projects"},
-		},
-		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
-				return appcontainer.ResolveName(ctx, d.OutputSink, appcontainer.ResolveNameInput{
-					Registry:        cmd.String("registry"),
-					ImageName:       cmd.String("image-name"),
-					Repository:      cmd.String(flagRepository),
-					RepositoryOwner: cmd.String("repository-owner"),
-					Name:            cmd.String("name"),
-				})
-			})
-		},
-	}
-}
-
 // planScopeMetadata is the plan-file scope of `container metadata` in
 // $REUSABLE_CI_PLAN (flag > plan > env > default).
 const planScopeMetadata = "container metadata"
@@ -381,7 +353,7 @@ func metadataCmd() *cli.Command {
 			"   reusable-ci container metadata --image-name ghcr.io/org/app \\\n" +
 			"     --tag-rules \"type=semver,pattern={{version}}\" --emit-labels",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "image-name", Required: true, Sources: planfile.Vars(planScopeMetadata, "image-name", "IMAGE_NAME"),
+			&cli.StringFlag{Name: flagImageName, Required: true, Sources: planfile.Vars(planScopeMetadata, flagImageName, "IMAGE_NAME"),
 				Usage: "single base image ref, e.g. ghcr.io/owner/repo"},
 			&cli.StringFlag{Name: "tag-rules", Sources: planfile.Vars(planScopeMetadata, "tag-rules", "TAG_RULES"),
 				Usage: "newline-separated csv tag-rule lines"},
@@ -397,7 +369,7 @@ func metadataCmd() *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
 				_, err := appcontainer.ComputeMetadata(ctx, d.Provider, d.RepoMetadataFetcher(), d.OutputSink, appcontainer.ComputeMetadataInput{
-					ImageName:   cmd.String("image-name"),
+					ImageName:   cmd.String(flagImageName),
 					TagRules:    cmd.String("tag-rules"),
 					Flavor:      cmd.String(flagFlavor),
 					EmitLabels:  cmd.Bool("emit-labels"),

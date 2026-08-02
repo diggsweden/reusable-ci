@@ -13,14 +13,14 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
-func TestResolveNameCmd_WritesOutput(t *testing.T) {
+func TestRefResolveCmd_WritesOutput(t *testing.T) {
 	env := ghaenv.Setup(t)
 	env.Setenv("CONTAINER_REGISTRY", "ghcr.io")
 	env.Setenv("REPOSITORY", "owner/repo")
 	env.Setenv("REPOSITORY_OWNER", "owner")
 
 	cmd := containercmd.New()
-	if err := cmd.Run(context.Background(), []string{"container", "resolve-name"}); err != nil { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+	if err := cmd.Run(context.Background(), []string{"container", "ref", "resolve"}); err != nil { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		t.Fatal(err)
 	}
 

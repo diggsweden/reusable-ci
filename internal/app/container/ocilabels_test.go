@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
+	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
@@ -28,16 +29,18 @@ func TestOCIReleaseLabelFlags_EmitsBuildahTokensAndDefaultsDocumentation(t *test
 	t.Parallel()
 
 	got, err := appcontainer.OCIReleaseLabelFlags(appcontainer.OCIReleaseLabelsInput{
-		Title:       "nanolinter",
-		Version:     "v0.7.9",
-		Created:     "2026-06-30T12:34:56Z",
-		Revision:    strings.Repeat("a", 40),
-		RefName:     "v0.7.9-alpine",
-		Source:      "https://codeberg.org/Itiquette/nanolinter",
-		Description: "Small lint image",
-		Licenses:    "EUPL-1.2",
-		Vendor:      "Itiquette",
-		Authors:     "The Itiquette Authors",
+		OCILabels: domaincontainer.OCILabels{
+			Title:       "nanolinter",
+			Version:     "v0.7.9",
+			Revision:    strings.Repeat("a", 40),
+			RefName:     "v0.7.9-alpine",
+			Description: "Small lint image",
+			Licenses:    "EUPL-1.2",
+			Vendor:      "Itiquette",
+			Authors:     "The Itiquette Authors",
+		},
+		Created: "2026-06-30T12:34:56Z",
+		Source:  "https://codeberg.org/Itiquette/nanolinter",
 	})
 	if err != nil {
 		t.Fatal(err)

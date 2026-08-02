@@ -52,15 +52,12 @@ type BuildPushOCIImageInput struct {
 	BuildsJSON    string
 	Image         string
 	Context       string
-	Title         string
-	Description   string
-	Licenses      string
-	Vendor        string
-	Authors       string
-	Documentation string
-	RefName       string
-	Version       string
-	Revision      string
+
+	// OCILabels carries the caller-supplied org.opencontainers.image.*
+	// label fields; RefName, Version, Revision, and Documentation default
+	// from the tag/checkout when empty.
+	domaincontainer.OCILabels
+
 	AuthFile      string
 	TLSVerify     string
 	ServerURL     string
@@ -195,18 +192,17 @@ func deriveBuildPushPlan(ctx context.Context, git BuildPushGit, in BuildPushOCII
 		return buildPushPlan{}, err
 	}
 
+	// Start from the caller-supplied labels and fill in the derived values.
+	ociLabels := in.OCILabels
+	ociLabels.Version = version
+	ociLabels.Revision = revision
+	ociLabels.RefName = refName
+	ociLabels.Documentation = documentation
+
 	labels, err := OCIReleaseLabels(OCIReleaseLabelsInput{
-		Title:         in.Title,
-		Version:       version,
-		Created:       created,
-		Revision:      revision,
-		RefName:       refName,
-		Source:        url,
-		Documentation: documentation,
-		Description:   in.Description,
-		Licenses:      in.Licenses,
-		Vendor:        in.Vendor,
-		Authors:       in.Authors,
+		OCILabels: ociLabels,
+		Created:   created,
+		Source:    url,
 	})
 	if err != nil {
 		return buildPushPlan{}, err

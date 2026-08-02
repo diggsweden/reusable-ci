@@ -6,9 +6,10 @@
 //
 // Subcommand tree:
 //
-//   - build.go     — `build <ecosystem>` per-ecosystem build summaries
-//   - publish.go   — `publish <target>` per-target publish summaries
-//   - status.go    — `status <stage|prerequisites|build-sbom|sbom-count|quality-check>`
+//   - kinds.go     — kind registry driving `build <ecosystem>` and
+//     `publish <target>`: pure "flags in → one summary block" writers
+//   - status.go    — `status <prerequisites|build-sbom|sbom-count|quality-check>`
+//     plus flat `stage-result` / `job-result` composers
 //   - lifecycle.go — flat lifecycle: `release`, `snapshot-release`, `pr`
 //   - misc.go      — flat one-offs: `extracted-binaries`, `swift-lint`
 package report

@@ -288,6 +288,7 @@ func TestLedgerAddEntryFromFlags_ShapesForgejoReleaseImageRecord(t *testing.T) {
 	entry, releaseTag, err := ledgerAddEntryFromFlags(ledgerAddFlags{
 		ReleaseTag:       "v1.2.3",
 		Kind:             "flavor",
+		ImageKind:        imageledger.ImageKindRelease,
 		Flavor:           "rust",
 		ImageName:        "docker://codeberg.org/itiquette/nanolinter:ignored",
 		Digest:           dig,
@@ -308,6 +309,7 @@ func TestLedgerAddEntryFromFlags_ShapesForgejoReleaseImageRecord(t *testing.T) {
 
 	want := imageledger.Entry{
 		Kind:         "flavor",
+		ImageKind:    imageledger.ImageKindRelease,
 		Flavor:       "rust",
 		Ref:          "codeberg.org/itiquette/nanolinter@" + dig,
 		Digest:       dig,

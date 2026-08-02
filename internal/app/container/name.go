@@ -13,7 +13,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 )
 
-// ResolveNameInput drives the `reusable-ci container resolve-name` use case.
+// ResolveNameInput drives the `reusable-ci container ref resolve` use case.
 type ResolveNameInput struct {
 	Registry        string
 	ImageName       string

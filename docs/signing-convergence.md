@@ -161,7 +161,7 @@ Implemented (Phase 4b, registry auth federation):
 - `internal/cli/deps` — `RequireRegistryAuthResolver` + `RegistryAuthForDetected`.
 - `container login` falls back to the forge's runner-injected credentials when
   no `--password`/`$REGISTRY_PASSWORD` is supplied **and** the login target is
-  the forge's own registry; explicit `--username`/`--password` always win. This
+  the forge's own registry; explicit `--registry-username`/`--registry-password-file` always win. This
   lets a GitHub/GitLab/Forgejo job push to its own registry with no separately
   managed secret.
 

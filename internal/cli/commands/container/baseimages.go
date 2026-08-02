@@ -25,6 +25,7 @@ import (
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
@@ -341,8 +342,8 @@ func baseImagesSignCmd() *cli.Command {
 			&cli.StringFlag{Name: "build-type", Sources: cli.EnvVars("CONTAINER_BUILD_TYPE", "BUILD_TYPE"), Usage: "SLSA buildType URI recorded in base lineage"},
 			&cli.StringFlag{Name: "key", Value: "env://COSIGN_KEY", Sources: cli.EnvVars("COSIGN_KEY_REF"), Usage: "cosign --key reference used for signing; default reads the signing key from $COSIGN_KEY"},
 			&cli.StringFlag{Name: "premade-sbom-dir", Sources: cli.EnvVars("PREMADE_SBOM_DIR"), Usage: "directory containing pre-built base-sbom-<flavor>.cyclonedx.json files; when set, every image must provide a matching sbom_sha256"},
-			&cli.StringFlag{Name: flagRegistryUsername, Sources: cli.EnvVars(envRegistryUser, "REGISTRY_USERNAME"), Usage: usageRegistryUsername},
-			&cli.StringFlag{Name: flagRegistryPasswordFile, Usage: usageRegistryPasswordFile},
+			regflags.Username(),
+			regflags.PasswordFile(),
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			common, err := baseImagesCommonFromCmd(cmd, true, false)
@@ -446,8 +447,8 @@ func baseImagesPromoteCmd() *cli.Command {
 		Flags: append(baseImagesCommonFlags(),
 			&cli.StringFlag{Name: "all-images-json", Sources: cli.EnvVars("ALL_IMAGES_JSON"), Usage: "JSON array of base image metadata to verify/promote"},
 			&cli.StringFlag{Name: flagBaseInputID, Sources: cli.EnvVars("BASE_INPUT_ID"), Usage: "optional single sha256 base input ID expected for every image"},
-			&cli.StringFlag{Name: flagRegistryUsername, Sources: cli.EnvVars(envRegistryUser, "REGISTRY_USERNAME"), Usage: usageRegistryUsername},
-			&cli.StringFlag{Name: flagRegistryPasswordFile, Usage: usageRegistryPasswordFile},
+			regflags.Username(),
+			regflags.PasswordFile(),
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			common, err := baseImagesCommonFromCmd(cmd, true, true)
@@ -505,7 +506,7 @@ their version names pass the base-image staging policy.`,
 			&cli.StringFlag{Name: "shared-core-images-json", Value: "[]", Sources: cli.EnvVars("SHARED_CORE_IMAGES_JSON"), Usage: "JSON array of shared-core base image metadata"},
 			&cli.StringFlag{Name: "base-images-json", Value: "[]", Sources: cli.EnvVars("BASE_IMAGES_JSON"), Usage: "JSON array of base image metadata"},
 			&cli.StringFlag{Name: flagBaseInputsJSON, Value: "[]", Sources: cli.EnvVars("BASE_INPUTS_JSON"), Usage: "JSON array mapping flavors to content/base input IDs"},
-			&cli.StringFlag{Name: flagAuthFile, Sources: cli.EnvVars("REUSABLE_CI_REGISTRY_AUTH_FILE"), Usage: "registry auth file for final/staging digest checks"},
+			regflags.AuthFile(regflags.AuthFileOpts{Usage: "registry auth file for final/staging digest checks"}),
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			common, err := baseImagesCommonFromCmd(cmd, false, false)
@@ -642,7 +643,9 @@ func baseImagesRegistryCreds(cmd *cli.Command, requireRegistry bool) (string, st
 		return "", ""
 	}
 
-	return strings.TrimSpace(cmd.String(flagRegistryUsername)), cmd.String(flagRegistryPasswordFile)
+	auth := regflags.Resolve(cmd)
+
+	return auth.Username, auth.PasswordFile
 }
 
 // baseImagesExpectedRepository resolves the exact base-image repository:
@@ -693,17 +696,9 @@ func baseImagesPublicKeyFromCmd(cmd *cli.Command, requirePublicKey bool) (string
 }
 
 func (c baseImagesCommon) login(authFile string) error {
-	if c.RegistryUsername == "" {
-		return errs.CredentialRequired(errs.Credential{What: credRegistryUsername, Env: envRegistryUser})
-	}
-
-	password, err := releaseImagesSecret(c.RegistryPassword, "REGISTRY_TOKEN", "REGISTRY_PASSWORD")
+	password, err := regflags.LoginPassword(c.RegistryUsername, c.RegistryPassword)
 	if err != nil {
 		return err
-	}
-
-	if password == "" {
-		return errs.CredentialRequired(errs.Credential{What: credRegistryPassword, Flag: flagRegistryPasswordFile, Env: "REGISTRY_TOKEN"})
 	}
 
 	return appcontainer.RegistryLogin(os.Stderr, appcontainer.RegistryLoginInput{

@@ -722,14 +722,6 @@ build and push a multi-arch OCI image manifest list with buildah
 | `--retry-attempts` | manifest push attempts | `$MANIFEST_PUSH_RETRY_ATTEMPTS` |
 | `--retry-delay-seconds` | base delay between manifest push retry attempts | `$MANIFEST_PUSH_RETRY_DELAY_SECONDS` |
 
-### `reusable-ci container canonical-ref`
-
-canonicalize a Docker image reference for digest-pinned Buildah use
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--ref` | image reference (required) | `$IMAGE_REF` |
-
 ### `reusable-ci container containerfile-arg-default`
 
 print an ARG default declared before the first FROM in a Containerfile
@@ -801,14 +793,6 @@ fetch an image's OCI config labels as compact JSON
 | `--ref` | image tag or digest ref to inspect (required) | `$IMAGE_REF` |
 | `--auth-file` | Docker-compatible registry auth config | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
 
-### `reusable-ci container image-name-for-ref`
-
-print an image repository/name with any tag or digest removed
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--ref` | image reference (required) | `$IMAGE_REF` |
-
 ### `reusable-ci container ledger`
 
 release-image ledger: record image entries and re-validate at the trust boundary
@@ -822,6 +806,7 @@ validate one image entry and append it to the ledger
 | `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
 | `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 | `--kind` | image role, e.g. distroless, alpine, base | n/a |
+| `--image-kind` | entry pipeline role recorded as image_kind: release, base, or signer | n/a |
 | `--ref` | digest-pinned image ref (registry/path@sha256:<64 hex>) | n/a |
 | `--digest` | image digest (sha256:<64 hex>) | n/a |
 | `--sbom` | CycloneDX SBOM path (dist/image-sbom*.cyclonedx.json) | n/a |
@@ -936,8 +921,8 @@ write registry credentials to the shared OCI auth config used by docker, podman,
 |------|-------------|----------|
 | `--registry` | registry host (e.g. ghcr.io, codeberg.org) | `$CONTAINER_REGISTRY` |
 | `--server-url` | forge/server URL used to derive the registry host when --registry is empty or omitted | n/a |
-| `--username` | registry username | `$REGISTRY_USERNAME` |
-| `--password-file` | file containing the password ("-" reads stdin); defaults to $REGISTRY_PASSWORD. The password never appears in argv. | n/a |
+| `--registry-username` | registry username; the password is read from --registry-password-file or $REGISTRY_TOKEN / $REGISTRY_PASSWORD | `$REGISTRY_USER`, `$REGISTRY_USERNAME` |
+| `--registry-password-file` | file containing the registry password/token ("-" reads stdin); defaults to $REGISTRY_TOKEN then $REGISTRY_PASSWORD. The password never appears in argv. | n/a |
 | `--auth-file` | override the auth config path (default: $REGISTRY_AUTH_FILE, else $DOCKER_CONFIG/config.json, else ~/.docker/config.json) | n/a |
 | `--create-auth-file` | when --auth-file is empty, create a fresh job-local auth file under $RUNNER_TEMP | `$REGISTRY_CREATE_AUTH_FILE` |
 | `--export-env` | append REGISTRY_AUTH_FILE=<auth-file> to --env-file; requires an explicit or created auth file | `$REGISTRY_EXPORT_AUTH_FILE_ENV` |
@@ -1033,7 +1018,27 @@ emit platform matrix JSON and per-platform suffix outputs
 | `--platforms` | comma/space/newline-separated build platforms (linux/amd64,linux/arm64) | `$PLATFORMS` |
 | `--platform` | single build platform; falls back to the first entry of --platforms | `$PLATFORM` |
 
-### `reusable-ci container platform-ref`
+### `reusable-ci container ref`
+
+image-reference helpers: canonicalize, strip to name, resolve per-platform digests, compose from repo context
+
+#### `reusable-ci container ref canonical`
+
+canonicalize a Docker image reference for digest-pinned Buildah use
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--ref` | image reference (required) | `$IMAGE_REF` |
+
+#### `reusable-ci container ref name`
+
+print an image repository/name with any tag or digest removed
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--ref` | image reference (required) | `$IMAGE_REF` |
+
+#### `reusable-ci container ref platform`
 
 resolve an image index reference to one platform's digest-pinned ref
 
@@ -1042,6 +1047,18 @@ resolve an image index reference to one platform's digest-pinned ref
 | `--ref` | image tag or digest ref to inspect (required) | `$IMAGE_REF` |
 | `--platform` | target platform: os/arch or os/arch/variant (required) | `$PLATFORM` |
 | `--auth-file` | Docker-compatible registry auth config | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
+
+#### `reusable-ci container ref resolve`
+
+compute the canonical image reference and emit name=&lt;value&gt;
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--registry` | registry hostname (e.g. ghcr.io) (required) | `$CONTAINER_REGISTRY` |
+| `--image-name` | explicit image name override (defaults to <owner>/<repo>) | `$IMAGE_NAME` |
+| `--repository` | "owner/repo" used to build the default image name (required) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--repository-owner` | owner segment used to prefix bare image names on docker.io (Docker Hub); the derived reference is always lowercased for OCI compliance (required) | `$REPOSITORY_OWNER`, `$FORGEJO_REPOSITORY_OWNER`, `$GITHUB_REPOSITORY_OWNER` |
+| `--name` | optional sub-name for multi-container projects | `$CONTAINER_NAME` |
 
 ### `reusable-ci container release-identity-matches`
 
@@ -1185,18 +1202,6 @@ emit standard OCI release labels as Buildah --label argv tokens
 | `--licenses` | org.opencontainers.image.licenses | `$OCI_LABEL_LICENSES` |
 | `--vendor` | org.opencontainers.image.vendor | `$OCI_LABEL_VENDOR` |
 | `--authors` | org.opencontainers.image.authors | `$OCI_LABEL_AUTHORS` |
-
-### `reusable-ci container resolve-name`
-
-compute the canonical image reference and emit name=&lt;value&gt;
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--registry` | registry hostname (e.g. ghcr.io) (required) | `$CONTAINER_REGISTRY` |
-| `--image-name` | explicit image name override (defaults to <owner>/<repo>) | `$IMAGE_NAME` |
-| `--repository` | "owner/repo" used to build the default image name (required) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
-| `--repository-owner` | owner segment used to prefix bare image names on docker.io (Docker Hub); the derived reference is always lowercased for OCI compliance (required) | `$REPOSITORY_OWNER`, `$FORGEJO_REPOSITORY_OWNER`, `$GITHUB_REPOSITORY_OWNER` |
-| `--name` | optional sub-name for multi-container projects | `$CONTAINER_NAME` |
 
 ### `reusable-ci container setup-buildah`
 

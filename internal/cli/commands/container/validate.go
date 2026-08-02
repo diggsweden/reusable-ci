@@ -101,7 +101,7 @@ func validateNamespaceCmd() *cli.Command {
      --repository org/app --registry ghcr.io --enforce-namespace org`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
-				Name:     "image-name", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+				Name:     flagImageName,
 				Required: true,
 				Sources:  cli.EnvVars("IMAGE_NAME"),
 				Usage:    "image ref (registry/owner/name) whose namespace is checked",
@@ -133,7 +133,7 @@ func validateNamespaceCmd() *cli.Command {
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			err := appcontainer.ValidateNamespace(domaincontainer.ValidateNamespaceInput{
-				ImageName:           cmd.String("image-name"),
+				ImageName:           cmd.String(flagImageName),
 				Repository:          cmd.String(flagRepository),
 				Registry:            cmd.String("registry"),
 				EnforceNamespace:    cmd.String("enforce-namespace"),
@@ -143,7 +143,7 @@ func validateNamespaceCmd() *cli.Command {
 				return err
 			}
 
-			_, _ = fmt.Fprintf(os.Stderr, "✓ Image namespace validated: %s\n", cmd.String("image-name"))
+			_, _ = fmt.Fprintf(os.Stderr, "✓ Image namespace validated: %s\n", cmd.String(flagImageName))
 
 			return nil
 		},

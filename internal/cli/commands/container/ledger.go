@@ -433,10 +433,11 @@ func ledgerAddCmd() *cli.Command {
 			ledgerPathFlag(),
 			releaseTagFlag(),
 			&cli.StringFlag{Name: "kind", Usage: "image role, e.g. distroless, alpine, base"},
+			&cli.StringFlag{Name: "image-kind", Value: imageledger.ImageKindRelease, Usage: "entry pipeline role recorded as image_kind: release, base, or signer"},
 			&cli.StringFlag{Name: flagRef, Usage: "digest-pinned image ref (registry/path@sha256:<64 hex>)"},
 			&cli.StringFlag{Name: flagDigest, Usage: "image digest (sha256:<64 hex>)"},
 			&cli.StringFlag{Name: "sbom", Usage: "CycloneDX SBOM path (dist/image-sbom*.cyclonedx.json)"},
-			&cli.StringFlag{Name: "image-name", Usage: "image registry/path (no tag); with --tag, derives --final-tag=<image>:<tag> and --candidate-tag=<image>:staging-<tag> so callers don't hand-assemble both (explicit flags still win)"}, //nolint:goconst // flag name; matches the package convention.
+			&cli.StringFlag{Name: flagImageName, Usage: "image registry/path (no tag); with --tag, derives --final-tag=<image>:<tag> and --candidate-tag=<image>:staging-<tag> so callers don't hand-assemble both (explicit flags still win)"},
 			&cli.StringFlag{Name: "final-tag-name", Usage: "immutable release tag name/portion combined with --image-name; when --tag is empty, derives the release tag from vMAJOR.MINOR.PATCH[-suffix]"},
 			&cli.StringFlag{Name: "final-tag", Usage: "immutable release tag ref (scoped to --tag); derived from --image-name when omitted"},
 			&cli.StringFlag{Name: "moving-tag-name", Usage: "optional moving tag name/portion combined with --image-name"},
@@ -456,7 +457,8 @@ func ledgerAddCmd() *cli.Command {
 			entry, releaseTag, err := ledgerAddEntryFromFlags(ledgerAddFlags{
 				ReleaseTag:          cmd.String(flagTag),
 				Kind:                cmd.String("kind"),
-				ImageName:           cmd.String("image-name"),
+				ImageKind:           cmd.String("image-kind"),
+				ImageName:           cmd.String(flagImageName),
 				Ref:                 cmd.String(flagRef),
 				Digest:              cmd.String(flagDigest),
 				SBOM:                cmd.String("sbom"),
@@ -540,6 +542,7 @@ func entryDescriptor(kind string) string {
 type ledgerAddFlags struct {
 	ReleaseTag          string
 	Kind                string
+	ImageKind           string
 	ImageName           string
 	Ref                 string
 	Digest              string
@@ -596,6 +599,7 @@ func ledgerAddEntryFromFlags(flags ledgerAddFlags) (imageledger.Entry, string, e
 
 	return imageledger.Entry{
 		Kind:         flags.Kind,
+		ImageKind:    flags.ImageKind,
 		Flavor:       flags.Flavor,
 		Ref:          ref,
 		Digest:       flags.Digest,

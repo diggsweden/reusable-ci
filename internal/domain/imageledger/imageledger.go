@@ -33,10 +33,15 @@ import (
 // release record carry the audit fields.
 type Entry struct {
 	// Kind is an optional image-role label (e.g. distroless, alpine).
-	Kind   string `json:"kind,omitempty"`
-	Flavor string `json:"flavor,omitempty"`
-	Ref    string `json:"ref"`
-	Digest string `json:"digest"`
+	Kind string `json:"kind,omitempty"`
+	// ImageKind self-describes the entry's pipeline role: one of
+	// ImageKindRelease, ImageKindBase, or ImageKindSigner. Empty means a
+	// legacy entry recorded before the field existed and is treated as
+	// "release"; validation therefore accepts absent values.
+	ImageKind string `json:"image_kind,omitempty"`
+	Flavor    string `json:"flavor,omitempty"`
+	Ref       string `json:"ref"`
+	Digest    string `json:"digest"`
 	// SBOM is an optional path to the image's CycloneDX SBOM.
 	SBOM         string `json:"sbom,omitempty"`
 	FinalTag     string `json:"final_tag"`
@@ -52,6 +57,14 @@ const (
 	finalTagField     = "final_tag"
 	movingTagField    = "moving_tag"
 	candidateTagField = "candidate_tag"
+)
+
+// ImageKind values: the pipeline roles an Entry may self-describe as. An
+// empty ImageKind is a legacy entry and means ImageKindRelease.
+const (
+	ImageKindRelease = "release"
+	ImageKindBase    = "base"
+	ImageKindSigner  = "signer"
 )
 
 // StagingTagPrefix is the candidate-tag prefix the trust boundary enforces:
@@ -204,9 +217,10 @@ func (e Entry) validateReleaseMovingTag(releaseTag string) error {
 // validateFormat enforces the stage-agnostic trust-boundary invariants:
 // the promotion-essential fields (ref, digest, final_tag) and their
 // formats. Kind and SBOM are optional release-manifest metadata — SBOM is
-// format-checked only when present. These hold at every promotion stage,
-// so both Validate (release) and ValidateForStage (pre-release) build on
-// them.
+// format-checked only when present; ImageKind is checked against its
+// closed value set (empty allowed for legacy entries). These hold at
+// every promotion stage, so both Validate (release) and ValidateForStage
+// (pre-release) build on them.
 func (e Entry) validateFormat() error {
 	for _, req := range []struct{ name, val string }{
 		{"ref", e.Ref}, {"digest", e.Digest}, {finalTagField, e.FinalTag},
@@ -214,6 +228,10 @@ func (e Entry) validateFormat() error {
 		if req.val == "" {
 			return fmt.Errorf("imageledger: %s is required: %w", req.name, errs.ErrValidation)
 		}
+	}
+
+	if err := validateImageKind(e.ImageKind); err != nil {
+		return err
 	}
 
 	if !container.ValidDigest(e.Digest) {
@@ -229,6 +247,19 @@ func (e Entry) validateFormat() error {
 	}
 
 	return e.validateTagRefs()
+}
+
+// validateImageKind accepts the three self-described pipeline roles or the
+// empty string. Empty is a legacy entry (recorded before the field existed)
+// and is treated as "release", so absence must never fail validation.
+func validateImageKind(kind string) error {
+	switch kind {
+	case "", ImageKindRelease, ImageKindBase, ImageKindSigner:
+		return nil
+	default:
+		return fmt.Errorf("imageledger: image_kind must be %q, %q, or %q: %q: %w",
+			ImageKindRelease, ImageKindBase, ImageKindSigner, kind, errs.ErrValidation)
+	}
 }
 
 // validateTagRefs checks that final_tag (already verified non-empty by

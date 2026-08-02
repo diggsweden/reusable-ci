@@ -347,10 +347,15 @@ func parseImageEvidencePlatforms(values []string) ([]imageEvidencePlatform, erro
 
 	platforms := make([]imageEvidencePlatform, 0, len(raws))
 	for _, raw := range raws {
-		osName, arch, ok := strings.Cut(raw, "/")
-		if !ok || osName == "" || arch == "" || strings.Contains(arch, "/") {
+		// Evidence scans take exactly os/arch: the OCI variant component is
+		// layered out here (skopeo per-arch copy has no variant selector),
+		// on top of the domain parser that owns the OCI format rule.
+		parsed, err := domaincontainer.ParsePlatform(raw)
+		if err != nil || parsed.Variant != "" {
 			return nil, fmt.Errorf("platform %q must be os/arch, for example linux/amd64: %w", raw, errs.ErrUsage)
 		}
+
+		osName, arch := parsed.OS, parsed.Arch
 
 		if seen[raw] {
 			return nil, fmt.Errorf("duplicate platform %q: %w", raw, errs.ErrUsage)

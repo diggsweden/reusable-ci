@@ -16,6 +16,8 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/planfile"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
+	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 )
 
 // planScopeBuildPush is the plan-file scope of `container
@@ -47,8 +49,8 @@ scope (flag > plan > env > default).`,
 			&cli.StringFlag{Name: flagRefName, Sources: planfile.Vars(planScopeBuildPush, flagRefName, "OCI_LABEL_REF_NAME"), Usage: "org.opencontainers.image.ref.name; defaults to --tag"},
 			&cli.StringFlag{Name: flagVersion, Sources: planfile.Vars(planScopeBuildPush, flagVersion, "OCI_LABEL_VERSION"), Usage: "org.opencontainers.image.version; defaults to --tag"},
 			&cli.StringFlag{Name: flagRevision, Sources: planfile.Vars(planScopeBuildPush, flagRevision, "OCI_LABEL_REVISION"), Usage: "org.opencontainers.image.revision; defaults to git rev-parse HEAD"},
-			&cli.StringFlag{Name: flagAuthFile, Sources: planfile.Vars(planScopeBuildPush, flagAuthFile, "REUSABLE_CI_REGISTRY_AUTH_FILE"), Usage: "registry auth file for buildah pulls and manifest push"},
-			&cli.StringFlag{Name: flagTLSVerify, Value: tlsVerifyDefault, Sources: planfile.Vars(planScopeBuildPush, flagTLSVerify, "BUILD_PUSH_TLS_VERIFY"), Usage: usageTLSVerify},
+			regflags.AuthFile(regflags.AuthFileOpts{Usage: "registry auth file for buildah pulls and manifest push", PlanScope: planScopeBuildPush}),
+			regflags.TLSVerify(regflags.TLSVerifyOpts{Env: "BUILD_PUSH_TLS_VERIFY", PlanScope: planScopeBuildPush}),
 			&cli.StringFlag{Name: flagServerURL, Sources: planfile.Chain(planScopeBuildPush, flagServerURL, cienv.ServerURL()), Usage: "forge server URL used to derive defaults and source labels"},
 			&cli.StringFlag{Name: flagRepository, Sources: planfile.Chain(planScopeBuildPush, flagRepository, cienv.Repository()), Usage: "owner/repo used to derive defaults and source labels"},
 			&cli.IntFlag{Name: flagRetryAttempts, Value: 3, Sources: planfile.Vars(planScopeBuildPush, flagRetryAttempts, "MANIFEST_PUSH_RETRY_ATTEMPTS"), Usage: "manifest push attempts"},
@@ -56,23 +58,27 @@ scope (flag > plan > env > default).`,
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(dep *deps.Deps) error {
+				auth := regflags.Resolve(cmd)
+
 				_, err := appcontainer.BuildPushOCIImage(ctx, buildah.New(), git.New(), dep.OutputSink, os.Stderr, appcontainer.BuildPushOCIImageInput{
 					Tag:           cmd.String(flagTag),
 					Containerfile: cmd.String(flagContainerfile),
 					BuildsJSON:    cmd.String("builds-json"),
 					Image:         cmd.String(flagImage),
 					Context:       cmd.String(flagContext),
-					Title:         cmd.String("title"),
-					Description:   cmd.String("description"),
-					Licenses:      cmd.String("licenses"),
-					Vendor:        cmd.String("vendor"),
-					Authors:       cmd.String("authors"),
-					Documentation: cmd.String("documentation"),
-					RefName:       cmd.String(flagRefName),
-					Version:       cmd.String(flagVersion),
-					Revision:      cmd.String(flagRevision),
-					AuthFile:      cmd.String(flagAuthFile),
-					TLSVerify:     cmd.String(flagTLSVerify),
+					OCILabels: domaincontainer.OCILabels{
+						Title:         cmd.String("title"),
+						Description:   cmd.String("description"),
+						Licenses:      cmd.String("licenses"),
+						Vendor:        cmd.String("vendor"),
+						Authors:       cmd.String("authors"),
+						Documentation: cmd.String("documentation"),
+						RefName:       cmd.String(flagRefName),
+						Version:       cmd.String(flagVersion),
+						Revision:      cmd.String(flagRevision),
+					},
+					AuthFile:      auth.AuthFile,
+					TLSVerify:     auth.TLSVerify,
 					ServerURL:     cmd.String(flagServerURL),
 					Repository:    cmd.String(flagRepository),
 					RetryAttempts: cmd.Int(flagRetryAttempts),

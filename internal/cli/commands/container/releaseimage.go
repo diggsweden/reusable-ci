@@ -18,6 +18,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/ociregistry"
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
@@ -57,7 +58,7 @@ reattestable.`,
 			&cli.StringFlag{Name: "identity-version", Usage: "OCI org.opencontainers.image.version expected for --allow-reattest; defaults to --expected-tag"},
 			&cli.StringFlag{Name: "identity-ref-name", Usage: "OCI org.opencontainers.image.ref.name expected for --allow-reattest; defaults to --expected-tag"},
 			&cli.StringFlag{Name: "identity-source", Usage: "OCI org.opencontainers.image.source expected for --allow-reattest; defaults to --expected-source"},
-			&cli.StringFlag{Name: flagAuthFile, Sources: cli.EnvVars("REUSABLE_CI_REGISTRY_AUTH_FILE"), Usage: "Docker/containers auth config for registry label reads and cosign verification"},
+			regflags.AuthFile(regflags.AuthFileOpts{Usage: "Docker/containers auth config for registry label reads and cosign verification"}),
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			if err := validateReleaseImageCLIInput(cmd); err != nil {

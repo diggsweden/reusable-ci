@@ -15,6 +15,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/ociregistry"
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 )
 
@@ -45,7 +46,7 @@ manifests and multi-platform indexes alike.`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagRef, Required: true, Sources: cli.EnvVars("IMAGE_REF", "MANIFEST_REF"), Usage: "registry image ref whose raw manifest digest should be computed"},
 			&cli.StringFlag{Name: "digest-file", Sources: cli.EnvVars("MANIFEST_DIGEST_FILE"), Usage: "optional Buildah digestfile to verify against the registry digest"},
-			&cli.StringFlag{Name: flagAuthFile, Sources: cli.EnvVars("REUSABLE_CI_REGISTRY_AUTH_FILE"), Usage: "registry auth file for registry digest verification"},
+			regflags.AuthFile(regflags.AuthFileOpts{Usage: "registry auth file for registry digest verification"}),
 			&cli.IntFlag{Name: flagRetryAttempts, Value: 3, Sources: cli.EnvVars("MANIFEST_DIGEST_RETRY_ATTEMPTS"), Usage: "registry digest read attempts"},
 			&cli.IntFlag{Name: flagRetryDelaySeconds, Value: 15, Sources: cli.EnvVars("MANIFEST_DIGEST_RETRY_DELAY_SECONDS"), Usage: "base delay between registry digest read attempts"},
 		},
@@ -85,24 +86,26 @@ the source of truth; a valid Buildah digestfile must match it.`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "local-manifest", Required: true, Sources: cli.EnvVars("LOCAL_MANIFEST"), Usage: "local Buildah manifest list name to push"},
 			&cli.StringFlag{Name: "destination", Required: true, Sources: cli.EnvVars("DESTINATION_REF", "IMAGE_REF"), Usage: "registry image ref to push, e.g. registry.example/owner/app:staging-v1"},
-			&cli.StringFlag{Name: flagAuthFile, Sources: cli.EnvVars("REUSABLE_CI_REGISTRY_AUTH_FILE"), Usage: "registry auth file for buildah push and registry digest verification"},
-			&cli.StringFlag{Name: flagTLSVerify, Value: tlsVerifyDefault, Sources: cli.EnvVars("MANIFEST_PUSH_TLS_VERIFY"), Usage: usageTLSVerify},
+			regflags.AuthFile(regflags.AuthFileOpts{Usage: "registry auth file for buildah push and registry digest verification"}),
+			regflags.TLSVerify(regflags.TLSVerifyOpts{Env: "MANIFEST_PUSH_TLS_VERIFY"}),
 			&cli.BoolFlag{Name: "remove-local", Sources: cli.EnvVars("MANIFEST_PUSH_REMOVE_LOCAL"), Usage: "pass --rm to buildah manifest push after a successful registry push"},
 			&cli.IntFlag{Name: flagRetryAttempts, Value: 3, Sources: cli.EnvVars("MANIFEST_PUSH_RETRY_ATTEMPTS"), Usage: "push and registry digest read attempts"},
 			&cli.IntFlag{Name: flagRetryDelaySeconds, Value: 15, Sources: cli.EnvVars("MANIFEST_PUSH_RETRY_DELAY_SECONDS"), Usage: "base delay between retry attempts"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(dep *deps.Deps) error {
+				auth := regflags.Resolve(cmd)
+
 				registry := ociregistry.New()
-				if authFile := cmd.String(flagAuthFile); authFile != "" {
-					registry = ociregistry.WithAuthFile(authFile)
+				if auth.AuthFile != "" {
+					registry = ociregistry.WithAuthFile(auth.AuthFile)
 				}
 
 				result, err := appcontainer.PushManifest(ctx, buildah.New(), registry, dep.OutputSink, os.Stderr, appcontainer.PushManifestInput{
 					LocalManifest: cmd.String("local-manifest"),
 					Destination:   cmd.String("destination"),
-					AuthFile:      cmd.String(flagAuthFile),
-					TLSVerify:     cmd.String(flagTLSVerify),
+					AuthFile:      auth.AuthFile,
+					TLSVerify:     auth.TLSVerify,
 					RemoveLocal:   cmd.Bool("remove-local"),
 					RetryAttempts: cmd.Int(flagRetryAttempts),
 					RetryDelay:    time.Duration(cmd.Int(flagRetryDelaySeconds)) * time.Second,
@@ -128,13 +131,13 @@ func manifestMergeCmd() *cli.Command {
    reusable-ci container manifest merge --image-name ghcr.io/org/app \
      --tags "v1.2.3" --digests-dir /tmp/digests`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "image-name", Sources: cli.EnvVars("IMAGE_NAME"), Usage: "base image name (without tag) the manifest list points to"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			&cli.StringFlag{Name: flagImageName, Sources: cli.EnvVars("IMAGE_NAME"), Usage: "base image name (without tag) the manifest list points to"},
 			&cli.StringFlag{Name: "tags", Sources: cli.EnvVars("TAGS"), Usage: "newline-separated tags to publish for the manifest list"},
 			&cli.StringFlag{Name: "digests-dir", Value: domaincontainer.DefaultDigestsDir, Sources: cli.EnvVars("DIGESTS_DIR"), Usage: "directory holding the per-arch digest marker files"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return appcontainer.MergeManifest(ctx, ociregistry.New(), os.Stderr, appcontainer.MergeManifestInput{
-				ImageName:  cmd.String("image-name"),
+				ImageName:  cmd.String(flagImageName),
 				Tags:       cmd.String("tags"),
 				DigestsDir: cmd.String("digests-dir"),
 			})

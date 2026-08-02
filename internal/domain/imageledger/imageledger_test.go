@@ -74,6 +74,7 @@ func TestValidate_Rejects(t *testing.T) {
 			e.CandidateTag = "not-a-registry-path:staging-v1.2.3"
 		},
 		"candidate_scope": func(e *imageledger.Entry) { e.CandidateTag = "codeberg.org/itiquette/gommitlint:v1.2.3" },
+		"bad_image_kind":  func(e *imageledger.Entry) { e.ImageKind = "sidecar" },
 		"bad_moving_ref":  func(e *imageledger.Entry) { e.MovingTag = "not-a-tag" },
 		"moving_staging":  func(e *imageledger.Entry) { e.MovingTag = "codeberg.org/itiquette/gommitlint:staging-v1.2.3" },
 		"moving_release":  func(e *imageledger.Entry) { e.MovingTag = "codeberg.org/itiquette/gommitlint:v1.2.3-rust" },
@@ -113,6 +114,32 @@ func TestValidate_AcceptsOptionalManifestMetadata(t *testing.T) {
 
 	if err := convention.Validate("v1.2.3"); err != nil {
 		t.Errorf("codebase SBOM filename should be accepted, got %v", err)
+	}
+}
+
+func TestValidateAll_AcceptsEveryImageKindAndLegacyAbsence(t *testing.T) {
+	t.Parallel()
+
+	// Each self-described pipeline role validates; the empty string is a
+	// legacy entry (recorded before image_kind existed, treated as
+	// "release") and must not fail either.
+	kinds := []string{
+		"",
+		imageledger.ImageKindRelease,
+		imageledger.ImageKindBase,
+		imageledger.ImageKindSigner,
+	}
+
+	entries := make([]imageledger.Entry, 0, len(kinds))
+
+	for _, kind := range kinds {
+		e := validEntry()
+		e.ImageKind = kind
+		entries = append(entries, e)
+	}
+
+	if err := imageledger.ValidateAll(entries, "v1.2.3"); err != nil {
+		t.Errorf("image kinds %q should all validate, got %v", kinds, err)
 	}
 }
 

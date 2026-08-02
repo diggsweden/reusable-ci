@@ -15,6 +15,7 @@ import (
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
 )
 
 func signerImageGroup() *cli.Command {
@@ -93,7 +94,7 @@ image-digest, and image-tag outputs.`,
 
 func signerImageCommonFlags() []cli.Flag {
 	return []cli.Flag{
-		&cli.StringFlag{Name: flagAuthFile, Sources: cli.EnvVars("REUSABLE_CI_SIGNER_AUTH_FILE"), Usage: "registry auth file used by buildah/skopeo"},
+		regflags.AuthFile(regflags.AuthFileOpts{Env: "REUSABLE_CI_SIGNER_AUTH_FILE", Usage: "registry auth file used by buildah/skopeo"}),
 		&cli.StringFlag{Name: flagSourceSHA, Sources: cli.EnvVars("SOURCE_SHA"), Usage: "git commit SHA used in signer image tags and OCI revision label"},
 		&cli.StringFlag{Name: flagServerURL, Sources: cienv.ServerURL(), Usage: "forge server URL used to derive the registry/repository"},
 		&cli.StringFlag{Name: flagRepository, Sources: cienv.Repository(), Usage: "owner/repo used to derive the signer image repository"},

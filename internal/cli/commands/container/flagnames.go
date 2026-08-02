@@ -3,16 +3,19 @@
 
 package container
 
+import "github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
+
 // Shared flag, subcommand, and credential-string names for the container
 // package. Each name that repeats across command definitions is declared
 // once here, so spellings cannot drift between verbs and the package stays
 // under goconst's literal budget. Values are part of the CLI contract —
 // docs/cli-reference.md is generated from them and a sync test gates any
-// change.
+// change. The registry-credential family aliases the shared regflags
+// spellings so package-local reads stay in sync with the shared flag set.
 const (
 	flagArch                    = "arch"
 	flagArchRef                 = "arch-ref"
-	flagAuthFile                = "auth-file"
+	flagAuthFile                = regflags.FlagAuthFile
 	flagBaseInputID             = "base-input-id"
 	flagBaseInputsJSON          = "base-inputs-json"
 	flagContainerfile           = "containerfile"
@@ -23,13 +26,15 @@ const (
 	flagFile                    = "file"
 	flagGroupsJSON              = "groups-json"
 	flagImage                   = "image"
+	flagImageName               = "image-name"
 	flagLedger                  = "ledger"
+	flagName                    = "name"
 	flagPlatform                = "platform"
 	flagProvenanceEnvelope      = "provenance-envelope"
 	flagRecursive               = "recursive"
 	flagRef                     = "ref"
-	flagRegistryPasswordFile    = "registry-password-file"
-	flagRegistryUsername        = "registry-username"
+	flagRegistryPasswordFile    = regflags.FlagPasswordFile
+	flagRegistryUsername        = regflags.FlagUsername
 	flagRefName                 = "ref-name"
 	flagRepository              = "repository"
 	flagRetryAttempts           = "retry-attempts"
@@ -40,7 +45,7 @@ const (
 	flagSource                  = "source"
 	flagSourceSHA               = "source-sha"
 	flagTag                     = "tag"
-	flagTLSVerify               = "tls-verify"
+	flagTLSVerify               = regflags.FlagTLSVerify
 	flagVersion                 = "version"
 )
 
@@ -56,21 +61,15 @@ const (
 	subCmdVerifyExisting = "verify-existing"
 )
 
-// Registry-credential strings shared by the login/push verbs. The password
-// is deliberately file/env-only (never argv).
+// Registry-credential strings shared with the regflags flag family; the
+// login verb keeps its own flag spellings but reuses the wording, and the
+// signer-secret hygiene list scrubs the shared username env var.
 const (
-	envRegistryUser           = "REGISTRY_USER"
-	credRegistryUsername      = "registry username"
-	credRegistryPassword      = "registry password"
-	usageRegistryUsername     = "registry username; the password is read from --registry-password-file or $REGISTRY_TOKEN / $REGISTRY_PASSWORD"
-	usageTLSVerify            = "verify registry TLS certificates: true or false"
-	usageRegistryPasswordFile = `file containing the registry password/token ("-" reads stdin); defaults to $REGISTRY_TOKEN then $REGISTRY_PASSWORD. The password never appears in argv.`
+	envRegistryUser      = regflags.EnvUser
+	credRegistryUsername = regflags.CredUsername
+	credRegistryPassword = regflags.CredPassword
 )
 
 // cosignMethodNoteGPG is the shared signflags method note for OCI-image
 // signing verbs, where gpg cannot be a signing backend.
 const cosignMethodNoteGPG = "gpg is rejected — it cannot sign OCI images."
-
-// tlsVerifyDefault is the shared default for the --tls-verify flags of the
-// push verbs: registry TLS verification stays on unless explicitly disabled.
-const tlsVerifyDefault = "true"

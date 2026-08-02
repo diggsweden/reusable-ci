@@ -19,6 +19,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/dryrun"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/secret"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/signflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
@@ -322,8 +323,8 @@ func releaseImagesCommonFlags() []cli.Flag {
 		&cli.StringFlag{Name: flagServerURL, Sources: cienv.ServerURL(), Usage: "forge server URL used to derive the registry host and provider API base"},
 		&cli.StringFlag{Name: flagRepository, Sources: cienv.Repository(), Usage: "owner/repo used to derive the expected image repository"},
 		&cli.StringFlag{Name: flagRegistry, Sources: cli.EnvVars("CONTAINER_REGISTRY"), Usage: "registry host for the short-lived Docker auth config (default: host from --server-url)"},
-		&cli.StringFlag{Name: flagRegistryUsername, Sources: cli.EnvVars(envRegistryUser, "REGISTRY_USERNAME"), Usage: usageRegistryUsername},
-		&cli.StringFlag{Name: flagRegistryPasswordFile, Usage: usageRegistryPasswordFile},
+		regflags.Username(),
+		regflags.PasswordFile(),
 		expectedImageRepositoryFlag(),
 	}
 }

@@ -351,7 +351,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
           NAME: ${{ inputs.name }}
-        run: reusable-ci container resolve-name
+        run: reusable-ci container ref resolve
       - name: Validate Image Namespace
         if: ${{ inputs['push-image'] }}
         env:

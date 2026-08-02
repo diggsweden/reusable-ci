@@ -12,6 +12,8 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/ociregistry"
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
+	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 )
 
 func releaseLabelsCmd() *cli.Command {
@@ -51,17 +53,19 @@ buildah bud without reimplementing label policy in shell.`,
 
 func releaseLabelsInput(cmd *cli.Command) appcontainer.OCIReleaseLabelsInput {
 	return appcontainer.OCIReleaseLabelsInput{
-		Title:         cmd.String("title"),
-		Version:       cmd.String(flagVersion),
-		Created:       cmd.String("created"),
-		Revision:      cmd.String(flagRevision),
-		RefName:       cmd.String(flagRefName),
-		Source:        cmd.String(flagSource),
-		Documentation: cmd.String("documentation"),
-		Description:   cmd.String("description"),
-		Licenses:      cmd.String("licenses"),
-		Vendor:        cmd.String("vendor"),
-		Authors:       cmd.String("authors"),
+		OCILabels: domaincontainer.OCILabels{
+			Title:         cmd.String("title"),
+			Version:       cmd.String(flagVersion),
+			Revision:      cmd.String(flagRevision),
+			RefName:       cmd.String(flagRefName),
+			Documentation: cmd.String("documentation"),
+			Description:   cmd.String("description"),
+			Licenses:      cmd.String("licenses"),
+			Vendor:        cmd.String("vendor"),
+			Authors:       cmd.String("authors"),
+		},
+		Created: cmd.String("created"),
+		Source:  cmd.String(flagSource),
 	}
 }
 
@@ -106,7 +110,7 @@ as a compact JSON object. --auth-file accepts the Docker/containers auth config
 written by ` + "`container login`" + `.`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagRef, Required: true, Sources: cli.EnvVars("IMAGE_REF"), Usage: "image tag or digest ref to inspect"},
-			&cli.StringFlag{Name: flagAuthFile, Sources: cli.EnvVars("REUSABLE_CI_REGISTRY_AUTH_FILE"), Usage: "Docker-compatible registry auth config"},
+			regflags.AuthFile(regflags.AuthFileOpts{Usage: "Docker-compatible registry auth config"}),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			registry := ociregistry.New()

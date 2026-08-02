@@ -102,7 +102,7 @@ func PlatformRef(ctx context.Context, registry RawManifestRegistry, in PlatformR
 		return "", fmt.Errorf("registry is required: %w", errs.ErrUsage)
 	}
 
-	wanted, err := parsePlatform(in.Platform)
+	wanted, err := domaincontainer.ParsePlatform(in.Platform)
 	if err != nil {
 		return "", err
 	}
@@ -138,27 +138,7 @@ func PlatformRef(ctx context.Context, registry RawManifestRegistry, in PlatformR
 	return imageName + "@" + digest, nil
 }
 
-type platformParts struct {
-	os           string
-	architecture string
-	variant      string
-}
-
-func parsePlatform(platform string) (platformParts, error) {
-	parts := strings.Split(platform, "/")
-	if len(parts) < 2 || len(parts) > 3 || parts[0] == "" || parts[1] == "" {
-		return platformParts{}, fmt.Errorf("platform must be os/arch or os/arch/variant: %s: %w", platform, errs.ErrUsage)
-	}
-
-	out := platformParts{os: parts[0], architecture: parts[1]}
-	if len(parts) == 3 {
-		out.variant = parts[2]
-	}
-
-	return out, nil
-}
-
-func platformDigest(raw []byte, wanted platformParts) (string, bool, error) {
+func platformDigest(raw []byte, wanted domaincontainer.Platform) (string, bool, error) {
 	var doc struct {
 		Manifests []struct {
 			Digest   string `json:"digest"`
@@ -179,11 +159,11 @@ func platformDigest(raw []byte, wanted platformParts) (string, bool, error) {
 	}
 
 	for _, manifest := range doc.Manifests {
-		if manifest.Platform.OS != wanted.os || manifest.Platform.Architecture != wanted.architecture {
+		if manifest.Platform.OS != wanted.OS || manifest.Platform.Architecture != wanted.Arch {
 			continue
 		}
 
-		if wanted.variant != "" && manifest.Platform.Variant != wanted.variant {
+		if wanted.Variant != "" && manifest.Platform.Variant != wanted.Variant {
 			continue
 		}
 

@@ -14,6 +14,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/syft"
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/trivy"
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
 )
 
 func imageEvidenceCmd() *cli.Command {
@@ -43,7 +44,7 @@ before Trivy runs, because Trivy's
 			&cli.StringFlag{Name: "registry-digest-ref", Sources: cli.EnvVars("IMAGE_EVIDENCE_REGISTRY_DIGEST_REF"), Usage: "digest-pinned registry image ref, e.g. registry.example/owner/app@sha256:..."},
 			&cli.StringFlag{Name: "registry-ref", Sources: cli.EnvVars("IMAGE_EVIDENCE_REGISTRY_REF", "IMAGE_REF"), Usage: "registry image ref used with --digest when no local source is available"},
 			&cli.StringFlag{Name: flagDigest, Sources: cli.EnvVars("IMAGE_EVIDENCE_DIGEST", "DIGEST"), Usage: "registry image digest used with --registry-ref when no local source is available"},
-			&cli.StringFlag{Name: flagAuthFile, Sources: cli.EnvVars("REUSABLE_CI_REGISTRY_AUTH_FILE"), Usage: "registry auth file for digest-ref fallback sources"},
+			regflags.AuthFile(regflags.AuthFileOpts{Usage: "registry auth file for digest-ref fallback sources"}),
 			&cli.StringSliceFlag{Name: flagPlatform, Sources: cli.EnvVars("IMAGE_EVIDENCE_PLATFORMS", "PLATFORMS"), Usage: "platform to scan, e.g. linux/amd64 (repeatable or comma/space-separated via env)"},
 			&cli.StringFlag{Name: "trivy-output-template", Sources: cli.EnvVars("IMAGE_EVIDENCE_TRIVY_OUTPUT_TEMPLATE"), Usage: "destination template for per-platform Trivy JSON; must contain {arch} or {platform}"},
 			&cli.StringFlag{Name: "sbom-output-template", Sources: cli.EnvVars("IMAGE_EVIDENCE_SBOM_OUTPUT_TEMPLATE"), Usage: "optional per-platform CycloneDX SBOM template; must contain {arch} or {platform}"},

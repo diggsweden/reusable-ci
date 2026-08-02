@@ -9,23 +9,19 @@ import (
 	"fmt"
 	"strings"
 
+	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // OCIReleaseLabelsInput is the canonical org.opencontainers.image.* release
 // label contract shared by reusable-ci image builds and bespoke Buildah flows.
+// The caller-supplied label identity lives in the embedded
+// domaincontainer.OCILabels; Created and Source are the build-derived rest.
 type OCIReleaseLabelsInput struct {
-	Title         string
-	Version       string
-	Created       string
-	Revision      string
-	RefName       string
-	Source        string
-	Documentation string
-	Description   string
-	Licenses      string
-	Vendor        string
-	Authors       string
+	domaincontainer.OCILabels
+
+	Created string
+	Source  string
 }
 
 // OCIReleaseIdentityInput is the read-side identity predicate for release
