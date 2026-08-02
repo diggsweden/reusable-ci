@@ -35,7 +35,7 @@ func TestCapabilities_GitHub(t *testing.T) {
 	t.Parallel()
 
 	caps := github.New().Capabilities()
-	if !caps.SARIFUpload || !caps.Attestation || !caps.KeylessOIDC || !caps.ReleaseAssets {
+	if !caps.SARIFUpload || !caps.Attestation || !caps.KeylessOIDC || !caps.ReleaseAssets || !caps.RunArtifacts {
 		t.Errorf("Capabilities = %+v, want all true", caps)
 	}
 }

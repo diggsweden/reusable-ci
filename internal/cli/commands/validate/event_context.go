@@ -10,6 +10,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	appvalidate "github.com/diggsweden/reusable-ci/v3/internal/app/validate"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/listval"
 )
@@ -19,20 +20,24 @@ func eventContextCmd() *cli.Command {
 		Name:  "event-context",
 		Usage: "refuse to run when the workflow trigger is outside the publish/release allowlist",
 		Description: "Defense-in-depth guard placed at the entry of every privileged " +
-			"publish/release workflow. Reads GITHUB_EVENT_NAME and refuses any trigger " +
+			"publish/release workflow. Reads the trigger event and refuses any trigger " +
 			"outside the allowlist — most importantly the pull_request* family, which " +
 			"would otherwise run with the caller's signing/package/API secrets attached " +
 			"to PR-HEAD code. Default allowlist: push, workflow_dispatch, release, " +
 			"schedule, workflow_run, merge_group. Adopters with legitimate PR-context " +
 			"publish needs (preview deploys) override via --allowed-events on the step.\n\n" +
 			"EXAMPLE:\n" +
-			"   # Reads $FORGEJO_EVENT_NAME / $GITHUB_EVENT_NAME; refuses pull_request* and other non-allowlisted triggers\n" +
+			"   # Reads $FORGEJO_EVENT_NAME / $GITHUB_EVENT_NAME, or the detected provider's\n" +
+			"   # event context (GitLab: normalized CI_PIPELINE_SOURCE); refuses pull_request*\n" +
+			"   # and other non-allowlisted triggers\n" +
 			"   reusable-ci validate event-context",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "event-name",
-				Sources: cli.EnvVars("FORGEJO_EVENT_NAME", "GITHUB_EVENT_NAME"),
-				Usage:   "trigger event being checked; read from $FORGEJO_EVENT_NAME / $GITHUB_EVENT_NAME on CI",
+				Sources: cienv.EventName(),
+				Usage: "trigger event being checked; read from $FORGEJO_EVENT_NAME / " +
+					"$GITHUB_EVENT_NAME, or from the detected CI provider's event context " +
+					"(GitLab: normalized CI_PIPELINE_SOURCE) when unset",
 			},
 			&cli.StringFlag{
 				Name:    "allowed-events",
@@ -40,10 +45,27 @@ func eventContextCmd() *cli.Command {
 				Usage:   "comma/space/newline-separated allowlist override (default: push,workflow_dispatch,release,schedule,workflow_run,merge_group)",
 			},
 		},
-		Action: func(_ context.Context, cmd *cli.Command) error {
-			return appvalidate.EventContext(os.Stderr, deps.Annotator(cmd), appvalidate.EventContextInput{
-				EventName:     cmd.String("event-name"),
-				AllowedEvents: splitAllowedEvents(cmd.String("allowed-events")),
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+				eventName := cmd.String("event-name")
+				if eventName == "" {
+					// No env var and no flag (GitLab runners set neither
+					// GITHUB_* nor FORGEJO_*): fall back to the provider's
+					// resolved event context, which carries the canonical
+					// vocabulary. An unresolvable event stays empty and the
+					// gate fails closed on missing input.
+					evt, err := d.Provider.ResolveContext(ctx)
+					if err != nil {
+						return err
+					}
+
+					eventName = evt.EventName
+				}
+
+				return appvalidate.EventContext(os.Stderr, deps.Annotator(cmd), appvalidate.EventContextInput{
+					EventName:     eventName,
+					AllowedEvents: splitAllowedEvents(cmd.String("allowed-events")),
+				})
 			})
 		},
 	}

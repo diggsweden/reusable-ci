@@ -33,7 +33,7 @@ func TestComputeMetadata_RequiresImageName(t *testing.T) {
 	prov := fakeprovider.New(t)
 	sink := fakeoutputsink.New(t)
 
-	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, appcontainer.ComputeMetadataInput{})
+	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, nil, appcontainer.ComputeMetadataInput{})
 	if err == nil || !strings.Contains(err.Error(), "image name is required") {
 		t.Errorf("err = %v", err)
 	}
@@ -44,7 +44,7 @@ func TestComputeMetadata_RawTag(t *testing.T) {
 	prov := newFake(t, provider.EventContext{})
 	sink := fakeoutputsink.New(t)
 
-	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, appcontainer.ComputeMetadataInput{
+	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, nil, appcontainer.ComputeMetadataInput{
 		ImageName: testImage,
 		TagRules:  "type=raw,value=main,enable=true",
 	})
@@ -65,7 +65,7 @@ func TestComputeMetadata_BranchTag(t *testing.T) {
 	})
 	sink := fakeoutputsink.New(t)
 
-	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, appcontainer.ComputeMetadataInput{
+	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, nil, appcontainer.ComputeMetadataInput{
 		ImageName: testImage,
 		TagRules:  "type=ref,event=branch",
 	})
@@ -86,7 +86,7 @@ func TestComputeMetadata_NoTagsEmitsEmptyScalar(t *testing.T) {
 	})
 	sink := fakeoutputsink.New(t)
 	// branch rule + tag ref → silent skip → no tags.
-	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, appcontainer.ComputeMetadataInput{
+	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, nil, appcontainer.ComputeMetadataInput{
 		ImageName: testImage,
 		TagRules:  "type=ref,event=branch",
 	})
@@ -116,7 +116,7 @@ func TestComputeMetadata_MultipleRulesInDeclarationOrder(t *testing.T) {
 		"type=semver,pattern={{major}},enable=true",
 	}, "\n")
 
-	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, appcontainer.ComputeMetadataInput{
+	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, nil, appcontainer.ComputeMetadataInput{
 		ImageName: testImage,
 		TagRules:  rules,
 	})
@@ -149,7 +149,7 @@ func TestComputeMetadata_PrimaryByPriority(t *testing.T) {
 	// sha (100) declared first; semver (900) wins primary.
 	rules := "type=sha,prefix=sha-,enable=true\ntype=semver,pattern={{version}},enable=true"
 
-	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, appcontainer.ComputeMetadataInput{
+	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, nil, appcontainer.ComputeMetadataInput{
 		ImageName: testImage,
 		TagRules:  rules,
 	})
@@ -171,7 +171,7 @@ func TestComputeMetadata_LabelsWithOverrides_SkipFetch(t *testing.T) {
 	})
 	sink := fakeoutputsink.New(t)
 
-	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, appcontainer.ComputeMetadataInput{
+	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, nil, appcontainer.ComputeMetadataInput{
 		ImageName:   testImage,
 		TagRules:    "type=raw,value=main", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		EmitLabels:  true,
@@ -223,7 +223,7 @@ func TestComputeMetadata_LabelsFetchOnMissingFields(t *testing.T) {
 	})
 	sink := fakeoutputsink.New(t)
 
-	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, appcontainer.ComputeMetadataInput{
+	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, nil, appcontainer.ComputeMetadataInput{
 		ImageName:  testImage,
 		TagRules:   "type=raw,value=main",
 		EmitLabels: true,
@@ -267,7 +267,7 @@ func TestComputeMetadata_LabelsFetchErrorIsNonFatal(t *testing.T) {
 
 	sink := fakeoutputsink.New(t)
 
-	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, appcontainer.ComputeMetadataInput{
+	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, nil, appcontainer.ComputeMetadataInput{
 		ImageName:  testImage,
 		TagRules:   "type=raw,value=main",
 		EmitLabels: true,
@@ -296,7 +296,7 @@ func TestComputeMetadata_LabelsSkippedWhenEmitLabelsFalse(t *testing.T) {
 	prov := newFake(t, provider.EventContext{})
 	sink := fakeoutputsink.New(t)
 
-	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, appcontainer.ComputeMetadataInput{
+	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, nil, appcontainer.ComputeMetadataInput{
 		ImageName: testImage,
 		TagRules:  "type=raw,value=main",
 	})
@@ -314,7 +314,7 @@ func TestComputeMetadata_FlavorLatestTrueRefused(t *testing.T) {
 	prov := newFake(t, provider.EventContext{})
 	sink := fakeoutputsink.New(t)
 
-	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, appcontainer.ComputeMetadataInput{
+	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, nil, appcontainer.ComputeMetadataInput{
 		ImageName: testImage,
 		TagRules:  "type=raw,value=main",
 		Flavor:    "latest=true",
@@ -329,7 +329,7 @@ func TestComputeMetadata_FlavorLatestFalseAccepted(t *testing.T) {
 	prov := newFake(t, provider.EventContext{})
 	sink := fakeoutputsink.New(t)
 
-	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, appcontainer.ComputeMetadataInput{
+	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, nil, appcontainer.ComputeMetadataInput{
 		ImageName: testImage,
 		TagRules:  "type=raw,value=main",
 		Flavor:    "latest=false",
@@ -349,7 +349,7 @@ func TestComputeMetadata_JSONShape(t *testing.T) {
 	sink := fakeoutputsink.New(t)
 	rules := "type=semver,pattern={{version}}\ntype=semver,pattern={{major}}"
 
-	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, appcontainer.ComputeMetadataInput{
+	_, err := appcontainer.ComputeMetadata(context.Background(), prov, prov, sink, nil, appcontainer.ComputeMetadataInput{
 		ImageName:   testImage,
 		TagRules:    rules,
 		EmitLabels:  true,

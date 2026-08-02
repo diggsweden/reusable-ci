@@ -26,7 +26,9 @@ type OutputSink interface {
 	SetBool(ctx context.Context, key string, value bool) error
 
 	// SetMultiline writes a multi-line value. On GitLab the implementation
-	// returns ErrUnsupported and callers should switch to a manifest file.
+	// returns ErrUnsupported (dotenv holds no newlines); callers route
+	// multi-line output through EmitMultiline, which degrades to the stage
+	// manifest on such sinks.
 	SetMultiline(ctx context.Context, key string, lines []string) error
 
 	// Close flushes any buffered state and releases handles.

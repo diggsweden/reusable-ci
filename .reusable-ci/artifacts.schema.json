@@ -27,10 +27,7 @@
       "properties": {
         "method": {
           "type": "string",
-          "enum": [
-            "gpg",
-            "ssh"
-          ],
+          "enum": ["gpg", "ssh"],
           "description": "gpg (default; imports $RELEASE_GPG_PRIVATE_KEY) or ssh (git-native SSH signing via $SSH_SIGNING_KEY, no OpenPGP key on the runner, verified against .reusable-ci/allowed_signers)."
         }
       }

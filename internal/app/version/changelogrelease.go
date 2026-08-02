@@ -34,13 +34,13 @@ type changelogReleaseOps interface {
 type ChangelogReleaseInput struct {
 	Tag               string // final stable release tag, e.g. v1.2.3
 	Repository        string // owner/name, used only to build the SSH origin URL
-	RemoteHost        string // empty defaults to codeberg.org
+	RemoteHost        string // required: SSH host for the origin URL (no org default; the caller/shell supplies it)
 	RemoteName        string // empty defaults to origin
 	Branch            string // empty defaults to main
 	ChangelogPath     string // empty defaults to CHANGELOG.md
 	CommitMessageFile string // empty defaults to commit-msg.txt
-	AuthorName        string // empty defaults to Itiquette Release Bot
-	AuthorEmail       string // empty defaults to itiquette-release-bot@pm.me
+	AuthorName        string // required: git user.name for the release commit (no org default)
+	AuthorEmail       string // required: git user.email for the release commit (no org default)
 	SigningKeyPath    string // SSH private key path already written to a temp dir; optional in dry-run (the signing setup only serves the skipped push)
 	TagSigned         bool
 	Token             string
@@ -169,14 +169,29 @@ func validateChangelogReleaseInput(in ChangelogReleaseInput) error {
 		return fmt.Errorf("commit-changelog: signing key path is required: %w", errs.ErrUsage)
 	}
 
+	// Org identity has no default: a three-forge engine must not assume one
+	// forge's host or ship one org's release identity. Each must be supplied
+	// by the caller/shell, and we fail loudly (with the flag + env) when it is
+	// not — see the Tier A coherence track and ADR-0001.
+	required := []struct{ name, value, flag, env string }{
+		{"remote host", in.RemoteHost, "--host", "$RELEASE_GIT_HOST"},
+		{"author name", in.AuthorName, "--author-name", "$GIT_USER_NAME"},
+		{"author email", in.AuthorEmail, "--author-email", "$GIT_USER_EMAIL"},
+	}
+	for _, field := range required {
+		if field.value == "" {
+			return fmt.Errorf("commit-changelog: %s is required (set %s or %s): %w", field.name, field.flag, field.env, errs.ErrUsage)
+		}
+	}
+
 	return nil
 }
 
+// withChangelogReleaseDefaults fills only the forge-neutral operational
+// defaults. Org identity (host, author name/email) has no default and is
+// required by validateChangelogReleaseInput — a general engine must not ship
+// one org's release identity or SSH host.
 func withChangelogReleaseDefaults(in ChangelogReleaseInput) ChangelogReleaseInput {
-	if in.RemoteHost == "" {
-		in.RemoteHost = "codeberg.org"
-	}
-
 	if in.RemoteName == "" {
 		in.RemoteName = defaultRemoteName
 	}
@@ -191,14 +206,6 @@ func withChangelogReleaseDefaults(in ChangelogReleaseInput) ChangelogReleaseInpu
 
 	if in.CommitMessageFile == "" {
 		in.CommitMessageFile = "commit-msg.txt"
-	}
-
-	if in.AuthorName == "" {
-		in.AuthorName = "Itiquette Release Bot"
-	}
-
-	if in.AuthorEmail == "" {
-		in.AuthorEmail = "itiquette-release-bot@pm.me"
 	}
 
 	return in

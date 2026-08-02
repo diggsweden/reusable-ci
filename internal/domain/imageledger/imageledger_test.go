@@ -73,11 +73,17 @@ func TestValidate_Rejects(t *testing.T) {
 		"bad_candidate_ref": func(e *imageledger.Entry) {
 			e.CandidateTag = "not-a-registry-path:staging-v1.2.3"
 		},
-		"candidate_scope": func(e *imageledger.Entry) { e.CandidateTag = "codeberg.org/itiquette/gommitlint:v1.2.3" },
-		"bad_image_kind":  func(e *imageledger.Entry) { e.ImageKind = "sidecar" },
-		"bad_moving_ref":  func(e *imageledger.Entry) { e.MovingTag = "not-a-tag" },
-		"moving_staging":  func(e *imageledger.Entry) { e.MovingTag = "codeberg.org/itiquette/gommitlint:staging-v1.2.3" },
-		"moving_release":  func(e *imageledger.Entry) { e.MovingTag = "codeberg.org/itiquette/gommitlint:v1.2.3-rust" },
+		"candidate_scope":  func(e *imageledger.Entry) { e.CandidateTag = "codeberg.org/itiquette/gommitlint:v1.2.3" },
+		"bad_image_kind":   func(e *imageledger.Entry) { e.ImageKind = "sidecar" },
+		"sbom_sha_not_hex": func(e *imageledger.Entry) { e.SBOMSHA256 = "XYZ" },
+		"sbom_sha_without_sbom": func(e *imageledger.Entry) {
+			e.SBOM = ""
+			e.SBOMSHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		},
+		"provenance_empty_key": func(e *imageledger.Entry) { e.Provenance = map[string]any{"": "x"} },
+		"bad_moving_ref":       func(e *imageledger.Entry) { e.MovingTag = "not-a-tag" },
+		"moving_staging":       func(e *imageledger.Entry) { e.MovingTag = "codeberg.org/itiquette/gommitlint:staging-v1.2.3" },
+		"moving_release":       func(e *imageledger.Entry) { e.MovingTag = "codeberg.org/itiquette/gommitlint:v1.2.3-rust" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -148,6 +154,68 @@ func TestValidate_RequiresReleaseTag(t *testing.T) {
 
 	if err := validEntry().Validate(""); !errors.Is(err, errs.ErrUsage) {
 		t.Errorf("empty release tag should be usage error, got %v", err)
+	}
+}
+
+// baseEntry is a schema-valid image_kind=base entry: a content-addressed
+// final tag (<base-input-id>-<flavor>) with its staging candidate.
+func baseEntry() imageledger.Entry {
+	repo := "codeberg.org/itiquette/nanolinter-base"
+	baseID := strings.Repeat("b", 64)
+
+	return imageledger.Entry{
+		Kind:         "base",
+		ImageKind:    imageledger.ImageKindBase,
+		Flavor:       "go",
+		Ref:          repo + "@" + goodDigest,
+		Digest:       goodDigest,
+		SBOM:         "dist/base-sboms/base-sbom-go.cyclonedx.json",
+		SBOMSHA256:   sixtyfour,
+		FinalTag:     repo + ":" + baseID + "-go",
+		CandidateTag: repo + ":staging-" + baseID + "-go",
+		BaseInputID:  baseID,
+	}
+}
+
+func TestValidate_BaseEntriesAreNotReleaseScoped(t *testing.T) {
+	t.Parallel()
+
+	// A base image's final tag is content-addressed and exists outside any
+	// release, so the entry validates with and without a release tag.
+	if err := baseEntry().Validate(""); err != nil {
+		t.Errorf("base entry without release tag rejected: %v", err)
+	}
+
+	if err := baseEntry().Validate("v1.2.3"); err != nil {
+		t.Errorf("base entry with release tag rejected: %v", err)
+	}
+}
+
+func TestValidate_BaseEntryRejections(t *testing.T) {
+	t.Parallel()
+
+	// The candidate discipline survives in base terms: the candidate must
+	// be the exact staging counterpart of the content-addressed final tag.
+	e := baseEntry()
+	e.CandidateTag = "codeberg.org/itiquette/nanolinter-base:staging-" + strings.Repeat("f", 64) + "-go"
+
+	if err := e.Validate(""); !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), "staging counterpart") {
+		t.Errorf("mismatched base candidate should fail, got %v", err)
+	}
+
+	e = baseEntry()
+	e.MovingTag = "codeberg.org/itiquette/nanolinter-base:staging-latest"
+
+	if err := e.Validate(""); !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), "moving_tag") {
+		t.Errorf("staging moving tag should fail, got %v", err)
+	}
+
+	// The shared format rules still bind base entries.
+	e = baseEntry()
+	e.Digest = "sha256:short"
+
+	if err := e.Validate(""); !errors.Is(err, errs.ErrValidation) {
+		t.Errorf("bad digest on base entry should fail, got %v", err)
 	}
 }
 

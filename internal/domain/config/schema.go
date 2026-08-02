@@ -59,6 +59,16 @@ const (
 	BuildTypeLibrary     BuildType = "library"
 )
 
+// ValidBuildTypes lists every BuildType the schema recognises. The
+// generated artifacts.yml JSON Schema renders its buildType enum from
+// this slice.
+//
+//nolint:gochecknoglobals // schema enumeration — read-only and ordered.
+var ValidBuildTypes = []BuildType{
+	BuildTypeApplication,
+	BuildTypeLibrary,
+}
+
 // GoBuildMode declares how reusable-ci should treat a Go artifact.
 // Container-first compiles inside the project Containerfile; artifact-first
 // compiles release binaries in build-go.yml before any container consumes them.

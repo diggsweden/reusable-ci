@@ -11,7 +11,6 @@ import (
 	"io/fs"
 	"os"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/adapters/cosign"
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/openpgp"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
@@ -85,7 +84,7 @@ func VerifyArtifactSignature(
 	case domainrelease.SignMethodGPG:
 		return verifyGPG(in.Artefact, resolved.signaturePath, in.PublicKey)
 	case domainrelease.SignMethodSigstore:
-		return verifyCosign(ctx, cosignVerifier, cosign.VerifyBlobInput{
+		return verifyCosign(ctx, cosignVerifier, domainrelease.BlobVerifyRequest{
 			Artefact:           in.Artefact,
 			BundlePath:         resolved.signaturePath,
 			Keyless:            true,
@@ -93,7 +92,7 @@ func VerifyArtifactSignature(
 			CertOIDCIssuer:     in.CertOIDCIssuer,
 		}, out)
 	case domainrelease.SignMethodKMS:
-		return verifyCosign(ctx, cosignVerifier, cosign.VerifyBlobInput{
+		return verifyCosign(ctx, cosignVerifier, domainrelease.BlobVerifyRequest{
 			Artefact:   in.Artefact,
 			BundlePath: resolved.signaturePath,
 			KeyRef:     in.KeyRef,
@@ -107,7 +106,7 @@ func VerifyArtifactSignature(
 // VerifyArtifactSignature needs. Lets tests inject an in-process
 // fake without paying for a real subprocess.
 type cosignBlobVerifier interface {
-	VerifyBlob(ctx context.Context, in cosign.VerifyBlobInput, errOut io.Writer) error
+	VerifyBlob(ctx context.Context, in domainrelease.BlobVerifyRequest, errOut io.Writer) error
 }
 
 // resolvedLayout captures what the on-disk inspection turned up.
@@ -229,7 +228,7 @@ func verifyGPG(artefactPath, signaturePath string, pubKeyArmor []byte) error {
 	return openpgp.VerifyDetachedArmored(artefact, sig, pubKeyArmor)
 }
 
-func verifyCosign(ctx context.Context, verifier cosignBlobVerifier, in cosign.VerifyBlobInput, errOut io.Writer) error {
+func verifyCosign(ctx context.Context, verifier cosignBlobVerifier, in domainrelease.BlobVerifyRequest, errOut io.Writer) error {
 	return verifier.VerifyBlob(ctx, in, errOut)
 }
 

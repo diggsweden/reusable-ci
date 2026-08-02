@@ -63,6 +63,7 @@ func ComputeMetadata(
 	prov provider.Provider,
 	meta provider.RepoMetadataFetcher,
 	sink ci.OutputSink,
+	manifest ci.ManifestSink,
 	in ComputeMetadataInput,
 ) (*ComputeMetadataOutput, error) {
 	if in.ImageName == "" {
@@ -126,7 +127,7 @@ func ComputeMetadata(
 
 	jsonOut := container.BuildJSONOutput(tags, labels)
 
-	if err := writeOutputs(ctx, sink, tags, labels, primary, jsonOut, in.EmitLabels); err != nil {
+	if err := writeOutputs(ctx, sink, manifest, tags, labels, primary, jsonOut, in.EmitLabels); err != nil {
 		return nil, err
 	}
 
@@ -204,6 +205,7 @@ func resolveOCIFields(
 func writeOutputs(
 	ctx context.Context,
 	sink ci.OutputSink,
+	manifest ci.ManifestSink,
 	tags []string,
 	labels []container.Label,
 	primary string,
@@ -214,14 +216,14 @@ func writeOutputs(
 		return err
 	}
 
+	// tags and labels are multi-line; on a sink without a multi-line
+	// encoding (GitLab) they degrade together to the stage manifest.
+	var multi []ci.MultilineEntry
+
 	if len(tags) > 0 {
-		if err := sink.SetMultiline(ctx, "tags", tags); err != nil {
-			return err
-		}
-	} else {
-		if err := sink.Set(ctx, "tags", ""); err != nil {
-			return err
-		}
+		multi = append(multi, ci.MultilineEntry{Key: "tags", Lines: tags})
+	} else if err := sink.Set(ctx, "tags", ""); err != nil {
+		return err
 	}
 
 	if emitLabels {
@@ -230,9 +232,11 @@ func writeOutputs(
 			lines = append(lines, l.String())
 		}
 
-		if err := sink.SetMultiline(ctx, "labels", lines); err != nil {
-			return err
-		}
+		multi = append(multi, ci.MultilineEntry{Key: "labels", Lines: lines})
+	}
+
+	if err := ci.EmitMultiline(ctx, sink, manifest, "container-metadata", multi...); err != nil {
+		return err
 	}
 
 	jsonStr, err := marshalJSONCompact(jsonOut)

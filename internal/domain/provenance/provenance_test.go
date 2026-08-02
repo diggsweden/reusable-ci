@@ -237,7 +237,8 @@ func TestPredicate_BaseLineage(t *testing.T) {
 		t.Errorf("base sha256 = %q, want %q (sha256: prefix must be stripped)", base.Digest["sha256"], strings.Repeat("b", 64))
 	}
 
-	// Pin the generic reusable-ci base-lineage predicate bytes. Forgejo CI's
-	// shipped compatibility shape is pinned separately by BaseLineagePredicate.
+	// Pin the generic reusable-ci base-lineage predicate bytes (the
+	// `container attest --base-*` path; forgejo-ci's retired shipped
+	// compatibility shape now lives on only in signed attestations).
 	golden.Equal(t, "provenance_base_lineage_predicate.json", body)
 }

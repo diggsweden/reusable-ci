@@ -129,6 +129,8 @@ func OpengrepCodeScanningLabel(ctx OpengrepPlatformContext) string {
 		return "SARIF generated, upload not configured"
 	case provider.PlatformGitLab:
 		return "GitLab SAST artifact generated"
+	case provider.PlatformForgejo:
+		return "SARIF artifact generated (no Code Scanning ingestion)"
 	default:
 		return "Portable artifacts only"
 	}
@@ -146,6 +148,8 @@ func OpengrepCodeScanningNote(ctx OpengrepPlatformContext) string {
 		return "SARIF is still generated and saved as a workflow artifact. Configure CODE_SCANNING_TOKEN to publish results in Security / Code Scanning."
 	case provider.PlatformGitLab:
 		return "A GitLab SAST report is generated alongside the portable artifacts."
+	case provider.PlatformForgejo:
+		return "Forgejo has no Code Scanning ingestion; the SARIF report is saved as a workflow artifact for external tooling."
 	default:
 		return "Portable artifacts are generated without platform-native upload."
 	}

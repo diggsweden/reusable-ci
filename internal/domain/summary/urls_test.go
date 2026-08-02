@@ -19,6 +19,7 @@ func TestReleaseURL(t *testing.T) {
 	}{
 		{provider.PlatformGitHub, "https://github.com/owner/repo/releases/tag/v1.0.0"},
 		{provider.PlatformGitLab, "https://gitlab.com/owner/repo/-/releases/v1.0.0"},
+		{provider.PlatformForgejo, "https://codeberg.org/owner/repo/releases/tag/v1.0.0"},
 		{provider.PlatformLocal, "(release: v1.0.0)"},
 	}
 	for _, c := range cases { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
@@ -30,8 +31,7 @@ func TestReleaseURL(t *testing.T) {
 		case provider.PlatformGitLab:
 			server = "https://gitlab.com"
 		case provider.PlatformForgejo:
-			// Forgejo summary URLs are wired in a later phase (the
-			// forge adapter); no case is exercised here yet.
+			server = "https://codeberg.org"
 		case provider.PlatformLocal:
 			// No server URL needed — the local placeholder ignores it.
 		}
@@ -52,6 +52,11 @@ func TestPackagesURL(t *testing.T) {
 
 	if got := summary.PackagesURL(provider.PlatformGitLab, "https://gitlab.com", "owner/repo"); got != "https://gitlab.com/owner/repo/-/packages" {
 		t.Errorf("gitlab = %q", got)
+	}
+
+	// Forgejo packages hang off the owner, not the repository.
+	if got := summary.PackagesURL(provider.PlatformForgejo, "https://codeberg.org", "owner/repo"); got != "https://codeberg.org/owner/-/packages" {
+		t.Errorf("forgejo = %q", got)
 	}
 
 	if got := summary.PackagesURL(provider.PlatformLocal, "", ""); got != "(packages)" {

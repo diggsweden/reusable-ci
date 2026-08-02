@@ -97,6 +97,17 @@ func Ref() cli.ValueSourceChain { return vars("REF", "FORGEJO_REF", "GITHUB_REF"
 // RefType resolves the ref kind ("branch" or "tag").
 func RefType() cli.ValueSourceChain { return vars("REF_TYPE", "FORGEJO_REF_TYPE", "GITHUB_REF_TYPE") }
 
+// EventName resolves the workflow trigger event in the canonical
+// vocabulary (the GitHub-Actions spellings, which GHA and Forgejo emit
+// natively). GitLab's CI_PIPELINE_SOURCE is deliberately absent from
+// this chain: its dialect (merge_request_event, web, …) is normalized
+// by the gitlab provider adapter's ResolveContext, and commands fall
+// back to that resolved context when no env var is set — sourcing the
+// raw var here would bypass the normalization.
+func EventName() cli.ValueSourceChain {
+	return vars("EVENT_NAME", "FORGEJO_EVENT_NAME", "GITHUB_EVENT_NAME")
+}
+
 // Commit resolves the commit SHA. COMMIT_SHA is the bare deliberate name
 // the report steps set; it wins over the runner-provided vars but not over
 // the CI_COMMIT* pair already in use.

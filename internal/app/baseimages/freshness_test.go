@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-package container_test
+package baseimages_test
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/app/baseimages"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 )
@@ -32,8 +32,8 @@ var errRegistryBlip = errors.New("registry blip")
 
 const freshPinned = "docker.io/library/debian:trixie-slim@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-func freshnessInput(enforce bool) appcontainer.CheckFreshnessInput {
-	return appcontainer.CheckFreshnessInput{
+func freshnessInput(enforce bool) baseimages.CheckFreshnessInput {
+	return baseimages.CheckFreshnessInput{
 		ChecksJSON: `[{"name":"DEBIAN_IMAGE","pinned-ref":"` + freshPinned + `","source-tag":"docker.io/library/debian:trixie-slim"}]`,
 		Enforce:    enforce,
 	}
@@ -49,7 +49,7 @@ func TestCheckFreshnessCurrent(t *testing.T) {
 
 	var out, stderr bytes.Buffer
 
-	err := appcontainer.CheckFreshness(context.Background(), resolver, sink, &out, &stderr, freshnessInput(true))
+	err := baseimages.CheckFreshness(context.Background(), resolver, sink, &out, &stderr, freshnessInput(true))
 	if err != nil {
 		t.Fatalf("CheckFreshness() = %v, want nil", err)
 	}
@@ -75,7 +75,7 @@ func TestCheckFreshnessStale(t *testing.T) {
 
 		var out, stderr bytes.Buffer
 
-		err := appcontainer.CheckFreshness(context.Background(), resolver, fakeoutputsink.New(t), &out, &stderr, freshnessInput(true))
+		err := baseimages.CheckFreshness(context.Background(), resolver, fakeoutputsink.New(t), &out, &stderr, freshnessInput(true))
 		if !errors.Is(err, errs.ErrValidation) {
 			t.Fatalf("CheckFreshness() = %v, want ErrValidation", err)
 		}
@@ -92,7 +92,7 @@ func TestCheckFreshnessStale(t *testing.T) {
 
 		var out, stderr bytes.Buffer
 
-		err := appcontainer.CheckFreshness(context.Background(), resolver, sink, &out, &stderr, freshnessInput(false))
+		err := baseimages.CheckFreshness(context.Background(), resolver, sink, &out, &stderr, freshnessInput(false))
 		if err != nil {
 			t.Fatalf("CheckFreshness() = %v, want nil", err)
 		}
@@ -117,7 +117,7 @@ func TestCheckFreshnessFetchFailure(t *testing.T) {
 
 		var out, stderr bytes.Buffer
 
-		err := appcontainer.CheckFreshness(context.Background(), resolver, fakeoutputsink.New(t), &out, &stderr, freshnessInput(true))
+		err := baseimages.CheckFreshness(context.Background(), resolver, fakeoutputsink.New(t), &out, &stderr, freshnessInput(true))
 		if !errors.Is(err, errs.ErrDependencyUnavailable) {
 			t.Fatalf("CheckFreshness() = %v, want ErrDependencyUnavailable", err)
 		}
@@ -128,7 +128,7 @@ func TestCheckFreshnessFetchFailure(t *testing.T) {
 
 		var out, stderr bytes.Buffer
 
-		err := appcontainer.CheckFreshness(context.Background(), resolver, fakeoutputsink.New(t), &out, &stderr, freshnessInput(false))
+		err := baseimages.CheckFreshness(context.Background(), resolver, fakeoutputsink.New(t), &out, &stderr, freshnessInput(false))
 		if err != nil {
 			t.Fatalf("CheckFreshness() = %v, want nil", err)
 		}
@@ -158,8 +158,8 @@ func TestCheckFreshnessConfigErrorsFailInBothModes(t *testing.T) {
 
 			var out, stderr bytes.Buffer
 
-			err := appcontainer.CheckFreshness(context.Background(), resolver, fakeoutputsink.New(t), &out, &stderr,
-				appcontainer.CheckFreshnessInput{ChecksJSON: checksJSON, Enforce: false})
+			err := baseimages.CheckFreshness(context.Background(), resolver, fakeoutputsink.New(t), &out, &stderr,
+				baseimages.CheckFreshnessInput{ChecksJSON: checksJSON, Enforce: false})
 			if err == nil {
 				t.Fatalf("CheckFreshness(%s) = nil, want config error even in warn-only mode", name)
 			}

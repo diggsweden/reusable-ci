@@ -116,7 +116,7 @@ func TestInstallReusableCI_ReleaseAssetPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tarballName := osArchTarballName(t, "v3.4.5")
+	tarballName := osArchTarballName(t)
 	binaryBody := []byte("#!/usr/bin/env bash\nprintf 'reusable-ci test-version\\n'\n")
 	tarballPath := filepath.Join(releaseDir, tarballName)
 	writeReusableCITarball(t, tarballPath, binaryBody)
@@ -126,10 +126,21 @@ func TestInstallReusableCI_ReleaseAssetPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Signature verification is fail-closed: the release must carry a
+	// checksums.txt.bundle and cosign must accept it. The fixture bundle
+	// plus a fake cosign (exit 0, argv logged) keep the test hermetic
+	// while exercising the signed path's plumbing.
+	if err := os.WriteFile(filepath.Join(releaseDir, "checksums.txt.bundle"), []byte("{}"), 0o644); err != nil { //nolint:gosec // test fixture
+		t.Fatal(err)
+	}
+
 	// Fake curl that returns staged fixtures by filename. Mirrors the
 	// `curl -sSfL -o <dest> <url>` invocation in the script.
 	binDir := t.TempDir()
 	writeFakeCurl(t, binDir, releaseRoot)
+
+	cosignLog := filepath.Join(t.TempDir(), "cosign-args")
+	writeFakeCosign(t, binDir, cosignLog)
 
 	installDir := filepath.Join(t.TempDir(), "install")
 	githubPath := filepath.Join(t.TempDir(), "github-path")
@@ -147,6 +158,17 @@ func TestInstallReusableCI_ReleaseAssetPath(t *testing.T) {
 
 	if !strings.Contains(stdout, "Downloading reusable-ci v3.4.5") {
 		t.Errorf("expected download log, got: %s", stdout)
+	}
+
+	cosignArgs, err := os.ReadFile(cosignLog) //nolint:gosec // test fixture
+	if err != nil {
+		t.Fatalf("cosign was not invoked: %v", err)
+	}
+
+	for _, want := range []string{"verify-blob", "--bundle", "--new-bundle-format"} {
+		if !strings.Contains(string(cosignArgs), want) {
+			t.Errorf("cosign argv missing %q: %s", want, cosignArgs)
+		}
 	}
 
 	got, err := os.ReadFile(filepath.Join(installDir, "reusable-ci")) //nolint:gosec // test fixture
@@ -180,7 +202,7 @@ func TestInstallReusableCI_ReleaseAssetTamperingDetected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tarballName := osArchTarballName(t, "v3.4.5")
+	tarballName := osArchTarballName(t)
 	tarballPath := filepath.Join(releaseDir, tarballName)
 	writeReusableCITarball(t, tarballPath, []byte("genuine\n"))
 	// Checksums file claims a hash for unrelated content; verification must fail.
@@ -189,8 +211,15 @@ func TestInstallReusableCI_ReleaseAssetTamperingDetected(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A bundle + fake cosign get the run past the fail-closed signature
+	// gate, so the test reaches the SHA-256 check it is actually about.
+	if err := os.WriteFile(filepath.Join(releaseDir, "checksums.txt.bundle"), []byte("{}"), 0o644); err != nil { //nolint:gosec // test fixture
+		t.Fatal(err)
+	}
+
 	binDir := t.TempDir()
 	writeFakeCurl(t, binDir, releaseRoot)
+	writeFakeCosign(t, binDir, filepath.Join(t.TempDir(), "cosign-args"))
 	// Provide a fake go too so the fall-back attempt is observable; we want
 	// the test to fail loudly, not silently fall back without verification.
 	logPath := filepath.Join(t.TempDir(), "go-args")
@@ -217,8 +246,142 @@ func TestInstallReusableCI_ReleaseAssetTamperingDetected(t *testing.T) {
 	}
 }
 
-func osArchTarballName(t *testing.T, ref string) string {
+// TestInstallReusableCI_UnsignedReleaseRefusedByDefault pins the
+// fail-closed contract: a release without a checksums.txt.bundle is
+// refused (even though its SHA-256 would verify) and the installer
+// falls back to `go install`, whose integrity comes from the module
+// checksum database instead.
+func TestInstallReusableCI_UnsignedReleaseRefusedByDefault(t *testing.T) {
+	if _, err := exec.LookPath("tar"); err != nil {
+		t.Skip("tar not available")
+	}
+
+	releaseRoot := t.TempDir()
+
+	releaseDir := filepath.Join(releaseRoot, "v3.4.5")
+	if err := os.MkdirAll(releaseDir, 0o755); err != nil { //nolint:gosec // test fixture
+		t.Fatal(err)
+	}
+
+	tarballName := osArchTarballName(t)
+	tarballPath := filepath.Join(releaseDir, tarballName)
+	writeReusableCITarball(t, tarballPath, []byte("genuine\n"))
+
+	checksums := sha256sumFile(t, tarballPath) + "  " + tarballName + "\n"
+	if err := os.WriteFile(filepath.Join(releaseDir, "checksums.txt"), []byte(checksums), 0o644); err != nil { //nolint:gosec // test fixture
+		t.Fatal(err)
+	}
+	// Deliberately NO checksums.txt.bundle.
+
+	binDir := t.TempDir()
+	writeFakeCurl(t, binDir, releaseRoot)
+	writeFakeCosign(t, binDir, filepath.Join(t.TempDir(), "cosign-args"))
+
+	goLog := filepath.Join(t.TempDir(), "go-args")
+	writeFakeGo(t, binDir, goLog)
+
+	installDir := filepath.Join(t.TempDir(), "install")
+
+	stdout, stderr, err := runSourcedScript(t, "install-reusable-ci.sh", `install_reusable_ci "$REUSABLE_CI_BINARY_REF"`, map[string]string{
+		"PATH":                         binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"REUSABLE_CI_BINARY_REF":       "v3.4.5",
+		"REUSABLE_CI_INSTALL_DIR":      installDir,
+		"REUSABLE_CI_RELEASE_URL_BASE": "file://" + releaseRoot,
+	})
+	if err != nil {
+		t.Fatalf("install_reusable_ci: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
+	}
+
+	if !strings.Contains(stderr, "the release carries no signature bundle") {
+		t.Errorf("expected fail-closed unsigned refusal, got stderr: %s", stderr)
+	}
+
+	if !strings.Contains(stderr, "falling back to go install") {
+		t.Errorf("expected fall-back to go install, got: %s\nstdout: %s", stderr, stdout)
+	}
+
+	goArgs, err := os.ReadFile(goLog) //nolint:gosec // test fixture
+	if err != nil {
+		t.Fatalf("go fallback was not invoked: %v", err)
+	}
+
+	if got := strings.TrimSpace(string(goArgs)); got != "install github.com/diggsweden/reusable-ci/v3/cmd/reusable-ci@v3.4.5" {
+		t.Fatalf("go args = %q", got)
+	}
+}
+
+// TestInstallReusableCI_UnsignedAcceptedWithExplicitOptIn pins the
+// documented escape hatch: REUSABLE_CI_ALLOW_UNSIGNED=1 accepts a
+// bundle-less release with a loud warning, and SHA-256 verification
+// still gates the install.
+func TestInstallReusableCI_UnsignedAcceptedWithExplicitOptIn(t *testing.T) {
+	if _, err := exec.LookPath("tar"); err != nil {
+		t.Skip("tar not available")
+	}
+
+	if _, err := exec.LookPath("sha256sum"); err != nil {
+		if _, err := exec.LookPath("shasum"); err != nil {
+			t.Skip("neither sha256sum nor shasum available")
+		}
+	}
+
+	releaseRoot := t.TempDir()
+
+	releaseDir := filepath.Join(releaseRoot, "v3.4.5")
+	if err := os.MkdirAll(releaseDir, 0o755); err != nil { //nolint:gosec // test fixture
+		t.Fatal(err)
+	}
+
+	tarballName := osArchTarballName(t)
+	binaryBody := []byte("#!/usr/bin/env bash\nprintf 'reusable-ci test-version\\n'\n")
+	tarballPath := filepath.Join(releaseDir, tarballName)
+	writeReusableCITarball(t, tarballPath, binaryBody)
+
+	checksums := sha256sumFile(t, tarballPath) + "  " + tarballName + "\n"
+	if err := os.WriteFile(filepath.Join(releaseDir, "checksums.txt"), []byte(checksums), 0o644); err != nil { //nolint:gosec // test fixture
+		t.Fatal(err)
+	}
+	// Deliberately NO checksums.txt.bundle.
+
+	binDir := t.TempDir()
+	writeFakeCurl(t, binDir, releaseRoot)
+	writeFakeCosign(t, binDir, filepath.Join(t.TempDir(), "cosign-args"))
+
+	installDir := filepath.Join(t.TempDir(), "install")
+	githubPath := filepath.Join(t.TempDir(), "github-path")
+
+	stdout, stderr, err := runSourcedScript(t, "install-reusable-ci.sh", `install_reusable_ci "$REUSABLE_CI_BINARY_REF"`, map[string]string{
+		"PATH":                         binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"REUSABLE_CI_BINARY_REF":       "v3.4.5",
+		"REUSABLE_CI_INSTALL_DIR":      installDir,
+		"REUSABLE_CI_RELEASE_URL_BASE": "file://" + releaseRoot,
+		"REUSABLE_CI_ALLOW_UNSIGNED":   "1",
+		"GITHUB_PATH":                  githubPath,
+	})
+	if err != nil {
+		t.Fatalf("install_reusable_ci: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
+	}
+
+	if !strings.Contains(stderr, "proceeding UNSIGNED") {
+		t.Errorf("expected UNSIGNED warning, got stderr: %s", stderr)
+	}
+
+	got, err := os.ReadFile(filepath.Join(installDir, "reusable-ci")) //nolint:gosec // test fixture
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(got, binaryBody) {
+		t.Errorf("extracted binary mismatch")
+	}
+}
+
+// osArchTarballName names the release tarball for the fixture version
+// v3.4.5 on the host OS/arch (every installer test stages that version).
+func osArchTarballName(t *testing.T) string {
 	t.Helper()
+
+	const ref = "v3.4.5"
 
 	osName := "linux"
 	if runtime.GOOS == "darwin" {
@@ -325,6 +488,21 @@ func TestInstallReusableCI_LocalRef(t *testing.T) {
 
 	if got := strings.TrimSpace(string(args)); got != "install ./cmd/reusable-ci" {
 		t.Fatalf("go args = %q", got)
+	}
+}
+
+// writeFakeCosign stages a cosign stand-in that logs its argv and
+// exits 0, so the fail-closed signature gate can be exercised
+// hermetically (no keys, no Fulcio, no network).
+func writeFakeCosign(t *testing.T, dir, logPath string) {
+	t.Helper()
+
+	body := `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" > "` + logPath + `"
+`
+	if err := os.WriteFile(filepath.Join(dir, "cosign"), []byte(body), 0o755); err != nil { //nolint:gosec // test fixture
+		t.Fatal(err)
 	}
 }
 

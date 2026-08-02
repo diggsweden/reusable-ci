@@ -293,7 +293,7 @@ func deriveSignerImageManifest(in SignerImageAssembleInput) (signerImageManifest
 
 	archs := in.Archs
 	if len(archs) == 0 {
-		archs = []string{archAMD64, archARM64}
+		archs = []string{domaincontainer.ArchAMD64, domaincontainer.ArchARM64}
 	}
 
 	for _, arch := range archs {
@@ -335,7 +335,7 @@ func validateSignerImageCommon(authFile, sourceSHA, serverURL, repository string
 
 func validateSignerArch(arch string) error {
 	switch arch {
-	case archAMD64, archARM64:
+	case domaincontainer.ArchAMD64, domaincontainer.ArchARM64:
 		return nil
 	default:
 		return fmt.Errorf("unsupported signer architecture: %s: %w", arch, errs.ErrValidation)

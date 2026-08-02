@@ -18,7 +18,8 @@ import (
 )
 
 const (
-	defaultPinRemote  = "https://codeberg.org/itiquette/forgejo-ci.git"
+	// No default remote: the engine must not assume one org's forgejo-ci
+	// fork. The caller supplies --remote (or a local --repo-dir).
 	defaultPinMain    = "main"
 	defaultPinSubject = "forgejo-ci"
 )
@@ -43,7 +44,6 @@ func PinReachability(ctx context.Context, out io.Writer, in PinReachabilityInput
 		return fmt.Errorf("usage: validate pin-reachability --workflow WORKFLOW.yml [--workflow WORKFLOW.yml ...]: %w", errs.ErrUsage)
 	}
 
-	remote := defaultString(in.Remote, defaultPinRemote)
 	mainBranch := defaultString(in.Main, defaultPinMain)
 	subject := defaultString(in.Subject, defaultPinSubject)
 
@@ -61,7 +61,11 @@ func PinReachability(ctx context.Context, out io.Writer, in PinReachabilityInput
 
 	repoDir := in.RepoDir
 	if repoDir == "" {
-		repoDir, err = clonePinReachabilityRepo(ctx, in.GitBin, remote, in.TempDir)
+		if strings.TrimSpace(in.Remote) == "" {
+			return fmt.Errorf("validate pin-reachability: provide --remote (the %s upstream to clone) or --repo-dir (a local clone): %w", subject, errs.ErrUsage)
+		}
+
+		repoDir, err = clonePinReachabilityRepo(ctx, in.GitBin, in.Remote, in.TempDir)
 		if err != nil {
 			return err
 		}

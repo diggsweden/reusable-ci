@@ -107,7 +107,7 @@ based on platform capability while keeping the artifact contract stable.
 | Step summaries | `GITHUB_STEP_SUMMARY` | `$CI_SUMMARY_FILE` (write + publish as artifact / MR comment) | provider-neutral Markdown via the `stepsummary` sink — already wired for `--runner gitlab` |
 | Scalar outputs | `$GITHUB_OUTPUT` | `artifacts:reports:dotenv` | provider-neutral `OutputSink` (`gitlaboutput`) — already wired |
 | Build-time secret mounts | `containers[].build-secrets` + `REUSABLE_CI_BUILD_SECRETS_JSON` envelope (GHA secret) | same envelope shape supplied as a GitLab CI variable | `reusable-ci container materialize-build-secrets` consumes the envelope identically on both platforms |
-| Privileged-trigger gate | `reusable-ci validate event-context` reads `GITHUB_EVENT_NAME` | needs `CI_PIPELINE_SOURCE` reader and a port allowlist (`push`, `web`, `schedule`, `pipeline`, `trigger`, `api`); refuse `merge_request_event` / `external_pull_request_event` | shared policy `domain/validate.RequireAllowedEvent` + `DefaultAllowedEvents` is **done**; only the GitLab reader (`CI_PIPELINE_SOURCE`) + its allowlist are missing |
+| Privileged-trigger gate | `reusable-ci validate event-context` reads `$GITHUB_EVENT_NAME` / `$FORGEJO_EVENT_NAME`, falling back to the provider-resolved event context | ✅ **done** — the gitlab adapter normalizes `CI_PIPELINE_SOURCE` to the canonical vocabulary (`web` → `workflow_dispatch`, `merge_request_event` → `pull_request`; `push`/`schedule` identity) and the gate consumes it. Unmapped sources (`api`, `trigger`, `pipeline`, …) pass through verbatim and are refused by the default allowlist (fail closed); extend per-workflow via `--allowed-events` with the raw source name | shared policy `domain/validate.RequireAllowedEvent` + `DefaultAllowedEvents` unchanged; the reader is the provider `ResolveContext`, not a GitLab branch |
 
 > **Capability-flag note.** The gitlab adapter reports `Attestation: false`,
 > which means **GitHub's native attestation API**, *not* "no signed provenance."
@@ -353,11 +353,14 @@ model behind these is the *Artifact & credential model* section above:
   imperative upload stays `ErrUnsupported`-with-guidance.
 - **Release-asset upload/link** (Generic Package Registry + asset links) — the
   adapter's `CreateRelease` works, but asset linking is still stubbed.
-- **`CI_PIPELINE_SOURCE` event reader** for `validate event-context` (the shared
-  `RequireAllowedEvent` policy already exists; only the GitLab reader is missing).
-  Coherent shape: resolve `EventName` from the provider Context (all three
-  adapters already populate it) rather than the current hardcoded
-  `GITHUB_EVENT_NAME` env source — a shared fix, not a GitLab branch.
+- **`CI_PIPELINE_SOURCE` event reader — ✅ shipped (canonical vocabulary via the
+  provider context).** `validate event-context` now sources the event through
+  `cienv.EventName()` and falls back to the provider-resolved `EventName` when
+  no env var is set. The gitlab adapter's `ResolveContext` normalizes
+  `CI_PIPELINE_SOURCE` to the canonical spellings (`web` →
+  `workflow_dispatch`, `merge_request_event` → `pull_request`) and passes
+  unknown sources through verbatim so the gate fails closed on them — exactly
+  the shared-fix shape planned here, not a GitLab branch.
 - **Stage-result aggregation — ✅ shipped (forge-neutral core + two input adapters).**
   `report stage-result` aggregates job outcomes against the stage plan through
   one shared pure function (`summary.ResolveTargetResults`) with one fail-closed

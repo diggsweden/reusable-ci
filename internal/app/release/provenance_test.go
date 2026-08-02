@@ -21,7 +21,7 @@ func TestGenerateProvenance_CarriesIdentifiersAndDeps(t *testing.T) {
 		GoSum:         strings.NewReader("github.com/foo/bar v1.0.0 h1:xyz=\n"),
 		RepositoryURL: "https://codeberg.org/itiquette/repo",
 		Ref:           "v2.0.0",
-		SHA:           "deadbeef",
+		SHA:           strings.Repeat("d", 40),
 		BuilderID:     "https://codeberg.org/itiquette/repo/release.yml@v2.0.0",
 		InvocationID:  "https://codeberg.org/itiquette/repo/actions/runs/777",
 		StartedOn:     "2026-06-01T00:00:00Z",
@@ -43,6 +43,29 @@ func TestGenerateProvenance_CarriesIdentifiersAndDeps(t *testing.T) {
 	// Source dep first, then the parsed go.sum module.
 	if n := len(got.Predicate.BuildDefinition.ResolvedDependencies); n != 2 {
 		t.Fatalf("got %d resolved deps, want 2 (source + 1 module)", n)
+	}
+}
+
+// TestGenerateProvenance_RejectsMalformedSHA pins the fail-closed commit
+// digest rule: the SHA lands in the attested resolvedDependencies, so junk
+// must be refused here, not signed into evidence (callers no longer
+// pre-validate in shell).
+func TestGenerateProvenance_RejectsMalformedSHA(t *testing.T) {
+	t.Parallel()
+
+	for _, sha := range []string{"", "deadbeef", strings.Repeat("A", 40), strings.Repeat("g", 64), strings.Repeat("2", 41)} {
+		_, err := apprelease.GenerateProvenance(apprelease.ProvenanceInput{
+			Checksums:     strings.NewReader(strings.Repeat("b", 64) + "  x\n"),
+			RepositoryURL: "https://git.example/o/r",
+			Ref:           "v1",
+			SHA:           sha,
+			BuilderID:     "https://git.example/o/r/release.yml@v1",
+			InvocationID:  "https://git.example/o/r/actions/runs/1",
+			StartedOn:     "2026-06-01T00:00:00Z",
+		})
+		if !errors.Is(err, errs.ErrValidation) {
+			t.Errorf("SHA %q: err = %v, want ErrValidation", sha, err)
+		}
 	}
 }
 
@@ -85,7 +108,7 @@ func TestGenerateProvenance_NoGoSum(t *testing.T) {
 		GoSum:         nil, // optional
 		RepositoryURL: "https://git.example/o/r",
 		Ref:           "v1",
-		SHA:           "abc",
+		SHA:           strings.Repeat("a", 40),
 		BuilderID:     "https://git.example/o/r/release.yml@v1",
 		InvocationID:  "https://git.example/o/r/actions/runs/1",
 		StartedOn:     "2026-06-01T00:00:00Z",
@@ -191,4 +214,48 @@ func TestGenerateProvenance_ForgejoActionsProfileRequiresWorkflow(t *testing.T) 
 	if !errors.Is(err, errs.ErrUsage) {
 		t.Fatalf("err = %v, want ErrUsage", err)
 	}
+}
+
+// TestGenerateProvenance_ExternalParameters pins the generic extras path
+// on the release statement: caller-declared parameters land in
+// buildDefinition.externalParameters, and any engine-computed key is
+// reserved — a collision fails rather than overriding a fact.
+func TestGenerateProvenance_ExternalParameters(t *testing.T) {
+	t.Parallel()
+
+	input := func(extras map[string]any) apprelease.ProvenanceInput {
+		return apprelease.ProvenanceInput{
+			Checksums:          strings.NewReader(strings.Repeat("a", 64) + "  app.tar.gz\n"),
+			RepositoryURL:      "https://codeberg.org/itiquette/example",
+			Ref:                "v1.2.3",
+			SHA:                strings.Repeat("2", 40),
+			BuilderID:          "https://codeberg.org/itiquette/example/release.yml@v1.2.3",
+			InvocationID:       "https://codeberg.org/itiquette/example/actions/runs/1",
+			StartedOn:          "2026-06-01T00:00:00Z",
+			ExternalParameters: extras,
+		}
+	}
+
+	t.Run("extras land in externalParameters", func(t *testing.T) {
+		t.Parallel()
+
+		body, err := apprelease.GenerateProvenance(input(map[string]any{"base_input_set": "abc123", "build_group": "core"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ext := decodeStatement(t, body).Predicate.BuildDefinition.ExternalParameters
+		if string(ext["base_input_set"]) != `"abc123"` || string(ext["build_group"]) != `"core"` {
+			t.Errorf("extras missing from externalParameters: %#v", ext)
+		}
+	})
+
+	t.Run("reserved-key collision fails", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := apprelease.GenerateProvenance(input(map[string]any{"source": "shadowed"}))
+		if !errors.Is(err, errs.ErrValidation) {
+			t.Fatalf("err = %v, want ErrValidation", err)
+		}
+	})
 }

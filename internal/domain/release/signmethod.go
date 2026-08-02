@@ -5,6 +5,8 @@ package release
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
@@ -56,22 +58,45 @@ const (
 // downstream consumers; new repos should set sign.method explicitly.
 const DefaultSignMethod = SignMethodGPG
 
+// ValidSignMethods lists every SignMethod in canonical order. It is
+// the single definition of the set: ParseSignMethod accepts exactly
+// these values and the generated artifacts.yml JSON Schema renders
+// its sign.method enum from this slice.
+//
+//nolint:gochecknoglobals // schema enumeration — read-only and ordered.
+var ValidSignMethods = []SignMethod{
+	SignMethodGPG,
+	SignMethodSigstore,
+	SignMethodKMS,
+}
+
 // ParseSignMethod validates and returns a SignMethod from raw input.
 // Empty input is rejected; callers that want a default should fall
 // back to DefaultSignMethod themselves, so the "user typed nothing"
 // vs "user typed garbage" cases stay distinct in error messages.
 func ParseSignMethod(raw string) (SignMethod, error) {
-	switch SignMethod(raw) {
-	case SignMethodGPG, SignMethodSigstore, SignMethodKMS:
-		return SignMethod(raw), nil
-	case "":
+	if raw == "" {
 		return "", fmt.Errorf("sign method is empty: %w", errs.ErrMissingInput)
-	default:
-		return "", fmt.Errorf(
-			"sign method %q is not one of [gpg, sigstore, kms]: %w",
-			raw, errs.ErrInvalidConfig,
-		)
 	}
+
+	if slices.Contains(ValidSignMethods, SignMethod(raw)) {
+		return SignMethod(raw), nil
+	}
+
+	return "", fmt.Errorf(
+		"sign method %q is not one of [%s]: %w",
+		raw, joinMethods(ValidSignMethods), errs.ErrInvalidConfig,
+	)
+}
+
+// joinMethods renders a method list for error messages: "gpg, sigstore, kms".
+func joinMethods(methods []SignMethod) string {
+	parts := make([]string, len(methods))
+	for i, method := range methods {
+		parts[i] = string(method)
+	}
+
+	return strings.Join(parts, ", ")
 }
 
 // SignatureExtensions returns the sidecar file extensions a given

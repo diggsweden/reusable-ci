@@ -27,7 +27,7 @@ EXAMPLE:
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagRoot, Value: ".", Usage: "repository root used to resolve relative workflow paths"},
 			&cli.StringSliceFlag{Name: flagWorkflow, Usage: "workflow file to scan for forgejo-ci pins (repeatable; required)"},
-			&cli.StringFlag{Name: "remote", Value: "https://codeberg.org/itiquette/forgejo-ci.git", Sources: cli.EnvVars("FORGEJO_CI_REMOTE"), Usage: "forgejo-ci git remote to clone when --repo-dir is unset"},
+			&cli.StringFlag{Name: "remote", Sources: cli.EnvVars("FORGEJO_CI_REMOTE"), Usage: "forgejo-ci git remote to clone when --repo-dir is unset (required unless --repo-dir is set; no org default)"},
 			&cli.StringFlag{Name: "repo-dir", Sources: cli.EnvVars("FORGEJO_CI_DIR"), Usage: "local forgejo-ci clone to check instead of cloning --remote"},
 			&cli.StringFlag{Name: "main", Value: "main", Sources: cli.EnvVars("FORGEJO_CI_MAIN"), Usage: "branch ref treated as current main"},
 			&cli.StringFlag{Name: "subject", Value: "forgejo-ci", Usage: "pin subject to scan before @<sha>"},

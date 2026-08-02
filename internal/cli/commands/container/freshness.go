@@ -10,7 +10,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/ociregistry"
-	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
+	appbaseimages "github.com/diggsweden/reusable-ci/v3/internal/app/baseimages"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 )
 
@@ -38,7 +38,7 @@ EXAMPLE:
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(dep *deps.Deps) error {
-				return appcontainer.CheckFreshness(ctx, ociregistry.New(), dep.OutputSink, os.Stdout, os.Stderr, appcontainer.CheckFreshnessInput{
+				return appbaseimages.CheckFreshness(ctx, ociregistry.New(), dep.OutputSink, os.Stdout, os.Stderr, appbaseimages.CheckFreshnessInput{
 					ChecksJSON: cmd.String("checks-json"),
 					Enforce:    cmd.Bool("enforce"),
 				})

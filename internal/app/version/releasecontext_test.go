@@ -35,7 +35,7 @@ func TestReleaseContext_DefaultModePreservesGenericOutputs(t *testing.T) {
 
 	err := appversion.ReleaseContext(context.Background(), fakeReleaseContextRepo{
 		tagger: git.TaggerInfo{Tagger: "Ada Lovelace <ada@example.test>"},
-	}, appversion.ReleaseContextInput{Ref: "release-request/v1.2.3"}, sink, &out)
+	}, appversion.ReleaseContextInput{Ref: "release-request/v1.2.3"}, sink, nil, &out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestReleaseContext_ForgejoStrictModeMatchesLegacyShellContract(t *testing.T
 		RequireReleaseRequest: true,
 		RequireStable:         true,
 		TrailerMode:           "forgejo-ci",
-	}, sink, &bytes.Buffer{})
+	}, sink, nil, &bytes.Buffer{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestReleaseContext_ForgejoStrictModeSkipsIncompleteTagger(t *testing.T) {
 		RequireReleaseRequest: true,
 		RequireStable:         true,
 		TrailerMode:           "forgejo-ci",
-	}, sink, &bytes.Buffer{})
+	}, sink, nil, &bytes.Buffer{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestReleaseContext_StrictModeRejectsLegacyShellInvalidRefs(t *testing.T) {
 				RequireReleaseRequest: true,
 				RequireStable:         true,
 				TrailerMode:           "forgejo-ci",
-			}, fakeoutputsink.New(t), &bytes.Buffer{})
+			}, fakeoutputsink.New(t), nil, &bytes.Buffer{})
 			if !errors.Is(err, errs.ErrValidation) {
 				t.Fatalf("err = %v, want validation", err)
 			}
@@ -134,7 +134,7 @@ func TestReleaseContext_RejectsUnknownTrailerMode(t *testing.T) {
 	err := appversion.ReleaseContext(context.Background(), fakeReleaseContextRepo{}, appversion.ReleaseContextInput{
 		Ref:         "release-request/v1.2.3",
 		TrailerMode: "unknown",
-	}, fakeoutputsink.New(t), &bytes.Buffer{})
+	}, fakeoutputsink.New(t), nil, &bytes.Buffer{})
 	if !errors.Is(err, errs.ErrUsage) {
 		t.Fatalf("err = %v, want usage", err)
 	}

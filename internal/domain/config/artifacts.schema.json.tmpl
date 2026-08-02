@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/diggsweden/reusable-ci/.reusable-ci/artifacts.schema.json",
+  "title": "reusable-ci artifacts.yml",
+  "description": "Declarative release plan for a repository. See docs/artifacts-reference.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifacts"],
+  "properties": {
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "containers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/container" }
+    },
+    "sign": { "$ref": "#/$defs/sign" },
+    "git-signing": { "$ref": "#/$defs/git-signing" }
+  },
+  "$defs": {
+    "git-signing": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Backend for signing the release commit and tag (git objects), independent of the artifact `sign` backend. See docs/verification.md#choosing-a-method.",
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": {{GIT_SIGN_METHODS}},
+          "description": "gpg (default; imports $RELEASE_GPG_PRIVATE_KEY) or ssh (git-native SSH signing via $SSH_SIGNING_KEY, no OpenPGP key on the runner, verified against .reusable-ci/allowed_signers)."
+        }
+      }
+    },
+    "sign": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Signing backend for `release sign` and `release sbom-zip --sign`. See docs/verification.md#signing-methods-for-release-artefacts.",
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": {{SIGN_METHODS}},
+          "description": "gpg (default; uses $GPG_PRIVATE_KEY), sigstore (keyless cosign + OIDC), or kms (cosign + key)."
+        },
+        "key": {
+          "type": "string",
+          "description": "cosign --key reference for method=kms. Allowed schemes: awskms://, gcpkms://, azurekms://, hashivault://, pkcs11:, file: (intentionally explicit prefix for local key files). Other schemes are rejected as a security-hardening measure.",
+          "pattern": "{{KMS_KEY_PATTERN}}"
+        },
+        "oidc-issuer": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://",
+          "description": "OIDC issuer URL for method=sigstore (default: auto-detected — GitHub Actions / GitLab / $CI_SERVER_URL). Must be HTTPS."
+        }
+      }
+    },
+    "projectType": {
+      "type": "string",
+      "description": "Ecosystem identifier. `go` and `cargo` require config.build-mode (artifact-first|container-first). Python is recognized as a future placeholder but is not currently a valid choice — no build/publish workflow exists; setting it would silently produce nothing.",
+      "enum": {{PROJECT_TYPES}}
+    },
+    "buildType": {
+      "type": "string",
+      "enum": {{BUILD_TYPES}}
+    },
+    "publishTarget": {
+      "type": "string",
+      "enum": {{PUBLISH_TARGETS}}
+    },
+    "sboms": {
+      "type": "string",
+      "description": "Enum or comma-list. Valid: all, none, build, analyzed-artifact, analyzed-container, or a comma-separated subset.",
+      "pattern": "{{SBOM_PATTERN}}"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "project-type"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "project-type": { "$ref": "#/$defs/projectType" },
+        "working-directory": { "type": "string" },
+        "build-type": { "$ref": "#/$defs/buildType" },
+        "publish-to": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/publishTarget" }
+        },
+        "sboms": { "$ref": "#/$defs/sboms" },
+        "require-authorization": {
+          "type": "boolean",
+          "description": "When true, the release tag must be signed by a key listed in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_keys.asc (GPG)."
+        },
+        "config": {
+          "type": "object",
+          "description": "Per-ecosystem options. Schema varies by project-type — see docs/artifacts-reference.md for the field list of each ecosystem."
+        }
+      }
+    },
+    "container": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "from": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Artifact names this container consumes (matching artifacts[].name)."
+        },
+        "container-file": { "type": "string" },
+        "context": { "type": "string" },
+        "target": { "type": "string" },
+        "platforms": {
+          "type": "string",
+          "description": "Comma-separated platform list (e.g. linux/amd64,linux/arm64)."
+        },
+        "enable-slsa": {
+          "type": "boolean",
+          "description": "Generate SLSA build provenance for this container. Default: true. Set false to disable on a debug/testing container that shouldn't carry provenance."
+        },
+        "enable-scan": {
+          "type": "boolean",
+          "description": "Run Trivy vulnerability scan AND gate the publish on its findings. Default: true. Set false to skip both the scan and the CVE gate (not recommended for production)."
+        },
+        "scan-severity": {
+          "type": "string",
+          "description": "Per-container override of the trivy --severity filter and fail-on threshold. Default 'CRITICAL,HIGH'. Narrow (e.g. 'CRITICAL') to relax the gate without disabling the scan; use enable-scan: false to skip the gate entirely."
+        },
+        "build-args": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "build-secrets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z_][A-Z0-9_]*$"
+          },
+          "description": "Names of BuildKit secrets to forward into the Containerfile build as `--mount=type=secret,id=<lowercased-name>` mounts. Values come from the REUSABLE_CI_BUILD_SECRETS_JSON envelope packed by the caller workflow; the publish-container materialize step writes them to mode-0600 tmpfiles for the duration of the build. Unlike build-args, these values are NEVER recorded in SLSA provenance attestations — use this for any secret consumed at build time (private package tokens, build-time API keys). See docs/artifacts-reference.md for the full caller recipe."
+        },
+        "extract": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "binary": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "target": {
+                  "type": "string",
+                  "description": "Containerfile stage that exposes the binary (typically a `FROM scratch` export-binary stage)."
+                },
+                "names": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Expected binary filenames; the build fails if any are missing."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

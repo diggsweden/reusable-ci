@@ -9,18 +9,10 @@ import (
 	"io"
 	"os"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/adapters/cosign"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provenance"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
-)
-
-// cosign --type aliases for the predicate kinds this package attests and
-// verifies, plus the syft output format used when generating SBOMs.
-const (
-	predicateTypeSLSAProvenance1 = "slsaprovenance1"
-	predicateTypeCycloneDX       = "cyclonedx"
-	sbomFormatCycloneDXJSON      = "cyclonedx-json"
 )
 
 // AttestImageInput drives `reusable-ci container attest`. It attaches a
@@ -60,7 +52,7 @@ type AttestImageInput struct {
 // cosignImageAttestor is the slice of *cosign.Adapter that attestation
 // needs; lets tests inject a fake.
 type cosignImageAttestor interface {
-	AttestImage(ctx context.Context, in cosign.AttestImageInput, errOut io.Writer) error
+	AttestImage(ctx context.Context, in container.ImageAttestRequest, errOut io.Writer) error
 }
 
 // AttestImage materialises the predicate (generating the SLSA provenance
@@ -90,14 +82,14 @@ func AttestImage(ctx context.Context, attestor cosignImageAttestor, out io.Write
 	case domainrelease.SignMethodSigstore:
 		_, _ = fmt.Fprintf(out, "Attesting %s to %s (type=%s, method=sigstore)\n", predicateType, in.Image, predicateType)
 
-		return attestor.AttestImage(ctx, cosign.AttestImageInput{
+		return attestor.AttestImage(ctx, container.ImageAttestRequest{
 			ImageRef: in.Image, PredicateType: predicateType, PredicatePath: predicatePath,
 			Recursive: in.Recursive, Keyless: true, OIDCIssuer: in.OIDCIssuer,
 		}, out)
 	case domainrelease.SignMethodKMS:
 		_, _ = fmt.Fprintf(out, "Attesting %s to %s (type=%s, method=kms)\n", predicateType, in.Image, predicateType)
 
-		return attestor.AttestImage(ctx, cosign.AttestImageInput{
+		return attestor.AttestImage(ctx, container.ImageAttestRequest{
 			ImageRef: in.Image, PredicateType: predicateType, PredicatePath: predicatePath,
 			Recursive: in.Recursive, KeyRef: in.KeyRef,
 		}, out)
@@ -132,7 +124,7 @@ func resolvePredicate(in AttestImageInput) (string, string, func(), error) {
 			"container attest: --type slsaprovenance is SLSA v0.2 and unsupported; use --type slsaprovenance1 (SLSA v1.0): %w", errs.ErrUsage)
 	}
 
-	if in.PredicateType != predicateTypeSLSAProvenance1 {
+	if in.PredicateType != container.PredicateTypeSLSAProvenance1 {
 		return "", "", noop, fmt.Errorf("container attest: --predicate is required for type %q: %w", in.PredicateType, errs.ErrMissingInput)
 	}
 
@@ -155,5 +147,5 @@ func resolvePredicate(in AttestImageInput) (string, string, func(), error) {
 
 	_ = file.Close()
 
-	return file.Name(), predicateTypeSLSAProvenance1, func() { _ = os.Remove(file.Name()) }, nil
+	return file.Name(), container.PredicateTypeSLSAProvenance1, func() { _ = os.Remove(file.Name()) }, nil
 }

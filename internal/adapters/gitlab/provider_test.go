@@ -101,6 +101,47 @@ func TestResolveContext_MergeRequest(t *testing.T) {
 	}
 }
 
+// TestResolveContext_CanonicalEventName pins the CI_PIPELINE_SOURCE →
+// canonical-vocabulary mapping: GitLab dialect spellings become the
+// GHA spellings every provider shares, and unknown sources pass
+// through verbatim so the event-context gate fails closed on them.
+func TestResolveContext_CanonicalEventName(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		source string
+		want   string
+	}{
+		{"push", "push"},
+		{"schedule", "schedule"},
+		{"web", "workflow_dispatch"},
+		{"merge_request_event", "pull_request"},
+		{"api", "api"},
+		{"trigger", "trigger"},
+		{"pipeline", "pipeline"},
+		{"", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.source, func(t *testing.T) {
+			t.Parallel()
+
+			p := &gitlab.Provider{Env: envFunc(map[string]string{
+				"CI_PIPELINE_SOURCE": tc.source,
+			})}
+
+			evt, err := p.ResolveContext(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if evt.EventName != tc.want {
+				t.Errorf("EventName for source %q = %q, want %q", tc.source, evt.EventName, tc.want)
+			}
+		})
+	}
+}
+
 func TestResolveContext_ShortSHAFallback(t *testing.T) {
 	t.Parallel()
 	// CI_COMMIT_SHORT_SHA absent → derive from first 7 of CI_COMMIT_SHA.

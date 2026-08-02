@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -320,7 +321,7 @@ func TestLedgerAddEntryFromFlags_ShapesForgejoReleaseImageRecord(t *testing.T) {
 		BaseRef:      "codeberg.org/itiquette/nanolinter-base@" + dig,
 		BaseInputID:  "base-input",
 	}
-	if entry != want {
+	if !reflect.DeepEqual(entry, want) {
 		t.Fatalf("entry = %#v\nwant  %#v", entry, want)
 	}
 }
@@ -401,6 +402,103 @@ func TestLedgerAddEntryFromFlags_KeepsLegacyImageNameMode(t *testing.T) {
 	if entry.CandidateTag != "codeberg.org/owner/repo:staging-v1.2.3" {
 		t.Fatalf("CandidateTag = %q", entry.CandidateTag)
 	}
+}
+
+func TestLedgerAddEntryFromFlags_RecordsSBOMPinAndProvenanceExtras(t *testing.T) {
+	t.Parallel()
+
+	const dig = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	pin := strings.Repeat("a", 64)
+
+	entry, _, err := ledgerAddEntryFromFlags(ledgerAddFlags{
+		Kind:           "distroless",
+		ImageName:      "codeberg.org/itiquette/gommitlint",
+		Digest:         dig,
+		FinalTagName:   "v1.2.3",
+		SBOM:           "dist/image-sbom.cyclonedx.json",
+		SBOMSHA256:     pin,
+		ProvenanceJSON: `{"base_input_set":"abc123","build_group":"core"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if entry.SBOMSHA256 != pin {
+		t.Errorf("SBOMSHA256 = %q, want %q", entry.SBOMSHA256, pin)
+	}
+
+	wantExtras := map[string]any{"base_input_set": "abc123", "build_group": "core"}
+	if !reflect.DeepEqual(entry.Provenance, wantExtras) {
+		t.Errorf("Provenance = %#v, want %#v", entry.Provenance, wantExtras)
+	}
+
+	// The domain accepts the shaped entry, so `ledger add` records it.
+	if _, _, err := imageledger.Append(nil, entry, "v1.2.3"); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	// A malformed pin is refused by the domain BEFORE any write: the
+	// validation runs inside Append, ahead of the ledger update.
+	bad := entry
+	bad.SBOMSHA256 = "not-hex"
+
+	if _, _, err := imageledger.Append(nil, bad, "v1.2.3"); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("bad pin err = %v, want ErrValidation", err)
+	}
+
+	// A pin without an SBOM path to verify is likewise refused.
+	orphan := entry
+	orphan.SBOM = ""
+
+	if _, _, err := imageledger.Append(nil, orphan, "v1.2.3"); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("pin without sbom err = %v, want ErrValidation", err)
+	}
+}
+
+func TestLedgerAddEntryFromFlags_RejectsMalformedProvenanceJSON(t *testing.T) {
+	t.Parallel()
+
+	const dig = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	for name, raw := range map[string]string{
+		"invalid":   `{not json`,
+		"array":     `[1,2]`,
+		"string":    `"x"`,
+		"null":      `null`,
+		"truncated": `{"a":`,
+	} {
+		_, _, err := ledgerAddEntryFromFlags(ledgerAddFlags{
+			Kind:           "distroless",
+			ImageName:      "codeberg.org/itiquette/gommitlint",
+			Digest:         dig,
+			FinalTagName:   "v1.2.3",
+			ProvenanceJSON: raw,
+		})
+		if !errors.Is(err, errs.ErrMalformedInput) {
+			t.Errorf("%s: err = %v, want ErrMalformedInput", name, err)
+		}
+	}
+}
+
+func TestLedgerAddCommandExposesSBOMPinAndProvenanceFlags(t *testing.T) {
+	t.Parallel()
+
+	for _, sub := range ledgerGroup().Commands {
+		if sub.Name != "add" {
+			continue
+		}
+
+		for _, flag := range []string{"sbom-sha256", "provenance-json"} {
+			if !hasFlag(sub, flag) {
+				t.Errorf("ledger add missing --%s", flag)
+			}
+		}
+
+		return
+	}
+
+	t.Fatal("ledger add command not found")
 }
 
 func TestLedgerAddEntryFromFlags_RejectsAmbiguousCandidateInputs(t *testing.T) {

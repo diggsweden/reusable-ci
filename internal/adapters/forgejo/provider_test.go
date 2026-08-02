@@ -118,6 +118,10 @@ func TestCapabilities(t *testing.T) {
 	if !caps.ReleaseAssets {
 		t.Error("Forgejo should advertise ReleaseAssets")
 	}
+
+	if !caps.RunArtifacts {
+		t.Error("Forgejo should advertise RunArtifacts (in-run Actions runtime service)")
+	}
 }
 
 // newProvider wires a Provider at the test server with a fixed token.

@@ -22,8 +22,6 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/safeexec"
 )
 
-const defaultCodebergED25519Fingerprint = "SHA256:mIlxA9k46MmM6qdJOdMnAQpzGxF4WIVVL+fj+wZbw0g"
-
 func commitChangelogReleaseCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "commit-changelog-release",
@@ -36,12 +34,12 @@ func commitChangelogReleaseCmd() *cli.Command {
 			&cli.StringFlag{Name: flagBranch, Value: "main", Sources: cli.EnvVars("RELEASE_BRANCH", "BRANCH"), Usage: "branch to push the signed changelog commit to"},
 			&cli.StringFlag{Name: "changelog", Value: "CHANGELOG.md", Sources: cli.EnvVars("CHANGELOG_PATH"), Usage: "pre-generated changelog file to commit"},
 			&cli.StringFlag{Name: "commit-message-file", Value: defaultCommitMessageFile, Sources: cli.EnvVars("COMMIT_MESSAGE_FILE"), Usage: "pre-generated commit message file used with git commit -F"},
-			&cli.StringFlag{Name: "author-name", Value: "Itiquette Release Bot", Sources: cli.EnvVars("GIT_USER_NAME", "COMMIT_AUTHOR_NAME"), Usage: "git user.name for the release bump commit"},
-			&cli.StringFlag{Name: "author-email", Value: "itiquette-release-bot@pm.me", Sources: cli.EnvVars("GIT_USER_EMAIL", "COMMIT_AUTHOR_EMAIL"), Usage: "git user.email for the release bump commit"},
+			&cli.StringFlag{Name: "author-name", Sources: cli.EnvVars("GIT_USER_NAME", "COMMIT_AUTHOR_NAME"), Usage: "git user.name for the release bump commit (required; no org default)"},
+			&cli.StringFlag{Name: "author-email", Sources: cli.EnvVars("GIT_USER_EMAIL", "COMMIT_AUTHOR_EMAIL"), Usage: "git user.email for the release bump commit (required; no org default)"},
 			&cli.StringFlag{Name: "private-key-file", Usage: "path to the OpenSSH private signing key (use '-' for stdin; defaults to $SSH_SIGNING_KEY)"},
-			&cli.StringFlag{Name: "host", Value: "codeberg.org", Sources: cli.EnvVars("RELEASE_GIT_HOST"), Usage: "SSH host for origin and known_hosts pinning"},
+			&cli.StringFlag{Name: "host", Sources: cli.EnvVars("RELEASE_GIT_HOST"), Usage: "SSH host for origin and known_hosts pinning (required; no org default)"},
 			&cli.StringFlag{Name: "host-key-type", Value: "ed25519", Sources: cli.EnvVars("RELEASE_GIT_HOST_KEY_TYPE"), Usage: "host key type passed to ssh-keyscan"},
-			&cli.StringFlag{Name: "host-key-fingerprint", Value: defaultCodebergED25519Fingerprint, Sources: cli.EnvVars("RELEASE_GIT_HOST_KEY_FINGERPRINT"), Usage: "expected SSH host key fingerprint"},
+			&cli.StringFlag{Name: "host-key-fingerprint", Sources: cli.EnvVars("RELEASE_GIT_HOST_KEY_FINGERPRINT"), Usage: "expected SSH host key fingerprint, required (a trust anchor, never defaulted; get it with: ssh-keyscan -t <type> <host> | ssh-keygen -lf -)"},
 			&cli.BoolFlag{Name: "no-sign", Usage: "skip final tag signing (intended for tests; production always signs)"},
 			&cli.BoolFlag{Name: "signed", Value: true, Sources: cli.EnvVars("TAG_RELEASE_SIGNED"), Usage: "create a signed final tag; set TAG_RELEASE_SIGNED=false for unsigned annotated test tags"},
 			&cli.StringFlag{Name: flagToken, Sources: cienv.ReleaseToken(), Usage: "optional token for HTTP remotes; the Forgejo release flow uses the SSH key instead"},
@@ -91,7 +89,15 @@ func commitChangelogReleaseCmd() *cli.Command {
 
 				_ = os.Unsetenv("SSH_SIGNING_KEY")
 
-				sshCommand, keyPath, cleanup, err := setupChangelogReleaseSSH(ctx, privateKey, cmd.String("host"), cmd.String("host-key-type"), cmd.String("host-key-fingerprint"))
+				// The host key fingerprint is a trust anchor: the engine ships
+				// no default, so require it explicitly before pinning the host.
+				fingerprint := cmd.String("host-key-fingerprint")
+				if fingerprint == "" {
+					return fmt.Errorf("commit-changelog: --host-key-fingerprint is required (a trust anchor; get it with: ssh-keyscan -t %s %s | ssh-keygen -lf -): %w",
+						cmd.String("host-key-type"), cmd.String("host"), errs.ErrUsage)
+				}
+
+				sshCommand, keyPath, cleanup, err := setupChangelogReleaseSSH(ctx, privateKey, cmd.String("host"), cmd.String("host-key-type"), fingerprint)
 				if err != nil {
 					return err
 				}

@@ -201,7 +201,7 @@ func TestChangelog_RequiredMissing(t *testing.T) {
 	path := testfs.NewReal(t).Path("CHANGELOG.md")
 	sink := fakeoutputsink.New(t)
 
-	err := appvalidate.Changelog(context.Background(), sink, &bytes.Buffer{}, appvalidate.ChangelogInput{
+	err := appvalidate.Changelog(context.Background(), sink, nil, &bytes.Buffer{}, appvalidate.ChangelogInput{
 		Path:     path,
 		Required: true,
 	})
@@ -218,7 +218,7 @@ func TestChangelog_RequiredPresent(t *testing.T) {
 
 	sink := fakeoutputsink.New(t)
 
-	err := appvalidate.Changelog(context.Background(), sink, &buf, appvalidate.ChangelogInput{
+	err := appvalidate.Changelog(context.Background(), sink, nil, &buf, appvalidate.ChangelogInput{
 		Path:     path,
 		Required: true,
 	})
@@ -235,7 +235,7 @@ func TestChangelog_MinimalAbsentEmitsSentinel(t *testing.T) {
 	t.Parallel()
 	sink := fakeoutputsink.New(t)
 
-	err := appvalidate.Changelog(context.Background(), sink, &bytes.Buffer{}, appvalidate.ChangelogInput{
+	err := appvalidate.Changelog(context.Background(), sink, nil, &bytes.Buffer{}, appvalidate.ChangelogInput{
 		Path:     testfs.NewReal(t).Path("missing.txt"),
 		Required: false,
 	})
@@ -255,7 +255,7 @@ func TestChangelog_MinimalPresentEmitsContent(t *testing.T) {
 	path := testfs.NewReal(t).WriteFile("minimal.txt", []byte(body))
 	sink := fakeoutputsink.New(t)
 
-	err := appvalidate.Changelog(context.Background(), sink, &bytes.Buffer{}, appvalidate.ChangelogInput{
+	err := appvalidate.Changelog(context.Background(), sink, nil, &bytes.Buffer{}, appvalidate.ChangelogInput{
 		Path:     path,
 		Required: false,
 	})

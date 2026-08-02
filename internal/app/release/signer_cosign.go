@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/adapters/cosign"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
@@ -37,7 +36,7 @@ type CosignSigner struct {
 // needs. Defining it as an interface lets unit tests inject a fake
 // without spinning up the mockbinary stack.
 type cosignSignBlobber interface {
-	SignBlob(ctx context.Context, in cosign.SignBlobInput, errOut io.Writer) error
+	SignBlob(ctx context.Context, in domainrelease.BlobSignRequest, errOut io.Writer) error
 }
 
 // CosignSignerInput captures the per-invocation configuration for
@@ -103,7 +102,7 @@ func (s *CosignSigner) Extensions() []string { return s.method.SignatureExtensio
 // lands at <file>.bundle. The caller's asset-walking loop handles
 // any subsequent rename.
 func (s *CosignSigner) SignFile(ctx context.Context, file string) error {
-	in := cosign.SignBlobInput{
+	in := domainrelease.BlobSignRequest{
 		Artefact:   file,
 		BundlePath: file + ".bundle",
 	}

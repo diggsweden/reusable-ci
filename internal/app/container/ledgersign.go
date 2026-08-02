@@ -5,6 +5,8 @@ package container
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,18 +15,24 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/adapters/cosign"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provenance"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
 
 var hex64RE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
+// imageDigestResolver is the registry surface ledger signing needs:
+// resolve a tag or ref to its manifest digest.
+type imageDigestResolver interface {
+	ResolveDigest(ctx context.Context, ref string) (string, error)
+}
+
 type ledgerImageSigner interface {
-	SignImage(ctx context.Context, in cosign.SignImageInput, errOut io.Writer) error
-	AttestImage(ctx context.Context, in cosign.AttestImageInput, errOut io.Writer) error
+	SignImage(ctx context.Context, in domaincontainer.ImageSignRequest, errOut io.Writer) error
+	AttestImage(ctx context.Context, in domaincontainer.ImageAttestRequest, errOut io.Writer) error
 }
 
 // SignLedgerImagesInput drives the signer-side release-image loop: validate the
@@ -165,14 +173,14 @@ func (run ledgerSignRun) signEntry(ctx context.Context, idx int, entry imageledg
 		return err
 	}
 
-	if err = generateImageSBOM(ctx, run.sbom, run.stderr, imageRef, entry.SBOM); err != nil {
+	if err = ensureImageSBOM(ctx, run.sbom, run.stderr, imageRef, entry); err != nil {
 		return err
 	}
 
 	if err = AttestImage(ctx, run.signer, run.out, AttestImageInput{
 		Image:         imageRef,
 		Method:        run.in.Method,
-		PredicateType: predicateTypeCycloneDX,
+		PredicateType: domaincontainer.PredicateTypeCycloneDX,
 		PredicatePath: entry.SBOM,
 		Recursive:     run.in.Recursive,
 		KeyRef:        run.in.KeyRef,
@@ -189,7 +197,7 @@ func (run ledgerSignRun) signEntry(ctx context.Context, idx int, entry imageledg
 	if err = AttestImage(ctx, run.signer, run.out, AttestImageInput{
 		Image:         imageRef,
 		Method:        run.in.Method,
-		PredicateType: predicateTypeSLSAProvenance1,
+		PredicateType: domaincontainer.PredicateTypeSLSAProvenance1,
 		PredicatePath: predicatePath,
 		Recursive:     run.in.Recursive,
 		KeyRef:        run.in.KeyRef,
@@ -307,7 +315,21 @@ func validateLedgerSignRepositories(entry imageledger.Entry, constraints ledgerS
 }
 
 // validateLedgerSignBase checks the paired base_ref/base_input_id fields.
+//
+// Base entries (image_kind=base) are exempt from the pairing: a base
+// image has no parent base image to reference, and its base_input_id
+// identifies the input set that PRODUCED it. A base entry must therefore
+// declare base_input_id alone; enrichImagePredicate turns it into the
+// attested externalParameters.base_input_id lineage field.
 func validateLedgerSignBase(entry imageledger.Entry) error {
+	if entry.ImageKind == imageledger.ImageKindBase && entry.BaseRef == "" {
+		if !hex64RE.MatchString(entry.BaseInputID) {
+			return fmt.Errorf("imageledger: base entries must declare base_input_id as a sha256 hex digest: %q: %w", entry.BaseInputID, errs.ErrValidation)
+		}
+
+		return nil
+	}
+
 	if (entry.BaseRef == "") != (entry.BaseInputID == "") {
 		return fmt.Errorf("imageledger: base_ref and base_input_id must be set together: %w", errs.ErrValidation)
 	}
@@ -356,6 +378,30 @@ func resolveLedgerSignRef(ctx context.Context, resolver imageDigestResolver, ent
 	}
 
 	return digestRef, "", nil
+}
+
+// ensureImageSBOM makes the entry's SBOM ready for attestation. A pinned
+// entry (sbom_sha256 set) carries a PREMADE document: verify the file
+// hashes to exactly the pin and attest it as-is — regenerating would
+// break the pin by construction, and the signer must attest exactly what
+// the build produced. Unpinned entries keep the generate-fresh behavior.
+func ensureImageSBOM(ctx context.Context, sbom ImageEvidenceSyft, stderr io.Writer, imageRef string, entry imageledger.Entry) error {
+	if entry.SBOMSHA256 == "" {
+		return generateImageSBOM(ctx, sbom, stderr, imageRef, entry.SBOM)
+	}
+
+	raw, err := os.ReadFile(entry.SBOM) //nolint:gosec // ledger-declared dist path, confined by the caller.
+	if err != nil {
+		return fmt.Errorf("premade SBOM %s: %w", entry.SBOM, err)
+	}
+
+	sum := sha256.Sum256(raw)
+	if got := hex.EncodeToString(sum[:]); got != entry.SBOMSHA256 {
+		return fmt.Errorf("premade SBOM %s does not match sbom_sha256: got %s, want %s: %w",
+			entry.SBOM, got, entry.SBOMSHA256, errs.ErrValidation)
+	}
+
+	return nil
 }
 
 func generateImageSBOM(ctx context.Context, sbom ImageEvidenceSyft, stderr io.Writer, imageRef, sbomPath string) error {
@@ -409,21 +455,17 @@ func enrichImagePredicate(base []byte, entry imageledger.Entry, imageRef, candid
 		"sbom":          entry.SBOM,
 	}
 
-	if entry.BaseRef != "" {
-		baseDigest := strings.TrimPrefix(entry.BaseRef[strings.LastIndex(entry.BaseRef, "@")+1:], "sha256:")
-		ext["base"] = map[string]any{"ref": entry.BaseRef, "input_id": entry.BaseInputID}
+	if err := enrichPredicateBaseLineage(build, ext, entry); err != nil {
+		return nil, err
+	}
 
-		deps, ok := build["resolvedDependencies"].([]any)
-		if !ok {
-			return nil, fmt.Errorf("provenance predicate buildDefinition.resolvedDependencies must be an array: %w", errs.ErrMalformedInput)
-		}
-
-		deps = append(deps, map[string]any{
-			"uri":         "oci://" + entry.BaseRef,
-			"digest":      map[string]any{"sha256": baseDigest},
-			"annotations": map[string]any{"base_input_id": entry.BaseInputID},
-		})
-		build["resolvedDependencies"] = deps
+	// Caller-declared extras merge last, with every already-present key
+	// reserved: the engine's computed facts and the base predicate's own
+	// fields can never be shadowed by a declared document. One shared
+	// merge implementation (domain/provenance) serves this path and the
+	// statement builder alike.
+	if err := provenance.MergeExternalParameters(ext, entry.Provenance); err != nil {
+		return nil, err
 	}
 
 	body, err := json.MarshalIndent(doc, "", "  ")
@@ -432,4 +474,45 @@ func enrichImagePredicate(base []byte, entry imageledger.Entry, imageRef, candid
 	}
 
 	return append(body, '\n'), nil
+}
+
+// enrichPredicateBaseLineage records the entry's base lineage before the
+// extras merge, so every emitted key is reserved against declared extras.
+//
+// A base entry (image_kind=base) with no base_ref IS the base image: its
+// base_input_id identifies the input set that produced it and is emitted
+// under the exact field name the retired base-lineage predicate used
+// (externalParameters.base_input_id), keeping the attested content
+// semantically identical across the signer flip. Every other entry with a
+// base_ref records the parent base image it was built FROM, as both an
+// externalParameters.base object and a resolvedDependencies pin.
+func enrichPredicateBaseLineage(build, ext map[string]any, entry imageledger.Entry) error {
+	if entry.ImageKind == imageledger.ImageKindBase && entry.BaseRef == "" {
+		if entry.BaseInputID != "" {
+			ext["base_input_id"] = entry.BaseInputID
+		}
+
+		return nil
+	}
+
+	if entry.BaseRef == "" {
+		return nil
+	}
+
+	baseDigest := strings.TrimPrefix(entry.BaseRef[strings.LastIndex(entry.BaseRef, "@")+1:], "sha256:")
+	ext["base"] = map[string]any{"ref": entry.BaseRef, "input_id": entry.BaseInputID}
+
+	deps, ok := build["resolvedDependencies"].([]any)
+	if !ok {
+		return fmt.Errorf("provenance predicate buildDefinition.resolvedDependencies must be an array: %w", errs.ErrMalformedInput)
+	}
+
+	deps = append(deps, map[string]any{
+		"uri":         "oci://" + entry.BaseRef,
+		"digest":      map[string]any{"sha256": baseDigest},
+		"annotations": map[string]any{"base_input_id": entry.BaseInputID},
+	})
+	build["resolvedDependencies"] = deps
+
+	return nil
 }

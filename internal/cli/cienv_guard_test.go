@@ -37,6 +37,8 @@ func TestRunContextEnvVarsGoThroughCienv(t *testing.T) {
 		"REF_NAME": true, "CI_REF_NAME": true, "FORGEJO_REF_NAME": true, "GITHUB_REF_NAME": true,
 		"REF": true, "FORGEJO_REF": true, "GITHUB_REF": true,
 		"REF_TYPE": true, "FORGEJO_REF_TYPE": true, "GITHUB_REF_TYPE": true,
+		// trigger event
+		"EVENT_NAME": true, "FORGEJO_EVENT_NAME": true, "GITHUB_EVENT_NAME": true,
 		// commit
 		"CI_COMMIT": true, "CI_COMMIT_SHA": true, "COMMIT_SHA": true,
 		"FORGEJO_SHA": true, "GITHUB_SHA": true,

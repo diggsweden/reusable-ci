@@ -114,6 +114,9 @@ func TestChangelogRelease_CommitsPushesTagsAndChecksOut(t *testing.T) {
 	res, err := appversion.ChangelogRelease(context.Background(), repo, fakeoutputsink.New(t), &out, appversion.ChangelogReleaseInput{
 		Tag:            "v1.2.3",
 		Repository:     "itiquette/example",
+		RemoteHost:     "codeberg.org",
+		AuthorName:     "Itiquette Release Bot",
+		AuthorEmail:    "itiquette-release-bot@pm.me",
 		SigningKeyPath: "/tmp/key",
 		TagSigned:      true,
 	})
@@ -160,6 +163,9 @@ func TestChangelogRelease_UnchangedSkipsCommitButTags(t *testing.T) {
 	_, err := appversion.ChangelogRelease(context.Background(), repo, nil, &bytes.Buffer{}, appversion.ChangelogReleaseInput{
 		Tag:            "v1.2.3",
 		Repository:     "itiquette/example",
+		RemoteHost:     "codeberg.org",
+		AuthorName:     "Itiquette Release Bot",
+		AuthorEmail:    "itiquette-release-bot@pm.me",
 		SigningKeyPath: "/tmp/key",
 		TagSigned:      false,
 	})
@@ -189,10 +195,13 @@ func TestChangelogRelease_DryRunSkipsGitMutationsAndNarrates(t *testing.T) {
 	// No SigningKeyPath: the signing key only serves the skipped push, so
 	// a dry-run preview may run without one.
 	res, err := appversion.ChangelogRelease(context.Background(), repo, fakeoutputsink.New(t), &out, appversion.ChangelogReleaseInput{
-		Tag:        "v1.2.3",
-		Repository: "itiquette/example",
-		TagSigned:  true,
-		DryRun:     true,
+		Tag:         "v1.2.3",
+		Repository:  "itiquette/example",
+		RemoteHost:  "codeberg.org",
+		AuthorName:  "Itiquette Release Bot",
+		AuthorEmail: "itiquette-release-bot@pm.me",
+		TagSigned:   true,
+		DryRun:      true,
 	})
 	if err != nil {
 		t.Fatalf("ChangelogRelease: %v", err)
@@ -241,9 +250,12 @@ func TestChangelogRelease_DryRunStillFailsValidation(t *testing.T) {
 		t.Chdir(dir)
 
 		_, err := appversion.ChangelogRelease(context.Background(), &fakeChangelogReleaseRepo{status: " M CHANGELOG.md"}, nil, &bytes.Buffer{}, appversion.ChangelogReleaseInput{
-			Tag:        "v1.2.3",
-			Repository: "itiquette/example",
-			DryRun:     true,
+			Tag:         "v1.2.3",
+			Repository:  "itiquette/example",
+			RemoteHost:  "codeberg.org",
+			AuthorName:  "Itiquette Release Bot",
+			AuthorEmail: "itiquette-release-bot@pm.me",
+			DryRun:      true,
 		})
 		if !errors.Is(err, errs.ErrMissingInput) {
 			t.Fatalf("err = %v, want ErrMissingInput", err)
@@ -254,9 +266,12 @@ func TestChangelogRelease_DryRunStillFailsValidation(t *testing.T) {
 		t.Parallel()
 
 		_, err := appversion.ChangelogRelease(context.Background(), &fakeChangelogReleaseRepo{}, nil, &bytes.Buffer{}, appversion.ChangelogReleaseInput{
-			Tag:        "v1.2.3-rc1",
-			Repository: "itiquette/example",
-			DryRun:     true,
+			Tag:         "v1.2.3-rc1",
+			Repository:  "itiquette/example",
+			RemoteHost:  "codeberg.org",
+			AuthorName:  "Itiquette Release Bot",
+			AuthorEmail: "itiquette-release-bot@pm.me",
+			DryRun:      true,
 		})
 		if !errors.Is(err, errs.ErrValidation) {
 			t.Fatalf("err = %v, want ErrValidation", err)
@@ -272,6 +287,9 @@ func TestChangelogRelease_RequiresCommitMessageWhenChangelogChanged(t *testing.T
 	_, err := appversion.ChangelogRelease(context.Background(), &fakeChangelogReleaseRepo{status: " M CHANGELOG.md"}, nil, &bytes.Buffer{}, appversion.ChangelogReleaseInput{
 		Tag:            "v1.2.3",
 		Repository:     "itiquette/example",
+		RemoteHost:     "codeberg.org",
+		AuthorName:     "Itiquette Release Bot",
+		AuthorEmail:    "itiquette-release-bot@pm.me",
 		SigningKeyPath: "/tmp/key",
 	})
 	if !errors.Is(err, errs.ErrMissingInput) {
@@ -285,6 +303,9 @@ func TestChangelogRelease_RequiresStableTag(t *testing.T) {
 	_, err := appversion.ChangelogRelease(context.Background(), &fakeChangelogReleaseRepo{}, nil, &bytes.Buffer{}, appversion.ChangelogReleaseInput{
 		Tag:            "v1.2.3-rc1",
 		Repository:     "itiquette/example",
+		RemoteHost:     "codeberg.org",
+		AuthorName:     "Itiquette Release Bot",
+		AuthorEmail:    "itiquette-release-bot@pm.me",
 		SigningKeyPath: "/tmp/key",
 	})
 	if !errors.Is(err, errs.ErrValidation) {

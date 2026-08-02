@@ -17,7 +17,10 @@ import (
 
 // EventContextInput drives `reusable-ci validate event-context`.
 type EventContextInput struct {
-	// EventName is GITHUB_EVENT_NAME (the workflow's trigger event).
+	// EventName is the workflow's trigger event in the canonical
+	// vocabulary — from --event-name, $GITHUB_EVENT_NAME /
+	// $FORGEJO_EVENT_NAME, or the provider-resolved CI context
+	// (GitLab: normalized CI_PIPELINE_SOURCE).
 	EventName string
 	// AllowedEvents overrides DefaultAllowedEvents. Empty falls back to
 	// the default policy. Comma/space/newline-separated lists from the

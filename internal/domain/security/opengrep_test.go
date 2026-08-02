@@ -211,6 +211,31 @@ func TestRenderOpengrepFailureSummary(t *testing.T) {
 	}
 }
 
+func TestRenderOpengrepSummary_Forgejo(t *testing.T) {
+	md, result := security.RenderOpengrepSummary(security.OpengrepSummaryInput{
+		Config:         "p/default",
+		TargetPath:     ".",
+		FailOnSeverity: security.OpengrepSeverityHigh,
+		Counts:         security.OpengrepCounts{},
+		Platform: security.OpengrepPlatformContext{
+			Platform: provider.PlatformForgejo,
+			RunURL:   "https://codeberg.org/owner/repo/actions/runs/1",
+		},
+	})
+	if result != "success" {
+		t.Errorf("result = %q", result)
+	}
+
+	for _, want := range []string{
+		"SARIF artifact generated (no Code Scanning ingestion)",
+		"Forgejo has no Code Scanning ingestion; the SARIF report is saved as a workflow artifact for external tooling.",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("missing %q in:\n%s", want, md)
+		}
+	}
+}
+
 func TestParseConfigList(t *testing.T) {
 	got, err := security.ParseConfigList(" p/default ,  custom-rules.yaml,  ")
 	if err != nil {

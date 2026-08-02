@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/adapters/cosign"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
@@ -35,7 +35,7 @@ type VerifyAttestationInput struct {
 
 // cosignAttestationVerifier mirrors cosignImageVerifier for the attestation side.
 type cosignAttestationVerifier interface {
-	VerifyAttestation(ctx context.Context, in cosign.VerifyAttestationInput, errOut io.Writer) error
+	VerifyAttestation(ctx context.Context, in container.AttestationVerifyRequest, errOut io.Writer) error
 }
 
 // VerifyAttestation re-verifies a registry-attached attestation of the given
@@ -64,7 +64,7 @@ func VerifyAttestation(ctx context.Context, verifier cosignAttestationVerifier, 
 	case domainrelease.SignMethodSigstore:
 		_, _ = fmt.Fprintf(out, "Verifying %s attestation on %s (method=sigstore)\n", in.PredicateType, in.Image)
 
-		return verifier.VerifyAttestation(ctx, cosign.VerifyAttestationInput{
+		return verifier.VerifyAttestation(ctx, container.AttestationVerifyRequest{
 			ImageRef:           in.Image,
 			PredicateType:      in.PredicateType,
 			Keyless:            true,
@@ -74,7 +74,7 @@ func VerifyAttestation(ctx context.Context, verifier cosignAttestationVerifier, 
 	case domainrelease.SignMethodKMS:
 		_, _ = fmt.Fprintf(out, "Verifying %s attestation on %s (method=kms)\n", in.PredicateType, in.Image)
 
-		return verifier.VerifyAttestation(ctx, cosign.VerifyAttestationInput{
+		return verifier.VerifyAttestation(ctx, container.AttestationVerifyRequest{
 			ImageRef:      in.Image,
 			PredicateType: in.PredicateType,
 			KeyRef:        in.KeyRef,

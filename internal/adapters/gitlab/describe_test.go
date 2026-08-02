@@ -57,4 +57,10 @@ func TestCapabilities_GitLab(t *testing.T) {
 	if !caps.KeylessOIDC {
 		t.Errorf("Capabilities = %+v, want KeylessOIDC", caps)
 	}
+
+	// Run artifacts are omitted by design: GitLab passes them declaratively
+	// via artifacts:/needs: in the job template, not this binary.
+	if caps.RunArtifacts {
+		t.Error("GitLab must not advertise RunArtifacts (declarative artifacts:/needs:)")
+	}
 }

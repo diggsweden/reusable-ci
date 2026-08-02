@@ -35,7 +35,7 @@ func changelogCmd() *cli.Command {
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
-				return appvalidate.Changelog(ctx, d.OutputSink, os.Stderr, appvalidate.ChangelogInput{
+				return appvalidate.Changelog(ctx, d.OutputSink, d.ManifestSink, os.Stderr, appvalidate.ChangelogInput{
 					Path:     cmd.String("path"),
 					Required: cmd.Bool("required"),
 				})

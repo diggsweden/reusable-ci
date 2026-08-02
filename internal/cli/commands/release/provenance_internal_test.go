@@ -215,3 +215,20 @@ func (f *fakeCommitUnixTimer) CommitUnixTime(_ context.Context, ref string) (str
 
 	return f.epoch, f.err
 }
+
+// TestProvenanceCommandExposesExternalParametersFlag pins the generic
+// externalParameters-extras flag on `release provenance`, the successor
+// to the per-field lineage flags slated for the coordinated flip.
+func TestProvenanceCommandExposesExternalParametersFlag(t *testing.T) {
+	t.Parallel()
+
+	for _, flag := range provenanceCmd().Flags {
+		for _, name := range flag.Names() {
+			if name == flagExternalParametersJSON {
+				return
+			}
+		}
+	}
+
+	t.Fatalf("release provenance missing --%s", flagExternalParametersJSON)
+}

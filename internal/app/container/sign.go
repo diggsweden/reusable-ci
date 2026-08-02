@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/adapters/cosign"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
@@ -41,9 +41,11 @@ type SignImageInput struct {
 }
 
 // cosignImageSigner is the slice of *cosign.Adapter that container-
-// signing needs. Lets tests inject an in-process fake.
+// signing needs, expressed against the domain port request so this
+// package never imports the adapter. Lets tests inject an in-process
+// fake.
 type cosignImageSigner interface {
-	SignImage(ctx context.Context, in cosign.SignImageInput, errOut io.Writer) error
+	SignImage(ctx context.Context, in container.ImageSignRequest, errOut io.Writer) error
 }
 
 // SignImage dispatches to the configured cosign signing path. Errors
@@ -64,7 +66,7 @@ func SignImage(ctx context.Context, signer cosignImageSigner, out io.Writer, in 
 	case domainrelease.SignMethodSigstore:
 		_, _ = fmt.Fprintf(out, "Signing image %s (method=sigstore, keyless OIDC)\n", in.Image)
 
-		return signer.SignImage(ctx, cosign.SignImageInput{
+		return signer.SignImage(ctx, container.ImageSignRequest{
 			ImageRef:   in.Image,
 			Recursive:  in.Recursive,
 			Keyless:    true,
@@ -73,7 +75,7 @@ func SignImage(ctx context.Context, signer cosignImageSigner, out io.Writer, in 
 	case domainrelease.SignMethodKMS:
 		_, _ = fmt.Fprintf(out, "Signing image %s (method=kms, key=%s)\n", in.Image, in.KeyRef)
 
-		return signer.SignImage(ctx, cosign.SignImageInput{
+		return signer.SignImage(ctx, container.ImageSignRequest{
 			ImageRef:  in.Image,
 			Recursive: in.Recursive,
 			KeyRef:    in.KeyRef,
@@ -103,7 +105,7 @@ type VerifyImageInput struct {
 
 // cosignImageVerifier mirrors cosignImageSigner for the verify side.
 type cosignImageVerifier interface {
-	VerifyImage(ctx context.Context, in cosign.VerifyImageInput, errOut io.Writer) error
+	VerifyImage(ctx context.Context, in container.ImageVerifyRequest, errOut io.Writer) error
 }
 
 // VerifyImage dispatches `cosign verify` against the chosen method.
@@ -125,7 +127,7 @@ func VerifyImage(ctx context.Context, verifier cosignImageVerifier, out io.Write
 	case domainrelease.SignMethodSigstore:
 		_, _ = fmt.Fprintf(out, "Verifying image %s (method=sigstore)\n", in.Image)
 
-		return verifier.VerifyImage(ctx, cosign.VerifyImageInput{
+		return verifier.VerifyImage(ctx, container.ImageVerifyRequest{
 			ImageRef:           in.Image,
 			Keyless:            true,
 			CertIdentityRegexp: in.CertIdentityRegexp,
@@ -134,7 +136,7 @@ func VerifyImage(ctx context.Context, verifier cosignImageVerifier, out io.Write
 	case domainrelease.SignMethodKMS:
 		_, _ = fmt.Fprintf(out, "Verifying image %s (method=kms)\n", in.Image)
 
-		return verifier.VerifyImage(ctx, cosign.VerifyImageInput{
+		return verifier.VerifyImage(ctx, container.ImageVerifyRequest{
 			ImageRef: in.Image,
 			KeyRef:   in.KeyRef,
 		}, out)

@@ -135,6 +135,7 @@ type Capabilities struct {
 	Attestation   bool `json:"attestation"`    // SLSA build-provenance attestation API
 	KeylessOIDC   bool `json:"keyless_oidc"`   // keyless signing via a runner OIDC issuer
 	ReleaseAssets bool `json:"release_assets"` // upload binary assets onto a release
+	RunArtifacts  bool `json:"run_artifacts"`  // programmatic intra-run artifact store (RunArtifactUploader/Downloader)
 }
 
 // CapabilityReporter is implemented by providers that report their
@@ -187,14 +188,19 @@ const (
 // variables (GITHUB_REF / GITHUB_SHA on GHA; CI_COMMIT_REF_NAME /
 // CI_COMMIT_TAG / CI_COMMIT_SHA on GitLab).
 type EventContext struct {
-	Platform  Platform
-	RefName   string // "main", "v1.2.3", etc.
-	RefType   RefType
-	SHA       string // full commit SHA
-	ShortSHA  string // 7-char short SHA
-	Branch    string // best-effort branch name (PR head branch on PR refs)
-	PRNumber  string // empty when not a PR
-	EventName string // "push", "pull_request", "schedule", "merge_request_event", …
+	Platform Platform
+	RefName  string // "main", "v1.2.3", etc.
+	RefType  RefType
+	SHA      string // full commit SHA
+	ShortSHA string // 7-char short SHA
+	Branch   string // best-effort branch name (PR head branch on PR refs)
+	PRNumber string // empty when not a PR
+	// EventName is the workflow trigger in the canonical vocabulary (the
+	// GitHub-Actions spellings: "push", "pull_request",
+	// "workflow_dispatch", "schedule", …). Adapters normalize their
+	// forge's dialect (GitLab's CI_PIPELINE_SOURCE) and pass unknown
+	// values through verbatim so fail-closed gates stay closed.
+	EventName string
 	Repo      string // "owner/repo" or "group/project/path"
 	RepoURL   string // canonical web URL
 }
@@ -375,6 +381,11 @@ type SARIFUploader interface {
 //     ACTIONS_RUNTIME_TOKEN, v3 container protocol) — same-run scope only.
 //   - github: the repo REST artifacts API (cross-run reads) for download;
 //     upload is runtime-only and may be unimplemented (ErrUnsupported).
+//   - gitlab: intentionally absent (Capabilities.RunArtifacts=false). GitLab
+//     passes intra-pipeline artifacts declaratively through the job YAML
+//     (`artifacts:` + `needs:`/`dependencies:`), not a programmatic in-job
+//     API, so the hand-off lives in the GitLab template, not this binary.
+//     RequireRunArtifact* returns ErrUnsupported there by design.
 //
 // Contract, independent of transport:
 //   - Exactly one artifact must match Name; zero or many is an error.

@@ -52,7 +52,7 @@ func TestFormatJSON_RoundTripsReport(t *testing.T) {
 
 	// Verify the wire keys are the stable snake_case contract a CI gate
 	// would parse — not Go field names.
-	for _, key := range []string{`"forge_api"`, `"sarif_upload"`, `"severity"`, `"failures"`, `"remediation"`} {
+	for _, key := range []string{`"forge_api"`, `"sarif_upload"`, `"run_artifacts"`, `"severity"`, `"failures"`, `"remediation"`} {
 		if !bytes.Contains(buf.Bytes(), []byte(key)) {
 			t.Errorf("expected JSON key %s in output:\n%s", key, buf.String())
 		}

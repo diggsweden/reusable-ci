@@ -22,7 +22,7 @@ import (
 //	CI_COMMIT_SHORT_SHA      → ShortSHA  (CI_COMMIT_SHA[:7] fallback)
 //	CI_COMMIT_BRANCH || CI_MERGE_REQUEST_SOURCE_BRANCH_NAME → Branch
 //	CI_MERGE_REQUEST_IID     → PRNumber
-//	CI_PIPELINE_SOURCE       → EventName
+//	CI_PIPELINE_SOURCE       → EventName (via canonicalEventName)
 //	CI_PROJECT_PATH          → Repo
 //	CI_PROJECT_URL           → RepoURL
 func (p *Provider) ResolveContext(_ context.Context) (*provider.EventContext, error) {
@@ -55,10 +55,36 @@ func (p *Provider) ResolveContext(_ context.Context) (*provider.EventContext, er
 		ShortSHA:  short,
 		Branch:    branch,
 		PRNumber:  prNumber,
-		EventName: get("CI_PIPELINE_SOURCE"),
+		EventName: canonicalEventName(get("CI_PIPELINE_SOURCE")),
 		Repo:      get("CI_PROJECT_PATH"),
 		RepoURL:   get("CI_PROJECT_URL"),
 	}, nil
+}
+
+// canonicalEventName maps CI_PIPELINE_SOURCE values onto the canonical
+// trigger-event vocabulary shared by every provider (the GitHub-Actions
+// spellings, which GHA and Forgejo emit natively):
+//
+//	push                → push (identity)
+//	schedule            → schedule (identity)
+//	web                 → workflow_dispatch (manual "Run pipeline")
+//	merge_request_event → pull_request
+//
+// Every other source (api, trigger, pipeline, parent_pipeline, …) is
+// passed through verbatim: the event-context gate fails closed on names
+// outside its allowlist, and mapping GitLab's external-trigger sources
+// onto an allowed GHA event would silently widen a security policy.
+// Callers that legitimately run privileged work from such a pipeline
+// extend the gate with --allowed-events using the raw source name.
+func canonicalEventName(source string) string {
+	switch source {
+	case "web":
+		return "workflow_dispatch"
+	case "merge_request_event":
+		return "pull_request"
+	default:
+		return source
+	}
 }
 
 // classifyRefType resolves the ref type from a GitLab CI env snapshot.

@@ -44,7 +44,7 @@ type ReleaseContextInput struct {
 // the original (human) tagger of the immutable, signed request tag — for the
 // bot's release commit; the request tag itself remains the cryptographic
 // anchor.
-func ReleaseContext(ctx context.Context, repo releaseContextOps, in ReleaseContextInput, sink ci.OutputSink, w io.Writer) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+func ReleaseContext(ctx context.Context, repo releaseContextOps, in ReleaseContextInput, sink ci.OutputSink, manifest ci.ManifestSink, w io.Writer) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if in.Ref == "" {
 		return fmt.Errorf("release-context: ref is required: %w", errs.ErrUsage)
 	}
@@ -69,7 +69,7 @@ func ReleaseContext(ctx context.Context, repo releaseContextOps, in ReleaseConte
 
 	trailers := buildReleaseTrailers(ctx, repo, requestRef, trailerMode)
 
-	return emitReleaseContextOutputs(ctx, sink, releaseTag, releaseVersion, requestRef, trailers)
+	return emitReleaseContextOutputs(ctx, sink, manifest, releaseTag, releaseVersion, requestRef, trailers)
 }
 
 // trailerModeDefault and trailerModeForgejoCI are the accepted
@@ -115,7 +115,7 @@ func deriveReleaseIdentity(in ReleaseContextInput) (string, string, error) {
 
 // emitReleaseContextOutputs writes the derived identity as CI outputs; a
 // nil sink (no CI output file) is a no-op.
-func emitReleaseContextOutputs(ctx context.Context, sink ci.OutputSink, releaseTag, releaseVersion, requestRef string, trailers []string) error {
+func emitReleaseContextOutputs(ctx context.Context, sink ci.OutputSink, manifest ci.ManifestSink, releaseTag, releaseVersion, requestRef string, trailers []string) error {
 	if sink == nil {
 		return nil
 	}
@@ -134,7 +134,8 @@ func emitReleaseContextOutputs(ctx context.Context, sink ci.OutputSink, releaseT
 		}
 	}
 
-	if err := sink.SetMultiline(ctx, "commit-trailers", trailers); err != nil {
+	if err := ci.EmitMultiline(ctx, sink, manifest, "release-context",
+		ci.MultilineEntry{Key: "commit-trailers", Lines: trailers}); err != nil {
 		return fmt.Errorf("emit commit-trailers: %w", err)
 	}
 

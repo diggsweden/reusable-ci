@@ -17,7 +17,9 @@ import (
 	"io"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 	"github.com/diggsweden/reusable-ci/v3/internal/safeexec"
 )
 
@@ -39,34 +41,12 @@ type Adapter struct {
 // New returns an Adapter using the system cosign.
 func New() *Adapter { return &Adapter{} }
 
-// SignBlobInput drives a single cosign sign-blob invocation. The
-// adapter never invents file paths: the caller decides where the
-// bundle lands. cosign 3.x emits the v3 bundle format exclusively —
-// one self-contained JSON sidecar holding signature, optional
-// Fulcio certificate, and Rekor proof.
-type SignBlobInput struct {
-	// Artefact is the file being signed.
-	Artefact string
-
-	// BundlePath receives the Sigstore v3 bundle JSON. Required for
-	// every method (cosign 3.x removed the split sig+cert layout).
-	BundlePath string
-
-	// Keyless selects Sigstore-keyless mode. When true, KeyRef must
-	// be empty; the adapter passes --yes (acknowledging the
-	// transparency-log upload) and --oidc-issuer when set.
-	Keyless bool
-
-	// OIDCIssuer is the OIDC issuer URL for keyless signing. Empty
-	// lets cosign auto-detect from the runner. Must be empty when
-	// Keyless is false.
-	OIDCIssuer string
-
-	// KeyRef is the cosign --key argument: a KMS URI
-	// (awskms://, gcpkms://, hashivault://, …), a PKCS#11 URI, or
-	// a local key-file path. Must be empty when Keyless is true.
-	KeyRef string
-}
+// SignBlobInput drives a single cosign sign-blob invocation. It is
+// the domain port request (release.BlobSignRequest) — the alias keeps
+// this adapter's call sites reading naturally while the type itself
+// lives with the domain, so app-layer consumers construct it without
+// importing this adapter.
+type SignBlobInput = release.BlobSignRequest
 
 // SignBlob runs `cosign sign-blob` with the configured input. errOut
 // receives a redacted view of cosign's stderr — the redactor strips
@@ -84,7 +64,7 @@ type SignBlobInput struct {
 //
 //nolint:cyclop // input validation + argv build + run + classify — phases of one operation.
 func (a *Adapter) SignBlob(ctx context.Context, in SignBlobInput, errOut io.Writer) error {
-	if err := in.validate(); err != nil {
+	if err := in.Validate(); err != nil {
 		return err
 	}
 
@@ -107,29 +87,10 @@ func (a *Adapter) SignBlob(ctx context.Context, in SignBlobInput, errOut io.Writ
 	return a.run(ctx, errOut, args...)
 }
 
-// VerifyBlobInput drives `cosign verify-blob`. Like SignBlobInput,
-// the caller supplies every path; the adapter never guesses.
-// cosign 3.x verify consumes a single bundle file and requires the
-// caller to declare identity constraints (regexp + issuer for
-// keyless; pubkey for KMS) — the bundle itself doesn't encode trust.
-type VerifyBlobInput struct {
-	// Artefact is the file whose signature is being verified.
-	Artefact string
-
-	// BundlePath is the v3 bundle JSON sidecar (produced by Sign-
-	// Blob). Required for every method.
-	BundlePath string
-
-	// Keyless verification — requires CertIdentityRegexp and
-	// CertOIDCIssuer. KeyRef must be empty.
-	Keyless            bool
-	CertIdentityRegexp string
-	CertOIDCIssuer     string
-
-	// KeyRef is required for non-keyless verify. Local pubkey path
-	// or KMS URI (cosign reads pubkey from KMS).
-	KeyRef string
-}
+// VerifyBlobInput drives `cosign verify-blob`. It is the domain port
+// request (release.BlobVerifyRequest) — see SignBlobInput for why the
+// type lives with the domain.
+type VerifyBlobInput = release.BlobVerifyRequest
 
 // VerifyBlob runs `cosign verify-blob`. Exit 0 → signature verifies;
 // non-zero → returns cosign's exit-error wrapped with the argv that
@@ -142,7 +103,7 @@ type VerifyBlobInput struct {
 //
 //nolint:cyclop // input validation + argv build + run + classify — phases of one operation.
 func (a *Adapter) VerifyBlob(ctx context.Context, in VerifyBlobInput, errOut io.Writer) error {
-	if err := in.validate(); err != nil {
+	if err := in.Validate(); err != nil {
 		return err
 	}
 
@@ -163,63 +124,12 @@ func (a *Adapter) VerifyBlob(ctx context.Context, in VerifyBlobInput, errOut io.
 	return a.run(ctx, errOut, args...)
 }
 
-// validate checks SignBlobInput consistency before any subprocess
-// runs. Keeps the error surfaces narrow: callers get a single
-// ErrUsage with the specific field at fault rather than a cryptic
-// cosign-exit-1 with a stack trace.
-func (in SignBlobInput) validate() error {
-	if in.Artefact == "" {
-		return fmt.Errorf("cosign sign: artefact path is empty: %w", errs.ErrUsage)
-	}
-
-	if in.BundlePath == "" {
-		return fmt.Errorf("cosign sign: bundle path is empty: %w", errs.ErrUsage)
-	}
-
-	if in.Keyless && in.KeyRef != "" {
-		return fmt.Errorf("cosign sign: keyless mode forbids --key (got %q): %w", in.KeyRef, errs.ErrUsage)
-	}
-
-	if !in.Keyless && in.KeyRef == "" {
-		return fmt.Errorf("cosign sign: non-keyless mode requires --key: %w", errs.ErrUsage)
-	}
-
-	if !in.Keyless && in.OIDCIssuer != "" {
-		return fmt.Errorf("cosign sign: --oidc-issuer only applies to keyless mode: %w", errs.ErrUsage)
-	}
-
-	return nil
-}
-
 // SignImageInput drives a single `cosign sign <image-ref>` invocation.
-// Unlike SignBlob, the signature is stored in the OCI registry next
-// to the image (as a sibling tag), not on the local filesystem — so
-// no BundlePath is required.
-type SignImageInput struct {
-	// ImageRef is the OCI reference. Must be a fully-qualified
-	// digest reference (registry/image@sha256:...) — cosign refuses
-	// to sign a mutable tag.
-	ImageRef string
-
-	// Recursive walks a manifest-list, signing each per-arch digest
-	// referenced by the list in addition to the list itself.
-	// Production releases use multi-arch manifest lists, so this is
-	// almost always true.
-	Recursive bool
-
-	// Keyless selects Sigstore-keyless mode. When true, KeyRef must
-	// be empty.
-	Keyless bool
-
-	// OIDCIssuer overrides cosign's default Sigstore OIDC issuer.
-	// Only meaningful when Keyless is true; must be empty otherwise.
-	OIDCIssuer string
-
-	// KeyRef is the cosign --key URI for non-keyless signing
-	// (awskms://, hashivault://, etc.). Must be empty when
-	// Keyless is true; required otherwise.
-	KeyRef string
-}
+// It is the domain port request (container.ImageSignRequest) — the
+// alias keeps this adapter's call sites reading naturally while the
+// type itself lives with the domain, so app-layer consumers construct
+// it without importing this adapter.
+type SignImageInput = container.ImageSignRequest
 
 // SignImage runs `cosign sign` against an OCI image reference. The
 // signature is uploaded to the registry next to the image — there is
@@ -229,7 +139,7 @@ type SignImageInput struct {
 // exit error otherwise. errOut receives a redacted view of cosign's
 // stderr (same redactor as SignBlob).
 func (a *Adapter) SignImage(ctx context.Context, in SignImageInput, errOut io.Writer) error {
-	if err := in.validate(); err != nil {
+	if err := in.Validate(); err != nil {
 		return err
 	}
 
@@ -259,33 +169,10 @@ func (a *Adapter) SignImage(ctx context.Context, in SignImageInput, errOut io.Wr
 // with `cosign verify-attestation` on any registry/forge — unlike a
 // BuildKit in-index attestation, which is unsigned and has no portable
 // verifier.
-type AttestImageInput struct {
-	// ImageRef is a fully-qualified digest reference. cosign refuses a
-	// mutable tag — an attestation must bind to immutable content.
-	ImageRef string
-
-	// PredicateType is cosign's --type: a well-known name
-	// (slsaprovenance, cyclonedx, spdx, …) or a predicate-type URI.
-	PredicateType string
-
-	// PredicatePath is the file holding the predicate JSON (the SLSA
-	// provenance predicate, the CycloneDX SBOM, …).
-	PredicatePath string
-
-	// Recursive attests each per-arch child of a manifest list in
-	// addition to the list itself — used for one provenance predicate
-	// that applies to the whole multi-arch release.
-	Recursive bool
-
-	// Keyless selects Sigstore-keyless mode. KeyRef must be empty.
-	Keyless bool
-
-	// OIDCIssuer overrides the default issuer; keyless-only.
-	OIDCIssuer string
-
-	// KeyRef is the cosign --key URI for non-keyless attestation.
-	KeyRef string
-}
+// AttestImageInput is the domain port request
+// (container.ImageAttestRequest) — see SignImageInput for why the type
+// lives with the domain.
+type AttestImageInput = container.ImageAttestRequest
 
 // PublicKey writes `cosign public-key --key <ref>` to out. It is used by
 // signer-boundary commands that need to verify registry-published evidence with
@@ -304,7 +191,7 @@ func (a *Adapter) PublicKey(ctx context.Context, keyRef string, out, errOut io.W
 // errs.ErrUsage on inconsistent input; cosign's exit error otherwise.
 // errOut receives the redacted cosign stderr (same redactor as Sign).
 func (a *Adapter) AttestImage(ctx context.Context, in AttestImageInput, errOut io.Writer) error {
-	if err := in.validate(); err != nil {
+	if err := in.Validate(); err != nil {
 		return err
 	}
 
@@ -328,57 +215,15 @@ func (a *Adapter) AttestImage(ctx context.Context, in AttestImageInput, errOut i
 	return a.run(ctx, errOut, args...)
 }
 
-// validate checks AttestImageInput consistency before any subprocess
-// runs, mirroring SignBlobInput.validate — a single ErrUsage naming the
-// field at fault instead of a cryptic cosign exit.
-func (in AttestImageInput) validate() error {
-	if in.ImageRef == "" {
-		return fmt.Errorf("cosign attest: image reference is empty: %w", errs.ErrUsage)
-	}
-
-	if in.PredicateType == "" {
-		return fmt.Errorf("cosign attest: predicate type is empty: %w", errs.ErrUsage)
-	}
-
-	if in.PredicatePath == "" {
-		return fmt.Errorf("cosign attest: predicate path is empty: %w", errs.ErrUsage)
-	}
-
-	if in.Keyless && in.KeyRef != "" {
-		return fmt.Errorf("cosign attest: keyless mode forbids --key (got %q): %w", in.KeyRef, errs.ErrUsage)
-	}
-
-	if !in.Keyless && in.KeyRef == "" {
-		return fmt.Errorf("cosign attest: non-keyless mode requires --key: %w", errs.ErrUsage)
-	}
-
-	if !in.Keyless && in.OIDCIssuer != "" {
-		return fmt.Errorf("cosign attest: --oidc-issuer only applies to keyless mode: %w", errs.ErrUsage)
-	}
-
-	return nil
-}
-
-// VerifyImageInput drives `cosign verify <image-ref>`. The signature
-// is read from the registry — no local sidecar path is needed.
-type VerifyImageInput struct {
-	ImageRef string
-
-	// Keyless verification: requires CertIdentityRegexp +
-	// CertOIDCIssuer. KeyRef must be empty.
-	Keyless            bool
-	CertIdentityRegexp string
-	CertOIDCIssuer     string
-
-	// KMS verification: requires KeyRef. The other identity fields
-	// must be empty.
-	KeyRef string
-}
+// VerifyImageInput drives `cosign verify <image-ref>`. It is the
+// domain port request (container.ImageVerifyRequest) — see
+// SignImageInput for why the type lives with the domain.
+type VerifyImageInput = container.ImageVerifyRequest
 
 // VerifyImage runs `cosign verify` against an OCI image reference.
 // Exit 0 → signature verifies and identity constraints match.
 func (a *Adapter) VerifyImage(ctx context.Context, in VerifyImageInput, errOut io.Writer) error {
-	if err := in.validate(); err != nil {
+	if err := in.Validate(); err != nil {
 		return err
 	}
 
@@ -399,26 +244,10 @@ func (a *Adapter) VerifyImage(ctx context.Context, in VerifyImageInput, errOut i
 	return a.run(ctx, errOut, args...)
 }
 
-// VerifyAttestationInput drives `cosign verify-attestation <image-ref>`. It
-// checks a signed in-toto attestation (SLSA provenance or an SBOM) of the given
-// predicate type, attached to the image in the registry, against the signing
-// identity. The attestation is read from the registry — no local path needed.
-type VerifyAttestationInput struct {
-	ImageRef string
-
-	// PredicateType is cosign's --type: slsaprovenance1 (SLSA v1.0) | cyclonedx
-	// | spdx | a predicate-type URI. Bare "slsaprovenance" is the obsolete v0.2.
-	PredicateType string
-
-	// Keyless verification: requires CertIdentityRegexp + CertOIDCIssuer.
-	// KeyRef must be empty.
-	Keyless            bool
-	CertIdentityRegexp string
-	CertOIDCIssuer     string
-
-	// KMS verification: requires KeyRef. The identity fields must be empty.
-	KeyRef string
-}
+// VerifyAttestationInput drives `cosign verify-attestation <image-ref>`.
+// It is the domain port request (container.AttestationVerifyRequest) —
+// see SignImageInput for why the type lives with the domain.
+type VerifyAttestationInput = container.AttestationVerifyRequest
 
 // VerifyAttestation runs `cosign verify-attestation --type <type>` against an
 // OCI image reference. Exit 0 → an attestation of that type verifies and the
@@ -432,7 +261,7 @@ func (a *Adapter) VerifyAttestation(ctx context.Context, in VerifyAttestationInp
 // higher-level verifiers that need to inspect predicate fields after cosign has
 // checked the signature, identity, and subject binding.
 func (a *Adapter) VerifyAttestationOutput(ctx context.Context, in VerifyAttestationInput, out, errOut io.Writer) error {
-	if err := in.validate(); err != nil {
+	if err := in.Validate(); err != nil {
 		return err
 	}
 
@@ -451,45 +280,6 @@ func (a *Adapter) VerifyAttestationOutput(ctx context.Context, in VerifyAttestat
 	args = append(args, in.ImageRef)
 
 	return a.runWithStdout(ctx, out, errOut, args...)
-}
-
-func (in VerifyAttestationInput) validate() error {
-	if in.ImageRef == "" {
-		return fmt.Errorf("cosign verify-attestation: image reference is empty: %w", errs.ErrUsage)
-	}
-
-	if !strings.Contains(in.ImageRef, "@sha256:") {
-		return fmt.Errorf(
-			"cosign verify-attestation: image reference %q must be a digest reference (registry/image@sha256:...); verifying a mutable tag is unsafe: %w",
-			in.ImageRef, errs.ErrUsage,
-		)
-	}
-
-	if in.PredicateType == "" {
-		return fmt.Errorf("cosign verify-attestation: predicate type is empty: %w", errs.ErrUsage)
-	}
-
-	if in.Keyless {
-		if in.CertIdentityRegexp == "" {
-			return fmt.Errorf("cosign verify-attestation (keyless): cert-identity-regexp is empty: %w", errs.ErrUsage)
-		}
-
-		if in.CertOIDCIssuer == "" {
-			return fmt.Errorf("cosign verify-attestation (keyless): cert-oidc-issuer is empty: %w", errs.ErrUsage)
-		}
-
-		if in.KeyRef != "" {
-			return fmt.Errorf("cosign verify-attestation: keyless mode forbids --key (got %q): %w", in.KeyRef, errs.ErrUsage)
-		}
-
-		return nil
-	}
-
-	if in.KeyRef == "" {
-		return fmt.Errorf("cosign verify-attestation: non-keyless mode requires --key: %w", errs.ErrUsage)
-	}
-
-	return nil
 }
 
 // CopyImageInput drives `cosign copy`, which copies an image together
@@ -569,37 +359,6 @@ func (a *Adapter) bin() string {
 	return a.Bin
 }
 
-// validate enforces SignImageInput consistency. The image ref must
-// be a digest reference — cosign refuses tag-based signing, but we
-// surface the requirement early so the operator gets an actionable
-// error instead of a cryptic cosign-internal failure.
-func (in SignImageInput) validate() error {
-	if in.ImageRef == "" {
-		return fmt.Errorf("cosign sign image: image reference is empty: %w", errs.ErrUsage)
-	}
-
-	if !strings.Contains(in.ImageRef, "@sha256:") {
-		return fmt.Errorf(
-			"cosign sign image: image reference %q must be a digest reference (registry/image@sha256:...); cosign refuses to sign mutable tags: %w",
-			in.ImageRef, errs.ErrUsage,
-		)
-	}
-
-	if in.Keyless && in.KeyRef != "" {
-		return fmt.Errorf("cosign sign image: keyless mode forbids --key (got %q): %w", in.KeyRef, errs.ErrUsage)
-	}
-
-	if !in.Keyless && in.KeyRef == "" {
-		return fmt.Errorf("cosign sign image: non-keyless mode requires --key: %w", errs.ErrUsage)
-	}
-
-	if !in.Keyless && in.OIDCIssuer != "" {
-		return fmt.Errorf("cosign sign image: --oidc-issuer only applies to keyless mode: %w", errs.ErrUsage)
-	}
-
-	return nil
-}
-
 // validate enforces CopyImageInput consistency before the subprocess runs.
 func (in CopyImageInput) validate() error {
 	if in.Source == "" {
@@ -608,75 +367,6 @@ func (in CopyImageInput) validate() error {
 
 	if in.Dest == "" {
 		return fmt.Errorf("cosign copy: destination image reference is empty: %w", errs.ErrUsage)
-	}
-
-	return nil
-}
-
-// validate mirrors SignImageInput.validate for the verify side.
-func (in VerifyImageInput) validate() error {
-	if in.ImageRef == "" {
-		return fmt.Errorf("cosign verify image: image reference is empty: %w", errs.ErrUsage)
-	}
-
-	if !strings.Contains(in.ImageRef, "@sha256:") {
-		return fmt.Errorf(
-			"cosign verify image: image reference %q must be a digest reference (registry/image@sha256:...); verifying a mutable tag is unsafe: %w",
-			in.ImageRef, errs.ErrUsage,
-		)
-	}
-
-	if in.Keyless {
-		if in.CertIdentityRegexp == "" {
-			return fmt.Errorf("cosign verify image (keyless): cert-identity-regexp is empty: %w", errs.ErrUsage)
-		}
-
-		if in.CertOIDCIssuer == "" {
-			return fmt.Errorf("cosign verify image (keyless): cert-oidc-issuer is empty: %w", errs.ErrUsage)
-		}
-
-		if in.KeyRef != "" {
-			return fmt.Errorf("cosign verify image: keyless mode forbids --key (got %q): %w", in.KeyRef, errs.ErrUsage)
-		}
-
-		return nil
-	}
-
-	if in.KeyRef == "" {
-		return fmt.Errorf("cosign verify image: non-keyless mode requires --key: %w", errs.ErrUsage)
-	}
-
-	return nil
-}
-
-// validate mirrors SignBlobInput.validate for the verify-blob side.
-func (in VerifyBlobInput) validate() error {
-	if in.Artefact == "" {
-		return fmt.Errorf("cosign verify: artefact path is empty: %w", errs.ErrUsage)
-	}
-
-	if in.BundlePath == "" {
-		return fmt.Errorf("cosign verify: bundle path is empty: %w", errs.ErrUsage)
-	}
-
-	if in.Keyless {
-		if in.CertIdentityRegexp == "" {
-			return fmt.Errorf("cosign verify (keyless): cert-identity-regexp is empty: %w", errs.ErrUsage)
-		}
-
-		if in.CertOIDCIssuer == "" {
-			return fmt.Errorf("cosign verify (keyless): cert-oidc-issuer is empty: %w", errs.ErrUsage)
-		}
-
-		if in.KeyRef != "" {
-			return fmt.Errorf("cosign verify: keyless mode forbids --key (got %q): %w", in.KeyRef, errs.ErrUsage)
-		}
-
-		return nil
-	}
-
-	if in.KeyRef == "" {
-		return fmt.Errorf("cosign verify: non-keyless mode requires --key: %w", errs.ErrUsage)
 	}
 
 	return nil

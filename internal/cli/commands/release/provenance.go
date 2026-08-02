@@ -24,6 +24,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/signflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provenance"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
 
@@ -38,6 +39,11 @@ import (
 // planScopeProvenance is the plan-file scope of `release provenance` in
 // $REUSABLE_CI_PLAN (flag > plan > env > default).
 const planScopeProvenance = "release provenance"
+
+// flagExternalParametersJSON is the generic externalParameters-extras
+// flag: a JSON object merged into buildDefinition.externalParameters
+// with every engine-computed key reserved.
+const flagExternalParametersJSON = "external-parameters-json"
 
 func provenanceCmd() *cli.Command {
 	return &cli.Command{
@@ -62,6 +68,7 @@ EXAMPLE:
 				&cli.StringFlag{Name: "workflow", Sources: planfile.Vars(planScopeProvenance, "workflow", "FORGEJO_WORKFLOW"), Usage: "workflow filename/path for the forgejo-actions profile"},
 				&cli.StringFlag{Name: "started-on", Sources: planfile.Vars(planScopeProvenance, "started-on"), Usage: "RFC3339 build timestamp (default: $SOURCE_DATE_EPOCH)"},
 				&cli.StringFlag{Name: "started-on-commit", Sources: planfile.Vars(planScopeProvenance, "started-on-commit"), Usage: "commit/ref whose commit timestamp becomes the RFC3339 build timestamp"},
+				&cli.StringFlag{Name: flagExternalParametersJSON, Sources: planfile.Vars(planScopeProvenance, flagExternalParametersJSON, "SLSA_EXTERNAL_PARAMETERS_JSON"), Usage: "JSON object of extra buildDefinition.externalParameters merged into the predicate; already-present (engine-computed) keys are reserved, a collision fails. Generic successor to the per-field lineage flags (--base-ref/--base-digest/--base-input-id)"},
 				&cli.StringFlag{Name: flagOutput, Value: cliio.StdSentinel, Sources: planfile.Vars(planScopeProvenance, flagOutput), Usage: "output file (\"-\" for stdout)"},
 				&cli.StringFlag{Name: "bundle", Sources: planfile.Vars(planScopeProvenance, "bundle"), Usage: "signature bundle output path (default: <output>.bundle)"},
 			},
@@ -76,6 +83,13 @@ EXAMPLE:
 				profile, err := parseProvenanceProfile(cmd.String("profile"))
 				if err != nil {
 					return err
+				}
+
+				// Parse the declared extras up front so a malformed
+				// document fails before any context resolution or output.
+				extraParams, err := provenance.ParseExternalParametersJSON(cmd.String(flagExternalParametersJSON))
+				if err != nil {
+					return fmt.Errorf("provenance: --%s: %w", flagExternalParametersJSON, err)
 				}
 
 				evt, err := d.Provider.ResolveContext(ctx)
@@ -107,11 +121,12 @@ EXAMPLE:
 					// Generic provenance uses the same forge-neutral builder /
 					// invocation identity as containers. The forgejo-actions profile
 					// overrides builderID above to match forgejo-ci's shipped shape.
-					BuilderID:    builderID,
-					InvocationID: cienv.ProvenanceInvocationID(),
-					StartedOn:    startedOn,
-					Profile:      profile,
-					Workflow:     cmd.String("workflow"),
+					BuilderID:          builderID,
+					InvocationID:       cienv.ProvenanceInvocationID(),
+					StartedOn:          startedOn,
+					Profile:            profile,
+					Workflow:           cmd.String("workflow"),
+					ExternalParameters: extraParams,
 				})
 				if err != nil {
 					return err

@@ -38,7 +38,7 @@ var DefaultAllowedEvents = []string{
 // in the configured allowlist. The app layer formats user-facing
 // guidance from the structured fields.
 type EventContextError struct {
-	Got     string   // observed GITHUB_EVENT_NAME
+	Got     string   // observed trigger event (canonical vocabulary)
 	Allowed []string // policy in effect (default or override)
 }
 
@@ -56,7 +56,9 @@ func (e *EventContextError) Error() string {
 // PR HEAD; gate the caller workflow…").
 func RequireAllowedEvent(eventName string, allowed []string) error {
 	if strings.TrimSpace(eventName) == "" {
-		return fmt.Errorf("GITHUB_EVENT_NAME is empty: %w", errs.ErrMissingInput)
+		return fmt.Errorf(
+			"trigger event is empty (no --event-name, $GITHUB_EVENT_NAME / $FORGEJO_EVENT_NAME, "+
+				"or detected CI event context): %w", errs.ErrMissingInput)
 	}
 
 	if len(allowed) == 0 {
@@ -78,15 +80,19 @@ func RequireAllowedEvent(eventName string, allowed []string) error {
 	return &EventContextError{Got: eventName, Allowed: sorted}
 }
 
-// IsPullRequestEvent reports whether the GHA event-name belongs to the
+// IsPullRequestEvent reports whether the event-name belongs to the
 // PR family. The app layer uses this to render PR-specific guidance
-// (since most refusals will be PR misconfigs).
+// (since most refusals will be PR misconfigs). merge_request_event is
+// GitLab's raw spelling — the gitlab adapter normalizes it to
+// pull_request, but an explicit --event-name can still carry it, and
+// the PR guidance should apply either way.
 func IsPullRequestEvent(eventName string) bool {
 	switch eventName {
 	case "pull_request",
 		"pull_request_target",
 		"pull_request_review",
 		"pull_request_review_comment",
+		"merge_request_event",
 		"issue_comment":
 		return true
 	}

@@ -639,6 +639,16 @@ func (p *Provider) finalizeArtifact(ctx context.Context, runtimeURL, token, runI
 // runtimeSend issues a request to the runtime service carrying the Bearer
 // token in a per-request header — never argv, never disk.
 func (p *Provider) runtimeSend(ctx context.Context, method, rawURL, token, contentType string, body io.Reader, contentLength int64, headers map[string]string) (*http.Response, error) {
+	// ContentLength 0 with a non-nil body means "unknown" to net/http,
+	// which then sends Transfer-Encoding: chunked — Forgejo's upload-chunk
+	// handler 500s on that. NoBody makes the zero-length case an explicit
+	// Content-Length: 0, the shape the canonical clients send. Hit in the
+	// wild by the first live Codeberg round-trip: the zero-byte fixture
+	// file failed while every sized file was fine.
+	if contentLength == 0 {
+		body = http.NoBody
+	}
+
 	req, err := http.NewRequestWithContext(ctx, method, rawURL, body)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)

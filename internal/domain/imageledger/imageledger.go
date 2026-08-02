@@ -15,6 +15,7 @@
 package imageledger
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -43,12 +44,22 @@ type Entry struct {
 	Ref       string `json:"ref"`
 	Digest    string `json:"digest"`
 	// SBOM is an optional path to the image's CycloneDX SBOM.
-	SBOM         string `json:"sbom,omitempty"`
-	FinalTag     string `json:"final_tag"`
-	MovingTag    string `json:"moving_tag,omitempty"`
-	CandidateTag string `json:"candidate_tag,omitempty"`
-	BaseRef      string `json:"base_ref,omitempty"`
-	BaseInputID  string `json:"base_input_id,omitempty"`
+	SBOM string `json:"sbom,omitempty"`
+	// SBOMSHA256 optionally pins the SBOM file's exact content: when set,
+	// `ledger sign` verifies the file at SBOM hashes to this and attests
+	// the premade document instead of generating a fresh one — the signer
+	// attests exactly what the build produced.
+	SBOMSHA256 string `json:"sbom_sha256,omitempty"`
+	// Provenance carries caller-declared extra externalParameters merged
+	// into the enriched SLSA predicate for this image. Keys the engine
+	// computes or that already exist in the base predicate are reserved —
+	// a collision fails the signing run rather than overriding a fact.
+	Provenance   map[string]any `json:"provenance,omitempty"`
+	FinalTag     string         `json:"final_tag"`
+	MovingTag    string         `json:"moving_tag,omitempty"`
+	CandidateTag string         `json:"candidate_tag,omitempty"`
+	BaseRef      string         `json:"base_ref,omitempty"`
+	BaseInputID  string         `json:"base_input_id,omitempty"`
 }
 
 // finalTagField, movingTagField and candidateTagField are the ledger's tag
@@ -86,8 +97,9 @@ func DeriveTags(imageName, releaseTag string) (string, string) {
 //
 //nolint:gochecknoglobals // compiled regex table — read-only.
 var (
-	imageRefRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?@sha256:[0-9a-f]{64}$`)
-	tagRefRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
+	imageRefRE  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?@sha256:[0-9a-f]{64}$`)
+	sha256HexRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	tagRefRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
 	// sbomRE accepts any relative CycloneDX path, matching the filenames
 	// the sbom package emits (domain/sbom/filenames.go), rather than a
 	// single fixed name. Anchored to a leaf-relative path (no leading '/').
@@ -146,7 +158,17 @@ func (e *Entry) PinDigest(digest string) {
 // to the release tag (releaseTag or releaseTag-<suffix>) and — when
 // present — a candidate_tag scoped to staging-<releaseTag>. This is the
 // terminal (release) check; ValidateForStage scopes it to a stage.
+//
+// Base entries (ImageKind == ImageKindBase) are the one principled
+// exception to the release scope: base images carry content-addressed
+// final tags (<base-input-id>-<flavor>) that exist outside any release,
+// so releaseTag does not apply to them. They get the base-scoped rules
+// instead — see validateBaseTags.
 func (e Entry) Validate(releaseTag string) error {
+	if e.ImageKind == ImageKindBase {
+		return e.validateBaseTags()
+	}
+
 	if releaseTag == "" {
 		return fmt.Errorf("imageledger: release tag is required for validation: %w", errs.ErrUsage)
 	}
@@ -179,6 +201,31 @@ func (e Entry) ValidateForStage(stage Stage, releaseTag string) error {
 	}
 
 	return e.validateFormat()
+}
+
+// validateBaseTags is the base-image counterpart of the release scoping.
+// A base image's final tag is content-addressed, not release-scoped, so
+// no release tag participates. The candidate discipline is preserved in
+// base terms: candidate_tag, when present, must be the exact staging
+// counterpart of final_tag (staging-<finalName>), and moving_tag must
+// not be a staging tag. Everything else is the shared format check.
+func (e Entry) validateBaseTags() error {
+	if err := e.validateFormat(); err != nil {
+		return err
+	}
+
+	if e.CandidateTag != "" {
+		want := StagingTagPrefix + tagName(e.FinalTag)
+		if tagName(e.CandidateTag) != want {
+			return fmt.Errorf("imageledger: candidate_tag %q must have tag %q (staging counterpart of final_tag): %w", e.CandidateTag, want, errs.ErrValidation)
+		}
+	}
+
+	if e.MovingTag != "" && strings.HasPrefix(tagName(e.MovingTag), StagingTagPrefix) {
+		return fmt.Errorf("imageledger: moving_tag %q must not be a staging tag: %w", e.MovingTag, errs.ErrValidation)
+	}
+
+	return nil
 }
 
 // validateReleaseCandidateTag enforces that candidate_tag, when present, is
@@ -246,7 +293,46 @@ func (e Entry) validateFormat() error {
 		return fmt.Errorf("imageledger: sbom must be a relative CycloneDX path (*.cyclonedx.json): %q: %w", e.SBOM, errs.ErrValidation)
 	}
 
+	if err := e.validateSBOMSHA256(); err != nil {
+		return err
+	}
+
+	if err := e.validateProvenance(); err != nil {
+		return err
+	}
+
 	return e.validateTagRefs()
+}
+
+// validateSBOMSHA256 checks the optional premade-SBOM pin: 64 lowercase
+// hex, and only meaningful when an sbom path exists to verify against.
+func (e Entry) validateSBOMSHA256() error {
+	if e.SBOMSHA256 == "" {
+		return nil
+	}
+
+	if e.SBOM == "" {
+		return fmt.Errorf("imageledger: sbom_sha256 requires sbom to name the file it pins: %w", errs.ErrValidation)
+	}
+
+	if !sha256HexRE.MatchString(e.SBOMSHA256) {
+		return fmt.Errorf("imageledger: sbom_sha256 must be 64 lowercase hex characters: %q: %w", e.SBOMSHA256, errs.ErrValidation)
+	}
+
+	return nil
+}
+
+// validateProvenance shape-checks the caller-declared externalParameters
+// extras. Only the shape is a ledger concern; reserved-key collisions are
+// enforced at signing time, where the engine knows every computed key.
+func (e Entry) validateProvenance() error {
+	for key := range e.Provenance {
+		if key == "" {
+			return fmt.Errorf("imageledger: provenance keys must be non-empty: %w", errs.ErrValidation)
+		}
+	}
+
+	return nil
 }
 
 // validateImageKind accepts the three self-described pipeline roles or the
@@ -348,11 +434,22 @@ func Append(ledgerJSON []byte, entry Entry, releaseTag string) ([]byte, bool, er
 		return nil, false, err
 	}
 
-	// Entry is a flat all-string struct, so == is exact-value equality.
+	// Entry carries a map (provenance extras), so equality is defined by
+	// the canonical JSON encoding rather than ==.
 	var doc []byte
 
+	entryJSON, err := json.Marshal(entry)
+	if err != nil {
+		return nil, false, fmt.Errorf("imageledger: encode entry: %w", err)
+	}
+
 	for _, existing := range entries {
-		if existing == entry {
+		existingJSON, marshalErr := json.Marshal(existing)
+		if marshalErr != nil {
+			return nil, false, fmt.Errorf("imageledger: encode existing entry: %w", marshalErr)
+		}
+
+		if bytes.Equal(existingJSON, entryJSON) {
 			doc, err = Marshal(entries)
 
 			return doc, false, err

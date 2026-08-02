@@ -182,7 +182,18 @@ func TestDownloadRunArtifact_RuntimeCredsRequired(t *testing.T) {
 type uploadRecorder struct {
 	mu        sync.Mutex
 	puts      map[string]string
+	putWire   map[string]putWire
 	finalSize int64
+}
+
+// putWire captures the transport shape of one PUT, so tests can pin what
+// the real Forgejo backend sees (its chunk saver 500s on chunked encoding
+// — invisible in body-level assertions because httptest decodes chunked
+// transparently).
+type putWire struct {
+	contentLength    int64
+	transferEncoding []string
+	contentRange     string
 }
 
 // uploadServer fakes the v3 create → PUT → finalize endpoints.
@@ -190,6 +201,7 @@ func uploadServer(t *testing.T, rec *uploadRecorder) *httptest.Server {
 	t.Helper()
 
 	rec.puts = map[string]string{}
+	rec.putWire = map[string]putWire{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+runtimeToken {
@@ -207,6 +219,11 @@ func uploadServer(t *testing.T, rec *uploadRecorder) *httptest.Server {
 
 			rec.mu.Lock()
 			rec.puts[r.URL.Query().Get("itemPath")] = string(body)
+			rec.putWire[r.URL.Query().Get("itemPath")] = putWire{
+				contentLength:    r.ContentLength,
+				transferEncoding: r.TransferEncoding,
+				contentRange:     r.Header.Get("Content-Range"),
+			}
 			rec.mu.Unlock()
 
 			w.WriteHeader(http.StatusCreated)
@@ -445,5 +462,47 @@ func TestUploadRunArtifact_BackendProtocolContract(t *testing.T) {
 
 	if empty.md5 != md5b64("") {
 		t.Errorf("empty md5 = %q, want %q (md5 of empty)", empty.md5, md5b64(""))
+	}
+}
+
+// TestUploadRunArtifact_EmptyFileWireShape pins the regression found by the
+// first live Codeberg round-trip: a zero-byte file must go out with an
+// explicit Content-Length: 0 and the empty-form Content-Range — NEVER
+// Transfer-Encoding: chunked, which net/http silently switches to when
+// ContentLength is 0 on a non-nil body and which Forgejo's chunk saver
+// rejects with HTTP 500.
+func TestUploadRunArtifact_EmptyFileWireShape(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "empty-marker"), "")
+	mustWrite(t, filepath.Join(dir, "sized.txt"), "payload")
+
+	var rec uploadRecorder
+
+	srv := uploadServer(t, &rec)
+
+	if _, err := uploadProvider(srv).UploadRunArtifact(context.Background(), provider.RunArtifactUpload{Name: "dist", Dir: dir}); err != nil {
+		t.Fatal(err)
+	}
+
+	empty, ok := rec.putWire["dist/empty-marker"]
+	if !ok {
+		t.Fatalf("no PUT recorded for the empty file; puts = %v", rec.puts)
+	}
+
+	if len(empty.transferEncoding) != 0 {
+		t.Errorf("empty file sent with Transfer-Encoding %v; Forgejo 500s on chunked uploads", empty.transferEncoding)
+	}
+
+	if empty.contentLength != 0 {
+		t.Errorf("empty file ContentLength = %d, want explicit 0 (a server sees -1 for chunked)", empty.contentLength)
+	}
+
+	if empty.contentRange != "bytes 0--1/0" {
+		t.Errorf("empty file Content-Range = %q, want the canonical empty form", empty.contentRange)
+	}
+
+	sized := rec.putWire["dist/sized.txt"]
+	if sized.contentLength != int64(len("payload")) || len(sized.transferEncoding) != 0 {
+		t.Errorf("sized file wire shape = %+v, want plain Content-Length upload", sized)
 	}
 }

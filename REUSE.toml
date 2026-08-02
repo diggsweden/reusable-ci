@@ -62,9 +62,15 @@ SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
 SPDX-License-Identifier = "CC0-1.0"
 
 # JSON Schema for artifacts.yml — JSON has no comment syntax for an
-# inline SPDX header, so the licensing claim lives here.
+# inline SPDX header, so the licensing claim lives here. The .json is
+# generated from the .tmpl by cmd/gen-artifacts-schema.
 [[annotations]]
 path = ".reusable-ci/artifacts.schema.json"
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = "internal/domain/config/artifacts.schema.json.tmpl"
 SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
 SPDX-License-Identifier = "CC0-1.0"
 

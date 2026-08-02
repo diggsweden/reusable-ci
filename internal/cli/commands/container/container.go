@@ -61,9 +61,9 @@ func New() *cli.Command {
 		Name:  "container",
 		Usage: "container-image helpers (name resolution, manifests, namespace policy, tag/label metadata, …)",
 		Commands: slices.Concat(
-			cmdmeta.WithCategory("Build & sign", setupBuildahCmd(), buildCmd(), buildPushOCIImageCmd(), imageGroup(), signerImageGroup(), loginCmd(), logoutCmd(), signCmd(), attestCmd(), baseLineagePredicateCmd()),
+			cmdmeta.WithCategory("Build & sign", setupBuildahCmd(), buildCmd(), buildPushOCIImageCmd(), imageGroup(), signerImageGroup(), loginCmd(), logoutCmd(), signCmd(), attestCmd()),
 			cmdmeta.WithCategory("Image metadata & manifests", refGroup(), metadataCmd(), containerfileArgDefaultCmd(), releaseLabelsCmd(), releaseIdentityMatchesCmd(), imageLabelsJSONCmd(), imageEvidenceCmd(), platformPlanCmd(), manifestGroup(), writeDigestMarkerCmd()),
-			cmdmeta.WithCategory("Release promotion", ledgerGroup(), releaseImageGroup(), releaseImagesGroup(), baseGraphGroup(), baseImagesGroup()),
+			cmdmeta.WithCategory("Release promotion", ledgerGroup(), releaseImageGroup(), releaseImagesGroup(), baseImagesGroup()),
 			cmdmeta.WithCategory("Validation", validateGroup()),
 			cmdmeta.WithCategory("Workflow plumbing", materializeBuildSecretsCmd(), extractNPMTarballCmd(), suffixBinariesCmd()),
 		),
@@ -368,7 +368,7 @@ func metadataCmd() *cli.Command {
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
-				_, err := appcontainer.ComputeMetadata(ctx, d.Provider, d.RepoMetadataFetcher(), d.OutputSink, appcontainer.ComputeMetadataInput{
+				_, err := appcontainer.ComputeMetadata(ctx, d.Provider, d.RepoMetadataFetcher(), d.OutputSink, d.ManifestSink, appcontainer.ComputeMetadataInput{
 					ImageName:   cmd.String(flagImageName),
 					TagRules:    cmd.String("tag-rules"),
 					Flavor:      cmd.String(flagFlavor),

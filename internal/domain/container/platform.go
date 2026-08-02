@@ -10,6 +10,12 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
+// The two CPU architectures this pipeline builds and signs images for.
+const (
+	ArchAMD64 = "amd64"
+	ArchARM64 = "arm64"
+)
+
 // Platform is an OCI image platform: os/arch with an optional variant
 // (e.g. linux/arm/v7). This is deliberately NOT the Go build target pair
 // (domain/build.SplitPlatform) — OCI platforms carry a variant component

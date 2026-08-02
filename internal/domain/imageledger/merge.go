@@ -3,6 +3,11 @@
 
 package imageledger
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 // Merge concatenates the entries of several ledger documents into one,
 // dropping exact duplicates while preserving first-seen order. It checks only
 // that each document parses; per-entry release-scope and digest rules are the
@@ -15,7 +20,9 @@ package imageledger
 // single gated unit — matching the ledger's multi-entry design.
 func Merge(docs [][]byte) ([]byte, error) {
 	merged := make([]Entry, 0, len(docs))
-	seen := make(map[Entry]bool) // Entry is a flat all-string struct: comparable.
+	// Entry carries a map (provenance extras), so identity is its
+	// canonical JSON encoding rather than struct comparability.
+	seen := make(map[string]bool)
 
 	for _, doc := range docs {
 		entries, err := Parse(doc)
@@ -24,11 +31,17 @@ func Merge(docs [][]byte) ([]byte, error) {
 		}
 
 		for _, entry := range entries {
-			if seen[entry] {
+			key, keyErr := json.Marshal(entry)
+			if keyErr != nil {
+				return nil, fmt.Errorf("imageledger: encode entry for merge: %w", keyErr)
+			}
+
+			if seen[string(key)] {
 				continue
 			}
 
-			seen[entry] = true
+			seen[string(key)] = true
+
 			merged = append(merged, entry)
 		}
 	}

@@ -202,7 +202,7 @@ func deriveReleaseCmd() *cli.Command {
 						RequireStable:         cmd.Bool("require-stable"),
 						TrailerMode:           cmd.String("trailer-mode"),
 					},
-					d.OutputSink, os.Stderr)
+					d.OutputSink, d.ManifestSink, os.Stderr)
 			})
 		},
 	}

@@ -113,6 +113,7 @@ func TestIsPullRequestEvent(t *testing.T) {
 		"pull_request_target",
 		"pull_request_review",
 		"pull_request_review_comment",
+		"merge_request_event", // GitLab raw spelling via explicit --event-name
 		"issue_comment",
 	}
 	for _, e := range prFamily {

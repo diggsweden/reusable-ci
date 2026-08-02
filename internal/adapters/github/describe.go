@@ -29,6 +29,7 @@ func (p *Provider) Capabilities() provider.Capabilities {
 		Attestation:   true,
 		KeylessOIDC:   true,
 		ReleaseAssets: true,
+		RunArtifacts:  true,
 	}
 }
 

@@ -408,135 +408,9 @@ attach a signed in-toto attestation (slsaprovenance1 | cyclonedx | spdx) to an O
 | `--base-digest` | sha256 digest of --base-ref (with or without the sha256: prefix) | `$BASE_IMAGE_DIGEST` |
 | `--recursive` | also attest each per-arch child of a manifest list (one provenance for the whole release). Default true. | `$ATTEST_RECURSIVE` |
 
-### `reusable-ci container base-graph`
-
-compute deterministic base-image input IDs and build groups from a caller-provided graph
-
-#### `reusable-ci container base-graph flavor`
-
-print one flavor's base-input-id or content-id
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--root` | workspace root containing the graph and inputs | `$BASE_GRAPH_ROOT` |
-| `--graph-file` | base graph JSON path relative to --root | `$BASE_GRAPH_FILE` |
-| `--containerfile` | Containerfile path relative to --root | `$BASE_GRAPH_CONTAINERFILE`, `$CONTAINERFILE` |
-| `--arch` | base architecture in the manifest input set (repeatable or comma/space-separated); defaults to amd64 | `$BASE_GRAPH_ARCH_SET`, `$ARCH_SET` |
-| `--flavor` | base flavor to select (required) | `$BASE_GRAPH_FLAVOR`, `$FLAVOR` |
-| `--field` | field to print: base-input-id or content-id | `$BASE_GRAPH_FIELD` |
-
-#### `reusable-ci container base-graph group-context-files`
-
-print extra build-context files for one base build group, one per line
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--root` | workspace root containing the graph and inputs | `$BASE_GRAPH_ROOT` |
-| `--graph-file` | base graph JSON path relative to --root | `$BASE_GRAPH_FILE` |
-| `--group` | base build group (required) | `$BASE_GRAPH_GROUP`, `$FLAVOR_GROUP` |
-
-#### `reusable-ci container base-graph group-flavors`
-
-print the flavors in one base build group, one per line
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--root` | workspace root containing the graph and inputs | `$BASE_GRAPH_ROOT` |
-| `--graph-file` | base graph JSON path relative to --root | `$BASE_GRAPH_FILE` |
-| `--group` | base build group (required) | `$BASE_GRAPH_GROUP`, `$FLAVOR_GROUP` |
-
-#### `reusable-ci container base-graph groups-for-missing`
-
-print JSON array of groups containing at least one missing flavor
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--root` | workspace root containing the graph and inputs | `$BASE_GRAPH_ROOT` |
-| `--graph-file` | base graph JSON path relative to --root | `$BASE_GRAPH_FILE` |
-| `--groups-json` | optional groups JSON array; when set, no graph file is read | `$BASE_BUILD_GROUPS_JSON` |
-| `--missing-json` | JSON array of missing flavor names | `$MISSING_FLAVORS_JSON` |
-| `--missing-flavor` | missing flavor name (repeatable or comma/space-separated via env) | `$MISSING_FLAVOR` |
-
-#### `reusable-ci container base-graph groups-json`
-
-print base build groups JSON from the graph
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--root` | workspace root containing the graph and inputs | `$BASE_GRAPH_ROOT` |
-| `--graph-file` | base graph JSON path relative to --root | `$BASE_GRAPH_FILE` |
-
-#### `reusable-ci container base-graph input-set-id`
-
-print the sha256 digest of the full base input JSON set
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--root` | workspace root containing the graph and inputs | `$BASE_GRAPH_ROOT` |
-| `--graph-file` | base graph JSON path relative to --root | `$BASE_GRAPH_FILE` |
-| `--containerfile` | Containerfile path relative to --root | `$BASE_GRAPH_CONTAINERFILE`, `$CONTAINERFILE` |
-| `--arch` | base architecture in the manifest input set (repeatable or comma/space-separated); defaults to amd64 | `$BASE_GRAPH_ARCH_SET`, `$ARCH_SET` |
-
-#### `reusable-ci container base-graph inputs`
-
-print JSON mapping every base flavor to content and manifest input IDs
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--root` | workspace root containing the graph and inputs | `$BASE_GRAPH_ROOT` |
-| `--graph-file` | base graph JSON path relative to --root | `$BASE_GRAPH_FILE` |
-| `--containerfile` | Containerfile path relative to --root | `$BASE_GRAPH_CONTAINERFILE`, `$CONTAINERFILE` |
-| `--arch` | base architecture in the manifest input set (repeatable or comma/space-separated); defaults to amd64 | `$BASE_GRAPH_ARCH_SET`, `$ARCH_SET` |
-
 ### `reusable-ci container base-images`
 
 sign, verify, and promote forgejo-ci base-image caches
-
-#### `reusable-ci container base-images arch-metadata`
-
-write per-architecture base-image metadata JSON for manifest assembly
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--flavor` | base flavor name (required) | `$BASE_FLAVOR`, `$FLAVOR` |
-| `--arch` | base architecture, e.g. amd64 or arm64 (required) | `$BASE_ARCH` |
-| `--repository` | base image repository used to derive --arch-ref from --arch-digest | `$BASE_REPO`, `$EXPECTED_REPOSITORY` |
-| `--tag` | final immutable base image tag (required) | `$FINAL_TAG`, `$BASE_TAG` |
-| `--arch-tag` | per-architecture staging tag (required) | `$ARCH_TAG`, `$BASE_ARCH_TAG` |
-| `--arch-digest` | per-architecture digest, sha256:<hex>; used with --repository when --arch-ref is empty | `$ARCH_DIGEST`, `$BASE_ARCH_DIGEST` |
-| `--arch-ref` | optional digest-pinned per-architecture ref | `$ARCH_REF`, `$BASE_ARCH_REF` |
-| `--base-input-id` | sha256 base input ID (required) | `$BASE_INPUT_ID` |
-| `--content-id` | sha256 content ID (required) | `$BASE_CONTENT_ID` |
-| `--output` | output JSON path; '-' writes stdout | `$BASE_ARCH_METADATA_OUTPUT` |
-
-#### `reusable-ci container base-images arch-ref`
-
-print a verified per-architecture base-image ref from metadata JSON
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--file` | base arch metadata JSON file (required) | `$BASE_ARCH_METADATA_FILE` |
-| `--flavor` | optional expected base flavor | `$BASE_FLAVOR`, `$FLAVOR` |
-| `--arch` | expected architecture, e.g. amd64 or arm64 (required) | `$BASE_ARCH` |
-| `--content-id` | expected sha256 content ID (required) | `$BASE_CONTENT_ID` |
-| `--repository` | optional expected base image repository for arch_ref | `$BASE_REPO`, `$EXPECTED_REPOSITORY` |
-
-#### `reusable-ci container base-images candidate-metadata`
-
-write assembled candidate base-image metadata JSON for signing and promotion
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--flavor` | base flavor name (required) | `$BASE_FLAVOR`, `$FLAVOR` |
-| `--repository` | base image repository used to validate tags and refs | `$BASE_REPO`, `$EXPECTED_REPOSITORY` |
-| `--tag` | final immutable base image tag (required) | `$FINAL_TAG`, `$BASE_TAG` |
-| `--ref` | digest-pinned image ref for the candidate digest (required) | `$IMAGE_REF`, `$BASE_REF` |
-| `--candidate-tag` | candidate staging tag (required) | `$CANDIDATE_TAG`, `$BASE_CANDIDATE_TAG` |
-| `--candidate-ref` | candidate digest-pinned ref; defaults to --ref | `$CANDIDATE_REF`, `$BASE_CANDIDATE_REF` |
-| `--base-input-id` | sha256 base input ID (required) | `$BASE_INPUT_ID` |
-| `--content-id` | sha256 content ID (required) | `$BASE_CONTENT_ID` |
-| `--sbom-sha256` | optional sha256 of the delivered base SBOM | `$SBOM_SHA256`, `$BASE_SBOM_SHA256` |
-| `--output` | output JSON path; '-' writes stdout | `$BASE_CANDIDATE_METADATA_OUTPUT` |
 
 #### `reusable-ci container base-images cleanup-staging`
 
@@ -556,25 +430,6 @@ delete promoted and stale staging base-image tags safely
 | `--base-inputs-json` | JSON array mapping flavors to content/base input IDs | `$BASE_INPUTS_JSON` |
 | `--auth-file` | registry auth file for final/staging digest checks | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
 
-#### `reusable-ci container base-images collect`
-
-collect verified and built base-image metadata for signing and promotion
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--already-verified` | verified images already satisfy the request; ignore built metadata | `$BASES_ALREADY_VERIFIED`, `$BASE_IMAGES_ALREADY_VERIFIED` |
-| `--verified-images-json` | JSON array of already verified base images | `$VERIFIED_BASE_IMAGES_JSON`, `$VERIFIED_SHARED_CORE_JSON` |
-| `--verified-file` | optional JSON file containing verified images | `$VERIFIED_BASE_IMAGES_FILE` |
-| `--built-file` | built base image metadata file (object or array); missing files are ignored | `$BUILT_BASE_IMAGE_FILE` |
-| `--built-dir` | directory containing built base image metadata files | `$BUILT_BASE_IMAGE_DIR` |
-| `--built-pattern` | glob pattern under --built-dir for built metadata | `$BUILT_BASE_IMAGE_PATTERN` |
-| `--missing-flavors-json` | JSON array of flavors missing before build | `$MISSING_FLAVORS_JSON` |
-| `--include-signing-sbom-sha256` | include sbom_sha256 in signing images, using an empty string when absent | `$BASE_IMAGES_SIGNING_INCLUDE_SBOM_SHA256` |
-| `--base-input-set-id` | base input set sha256 for decision JSON | `$BASE_INPUT_SET_ID`, `$BASE_INPUT_ID` |
-| `--base-inputs-json` | base input JSON array for decision JSON | `$BASE_INPUTS_JSON` |
-| `--source-sha` | source commit sha for decision JSON | `$SOURCE_SHA` |
-| `--decision-output` | optional path to write compact base decision JSON | `$BASE_DECISION_OUTPUT` |
-
 #### `reusable-ci container base-images freshness`
 
 compare pinned base-image digests with their upstream source tags
@@ -583,16 +438,6 @@ compare pinned base-image digests with their upstream source tags
 |------|-------------|----------|
 | `--checks-json` | JSON array of checks: [{"name":..., "pinned-ref":..., "source-tag":...}] (required) | `$FRESHNESS_CHECKS_JSON` |
 | `--enforce` | fail on stale or unfetchable digests (false: warn only; config errors still fail) | `$FRESHNESS_ENFORCE` |
-
-#### `reusable-ci container base-images input-field`
-
-print one field from base-inputs JSON for a flavor
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--base-inputs-json` | JSON array mapping flavors to content/base input IDs (required) | `$BASE_INPUTS_JSON` |
-| `--flavor` | base flavor to select (required) | `$BASE_FLAVOR`, `$FLAVOR` |
-| `--field` | field to print: base-input-id or content-id | `$BASE_INPUT_FIELD` |
 
 #### `reusable-ci container base-images promote`
 
@@ -614,28 +459,6 @@ verify base-image evidence and promote candidate refs to immutable final tags
 | `--registry-username` | registry username; the password is read from --registry-password-file or $REGISTRY_TOKEN / $REGISTRY_PASSWORD | `$REGISTRY_USER`, `$REGISTRY_USERNAME` |
 | `--registry-password-file` | file containing the registry password/token ("-" reads stdin); defaults to $REGISTRY_TOKEN then $REGISTRY_PASSWORD. The password never appears in argv. | n/a |
 
-#### `reusable-ci container base-images sign`
-
-sign and attest digest-pinned base images with SBOM and SLSA lineage evidence
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--server-url` | forge server URL used to derive the registry host and expected source | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
-| `--repository` | owner/repo used to derive the expected source and base-image repository | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
-| `--repository-suffix` | optional suffix appended to the repository package name, e.g. -base | `$REPOSITORY_SUFFIX` |
-| `--expected-repository` | exact base-image repository allowed for tags/refs (default: host/lower(owner/repo)<suffix>) | `$EXPECTED_REPOSITORY`, `$BASE_IMAGES_EXPECTED_REPOSITORY` |
-| `--expected-source` | source repository URL expected in SLSA lineage (default: <server-url>/<repository>) | `$EXPECTED_SOURCE`, `$BASE_IMAGES_EXPECTED_SOURCE` |
-| `--caller-workflow` | workflow filename expected in SLSA lineage | `$EXPECTED_WORKFLOW`, `$CALLER_WORKFLOW` |
-| `--registry` | registry host for promotion auth (default: host from --server-url) | `$CONTAINER_REGISTRY` |
-| `--images-json` | JSON array of base image metadata to sign | `$IMAGES_JSON` |
-| `--base-input-id` | optional single sha256 base input ID expected for every image | `$BASE_INPUT_ID` |
-| `--source-sha` | source commit SHA that produced the base images | `$SOURCE_SHA` |
-| `--build-type` | SLSA buildType URI recorded in base lineage | `$CONTAINER_BUILD_TYPE`, `$BUILD_TYPE` |
-| `--key` | cosign --key reference used for signing; default reads the signing key from $COSIGN_KEY | `$COSIGN_KEY_REF` |
-| `--premade-sbom-dir` | directory containing pre-built base-sbom-<flavor>.cyclonedx.json files; when set, every image must provide a matching sbom_sha256 | `$PREMADE_SBOM_DIR` |
-| `--registry-username` | registry username; the password is read from --registry-password-file or $REGISTRY_TOKEN / $REGISTRY_PASSWORD | `$REGISTRY_USER`, `$REGISTRY_USERNAME` |
-| `--registry-password-file` | file containing the registry password/token ("-" reads stdin); defaults to $REGISTRY_TOKEN then $REGISTRY_PASSWORD. The password never appears in argv. | n/a |
-
 #### `reusable-ci container base-images verify-existing`
 
 verify existing immutable final base-image tags and report missing flavors
@@ -654,21 +477,6 @@ verify existing immutable final base-image tags and report missing flavors
 | `--base-input-id` | optional single sha256 base input ID expected for every flavor | `$BASE_INPUT_ID` |
 | `--base-inputs-json` | JSON array mapping flavors to sha256 base input IDs | `$BASE_INPUTS_JSON` |
 | `--flavors-file` | newline-delimited flavor list in the consumer checkout | `$FLAVORS_FILE` |
-
-### `reusable-ci container base-lineage-predicate`
-
-emit the SLSA Provenance v1.0 predicate for a base-image lineage attestation
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--source` | source repository URL without git+ prefix (server/owner/repo) | `$SOURCE_REPOSITORY` |
-| `--commit` | source commit SHA | `$SOURCE_SHA` |
-| `--workflow` | workflow file that produced the image | `$CALLER_WORKFLOW` |
-| `--flavor` | base-image flavor | `$BUILD_FLAVOR` |
-| `--base-input-id` | sha256 content id of the base inputs | `$BASE_INPUT_ID` |
-| `--image` | base image digest reference being attested | `$IMAGE_REF` |
-| `--build-type` | SLSA buildType URI | `$BUILD_TYPE` |
-| `--builder-id` | override builder.id; defaults to <source>/.forgejo/workflows/<workflow>@<commit> | `$BUILDER_ID` |
 
 ### `reusable-ci container build`
 
@@ -810,6 +618,8 @@ validate one image entry and append it to the ledger
 | `--ref` | digest-pinned image ref (registry/path@sha256:<64 hex>) | n/a |
 | `--digest` | image digest (sha256:<64 hex>) | n/a |
 | `--sbom` | CycloneDX SBOM path (dist/image-sbom*.cyclonedx.json) | n/a |
+| `--sbom-sha256` | sha256 hex pin of the premade --sbom file; ledger sign verifies the pin and attests that exact document instead of generating a fresh one | `$LEDGER_SBOM_SHA256` |
+| `--provenance-json` | JSON object of extra externalParameters recorded on the entry and merged into its enriched SLSA predicate at signing; engine-computed keys are reserved (a collision fails the signing run) | `$LEDGER_PROVENANCE_JSON` |
 | `--image-name` | image registry/path (no tag); with --tag, derives --final-tag=<image>:<tag> and --candidate-tag=<image>:staging-<tag> so callers don't hand-assemble both (explicit flags still win) | n/a |
 | `--final-tag-name` | immutable release tag name/portion combined with --image-name; when --tag is empty, derives the release tag from vMAJOR.MINOR.PATCH[-suffix] | n/a |
 | `--final-tag` | immutable release tag ref (scoped to --tag); derived from --image-name when omitted | n/a |
@@ -1839,6 +1649,7 @@ generate an in-toto/SLSA-v1.0 provenance statement from a checksums file
 | `--workflow` | workflow filename/path for the forgejo-actions profile | `$FORGEJO_WORKFLOW` |
 | `--started-on` | RFC3339 build timestamp (default: $SOURCE_DATE_EPOCH) | n/a |
 | `--started-on-commit` | commit/ref whose commit timestamp becomes the RFC3339 build timestamp | n/a |
+| `--external-parameters-json` | JSON object of extra buildDefinition.externalParameters merged into the predicate; already-present (engine-computed) keys are reserved, a collision fails. Generic successor to the per-field lineage flags (--base-ref/--base-digest/--base-input-id) | `$SLSA_EXTERNAL_PARAMETERS_JSON` |
 | `--output` | output file ("-" for stdout) | n/a |
 | `--bundle` | signature bundle output path (default: <output>.bundle) | n/a |
 | `--method` | signing backend: sigstore (keyless cosign + OIDC) or kms (cosign + --key). Omit to generate the statement only (signs when --method or --key is set). | `$SIGN_METHOD` |
@@ -2679,7 +2490,7 @@ refuse to run when the workflow trigger is outside the publish/release allowlist
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--event-name` | trigger event being checked; read from $FORGEJO_EVENT_NAME / $GITHUB_EVENT_NAME on CI | `$FORGEJO_EVENT_NAME`, `$GITHUB_EVENT_NAME` |
+| `--event-name` | trigger event being checked; read from $FORGEJO_EVENT_NAME / $GITHUB_EVENT_NAME, or from the detected CI provider's event context (GitLab: normalized CI_PIPELINE_SOURCE) when unset | `$EVENT_NAME`, `$FORGEJO_EVENT_NAME`, `$GITHUB_EVENT_NAME` |
 | `--allowed-events` | comma/space/newline-separated allowlist override (default: push,workflow_dispatch,release,schedule,workflow_run,merge_group) | `$ALLOWED_EVENTS` |
 
 ### `reusable-ci validate isolation`
@@ -2722,7 +2533,7 @@ reject forgejo-ci commit pins that are no longer reachable from main or any tag
 |------|-------------|----------|
 | `--root` | repository root used to resolve relative workflow paths | n/a |
 | `--workflow` | workflow file to scan for forgejo-ci pins (repeatable; required) | n/a |
-| `--remote` | forgejo-ci git remote to clone when --repo-dir is unset | `$FORGEJO_CI_REMOTE` |
+| `--remote` | forgejo-ci git remote to clone when --repo-dir is unset (required unless --repo-dir is set; no org default) | `$FORGEJO_CI_REMOTE` |
 | `--repo-dir` | local forgejo-ci clone to check instead of cloning --remote | `$FORGEJO_CI_DIR` |
 | `--main` | branch ref treated as current main | `$FORGEJO_CI_MAIN` |
 | `--subject` | pin subject to scan before @<sha> | n/a |
@@ -2875,12 +2686,12 @@ SSH-sign a pre-rendered changelog commit, push main without force, create the fi
 | `--branch` | branch to push the signed changelog commit to | `$RELEASE_BRANCH`, `$BRANCH` |
 | `--changelog` | pre-generated changelog file to commit | `$CHANGELOG_PATH` |
 | `--commit-message-file` | pre-generated commit message file used with git commit -F | `$COMMIT_MESSAGE_FILE` |
-| `--author-name` | git user.name for the release bump commit | `$GIT_USER_NAME`, `$COMMIT_AUTHOR_NAME` |
-| `--author-email` | git user.email for the release bump commit | `$GIT_USER_EMAIL`, `$COMMIT_AUTHOR_EMAIL` |
+| `--author-name` | git user.name for the release bump commit (required; no org default) | `$GIT_USER_NAME`, `$COMMIT_AUTHOR_NAME` |
+| `--author-email` | git user.email for the release bump commit (required; no org default) | `$GIT_USER_EMAIL`, `$COMMIT_AUTHOR_EMAIL` |
 | `--private-key-file` | path to the OpenSSH private signing key (use '-' for stdin; defaults to $SSH_SIGNING_KEY) | n/a |
-| `--host` | SSH host for origin and known_hosts pinning | `$RELEASE_GIT_HOST` |
+| `--host` | SSH host for origin and known_hosts pinning (required; no org default) | `$RELEASE_GIT_HOST` |
 | `--host-key-type` | host key type passed to ssh-keyscan | `$RELEASE_GIT_HOST_KEY_TYPE` |
-| `--host-key-fingerprint` | expected SSH host key fingerprint | `$RELEASE_GIT_HOST_KEY_FINGERPRINT` |
+| `--host-key-fingerprint` | expected SSH host key fingerprint, required (a trust anchor, never defaulted; get it with: ssh-keyscan -t <type> <host> \| ssh-keygen -lf -) | `$RELEASE_GIT_HOST_KEY_FINGERPRINT` |
 | `--no-sign` | skip final tag signing (intended for tests; production always signs) | n/a |
 | `--signed` | create a signed final tag; set TAG_RELEASE_SIGNED=false for unsigned annotated test tags | `$TAG_RELEASE_SIGNED` |
 | `--token` | optional token for HTTP remotes; the Forgejo release flow uses the SSH key instead | `$RELEASE_TOKEN`, `$CI_TOKEN`, `$FORGEJO_TOKEN`, `$GITHUB_TOKEN` |

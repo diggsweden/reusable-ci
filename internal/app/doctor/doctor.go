@@ -301,6 +301,7 @@ func FormatEnvironment(w io.Writer, env Environment) { //nolint:varnamelen // id
 		{"SLSA build provenance", env.Capabilities.Attestation, "no attestation API; provenance is not published on this forge"},
 		{"keyless OIDC signing", env.Capabilities.KeylessOIDC, "use key-based signing and pass --oidc-issuer explicitly"},
 		{"release asset upload", env.Capabilities.ReleaseAssets, "release assets cannot be attached on this forge"},
+		{"run-artifact store (intra-run hand-off)", env.Capabilities.RunArtifacts, "pass run artifacts via the job template's artifacts:/needs:, not the binary"},
 	}
 
 	for _, row := range rows {

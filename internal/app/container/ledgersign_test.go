@@ -6,6 +6,8 @@ package container_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -384,5 +386,232 @@ func TestSignLedgerImages_RejectsRefDigestMismatch(t *testing.T) {
 	})
 	if !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+}
+
+// signInput builds the standard SignLedgerImagesInput for one entry,
+// shared by the premade-SBOM and provenance-extras regressions.
+func signInput(t *testing.T, entry imageledger.Entry) appcontainer.SignLedgerImagesInput {
+	t.Helper()
+
+	return appcontainer.SignLedgerImagesInput{
+		Entries:                 []imageledger.Entry{entry},
+		ReleaseTag:              "v1.2.3",
+		PredicatePath:           writeBasePredicate(t),
+		Method:                  domainrelease.SignMethodKMS,
+		KeyRef:                  "env://COSIGN_KEY",
+		ExpectedImageRepository: "codeberg.org/itiquette/gommitlint",
+		ExpectedBaseRepository:  "codeberg.org/itiquette/gommitlint-base",
+		SBOMPathPattern:         `^dist/image-sbom[-A-Za-z0-9_.]*\.cyclonedx\.json$`,
+	}
+}
+
+func TestSignLedgerImages_PremadeSBOMPin(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	entry := ledgerSignEntry(t)
+	content := []byte(`{"bomFormat":"CycloneDX"}`)
+
+	if err := os.MkdirAll("dist", 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(entry.SBOM, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	sum := sha256.Sum256(content)
+	entry.SBOMSHA256 = hex.EncodeToString(sum[:])
+
+	t.Run("matching pin attests the premade file without regenerating", func(t *testing.T) {
+		signer := &recordingImageSigner{}
+		syft := &fakeLedgerSyft{}
+
+		err := appcontainer.SignLedgerImages(context.Background(), signer, syft, fakeLedgerResolver{entry.CandidateTag: entry.Digest}, &bytes.Buffer{}, io.Discard, signInput(t, entry))
+		if err != nil {
+			t.Fatalf("SignLedgerImages: %v", err)
+		}
+
+		if len(syft.targets) != 0 {
+			t.Errorf("syft ran %v; a pinned SBOM must be attested as-is, never regenerated", syft.targets)
+		}
+
+		if len(signer.attests) != 2 || signer.attests[0].input.PredicatePath != entry.SBOM {
+			t.Errorf("attests = %+v, want the premade SBOM attested first", signer.attests)
+		}
+	})
+
+	t.Run("mismatching pin fails closed before any attestation", func(t *testing.T) {
+		bad := entry
+		bad.SBOMSHA256 = strings.Repeat("0", 64)
+		signer := &recordingImageSigner{}
+
+		err := appcontainer.SignLedgerImages(context.Background(), signer, &fakeLedgerSyft{}, fakeLedgerResolver{entry.CandidateTag: entry.Digest}, &bytes.Buffer{}, io.Discard, signInput(t, bad))
+		if !errors.Is(err, errs.ErrValidation) {
+			t.Fatalf("err = %v, want ErrValidation", err)
+		}
+
+		if len(signer.attests) != 0 {
+			t.Errorf("attests = %+v, want none after a pin mismatch", signer.attests)
+		}
+	})
+}
+
+func TestSignLedgerImages_ProvenanceExtras(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	t.Run("declared extras land in externalParameters", func(t *testing.T) {
+		entry := ledgerSignEntry(t)
+		entry.Provenance = map[string]any{"base_input_set": "abc123", "build_group": "core"}
+		signer := &recordingImageSigner{}
+
+		err := appcontainer.SignLedgerImages(context.Background(), signer, &fakeLedgerSyft{}, fakeLedgerResolver{entry.CandidateTag: entry.Digest}, &bytes.Buffer{}, io.Discard, signInput(t, entry))
+		if err != nil {
+			t.Fatalf("SignLedgerImages: %v", err)
+		}
+
+		var predicate map[string]any
+		if err := json.Unmarshal(signer.attests[1].predicate, &predicate); err != nil {
+			t.Fatal(err)
+		}
+
+		ext := asMap(t, asMap(t, predicate["buildDefinition"], "buildDefinition")["externalParameters"], "externalParameters")
+		if ext["base_input_set"] != "abc123" || ext["build_group"] != "core" {
+			t.Errorf("extras missing from externalParameters: %#v", ext)
+		}
+	})
+
+	t.Run("collision with a computed key fails the run", func(t *testing.T) {
+		entry := ledgerSignEntry(t)
+		entry.Provenance = map[string]any{"image": "shadowed"}
+		signer := &recordingImageSigner{}
+
+		err := appcontainer.SignLedgerImages(context.Background(), signer, &fakeLedgerSyft{}, fakeLedgerResolver{entry.CandidateTag: entry.Digest}, &bytes.Buffer{}, io.Discard, signInput(t, entry))
+		if !errors.Is(err, errs.ErrValidation) {
+			t.Fatalf("err = %v, want ErrValidation for reserved-key collision", err)
+		}
+	})
+}
+
+// TestSignLedgerImages_BaseKindEntries is the signer-flip proof: a
+// base-kind ledger entry — the exact shape nanolinter-ci's `base-images
+// collect --format ledger` emits — feeds `container ledger sign` green
+// with zero consumer schema. The base entry's content-addressed final tag
+// needs no release scope, its premade SBOM pin is verified (never
+// regenerated), and the attested predicate carries the retired
+// base-lineage field names (externalParameters.base_input_id, .flavor).
+func TestSignLedgerImages_BaseKindEntries(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	repo := "codeberg.org/itiquette/nanolinter-base"
+	baseID := strings.Repeat("b", 64)
+	digest := "sha256:" + strings.Repeat("1", 64)
+	sbomContent := []byte(`{"bomFormat":"CycloneDX"}`)
+	sbomSum := sha256.Sum256(sbomContent)
+
+	ledgerJSON, err := json.Marshal([]imageledger.Entry{{
+		Kind:         imageledger.ImageKindBase,
+		ImageKind:    imageledger.ImageKindBase,
+		Flavor:       "go",
+		Ref:          repo + "@" + digest,
+		Digest:       digest,
+		SBOM:         "dist/base-sboms/base-sbom-go.cyclonedx.json",
+		SBOMSHA256:   hex.EncodeToString(sbomSum[:]),
+		Provenance:   map[string]any{"flavor": "go"},
+		FinalTag:     repo + ":" + baseID + "-go",
+		CandidateTag: repo + ":staging-" + baseID + "-go",
+		BaseInputID:  baseID,
+	}})
+	if err != nil {
+		t.Fatalf("marshal base ledger: %v", err)
+	}
+
+	entries, err := imageledger.Parse(ledgerJSON)
+	if err != nil {
+		t.Fatalf("parse base ledger: %v", err)
+	}
+
+	if mkErr := os.MkdirAll("dist/base-sboms", 0o750); mkErr != nil {
+		t.Fatal(mkErr)
+	}
+
+	if writeErr := os.WriteFile("dist/base-sboms/base-sbom-go.cyclonedx.json", sbomContent, 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+
+	signer := &recordingImageSigner{}
+	syft := &fakeLedgerSyft{}
+	candidateTag := repo + ":staging-" + baseID + "-go"
+
+	err = appcontainer.SignLedgerImages(context.Background(), signer, syft, fakeLedgerResolver{candidateTag: digest}, &bytes.Buffer{}, io.Discard, appcontainer.SignLedgerImagesInput{
+		Entries:                 entries,
+		PredicatePath:           writeBasePredicate(t),
+		Method:                  domainrelease.SignMethodKMS,
+		KeyRef:                  "env://COSIGN_KEY",
+		ExpectedImageRepository: repo,
+	})
+	if err != nil {
+		t.Fatalf("SignLedgerImages: %v", err)
+	}
+
+	if len(signer.signs) != 1 || signer.signs[0].ImageRef != candidateTag+"@"+digest {
+		t.Fatalf("sign calls = %+v, want one sign of the staged candidate", signer.signs)
+	}
+
+	if len(syft.targets) != 0 {
+		t.Errorf("syft ran %v; the pinned premade base SBOM must be attested as-is", syft.targets)
+	}
+
+	if len(signer.attests) != 2 || signer.attests[0].input.PredicateType != "cyclonedx" {
+		t.Fatalf("attests = %+v, want premade SBOM then provenance", signer.attests)
+	}
+
+	var predicate map[string]any
+	if err := json.Unmarshal(signer.attests[1].predicate, &predicate); err != nil {
+		t.Fatal(err)
+	}
+
+	ext := asMap(t, asMap(t, predicate["buildDefinition"], "buildDefinition")["externalParameters"], "externalParameters")
+	if ext["base_input_id"] != baseID || ext["flavor"] != "go" {
+		t.Errorf("base lineage fields missing from externalParameters: %#v", ext)
+	}
+
+	if _, hasBase := ext["base"]; hasBase {
+		t.Errorf("base entry must not fabricate a parent base ref: %#v", ext["base"])
+	}
+
+	image := asMap(t, ext["image"], "image")
+	if image["flavor"] != "go" || image["final_tag"] != repo+":"+baseID+"-go" {
+		t.Errorf("image externalParameters mismatch: %#v", image)
+	}
+}
+
+// TestSignLedgerImages_BaseKindRequiresBaseInputID pins the base-entry
+// relaxation's floor: exempting base entries from the base_ref pairing
+// never waives their own lineage — base_input_id stays mandatory.
+func TestSignLedgerImages_BaseKindRequiresBaseInputID(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	repo := "codeberg.org/itiquette/nanolinter-base"
+	baseID := strings.Repeat("b", 64)
+	entry := imageledger.Entry{
+		Kind:       "base",
+		ImageKind:  imageledger.ImageKindBase,
+		Flavor:     "go",
+		Ref:        repo + "@" + ledgerSignDigest,
+		Digest:     ledgerSignDigest,
+		SBOM:       "dist/base-sboms/base-sbom-go.cyclonedx.json",
+		SBOMSHA256: strings.Repeat("d", 64),
+		FinalTag:   repo + ":" + baseID + "-go",
+	}
+
+	err := appcontainer.SignLedgerImages(context.Background(), &recordingImageSigner{}, &fakeLedgerSyft{}, fakeLedgerResolver{}, io.Discard, io.Discard, appcontainer.SignLedgerImagesInput{
+		Entries:       []imageledger.Entry{entry},
+		PredicatePath: writeBasePredicate(t),
+		Method:        domainrelease.SignMethodKMS,
+		KeyRef:        "env://COSIGN_KEY",
+	})
+	if !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), "base entries must declare base_input_id") {
+		t.Fatalf("err = %v, want base_input_id requirement", err)
 	}
 }

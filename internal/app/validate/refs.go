@@ -197,7 +197,7 @@ type ChangelogInput struct {
 //
 // Returns ("", nil) and writes to sink only in the !Required path.
 // Required=true returns the content as a courtesy (callers can ignore it).
-func Changelog(ctx context.Context, sink ci.OutputSink, out io.Writer, in ChangelogInput) error {
+func Changelog(ctx context.Context, sink ci.OutputSink, manifest ci.ManifestSink, out io.Writer, in ChangelogInput) error {
 	data, statErr := os.ReadFile(in.Path)
 	if statErr != nil && !os.IsNotExist(statErr) {
 		return fmt.Errorf("read %s: %w", in.Path, statErr)
@@ -218,11 +218,13 @@ func Changelog(ctx context.Context, sink ci.OutputSink, out io.Writer, in Change
 	if !exists {
 		return sink.Set(ctx, "content", "No changes for this release")
 	}
-	// Multiline write preserves embedded newlines; the heredoc-based GHA
-	// sink handles them; GitLab dotenv falls back to scalar Set.
+	// Multiline write preserves embedded newlines: the heredoc-based GHA/
+	// Forgejo sink encodes them directly; on GitLab (no multi-line dotenv)
+	// the content degrades to the stage manifest instead of a CI/CD variable.
 	lines := splitLinesPreservingTrailing(data)
 
-	return sink.SetMultiline(ctx, "content", lines)
+	return ci.EmitMultiline(ctx, sink, manifest, "changelog",
+		ci.MultilineEntry{Key: "content", Lines: lines})
 }
 
 // splitLinesPreservingTrailing splits raw on '\n'. A trailing newline

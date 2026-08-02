@@ -107,6 +107,11 @@ type Input struct {
 	// base_input_id. Optional; emitted as externalParameters.base_input_id.
 	BaseInputID string
 
+	// ExternalParameters carries caller-declared extra externalParameters
+	// merged into the predicate after every computed key. Computed keys
+	// are reserved — a collision is ErrValidation, never an override.
+	ExternalParameters map[string]any
+
 	// Workflow optionally replaces the generic {source, ref} external
 	// parameters with forgejo-ci's legacy workflow object for release blobs.
 	Workflow *WorkflowExternalParameters
@@ -179,10 +184,12 @@ type Statement struct {
 	Predicate     predicateJSON `json:"predicate"`
 }
 
-const (
-	statementType = "https://in-toto.io/Statement/v1"
-	predicateType = "https://slsa.dev/provenance/v1"
-)
+const statementType = "https://in-toto.io/Statement/v1"
+
+// PredicateTypeV1 is the SLSA Provenance v1 predicateType URI carried in
+// the in-toto statements this package builds; attestation verifiers match
+// decoded statements against it.
+const PredicateTypeV1 = "https://slsa.dev/provenance/v1"
 
 // validate checks the identifying fields every predicate needs, so a
 // provenance with missing context is refused rather than silently emitted.
@@ -218,7 +225,7 @@ func (in Input) validate() error {
 	return nil
 }
 
-func buildPredicate(in Input) predicateJSON {
+func buildPredicate(in Input) (predicateJSON, error) {
 	ext := map[string]any{}
 	if in.Workflow != nil {
 		ext["workflow"] = workflowExternalJSON{
@@ -245,6 +252,12 @@ func buildPredicate(in Input) predicateJSON {
 		ext["base_input_id"] = in.BaseInputID
 	}
 
+	// Caller-declared extras merge last, with every computed key reserved
+	// — a declared document can never shadow an engine-computed fact.
+	if err := MergeExternalParameters(ext, in.ExternalParameters); err != nil {
+		return predicateJSON{}, err
+	}
+
 	deps := make([]resourceDescriptor, 0, len(in.ResolvedDeps))
 	for _, d := range in.ResolvedDeps {
 		deps = append(deps, resourceDescriptor{
@@ -262,7 +275,7 @@ func buildPredicate(in Input) predicateJSON {
 		}
 	}
 
-	return predicateJSON{
+	pred := predicateJSON{
 		BuildDefinition: buildDefinitionJSON{
 			BuildType:            in.BuildType,
 			ExternalParameters:   ext,
@@ -278,6 +291,8 @@ func buildPredicate(in Input) predicateJSON {
 			},
 		},
 	}
+
+	return pred, nil
 }
 
 // Predicate renders just the SLSA Provenance v1.0 predicate JSON (no in-toto
@@ -288,7 +303,12 @@ func Predicate(in Input) ([]byte, error) {
 		return nil, err
 	}
 
-	body, err := json.MarshalIndent(buildPredicate(in), "", "  ")
+	pred, err := buildPredicate(in)
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := json.MarshalIndent(pred, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("provenance: marshal predicate: %w", err)
 	}
@@ -307,6 +327,11 @@ func Build(in Input) (Statement, error) {
 		return Statement{}, err
 	}
 
+	pred, err := buildPredicate(in)
+	if err != nil {
+		return Statement{}, err
+	}
+
 	subjects := make([]subjectJSON, 0, len(in.Subjects))
 	for _, s := range in.Subjects {
 		subjects = append(subjects, subjectJSON{Name: s.Name, Digest: map[string]string{"sha256": s.SHA256}})
@@ -315,8 +340,8 @@ func Build(in Input) (Statement, error) {
 	return Statement{
 		Type:          statementType,
 		Subject:       subjects,
-		PredicateType: predicateType,
-		Predicate:     buildPredicate(in),
+		PredicateType: PredicateTypeV1,
+		Predicate:     pred,
 	}, nil
 }
 

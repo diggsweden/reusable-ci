@@ -22,7 +22,7 @@ func TestFormatEnvironment_GitHubAllCapabilities(t *testing.T) {
 		ForgeAPI: "github",
 		Runner:   "github",
 		Capabilities: provider.Capabilities{
-			SARIFUpload: true, Attestation: true, KeylessOIDC: true, ReleaseAssets: true,
+			SARIFUpload: true, Attestation: true, KeylessOIDC: true, ReleaseAssets: true, RunArtifacts: true,
 		},
 	})
 

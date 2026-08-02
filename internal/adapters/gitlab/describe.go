@@ -26,12 +26,16 @@ func (p *Provider) Describe() provider.Info {
 // Capabilities reports the GitLab feature set. GitLab has no Code
 // Scanning SARIF ingestion (it consumes the JSON SAST report directly)
 // and no build-provenance attestation API today. Keyless OIDC and release asset
-// upload/linking are available.
+// upload/linking are available. RunArtifacts is false by design: GitLab passes
+// intra-pipeline artifacts declaratively via the job YAML (`artifacts:` +
+// `needs:`), not a programmatic in-job store, so that hand-off lives in the
+// GitLab template rather than this binary.
 func (p *Provider) Capabilities() provider.Capabilities {
 	return provider.Capabilities{
 		SARIFUpload:   false,
 		Attestation:   false,
 		KeylessOIDC:   true,
 		ReleaseAssets: true,
+		RunArtifacts:  false,
 	}
 }

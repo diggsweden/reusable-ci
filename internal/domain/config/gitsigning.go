@@ -5,6 +5,8 @@ package config
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
@@ -30,6 +32,17 @@ const (
 // key.
 const DefaultGitSignMethod = GitSignGPG
 
+// ValidGitSignMethods lists every GitSignMethod in canonical order. It
+// is the single definition of the set: Validate accepts exactly these
+// values and the generated artifacts.yml JSON Schema renders its
+// git-signing.method enum from this slice.
+//
+//nolint:gochecknoglobals // schema enumeration — read-only and ordered.
+var ValidGitSignMethods = []GitSignMethod{
+	GitSignGPG,
+	GitSignSSH,
+}
+
 // GitSigningConfig is the top-level `git-signing:` block in artifacts.yml.
 // All fields optional; an empty block (or empty Method) defaults to gpg.
 type GitSigningConfig struct {
@@ -47,14 +60,20 @@ func (g GitSigningConfig) EffectiveMethod() GitSignMethod {
 	return g.Method
 }
 
-// Validate enforces that the method is one of [gpg, ssh] (or empty → gpg).
-// Errors wrap errs.ErrInvalidConfig so the CLI exits EX_CONFIG (78).
+// Validate enforces that the method is one of ValidGitSignMethods (or
+// empty → gpg). Errors wrap errs.ErrInvalidConfig so the CLI exits
+// EX_CONFIG (78).
 func (g GitSigningConfig) Validate() error {
-	switch g.EffectiveMethod() {
-	case GitSignGPG, GitSignSSH:
+	if slices.Contains(ValidGitSignMethods, g.EffectiveMethod()) {
 		return nil
-	default:
-		return fmt.Errorf(
-			"git-signing.method %q is not one of [gpg, ssh]: %w", g.Method, errs.ErrInvalidConfig)
 	}
+
+	parts := make([]string, len(ValidGitSignMethods))
+	for i, method := range ValidGitSignMethods {
+		parts[i] = string(method)
+	}
+
+	return fmt.Errorf(
+		"git-signing.method %q is not one of [%s]: %w",
+		g.Method, strings.Join(parts, ", "), errs.ErrInvalidConfig)
 }

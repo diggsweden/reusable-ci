@@ -11,9 +11,9 @@ import (
 	"io"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/adapters/cosign"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	domainprovenance "github.com/diggsweden/reusable-ci/v3/internal/domain/provenance"
 )
 
 // Release-image verification outcomes: fully verified evidence, or signed
@@ -51,6 +51,15 @@ type ReleaseImageVerifyExistingInput struct {
 // ReleaseImageStatusReattestable).
 type ReleaseImageVerifyExistingResult struct {
 	Status string
+}
+
+// imageEvidenceVerifier is the cosign surface release-image
+// verification needs: verify the signature and the attached
+// attestations, optionally capturing the attestation output.
+type imageEvidenceVerifier interface {
+	VerifyImage(ctx context.Context, in domaincontainer.ImageVerifyRequest, errOut io.Writer) error
+	VerifyAttestation(ctx context.Context, in domaincontainer.AttestationVerifyRequest, errOut io.Writer) error
+	VerifyAttestationOutput(ctx context.Context, in domaincontainer.AttestationVerifyRequest, out, errOut io.Writer) error
 }
 
 type releaseImageProvenanceExpectation struct {
@@ -204,7 +213,7 @@ func validReleaseImageDigestRef(ref string) bool {
 
 func verifyReleaseImageEvidence(ctx context.Context, verifier imageEvidenceVerifier, out io.Writer, ref, publicKey string, expected releaseImageProvenanceExpectation) error {
 	var errBuf bytes.Buffer
-	if err := verifier.VerifyImage(ctx, cosign.VerifyImageInput{ImageRef: ref, KeyRef: publicKey}, &errBuf); err != nil {
+	if err := verifier.VerifyImage(ctx, domaincontainer.ImageVerifyRequest{ImageRef: ref, KeyRef: publicKey}, &errBuf); err != nil {
 		printReleaseImageVerificationError(out, ref, "signature", errBuf.Bytes())
 
 		return fmt.Errorf("release image verify: signature verification failed for %s: %w", ref, err)
@@ -212,7 +221,7 @@ func verifyReleaseImageEvidence(ctx context.Context, verifier imageEvidenceVerif
 
 	errBuf.Reset()
 
-	if err := verifier.VerifyAttestation(ctx, cosign.VerifyAttestationInput{ImageRef: ref, PredicateType: predicateTypeCycloneDX, KeyRef: publicKey}, &errBuf); err != nil {
+	if err := verifier.VerifyAttestation(ctx, domaincontainer.AttestationVerifyRequest{ImageRef: ref, PredicateType: domaincontainer.PredicateTypeCycloneDX, KeyRef: publicKey}, &errBuf); err != nil {
 		printReleaseImageVerificationError(out, ref, "CycloneDX attestation", errBuf.Bytes())
 
 		return fmt.Errorf("release image verify: CycloneDX attestation verification failed for %s: %w", ref, err)
@@ -221,7 +230,7 @@ func verifyReleaseImageEvidence(ctx context.Context, verifier imageEvidenceVerif
 	errBuf.Reset()
 
 	var provenance bytes.Buffer
-	if err := verifier.VerifyAttestationOutput(ctx, cosign.VerifyAttestationInput{ImageRef: ref, PredicateType: predicateTypeSLSAProvenance1, KeyRef: publicKey}, &provenance, &errBuf); err != nil {
+	if err := verifier.VerifyAttestationOutput(ctx, domaincontainer.AttestationVerifyRequest{ImageRef: ref, PredicateType: domaincontainer.PredicateTypeSLSAProvenance1, KeyRef: publicKey}, &provenance, &errBuf); err != nil {
 		printReleaseImageVerificationError(out, ref, "SLSA provenance attestation", errBuf.Bytes())
 
 		return fmt.Errorf("release image verify: SLSA provenance attestation verification failed for %s: %w", ref, err)
@@ -249,7 +258,7 @@ func verifyReleaseImageEvidence(ctx context.Context, verifier imageEvidenceVerif
 
 func releaseImageCanBeReattested(ctx context.Context, verifier imageEvidenceVerifier, registry OCIImageLabelsRegistry, out io.Writer, ref, publicKey string, expected releaseImageProvenanceExpectation) error {
 	var errBuf bytes.Buffer
-	if err := verifier.VerifyImage(ctx, cosign.VerifyImageInput{ImageRef: ref, KeyRef: publicKey}, &errBuf); err != nil {
+	if err := verifier.VerifyImage(ctx, domaincontainer.ImageVerifyRequest{ImageRef: ref, KeyRef: publicKey}, &errBuf); err != nil {
 		_, _ = fmt.Fprintf(out, "re-attest declined: cosign verify did not pass for %s:\n", ref)
 		printReleaseImageVerificationError(out, ref, "signature", errBuf.Bytes())
 
@@ -258,7 +267,7 @@ func releaseImageCanBeReattested(ctx context.Context, verifier imageEvidenceVeri
 
 	errBuf.Reset()
 
-	if err := verifier.VerifyAttestation(ctx, cosign.VerifyAttestationInput{ImageRef: ref, PredicateType: predicateTypeCycloneDX, KeyRef: publicKey}, &errBuf); err != nil {
+	if err := verifier.VerifyAttestation(ctx, domaincontainer.AttestationVerifyRequest{ImageRef: ref, PredicateType: domaincontainer.PredicateTypeCycloneDX, KeyRef: publicKey}, &errBuf); err != nil {
 		_, _ = fmt.Fprintf(out, "re-attest declined: cosign verify-attestation (cyclonedx) did not pass for %s:\n", ref)
 		printReleaseImageVerificationError(out, ref, "CycloneDX attestation", errBuf.Bytes())
 
@@ -331,12 +340,12 @@ func releaseImageProvenanceAttestationMatches(body []byte, expected releaseImage
 	}
 
 	for _, envelope := range envelopes {
-		payload, ok := envelopePayload(envelope)
+		payload, ok := domainprovenance.EnvelopePayload(envelope)
 		if !ok {
 			continue
 		}
 
-		statement, err := decodeBaseLineageStatement(payload)
+		statement, err := domainprovenance.DecodeStatement(payload)
 		if err != nil {
 			return err
 		}
@@ -350,16 +359,16 @@ func releaseImageProvenanceAttestationMatches(body []byte, expected releaseImage
 }
 
 func releaseImageProvenanceStatementMatches(statement map[string]any, expected releaseImageProvenanceExpectation) bool {
-	if statementString(statement, "predicateType") != slsaProvenanceV1PredicateType {
+	if domainprovenance.StatementString(statement, "predicateType") != domainprovenance.PredicateTypeV1 {
 		return false
 	}
 
-	build, ok := nestedMap(statement, "predicate", "buildDefinition")
+	build, ok := domainprovenance.NestedMap(statement, "predicate", "buildDefinition")
 	if !ok {
 		return false
 	}
 
-	params, ok := nestedMap(build, "externalParameters")
+	params, ok := domainprovenance.NestedMap(build, "externalParameters")
 	if !ok {
 		return false
 	}
@@ -381,21 +390,21 @@ func releaseImageProvenanceStatementMatches(statement map[string]any, expected r
 
 // releaseImageWorkflowMatches checks the provenance workflow identity fields.
 func releaseImageWorkflowMatches(params map[string]any, expected releaseImageProvenanceExpectation) bool {
-	workflow, ok := nestedMap(params, "workflow")
+	workflow, ok := domainprovenance.NestedMap(params, "workflow")
 	if !ok {
 		return false
 	}
 
-	return statementString(workflow, "ref") == expected.Tag &&
-		statementString(workflow, "repository") == expected.Source &&
-		statementString(workflow, "path") == expected.Workflow
+	return domainprovenance.StatementString(workflow, "ref") == expected.Tag &&
+		domainprovenance.StatementString(workflow, "repository") == expected.Source &&
+		domainprovenance.StatementString(workflow, "path") == expected.Workflow
 }
 
 // releaseImageBaseMatches checks the provenance base-lineage fields and the
 // matching resolved dependency.
 func releaseImageBaseMatches(params, build map[string]any, expected releaseImageProvenanceExpectation) bool {
-	base, ok := nestedMap(params, "base")
-	if !ok || statementString(base, "ref") != expected.BaseRef || statementString(base, "input_id") != expected.BaseInputID {
+	base, ok := domainprovenance.NestedMap(params, "base")
+	if !ok || domainprovenance.StatementString(base, "ref") != expected.BaseRef || domainprovenance.StatementString(base, "input_id") != expected.BaseInputID {
 		return false
 	}
 
@@ -404,8 +413,8 @@ func releaseImageBaseMatches(params, build map[string]any, expected releaseImage
 
 func releaseImageHasGitCommitDependency(build map[string]any, commit string) bool {
 	for _, dep := range releaseImageDependencies(build) {
-		digest, ok := nestedMap(dep, "digest")
-		if ok && statementString(digest, "gitCommit") == commit {
+		digest, ok := domainprovenance.NestedMap(dep, "digest")
+		if ok && domainprovenance.StatementString(digest, "gitCommit") == commit {
 			return true
 		}
 	}
@@ -415,8 +424,8 @@ func releaseImageHasGitCommitDependency(build map[string]any, commit string) boo
 
 func releaseImageHasBaseDependency(build map[string]any, baseRef, baseInputID string) bool {
 	for _, dep := range releaseImageDependencies(build) {
-		annotations, ok := nestedMap(dep, "annotations")
-		if statementString(dep, "uri") == "oci://"+baseRef && ok && statementString(annotations, "base_input_id") == baseInputID {
+		annotations, ok := domainprovenance.NestedMap(dep, "annotations")
+		if domainprovenance.StatementString(dep, "uri") == "oci://"+baseRef && ok && domainprovenance.StatementString(annotations, "base_input_id") == baseInputID {
 			return true
 		}
 	}
@@ -447,7 +456,7 @@ func printReleaseImageVerificationError(out io.Writer, ref, verifyStep string, r
 
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || unsafeCosignErrorLine(line) {
+		if line == "" || domaincontainer.UnsafeCosignErrorLine(line) {
 			continue
 		}
 

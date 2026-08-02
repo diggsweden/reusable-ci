@@ -89,7 +89,8 @@ func (d *Deps) RequireReleasePublisher() (provider.ReleasePublisher, error) {
 }
 
 // RequireReleaseAssetUploader returns the ReleaseAssetUploader role
-// when the active provider implements it. Today only github does.
+// when the active provider implements it. GitHub, Forgejo and GitLab all
+// implement it; local does not.
 func (d *Deps) RequireReleaseAssetUploader() (provider.ReleaseAssetUploader, error) {
 	return requireRole[provider.ReleaseAssetUploader](d, "release asset upload")
 }
