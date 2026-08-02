@@ -21,7 +21,7 @@ import (
 // path resolution, registry-namespace policy).
 func validateGroup() *cli.Command {
 	return &cli.Command{
-		Name:  "validate",
+		Name:  subCmdValidate,
 		Usage: "validate one aspect of the container build inputs",
 		Commands: []*cli.Command{
 			validateArtifactsCmd(),
@@ -51,7 +51,7 @@ func validateArtifactsCmd() *cli.Command {
 				Usage:    "directory holding the built artifacts to inspect",
 			},
 			&cli.StringFlag{
-				Name:    "containerfile",
+				Name:    flagContainerfile,
 				Sources: cli.EnvVars("CONTAINERFILE"),
 				Usage:   "Containerfile path (enables COPY-vs-rebuild policy checks)",
 			},
@@ -62,7 +62,7 @@ func validateArtifactsCmd() *cli.Command {
 			return appcontainer.ValidateArtifacts(os.Stderr, os.Stderr, annot, appcontainer.ValidateArtifactsInput{
 				ProjectType:       cmd.String("project-type"),
 				ArtifactDir:       cmd.String("artifact-dir"),
-				ContainerfilePath: cmd.String("containerfile"),
+				ContainerfilePath: cmd.String(flagContainerfile),
 			})
 		},
 	}
@@ -70,7 +70,7 @@ func validateArtifactsCmd() *cli.Command {
 
 func validateContainerfileCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "containerfile",
+		Name:  flagContainerfile,
 		Usage: "verify a Containerfile path exists (or glob-resolves uniquely), emit containerfile=<path>",
 		Description: `EXAMPLE:
    reusable-ci container validate containerfile --path Containerfile`,
@@ -107,7 +107,7 @@ func validateNamespaceCmd() *cli.Command {
 				Usage:    "image ref (registry/owner/name) whose namespace is checked",
 			},
 			&cli.StringFlag{
-				Name:     "repository",
+				Name:     flagRepository,
 				Required: true,
 				Sources:  cienv.Repository(),
 				Usage:    "\"owner/repo\" the image must be namespaced under on an enforced registry",
@@ -134,7 +134,7 @@ func validateNamespaceCmd() *cli.Command {
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			err := appcontainer.ValidateNamespace(domaincontainer.ValidateNamespaceInput{
 				ImageName:           cmd.String("image-name"),
-				Repository:          cmd.String("repository"),
+				Repository:          cmd.String(flagRepository),
 				Registry:            cmd.String("registry"),
 				EnforceNamespace:    cmd.String("enforce-namespace"),
 				EnforceOnRegistries: cmd.StringSlice("enforce-namespace-on"),

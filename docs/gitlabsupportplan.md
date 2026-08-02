@@ -317,13 +317,18 @@ GitLab** (each consolidation improves GitHub too).
   `install trivy` step moved ahead of it (carrying the `&if_scan_enabled`
   anchor); the digest still flows to export/upload and the SARIF/GitLab reports
   to their uploads — actionlint green.
+- **✅ `build-and-scan` folded into `container build --scan` (2026-07-03):** the
+  digest-coupled build+scan is now a flag on the one build verb (with `--scan`
+  unset it is exactly the old `build`); the separate spelling was removed
+  outright, and publish-container.yml calls `container build` with the same
+  ENABLE_SCAN gating.
 - **Deliberate boundary:** SBOM, attest, and extract stay as the per-platform
   job's *distinct* steps — they're separate tool pipelines (syft / cosign-signing
-  / a second `container build` in export mode), not "more of build-and-scan".
+  / a second `container build` in export mode), not more of the build+scan step.
   Merging all five would be a ~30-param orchestrator wiring
   buildah+ggcr+trivy+syft+mvn+git+cosign and handling **signing keys** — an
-  unmaintainable, unverifiable anti-pattern. `build-and-scan` (the digest-coupled
-  build+scan) is the correct unit.
+  unmaintainable, unverifiable anti-pattern. `container build --scan` (the
+  digest-coupled build+scan) is the correct unit.
 - **✅ publish-side fan-out generator shipped (2026-06-21):** `reusable-ci plan
   gitlab-publish-pipeline` — the publish sibling of `gitlab-build-pipeline`, one
   `include:` of the matching `publish-<target>` component per running item

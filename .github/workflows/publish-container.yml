@@ -561,7 +561,7 @@ jobs:
       # push-image is false this is a build-only validation (load into local
       # storage, no push, no digest). SOURCE_DATE_EPOCH (from `prep`) clamps the
       # image/layer timestamps so a rebuild of the same tag yields the same digest.
-      # Installed BEFORE the build so `container build-and-scan` can scan the
+      # Installed BEFORE the build so `container build` (ENABLE_SCAN) can scan the
       # just-pushed image in-process (build → scan name@digest), instead of
       # round-tripping the digest through a second step's env. Gated identically
       # to the scan it feeds (enable-scan AND push-image).
@@ -605,7 +605,7 @@ jobs:
         # attestation: SLSA provenance on the merged index in the `merge` job
         # (--recursive over per-arch children), and the CycloneDX SBOM per-arch
         # below (syft) — verifiable with cosign verify-attestation on any forge.
-        run: reusable-ci container build-and-scan
+        run: reusable-ci container build
       - name: Check SLSA compatibility
         if: ${{ inputs['push-image'] && inputs['enable-slsa'] && inputs.registry != 'ghcr.io' }}
         env:

@@ -7,14 +7,20 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	domainversion "github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 )
+
+// defaultRemoteName is the git remote used when the caller does not name one.
+const defaultRemoteName = "origin"
 
 // tagReleaseOps is the slice of adapter/git.Repo this use case needs.
 type tagReleaseOps interface {
 	TagExists(ctx context.Context, tag string) (bool, error)
+	RemoteTagExists(ctx context.Context, remote, tag string) (bool, error)
 	CreateTag(ctx context.Context, tag, ref string, signed bool) error
 	PushTagNoForce(ctx context.Context, tag, token string) error
 	RevParse(ctx context.Context, ref string) (string, error)
@@ -25,6 +31,7 @@ type tagReleaseOps interface {
 type TagReleaseInput struct {
 	Tag    string // final release tag, e.g. "v3.5.7"
 	Signed bool
+	Remote string // empty defaults to origin
 	Token  string // optional; authenticates the tag push when the checkout did not persist credentials
 }
 
@@ -43,34 +50,30 @@ type TagReleaseOutput struct {
 // and created exactly once; this never moves or clobbers a tag, and the
 // push is non-force so the remote rejects any clobber too.
 func TagRelease(ctx context.Context, repo tagReleaseOps, in TagReleaseInput, sink ci.OutputSink, w io.Writer) (*TagReleaseOutput, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	if in.Tag == "" {
-		return nil, fmt.Errorf("tag-release: tag is required: %w", errs.ErrUsage)
+	if err := validateTagReleaseInput(in); err != nil {
+		return nil, err
 	}
 
-	exists, err := repo.TagExists(ctx, in.Tag)
-	if err != nil {
-		return nil, fmt.Errorf("check tag %s: %w", in.Tag, err)
+	remote := in.Remote
+	if remote == "" {
+		remote = defaultRemoteName
 	}
 
-	if exists {
-		return nil, fmt.Errorf(
-			"release tag %s already exists — release tags are immutable and created once; refusing to move it: %w",
-			in.Tag, errs.ErrValidation)
+	if err := ensureReleaseTagAbsent(ctx, repo, remote, in.Tag); err != nil {
+		return nil, err
 	}
-
-	_, _ = fmt.Fprintf(w, "Creating release tag %s at HEAD (bump commit)\n", in.Tag)
 
 	if createErr := repo.CreateTag(ctx, in.Tag, "HEAD", in.Signed); createErr != nil {
-		return nil, fmt.Errorf("create tag: %w", createErr)
+		return nil, fmt.Errorf("tag-release: create tag: %w", createErr)
 	}
 
 	if pushErr := repo.PushTagNoForce(ctx, in.Tag, in.Token); pushErr != nil {
-		return nil, fmt.Errorf("push tag: %w", pushErr)
+		return nil, fmt.Errorf("tag-release: push tag: %w", pushErr)
 	}
 
 	releaseSHA, err := repo.RevParse(ctx, "HEAD")
 	if err != nil {
-		return nil, fmt.Errorf("rev-parse HEAD: %w", err)
+		return nil, fmt.Errorf("tag-release: rev-parse HEAD: %w", err)
 	}
 
 	if sink != nil {
@@ -79,5 +82,50 @@ func TagRelease(ctx context.Context, repo tagReleaseOps, in TagReleaseInput, sin
 		}
 	}
 
+	_, _ = fmt.Fprintf(w, "Release tag %s created at %s\n", in.Tag, releaseSHA)
+
 	return &TagReleaseOutput{Tag: in.Tag, ReleaseSHA: releaseSHA}, nil
+}
+
+// validateTagReleaseInput rejects missing, multi-line, or non-stable-semver tags.
+func validateTagReleaseInput(in TagReleaseInput) error {
+	if in.Tag == "" {
+		return fmt.Errorf("tag-release: tag is required: %w", errs.ErrUsage)
+	}
+
+	if strings.ContainsAny(in.Tag, "\n\r") {
+		return fmt.Errorf("tag-release: release tag must be a single-line value: %w", errs.ErrValidation)
+	}
+
+	if !domainversion.IsStableSemverTag(in.Tag) {
+		return fmt.Errorf("tag-release: release tag must look like stable vMAJOR.MINOR.PATCH: %s: %w", in.Tag, errs.ErrValidation)
+	}
+
+	return nil
+}
+
+// ensureReleaseTagAbsent refuses to proceed when the release tag already
+// exists locally or on the remote — release tags are created exactly once.
+func ensureReleaseTagAbsent(ctx context.Context, repo tagReleaseOps, remote, tag string) error {
+	exists, err := repo.TagExists(ctx, tag)
+	if err != nil {
+		return fmt.Errorf("tag-release: check local tag %s: %w", tag, err)
+	}
+
+	if exists {
+		return fmt.Errorf(
+			"tag-release: release tag %s already exists locally; refusing to move it: %w",
+			tag, errs.ErrValidation)
+	}
+
+	remoteExists, err := repo.RemoteTagExists(ctx, remote, tag)
+	if err != nil {
+		return fmt.Errorf("tag-release: check release tag %s on %s: %w", tag, remote, err)
+	}
+
+	if remoteExists {
+		return fmt.Errorf("tag-release: release tag %s already exists on %s; refusing to move it: %w", tag, remote, errs.ErrValidation)
+	}
+
+	return nil
 }

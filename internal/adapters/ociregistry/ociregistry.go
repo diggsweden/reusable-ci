@@ -21,9 +21,15 @@ package ociregistry
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"os"
+	"runtime"
 	"strings"
 
+	"github.com/docker/cli/cli/config"
+	dockertypes "github.com/docker/cli/cli/config/types"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/crane"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -32,17 +38,28 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/layout"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/httpretry"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
+
+// osLinux is the only image platform OS reusable-ci selects from an index.
+const osLinux = "linux"
 
 // Adapter resolves, copies, and assembles image manifests over the registry
 // API. It satisfies imageledger.Registry and the manifest-helper registry
 // surface in internal/app/container.
-type Adapter struct{}
+type Adapter struct {
+	AuthFile string
+}
 
 // New returns an Adapter authenticating from the default keychain.
 func New() *Adapter { return &Adapter{} }
+
+// WithAuthFile returns an Adapter that authenticates from a Docker-compatible
+// config file instead of the process-default keychain.
+func WithAuthFile(path string) *Adapter { return &Adapter{AuthFile: path} }
 
 // ResolveDigest returns the sha256 digest the registry currently serves for
 // ref (a tag or digest-pinned ref). For a multi-arch tag this is the index
@@ -51,7 +68,7 @@ func New() *Adapter { return &Adapter{} }
 func (a *Adapter) ResolveDigest(ctx context.Context, ref string) (string, error) {
 	digest, err := crane.Digest(ref, a.craneOpts(ctx, ref)...)
 	if err != nil {
-		return "", fmt.Errorf("resolve digest for %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+		return "", fmt.Errorf("resolve digest for %s: %w: %w", ref, err, classifyRegistryResolveError(err))
 	}
 
 	if digest = strings.TrimSpace(digest); digest == "" {
@@ -59,6 +76,21 @@ func (a *Adapter) ResolveDigest(ctx context.Context, ref string) (string, error)
 	}
 
 	return digest, nil
+}
+
+func classifyRegistryResolveError(err error) error {
+	var transportErr *transport.Error
+	if errors.As(err, &transportErr) {
+		if transportErr.StatusCode == http.StatusNotFound {
+			return errs.ErrMissingInput
+		}
+
+		if mapped := errs.FromHTTPStatus(transportErr.StatusCode); mapped != nil {
+			return mapped
+		}
+	}
+
+	return errs.ErrDependencyUnavailable
 }
 
 // CopyTag points dest at the manifest (image or multi-arch index) currently
@@ -120,6 +152,123 @@ func (a *Adapter) Manifest(ctx context.Context, ref string) ([]byte, error) {
 	return raw, nil
 }
 
+// Labels returns the config labels for the image selected by ref. If ref points
+// at a multi-platform index, the host platform is selected, matching the
+// inspection behavior the shell migration previously relied on.
+func (a *Adapter) Labels(ctx context.Context, ref string) (map[string]string, error) {
+	parsed, err := a.parse(ref)
+	if err != nil {
+		return nil, fmt.Errorf("parse image ref %s: %w", ref, err)
+	}
+
+	opts := append(a.remoteOpts(ctx), remote.WithPlatform(v1.Platform{OS: runtime.GOOS, Architecture: runtime.GOARCH}))
+
+	desc, err := remote.Get(parsed, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("fetch image %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+	}
+
+	img, err := desc.Image()
+	if err != nil {
+		return nil, fmt.Errorf("read image %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+	}
+
+	config, err := img.ConfigFile()
+	if err != nil {
+		return nil, fmt.Errorf("read image config %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+	}
+
+	labels := make(map[string]string, len(config.Config.Labels))
+	for key, value := range config.Config.Labels {
+		labels[key] = value
+	}
+
+	return labels, nil
+}
+
+// InspectImage returns the digest, architecture, and config labels for ref. If
+// ref points at an index, the descriptor matching arch is selected.
+func (a *Adapter) InspectImage(ctx context.Context, ref, arch string) (string, string, map[string]string, error) {
+	parsed, err := a.parse(ref)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("parse image ref %s: %w", ref, err)
+	}
+
+	desc, err := remote.Get(parsed, a.remoteOpts(ctx)...)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("fetch image %s: %w: %w", ref, err, classifyRegistryResolveError(err))
+	}
+
+	if desc.MediaType.IsIndex() {
+		return a.inspectImageIndex(ref, desc, arch)
+	}
+
+	img, err := desc.Image()
+	if err != nil {
+		return "", "", nil, fmt.Errorf("read image %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+	}
+
+	digest := desc.Digest.String()
+	if digest == "" {
+		computed, digestErr := img.Digest()
+		if digestErr != nil {
+			return "", "", nil, fmt.Errorf("compute image digest %s: %w: %w", ref, digestErr, errs.ErrDependencyUnavailable)
+		}
+
+		digest = computed.String()
+	}
+
+	architecture, labels, err := imageConfigMetadata(img, ref)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	return digest, architecture, labels, nil
+}
+
+// findLinuxArchDescriptor returns the single linux/<arch> child descriptor of
+// an image index, rejecting missing or ambiguous entries.
+func findLinuxArchDescriptor(manifest *v1.IndexManifest, ref, arch string) (*v1.Descriptor, error) {
+	var match *v1.Descriptor
+
+	for _, child := range manifest.Manifests {
+		if child.Platform == nil || child.Platform.Architecture != arch {
+			continue
+		}
+
+		if child.Platform.OS != "" && child.Platform.OS != osLinux {
+			continue
+		}
+
+		if match != nil {
+			return nil, fmt.Errorf("image index %s has multiple linux/%s entries: %w", ref, arch, errs.ErrValidation)
+		}
+
+		selected := child
+		match = &selected
+	}
+
+	if match == nil {
+		return nil, fmt.Errorf("image index %s has no linux/%s entry: %w", ref, arch, errs.ErrMissingInput)
+	}
+
+	return match, nil
+}
+
+func imageConfigMetadata(img v1.Image, ref string) (string, map[string]string, error) {
+	config, err := img.ConfigFile()
+	if err != nil {
+		return "", nil, fmt.Errorf("read image config %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+	}
+
+	labels := make(map[string]string, len(config.Config.Labels))
+	for key, value := range config.Config.Labels {
+		labels[key] = value
+	}
+
+	return config.Architecture, labels, nil
+}
+
 // MergeManifest assembles a multi-platform image index from the per-platform
 // builds already pushed at image@sha256:<digest> and writes it to every tag —
 // the daemonless equivalent of
@@ -164,6 +313,39 @@ func (a *Adapter) MergeManifest(ctx context.Context, image string, digests, tags
 	}
 
 	return nil
+}
+
+func (a *Adapter) inspectImageIndex(ref string, desc *remote.Descriptor, arch string) (string, string, map[string]string, error) {
+	idx, err := desc.ImageIndex()
+	if err != nil {
+		return "", "", nil, fmt.Errorf("read image index %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+	}
+
+	manifest, err := idx.IndexManifest()
+	if err != nil {
+		return "", "", nil, fmt.Errorf("read image index manifest %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+	}
+
+	match, err := findLinuxArchDescriptor(manifest, ref, arch)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	img, err := idx.Image(match.Digest)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("read image %s child %s: %w: %w", ref, match.Digest, err, errs.ErrDependencyUnavailable)
+	}
+
+	architecture, labels, err := imageConfigMetadata(img, ref)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	if architecture == "" {
+		architecture = match.Platform.Architecture
+	}
+
+	return match.Digest.String(), architecture, labels, nil
 }
 
 // addendaFor resolves one source digest into the index entries to merge. A
@@ -267,7 +449,8 @@ func (a *Adapter) parse(ref string) (name.Reference, error) {
 func (a *Adapter) remoteOpts(ctx context.Context) []remote.Option {
 	return []remote.Option{
 		remote.WithContext(ctx),
-		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		remote.WithAuthFromKeychain(a.keychain()),
+		remote.WithTransport(httpretry.NewTransport(httpretry.Config{})),
 	}
 }
 
@@ -276,7 +459,8 @@ func (a *Adapter) remoteOpts(ctx context.Context) []remote.Option {
 func (a *Adapter) craneOpts(ctx context.Context, refs ...string) []crane.Option {
 	opts := []crane.Option{
 		crane.WithContext(ctx),
-		crane.WithAuthFromKeychain(authn.DefaultKeychain),
+		crane.WithAuthFromKeychain(a.keychain()),
+		crane.WithTransport(httpretry.NewTransport(httpretry.Config{})),
 	}
 
 	if allLoopback(refs) {
@@ -284,6 +468,74 @@ func (a *Adapter) craneOpts(ctx context.Context, refs ...string) []crane.Option 
 	}
 
 	return opts
+}
+
+func (a *Adapter) keychain() authn.Keychain {
+	if a.AuthFile == "" {
+		return authn.DefaultKeychain
+	}
+
+	return authFileKeychain{path: a.AuthFile}
+}
+
+type authFileKeychain struct {
+	path string
+}
+
+func (k authFileKeychain) Resolve(target authn.Resource) (authn.Authenticator, error) {
+	authFile, err := os.Open(k.path) //nolint:gosec // caller-selected Docker auth config.
+	if err != nil {
+		return nil, fmt.Errorf("open registry auth file %s: %w: %w", k.path, err, errs.ErrMissingInput)
+	}
+
+	defer func() { _ = authFile.Close() }()
+
+	cf, err := config.LoadFromReader(authFile)
+	if err != nil {
+		return nil, fmt.Errorf("load registry auth file %s: %w: %w", k.path, err, errs.ErrMalformedInput)
+	}
+
+	cfg, err := dockerAuthConfig(cf, target)
+	if err != nil {
+		return nil, err
+	}
+
+	var empty dockertypes.AuthConfig
+	if cfg == empty {
+		return authn.Anonymous, nil
+	}
+
+	return authn.FromConfig(authn.AuthConfig{
+		Username:      cfg.Username,
+		Password:      cfg.Password,
+		Auth:          cfg.Auth,
+		IdentityToken: cfg.IdentityToken,
+		RegistryToken: cfg.RegistryToken,
+	}), nil
+}
+
+func dockerAuthConfig(cf interface {
+	GetAuthConfig(registryKey string) (dockertypes.AuthConfig, error)
+}, target authn.Resource) (dockertypes.AuthConfig, error) {
+	var empty dockertypes.AuthConfig
+
+	for _, key := range []string{target.String(), target.RegistryStr()} {
+		if key == name.DefaultRegistry {
+			key = authn.DefaultAuthKey
+		}
+
+		cfg, err := cf.GetAuthConfig(key)
+		if err != nil {
+			return empty, err
+		}
+
+		cfg.ServerAddress = ""
+		if cfg != empty {
+			return cfg, nil
+		}
+	}
+
+	return empty, nil
 }
 
 func allLoopback(refs []string) bool {

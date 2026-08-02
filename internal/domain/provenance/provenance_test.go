@@ -19,6 +19,7 @@ func TestParseChecksums(t *testing.T) {
 
 	in := strings.NewReader(
 		"DEADBEEF" + strings.Repeat("0", 56) + "  dist/app_linux_amd64.tar.gz\n" +
+			strings.Repeat("c", 64) + "  *dist/binary-mode.tar.gz\r\n" +
 			"\n" + // blank line skipped
 			strings.Repeat("a", 64) + "  dist/checksums.txt\n")
 
@@ -27,8 +28,8 @@ func TestParseChecksums(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(subjects) != 2 {
-		t.Fatalf("got %d subjects, want 2", len(subjects))
+	if len(subjects) != 3 {
+		t.Fatalf("got %d subjects, want 3", len(subjects))
 	}
 
 	if subjects[0].Name != "dist/app_linux_amd64.tar.gz" {
@@ -38,6 +39,10 @@ func TestParseChecksums(t *testing.T) {
 	// Digest must be lower-cased.
 	if subjects[0].SHA256 != "deadbeef"+strings.Repeat("0", 56) {
 		t.Errorf("sha = %q (should be lower-cased)", subjects[0].SHA256)
+	}
+
+	if subjects[1].Name != "dist/binary-mode.tar.gz" {
+		t.Errorf("binary-mode name = %q (should strip coreutils '*' marker and CRLF)", subjects[1].Name)
 	}
 }
 
@@ -135,15 +140,15 @@ func TestPredicate_Golden(t *testing.T) {
 	// (cosign binds the image subject), with an image external parameter.
 	body, err := provenance.Predicate(provenance.Input{
 		BuildType:    provenance.ContainerBuildType,
-		BuilderID:    "https://github.com/diggsweden/reusable-ci/v3/.github/workflows/publish-container.yml@refs/tags/v1.2.3",
-		SourceURI:    "git+https://github.com/diggsweden/reusable-ci/v3",
+		BuilderID:    "https://github.com/diggsweden/reusable-ci/.github/workflows/publish-container.yml@refs/tags/v1.2.3",
+		SourceURI:    "git+https://github.com/diggsweden/reusable-ci",
 		Ref:          "refs/tags/v1.2.3",
 		ImageName:    "ghcr.io/diggsweden/app",
-		InvocationID: "https://github.com/diggsweden/reusable-ci/v3/actions/runs/4242",
+		InvocationID: "https://github.com/diggsweden/reusable-ci/actions/runs/4242",
 		StartedOn:    "2026-06-01T12:00:00Z",
 		FinishedOn:   "2026-06-01T12:00:00Z",
 		ResolvedDeps: []provenance.Dependency{
-			provenance.SourceDependency("https://github.com/diggsweden/reusable-ci/v3", "refs/tags/v1.2.3", strings.Repeat("c", 40)),
+			provenance.SourceDependency("https://github.com/diggsweden/reusable-ci", "refs/tags/v1.2.3", strings.Repeat("c", 40)),
 		},
 	})
 	if err != nil {
@@ -232,9 +237,7 @@ func TestPredicate_BaseLineage(t *testing.T) {
 		t.Errorf("base sha256 = %q, want %q (sha256: prefix must be stripped)", base.Digest["sha256"], strings.Repeat("b", 64))
 	}
 
-	// Pin the CLI's canonical base-lineage predicate bytes — the verify side of
-	// forgejo-ci's golden-baseline-base-lineage-predicate. The two goldens are
-	// NOT byte-identical (bash jq vs Go json.Marshal); each side is locked
-	// independently and the flip is atomic, per the migration map's flip strategy.
+	// Pin the generic reusable-ci base-lineage predicate bytes. Forgejo CI's
+	// shipped compatibility shape is pinned separately by BaseLineagePredicate.
 	golden.Equal(t, "provenance_base_lineage_predicate.json", body)
 }

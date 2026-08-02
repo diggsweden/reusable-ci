@@ -50,6 +50,31 @@ func TestDeleteTag_DeletesContainerPackageVersion(t *testing.T) {
 	}
 }
 
+func TestDeleteTag_TreatsMissingPackageVersionAsAlreadyAbsent(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			http.Error(w, "not found", http.StatusNotFound)
+
+			return
+		}
+
+		http.Error(w, "unexpected "+r.Method, http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	p := &forgejo.Provider{
+		Env:             envMap(map[string]string{"FORGEJO_TOKEN": "tok"}),
+		HTTPClient:      srv.Client(),
+		APIBaseOverride: srv.URL,
+	}
+
+	if err := p.DeleteTag(context.Background(), "codeberg.org/itiquette/gommitlint:staging-v1.2.3"); err != nil {
+		t.Fatalf("DeleteTag 404 should be idempotent, got %v", err)
+	}
+}
+
 func TestDeleteTag_RejectsRefWithoutTag(t *testing.T) {
 	t.Parallel()
 

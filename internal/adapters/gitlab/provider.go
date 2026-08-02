@@ -4,8 +4,8 @@
 // Package gitlab implements the GitLab CI provider port.
 //
 // The Provider type implements the always-available base + the
-// RepoMetadataFetcher, TokenValidator, and ReleaseCreator roles. Each
-// role lives in its own file (context.go, metadata.go, token.go,
+// RepoMetadataFetcher, TokenValidator, ReleaseCreator, and ReleaseAssetUploader
+// roles. Each role lives in its own file (context.go, metadata.go, token.go,
 // release.go) sharing the same struct receiver. Common HTTP plumbing
 // (retry transport, JSON helpers) lives in client.go.
 //
@@ -13,8 +13,6 @@
 //
 //   - SARIFUploader — GitLab CI consumes the JSON SAST report format
 //     (gl-sast-report.json) that trivy/opengrep emit directly.
-//   - ReleaseAssetUploader — the release-link API will land alongside
-//     the rest of GitLab CI support.
 //
 // CLI surfaces that require those capabilities gate on platform first.
 package gitlab
@@ -64,13 +62,13 @@ func (p *Provider) envFunc() func(string) string {
 	return os.Getenv
 }
 
-// Compile-time conformance checks. SARIFUploader and
-// ReleaseAssetUploader are intentionally absent — see package doc.
+// Compile-time conformance checks. SARIFUploader is intentionally absent — see package doc.
 var (
 	_ provider.Provider                = (*Provider)(nil)
 	_ provider.RepoMetadataFetcher     = (*Provider)(nil)
 	_ provider.TokenValidator          = (*Provider)(nil)
 	_ provider.ReleaseCreator          = (*Provider)(nil)
+	_ provider.ReleaseAssetUploader    = (*Provider)(nil)
 	_ provider.Describer               = (*Provider)(nil)
 	_ provider.CapabilityReporter      = (*Provider)(nil)
 	_ provider.SigningIdentityResolver = (*Provider)(nil)

@@ -25,13 +25,13 @@ func verifyTagCmd() *cli.Command {
 		Description: `EXAMPLE:
    reusable-ci release verify-tag --tag v1.2.3 --release-sha abc... --repo-url https://github.com/org/app`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "release-sha", Sources: cli.EnvVars("RELEASE_SHA"), Usage: "commit the release is built from"},
+			&cli.StringFlag{Name: flagReleaseSHA, Sources: cli.EnvVars("RELEASE_SHA"), Usage: "commit the release is built from"},
 			&cli.StringFlag{Name: flagTag, Sources: cienv.Tag(), Usage: "release tag (e.g. v1.2.3)"},
 			&cli.StringFlag{Name: "repo-url", Sources: cli.EnvVars("REPO_URL"), Usage: "remote repository URL for ls-remote"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return apprelease.VerifyReleaseTag(ctx, git.New(), os.Stderr, apprelease.VerifyReleaseTagInput{
-				ReleaseSHA: cmd.String("release-sha"),
+				ReleaseSHA: cmd.String(flagReleaseSHA),
 				Tag:        cmd.String(flagTag),
 				RepoURL:    cmd.String("repo-url"),
 			})

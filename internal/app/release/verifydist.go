@@ -26,22 +26,37 @@ import (
 //
 // (paths are byte-sorted, matching a C/POSIX-locale `sort`).
 func DistDigest(dir string) (string, error) {
-	files, err := regularFiles(dir)
+	return DistDigestWithManifestRoot(dir, "")
+}
+
+// DistDigestWithManifestRoot is DistDigest with an explicit path prefix for
+// the hashed sha256sum manifest. When manifestRoot is empty, dir is used so
+// existing path-sensitive release digests remain unchanged. Set manifestRoot to
+// "." to match `cd <dir> && find . -type f ...` for artifact contents that may
+// be staged under different directory names on each side of a job boundary.
+func DistDigestWithManifestRoot(dir, manifestRoot string) (string, error) {
+	files, err := regularFiles(dir, manifestRoot)
 	if err != nil {
 		return "", err
 	}
 
-	sort.Strings(files)
+	if len(files) == 0 {
+		return "", fmt.Errorf("verify-dist: no files under %s; refusing to digest an empty hand-off: %w", dir, errs.ErrValidation)
+	}
+
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].manifestPath < files[j].manifestPath
+	})
 
 	outer := sha256.New()
 
 	for _, file := range files {
-		sum, err := fileSHA256(file)
+		sum, err := fileSHA256(file.diskPath)
 		if err != nil {
 			return "", err
 		}
 
-		_, _ = fmt.Fprintf(outer, "%s  %s\n", sum, file)
+		_, _ = fmt.Fprintf(outer, "%s  %s\n", sum, file.manifestPath)
 	}
 
 	return hex.EncodeToString(outer.Sum(nil)), nil
@@ -54,6 +69,12 @@ func DistDigest(dir string) (string, error) {
 // non-directory entries, and no control characters in any path. A
 // structural violation or a digest mismatch is a validation error.
 func VerifyDist(dir, expectedDigest string) error {
+	return VerifyDistWithManifestRoot(dir, expectedDigest, "")
+}
+
+// VerifyDistWithManifestRoot is VerifyDist with an explicit path prefix for
+// digest recomputation. See DistDigestWithManifestRoot.
+func VerifyDistWithManifestRoot(dir, expectedDigest, manifestRoot string) error {
 	if expectedDigest == "" {
 		return fmt.Errorf("verify-dist: --expected-digest is required: %w", errs.ErrUsage)
 	}
@@ -75,7 +96,7 @@ func VerifyDist(dir, expectedDigest string) error {
 		return err
 	}
 
-	actual, err := DistDigest(dir)
+	actual, err := DistDigestWithManifestRoot(dir, manifestRoot)
 	if err != nil {
 		return err
 	}
@@ -86,6 +107,11 @@ func VerifyDist(dir, expectedDigest string) error {
 	}
 
 	return nil
+}
+
+type digestFile struct {
+	diskPath     string
+	manifestPath string
 }
 
 // walkSafe rejects symlinks, non-regular/non-directory entries, and
@@ -113,10 +139,14 @@ func walkSafe(dir string) error {
 	})
 }
 
-// regularFiles returns every regular file under dir, paths rooted at dir
-// (e.g. "dist/app.tar.gz"), matching `find <dir> -type f`.
-func regularFiles(dir string) ([]string, error) {
-	var files []string
+// regularFiles returns every regular file under dir, paired with the path that
+// must be written into the sha256sum manifest.
+func regularFiles(dir, manifestRoot string) ([]digestFile, error) {
+	if manifestRoot == "" {
+		manifestRoot = dir
+	}
+
+	var files []digestFile
 
 	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -124,7 +154,12 @@ func regularFiles(dir string) ([]string, error) {
 		}
 
 		if entry.Type().IsRegular() {
-			files = append(files, path)
+			rel, err := filepath.Rel(dir, path)
+			if err != nil {
+				return err
+			}
+
+			files = append(files, digestFile{diskPath: path, manifestPath: manifestPath(manifestRoot, rel)})
 		}
 
 		return nil
@@ -134,6 +169,19 @@ func regularFiles(dir string) ([]string, error) {
 	}
 
 	return files, nil
+}
+
+func manifestPath(root, rel string) string {
+	if rel == "." {
+		return strings.TrimRight(root, string(os.PathSeparator))
+	}
+
+	trimmedRoot := strings.TrimRight(root, string(os.PathSeparator))
+	if trimmedRoot == "" || trimmedRoot == string(os.PathSeparator) {
+		return string(os.PathSeparator) + rel
+	}
+
+	return trimmedRoot + string(os.PathSeparator) + rel
 }
 
 // fileSHA256 returns the lowercase hex SHA-256 of a file's contents.

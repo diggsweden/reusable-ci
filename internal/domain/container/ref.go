@@ -4,8 +4,11 @@
 package container
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // digestRE matches a canonical OCI content digest: the lowercase `sha256:`
@@ -31,4 +34,86 @@ func StripTag(ref string) string {
 	}
 
 	return ref
+}
+
+// StripDigest removes a trailing @<algorithm>:<digest> from an OCI reference.
+// It is intentionally syntax-light: callers that need full validation should do
+// that separately, while this helper only computes the repository/tag part for
+// comparison or destination derivation.
+func StripDigest(ref string) string {
+	if at := strings.Index(ref, "@"); at >= 0 {
+		return ref[:at]
+	}
+
+	return ref
+}
+
+// StripTagOrDigest returns the repository path with either a mutable tag or a
+// digest suffix removed. A ref that carries both (`repo:tag@sha256:...`) loses
+// both, yielding `repo`.
+func StripTagOrDigest(ref string) string {
+	return StripTag(StripDigest(ref))
+}
+
+// ImageNameWithoutTag returns ref's repository/name with a trailing tag removed,
+// preserving any registry host:port prefix.
+func ImageNameWithoutTag(ref string) (string, error) {
+	if ref == "" {
+		return "", fmt.Errorf("image repository name is empty: %w", errs.ErrUsage)
+	}
+
+	name := StripTag(ref)
+
+	last := name[strings.LastIndex(name, "/")+1:]
+	if last == "" {
+		return "", fmt.Errorf("image repository name is empty after removing tag: %s: %w", ref, errs.ErrUsage)
+	}
+
+	return name, nil
+}
+
+// CanonicalImageRef removes docker:// and canonicalizes digest refs by dropping
+// any tag before @sha256:..., matching Buildah/Skopeo's digest-ref expectation.
+func CanonicalImageRef(ref string) (string, error) {
+	if ref == "" || strings.ContainsAny(ref, "\n\r") {
+		return "", fmt.Errorf("unsafe or empty image ref: %w", errs.ErrUsage)
+	}
+
+	if strings.HasPrefix(ref, "docker://") {
+		ref = strings.TrimPrefix(ref, "docker://")
+	} else if strings.Contains(ref, "://") {
+		return "", fmt.Errorf("image ref must not include a transport other than docker://: %s: %w", ref, errs.ErrUsage)
+	}
+
+	if strings.Count(ref, "@") > 1 {
+		return "", fmt.Errorf("image ref contains multiple digest separators: %s: %w", ref, errs.ErrUsage)
+	}
+
+	name, digest, hasDigest := strings.Cut(ref, "@")
+	if !hasDigest {
+		return ref, nil
+	}
+
+	if name == "" || digest == "" {
+		return "", fmt.Errorf("image digest ref must include both name and digest: %s: %w", ref, errs.ErrUsage)
+	}
+
+	name, err := ImageNameWithoutTag(name)
+	if err != nil {
+		return "", err
+	}
+
+	return name + "@" + digest, nil
+}
+
+// ImageNameForRef returns the repository/name for a tag or digest ref.
+func ImageNameForRef(ref string) (string, error) {
+	canonical, err := CanonicalImageRef(ref)
+	if err != nil {
+		return "", err
+	}
+
+	name, _, _ := strings.Cut(canonical, "@")
+
+	return ImageNameWithoutTag(name)
 }

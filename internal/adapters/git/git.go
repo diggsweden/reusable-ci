@@ -19,6 +19,10 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 )
 
+// defaultRemote is the remote name assumed whenever a caller leaves the
+// remote unspecified — the same "origin" every fetch/push method targets.
+const defaultRemote = "origin"
+
 // Repo is a handle for git operations against a working tree.
 // The Dir field, when non-empty, sets the cwd for every invocation.
 //
@@ -79,9 +83,22 @@ func (r *Repo) Run(ctx context.Context, args ...string) (string, error) {
 // means options like "-c user.signingkey=… commit" still produce the
 // useful "commit" label instead of "-c".
 func firstGitArg(args []string) string {
-	for _, a := range args {
-		if !strings.HasPrefix(a, "-") {
-			return a
+	skipNext := false
+	for _, arg := range args {
+		if skipNext {
+			skipNext = false
+
+			continue
+		}
+
+		if arg == "-c" {
+			skipNext = true
+
+			continue
+		}
+
+		if !strings.HasPrefix(arg, "-") {
+			return arg
 		}
 	}
 

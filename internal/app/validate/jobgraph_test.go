@@ -64,3 +64,37 @@ func TestJobGraph_MaskingFails(t *testing.T) {
 		t.Errorf("missing masking annotation in:\n%s", out.String())
 	}
 }
+
+func TestJobGraph_ExplicitForgejoWorkflow(t *testing.T) {
+	mem := testfs.NewMemory(t)
+	mem.WriteFile(".forgejo/workflows/release.yml", []byte(jobGraphClean))
+
+	var out bytes.Buffer
+	if err := appvalidate.JobGraph(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.JobGraphInput{
+		Root:      ".",
+		Workflows: []string{".forgejo/workflows/release.yml"},
+		FS:        mem.FS(),
+	}); err != nil {
+		t.Fatalf("JobGraph with explicit Forgejo workflow: %v", err)
+	}
+}
+
+func TestJobGraph_ExplicitWorkflowMaskingFails(t *testing.T) {
+	mem := testfs.NewMemory(t)
+	mem.WriteFile(".scratch-jg/bad.yml", []byte(jobGraphMasking))
+
+	var out bytes.Buffer
+
+	err := appvalidate.JobGraph(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.JobGraphInput{
+		Root:      ".",
+		Workflows: []string{".scratch-jg/bad.yml"},
+		FS:        mem.FS(),
+	})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+
+	if !strings.Contains(out.String(), ".scratch-jg/bad.yml") {
+		t.Errorf("missing explicit workflow path in annotation:\n%s", out.String())
+	}
+}

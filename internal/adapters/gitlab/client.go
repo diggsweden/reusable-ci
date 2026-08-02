@@ -109,3 +109,43 @@ func postJSON(ctx context.Context, client *http.Client, url string, headers map[
 
 	return nil
 }
+
+// deleteJSON sends a DELETE request, classifying non-2xx responses via
+// errs.FromHTTPStatus when possible.
+func deleteJSON(ctx context.Context, client *http.Client, url string, headers map[string]string) error {
+	if client == nil {
+		client = defaultHTTPClient()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+
+	for k, v := range headers {
+		if v == "" {
+			continue
+		}
+
+		req.Header.Set(k, v)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		cls := errs.FromHTTPStatus(resp.StatusCode)
+		if cls == nil {
+			cls = errs.ErrDependencyUnavailable
+		}
+
+		return fmt.Errorf("HTTP %d: %s: %w", resp.StatusCode, string(respBody), cls)
+	}
+
+	return nil
+}

@@ -21,7 +21,7 @@ const flagRoot = "root"
 // structural rule (literal-default inputs, removed v3 contracts).
 func workflowGroup() *cli.Command {
 	return &cli.Command{
-		Name:  "workflow",
+		Name:  flagWorkflow,
 		Usage: "scan reusable workflow YAML for structural rules",
 		Commands: []*cli.Command{
 			workflowInputDefaultsCmd(),

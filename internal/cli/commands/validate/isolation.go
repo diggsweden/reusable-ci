@@ -23,12 +23,22 @@ func isolationCmd() *cli.Command {
 access to signing secrets (those belong only to the separately-trusted signing
 job), and every actions/checkout step must set persist-credentials: false.
 
+When --sign-job is set, additional Forgejo release-signing invariants are
+checked: prepare release identity outputs, signer secret enumeration, dist-digest
+handoff wiring, prepare-secret-before-checkout ordering, and cache-free
+setup-toolchain use. --single-pin-subject additionally enforces that every
+matching cross-repo reference in the workflow directory uses one commit pin.
+
 EXAMPLE:
    reusable-ci validate isolation --workflow .github/workflows/release.yml \
      --build-job build --signing-secret RELEASE_GPG_PRIVATE_KEY --signing-secret COSIGN_PRIVATE_KEY`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "workflow", Required: true, Usage: "path to the workflow file to check"},
+			&cli.StringFlag{Name: flagWorkflow, Required: true, Usage: "path to the workflow file to check"},
 			&cli.StringFlag{Name: "build-job", Value: "build", Usage: "the artifact-producing job that must not see signing secrets"},
+			&cli.StringFlag{Name: "sign-job", Usage: "cross-repo signing workflow call-site job; enables Forgejo release-signing channel checks"},
+			&cli.StringFlag{Name: "prepare-job", Usage: "job that emits release-tag/release-sha and may check signing-secret presence before checkout"},
+			&cli.StringFlag{Name: "dist-digest-output", Usage: "build job output carrying the dist-digest passed to the signer"},
+			&cli.StringFlag{Name: "single-pin-subject", Usage: "subject whose @<sha> refs must agree across the workflow directory (for forgejo-ci: itiquette/forgejo-ci)"},
 			&cli.StringSliceFlag{
 				Name:  "signing-secret",
 				Usage: "signing secret name forbidden in the build job (repeatable)",
@@ -37,9 +47,13 @@ EXAMPLE:
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			return appvalidate.Isolation(os.Stderr, deps.Annotator(cmd), appvalidate.IsolationInput{
-				Workflow:       cmd.String("workflow"),
-				BuildJob:       cmd.String("build-job"),
-				SigningSecrets: cmd.StringSlice("signing-secret"),
+				Workflow:         cmd.String(flagWorkflow),
+				BuildJob:         cmd.String("build-job"),
+				SignJob:          cmd.String("sign-job"),
+				PrepareJob:       cmd.String("prepare-job"),
+				DistDigestOutput: cmd.String("dist-digest-output"),
+				SinglePinSubject: cmd.String("single-pin-subject"),
+				SigningSecrets:   cmd.StringSlice("signing-secret"),
 			})
 		},
 	}

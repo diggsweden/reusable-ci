@@ -5,10 +5,14 @@ package gitlab_test
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/gitlab"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakegitlabserver"
 )
@@ -329,6 +333,8 @@ func TestValidateBotPermissions_FallsBackToCIJobToken(t *testing.T) {
 func TestCreateRelease_PostsRelease(t *testing.T) {
 	t.Parallel()
 	srv := fakegitlabserver.New(t)
+	asset := writeTestAsset(t, "foo.zip", "zip bytes")
+
 	srv.OnPost("/api/v4/projects/group%2Fproject/releases", func(req fakegitlabserver.Request) fakegitlabserver.Response {
 		if got := req.Header.Get("Private-Token"); got != "glpat_test" {
 			t.Errorf("token = %q", got)
@@ -340,7 +346,30 @@ func TestCreateRelease_PostsRelease(t *testing.T) {
 
 		return fakegitlabserver.Response{Status: 201, Body: `{}`}
 	})
-	srv.OnPost("/api/v4/projects/group%2Fproject/releases/v1.0.0/assets/links", func(_ fakegitlabserver.Request) fakegitlabserver.Response {
+	srv.OnGet("/api/v4/projects/group%2Fproject/releases/v1.0.0/assets/links", func(_ fakegitlabserver.Request) fakegitlabserver.Response {
+		return fakegitlabserver.Response{Body: `[]`}
+	})
+	srv.OnPost("/api/v4/projects/group%2Fproject/uploads", func(req fakegitlabserver.Request) fakegitlabserver.Response {
+		if got := req.Header.Get("Private-Token"); got != "glpat_test" {
+			t.Errorf("upload token = %q", got)
+		}
+
+		if !strings.Contains(req.Header.Get("Content-Type"), "multipart/form-data") {
+			t.Errorf("upload content-type = %q", req.Header.Get("Content-Type"))
+		}
+
+		if !strings.Contains(string(req.Body), "zip bytes") || !strings.Contains(string(req.Body), `filename="foo.zip"`) {
+			t.Errorf("upload body missing file content/name: %s", req.Body)
+		}
+
+		return fakegitlabserver.Response{Status: 201, Body: `{"url":"/uploads/abc/foo.zip","full_path":"/group/project/uploads/abc/foo.zip"}`}
+	})
+	srv.OnPost("/api/v4/projects/group%2Fproject/releases/v1.0.0/assets/links", func(req fakegitlabserver.Request) fakegitlabserver.Response {
+		body := string(req.Body)
+		if !strings.Contains(body, `"name":"foo.zip"`) || !strings.Contains(body, srv.URL()+`/group/project/uploads/abc/foo.zip`) {
+			t.Errorf("link body missing name/url: %s", body)
+		}
+
 		return fakegitlabserver.Response{Status: 201, Body: `{}`}
 	})
 	p := &gitlab.Provider{
@@ -351,10 +380,106 @@ func TestCreateRelease_PostsRelease(t *testing.T) {
 	err := p.CreateRelease(context.Background(), "group/project", provider.ReleaseSpec{
 		Tag:    "v1.0.0",
 		Name:   "Release v1.0.0",
-		Assets: []string{"foo.zip"},
+		Assets: []string{asset},
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestUploadReleaseAsset_UploadsProjectFileAndLinksRelease(t *testing.T) {
+	t.Parallel()
+
+	srv := fakegitlabserver.New(t)
+	asset := writeTestAsset(t, "artifact.tar.gz", "release asset")
+
+	srv.OnGet("/api/v4/projects/group%2Fproject/releases/v1.2.3/assets/links", func(req fakegitlabserver.Request) fakegitlabserver.Response {
+		if got := req.Header.Get("Private-Token"); got != "glpat_test" {
+			t.Errorf("links token = %q", got)
+		}
+
+		return fakegitlabserver.Response{Body: `[]`}
+	})
+	srv.OnPost("/api/v4/projects/group%2Fproject/uploads", func(req fakegitlabserver.Request) fakegitlabserver.Response {
+		if !strings.Contains(req.Header.Get("Content-Type"), "multipart/form-data") {
+			t.Errorf("upload content-type = %q", req.Header.Get("Content-Type"))
+		}
+
+		if !strings.Contains(string(req.Body), "release asset") || !strings.Contains(string(req.Body), `filename="artifact.tar.gz"`) {
+			t.Errorf("upload body missing file content/name: %s", req.Body)
+		}
+
+		return fakegitlabserver.Response{Status: 201, Body: `{"url":"/uploads/abc/artifact.tar.gz","full_path":"/group/project/uploads/abc/artifact.tar.gz"}`}
+	})
+	srv.OnPost("/api/v4/projects/group%2Fproject/releases/v1.2.3/assets/links", func(req fakegitlabserver.Request) fakegitlabserver.Response {
+		body := string(req.Body)
+		if !strings.Contains(body, `"name":"artifact.tar.gz"`) || !strings.Contains(body, srv.URL()+`/group/project/uploads/abc/artifact.tar.gz`) {
+			t.Errorf("link body missing name/url: %s", body)
+		}
+
+		return fakegitlabserver.Response{Status: 201, Body: `{}`}
+	})
+
+	p := &gitlab.Provider{
+		Env: envFunc(map[string]string{
+			"GITLAB_TOKEN":    "glpat_test",
+			"CI_PROJECT_PATH": "group/project",
+		}),
+		APIBaseOverride: srv.URL(),
+	}
+
+	if err := p.UploadReleaseAsset(context.Background(), "v1.2.3", asset); err != nil {
+		t.Fatalf("UploadReleaseAsset: %v", err)
+	}
+}
+
+func TestUploadReleaseAsset_ClobbersExistingLink(t *testing.T) {
+	t.Parallel()
+
+	srv := fakegitlabserver.New(t)
+	asset := writeTestAsset(t, "artifact.tar.gz", "replacement")
+	deleted := false
+
+	srv.OnGet("/api/v4/projects/group%2Fproject/releases/v1.2.3/assets/links", func(_ fakegitlabserver.Request) fakegitlabserver.Response {
+		return fakegitlabserver.Response{Body: `[{"id":42,"name":"artifact.tar.gz"},{"id":7,"name":"other.txt"}]`}
+	})
+	srv.On("DELETE", "/api/v4/projects/group%2Fproject/releases/v1.2.3/assets/links/42", func(_ fakegitlabserver.Request) fakegitlabserver.Response {
+		deleted = true
+
+		return fakegitlabserver.Response{Status: 204}
+	})
+	srv.OnPost("/api/v4/projects/group%2Fproject/uploads", func(_ fakegitlabserver.Request) fakegitlabserver.Response {
+		return fakegitlabserver.Response{Status: 201, Body: `{"full_path":"/group/project/uploads/def/artifact.tar.gz"}`}
+	})
+	srv.OnPost("/api/v4/projects/group%2Fproject/releases/v1.2.3/assets/links", func(_ fakegitlabserver.Request) fakegitlabserver.Response {
+		return fakegitlabserver.Response{Status: 201, Body: `{}`}
+	})
+
+	p := &gitlab.Provider{
+		Env: envFunc(map[string]string{
+			"GITLAB_TOKEN":    "glpat_test",
+			"CI_PROJECT_PATH": "group/project",
+		}),
+		APIBaseOverride: srv.URL(),
+	}
+
+	if err := p.UploadReleaseAsset(context.Background(), "v1.2.3", asset); err != nil {
+		t.Fatalf("UploadReleaseAsset: %v", err)
+	}
+
+	if !deleted {
+		t.Fatal("existing release asset link was not deleted")
+	}
+}
+
+func TestUploadReleaseAsset_RequiresProjectPath(t *testing.T) {
+	t.Parallel()
+
+	p := &gitlab.Provider{Env: envFunc(nil)}
+
+	err := p.UploadReleaseAsset(context.Background(), "v1.2.3", "asset.tar.gz")
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("UploadReleaseAsset error = %v, want ErrUsage", err)
 	}
 }
 
@@ -398,4 +523,15 @@ func TestFetchRepoMetadata_ReadsCIServerURL(t *testing.T) {
 	if len(srv.Requests()) != 1 {
 		t.Errorf("expected 1 request, got %d", len(srv.Requests()))
 	}
+}
+
+func writeTestAsset(t *testing.T, name, body string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	return path
 }

@@ -12,9 +12,13 @@ package git
 // CommitInput captures the bits a use case needs to drive `git commit`.
 type CommitInput struct {
 	Message     string
+	MessageFile string
 	AuthorName  string
 	AuthorEmail string
+	Sign        bool
 	Signoff     bool
+	NoVerify    bool
+	NoHooks     bool
 }
 
 // CommitInfo is the result of a CommitInfo lookup. Author is "Name <email>";

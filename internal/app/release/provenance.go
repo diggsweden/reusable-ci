@@ -4,9 +4,26 @@
 package release
 
 import (
+	"fmt"
 	"io"
+	"strings"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provenance"
+)
+
+// ProvenanceProfile selects the release statement shape. The empty profile is
+// the generic reusable-ci profile; ForgejoActions preserves forgejo-ci's
+// shipped release-blob provenance contract for existing downstream verifiers.
+type ProvenanceProfile string
+
+const (
+	// ProvenanceProfileGeneric is the default forge-neutral release
+	// provenance profile.
+	ProvenanceProfileGeneric ProvenanceProfile = ""
+	// ProvenanceProfileForgejoActions preserves forgejo-ci's shipped
+	// release-blob provenance contract for existing downstream verifiers.
+	ProvenanceProfileForgejoActions ProvenanceProfile = "forgejo-actions"
 )
 
 // ProvenanceInput drives GenerateProvenance. The CLI resolves the context
@@ -23,12 +40,14 @@ type ProvenanceInput struct {
 	BuilderID     string    // forge-neutral build identity URI
 	InvocationID  string    // forge-neutral run/job URL
 	StartedOn     string    // RFC3339 UTC; commit-derived for reproducibility
+	Profile       ProvenanceProfile
+	Workflow      string // forgejo-actions profile: workflow filename/path
 }
 
 // GenerateProvenance parses the checksums (+ optional go.sum) and builds the
-// signed-ready in-toto Statement JSON. The predicate is forge-neutral
-// (release-build buildType, {source,ref} external parameters) so it is
-// byte-identical in shape to the container provenance.
+// signed-ready in-toto Statement JSON. The default predicate is forge-neutral;
+// the forgejo-actions profile is an explicit compatibility shape for existing
+// forgejo-ci release verifiers.
 func GenerateProvenance(in ProvenanceInput) ([]byte, error) {
 	subjects, err := provenance.ParseChecksums(in.Checksums)
 	if err != nil {
@@ -46,7 +65,7 @@ func GenerateProvenance(in ProvenanceInput) ([]byte, error) {
 		deps = append(deps, mods...)
 	}
 
-	stmt, err := provenance.Build(provenance.Input{
+	input := provenance.Input{
 		Subjects:     subjects,
 		BuildType:    provenance.ReleaseBuildType,
 		BuilderID:    in.BuilderID,
@@ -56,10 +75,38 @@ func GenerateProvenance(in ProvenanceInput) ([]byte, error) {
 		StartedOn:    in.StartedOn,
 		FinishedOn:   in.StartedOn,
 		ResolvedDeps: deps,
-	})
+	}
+
+	switch in.Profile {
+	case ProvenanceProfileGeneric:
+	case ProvenanceProfileForgejoActions:
+		if in.Workflow == "" {
+			return nil, fmt.Errorf("provenance: --workflow is required for forgejo-actions profile: %w", errs.ErrUsage)
+		}
+
+		input.BuildType = provenance.ForgejoActionsWorkflowBuildType
+		input.Workflow = &provenance.WorkflowExternalParameters{
+			Ref:        in.Ref,
+			Repository: in.RepositoryURL,
+			Path:       forgejoActionsWorkflowPath(in.Workflow),
+		}
+		input.InternalParameters = map[string]string{"runner": "forgejo-actions"}
+	default:
+		return nil, fmt.Errorf("provenance: unknown profile %q: %w", in.Profile, errs.ErrUsage)
+	}
+
+	stmt, err := provenance.Build(input)
 	if err != nil {
 		return nil, err
 	}
 
 	return stmt.JSON()
+}
+
+func forgejoActionsWorkflowPath(workflow string) string {
+	if strings.HasPrefix(workflow, ".forgejo/workflows/") {
+		return workflow
+	}
+
+	return ".forgejo/workflows/" + workflow
 }

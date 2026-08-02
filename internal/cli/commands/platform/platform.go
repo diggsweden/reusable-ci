@@ -39,7 +39,7 @@ func resolveRefCmd() *cli.Command {
 		Description: `EXAMPLE:
    reusable-ci platform resolve-ref --remote-url https://github.com/org/app --ref v1.2.3`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "remote-url", Value: "https://github.com/diggsweden/reusable-ci/v3", Sources: cli.EnvVars("REMOTE_URL"), Usage: "remote git URL queried with 'git ls-remote'"},
+			&cli.StringFlag{Name: "remote-url", Value: "https://github.com/diggsweden/reusable-ci", Sources: cli.EnvVars("REMOTE_URL"), Usage: "remote git URL queried with 'git ls-remote'"},
 			&cli.StringFlag{Name: "ref", Sources: cienv.Ref(), Usage: "ref to resolve (tag, branch, or full refs/X/Y)"},
 			&cli.StringFlag{Name: "output-key", Value: "sha", Sources: cli.EnvVars("OUTPUT_KEY"), Usage: "key written to the platform output sink"},
 		},

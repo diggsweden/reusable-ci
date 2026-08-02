@@ -31,6 +31,7 @@ import (
 	cmdreport "github.com/diggsweden/reusable-ci/v3/internal/cli/commands/report"
 	cmdsbom "github.com/diggsweden/reusable-ci/v3/internal/cli/commands/sbom"
 	cmdsecurity "github.com/diggsweden/reusable-ci/v3/internal/cli/commands/security"
+	cmdtoolchain "github.com/diggsweden/reusable-ci/v3/internal/cli/commands/toolchain"
 	cmdvalidate "github.com/diggsweden/reusable-ci/v3/internal/cli/commands/validate"
 	cmdversion "github.com/diggsweden/reusable-ci/v3/internal/cli/commands/version"
 	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
@@ -313,6 +314,7 @@ func newRoot(info BuildInfo, versionString string) *cli.Command {
 			cmdrelease.New(),
 			cmdsbom.New(),
 			cmdsecurity.New(),
+			cmdtoolchain.New(),
 			cmdreport.New(),
 			cmdvalidate.New(),
 			cmdversion.New(),
@@ -368,8 +370,8 @@ reference is in docs/cli-reference.md.
 
 COMMANDS TO RUN DIRECTLY:
 %s
-Docs:    https://github.com/diggsweden/reusable-ci/v3/tree/%s/docs
-Issues:  https://github.com/diggsweden/reusable-ci/v3/issues`, common.String(), docsRef(version))
+Docs:    https://github.com/diggsweden/reusable-ci/tree/%s/docs
+Issues:  https://github.com/diggsweden/reusable-ci/issues`, common.String(), docsRef(version))
 }
 
 // applyProviderOverrides validates the --provider / --runner flags and

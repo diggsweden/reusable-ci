@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/listval"
 )
@@ -112,6 +113,19 @@ func MaterializeBuildSecrets(
 	var formatted strings.Builder
 
 	for _, name := range names {
+		// Re-check the single-sourced name shape locally: the same rule
+		// config validation enforces, but asserted here where the name
+		// becomes a filename — so this verb is safe even when invoked
+		// directly with a hand-crafted --names, not only downstream of a
+		// validated artifacts.yml (no separators or dots can reach the
+		// filepath.Join below).
+		if !config.ValidBuildSecretName(name) {
+			return fmt.Errorf(
+				"build-secret name %q is not a valid env-var name (need [A-Z_][A-Z0-9_]*): %w",
+				name, errs.ErrInvalidConfig,
+			)
+		}
+
 		value, ok := envelope[name]
 		if !ok {
 			return fmt.Errorf(

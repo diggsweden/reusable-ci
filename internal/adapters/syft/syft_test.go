@@ -54,6 +54,30 @@ func TestAdapter_GenerateRequiresOutputs(t *testing.T) {
 	}
 }
 
+func TestAdapter_GenerateCanUnsetSensitiveEnv(t *testing.T) {
+	m := mockbinary.New(t) //nolint:varnamelen // idiomatic short name.
+	m.Add("syft", `
+if [ -n "${COSIGN_KEY:-}" ] || [ -n "${REGISTRY_TOKEN:-}" ]; then
+  printf 'secret env leaked to syft\n' >&2
+  exit 42
+fi
+printf 'ok\n' >&2
+`)
+	t.Setenv("COSIGN_KEY", "secret")
+	t.Setenv("REGISTRY_TOKEN", "token")
+
+	a := &syft.Adapter{Bin: m.Path("syft"), UnsetEnv: []string{"COSIGN_KEY", "REGISTRY_TOKEN"}}
+
+	var stderr bytes.Buffer
+	if err := a.Generate(context.Background(), "image@sha256:abc", map[string]string{"cyclonedx-json": "out.json"}, &stderr); err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.TrimSpace(stderr.String()) != "ok" {
+		t.Errorf("stderr = %q", stderr.String())
+	}
+}
+
 func TestAdapter_RunInherit(t *testing.T) {
 	m := mockbinary.New(t)
 	m.Add("syft", `printf 'syft %s\n' "$*"`)

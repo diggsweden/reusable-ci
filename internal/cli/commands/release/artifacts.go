@@ -88,7 +88,7 @@ func signMethodFlags() []cli.Flag {
 			Usage: "path to the armored GPG private key for --method=gpg (\"-\" for stdin; defaults to $GPG_PRIVATE_KEY). Lets the key be passed via file/stdin instead of the environment. Forbidden for --method=sigstore/kms.",
 		},
 		&cli.StringFlag{
-			Name:  "passphrase-file",
+			Name:  flagPassphraseFile,
 			Usage: "path to the GPG passphrase for --method=gpg (\"-\" for stdin; defaults to $GPG_PASSPHRASE). Forbidden for --method=sigstore/kms.",
 		},
 	}
@@ -112,7 +112,7 @@ func buildSigner(cmd *cli.Command, errOut io.Writer) (apprelease.Signer, domainr
 	keyRef := cmd.String("key")
 	oidcIssuer := cmd.String("oidc-issuer")
 	keyFile := cmd.String(flagPrivateKeyFile)
-	passFile := cmd.String("passphrase-file")
+	passFile := cmd.String(flagPassphraseFile)
 
 	if err := validateSignFlags(method, keyRef, oidcIssuer, keyFile, passFile); err != nil {
 		return nil, "", err
@@ -151,10 +151,10 @@ func buildGPGSigner(cmd *cli.Command, method domainrelease.SignMethod) (apprelea
 	}
 
 	if privateKey == "" {
-		return nil, "", errs.CredentialRequired(errs.Credential{What: "GPG private key", Flag: flagPrivateKeyFile, Env: "GPG_PRIVATE_KEY"})
+		return nil, "", errs.CredentialRequired(errs.Credential{What: credentialGPGPrivateKey, Flag: flagPrivateKeyFile, Env: "GPG_PRIVATE_KEY"})
 	}
 
-	passphrase, err := secret.Resolve(cmd.String("passphrase-file"), "GPG_PASSPHRASE")
+	passphrase, err := secret.Resolve(cmd.String(flagPassphraseFile), "GPG_PASSPHRASE")
 	if err != nil {
 		return nil, "", err
 	}
@@ -189,7 +189,12 @@ func buildSigstoreSigner(method domainrelease.SignMethod, oidcIssuer string, err
 
 // buildKMSSigner constructs a cosign-KMS signer against keyRef.
 func buildKMSSigner(method domainrelease.SignMethod, keyRef string, errOut io.Writer) (apprelease.Signer, domainrelease.SignMethod, error) {
-	signer, err := apprelease.NewCosignSigner(cosign.New(), apprelease.CosignSignerInput{
+	adapter := cosign.New()
+	if allow := provenanceSignAllow(keyRef); allow != nil {
+		adapter = cosign.NewIsolated(allow...)
+	}
+
+	signer, err := apprelease.NewCosignSigner(adapter, apprelease.CosignSignerInput{
 		Method: method,
 		KeyRef: keyRef,
 	}, errOut)
@@ -259,10 +264,17 @@ func forbidGPGKeyFiles(method domainrelease.SignMethod, keyFile, passFile string
 
 func signCmd() *cli.Command {
 	flags := append([]cli.Flag{
-		&cli.StringFlag{Name: "checksums-file", Sources: cli.EnvVars("CHECKSUMS_FILE"), Usage: "SHA256 manifest to sign (default: checksums.sha256)"},
+		&cli.StringFlag{Name: flagChecksumsFile, Sources: cli.EnvVars("CHECKSUMS_FILE"), Usage: "SHA256 manifest to sign (default: checksums.sha256)"},
+		&cli.BoolFlag{Name: "no-checksums-file", Usage: "do not sign the default or configured checksums file"},
+		&cli.BoolFlag{Name: "checksums-from-manifest", Usage: "use and validate the single checksums file from --manifest before signing it"},
 		&cli.StringFlag{Name: flagAssembly, Sources: cli.EnvVars("RELEASE_ASSEMBLY"), Usage: "release assembly manifest to sign exactly"},
 		&cli.StringFlag{Name: flagReleaseArtifactsDir, Sources: cli.EnvVars("RELEASE_ARTIFACTS_DIR"), Usage: "directory whose files are each signed alongside the manifest"},
+		&cli.BoolFlag{Name: "no-release-artifacts-dir", Usage: "do not sign the default or configured release artifacts directory"},
 		&cli.StringFlag{Name: flagAttachArtifacts, Sources: cli.EnvVars("ATTACH_ARTIFACTS"), Usage: "comma-separated globs for extra files to sign"},
+		&cli.StringSliceFlag{Name: "file", Usage: "exact file to sign in place (repeatable; sidecar stays next to the file)"},
+		&cli.StringFlag{Name: flagManifest, Value: apprelease.DefaultReleaseFilesManifest, Sources: cli.EnvVars("RELEASE_FILES_MANIFEST"), Usage: "release file manifest used by --manifest-section and --checksums-from-manifest"},
+		&cli.StringFlag{Name: flagDistDir, Value: defaultDistDir, Usage: "dist directory used with --manifest"},
+		&cli.StringSliceFlag{Name: "manifest-section", Usage: "release file manifest section to sign exactly (repeatable): assets, checksums, sboms, evidence, provenance"},
 		debugAllowSwapFlag(),
 	}, signMethodFlags()...)
 
@@ -296,10 +308,17 @@ func signCmd() *cli.Command {
 			}
 
 			return apprelease.SignArtifacts(ctx, signer, os.Stderr, apprelease.SignInput{
-				ChecksumsFile:       cmd.String("checksums-file"),
-				ReleaseArtifactsDir: cmd.String(flagReleaseArtifactsDir),
-				AttachArtifacts:     cmd.String(flagAttachArtifacts),
-				AssemblyFile:        cmd.String(flagAssembly),
+				ChecksumsFile:           cmd.String(flagChecksumsFile),
+				SkipChecksumsFile:       cmd.Bool("no-checksums-file"),
+				ReleaseArtifactsDir:     cmd.String(flagReleaseArtifactsDir),
+				SkipReleaseArtifactsDir: cmd.Bool("no-release-artifacts-dir"),
+				AttachArtifacts:         cmd.String(flagAttachArtifacts),
+				Files:                   cmd.StringSlice("file"),
+				AssemblyFile:            cmd.String(flagAssembly),
+				ReleaseFilesManifest:    cmd.String(flagManifest),
+				ReleaseFilesDistDir:     cmd.String(flagDistDir),
+				ManifestSections:        cmd.StringSlice("manifest-section"),
+				ChecksumsFromManifest:   cmd.Bool("checksums-from-manifest"),
 			})
 		},
 	}
@@ -314,7 +333,7 @@ func downloadArtifactsCmd() *cli.Command {
 EXAMPLE (as a workflow step):
    reusable-ci release download-artifacts --run-id 123456 --repository org/app`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "artifact-transfer-plan-json", Sources: cli.EnvVars("ARTIFACT_TRANSFER_PLAN_JSON"), Usage: "typed transfer plan JSON listing which CI artifacts to download"},
+			&cli.StringFlag{Name: flagArtifactTransferPlanJSON, Sources: cli.EnvVars("ARTIFACT_TRANSFER_PLAN_JSON"), Usage: "typed transfer plan JSON listing which CI artifacts to download"},
 			&cli.StringFlag{Name: "run-id", Sources: cienv.RunID(), Usage: "CI run ID artifacts are downloaded from"},
 			&cli.StringFlag{Name: flagRepository, Sources: cienv.Repository(), Usage: "\"owner/repo\" the run belongs to"},
 		},
@@ -326,7 +345,7 @@ EXAMPLE (as a workflow step):
 				}
 
 				return apprelease.DownloadArtifacts(ctx, dl, os.Stderr, apprelease.DownloadArtifactsInput{
-					ArtifactTransferPlanJSON: cmd.String("artifact-transfer-plan-json"),
+					ArtifactTransferPlanJSON: cmd.String(flagArtifactTransferPlanJSON),
 					RunID:                    cmd.String("run-id"),
 					Repository:               cmd.String(flagRepository),
 				})

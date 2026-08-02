@@ -5,6 +5,7 @@ package ociregistry
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -17,6 +18,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // TestPushLayoutByDigest writes a random image to an OCI layout, pushes it
@@ -101,7 +104,7 @@ func TestAllLoopback(t *testing.T) {
 		{"real_registry", []string{"ghcr.io/o/r:tag"}, false},
 		{"mixed_loopback_and_real", []string{"127.0.0.1:5000/o/r:t", "ghcr.io/o/r:t"}, false},
 		{"empty", nil, false},
-		{"unparseable", []string{"::not a ref::"}, false},
+		{"unparsable", []string{"::not a ref::"}, false},
 	}
 
 	for _, testCase := range cases {
@@ -172,6 +175,20 @@ func TestResolveDigestAndCopyTag(t *testing.T) {
 	}
 }
 
+func TestResolveDigest_MissingTagIsMissingInput(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(registry.New())
+	t.Cleanup(srv.Close)
+
+	repo := strings.TrimPrefix(srv.URL, "http://") + "/o/r"
+
+	_, err := New().ResolveDigest(t.Context(), repo+":missing")
+	if !errors.Is(err, errs.ErrMissingInput) {
+		t.Fatalf("ResolveDigest missing tag error = %v, want ErrMissingInput", err)
+	}
+}
+
 // TestMergeManifest assembles a multi-platform index from two per-arch images
 // and asserts the written index advertises both children with the correct
 // platforms — the daemonless replacement for `docker buildx imagetools create`.
@@ -186,8 +203,8 @@ func TestMergeManifest(t *testing.T) {
 	platforms := []struct {
 		os, arch, hex string
 	}{
-		{os: "linux", arch: "amd64"},
-		{os: "linux", arch: "arm64"},
+		{os: osLinux, arch: "amd64"},
+		{os: osLinux, arch: "arm64"},
 	}
 
 	for i := range platforms {
@@ -286,7 +303,7 @@ func seedBuildKitIndex(t *testing.T, repo, arch string) string {
 	}
 
 	cfg = cfg.DeepCopy()
-	cfg.OS, cfg.Architecture = "linux", arch
+	cfg.OS, cfg.Architecture = osLinux, arch
 
 	img, err = mutate.ConfigFile(img, cfg)
 	if err != nil {
@@ -305,7 +322,7 @@ func seedBuildKitIndex(t *testing.T, repo, arch string) string {
 	}
 
 	idx := mutate.AppendManifests(empty.Index,
-		mutate.IndexAddendum{Add: img, Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: arch}}},
+		mutate.IndexAddendum{Add: img, Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: osLinux, Architecture: arch}}},
 		mutate.IndexAddendum{Add: att, Descriptor: v1.Descriptor{
 			Platform: &v1.Platform{OS: "unknown", Architecture: "unknown"},
 			Annotations: map[string]string{
@@ -443,5 +460,53 @@ func TestManifest(t *testing.T) {
 
 	if !strings.Contains(string(raw), config.Hex) {
 		t.Errorf("manifest does not reference config digest %s:\n%s", config.Hex, raw)
+	}
+}
+
+func TestLabelsFetchesImageConfigLabels(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(registry.New())
+	t.Cleanup(srv.Close)
+
+	repo := strings.TrimPrefix(srv.URL, "http://") + "/o/r"
+
+	img, err := random.Image(256, 1)
+	if err != nil {
+		t.Fatalf("random image: %v", err)
+	}
+
+	config, err := img.ConfigFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	config = config.DeepCopy()
+	config.Config.Labels = map[string]string{
+		"org.opencontainers.image.revision": "abc123",
+		"org.opencontainers.image.version":  "v1.2.3",
+	}
+
+	img, err = mutate.ConfigFile(img, config)
+	if err != nil {
+		t.Fatalf("set labels: %v", err)
+	}
+
+	ref, err := name.ParseReference(repo+":x", name.Insecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err = remote.Write(ref, img, remote.WithContext(t.Context())); err != nil {
+		t.Fatalf("seed image: %v", err)
+	}
+
+	labels, err := New().Labels(t.Context(), repo+":x")
+	if err != nil {
+		t.Fatalf("Labels: %v", err)
+	}
+
+	if labels["org.opencontainers.image.revision"] != "abc123" || labels["org.opencontainers.image.version"] != "v1.2.3" {
+		t.Fatalf("labels = %v", labels)
 	}
 }

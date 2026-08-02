@@ -50,6 +50,19 @@ type Stage struct {
 	// immutable :<version> tag to the target. Empty keeps the entry's own
 	// registry/path (the same-registry scheme).
 	TargetRepo string
+
+	// UseEntryReleaseTags switches release promotion from the generic
+	// <base>:release pointer to the exact release destinations carried by the
+	// ledger entry: final_tag and optional moving_tag. This is the build-once,
+	// sign-before-publish model used by Forgejo releases where the immutable
+	// final tag is not applied until after signing.
+	UseEntryReleaseTags bool
+
+	// AllowDigestRefFallback lets promotion recover when candidate_tag no longer
+	// resolves to the recorded digest by copying from the entry's digest-pinned
+	// ref instead. Off by default so existing users keep strict candidate-tag
+	// validation unless they explicitly opt into Forgejo-style rerun recovery.
+	AllowDigestRefFallback bool
 }
 
 // ReleaseStageName is the terminal stage; its destination is the <base>:release
@@ -88,6 +101,10 @@ func (s Stage) Validate() error {
 // target, so a sovereign registry holds the complete release — the version tag
 // and the :release pointer — not just a dangling pointer.
 func (s Stage) destinations(entry Entry) []string {
+	if s.IsRelease() && s.UseEntryReleaseTags {
+		return s.entryReleaseDestinations(entry)
+	}
+
 	name := s.Name
 	if name == "" {
 		name = ReleaseStageName
@@ -108,6 +125,26 @@ func (s Stage) destinations(entry Entry) []string {
 	}
 
 	dests = append(dests, base+":"+name)
+
+	return dests
+}
+
+func (s Stage) entryReleaseDestinations(entry Entry) []string {
+	if s.TargetRepo == "" {
+		dests := []string{entry.FinalTag}
+		if entry.MovingTag != "" {
+			dests = append(dests, entry.MovingTag)
+		}
+
+		return dests
+	}
+
+	base := s.TargetRepo + "/" + repoPathAfterHost(entry.FinalTag)
+
+	dests := []string{base + ":" + tagName(entry.FinalTag)}
+	if entry.MovingTag != "" {
+		dests = append(dests, base+":"+tagName(entry.MovingTag))
+	}
 
 	return dests
 }

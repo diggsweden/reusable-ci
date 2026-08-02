@@ -30,3 +30,8 @@
 # public repo (planned). Until publication, lychee 404s on it; once
 # published this line can come out.
 ^https://github\.com/diggsweden/reusable-ci-testsuite/?$
+
+# NTIA "SBOM Minimum Elements" report PDF. The canonical citation for
+# the CISA 3-layer SBOM baseline; ntia.gov serves an incomplete TLS
+# chain that lychee's trust store rejects. The URL itself is correct.
+^https://www\.ntia\.gov/sites/default/files/publications/sbom_minimum_elements_report_0\.pdf$

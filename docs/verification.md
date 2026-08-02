@@ -342,7 +342,10 @@ The committed-file model lets the signature do the heavy lifting — for SSH, `g
 
 ### Request → promote: release tags are immutable
 
-A release is requested by pushing a **signed `release-request/vX.Y.Z` tag**. reusable-ci verifies *that* tag's signature (this is what the allowlist checks), bumps the version + changelog into a commit, then **creates the final `vX.Y.Z` tag once** at that commit and pushes it without `--force`. No tag is ever moved, deleted, or force-pushed: both `release-request/vX.Y.Z` and `vX.Y.Z` are immutable. The signed request tag stays in the repo as the cryptographic anchor of who authorised the release, and the bot's release commit records the original tagger in `Release-Request` / `Release-Authorized-By` / `Co-authored-by` trailers. So the verified authorisation and the shipped commit always correspond. (The `reusable-ci version derive-release` and `version tag-release` commands implement this; workflows never parse refs or move tags in bash.)
+A release is requested by pushing a **signed `release-request/vX.Y.Z` tag**. reusable-ci verifies *that* tag's signature (this is what the allowlist checks), bumps the version + changelog into a commit, then **creates the final `vX.Y.Z` tag once** at that commit and pushes it without `--force`.
+No tag is ever moved, deleted, or force-pushed: both `release-request/vX.Y.Z` and `vX.Y.Z` are immutable.
+The signed request tag stays in the repo as the cryptographic anchor of who authorised the release, and the bot's release commit records the original tagger in `Release-Request` / `Release-Authorized-By` / `Co-authored-by` trailers. So the verified authorisation and the shipped commit always correspond.
+(The `reusable-ci version derive-release` and `version tag-release` commands implement this; workflows never parse refs or move tags in bash.)
 
 ### Org policy: allowlisting is on by default at the caller layer
 
@@ -1339,4 +1342,4 @@ skopeo --version
 
 - [GitHub Security Hardening](https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions)
 - [GitHub OIDC Token](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/about-security-hardening-with-openid-connect)
-- [GitHub Packages Authentication](https://docs.github.com/en/packages/learn-forge-packages/introduction-to-forge-packages#authenticating-to-forge-packages)
+- [GitHub Packages Authentication](https://docs.github.com/en/packages/learn-github-packages/introduction-to-github-packages#authenticating-to-github-packages)

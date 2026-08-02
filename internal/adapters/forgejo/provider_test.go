@@ -5,6 +5,7 @@ package forgejo_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -253,4 +254,171 @@ func TestCreateRelease_EmptyTag(t *testing.T) {
 	if !errors.Is(err, errs.ErrUsage) {
 		t.Errorf("empty tag should be usage error, got %v", err)
 	}
+}
+
+func TestPublishRelease_UpdatesExistingReleaseAndReconcilesAssets(t *testing.T) {
+	t.Parallel()
+
+	asset := filepath.Join(t.TempDir(), "asset.tgz")
+	if err := os.WriteFile(asset, []byte("asset\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	notes := filepath.Join(t.TempDir(), "notes.md")
+	if err := os.WriteFile(notes, []byte("release notes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/itiquette/repo/releases/tags/v1.2.3":
+			_, _ = w.Write([]byte(`{"id":99,"tag_name":"v1.2.3","assets":[{"id":1,"name":"asset.tgz"},{"id":2,"name":"stale.txt"}]}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/repos/itiquette/repo/releases/99":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode patch payload: %v", err)
+			}
+
+			if payload["name"] != "repo v1.2.3" || payload["body"] != "release notes\n" || payload["draft"] != false || payload["prerelease"] != false {
+				t.Fatalf("patch payload = %#v", payload)
+			}
+
+			_, _ = w.Write([]byte(`{"id":99,"tag_name":"v1.2.3"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/itiquette/repo/releases/99/assets":
+			_, _ = w.Write([]byte(`[{"id":1,"name":"asset.tgz"},{"id":2,"name":"stale.txt"}]`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/repos/itiquette/repo/releases/99/assets/1":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/repos/itiquette/repo/releases/99/assets/2":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/repos/itiquette/repo/releases/99/assets":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":7,"name":"asset.tgz"}`))
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.String(), http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	err := newProvider(srv).PublishRelease(context.Background(), "itiquette/repo", provider.ReleaseSpec{
+		Tag:       "v1.2.3",
+		Name:      "repo v1.2.3",
+		NotesFile: notes,
+		Draft:     false,
+		Assets:    []string{asset},
+	})
+	if err != nil {
+		t.Fatalf("PublishRelease = %v", err)
+	}
+
+	assertCallPresent(t, calls, "PATCH /api/v1/repos/itiquette/repo/releases/99")
+	assertCallPresent(t, calls, "DELETE /api/v1/repos/itiquette/repo/releases/99/assets/1")
+	assertCallPresent(t, calls, "POST /api/v1/repos/itiquette/repo/releases/99/assets")
+	assertCallPresent(t, calls, "DELETE /api/v1/repos/itiquette/repo/releases/99/assets/2")
+	assertCallAbsent(t, calls, "DELETE /api/v1/repos/itiquette/repo/releases/99")
+
+	if indexCall(calls, "DELETE /api/v1/repos/itiquette/repo/releases/99/assets/1") > indexCall(calls, "POST /api/v1/repos/itiquette/repo/releases/99/assets") {
+		t.Fatalf("colliding asset was not deleted before upload: %v", calls)
+	}
+
+	if indexCall(calls, "DELETE /api/v1/repos/itiquette/repo/releases/99/assets/2") < indexCall(calls, "POST /api/v1/repos/itiquette/repo/releases/99/assets") {
+		t.Fatalf("stale asset was deleted before desired upload succeeded: %v", calls)
+	}
+}
+
+func TestPublishRelease_CreatesMissingRelease(t *testing.T) {
+	t.Parallel()
+
+	asset := filepath.Join(t.TempDir(), "asset.tgz")
+	if err := os.WriteFile(asset, []byte("asset\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	notes := filepath.Join(t.TempDir(), "notes.md")
+	if err := os.WriteFile(notes, []byte("release notes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/itiquette/repo/releases/tags/v1.2.3":
+			http.Error(w, "not found", http.StatusNotFound)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/repos/itiquette/repo/releases":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode create payload: %v", err)
+			}
+
+			if payload["name"] != "repo v1.2.3" || payload["body"] != "release notes\n" || payload["draft"] != true {
+				t.Fatalf("create payload = %#v", payload)
+			}
+
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":42,"tag_name":"v1.2.3"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/repos/itiquette/repo/releases/42/assets":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":7,"name":"asset.tgz"}`))
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.String(), http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	err := newProvider(srv).PublishRelease(context.Background(), "itiquette/repo", provider.ReleaseSpec{
+		Tag:       "v1.2.3",
+		Name:      "repo v1.2.3",
+		NotesFile: notes,
+		Draft:     true,
+		Assets:    []string{asset},
+	})
+	if err != nil {
+		t.Fatalf("PublishRelease = %v", err)
+	}
+
+	assertCallPresent(t, calls, "POST /api/v1/repos/itiquette/repo/releases")
+	assertCallPresent(t, calls, "POST /api/v1/repos/itiquette/repo/releases/42/assets")
+	assertCallAbsent(t, calls, "PATCH /api/v1/repos/itiquette/repo/releases/42")
+	assertCallAbsent(t, calls, "DELETE /api/v1/repos/itiquette/repo/releases/42")
+}
+
+func TestPublishRelease_EmptyTag(t *testing.T) {
+	t.Parallel()
+
+	err := forgejo.New().PublishRelease(context.Background(), "owner/repo", provider.ReleaseSpec{})
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Errorf("empty tag should be usage error, got %v", err)
+	}
+}
+
+func assertCallPresent(t *testing.T, calls []string, want string) {
+	t.Helper()
+
+	if indexCall(calls, want) < 0 {
+		t.Fatalf("missing call %q in %v", want, calls)
+	}
+}
+
+func assertCallAbsent(t *testing.T, calls []string, want string) {
+	t.Helper()
+
+	if indexCall(calls, want) >= 0 {
+		t.Fatalf("unexpected call %q in %v", want, calls)
+	}
+}
+
+func indexCall(calls []string, want string) int {
+	for i, call := range calls {
+		if call == want {
+			return i
+		}
+	}
+
+	return -1
 }

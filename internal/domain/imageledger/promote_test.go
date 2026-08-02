@@ -6,6 +6,7 @@ package imageledger_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -88,6 +89,142 @@ func TestPromote_CopiesCandidateToReleasePointerAndVerifies(t *testing.T) {
 
 	if len(reg.copies) != 1 {
 		t.Errorf("expected 1 copy (the :release pointer), got %v", reg.copies)
+	}
+}
+
+func TestPromoteToStage_ReleaseCanUseLedgerFinalAndMovingTags(t *testing.T) {
+	t.Parallel()
+
+	e := candidateEntry()
+	e.MovingTag = "codeberg.org/itiquette/gommitlint:rust"
+	reg := &fakeRegistry{digests: map[string]string{e.CandidateTag: goodDigest}}
+	stage := imageledger.Stage{Name: "release", UseEntryReleaseTags: true}
+
+	if err := imageledger.PromoteToStage(context.Background(), reg, nil, []imageledger.Entry{e}, "v1.2.3", stage); err != nil {
+		t.Fatalf("release-tag promote failed: %v", err)
+	}
+
+	if reg.digests[e.FinalTag] != goodDigest {
+		t.Errorf("final tag not promoted: %v", reg.digests)
+	}
+
+	if reg.digests[e.MovingTag] != goodDigest {
+		t.Errorf("moving tag not promoted: %v", reg.digests)
+	}
+
+	if len(reg.copies) != 2 {
+		t.Errorf("expected final+moving copies, got %v", reg.copies)
+	}
+}
+
+func TestPromoteToStage_ReleaseRefusesExistingFinalDifferentDigest(t *testing.T) {
+	t.Parallel()
+
+	e := candidateEntry()
+	otherDigest := "sha256:" + "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	reg := &fakeRegistry{digests: map[string]string{
+		e.CandidateTag: goodDigest,
+		e.FinalTag:     otherDigest,
+	}}
+	stage := imageledger.Stage{Name: "release", UseEntryReleaseTags: true}
+
+	err := imageledger.PromoteToStage(context.Background(), reg, nil, []imageledger.Entry{e}, "v1.2.3", stage)
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("existing final tag with another digest must be refused, got %v", err)
+	}
+
+	if len(reg.copies) != 0 {
+		t.Errorf("no tag should be copied after immutable-final conflict, got %v", reg.copies)
+	}
+}
+
+func TestPromoteToStage_ReleaseSkipsExistingFinalAtSameDigest(t *testing.T) {
+	t.Parallel()
+
+	e := candidateEntry()
+	e.MovingTag = "codeberg.org/itiquette/gommitlint:rust"
+	reg := &fakeRegistry{digests: map[string]string{
+		e.CandidateTag: goodDigest,
+		e.FinalTag:     goodDigest,
+	}}
+	stage := imageledger.Stage{Name: "release", UseEntryReleaseTags: true}
+
+	if err := imageledger.PromoteToStage(context.Background(), reg, nil, []imageledger.Entry{e}, "v1.2.3", stage); err != nil {
+		t.Fatalf("release-tag promote failed: %v", err)
+	}
+
+	want := []string{e.CandidateTag + "->" + e.MovingTag}
+	if !slices.Equal(reg.copies, want) {
+		t.Errorf("expected only moving-tag copy when final already serves digest, got %v", reg.copies)
+	}
+}
+
+func TestPromoteToStage_DefaultStillRequiresCandidate(t *testing.T) {
+	t.Parallel()
+
+	e := candidateEntry()
+	reg := &fakeRegistry{digests: map[string]string{e.Ref: goodDigest}}
+	stage := imageledger.Stage{Name: "release", UseEntryReleaseTags: true}
+
+	if err := imageledger.PromoteToStage(context.Background(), reg, nil, []imageledger.Entry{e}, "v1.2.3", stage); err == nil {
+		t.Fatal("default promotion should still fail when candidate_tag is absent from the registry")
+	}
+
+	if len(reg.copies) != 0 {
+		t.Errorf("no copy should happen without explicit digest-ref fallback, got %v", reg.copies)
+	}
+}
+
+func TestPromoteToStage_DigestRefFallbackUsesRecordedRefWhenCandidateMissing(t *testing.T) {
+	t.Parallel()
+
+	e := candidateEntry()
+	reg := &fakeRegistry{digests: map[string]string{e.Ref: goodDigest}}
+	stage := imageledger.Stage{Name: "release", UseEntryReleaseTags: true, AllowDigestRefFallback: true}
+
+	if err := imageledger.PromoteToStage(context.Background(), reg, nil, []imageledger.Entry{e}, "v1.2.3", stage); err != nil {
+		t.Fatalf("digest-ref fallback promote failed: %v", err)
+	}
+
+	if !slices.Equal(reg.copies, []string{e.Ref + "->" + e.FinalTag}) {
+		t.Errorf("expected promote from digest ref, got %v", reg.copies)
+	}
+
+	if reg.digests[e.FinalTag] != goodDigest {
+		t.Errorf("final tag not promoted from digest ref: %v", reg.digests)
+	}
+}
+
+func TestPromoteToStage_DigestRefFallbackUsesRecordedRefWhenCandidateMoved(t *testing.T) {
+	t.Parallel()
+
+	e := candidateEntry()
+	otherDigest := "sha256:" + "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	reg := &fakeRegistry{digests: map[string]string{e.CandidateTag: otherDigest, e.Ref: goodDigest}}
+	stage := imageledger.Stage{Name: "release", UseEntryReleaseTags: true, AllowDigestRefFallback: true}
+
+	if err := imageledger.PromoteToStage(context.Background(), reg, nil, []imageledger.Entry{e}, "v1.2.3", stage); err != nil {
+		t.Fatalf("digest-ref fallback promote failed: %v", err)
+	}
+
+	if !slices.Equal(reg.copies, []string{e.Ref + "->" + e.FinalTag}) {
+		t.Errorf("expected promote from digest ref, got %v", reg.copies)
+	}
+}
+
+func TestPromoteToStage_DigestRefFallbackPromotesEntryWithoutCandidate(t *testing.T) {
+	t.Parallel()
+
+	e := validEntry()
+	reg := &fakeRegistry{digests: map[string]string{e.Ref: goodDigest}}
+	stage := imageledger.Stage{Name: "release", UseEntryReleaseTags: true, AllowDigestRefFallback: true}
+
+	if err := imageledger.PromoteToStage(context.Background(), reg, nil, []imageledger.Entry{e}, "v1.2.3", stage); err != nil {
+		t.Fatalf("digest-ref fallback promote failed: %v", err)
+	}
+
+	if !slices.Equal(reg.copies, []string{e.Ref + "->" + e.FinalTag}) {
+		t.Errorf("expected no-candidate promote from digest ref, got %v", reg.copies)
 	}
 }
 

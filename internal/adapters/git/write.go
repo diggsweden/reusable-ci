@@ -23,6 +23,13 @@ func (r *Repo) Config(ctx context.Context, key, value string) error {
 	return err
 }
 
+// SetRemoteURL runs `git remote set-url <remote> <url>`.
+func (r *Repo) SetRemoteURL(ctx context.Context, remote, url string) error {
+	_, err := r.Run(ctx, "remote", "set-url", remote, url)
+
+	return err
+}
+
 // AddPathspecs runs `git add -- <pathspec> ...`. A pathspec that
 // matches no files causes git to exit non-zero; this is *expected*
 // during bump flows where the bump may legitimately produce nothing to
@@ -31,6 +38,16 @@ func (r *Repo) Config(ctx context.Context, key, value string) error {
 func (r *Repo) AddPathspecs(ctx context.Context, pathspecs []string) {
 	args := append([]string{"add", "--"}, pathspecs...)
 	_, _ = r.Run(ctx, args...) // intentional swallow
+}
+
+// AddPathspecsStrict runs `git add -- <pathspec> ...` and returns errors.
+// Release paths use this stricter variant because a missing changelog should
+// fail the signing step instead of becoming a misleading no-op.
+func (r *Repo) AddPathspecsStrict(ctx context.Context, pathspecs []string) error {
+	args := append([]string{"-c", "core.hooksPath=/dev/null", "add", "--"}, pathspecs...)
+	_, err := r.Run(ctx, args...)
+
+	return err
 }
 
 // HasStagedChanges reports whether the index differs from HEAD.
@@ -68,9 +85,28 @@ func (r *Repo) HasStagedChanges(ctx context.Context) (bool, error) {
 // Commit runs `git commit` with the given input. Author is passed via
 // --author "Name <email>"; signoff appends the trailer when set.
 func (r *Repo) Commit(ctx context.Context, in domaingit.CommitInput) error {
-	args := []string{"commit"}
+	args := make([]string, 0, 12)
+	if in.NoHooks {
+		args = append(args, "-c", "core.hooksPath=/dev/null")
+	}
+
+	args = append(args, "commit")
+	if in.Sign {
+		args = append(args, "-S")
+	}
+
+	if in.MessageFile != "" {
+		args = append(args, "-F", in.MessageFile)
+	} else {
+		args = append(args, "-m", in.Message)
+	}
+
 	if in.Signoff {
 		args = append(args, "--signoff")
+	}
+
+	if in.NoVerify {
+		args = append(args, "--no-verify")
 	}
 
 	if in.AuthorName != "" || in.AuthorEmail != "" {
@@ -78,7 +114,6 @@ func (r *Repo) Commit(ctx context.Context, in domaingit.CommitInput) error {
 			fmt.Sprintf("%s <%s>", in.AuthorName, in.AuthorEmail))
 	}
 
-	args = append(args, "-m", in.Message)
 	_, err := r.Run(ctx, args...)
 
 	return err
@@ -104,19 +139,33 @@ func (r *Repo) Push(ctx context.Context, localRef, remoteBranch string, force bo
 		args = append(args, "--force")
 	}
 
-	args = append(args, "origin", fmt.Sprintf("%s:%s", localRef, remoteBranch))
+	args = append(args, defaultRemote, fmt.Sprintf("%s:%s", localRef, remoteBranch))
 
 	return r.runEnv(ctx, env, args...)
 }
 
+// PushBranchNoForce pushes the checked-out branch without --force, matching
+// `git -c core.hooksPath=/dev/null push origin <branch>`.
+func (r *Repo) PushBranchNoForce(ctx context.Context, branch, token string) error {
+	env, err := r.pushAuthEnv(ctx, token)
+	if err != nil {
+		return err
+	}
+
+	return r.runEnv(ctx, env, "-c", "core.hooksPath=/dev/null", "push", defaultRemote, branch)
+}
+
 // CreateTag creates an annotated tag at ref WITHOUT -f (create-once):
-// `git tag [-s] <tag> -m <tag> [<ref>]`. Because there is no -f, git
-// errors if the tag already exists — the create-once release path relies
-// on that so a release tag is never clobbered or moved. ref empty → HEAD.
+// `git -c core.hooksPath=/dev/null tag (-s|-a) <tag> -m <tag> [<ref>]`.
+// Because there is no -f, git errors if the tag already exists — the
+// create-once release path relies on that so a release tag is never clobbered
+// or moved. ref empty → HEAD.
 func (r *Repo) CreateTag(ctx context.Context, tag, ref string, signed bool) error {
-	args := []string{"tag"} //nolint:goconst // git subcommand name; a const for "tag" adds noise without clarity.
+	args := []string{"-c", "core.hooksPath=/dev/null", "tag"} //nolint:goconst // git subcommand name; a const for "tag" adds noise without clarity.
 	if signed {
 		args = append(args, "-s")
+	} else {
+		args = append(args, "-a")
 	}
 
 	args = append(args, tag, "-m", tag)
@@ -129,7 +178,8 @@ func (r *Repo) CreateTag(ctx context.Context, tag, ref string, signed bool) erro
 	return err
 }
 
-// PushTagNoForce pushes a tag without --force: `git push origin <tag>`.
+// PushTagNoForce pushes a tag without --force:
+// `git -c core.hooksPath=/dev/null push origin <tag>`.
 // The remote rejects a non-fast-forward update, so this can only create a
 // new tag, never overwrite one — the immutability guarantee for release
 // tags. token authenticates the push transiently, identical to Push.
@@ -139,14 +189,14 @@ func (r *Repo) PushTagNoForce(ctx context.Context, tag, token string) error {
 		return err
 	}
 
-	return r.runEnv(ctx, env, "push", "origin", tag)
+	return r.runEnv(ctx, env, "-c", "core.hooksPath=/dev/null", "push", defaultRemote, tag)
 }
 
 // RemoteURL returns origin's configured URL (`git remote get-url origin`),
 // used to scope a push's transient auth header to exactly the remote git will
 // contact.
 func (r *Repo) RemoteURL(ctx context.Context) (string, error) {
-	out, err := r.Run(ctx, "remote", "get-url", "origin")
+	out, err := r.Run(ctx, "remote", "get-url", defaultRemote)
 	if err != nil {
 		return "", err
 	}

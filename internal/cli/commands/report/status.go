@@ -153,7 +153,7 @@ func statusPrerequisitesCmd() *cli.Command {
    reusable-ci report status prerequisites --tag v1.2.3 --ref-type tag --job-status success`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "tag", Sources: cienv.Tag(), Usage: "tag the release is anchored to (e.g. v1.2.3)"},
-			&cli.StringFlag{Name: "commit-sha", Sources: cli.EnvVars("COMMIT_SHA"), Usage: "commit SHA the tag points at"},
+			&cli.StringFlag{Name: "commit-sha", Sources: cienv.Commit(), Usage: "commit SHA the tag points at"},
 			&cli.StringFlag{Name: "ref-type", Sources: cienv.RefType(), Usage: "trigger ref type (tag/branch/…)"},
 			&cli.StringFlag{Name: "config-plan-json", Sources: cli.EnvVars("CONFIG_PLAN_JSON"), Usage: "typed config-plan JSON used to describe targets in the summary"},
 			&cli.StringFlag{Name: "project-types", Sources: cli.EnvVars("PROJECT_TYPES"), Usage: "comma-separated ecosystems detected in the project"},

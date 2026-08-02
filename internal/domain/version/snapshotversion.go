@@ -45,6 +45,13 @@ func ComposeSnapshotVersion(baseVersion, branch, shortSHA string) string {
 // variant and is not part of any consumer's API.
 var semverTagPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 
+// IsStableSemverTag reports whether tag strictly matches vMAJOR.MINOR.PATCH.
+// It deliberately rejects prerelease/build metadata; release signing paths use
+// this narrower predicate so a request like v1.2.3-rc1 cannot reach signing.
+func IsStableSemverTag(tag string) bool {
+	return semverTagPattern.MatchString(tag)
+}
+
 // StripVPrefix turns "v1.2.3" into "1.2.3". Idempotent on already-stripped
 // inputs.
 func StripVPrefix(tag string) string {

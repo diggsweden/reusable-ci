@@ -10,7 +10,7 @@
 // the developer can set; everything else returns zero values.
 //
 // The local adapter intentionally does NOT implement TokenValidator,
-// ReleaseCreator, ReleaseAssetUploader, or SARIFUploader — those
+// ReleaseCreator, ReleasePublisher, ReleaseAssetUploader, or SARIFUploader — those
 // capabilities require a real CI platform API to be meaningful. CLI
 // commands that need them gate on platform first, so the operator
 // gets a clear "feature X requires GitHub/GitLab CI" at the command
@@ -89,7 +89,7 @@ func (p *Provider) Capabilities() provider.Capabilities {
 // Compile-time conformance checks. local.Provider satisfies the
 // always-available base + RepoMetadataFetcher + self-description roles.
 // It deliberately does not satisfy TokenValidator / ReleaseCreator /
-// ReleaseAssetUploader / SARIFUploader — those CLI surfaces gate on
+// ReleasePublisher / ReleaseAssetUploader / SARIFUploader — those CLI surfaces gate on
 // platform.
 var (
 	_ provider.Provider            = (*Provider)(nil)

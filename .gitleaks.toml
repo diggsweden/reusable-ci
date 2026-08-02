@@ -33,4 +33,13 @@ paths = [
   # path end-to-end. The key is generated for that test and not used
   # anywhere else.
   '''internal/adapters/gpg/import_stdin_test\.go''',
+
+  # GPG package-signing test. Same style of throwaway PGP private-key
+  # armor fixture, driving the sign-packages flow through a real
+  # `gpg --import`; no live key material.
+  '''internal/app/release/gpgsignpackages_test\.go''',
+
+  # Run-artifact API test. Uses a made-up bearer token so the client's
+  # auth-header handling can be asserted; not a real credential.
+  '''internal/adapters/github/runartifact_test\.go''',
 ]

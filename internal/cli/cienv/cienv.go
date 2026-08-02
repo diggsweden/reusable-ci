@@ -76,7 +76,9 @@ func vars(keys ...string) cli.ValueSourceChain {
 // relying on the alias alone is fragile; on GitHub the FORGEJO_* var is
 // unset, so the alias still wins there.
 func Repository() cli.ValueSourceChain {
-	return vars("REPOSITORY", "CI_REPO", "FORGEJO_REPOSITORY", "GITHUB_REPOSITORY")
+	// FORGEJO_REPO is the forgejo-ci workflows' explicitly-set alias for
+	// the runner's FORGEJO_REPOSITORY (same value, `forgejo.repository`).
+	return vars("REPOSITORY", "CI_REPO", "FORGEJO_REPOSITORY", "FORGEJO_REPO", "GITHUB_REPOSITORY")
 }
 
 // RepositoryOwner resolves the owning org/user.
@@ -95,9 +97,11 @@ func Ref() cli.ValueSourceChain { return vars("REF", "FORGEJO_REF", "GITHUB_REF"
 // RefType resolves the ref kind ("branch" or "tag").
 func RefType() cli.ValueSourceChain { return vars("REF_TYPE", "FORGEJO_REF_TYPE", "GITHUB_REF_TYPE") }
 
-// Commit resolves the commit SHA.
+// Commit resolves the commit SHA. COMMIT_SHA is the bare deliberate name
+// the report steps set; it wins over the runner-provided vars but not over
+// the CI_COMMIT* pair already in use.
 func Commit() cli.ValueSourceChain {
-	return vars("CI_COMMIT", "CI_COMMIT_SHA", "FORGEJO_SHA", "GITHUB_SHA")
+	return vars("CI_COMMIT", "CI_COMMIT_SHA", "COMMIT_SHA", "FORGEJO_SHA", "GITHUB_SHA")
 }
 
 // CheckoutRef resolves the ref `platform checkout` materializes: an explicit
@@ -122,7 +126,9 @@ func Actor() cli.ValueSourceChain { return vars("CI_ACTOR") }
 // CI_SERVER_URL (GitLab-native / neutral) → FORGEJO_SERVER_URL → the
 // GitHub-native GITHUB_SERVER_URL the Forgejo runner also sets.
 func ServerURL() cli.ValueSourceChain {
-	return vars("CI_SERVER_URL", "FORGEJO_SERVER_URL", "GITHUB_SERVER_URL")
+	// FORGEJO_SERVER is the forgejo-ci workflows' explicitly-set alias for
+	// the runner's FORGEJO_SERVER_URL (same value, `forgejo.server_url`).
+	return vars("CI_SERVER_URL", "FORGEJO_SERVER_URL", "FORGEJO_SERVER", "GITHUB_SERVER_URL")
 }
 
 // TempDir resolves the runner scratch directory.

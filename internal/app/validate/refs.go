@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
@@ -97,6 +99,86 @@ func TagFormat(out io.Writer, in TagFormatInput) error {
 	_, _ = fmt.Fprintf(out, "%s Tag format validation passed\n", clicolor.Check(out))
 
 	return nil
+}
+
+// ReleaseTagGuardInput drives ReleaseTagGuard.
+type ReleaseTagGuardInput struct {
+	Tag     string
+	Pattern string
+}
+
+// ReleaseTagGuard validates a stable final release tag or release-request tag and emits normalized outputs.
+func ReleaseTagGuard(ctx context.Context, sink ci.OutputSink, out io.Writer, in ReleaseTagGuardInput) error {
+	pattern := in.Pattern
+	if pattern == "" {
+		pattern = `^v[0-9]+[.][0-9]+[.][0-9]+$`
+	}
+
+	if !strings.HasPrefix(pattern, "^") || !strings.HasSuffix(pattern, "$") {
+		return fmt.Errorf("release-tag-guard: pattern must be anchored (^...$), got %q: %w", pattern, errs.ErrUsage)
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return fmt.Errorf("compile release tag pattern %q: %w: %w", pattern, err, errs.ErrUsage)
+	}
+
+	releaseTag, releaseRequest, err := normalizeReleaseTag(re, pattern, in.Tag)
+	if err != nil {
+		return err
+	}
+
+	if releaseRequest != "" && releaseTag == "" {
+		return fmt.Errorf("release request is missing its final release tag: %w", errs.ErrValidation)
+	}
+
+	if err := emitReleaseTagOutputs(ctx, sink, releaseTag, releaseRequest); err != nil {
+		return err
+	}
+
+	if releaseRequest != "" {
+		_, _ = fmt.Fprintf(out, "Release request accepted: %s -> %s\n", releaseRequest, releaseTag)
+	} else {
+		_, _ = fmt.Fprintf(out, "Release tag accepted: %s\n", releaseTag)
+	}
+
+	return nil
+}
+
+// normalizeReleaseTag resolves tag against the anchored pattern, accepting a
+// final release tag directly or via a release-request/<tag> ref. It returns
+// the normalized release tag and, when present, the release-request ref name.
+func normalizeReleaseTag(re *regexp.Regexp, pattern, tag string) (string, string, error) {
+	if re.MatchString(tag) {
+		return tag, "", nil
+	}
+
+	releaseRequest := ""
+
+	candidate := strings.TrimPrefix(tag, "refs/tags/")
+	if strings.HasPrefix(candidate, "release-request/") {
+		releaseRequest = candidate
+		candidate = strings.TrimPrefix(candidate, "release-request/")
+	}
+
+	if !re.MatchString(candidate) {
+		return "", "", fmt.Errorf("release tag must match %s (got %q): %w", pattern, tag, errs.ErrValidation)
+	}
+
+	return candidate, releaseRequest, nil
+}
+
+// emitReleaseTagOutputs writes the normalized tag outputs when a sink is configured.
+func emitReleaseTagOutputs(ctx context.Context, sink ci.OutputSink, releaseTag, releaseRequest string) error {
+	if sink == nil {
+		return nil
+	}
+
+	if err := sink.Set(ctx, "release-tag", releaseTag); err != nil {
+		return err
+	}
+
+	return sink.Set(ctx, "release-request", releaseRequest)
 }
 
 // ChangelogInput drives `reusable-ci validate changelog`. Path is the

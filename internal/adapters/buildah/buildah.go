@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
@@ -37,8 +38,9 @@ import (
 // --storage-driver/--root, used by hermetic integration tests and by operators
 // who need a non-default storage backend.
 type Adapter struct {
-	Bin    string   // empty → "buildah"
-	Global []string // global flags before the subcommand (e.g. --storage-driver vfs)
+	Bin       string   // empty → "buildah"
+	SkopeoBin string   // empty → "skopeo" for signer-image manifest inspection
+	Global    []string // global flags before the subcommand (e.g. --storage-driver vfs)
 }
 
 // New returns an Adapter using the system buildah with default storage.
@@ -100,6 +102,47 @@ func (a *Adapter) BuildToLayout(ctx context.Context, req container.BuildRequest,
 	return a.run(ctx, out, a.global("push", imageID, "oci:"+layoutDir+":image")...)
 }
 
+// CommandExists reports whether name is available in PATH.
+func (a *Adapter) CommandExists(name string) bool {
+	_, err := exec.LookPath(name)
+
+	return err == nil
+}
+
+// InfoDriver returns buildah's selected graph driver for the supplied env.
+func (a *Adapter) InfoDriver(ctx context.Context, env []string) (string, error) {
+	out, err := a.outputWithEnv(ctx, env, "info", "--format", "{{.store.GraphDriverName}}")
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(out), nil
+}
+
+// InfoJSON returns buildah info for diagnostics.
+func (a *Adapter) InfoJSON(ctx context.Context, env []string) ([]byte, error) {
+	out, err := a.outputBytesWithEnv(ctx, env, "info")
+	if err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+// ProbeBuild builds and removes a tiny scratch image to prove storage works.
+func (a *Adapter) ProbeBuild(ctx context.Context, env []string, probeDir, image string, out io.Writer) error {
+	if err := a.runWithEnv(ctx, out, env, a.global("bud", "--isolation", "chroot", "--pull=never", "--tag", image, probeDir)...); err != nil {
+		return err
+	}
+
+	return a.RemoveImage(ctx, env, image, out)
+}
+
+// RemoveImage removes an image from local Buildah storage.
+func (a *Adapter) RemoveImage(ctx context.Context, env []string, image string, out io.Writer) error {
+	return a.runWithEnv(ctx, out, env, a.global("rmi", image)...)
+}
+
 // buildArgs assembles `buildah build` argv from the request. modeArgs are the
 // mode-specific flags (-t / --output / --iidfile); the build context is last.
 func (a *Adapter) buildArgs(req container.BuildRequest, modeArgs ...string) []string {
@@ -117,8 +160,8 @@ func (a *Adapter) buildArgs(req container.BuildRequest, modeArgs ...string) []st
 		args = append(args, "--target", req.Target)
 	}
 
-	for _, ba := range req.BuildArgs {
-		args = append(args, "--build-arg", ba)
+	for _, buildArg := range req.BuildArgs {
+		args = append(args, "--build-arg", buildArg)
 	}
 
 	for _, s := range req.Secrets {
@@ -175,15 +218,43 @@ func (a *Adapter) global(sub ...string) []string {
 // CI as it happens. On failure the captured tail is folded into the classified
 // error (redacted, defending against a build that echoes secret material).
 func (a *Adapter) run(ctx context.Context, w io.Writer, args ...string) error {
+	return a.runWithEnv(ctx, w, nil, args...)
+}
+
+func (a *Adapter) runWithEnv(ctx context.Context, w io.Writer, env []string, args ...string) error {
 	cmd := safeexec.Command(ctx, a.bin(), args...)
 	cmd.Stdout = w
+
 	cmd.Stderr = w
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 
 	if err := cmd.Run(); err != nil {
 		return safeexec.WrapError(err, a.bin(), safeexec.FirstArg(args))
 	}
 
 	return nil
+}
+
+func (a *Adapter) outputWithEnv(ctx context.Context, env []string, args ...string) (string, error) {
+	out, err := a.outputBytesWithEnv(ctx, env, args...)
+
+	return string(out), err
+}
+
+func (a *Adapter) outputBytesWithEnv(ctx context.Context, env []string, args ...string) ([]byte, error) {
+	cmd := safeexec.Command(ctx, a.bin(), args...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, safeexec.WrapError(err, a.bin(), safeexec.FirstArg(args))
+	}
+
+	return out, nil
 }
 
 func (a *Adapter) bin() string {

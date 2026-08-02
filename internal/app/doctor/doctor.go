@@ -716,7 +716,7 @@ func deriveSelfRepoSlug() string {
 
 // repoSlugFromModulePath turns a Go module path into the "owner/repo" slug
 // used in workflow `uses:` lines: it drops the host segment and any trailing
-// "/vN" major-version element. "github.com/diggsweden/reusable-ci/v3" →
+// "/vN" major-version element. "github.com/diggsweden/reusable-ci" →
 // "diggsweden/reusable-ci"; "" for paths too short to carry a slug.
 func repoSlugFromModulePath(modPath string) string {
 	parts := strings.Split(modPath, "/")

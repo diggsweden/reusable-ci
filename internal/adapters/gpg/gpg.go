@@ -26,10 +26,16 @@ import (
 type Adapter struct {
 	GPGBin   string // empty → "gpg"
 	AgentBin string // empty → "gpg-connect-agent"
+	Env      []string
 }
 
 // New returns an Adapter using the system gpg / gpg-connect-agent.
 func New() *Adapter { return &Adapter{} }
+
+// NewIsolated returns an Adapter whose subprocesses see only runtime env vars
+// such as PATH/GNUPGHOME/TMPDIR, not the private key or passphrase env that the
+// reusable-ci process may have read before invoking gpg.
+func NewIsolated() *Adapter { return &Adapter{Env: IsolatedEnv()} }
 
 // ImportKey runs `gpg --import --batch --yes` with the key piped on
 // stdin. The key bytes never touch disk — they go process-to-process
@@ -43,6 +49,9 @@ func (a *Adapter) ImportKey(ctx context.Context, keyData []byte) error {
 	cmd := safeexec.Command(ctx, a.gpg(), "--import", "--batch", "--yes")
 
 	cmd.Stdin = strings.NewReader(string(keyData))
+	if a.Env != nil {
+		cmd.Env = a.Env
+	}
 
 	// Deliberately NOT finishRun: import stdin is key material by
 	// definition, and gpg echoes input fragments in its diagnostics
@@ -64,6 +73,29 @@ func (a *Adapter) ImportKey(ctx context.Context, keyData []byte) error {
 func (a *Adapter) ListKeygrips(ctx context.Context, fingerprint string) (string, error) {
 	return a.run(ctx, a.gpg(),
 		"--batch", "--with-colons", "--with-keygrip", "--list-secret-keys", fingerprint)
+}
+
+// ListSecretKeys returns machine-readable secret-key metadata for the current
+// keyring. Callers parse fpr records to verify the imported key fingerprint.
+func (a *Adapter) ListSecretKeys(ctx context.Context) (string, error) {
+	return a.run(ctx, a.gpg(), "--batch", "--with-colons", "--list-secret-keys")
+}
+
+// DetachedSign creates a binary detached signature at outputPath using loopback
+// pinentry. The passphrase is provided on stdin, never argv or environment.
+func (a *Adapter) DetachedSign(ctx context.Context, fingerprint, passphrase, inputPath, outputPath string) error {
+	_, err := a.runStdin(ctx, passphrase, a.gpg(),
+		"--batch",
+		"--pinentry-mode", "loopback",
+		"--passphrase-fd", "0",
+		"--local-user", fingerprint,
+		"--output", outputPath,
+		"--detach-sign", inputPath)
+	if err != nil {
+		return fmt.Errorf("gpg --detach-sign %s: %w", inputPath, err)
+	}
+
+	return nil
 }
 
 // ConfigureAgent writes the canonical gpg-agent.conf into the resolved
@@ -154,6 +186,9 @@ func (a *Adapter) agent() string {
 // own diagnostic text in CI logs.
 func (a *Adapter) run(ctx context.Context, bin string, args ...string) (string, error) {
 	cmd := safeexec.Command(ctx, bin, args...)
+	if a.Env != nil {
+		cmd.Env = a.Env
+	}
 
 	out, err := cmd.CombinedOutput()
 
@@ -163,7 +198,11 @@ func (a *Adapter) run(ctx context.Context, bin string, args ...string) (string, 
 // runStdin invokes a binary with args and a stdin string.
 func (a *Adapter) runStdin(ctx context.Context, stdin, bin string, args ...string) (string, error) {
 	cmd := safeexec.Command(ctx, bin, args...)
+
 	cmd.Stdin = strings.NewReader(stdin)
+	if a.Env != nil {
+		cmd.Env = a.Env
+	}
 
 	out, err := cmd.CombinedOutput()
 

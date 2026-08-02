@@ -13,6 +13,10 @@ This document is the canonical surface of the `reusable-ci` binary.
 Every command supports `--help`. Global flags (`--quiet`, `--log-level`, `--format`, `--json`,
 `--provider`, `--runner`) are accepted on every subcommand.
 
+Value resolution is one fixed precedence everywhere: explicit flag, then (where a
+command supports it) the `$REUSABLE_CI_PLAN` plan-file field for the command's scope,
+then the environment variables listed per flag, then the flag default.
+
 ## Command groups
 
 - [`artifact`](#reusable-ci-artifact) — upload/download per-run CI artifacts
@@ -28,6 +32,7 @@ Every command supports `--help`. Global flags (`--quiet`, `--log-level`, `--form
 - [`report`](#reusable-ci-report) — write step-summary blocks (build, publish, status, lifecycle)
 - [`sbom`](#reusable-ci-sbom) — CISA-layered SBOM tooling (SPDX + CycloneDX via syft)
 - [`security`](#reusable-ci-security) — security scanners and report converters
+- [`toolchain`](#reusable-ci-toolchain) — bootstrap and expose CI toolchains
 - [`validate`](#reusable-ci-validate) — fail-fast pre-flight validators (tag, workflow, auth, secret, …)
 - [`version`](#reusable-ci-version) — version-bump and tag-management helpers
 
@@ -54,7 +59,7 @@ download a named run artifact into a directory
 | `--merge-multiple` | with --pattern: flatten all matches into --dir instead of --dir/<name>/ | `$ARTIFACT_MERGE_MULTIPLE` |
 | `--dir` | destination directory | `$ARTIFACT_DIR` |
 | `--run-id` | run the artifact belongs to (default: current run) | `$CI_RUN_ID`, `$FORGEJO_RUN_ID`, `$GITHUB_RUN_ID` |
-| `--repository` | owner/repo the run belongs to (default: current repo) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--repository` | owner/repo the run belongs to (default: current repo) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
 
 ### `reusable-ci artifact upload`
 
@@ -140,7 +145,7 @@ run the full Go release build (metadata, deps, test, SBOM, compile, summary)
 | `--binary-name` | explicit binary name (defaults to artifact-name, then go.mod module basename) | `$BINARY_NAME` |
 | `--version` | release version baked via -ldflags (defaults to --ref-name; 'dev' when neither set) | `$VERSION` |
 | `--ref-name` | git ref name used to derive the version when --version is empty | `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
-| `--commit` | commit SHA baked into the binary via -ldflags | `$CI_COMMIT`, `$CI_COMMIT_SHA`, `$FORGEJO_SHA`, `$GITHUB_SHA` |
+| `--commit` | commit SHA baked into the binary via -ldflags | `$CI_COMMIT`, `$CI_COMMIT_SHA`, `$COMMIT_SHA`, `$FORGEJO_SHA`, `$GITHUB_SHA` |
 | `--platforms` | comma/space/newline-separated GOOS/GOARCH targets to cross-compile | `$PLATFORMS` |
 | `--build-tags` | comma-separated build tags passed via -tags (test + compile) | `$BUILD_TAGS` |
 | `--ldflags` | extra -ldflags appended after the version-injection block | `$LD_FLAGS` |
@@ -403,6 +408,259 @@ attach a signed in-toto attestation (slsaprovenance1 | cyclonedx | spdx) to an O
 | `--base-digest` | sha256 digest of --base-ref (with or without the sha256: prefix) | `$BASE_IMAGE_DIGEST` |
 | `--recursive` | also attest each per-arch child of a manifest list (one provenance for the whole release). Default true. | `$ATTEST_RECURSIVE` |
 
+### `reusable-ci container base-graph`
+
+compute deterministic base-image input IDs and build groups from a caller-provided graph
+
+#### `reusable-ci container base-graph flavor`
+
+print one flavor's base-input-id or content-id
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--root` | workspace root containing the graph and inputs | `$BASE_GRAPH_ROOT` |
+| `--graph-file` | base graph JSON path relative to --root | `$BASE_GRAPH_FILE` |
+| `--containerfile` | Containerfile path relative to --root | `$BASE_GRAPH_CONTAINERFILE`, `$CONTAINERFILE` |
+| `--arch` | base architecture in the manifest input set (repeatable or comma/space-separated); defaults to amd64 | `$BASE_GRAPH_ARCH_SET`, `$ARCH_SET` |
+| `--flavor` | base flavor to select (required) | `$BASE_GRAPH_FLAVOR`, `$FLAVOR` |
+| `--field` | field to print: base-input-id or content-id | `$BASE_GRAPH_FIELD` |
+
+#### `reusable-ci container base-graph group-context-files`
+
+print extra build-context files for one base build group, one per line
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--root` | workspace root containing the graph and inputs | `$BASE_GRAPH_ROOT` |
+| `--graph-file` | base graph JSON path relative to --root | `$BASE_GRAPH_FILE` |
+| `--group` | base build group (required) | `$BASE_GRAPH_GROUP`, `$FLAVOR_GROUP` |
+
+#### `reusable-ci container base-graph group-flavors`
+
+print the flavors in one base build group, one per line
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--root` | workspace root containing the graph and inputs | `$BASE_GRAPH_ROOT` |
+| `--graph-file` | base graph JSON path relative to --root | `$BASE_GRAPH_FILE` |
+| `--group` | base build group (required) | `$BASE_GRAPH_GROUP`, `$FLAVOR_GROUP` |
+
+#### `reusable-ci container base-graph groups-for-missing`
+
+print JSON array of groups containing at least one missing flavor
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--root` | workspace root containing the graph and inputs | `$BASE_GRAPH_ROOT` |
+| `--graph-file` | base graph JSON path relative to --root | `$BASE_GRAPH_FILE` |
+| `--groups-json` | optional groups JSON array; when set, no graph file is read | `$BASE_BUILD_GROUPS_JSON` |
+| `--missing-json` | JSON array of missing flavor names | `$MISSING_FLAVORS_JSON` |
+| `--missing-flavor` | missing flavor name (repeatable or comma/space-separated via env) | `$MISSING_FLAVOR` |
+
+#### `reusable-ci container base-graph groups-json`
+
+print base build groups JSON from the graph
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--root` | workspace root containing the graph and inputs | `$BASE_GRAPH_ROOT` |
+| `--graph-file` | base graph JSON path relative to --root | `$BASE_GRAPH_FILE` |
+
+#### `reusable-ci container base-graph input-set-id`
+
+print the sha256 digest of the full base input JSON set
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--root` | workspace root containing the graph and inputs | `$BASE_GRAPH_ROOT` |
+| `--graph-file` | base graph JSON path relative to --root | `$BASE_GRAPH_FILE` |
+| `--containerfile` | Containerfile path relative to --root | `$BASE_GRAPH_CONTAINERFILE`, `$CONTAINERFILE` |
+| `--arch` | base architecture in the manifest input set (repeatable or comma/space-separated); defaults to amd64 | `$BASE_GRAPH_ARCH_SET`, `$ARCH_SET` |
+
+#### `reusable-ci container base-graph inputs`
+
+print JSON mapping every base flavor to content and manifest input IDs
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--root` | workspace root containing the graph and inputs | `$BASE_GRAPH_ROOT` |
+| `--graph-file` | base graph JSON path relative to --root | `$BASE_GRAPH_FILE` |
+| `--containerfile` | Containerfile path relative to --root | `$BASE_GRAPH_CONTAINERFILE`, `$CONTAINERFILE` |
+| `--arch` | base architecture in the manifest input set (repeatable or comma/space-separated); defaults to amd64 | `$BASE_GRAPH_ARCH_SET`, `$ARCH_SET` |
+
+### `reusable-ci container base-images`
+
+sign, verify, and promote forgejo-ci base-image caches
+
+#### `reusable-ci container base-images arch-metadata`
+
+write per-architecture base-image metadata JSON for manifest assembly
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--flavor` | base flavor name (required) | `$BASE_FLAVOR`, `$FLAVOR` |
+| `--arch` | base architecture, e.g. amd64 or arm64 (required) | `$BASE_ARCH` |
+| `--repository` | base image repository used to derive --arch-ref from --arch-digest | `$BASE_REPO`, `$EXPECTED_REPOSITORY` |
+| `--tag` | final immutable base image tag (required) | `$FINAL_TAG`, `$BASE_TAG` |
+| `--arch-tag` | per-architecture staging tag (required) | `$ARCH_TAG`, `$BASE_ARCH_TAG` |
+| `--arch-digest` | per-architecture digest, sha256:<hex>; used with --repository when --arch-ref is empty | `$ARCH_DIGEST`, `$BASE_ARCH_DIGEST` |
+| `--arch-ref` | optional digest-pinned per-architecture ref | `$ARCH_REF`, `$BASE_ARCH_REF` |
+| `--base-input-id` | sha256 base input ID (required) | `$BASE_INPUT_ID` |
+| `--content-id` | sha256 content ID (required) | `$BASE_CONTENT_ID` |
+| `--output` | output JSON path; '-' writes stdout | `$BASE_ARCH_METADATA_OUTPUT` |
+
+#### `reusable-ci container base-images arch-ref`
+
+print a verified per-architecture base-image ref from metadata JSON
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--file` | base arch metadata JSON file (required) | `$BASE_ARCH_METADATA_FILE` |
+| `--flavor` | optional expected base flavor | `$BASE_FLAVOR`, `$FLAVOR` |
+| `--arch` | expected architecture, e.g. amd64 or arm64 (required) | `$BASE_ARCH` |
+| `--content-id` | expected sha256 content ID (required) | `$BASE_CONTENT_ID` |
+| `--repository` | optional expected base image repository for arch_ref | `$BASE_REPO`, `$EXPECTED_REPOSITORY` |
+
+#### `reusable-ci container base-images candidate-metadata`
+
+write assembled candidate base-image metadata JSON for signing and promotion
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--flavor` | base flavor name (required) | `$BASE_FLAVOR`, `$FLAVOR` |
+| `--repository` | base image repository used to validate tags and refs | `$BASE_REPO`, `$EXPECTED_REPOSITORY` |
+| `--tag` | final immutable base image tag (required) | `$FINAL_TAG`, `$BASE_TAG` |
+| `--ref` | digest-pinned image ref for the candidate digest (required) | `$IMAGE_REF`, `$BASE_REF` |
+| `--candidate-tag` | candidate staging tag (required) | `$CANDIDATE_TAG`, `$BASE_CANDIDATE_TAG` |
+| `--candidate-ref` | candidate digest-pinned ref; defaults to --ref | `$CANDIDATE_REF`, `$BASE_CANDIDATE_REF` |
+| `--base-input-id` | sha256 base input ID (required) | `$BASE_INPUT_ID` |
+| `--content-id` | sha256 content ID (required) | `$BASE_CONTENT_ID` |
+| `--sbom-sha256` | optional sha256 of the delivered base SBOM | `$SBOM_SHA256`, `$BASE_SBOM_SHA256` |
+| `--output` | output JSON path; '-' writes stdout | `$BASE_CANDIDATE_METADATA_OUTPUT` |
+
+#### `reusable-ci container base-images cleanup-staging`
+
+delete promoted and stale staging base-image tags safely
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--server-url` | forge server URL used to derive the registry host and expected source | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
+| `--repository` | owner/repo used to derive the expected source and base-image repository | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--repository-suffix` | optional suffix appended to the repository package name, e.g. -base | `$REPOSITORY_SUFFIX` |
+| `--expected-repository` | exact base-image repository allowed for tags/refs (default: host/lower(owner/repo)<suffix>) | `$EXPECTED_REPOSITORY`, `$BASE_IMAGES_EXPECTED_REPOSITORY` |
+| `--expected-source` | source repository URL expected in SLSA lineage (default: <server-url>/<repository>) | `$EXPECTED_SOURCE`, `$BASE_IMAGES_EXPECTED_SOURCE` |
+| `--caller-workflow` | workflow filename expected in SLSA lineage | `$EXPECTED_WORKFLOW`, `$CALLER_WORKFLOW` |
+| `--registry` | registry host for promotion auth (default: host from --server-url) | `$CONTAINER_REGISTRY` |
+| `--shared-core-images-json` | JSON array of shared-core base image metadata | `$SHARED_CORE_IMAGES_JSON` |
+| `--base-images-json` | JSON array of base image metadata | `$BASE_IMAGES_JSON` |
+| `--base-inputs-json` | JSON array mapping flavors to content/base input IDs | `$BASE_INPUTS_JSON` |
+| `--auth-file` | registry auth file for final/staging digest checks | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
+
+#### `reusable-ci container base-images collect`
+
+collect verified and built base-image metadata for signing and promotion
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--already-verified` | verified images already satisfy the request; ignore built metadata | `$BASES_ALREADY_VERIFIED`, `$BASE_IMAGES_ALREADY_VERIFIED` |
+| `--verified-images-json` | JSON array of already verified base images | `$VERIFIED_BASE_IMAGES_JSON`, `$VERIFIED_SHARED_CORE_JSON` |
+| `--verified-file` | optional JSON file containing verified images | `$VERIFIED_BASE_IMAGES_FILE` |
+| `--built-file` | built base image metadata file (object or array); missing files are ignored | `$BUILT_BASE_IMAGE_FILE` |
+| `--built-dir` | directory containing built base image metadata files | `$BUILT_BASE_IMAGE_DIR` |
+| `--built-pattern` | glob pattern under --built-dir for built metadata | `$BUILT_BASE_IMAGE_PATTERN` |
+| `--missing-flavors-json` | JSON array of flavors missing before build | `$MISSING_FLAVORS_JSON` |
+| `--include-signing-sbom-sha256` | include sbom_sha256 in signing images, using an empty string when absent | `$BASE_IMAGES_SIGNING_INCLUDE_SBOM_SHA256` |
+| `--base-input-set-id` | base input set sha256 for decision JSON | `$BASE_INPUT_SET_ID`, `$BASE_INPUT_ID` |
+| `--base-inputs-json` | base input JSON array for decision JSON | `$BASE_INPUTS_JSON` |
+| `--source-sha` | source commit sha for decision JSON | `$SOURCE_SHA` |
+| `--decision-output` | optional path to write compact base decision JSON | `$BASE_DECISION_OUTPUT` |
+
+#### `reusable-ci container base-images input-field`
+
+print one field from base-inputs JSON for a flavor
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--base-inputs-json` | JSON array mapping flavors to content/base input IDs (required) | `$BASE_INPUTS_JSON` |
+| `--flavor` | base flavor to select (required) | `$BASE_FLAVOR`, `$FLAVOR` |
+| `--field` | field to print: base-input-id or content-id | `$BASE_INPUT_FIELD` |
+
+#### `reusable-ci container base-images promote`
+
+verify base-image evidence and promote candidate refs to immutable final tags
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--server-url` | forge server URL used to derive the registry host and expected source | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
+| `--repository` | owner/repo used to derive the expected source and base-image repository | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--repository-suffix` | optional suffix appended to the repository package name, e.g. -base | `$REPOSITORY_SUFFIX` |
+| `--expected-repository` | exact base-image repository allowed for tags/refs (default: host/lower(owner/repo)<suffix>) | `$EXPECTED_REPOSITORY`, `$BASE_IMAGES_EXPECTED_REPOSITORY` |
+| `--expected-source` | source repository URL expected in SLSA lineage (default: <server-url>/<repository>) | `$EXPECTED_SOURCE`, `$BASE_IMAGES_EXPECTED_SOURCE` |
+| `--caller-workflow` | workflow filename expected in SLSA lineage | `$EXPECTED_WORKFLOW`, `$CALLER_WORKFLOW` |
+| `--registry` | registry host for promotion auth (default: host from --server-url) | `$CONTAINER_REGISTRY` |
+| `--cosign-public-key-path` | relative path to the trusted Cosign public key in the consumer checkout | `$COSIGN_PUBLIC_KEY_PATH` |
+| `--cosign-public-key-sha256` | expected sha256 digest of the trusted Cosign public key | `$COSIGN_PUBLIC_KEY_SHA256` |
+| `--all-images-json` | JSON array of base image metadata to verify/promote | `$ALL_IMAGES_JSON` |
+| `--base-input-id` | optional single sha256 base input ID expected for every image | `$BASE_INPUT_ID` |
+| `--registry-username` | registry username; the password is read from --registry-password-file or $REGISTRY_TOKEN / $REGISTRY_PASSWORD | `$REGISTRY_USER`, `$REGISTRY_USERNAME` |
+| `--registry-password-file` | file containing the registry password/token ("-" reads stdin); defaults to $REGISTRY_TOKEN then $REGISTRY_PASSWORD. The password never appears in argv. | n/a |
+
+#### `reusable-ci container base-images sign`
+
+sign and attest digest-pinned base images with SBOM and SLSA lineage evidence
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--server-url` | forge server URL used to derive the registry host and expected source | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
+| `--repository` | owner/repo used to derive the expected source and base-image repository | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--repository-suffix` | optional suffix appended to the repository package name, e.g. -base | `$REPOSITORY_SUFFIX` |
+| `--expected-repository` | exact base-image repository allowed for tags/refs (default: host/lower(owner/repo)<suffix>) | `$EXPECTED_REPOSITORY`, `$BASE_IMAGES_EXPECTED_REPOSITORY` |
+| `--expected-source` | source repository URL expected in SLSA lineage (default: <server-url>/<repository>) | `$EXPECTED_SOURCE`, `$BASE_IMAGES_EXPECTED_SOURCE` |
+| `--caller-workflow` | workflow filename expected in SLSA lineage | `$EXPECTED_WORKFLOW`, `$CALLER_WORKFLOW` |
+| `--registry` | registry host for promotion auth (default: host from --server-url) | `$CONTAINER_REGISTRY` |
+| `--images-json` | JSON array of base image metadata to sign | `$IMAGES_JSON` |
+| `--base-input-id` | optional single sha256 base input ID expected for every image | `$BASE_INPUT_ID` |
+| `--source-sha` | source commit SHA that produced the base images | `$SOURCE_SHA` |
+| `--build-type` | SLSA buildType URI recorded in base lineage | `$CONTAINER_BUILD_TYPE`, `$BUILD_TYPE` |
+| `--key` | cosign --key reference used for signing; default reads the signing key from $COSIGN_KEY | `$COSIGN_KEY_REF` |
+| `--premade-sbom-dir` | directory containing pre-built base-sbom-<flavor>.cyclonedx.json files; when set, every image must provide a matching sbom_sha256 | `$PREMADE_SBOM_DIR` |
+| `--registry-username` | registry username; the password is read from --registry-password-file or $REGISTRY_TOKEN / $REGISTRY_PASSWORD | `$REGISTRY_USER`, `$REGISTRY_USERNAME` |
+| `--registry-password-file` | file containing the registry password/token ("-" reads stdin); defaults to $REGISTRY_TOKEN then $REGISTRY_PASSWORD. The password never appears in argv. | n/a |
+
+#### `reusable-ci container base-images verify-existing`
+
+verify existing immutable final base-image tags and report missing flavors
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--server-url` | forge server URL used to derive the registry host and expected source | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
+| `--repository` | owner/repo used to derive the expected source and base-image repository | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--repository-suffix` | optional suffix appended to the repository package name, e.g. -base | `$REPOSITORY_SUFFIX` |
+| `--expected-repository` | exact base-image repository allowed for tags/refs (default: host/lower(owner/repo)<suffix>) | `$EXPECTED_REPOSITORY`, `$BASE_IMAGES_EXPECTED_REPOSITORY` |
+| `--expected-source` | source repository URL expected in SLSA lineage (default: <server-url>/<repository>) | `$EXPECTED_SOURCE`, `$BASE_IMAGES_EXPECTED_SOURCE` |
+| `--caller-workflow` | workflow filename expected in SLSA lineage | `$EXPECTED_WORKFLOW`, `$CALLER_WORKFLOW` |
+| `--registry` | registry host for promotion auth (default: host from --server-url) | `$CONTAINER_REGISTRY` |
+| `--cosign-public-key-path` | relative path to the trusted Cosign public key in the consumer checkout | `$COSIGN_PUBLIC_KEY_PATH` |
+| `--cosign-public-key-sha256` | expected sha256 digest of the trusted Cosign public key | `$COSIGN_PUBLIC_KEY_SHA256` |
+| `--base-input-id` | optional single sha256 base input ID expected for every flavor | `$BASE_INPUT_ID` |
+| `--base-inputs-json` | JSON array mapping flavors to sha256 base input IDs | `$BASE_INPUTS_JSON` |
+| `--flavors-file` | newline-delimited flavor list in the consumer checkout | `$FLAVORS_FILE` |
+
+### `reusable-ci container base-lineage-predicate`
+
+emit the SLSA Provenance v1.0 predicate for a base-image lineage attestation
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--source` | source repository URL without git+ prefix (server/owner/repo) | `$SOURCE_REPOSITORY` |
+| `--commit` | source commit SHA | `$SOURCE_SHA` |
+| `--workflow` | workflow file that produced the image | `$CALLER_WORKFLOW` |
+| `--flavor` | base-image flavor | `$BUILD_FLAVOR` |
+| `--base-input-id` | sha256 content id of the base inputs | `$BASE_INPUT_ID` |
+| `--image` | base image digest reference being attested | `$IMAGE_REF` |
+| `--build-type` | SLSA buildType URI | `$BUILD_TYPE` |
+| `--builder-id` | override builder.id; defaults to <source>/.forgejo/workflows/<workflow>@<commit> | `$BUILDER_ID` |
+
 ### `reusable-ci container build`
 
 build a single native-platform container image with buildah, optionally pushing it by digest
@@ -424,35 +682,123 @@ build a single native-platform container image with buildah, optionally pushing 
 | `--image-ref` | push target (push-by-digest) or local tag (load) | `$IMAGE_REF` |
 | `--output-dir` | destination directory for local-export mode | `$OUTPUT_DIR` |
 | `--digest-key` | OutputSink key for the pushed digest (push-by-digest mode) | `$DIGEST_KEY` |
+| `--scan` | scan the pushed image with trivy and fail on findings at/above --scan-severity (push-by-digest mode only) | `$ENABLE_SCAN` |
+| `--scan-severity` | trivy severity filter AND fail-on threshold | `$SCAN_SEVERITY` |
+| `--trivy-version` | version embedded in the GitLab container-scanning report | `$TRIVY_VERSION` |
 
-### `reusable-ci container build-and-scan`
+### `reusable-ci container build-push-oci-image`
 
-build a container image and (in push-by-digest mode) scan it — the consolidated per-platform build-logic step
+build and push a multi-arch OCI image manifest list with buildah
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
+| `--tag` | image tag to build and push | `$IMAGE_TAG` |
+| `--containerfile` | path to the Containerfile/Dockerfile | `$CONTAINER_FILE` |
+| `--builds-json` | JSON array of per-platform builds: [{"platform":"linux/amd64","build-args":["KEY=VALUE"]}] | `$BUILDS_JSON` |
+| `--image` | image base (registry/owner/name); defaults to server host + lowercased repository | `$IMAGE_NAME` |
 | `--context` | build context directory | `$BUILD_CONTEXT` |
-| `--file` | path to the Containerfile/Dockerfile | `$CONTAINER_FILE` |
-| `--target` | multi-stage target stage to build | `$BUILD_TARGET` |
-| `--platform` | single target platform, e.g. linux/arm64 (built natively) | `$BUILD_PLATFORM` |
-| `--build-args` | newline-separated KEY=VALUE build args | `$BUILD_ARGS` |
-| `--secrets` | newline-separated id=NAME,src=PATH secrets (the secret-mounts output of `container materialize-build-secrets`) | `$BUILD_SECRETS` |
-| `--labels` | newline-separated key=value OCI labels (the labels output of `container metadata`) | `$LABELS` |
-| `--source-date-epoch` | unix seconds; clamps image/layer timestamps for reproducible digests | `$SOURCE_DATE_EPOCH` |
-| `--cache-repo` | dedicated registry repo for the layer cache (e.g. ghcr.io/org/buildcache). Empty disables caching. Imported best-effort; --cache-push also exports. | `$BUILD_CACHE_REPO` |
-| `--cache-scope` | tag scope for the cache repo, e.g. <image>-<arch>; the ref is <cache-repo>:<cache-scope> | `$BUILD_CACHE_SCOPE` |
-| `--cache-push` | also EXPORT the layer cache (not just import). Set only on a trusted push — never a fork PR. | `$BUILD_CACHE_PUSH` |
-| `--mode` | output mode: push-by-digest \| load \| local (required) | `$BUILD_MODE` |
-| `--image-ref` | push target (push-by-digest) or local tag (load) | `$IMAGE_REF` |
-| `--output-dir` | destination directory for local-export mode | `$OUTPUT_DIR` |
-| `--digest-key` | OutputSink key for the pushed digest (push-by-digest mode) | `$DIGEST_KEY` |
-| `--enable-scan` | scan the pushed image with trivy and fail on findings at/above --scan-severity | `$ENABLE_SCAN` |
-| `--scan-severity` | trivy severity filter AND fail-on threshold | `$SCAN_SEVERITY` |
-| `--trivy-version` | version embedded in the GitLab container-scanning report | `$TRIVY_VERSION` |
+| `--title` | org.opencontainers.image.title | `$OCI_LABEL_TITLE` |
+| `--description` | org.opencontainers.image.description | `$OCI_LABEL_DESCRIPTION` |
+| `--licenses` | org.opencontainers.image.licenses | `$OCI_LABEL_LICENSES` |
+| `--vendor` | org.opencontainers.image.vendor | `$OCI_LABEL_VENDOR` |
+| `--authors` | org.opencontainers.image.authors | `$OCI_LABEL_AUTHORS` |
+| `--documentation` | org.opencontainers.image.documentation; defaults to <source>#readme | `$OCI_LABEL_DOCUMENTATION` |
+| `--ref-name` | org.opencontainers.image.ref.name; defaults to --tag | `$OCI_LABEL_REF_NAME` |
+| `--version` | org.opencontainers.image.version; defaults to --tag | `$OCI_LABEL_VERSION` |
+| `--revision` | org.opencontainers.image.revision; defaults to git rev-parse HEAD | `$OCI_LABEL_REVISION` |
+| `--auth-file` | registry auth file for buildah pulls and manifest push | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
+| `--tls-verify` | verify registry TLS certificates: true or false | `$BUILD_PUSH_TLS_VERIFY` |
+| `--server-url` | forge server URL used to derive defaults and source labels | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
+| `--repository` | owner/repo used to derive defaults and source labels | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--retry-attempts` | manifest push attempts | `$MANIFEST_PUSH_RETRY_ATTEMPTS` |
+| `--retry-delay-seconds` | base delay between manifest push retry attempts | `$MANIFEST_PUSH_RETRY_DELAY_SECONDS` |
+
+### `reusable-ci container canonical-ref`
+
+canonicalize a Docker image reference for digest-pinned Buildah use
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--ref` | image reference (required) | `$IMAGE_REF` |
+
+### `reusable-ci container containerfile-arg-default`
+
+print an ARG default declared before the first FROM in a Containerfile
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--file` | Containerfile/Dockerfile path (required) | `$CONTAINERFILE` |
+| `--name` | ARG name to read (required) | `$ARG_NAME` |
 
 ### `reusable-ci container extract-npm-tarball`
 
 extract a top-level \*.tgz / \*.tar.gz with --strip-components=1 then remove it (no-op when none present)
+
+### `reusable-ci container image`
+
+single-image registry operations
+
+#### `reusable-ci container image push`
+
+push a local Buildah image to a registry ref and print the verified digest
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--local-image` | local Buildah image name/ref to push (required) | `$LOCAL_IMAGE` |
+| `--destination` | registry image ref to push, e.g. registry.example/owner/app:staging-amd64 (required) | `$DESTINATION_REF`, `$IMAGE_REF` |
+| `--auth-file` | registry auth file for buildah push and registry digest verification | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
+| `--tls-verify` | verify registry TLS certificates: true or false | `$IMAGE_PUSH_TLS_VERIFY` |
+| `--retry-attempts` | push and registry digest read attempts | `$IMAGE_PUSH_RETRY_ATTEMPTS` |
+| `--retry-delay-seconds` | base delay between retry attempts | `$IMAGE_PUSH_RETRY_DELAY_SECONDS` |
+
+#### `reusable-ci container image usable-digest`
+
+print an existing image digest only when architecture and labels match
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--ref` | registry image ref to inspect, e.g. registry.example/owner/app:staging-amd64 (required) | `$IMAGE_USABLE_DIGEST_REF` |
+| `--arch` | required image architecture, e.g. amd64 or arm64 (required) | `$IMAGE_USABLE_DIGEST_ARCH` |
+| `--require-label` | required image config label as key=value (repeatable) | `$IMAGE_USABLE_DIGEST_REQUIRE_LABELS` |
+| `--auth-file` | registry auth file for digest/metadata inspection | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
+
+### `reusable-ci container image-evidence`
+
+scan local OCI image evidence, including per-platform multi-arch layouts
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--oci-layout` | existing OCI layout directory to scan | `$IMAGE_EVIDENCE_OCI_LAYOUT` |
+| `--local-image-ref` | Buildah local image reference to export to an OCI layout before scanning | `$IMAGE_EVIDENCE_LOCAL_IMAGE_REF` |
+| `--trivy-output` | destination path for Trivy JSON output | `$IMAGE_EVIDENCE_TRIVY_OUTPUT` |
+| `--sbom-output` | optional destination path for CycloneDX SBOM output | `$IMAGE_EVIDENCE_SBOM_OUTPUT` |
+| `--scan-layout` | multi-platform OCI layout directory already tagged scan; preferred when set | `$IMAGE_EVIDENCE_SCAN_LAYOUT`, `$SCAN_LAYOUT` |
+| `--local-manifest` | local Buildah manifest list to export before per-platform scans | `$IMAGE_EVIDENCE_LOCAL_MANIFEST`, `$LOCAL_MANIFEST` |
+| `--registry-digest-ref` | digest-pinned registry image ref, e.g. registry.example/owner/app@sha256:... | `$IMAGE_EVIDENCE_REGISTRY_DIGEST_REF` |
+| `--registry-ref` | registry image ref used with --digest when no local source is available | `$IMAGE_EVIDENCE_REGISTRY_REF`, `$IMAGE_REF` |
+| `--digest` | registry image digest used with --registry-ref when no local source is available | `$IMAGE_EVIDENCE_DIGEST`, `$DIGEST` |
+| `--auth-file` | registry auth file for digest-ref fallback sources | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
+| `--platform` | platform to scan, e.g. linux/amd64 (repeatable or comma/space-separated via env) | `$IMAGE_EVIDENCE_PLATFORMS`, `$PLATFORMS` |
+| `--trivy-output-template` | destination template for per-platform Trivy JSON; must contain {arch} or {platform} | `$IMAGE_EVIDENCE_TRIVY_OUTPUT_TEMPLATE` |
+| `--sbom-output-template` | optional per-platform CycloneDX SBOM template; must contain {arch} or {platform} | `$IMAGE_EVIDENCE_SBOM_OUTPUT_TEMPLATE` |
+| `--trivy-timeout` | Trivy scan timeout | `$IMAGE_EVIDENCE_TRIVY_TIMEOUT` |
+
+### `reusable-ci container image-labels-json`
+
+fetch an image's OCI config labels as compact JSON
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--ref` | image tag or digest ref to inspect (required) | `$IMAGE_REF` |
+| `--auth-file` | Docker-compatible registry auth config | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
+
+### `reusable-ci container image-name-for-ref`
+
+print an image repository/name with any tag or digest removed
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--ref` | image reference (required) | `$IMAGE_REF` |
 
 ### `reusable-ci container ledger`
 
@@ -471,8 +817,14 @@ validate one image entry and append it to the ledger
 | `--digest` | image digest (sha256:<64 hex>) | n/a |
 | `--sbom` | CycloneDX SBOM path (dist/image-sbom*.cyclonedx.json) | n/a |
 | `--image-name` | image registry/path (no tag); with --tag, derives --final-tag=<image>:<tag> and --candidate-tag=<image>:staging-<tag> so callers don't hand-assemble both (explicit flags still win) | n/a |
+| `--final-tag-name` | immutable release tag name/portion combined with --image-name; when --tag is empty, derives the release tag from vMAJOR.MINOR.PATCH[-suffix] | n/a |
 | `--final-tag` | immutable release tag ref (scoped to --tag); derived from --image-name when omitted | n/a |
+| `--moving-tag-name` | optional moving tag name/portion combined with --image-name | n/a |
+| `--moving-tag` | optional moving tag ref, e.g. codeberg.org/owner/repo:rust | n/a |
 | `--flavor` | optional base-image flavour | n/a |
+| `--derive-candidate-tag` | derive --candidate-tag as <image>:staging-<final-tag-name>; mutually exclusive with explicit candidate tag flags | `$LEDGER_DERIVE_CANDIDATE_TAG` |
+| `--default-sbom` | when --sbom is empty, use dist/image-sbom-<flavor\|kind>.cyclonedx.json | n/a |
+| `--candidate-tag-name` | optional staging tag name/portion combined with --image-name | n/a |
 | `--candidate-tag` | optional staging tag ref (scoped to staging-<tag>); derived from --image-name when omitted | n/a |
 | `--base-ref` | optional digest-pinned base image | n/a |
 | `--base-input-id` | optional base-image input identifier (SLSA lineage) | n/a |
@@ -486,6 +838,7 @@ delete each entry's staging candidate tag after verifying the promoted final tag
 |------|-------------|----------|
 | `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
 | `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--expected-image-repository` | optional exact image repository allowed for ledger refs/tags at the signer/publisher boundary | `$LEDGER_EXPECTED_IMAGE_REPOSITORY` |
 | `--dry-run` | preview registry mutations (copies/deletes) without performing them | n/a |
 
 #### `reusable-ci container ledger merge`
@@ -508,6 +861,10 @@ promote each entry's candidate image to the stage's moving pointer (&lt;base&gt;
 | `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 | `--stage` | promotion stage: 'release' adds the <base>:release pointer and enforces the release scope; a named stage ('dev', 'staging') adds <base>:<stage> on the same digest and needs no --tag. The immutable :<version> tag is build-only. | `$PROMOTE_STAGE` |
 | `--stage-repo` | rehome the promotion onto a destination registry/namespace PREFIX (e.g. a sovereign codeberg.org/owner); each image lands at <prefix>/<image-name>, so a multi-container release never collides. A different registry is a cross-registry promotion that copies the signature via cosign | `$PROMOTE_STAGE_REPO` |
+| `--release-tags-from-ledger` | for the release stage, promote to each entry's final_tag and optional moving_tag instead of the generic <base>:release pointer | `$PROMOTE_RELEASE_TAGS_FROM_LEDGER` |
+| `--allow-digest-ref-fallback` | when candidate_tag is absent or no longer serves the recorded digest, copy from the ledger ref digest instead (Forgejo release rerun recovery) | `$PROMOTE_ALLOW_DIGEST_REF_FALLBACK` |
+| `--expected-image-repository` | optional exact image repository allowed for ledger refs/tags at the signer/publisher boundary | `$LEDGER_EXPECTED_IMAGE_REPOSITORY` |
+| `--journal` | JSONL promotion rollback journal; promote writes it before tag moves, rollback restores/deletes from it | `$IMAGE_PROMOTIONS_JOURNAL` |
 | `--dry-run` | preview registry mutations (copies/deletes) without performing them | n/a |
 
 #### `reusable-ci container ledger rollback`
@@ -520,7 +877,28 @@ undo a stage's promotion: delete that stage's pointer tag(s) (e.g. :dev/:staging
 | `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 | `--stage` | promotion stage: 'release' adds the <base>:release pointer and enforces the release scope; a named stage ('dev', 'staging') adds <base>:<stage> on the same digest and needs no --tag. The immutable :<version> tag is build-only. | `$PROMOTE_STAGE` |
 | `--stage-repo` | rehome the promotion onto a destination registry/namespace PREFIX (e.g. a sovereign codeberg.org/owner); each image lands at <prefix>/<image-name>, so a multi-container release never collides. A different registry is a cross-registry promotion that copies the signature via cosign | `$PROMOTE_STAGE_REPO` |
+| `--release-tags-from-ledger` | for the release stage, promote to each entry's final_tag and optional moving_tag instead of the generic <base>:release pointer | `$PROMOTE_RELEASE_TAGS_FROM_LEDGER` |
+| `--expected-image-repository` | optional exact image repository allowed for ledger refs/tags at the signer/publisher boundary | `$LEDGER_EXPECTED_IMAGE_REPOSITORY` |
+| `--journal` | JSONL promotion rollback journal; promote writes it before tag moves, rollback restores/deletes from it | `$IMAGE_PROMOTIONS_JOURNAL` |
 | `--dry-run` | preview registry mutations (copies/deletes) without performing them | n/a |
+
+#### `reusable-ci container ledger sign`
+
+sign and attest every release image recorded in the ledger
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
+| `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--provenance-predicate` | base SLSA provenance predicate JSON enriched per image before attestation | `$SLSA_PROVENANCE_PREDICATE` |
+| `--provenance-envelope` | in-toto statement JSON; its .predicate is enriched per image before attestation | `$SLSA_PROVENANCE_ENVELOPE` |
+| `--recursive` | pass --recursive to cosign sign/attest for manifest-list children (default false to match forgejo-ci signer behavior) | `$LEDGER_SIGN_RECURSIVE` |
+| `--expected-image-repository` | optional exact image repository allowed for ref, final_tag, moving_tag, and candidate_tag (for forge-specific signer boundaries) | `$LEDGER_SIGN_EXPECTED_IMAGE_REPOSITORY`, `$LEDGER_EXPECTED_IMAGE_REPOSITORY` |
+| `--expected-base-repository` | optional exact base image repository allowed for base_ref | `$LEDGER_SIGN_EXPECTED_BASE_REPOSITORY` |
+| `--sbom-path-pattern` | optional regular expression every ledger SBOM path must match | `$LEDGER_SIGN_SBOM_PATH_PATTERN` |
+| `--method` | signing backend: sigstore (keyless cosign + OIDC) or kms (cosign + --key). gpg is rejected — it cannot sign OCI images. | `$SIGN_METHOD` |
+| `--key` | cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore. | `$SIGN_KEY` |
+| `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
 
 #### `reusable-ci container ledger validate`
 
@@ -530,6 +908,7 @@ re-validate every entry in the ledger against the release tag (trust-boundary ch
 |------|-------------|----------|
 | `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
 | `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--non-empty` | fail when the ledger contains no entries | n/a |
 
 #### `reusable-ci container ledger verify-digests`
 
@@ -547,9 +926,13 @@ write registry credentials to the shared OCI auth config used by docker, podman,
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--registry` | registry host (e.g. ghcr.io, codeberg.org) | `$CONTAINER_REGISTRY` |
+| `--server-url` | forge/server URL used to derive the registry host when --registry is empty or omitted | n/a |
 | `--username` | registry username | `$REGISTRY_USERNAME` |
 | `--password-file` | file containing the password ("-" reads stdin); defaults to $REGISTRY_PASSWORD. The password never appears in argv. | n/a |
 | `--auth-file` | override the auth config path (default: $REGISTRY_AUTH_FILE, else $DOCKER_CONFIG/config.json, else ~/.docker/config.json) | n/a |
+| `--create-auth-file` | when --auth-file is empty, create a fresh job-local auth file under $RUNNER_TEMP | `$REGISTRY_CREATE_AUTH_FILE` |
+| `--export-env` | append REGISTRY_AUTH_FILE=<auth-file> to --env-file; requires an explicit or created auth file | `$REGISTRY_EXPORT_AUTH_FILE_ENV` |
+| `--env-file` | runner env file used with --export-env | `$FORGEJO_ENV`, `$GITHUB_ENV` |
 
 ### `reusable-ci container logout`
 
@@ -562,7 +945,19 @@ remove a registry's credential from the shared OCI auth config (the inverse of l
 
 ### `reusable-ci container manifest`
 
-merge / inspect multi-platform container manifest lists
+inspect, digest, merge, and push container manifests
+
+#### `reusable-ci container manifest digest`
+
+print the registry-served raw manifest digest and optionally verify a digestfile
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--ref` | registry image ref whose raw manifest digest should be computed (required) | `$IMAGE_REF`, `$MANIFEST_REF` |
+| `--digest-file` | optional Buildah digestfile to verify against the registry digest | `$MANIFEST_DIGEST_FILE` |
+| `--auth-file` | registry auth file for registry digest verification | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
+| `--retry-attempts` | registry digest read attempts | `$MANIFEST_DIGEST_RETRY_ATTEMPTS` |
+| `--retry-delay-seconds` | base delay between registry digest read attempts | `$MANIFEST_DIGEST_RETRY_DELAY_SECONDS` |
 
 #### `reusable-ci container manifest inspect`
 
@@ -582,6 +977,20 @@ create a manifest list from digest marker files and tags
 | `--image-name` | base image name (without tag) the manifest list points to | `$IMAGE_NAME` |
 | `--tags` | newline-separated tags to publish for the manifest list | `$TAGS` |
 | `--digests-dir` | directory holding the per-arch digest marker files | `$DIGESTS_DIR` |
+
+#### `reusable-ci container manifest push`
+
+push a local Buildah manifest list to a registry ref and print the verified digest
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--local-manifest` | local Buildah manifest list name to push (required) | `$LOCAL_MANIFEST` |
+| `--destination` | registry image ref to push, e.g. registry.example/owner/app:staging-v1 (required) | `$DESTINATION_REF`, `$IMAGE_REF` |
+| `--auth-file` | registry auth file for buildah push and registry digest verification | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
+| `--tls-verify` | verify registry TLS certificates: true or false | `$MANIFEST_PUSH_TLS_VERIFY` |
+| `--remove-local` | pass --rm to buildah manifest push after a successful registry push | `$MANIFEST_PUSH_REMOVE_LOCAL` |
+| `--retry-attempts` | push and registry digest read attempts | `$MANIFEST_PUSH_RETRY_ATTEMPTS` |
+| `--retry-delay-seconds` | base delay between retry attempts | `$MANIFEST_PUSH_RETRY_DELAY_SECONDS` |
 
 ### `reusable-ci container materialize-build-secrets`
 
@@ -615,6 +1024,159 @@ emit platform matrix JSON and per-platform suffix outputs
 | `--platforms` | comma/space/newline-separated build platforms (linux/amd64,linux/arm64) | `$PLATFORMS` |
 | `--platform` | single build platform; falls back to the first entry of --platforms | `$PLATFORM` |
 
+### `reusable-ci container platform-ref`
+
+resolve an image index reference to one platform's digest-pinned ref
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--ref` | image tag or digest ref to inspect (required) | `$IMAGE_REF` |
+| `--platform` | target platform: os/arch or os/arch/variant (required) | `$PLATFORM` |
+| `--auth-file` | Docker-compatible registry auth config | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
+
+### `reusable-ci container release-identity-matches`
+
+print whether OCI labels identify the expected release
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--labels-json` | compact JSON object containing image labels (required) | n/a |
+| `--revision` | expected org.opencontainers.image.revision (required) | n/a |
+| `--version` | expected org.opencontainers.image.version (required) | n/a |
+| `--ref-name` | expected org.opencontainers.image.ref.name (required) | n/a |
+| `--source` | expected org.opencontainers.image.source (required) | n/a |
+
+### `reusable-ci container release-image`
+
+single release-image verification helpers
+
+#### `reusable-ci container release-image verify-existing`
+
+verify an existing digest-pinned release image before reusing it
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--cosign-public-key-path` | relative path to the trusted Cosign public key in the consumer checkout | `$COSIGN_PUBLIC_KEY_PATH` |
+| `--cosign-public-key-sha256` | expected sha256 digest of the trusted Cosign public key | `$COSIGN_PUBLIC_KEY_SHA256` |
+| `--ref` | digest-pinned image ref to verify (required) | `$IMAGE_REF` |
+| `--expected-tag` | release tag expected in SLSA workflow externalParameters.workflow.ref (required) | `$RELEASE_TAG` |
+| `--expected-commit` | source commit expected in SLSA resolvedDependencies[].digest.gitCommit (required) | `$RELEASE_SHA` |
+| `--expected-source` | source repository URL expected in SLSA workflow externalParameters.workflow.repository (required) | `$EXPECTED_SOURCE` |
+| `--expected-workflow` | workflow path expected in SLSA workflow externalParameters.workflow.path (required) | `$EXPECTED_WORKFLOW` |
+| `--expected-base-ref` | optional digest-pinned base ref expected in SLSA base lineage | `$EXPECTED_BASE_REF` |
+| `--expected-base-input-id` | optional sha256 base input ID expected in SLSA base lineage | `$EXPECTED_BASE_INPUT_ID` |
+| `--allow-reattest` | allow signed/SBOM-attested images with matching OCI identity labels to be re-attested | `$ALLOW_REATTEST` |
+| `--identity-version` | OCI org.opencontainers.image.version expected for --allow-reattest; defaults to --expected-tag | n/a |
+| `--identity-ref-name` | OCI org.opencontainers.image.ref.name expected for --allow-reattest; defaults to --expected-tag | n/a |
+| `--identity-source` | OCI org.opencontainers.image.source expected for --allow-reattest; defaults to --expected-source | n/a |
+| `--auth-file` | Docker/containers auth config for registry label reads and cosign verification | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
+
+### `reusable-ci container release-images`
+
+high-level release-image signing, promotion, rollback, and cleanup boundary
+
+#### `reusable-ci container release-images cleanup`
+
+delete release candidate tags after verified final/moving promotion
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--dist-dir` | release dist directory; the default ledger and SLSA envelope are resolved under this directory | `$DIST_DIR` |
+| `--ledger` | release-image ledger path; defaults to <dist-dir>/release-images.json and must remain under <dist-dir>/ | `$RELEASE_IMAGES_PATH`, `$RELEASE_IMAGES_LEDGER` |
+| `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--stage` | promotion stage: 'release' adds the <base>:release pointer and enforces the release scope; a named stage ('dev', 'staging') adds <base>:<stage> on the same digest and needs no --tag. The immutable :<version> tag is build-only. | `$PROMOTE_STAGE` |
+| `--server-url` | forge server URL used to derive the registry host and provider API base | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
+| `--repository` | owner/repo used to derive the expected image repository | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--registry` | registry host for the short-lived Docker auth config (default: host from --server-url) | `$CONTAINER_REGISTRY` |
+| `--registry-username` | registry username; the password is read from --registry-password-file or $REGISTRY_TOKEN / $REGISTRY_PASSWORD | `$REGISTRY_USER`, `$REGISTRY_USERNAME` |
+| `--registry-password-file` | file containing the registry password/token ("-" reads stdin); defaults to $REGISTRY_TOKEN then $REGISTRY_PASSWORD. The password never appears in argv. | n/a |
+| `--expected-image-repository` | optional exact image repository allowed for ledger refs/tags at the signer/publisher boundary | `$LEDGER_EXPECTED_IMAGE_REPOSITORY` |
+| `--provider-token-file` | file containing the provider/package-API token ("-" reads stdin); defaults to $REUSABLE_CI_PROVIDER_TOKEN / provider-native token env. The token never appears in argv. | n/a |
+| `--dry-run` | preview registry mutations (copies/deletes) without performing them | n/a |
+
+#### `reusable-ci container release-images promote`
+
+promote signed release image candidates to their final/moving release tags
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--dist-dir` | release dist directory; the default ledger and SLSA envelope are resolved under this directory | `$DIST_DIR` |
+| `--ledger` | release-image ledger path; defaults to <dist-dir>/release-images.json and must remain under <dist-dir>/ | `$RELEASE_IMAGES_PATH`, `$RELEASE_IMAGES_LEDGER` |
+| `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--stage` | promotion stage: 'release' adds the <base>:release pointer and enforces the release scope; a named stage ('dev', 'staging') adds <base>:<stage> on the same digest and needs no --tag. The immutable :<version> tag is build-only. | `$PROMOTE_STAGE` |
+| `--server-url` | forge server URL used to derive the registry host and provider API base | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
+| `--repository` | owner/repo used to derive the expected image repository | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--registry` | registry host for the short-lived Docker auth config (default: host from --server-url) | `$CONTAINER_REGISTRY` |
+| `--registry-username` | registry username; the password is read from --registry-password-file or $REGISTRY_TOKEN / $REGISTRY_PASSWORD | `$REGISTRY_USER`, `$REGISTRY_USERNAME` |
+| `--registry-password-file` | file containing the registry password/token ("-" reads stdin); defaults to $REGISTRY_TOKEN then $REGISTRY_PASSWORD. The password never appears in argv. | n/a |
+| `--expected-image-repository` | optional exact image repository allowed for ledger refs/tags at the signer/publisher boundary | `$LEDGER_EXPECTED_IMAGE_REPOSITORY` |
+| `--state-dir` | release-image state directory; default promotion journal is <state-dir>/image-promotions.jsonl | `$SIGN_AND_PUBLISH_STATE_DIR` |
+| `--journal` | JSONL promotion rollback journal; promote writes it before tag moves, rollback restores/deletes from it | `$IMAGE_PROMOTIONS_JOURNAL` |
+| `--dry-run` | preview registry mutations (copies/deletes) without performing them | n/a |
+
+#### `reusable-ci container release-images rollback`
+
+roll back a failed release-image promotion from its promotion journal
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--dist-dir` | release dist directory; the default ledger and SLSA envelope are resolved under this directory | `$DIST_DIR` |
+| `--ledger` | release-image ledger path; defaults to <dist-dir>/release-images.json and must remain under <dist-dir>/ | `$RELEASE_IMAGES_PATH`, `$RELEASE_IMAGES_LEDGER` |
+| `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--stage` | promotion stage: 'release' adds the <base>:release pointer and enforces the release scope; a named stage ('dev', 'staging') adds <base>:<stage> on the same digest and needs no --tag. The immutable :<version> tag is build-only. | `$PROMOTE_STAGE` |
+| `--server-url` | forge server URL used to derive the registry host and provider API base | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
+| `--repository` | owner/repo used to derive the expected image repository | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--registry` | registry host for the short-lived Docker auth config (default: host from --server-url) | `$CONTAINER_REGISTRY` |
+| `--registry-username` | registry username; the password is read from --registry-password-file or $REGISTRY_TOKEN / $REGISTRY_PASSWORD | `$REGISTRY_USER`, `$REGISTRY_USERNAME` |
+| `--registry-password-file` | file containing the registry password/token ("-" reads stdin); defaults to $REGISTRY_TOKEN then $REGISTRY_PASSWORD. The password never appears in argv. | n/a |
+| `--expected-image-repository` | optional exact image repository allowed for ledger refs/tags at the signer/publisher boundary | `$LEDGER_EXPECTED_IMAGE_REPOSITORY` |
+| `--state-dir` | release-image state directory; default promotion journal is <state-dir>/image-promotions.jsonl | `$SIGN_AND_PUBLISH_STATE_DIR` |
+| `--journal` | JSONL promotion rollback journal; promote writes it before tag moves, rollback restores/deletes from it | `$IMAGE_PROMOTIONS_JOURNAL` |
+| `--provider-token-file` | file containing the provider/package-API token ("-" reads stdin); defaults to $REUSABLE_CI_PROVIDER_TOKEN / provider-native token env. The token never appears in argv. | n/a |
+| `--dry-run` | preview registry mutations (copies/deletes) without performing them | n/a |
+
+#### `reusable-ci container release-images sign`
+
+sign and attest release images from the confined release-image ledger
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--dist-dir` | release dist directory; the default ledger and SLSA envelope are resolved under this directory | `$DIST_DIR` |
+| `--ledger` | release-image ledger path; defaults to <dist-dir>/release-images.json and must remain under <dist-dir>/ | `$RELEASE_IMAGES_PATH`, `$RELEASE_IMAGES_LEDGER` |
+| `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--stage` | promotion stage: 'release' adds the <base>:release pointer and enforces the release scope; a named stage ('dev', 'staging') adds <base>:<stage> on the same digest and needs no --tag. The immutable :<version> tag is build-only. | `$PROMOTE_STAGE` |
+| `--server-url` | forge server URL used to derive the registry host and provider API base | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
+| `--repository` | owner/repo used to derive the expected image repository | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--registry` | registry host for the short-lived Docker auth config (default: host from --server-url) | `$CONTAINER_REGISTRY` |
+| `--registry-username` | registry username; the password is read from --registry-password-file or $REGISTRY_TOKEN / $REGISTRY_PASSWORD | `$REGISTRY_USER`, `$REGISTRY_USERNAME` |
+| `--registry-password-file` | file containing the registry password/token ("-" reads stdin); defaults to $REGISTRY_TOKEN then $REGISTRY_PASSWORD. The password never appears in argv. | n/a |
+| `--expected-image-repository` | optional exact image repository allowed for ledger refs/tags at the signer/publisher boundary | `$LEDGER_EXPECTED_IMAGE_REPOSITORY` |
+| `--provenance-envelope` | in-toto statement JSON; defaults to <dist-dir>/slsa-provenance.intoto.json | `$SLSA_PROVENANCE_ENVELOPE` |
+| `--recursive` | pass --recursive to cosign sign/attest for manifest-list children | `$LEDGER_SIGN_RECURSIVE` |
+| `--expected-base-repository` | exact base image repository allowed for ledger base_ref values (default: <expected-image-repository>-base) | `$LEDGER_SIGN_EXPECTED_BASE_REPOSITORY` |
+| `--sbom-path-pattern` | regular expression every ledger SBOM path must match (default: <dist-dir>/image-sbom*.cyclonedx.json) | `$LEDGER_SIGN_SBOM_PATH_PATTERN` |
+| `--method` | signing backend: sigstore (keyless cosign + OIDC) or kms (cosign + --key). gpg is rejected — it cannot sign OCI images. | `$SIGN_METHOD` |
+| `--key` | cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore. | `$SIGN_KEY` |
+| `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
+
+### `reusable-ci container release-labels`
+
+emit standard OCI release labels as Buildah --label argv tokens
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--title` | org.opencontainers.image.title (required) | `$OCI_LABEL_TITLE` |
+| `--version` | org.opencontainers.image.version (required) | `$OCI_LABEL_VERSION` |
+| `--created` | org.opencontainers.image.created (RFC 3339) (required) | `$OCI_LABEL_CREATED` |
+| `--revision` | org.opencontainers.image.revision (required) | `$OCI_LABEL_REVISION` |
+| `--ref-name` | org.opencontainers.image.ref.name (required) | `$OCI_LABEL_REF_NAME` |
+| `--source` | org.opencontainers.image.source and url (required) | `$OCI_LABEL_SOURCE` |
+| `--documentation` | org.opencontainers.image.documentation; defaults to <source>#readme | `$OCI_LABEL_DOCUMENTATION` |
+| `--description` | org.opencontainers.image.description | `$OCI_LABEL_DESCRIPTION` |
+| `--licenses` | org.opencontainers.image.licenses | `$OCI_LABEL_LICENSES` |
+| `--vendor` | org.opencontainers.image.vendor | `$OCI_LABEL_VENDOR` |
+| `--authors` | org.opencontainers.image.authors | `$OCI_LABEL_AUTHORS` |
+
 ### `reusable-ci container resolve-name`
 
 compute the canonical image reference and emit name=&lt;value&gt;
@@ -623,9 +1185,26 @@ compute the canonical image reference and emit name=&lt;value&gt;
 |------|-------------|----------|
 | `--registry` | registry hostname (e.g. ghcr.io) (required) | `$CONTAINER_REGISTRY` |
 | `--image-name` | explicit image name override (defaults to <owner>/<repo>) | `$IMAGE_NAME` |
-| `--repository` | "owner/repo" used to build the default image name (required) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--repository` | "owner/repo" used to build the default image name (required) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
 | `--repository-owner` | owner segment used to prefix bare image names on docker.io (Docker Hub); the derived reference is always lowercased for OCI compliance (required) | `$REPOSITORY_OWNER`, `$FORGEJO_REPOSITORY_OWNER`, `$GITHUB_REPOSITORY_OWNER` |
 | `--name` | optional sub-name for multi-container projects | `$CONTAINER_NAME` |
+
+### `reusable-ci container setup-buildah`
+
+install Buildah runtime packages and configure job-local storage
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--extra-packages` | whitespace-separated additional apt packages to install | `$SETUP_BUILDAH_EXTRA_PACKAGES` |
+| `--install-packages` | install missing Buildah/fuse-overlayfs/extra packages with apt-get | `$SETUP_BUILDAH_INSTALL_PACKAGES` |
+| `--probe-build` | validate storage with a scratch-image build probe | `$SETUP_BUILDAH_PROBE_BUILD` |
+| `--print-store` | print selected buildah storage details after setup | `$CONTAINER_STORAGE_PRINT_STORE` |
+| `--summary` | append selected storage details to the step summary | `$CONTAINER_STORAGE_SUMMARY` |
+| `--storage-conf` | containers storage config path (default: $RUNNER_TEMP/containers-storage.conf) | `$CONTAINERS_STORAGE_CONF` |
+| `--storage-root` | containers storage root path (default: $RUNNER_TEMP/containers-storage) | `$CONTAINER_STORAGE_ROOT` |
+| `--tmp-dir` | job-local temp directory (default: $RUNNER_TEMP/container-tmp) | `$CONTAINER_TMPDIR` |
+| `--runner-temp` | runner temp directory used for default paths | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
+| `--env-file` | runner env file receiving CONTAINERS_STORAGE_CONF and TMPDIR | `$FORGEJO_ENV`, `$GITHUB_ENV` |
 
 ### `reusable-ci container sign`
 
@@ -639,6 +1218,42 @@ sign an OCI image with cosign (sigstore or kms). Registry-attached storage; sign
 | `--key` | cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
 | `--recursive` | walk manifest-list children, signing each per-arch digest in addition to the list itself. Default true (production releases use multi-arch manifest lists). | `$SIGN_RECURSIVE` |
+
+### `reusable-ci container signer-image`
+
+build and assemble forgejo-ci signer images
+
+#### `reusable-ci container signer-image assemble`
+
+assemble and push the forgejo-ci signer multi-arch manifest
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--auth-file` | registry auth file used by buildah/skopeo | `$REUSABLE_CI_SIGNER_AUTH_FILE` |
+| `--source-sha` | git commit SHA used in signer image tags and OCI revision label | `$SOURCE_SHA` |
+| `--server-url` | forge server URL used to derive the registry/repository | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
+| `--repository` | owner/repo used to derive the signer image repository | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--retry-attempts` | registry push attempts | `$SIGNER_IMAGE_RETRY_ATTEMPTS` |
+| `--retry-delay-seconds` | base delay between registry push retries | `$SIGNER_IMAGE_RETRY_DELAY_SECONDS` |
+| `--archs` | newline-separated signer architectures to include | `$SIGNER_ARCHS` |
+| `--metadata-dir` | directory for signer-image.json | `$SIGNER_METADATA_DIR` |
+
+#### `reusable-ci container signer-image build-arch`
+
+build and push one forgejo-ci signer image architecture
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--auth-file` | registry auth file used by buildah/skopeo | `$REUSABLE_CI_SIGNER_AUTH_FILE` |
+| `--source-sha` | git commit SHA used in signer image tags and OCI revision label | `$SOURCE_SHA` |
+| `--server-url` | forge server URL used to derive the registry/repository | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
+| `--repository` | owner/repo used to derive the signer image repository | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--retry-attempts` | registry push attempts | `$SIGNER_IMAGE_RETRY_ATTEMPTS` |
+| `--retry-delay-seconds` | base delay between registry push retries | `$SIGNER_IMAGE_RETRY_DELAY_SECONDS` |
+| `--arch` | signer architecture: amd64 or arm64 | `$SIGNER_ARCH` |
+| `--containerfile` | signer image Containerfile | `$SIGNER_CONTAINERFILE` |
+| `--context` | signer image build context | `$SIGNER_CONTEXT` |
+| `--metadata-dir` | directory for signer-image-<arch>.json (default signer-image-arch-<arch>) | `$SIGNER_METADATA_DIR` |
 
 ### `reusable-ci container suffix-extracted-binaries`
 
@@ -679,7 +1294,7 @@ verify an image lives in the allowed namespace for an enforced registry (no-op f
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--image-name` | image ref (registry/owner/name) whose namespace is checked (required) | `$IMAGE_NAME` |
-| `--repository` | "owner/repo" the image must be namespaced under on an enforced registry (required) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--repository` | "owner/repo" the image must be namespaced under on an enforced registry (required) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
 | `--registry` | registry hostname the image is pushed to (checked against --enforce-namespace-on) (required) | `$CONTAINER_REGISTRY` |
 | `--enforce-namespace` | required namespace prefix (e.g. the owner) the image name must start with (required) | `$ENFORCE_NAMESPACE` |
 | `--enforce-namespace-on` | registries whose namespace policy this deployment enforces (default ghcr.io); set to your registry when self-hosting so the check runs instead of silently passing | `$ENFORCE_NAMESPACE_ON` |
@@ -824,8 +1439,8 @@ exact, credential-free, sha256-aware checkout of a repository into the workspace
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--repository` | owner/name to check out | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$GITHUB_REPOSITORY` |
-| `--server-url` | forge base URL (e.g. https://codeberg.org) | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$GITHUB_SERVER_URL` |
+| `--repository` | owner/name to check out | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--server-url` | forge base URL (e.g. https://codeberg.org) | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
 | `--ref` | commit SHA, refs/tags/…, refs/heads/…, or a bare tag/branch name to check out. Set via $CHECKOUT_REF; defaults to the triggering commit. | `$CHECKOUT_REF`, `$CI_COMMIT`, `$CI_COMMIT_SHA`, `$FORGEJO_SHA`, `$GITHUB_SHA` |
 | `--workspace` | target directory (default: current directory) | `$CI_WORKSPACE`, `$FORGEJO_WORKSPACE`, `$GITHUB_WORKSPACE` |
 | `--token` | clone token; empty for an anonymous checkout | `$CI_TOKEN`, `$FORGEJO_TOKEN`, `$GITHUB_TOKEN` |
@@ -999,6 +1614,22 @@ stage the canonical release file set and write release-assembly.json
 | `--release-artifacts-dir` | downloaded release artifact directory | `$RELEASE_ARTIFACTS_DIR` |
 | `--sbom-dir` | downloaded analyzed-container SBOM directory | `$SBOM_DIR` |
 
+### `reusable-ci release assemble-dist`
+
+assemble a release dist/ hand-off from run artifacts and image ledgers
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--artifact-transfer-plan-json` | optional typed artifact-transfer plan JSON; mutually exclusive with --artifact-names | `$ARTIFACT_TRANSFER_PLAN_JSON` |
+| `--artifact-names` | newline-separated current-run artifact names to download into --path | `$ARTIFACT_NAMES` |
+| `--path` | directory to assemble and digest | `$DIST_DIR` |
+| `--ledger-files` | newline-separated ledger files or directories to merge after artifact download | `$LEDGER_FILES` |
+| `--ledger-expected-count` | when greater than zero, require the merged release image ledger to contain exactly this many entries | `$LEDGER_EXPECTED_COUNT` |
+| `--release-images-path` | merged release image ledger path | `$RELEASE_IMAGES_PATH` |
+| `--prune-dirs` | whether to remove top-level directories before digesting: true\|false | `$PRUNE_DIRS` |
+| `--run-id` | run the artifact belongs to (default: current run) | `$CI_RUN_ID`, `$FORGEJO_RUN_ID`, `$GITHUB_RUN_ID` |
+| `--repository` | owner/repo the run belongs to (default: current repo) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+
 ### `reusable-ci release attachments`
 
 plan and upload release attachments
@@ -1035,23 +1666,14 @@ compute SHA256 over release artefacts, attached patterns, and SBOM layers
 | `--attach-artifacts` | comma-separated globs for additional files to checksum (paths kept verbatim) | `$ATTACH_ARTIFACTS` |
 | `--sbom-dir` | directory of SBOM layer files to include in the manifest | `$SBOM_DIR` |
 
-### `reusable-ci release create`
+### `reusable-ci release dist-digest`
 
-create a release on the detected platform with assembled assets
+print the current release dist/ hand-off digest
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--tag` | tag the release is created from (e.g. v1.2.3) (required) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
-| `--repository` | "owner/repo" on GitHub; "group/project[/sub]" on GitLab (required) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$GITHUB_REPOSITORY` |
-| `--release-name` | human-readable release title (defaults to the tag) | `$RELEASE_NAME` |
-| `--draft` | create the release as a draft (not published until edited) | `$DRAFT` |
-| `--make-latest` | platform latest handling: true, false, or legacy | `$MAKE_LATEST` |
-| `--attach-artifacts` | comma-separated globs of extra files to attach beyond release-dir | `$ATTACH_ARTIFACTS` |
-| `--release-notes-file` | path to the release-notes markdown body | `$RELEASE_NOTES_FILE` |
-| `--artifact-name` | project slug used in computed asset names (defaults to repo basename) | `$ARTIFACT_NAME` |
-| `--checksums-file` | path to the SHA256 manifest to attach | `$CI_CHECKSUMS_FILE` |
-| `--release-dir` | directory whose files are attached as release assets | `$RELEASE_DIR` |
-| `--assembly` | release assembly manifest to upload exactly | `$RELEASE_ASSEMBLY` |
+| `--dist-dir` | directory whose release hand-off digest is printed | n/a |
+| `--manifest-root` | path prefix written into the sha256sum manifest (defaults to --dist-dir) | n/a |
 
 ### `reusable-ci release download-artifacts`
 
@@ -1061,7 +1683,70 @@ download release artifacts from the explicit artifact-transfer plan
 |------|-------------|----------|
 | `--artifact-transfer-plan-json` | typed transfer plan JSON listing which CI artifacts to download | `$ARTIFACT_TRANSFER_PLAN_JSON` |
 | `--run-id` | CI run ID artifacts are downloaded from | `$CI_RUN_ID`, `$FORGEJO_RUN_ID`, `$GITHUB_RUN_ID` |
-| `--repository` | "owner/repo" the run belongs to | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--repository` | "owner/repo" the run belongs to | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+
+### `reusable-ci release files`
+
+release file-set manifest helpers
+
+#### `reusable-ci release files checksum-file`
+
+print the single release checksums file path
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--dist-dir` | dist directory containing GoReleaser artifacts.json and release files | n/a |
+| `--manifest` | release file manifest path | `$RELEASE_FILES_MANIFEST` |
+
+#### `reusable-ci release files collect`
+
+collect publishable release assets from GoReleaser metadata and signed sidecars
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--dist-dir` | dist directory containing GoReleaser artifacts.json and release files | n/a |
+| `--manifest` | release file manifest path | `$RELEASE_FILES_MANIFEST` |
+| `--output` | output JSON file ('-' for stdout) | n/a |
+
+#### `reusable-ci release files list`
+
+print release file paths for a manifest section, falling back to discovery when no manifest exists
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--dist-dir` | dist directory containing GoReleaser artifacts.json and release files | n/a |
+| `--manifest` | release file manifest path | `$RELEASE_FILES_MANIFEST` |
+| `--section` | manifest section to list: assets, checksums, sboms, evidence, provenance | n/a |
+
+#### `reusable-ci release files manifest`
+
+write the versioned release file manifest
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--dist-dir` | dist directory containing GoReleaser artifacts.json and release files | n/a |
+| `--manifest` | release file manifest path | `$RELEASE_FILES_MANIFEST` |
+| `--output` | output manifest file (defaults to --manifest; '-' for stdout) | n/a |
+| `--assets-json` | release files collect JSON to reuse instead of re-collecting ('-' for stdin) | n/a |
+
+#### `reusable-ci release files validate`
+
+validate the release file manifest
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--dist-dir` | dist directory containing GoReleaser artifacts.json and release files | n/a |
+| `--manifest` | release file manifest path | `$RELEASE_FILES_MANIFEST` |
+
+#### `reusable-ci release files validate-checksums`
+
+validate that the checksums file names every public release asset exactly once
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--dist-dir` | dist directory containing GoReleaser artifacts.json and release files | n/a |
+| `--manifest` | release file manifest path | `$RELEASE_FILES_MANIFEST` |
+| `--checksum-file` | checksums file to validate (defaults to release files checksum-file) | `$CHECKSUM_FILE` |
 
 ### `reusable-ci release gpg`
 
@@ -1087,6 +1772,17 @@ import a GPG private key, optionally cache the passphrase, optionally configure 
 | `--git-commit-gpgsign` | additionally write commit.gpgsign=true | `$GIT_COMMIT_GPGSIGN` |
 | `--git-config-global` | use --global on the git config writes (env $REUSABLE_CI_GIT_CONFIG_GLOBAL — NOT git's reserved $GIT_CONFIG_GLOBAL, which is a path) | `$REUSABLE_CI_GIT_CONFIG_GLOBAL` |
 
+#### `reusable-ci release gpg sign-packages`
+
+GPG detach-sign .deb/.rpm/.apk packages with binary .sig sidecars
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--private-key-file` | path to armored GPG private key (use "-" for stdin; defaults to $GPG_PRIVATE_KEY or $GPG_SIGNING_KEY) | n/a |
+| `--passphrase-file` | path to GPG passphrase (use "-" for stdin; defaults to $GPG_PASSPHRASE or $GPG_SIGNING_PASSWORD) | n/a |
+| `--fingerprint` | expected imported key fingerprint (required) | `$GPG_FINGERPRINT`, `$GPG_SIGNING_FINGERPRINT` |
+| `--dir` | directory containing .deb/.rpm/.apk packages | n/a |
+
 ### `reusable-ci release notes`
 
 prepare release-notes file from changelog artifact, fall back to a stub when missing
@@ -1098,6 +1794,15 @@ prepare release-notes file from changelog artifact, fall back to a stub when mis
 | `--release-version` | release version used in the fallback header when no source file is found | `$RELEASE_VERSION` |
 | `--release-commit` | release commit SHA used in the fallback body | `$RELEASE_COMMIT` |
 
+### `reusable-ci release prepare-dist`
+
+validate/prune a dist hand-off, compute its digest, and emit digest output before artifact upload
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--path` | directory to prepare for upload | `$DIST_DIR`, `$UPLOAD_DIST_PATH` |
+| `--prune-dirs` | whether to remove top-level directories before digesting: true\|false | `$PRUNE_DIRS`, `$UPLOAD_DIST_PRUNE` |
+
 ### `reusable-ci release provenance`
 
 generate an in-toto/SLSA-v1.0 provenance statement from a checksums file
@@ -1105,13 +1810,39 @@ generate an in-toto/SLSA-v1.0 provenance statement from a checksums file
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--checksum-file` | GoReleaser checksums file ("-" reads stdin) | `$CHECKSUM_FILE` |
-| `--go-sum` | go.sum for resolved module deps (empty string to skip) | n/a |
+| `--go-sum` | go.sum for resolved module deps (empty string to skip) | `$GO_SUM_FILE` |
+| `--profile` | provenance profile: generic or forgejo-actions | n/a |
+| `--workflow` | workflow filename/path for the forgejo-actions profile | `$FORGEJO_WORKFLOW` |
 | `--started-on` | RFC3339 build timestamp (default: $SOURCE_DATE_EPOCH) | n/a |
+| `--started-on-commit` | commit/ref whose commit timestamp becomes the RFC3339 build timestamp | n/a |
 | `--output` | output file ("-" for stdout) | n/a |
 | `--bundle` | signature bundle output path (default: <output>.bundle) | n/a |
 | `--method` | signing backend: sigstore (keyless cosign + OIDC) or kms (cosign + --key). Omit to generate the statement only (signs when --method or --key is set). | `$SIGN_METHOD` |
 | `--key` | cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore. Empty = generate only. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
+
+### `reusable-ci release publish`
+
+create or update a release and its assets on the detected platform
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--strategy` | reconcile updates the release and its assets in place; recreate deletes and recreates it | `$RELEASE_STRATEGY` |
+| `--tag` | tag the release is created from (e.g. v1.2.3) (required) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--repository` | "owner/repo" release repository (required) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--release-name` | human-readable release title (defaults to the tag) | `$RELEASE_NAME` |
+| `--release-name-from-repository` | when --release-name is empty, default to '<repo-name> <tag>' instead of the tag (reconcile only) | `$RELEASE_NAME_FROM_REPOSITORY` |
+| `--draft` | publish/update the release as a draft (default true) | `$RELEASE_DRAFT`, `$DRAFT` |
+| `--release-notes-file` | path to the release-notes markdown body | `$RELEASE_NOTES_FILE` |
+| `--asset` | release asset file to publish (repeatable); defaults to --manifest assets (reconcile only) | n/a |
+| `--make-latest` | platform latest handling: true, false, or legacy (recreate only) | `$MAKE_LATEST` |
+| `--attach-artifacts` | comma-separated globs of extra files to attach beyond release-dir (recreate only) | `$ATTACH_ARTIFACTS` |
+| `--artifact-name` | project slug used in computed asset names (recreate only; defaults to repo basename) | `$ARTIFACT_NAME` |
+| `--checksums-file` | path to the SHA256 manifest to attach (recreate only) | `$CI_CHECKSUMS_FILE` |
+| `--release-dir` | directory whose files are attached as release assets (recreate only) | `$RELEASE_DIR` |
+| `--assembly` | release assembly manifest to upload exactly (recreate only) | `$RELEASE_ASSEMBLY` |
+| `--dist-dir` | dist directory containing GoReleaser artifacts.json and release files | n/a |
+| `--manifest` | release file manifest path | `$RELEASE_FILES_MANIFEST` |
 
 ### `reusable-ci release resolve`
 
@@ -1133,7 +1864,7 @@ compute version / version-no-v / project-name from the release inputs
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--version` | release version (e.g. v1.2.3 or 1.2.3) (required) | `$VERSION` |
-| `--repository` | "owner/repo" slug used to derive the default project name (required) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--repository` | "owner/repo" slug used to derive the default project name (required) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
 | `--artifact-name` | explicit project name override (skips the repo-basename heuristic) | `$ARTIFACT_NAME` |
 
 ### `reusable-ci release sbom-zip`
@@ -1161,15 +1892,34 @@ detach-sign checksums.sha256, release artifacts, and attached artifacts. Method 
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--checksums-file` | SHA256 manifest to sign (default: checksums.sha256) | `$CHECKSUMS_FILE` |
+| `--no-checksums-file` | do not sign the default or configured checksums file | n/a |
+| `--checksums-from-manifest` | use and validate the single checksums file from --manifest before signing it | n/a |
 | `--assembly` | release assembly manifest to sign exactly | `$RELEASE_ASSEMBLY` |
 | `--release-artifacts-dir` | directory whose files are each signed alongside the manifest | `$RELEASE_ARTIFACTS_DIR` |
+| `--no-release-artifacts-dir` | do not sign the default or configured release artifacts directory | n/a |
 | `--attach-artifacts` | comma-separated globs for extra files to sign | `$ATTACH_ARTIFACTS` |
+| `--file` | exact file to sign in place (repeatable; sidecar stays next to the file) | n/a |
+| `--manifest` | release file manifest used by --manifest-section and --checksums-from-manifest | `$RELEASE_FILES_MANIFEST` |
+| `--dist-dir` | dist directory used with --manifest | n/a |
+| `--manifest-section` | release file manifest section to sign exactly (repeatable): assets, checksums, sboms, evidence, provenance | n/a |
 | `--debug-allow-swap` | DEBUG ONLY — bypass the swap-refusal policy when /proc/swaps reports an active swap area; emits a loud Warning annotation. NOT FOR PRODUCTION RELEASES; the supported fix is to disable swap on the runner. See docs/verification.md#swap-policy. | n/a |
 | `--method` | signing backend: gpg (default; key from --private-key-file or $GPG_PRIVATE_KEY), sigstore (keyless cosign + OIDC), or kms (cosign + --key) | `$SIGN_METHOD` |
 | `--key` | cosign --key reference for --method=kms: KMS URI (awskms:///alias/X, hashivault://transit/keys/X, gcpkms://..., azurekms://...), PKCS#11 URI, or local key-file path. Forbidden for --method=gpg/sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: auto-detected — GitHub Actions / GitLab CI / $CI_SERVER_URL). Forbidden for --method=gpg/kms. | `$SIGN_OIDC_ISSUER` |
 | `--private-key-file` | path to the armored GPG private key for --method=gpg ("-" for stdin; defaults to $GPG_PRIVATE_KEY). Lets the key be passed via file/stdin instead of the environment. Forbidden for --method=sigstore/kms. | n/a |
 | `--passphrase-file` | path to the GPG passphrase for --method=gpg ("-" for stdin; defaults to $GPG_PASSPHRASE). Forbidden for --method=sigstore/kms. | n/a |
+
+### `reusable-ci release sign-publish-context`
+
+export the sign-and-publish workflow env contract
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--release-sha` | prepared release commit SHA (required) | `$RELEASE_SHA` |
+| `--tag` | stable release tag (required) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--artifact-path` | artifact extraction path whose normalized value becomes DIST_DIR | `$ARTIFACT_PATH` |
+| `--env-file` | runner env file receiving RELEASE_*, DIST_DIR, and state-dir entries (required) | `$FORGEJO_ENV`, `$GITHUB_ENV` |
+| `--runner-temp` | runner temp directory for the sign-and-publish state dir | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
 
 ### `reusable-ci release ssh`
 
@@ -1212,6 +1962,18 @@ verify a dist/ tree is structurally safe and matches an expected digest (cross-j
 |------|-------------|----------|
 | `--dist-dir` | directory to verify | n/a |
 | `--expected-digest` | expected dist digest (from the build job) | `$EXPECTED_DIGEST`, `$DIST_DIGEST` |
+| `--manifest-root` | path prefix written into the sha256sum manifest during digest recomputation (defaults to --dist-dir) | n/a |
+
+### `reusable-ci release verify-request`
+
+verify an SSH-signed release-request tag authorizes creating a final release tag
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--release-request` | release request tag (release-request/vMAJOR.MINOR.PATCH) (required) | `$RELEASE_REQUEST` |
+| `--tag` | final stable release tag (vMAJOR.MINOR.PATCH) (required) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--allowed-signers-file` | OpenSSH allowed_signers file for release-request SSH signatures (required) | `$RELEASE_REQUEST_ALLOWED_SIGNERS` |
+| `--remote` | git remote queried for request/final tags | n/a |
 
 ### `reusable-ci release verify-tag`
 
@@ -1345,7 +2107,7 @@ append the PR step-summary (quality table + run link)
 |------|-------------|----------|
 | `--project-type` | primary ecosystem of the project (shown in the header) | `$PROJECT_TYPE` |
 | `--source-branch` | PR source branch | `$CI_BRANCH` |
-| `--commit` | head commit SHA of the PR | `$CI_COMMIT`, `$CI_COMMIT_SHA`, `$FORGEJO_SHA`, `$GITHUB_SHA` |
+| `--commit` | head commit SHA of the PR | `$CI_COMMIT`, `$CI_COMMIT_SHA`, `$COMMIT_SHA`, `$FORGEJO_SHA`, `$GITHUB_SHA` |
 | `--actor` | user who opened/updated the PR | `$CI_ACTOR` |
 | `--run-url` | URL of the CI run linked from the summary | `$CI_RUN_URL` |
 | `--quality-stage-result-json` | inline JSON of the quality-stage result table | `$QUALITY_STAGE_RESULT_JSON` |
@@ -1373,7 +2135,7 @@ append the forge-native package-registry publish summary block to the step summa
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--repository` | "owner/repo" the package was published from | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--repository` | "owner/repo" the package was published from | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
 | `--package-type` | package type (maven/npm/container/…) | `$PACKAGE_TYPE` |
 | `--registry-name` | registry display name for the summary; defaults to the detected forge's (e.g. "GitHub Packages") | `$REGISTRY_NAME` |
 
@@ -1418,8 +2180,8 @@ append the release step-summary (job table + release/packages/run links)
 | `--prepare-stage-result-json` | inline JSON of the prepare-stage result table | `$PREPARE_STAGE_RESULT_JSON` |
 | `--build-stage-result-json` | inline JSON of the build-stage result table | `$BUILD_STAGE_RESULT_JSON` |
 | `--publish-stage-result-json` | inline JSON of the publish-stage result table | `$PUBLISH_STAGE_RESULT_JSON` |
-| `--server-url` | CI server base URL (used to build release/run links) | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$GITHUB_SERVER_URL` |
-| `--repository` | "owner/repo" used in the release link | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--server-url` | CI server base URL (used to build release/run links) | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
+| `--repository` | "owner/repo" used in the release link | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
 
 ### `reusable-ci report snapshot-release`
 
@@ -1436,7 +2198,7 @@ append the snapshot-release step-summary (job table, npm install snippet, and li
 | `--build-stage-result-json` | inline JSON of the dev-build stage result table | `$BUILD_STAGE_RESULT_JSON` |
 | `--publish-stage-result-json` | inline JSON of the dev-publish stage result table | `$PUBLISH_STAGE_RESULT_JSON` |
 | `--snapshot-artifacts-json` | inline JSON listing the snapshot artifacts shown in the summary | `$SNAPSHOT_ARTIFACTS_JSON` |
-| `--server-url` | CI server base URL (used to build artifact/run links) | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$GITHUB_SERVER_URL` |
+| `--server-url` | CI server base URL (used to build artifact/run links) | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
 
 ### `reusable-ci report stage-result`
 
@@ -1472,7 +2234,7 @@ append the release prerequisites validation report (tag/commit info, secrets, va
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--tag` | tag the release is anchored to (e.g. v1.2.3) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
-| `--commit-sha` | commit SHA the tag points at | `$COMMIT_SHA` |
+| `--commit-sha` | commit SHA the tag points at | `$CI_COMMIT`, `$CI_COMMIT_SHA`, `$COMMIT_SHA`, `$FORGEJO_SHA`, `$GITHUB_SHA` |
 | `--ref-type` | trigger ref type (tag/branch/…) | `$REF_TYPE`, `$FORGEJO_REF_TYPE`, `$GITHUB_REF_TYPE` |
 | `--config-plan-json` | typed config-plan JSON used to describe targets in the summary | `$CONFIG_PLAN_JSON` |
 | `--project-types` | comma-separated ecosystems detected in the project | `$PROJECT_TYPES` |
@@ -1540,7 +2302,7 @@ assemble a project's CISA SBOM layer set (harvest the build BOM + syft-scan arti
 | `--image-digest` | container mode: sha256:… digest pinning the exact image manifest | `$IMAGE_DIGEST` |
 | `--artifact-types` | container mode: ecosystems embedded in the multi-artifact container SBOM | `$ARTIFACT_TYPES` |
 | `--ref-name` | container mode: git ref name (leading "v" stripped) used in the SBOM filename | `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
-| `--repository` | container mode: "owner/repo" used to derive the project slug | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--repository` | container mode: "owner/repo" used to derive the project slug | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
 | `--sign` | cosign-sign each assembled SBOM (produces <file>.bundle); reuses the `release sign` signing path | `$SIGN_SBOMS` |
 | `--sign-method` | signing method when --sign: "sigstore" (keyless OIDC) or "kms" | `$SIGN_METHOD` |
 | `--sign-key` | cosign --key for --sign-method=kms (KMS/PKCS#11 URI or key-file path); forbidden for sigstore | `$SIGN_KEY` |
@@ -1618,8 +2380,8 @@ upload a SARIF file to the platform's code-scanning surface (GitHub Code Scannin
 |------|-------------|----------|
 | `--sarif-file` | SARIF file to upload to Code Scanning ("-" reads stdin) | `$SARIF_FILE` |
 | `--token-file` | path to a file containing the code-scanning token (use "-" for stdin; defaults to $CODE_SCANNING_TOKEN) | n/a |
-| `--repository` | "owner/repo" the SARIF findings are attributed to | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$GITHUB_REPOSITORY` |
-| `--commit` | commit SHA the SARIF findings are attributed to | `$CI_COMMIT`, `$CI_COMMIT_SHA`, `$FORGEJO_SHA`, `$GITHUB_SHA` |
+| `--repository` | "owner/repo" the SARIF findings are attributed to | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--commit` | commit SHA the SARIF findings are attributed to | `$CI_COMMIT`, `$CI_COMMIT_SHA`, `$COMMIT_SHA`, `$FORGEJO_SHA`, `$GITHUB_SHA` |
 | `--ref` | fully-qualified ref (refs/heads/X or refs/tags/X) for attribution | `$REF`, `$FORGEJO_REF`, `$GITHUB_REF` |
 | `--category` | Code Scanning category label (groups multi-scanner results) | `$SARIF_CATEGORY` |
 
@@ -1639,6 +2401,20 @@ run `trivy image`, derive SARIF/GitLab reports, and fail when findings hit the s
 | `--gitlab-report-file` | destination path for the GitLab container-scanning report | `$CONTAINER_GITLAB_FILE` |
 | `--fail-on-severity` | trivy --severity filter that also sets the fail threshold; any finding at this level or above fails the scan (comma-list, e.g. 'CRITICAL,HIGH'; narrow to 'CRITICAL' to relax) | `$CONTAINER_FAIL_ON_SEVERITY` |
 | `--trivy-version` | trivy version string embedded in the SARIF / GitLab report | `$TRIVY_VERSION` |
+
+#### `reusable-ci security scan container-json`
+
+run `trivy image`, retry transient failures, and validate raw JSON output shape
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--image-ref` | image reference to scan (required) | `$SCAN_CONTAINER_IMAGE_REF`, `$IMAGE_REF` |
+| `--platform` | OCI platform to scan, for example linux/amd64 or linux/arm64 | `$SCAN_CONTAINER_IMAGE_PLATFORM` |
+| `--output` | destination path for the Trivy JSON result (required) | `$SCAN_CONTAINER_IMAGE_OUTPUT` |
+| `--timeout` | Trivy scan timeout | `$SCAN_CONTAINER_IMAGE_TIMEOUT` |
+| `--attempts` | scan attempts before failing | `$SCAN_CONTAINER_IMAGE_ATTEMPTS` |
+| `--retry-delay-seconds` | base delay between scan retry attempts | `$SCAN_CONTAINER_IMAGE_RETRY_DELAY_SECONDS` |
+| `--scanners` | comma-separated Trivy scanners | `$SCAN_CONTAINER_IMAGE_SCANNERS` |
 
 #### `reusable-ci security scan dependencies`
 
@@ -1670,6 +2446,113 @@ run an opengrep SAST scan, emit findings + JSON/SARIF/text/GitLab-SAST artifacts
 | `--has-code-scanning-token` | code-scanning upload token is available (toggles step-summary upload section) | `$HAS_CODE_SCANNING_TOKEN` |
 | `--run-url` | CI run URL emitted in the step summary for the linked findings | `$CI_RUN_URL` |
 
+## `reusable-ci toolchain`
+
+bootstrap and expose CI toolchains
+
+### `reusable-ci toolchain cache-discriminator`
+
+emit setup-toolchain's stable tool-cache discriminator
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--tools` | whitespace-separated mise tool selectors requested by the caller | `$TOOLSET_TOOLS` |
+| `--install-dev-tools` | whether consumer dev-tool installers are enabled | `$TOOLSET_DEV` |
+| `--extra-cache-paths` | additional newline-separated cache paths | `$TOOLSET_EXTRA_PATHS` |
+
+### `reusable-ci toolchain expose-mise-tools`
+
+expose installed mise tool binaries to later CI steps
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--root` | repository root containing mise config | `$MISE_PROJECT_ROOT` |
+| `--bin-home` | directory where executable symlinks are written (default: $HOME/.local/bin) | `$TOOLCHAIN_BIN_HOME` |
+| `--path-file` | runner path file to append exposed bin directories to (required) | `$FORGEJO_PATH`, `$GITHUB_PATH` |
+| `--locked` | whether rustup cargo exposure should use locked mise mode: true\|false | `$MISE_LOCKED_INSTALL` |
+
+### `reusable-ci toolchain install-changelog-renderer`
+
+install the pinned changelog renderer in an isolated mise tree
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--backend` | changelog renderer backend: git-chglog or git-cliff (required) | `$CHANGELOG_BACKEND` |
+| `--git-chglog-version` | pinned git-chglog version | `$GIT_CHGLOG_VERSION` |
+| `--git-cliff-version` | pinned git-cliff version | `$GIT_CLIFF_VERSION` |
+| `--mise-version` | mise version without leading v (required) | `$MISE_VERSION` |
+| `--mise-linux-x64-sha256` | SHA-256 of mise-v<version>-linux-x64-musl.tar.gz (required) | `$MISE_LINUX_X64_MUSL_TAR_GZ_SHA256` |
+| `--mise-linux-arm64-sha256` | SHA-256 of mise-v<version>-linux-arm64-musl.tar.gz (required) | `$MISE_LINUX_ARM64_MUSL_TAR_GZ_SHA256` |
+| `--mise-base-url` | override mise release base URL for tests/mirrors | `$MISE_RELEASE_BASE_URL` |
+| `--bin-home` | directory where the renderer symlink is written (default: $HOME/.local/bin) | `$TOOLCHAIN_BIN_HOME` |
+| `--path-file` | runner path file to append the bin directory to (required) | `$FORGEJO_PATH`, `$GITHUB_PATH` |
+| `--runner-temp` | runner temp directory for the isolated mise tree | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
+| `--run-id` | run identifier used to name the isolated mise tree | `$CI_RUN_ID`, `$FORGEJO_RUN_ID`, `$GITHUB_RUN_ID` |
+
+### `reusable-ci toolchain install-mise`
+
+download, checksum-verify, and install the pinned mise binary
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--version` | mise version without leading v (required) | `$MISE_VERSION` |
+| `--linux-x64-sha256` | SHA-256 of mise-v<version>-linux-x64-musl.tar.gz (required) | `$MISE_LINUX_X64_MUSL_TAR_GZ_SHA256` |
+| `--linux-arm64-sha256` | SHA-256 of mise-v<version>-linux-arm64-musl.tar.gz (required) | `$MISE_LINUX_ARM64_MUSL_TAR_GZ_SHA256` |
+| `--dest-dir` | installation directory (default: $HOME/.local/bin) | `$MISE_INSTALL_DEST_DIR` |
+| `--base-url` | override release base URL for tests/mirrors (default: GitHub mise releases) | `$MISE_RELEASE_BASE_URL` |
+
+### `reusable-ci toolchain install-mise-tools`
+
+install mise-managed CI tools with runtime bootstrap and retry
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--root` | repository root containing mise config | `$MISE_PROJECT_ROOT` |
+| `--locked` | whether mise install should use locked mode: true\|false | `$MISE_LOCKED_INSTALL` |
+| `--tools` | whitespace-separated mise tool selectors to install instead of the full config | `$TOOLS_SUBSET`, `$MISE_TOOLS` |
+| `--mise-bin` | mise binary path (default: $HOME/.local/bin/mise when present, else mise from PATH) | `$MISE_BIN` |
+| `--retry-attempts` | attempts for the final mise install | `$MISE_INSTALL_RETRY_ATTEMPTS` |
+| `--retry-delay-seconds` | seconds between final mise install retry attempts | `$MISE_INSTALL_RETRY_DELAY_SECONDS` |
+
+### `reusable-ci toolchain install-system-dependencies`
+
+install apt bootstrap packages when apt-get is available
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--packages` | whitespace-separated apt package names to install (required) | `$SYSTEM_DEPENDENCY_PACKAGES` |
+| `--skip-if-missing-apt` | skip successfully when apt-get is unavailable | `$SKIP_IF_MISSING_APT` |
+
+### `reusable-ci toolchain setup-mise-env`
+
+write setup-toolchain mise PATH/env file entries
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--cache` | setup-toolchain cache mode: true\|false | `$SETUP_CACHE` |
+| `--bin-home` | directory containing exposed tool symlinks (default: $HOME/.local/bin) | `$TOOLCHAIN_BIN_HOME` |
+| `--path-file` | runner path file to append PATH entries to (required) | `$FORGEJO_PATH`, `$GITHUB_PATH` |
+| `--env-file` | runner env file receiving MISE_* directory exports (required) | `$FORGEJO_ENV`, `$GITHUB_ENV` |
+| `--runner-temp` | runner temp directory for isolated mise dirs | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
+
+### `reusable-ci toolchain trust-mise-config`
+
+trust the consumer repository mise config in the current directory
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--mise-bin` | mise binary path (default: $HOME/.local/bin/mise when present, else mise from PATH) | `$MISE_BIN` |
+
+### `reusable-ci toolchain validate-mise-install`
+
+validate setup-toolchain's mise install mode before token-bearing work
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--root` | repository root containing mise config | `$MISE_PROJECT_ROOT` |
+| `--locked` | whether mise install will run in locked mode: true\|false | `$MISE_LOCKED_INSTALL` |
+| `--github-token-present` | whether the caller has a GitHub rate-limit token; pass presence only, never the token | `$MISE_GITHUB_TOKEN_PRESENT` |
+
 ## `reusable-ci validate`
 
 fail-fast pre-flight validators (tag, workflow, auth, secret, …)
@@ -1699,7 +2582,7 @@ probe the configured release-bot token's repo + branch access
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--repository` | "owner/repo" on GitHub; "group/project[/sub]" on GitLab (required) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--repository` | "owner/repo" on GitHub; "group/project[/sub]" on GitLab (required) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
 
 #### `reusable-ci validate auth registry`
 
@@ -1718,7 +2601,7 @@ validate a release-bot token against the platform API
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--token-file` | path to a file containing the release-bot token (use "-" for stdin; defaults to $RELEASE_TOKEN) | n/a |
-| `--repository` | "owner/repo" on GitHub; "group/project[/sub]" on GitLab (required) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--repository` | "owner/repo" on GitHub; "group/project[/sub]" on GitLab (required) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
 
 ### `reusable-ci validate cargo`
 
@@ -1782,6 +2665,10 @@ assert SLSA Build L3 job isolation (build job has no signing secrets; checkouts 
 |------|-------------|----------|
 | `--workflow` | path to the workflow file to check (required) | n/a |
 | `--build-job` | the artifact-producing job that must not see signing secrets | n/a |
+| `--sign-job` | cross-repo signing workflow call-site job; enables Forgejo release-signing channel checks | n/a |
+| `--prepare-job` | job that emits release-tag/release-sha and may check signing-secret presence before checkout | n/a |
+| `--dist-digest-output` | build job output carrying the dist-digest passed to the signer | n/a |
+| `--single-pin-subject` | subject whose @<sha> refs must agree across the workflow directory (for forgejo-ci: itiquette/forgejo-ci) | n/a |
 | `--signing-secret` | signing secret name forbidden in the build job (repeatable) | n/a |
 
 ### `reusable-ci validate job-graph`
@@ -1791,6 +2678,8 @@ reject reusable-call jobs that read a skippable producer's outputs (masks the re
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--root` | repository root containing .github/workflows | n/a |
+| `--workflows-dir` | workflow directory to scan (defaults to <root>/.github/workflows) | n/a |
+| `--workflow` | exact workflow file to check instead of scanning the workflow directory (repeatable) | n/a |
 
 ### `reusable-ci validate jvm-reproducibility`
 
@@ -1799,6 +2688,19 @@ warn when Maven/Gradle artefacts lack reproducible-build settings (outputTimesta
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--config-plan-json` | typed config-plan JSON (output of 'config parse-artifacts') | `$CONFIG_PLAN_JSON` |
+
+### `reusable-ci validate pin-reachability`
+
+reject forgejo-ci commit pins that are no longer reachable from main or any tag
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--root` | repository root used to resolve relative workflow paths | n/a |
+| `--workflow` | workflow file to scan for forgejo-ci pins (repeatable; required) | n/a |
+| `--remote` | forgejo-ci git remote to clone when --repo-dir is unset | `$FORGEJO_CI_REMOTE` |
+| `--repo-dir` | local forgejo-ci clone to check instead of cloning --remote | `$FORGEJO_CI_DIR` |
+| `--main` | branch ref treated as current main | `$FORGEJO_CI_MAIN` |
+| `--subject` | pin subject to scan before @<sha> | n/a |
 
 ### `reusable-ci validate prerequisites`
 
@@ -1810,7 +2712,7 @@ run all release-prerequisite validators concurrently and append a summary table
 | `--ref-type` | trigger ref type ("tag" required for releases) | `$REF_TYPE`, `$FORGEJO_REF_TYPE`, `$GITHUB_REF_TYPE` |
 | `--ref` | fully-qualified ref (refs/tags/X) for prefix verification | `$REF`, `$FORGEJO_REF`, `$GITHUB_REF` |
 | `--target-branch` | branch the tag commit must be reachable from | `$TARGET_BRANCH`, `$BRANCH` |
-| `--repository` | "owner/repo" on GitHub; "group/project[/sub]" on GitLab | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--repository` | "owner/repo" on GitHub; "group/project[/sub]" on GitLab | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
 | `--require-allowlisted-signer` | require the tag signer to be allowlisted in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_keys.asc (GPG) | `$REQUIRE_ALLOWLISTED_SIGNER` |
 | `--sign-artifacts` | require a GPG public key (release-artifact signing is enabled) | `$SIGN_ARTIFACTS` |
 | `--has-maven-central` | the plan targets Maven Central (enables credential check) | `$HAS_MAVEN_CENTRAL_TARGET` |
@@ -1869,6 +2771,15 @@ validate a tag against the project's permissive semver pattern
 |------|-------------|----------|
 | `--tag` | tag name (e.g. v1.2.3) (required) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 
+#### `reusable-ci validate tag release-guard`
+
+validate a stable release tag or release-request tag and emit normalized outputs
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--tag` | final tag or release-request tag to validate (required) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--pattern` | anchored regex the final tag must fully match | `$RELEASE_TAG_PATTERN` |
+
 #### `reusable-ci validate tag signature`
 
 verify a tag is annotated and cryptographically signed (GPG or SSH)
@@ -1876,7 +2787,7 @@ verify a tag is annotated and cryptographically signed (GPG or SSH)
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--tag` | tag name (e.g. v1.2.3) (required) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
-| `--repository` | repository slug used in error messages and SSH allowed-signers lookup | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$GITHUB_REPOSITORY` |
+| `--repository` | repository slug used in error messages and SSH allowed-signers lookup | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
 | `--release-gpg-public-key` | armored GPG public key to import before verification | `$RELEASE_GPG_PUBLIC_KEY` |
 | `--require-allowlisted-signer` | require the signer to appear in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_keys.asc (GPG); missing/empty allowlist or unverifiable signature fails closed | `$REQUIRE_ALLOWLISTED_SIGNER` |
 | `--allowed-signers-file` | override the default SSH allowed_signers path (default: .reusable-ci/allowed_signers) | `$ALLOWED_SIGNERS_FILE` |
@@ -1928,6 +2839,27 @@ rewrite the version-of-record (Maven POM / package.json / gradle.properties / .x
 | `--xcode-version-file` | path to the xcconfig file holding MARKETING_VERSION (xcode-ios only) | `$XCODE_VERSION_FILE` |
 | `--maven-cli-opts` | extra args forwarded to mvn (whitespace-separated, e.g. "-B -ntp") | `$MAVEN_CLI_OPTS` |
 
+### `reusable-ci version commit-changelog-release`
+
+SSH-sign a pre-rendered changelog commit, push main without force, create the final release tag once
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--tag` | final stable release tag to create (vMAJOR.MINOR.PATCH) (required) | `$RELEASE_TAG`, `$TAG_NAME` |
+| `--repository` | repository in owner/name form (required) | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--branch` | branch to push the signed changelog commit to | `$RELEASE_BRANCH`, `$BRANCH` |
+| `--changelog` | pre-generated changelog file to commit | `$CHANGELOG_PATH` |
+| `--commit-message-file` | pre-generated commit message file used with git commit -F | `$COMMIT_MESSAGE_FILE` |
+| `--author-name` | git user.name for the release bump commit | `$GIT_USER_NAME`, `$COMMIT_AUTHOR_NAME` |
+| `--author-email` | git user.email for the release bump commit | `$GIT_USER_EMAIL`, `$COMMIT_AUTHOR_EMAIL` |
+| `--private-key-file` | path to the OpenSSH private signing key (use '-' for stdin; defaults to $SSH_SIGNING_KEY) | n/a |
+| `--host` | SSH host for origin and known_hosts pinning | `$RELEASE_GIT_HOST` |
+| `--host-key-type` | host key type passed to ssh-keyscan | `$RELEASE_GIT_HOST_KEY_TYPE` |
+| `--host-key-fingerprint` | expected SSH host key fingerprint | `$RELEASE_GIT_HOST_KEY_FINGERPRINT` |
+| `--no-sign` | skip final tag signing (intended for tests; production always signs) | n/a |
+| `--signed` | create a signed final tag; set TAG_RELEASE_SIGNED=false for unsigned annotated test tags | `$TAG_RELEASE_SIGNED` |
+| `--token` | optional token for HTTP remotes; the Forgejo release flow uses the SSH key instead | `$RELEASE_TOKEN`, `$CI_TOKEN`, `$FORGEJO_TOKEN`, `$GITHUB_TOKEN` |
+
 ### `reusable-ci version commit-push`
 
 stage a file pattern, commit with --signoff, push to a branch (no-op when nothing changed)
@@ -1948,6 +2880,9 @@ derive the release tag, version and original-tagger commit trailers from the pus
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--ref` | the pushed ref (e.g. release-request/v1.2.3) (required) | `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--require-release-request` | reject refs outside release-request/vMAJOR.MINOR.PATCH | `$RELEASE_CONTEXT_REQUIRE_REQUEST` |
+| `--require-stable` | reject final tags outside stable vMAJOR.MINOR.PATCH | `$RELEASE_CONTEXT_REQUIRE_STABLE` |
+| `--trailer-mode` | commit trailer mode: default or forgejo-ci | `$RELEASE_CONTEXT_TRAILER_MODE` |
 
 ### `reusable-ci version file-pattern`
 
@@ -1966,6 +2901,24 @@ print a development version tag (`&lt;base&gt;-snapshot-&lt;branch&gt;-&lt;short
 |------|-------------|----------|
 | `--ref-name` | source branch / ref to sanitise into the snapshot-version suffix | `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 
+### `reusable-ci version render-changelog`
+
+render CHANGELOG.md and commit-msg.txt with git-chglog or git-cliff, preserving same-version recovery
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--backend` | changelog renderer backend: git-chglog or git-cliff | `$CHANGELOG_BACKEND` |
+| `--tag` | final stable release tag (vMAJOR.MINOR.PATCH) (required) | `$RELEASE_TAG`, `$TAG_NAME` |
+| `--changelog-config` | renderer config for CHANGELOG.md (required) | `$CHANGELOG_CONFIG` |
+| `--commit-body-config` | renderer config for the release bump commit body (required) | `$COMMIT_BODY_CONFIG` |
+| `--commit-trailers` | commit trailers appended after [skip ci] | `$COMMIT_TRAILERS` |
+| `--changelog-path` | output changelog path | `$CHANGELOG_PATH` |
+| `--commit-body-path` | output commit body path | `$COMMIT_BODY_PATH` |
+| `--commit-message-file` | output commit message path | `$COMMIT_MESSAGE_FILE` |
+| `--existing-release-sha-file` | marker file written when same-version recovery reuses an existing release tag | `$EXISTING_RELEASE_SHA_FILE` |
+| `--remote` | git remote to query | `$RELEASE_REMOTE` |
+| `--branch` | branch containing the release bump | `$RELEASE_BRANCH`, `$BRANCH` |
+
 ### `reusable-ci version tag-release`
 
 create the final release tag once at HEAD (the bump commit) and push it without --force; refuses to move an existing tag
@@ -1974,4 +2927,5 @@ create the final release tag once at HEAD (the bump commit) and push it without 
 |------|-------------|----------|
 | `--tag` | final release tag to create (e.g. v1.2.3) (required) | `$RELEASE_TAG`, `$TAG_NAME` |
 | `--no-sign` | skip GPG signing (intended for tests; production always signs) | n/a |
+| `--signed` | create a signed tag; set TAG_RELEASE_SIGNED=false for unsigned annotated test tags | `$TAG_RELEASE_SIGNED` |
 | `--token` | token authenticating the tag push; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`). | `$RELEASE_TOKEN`, `$CI_TOKEN`, `$FORGEJO_TOKEN`, `$GITHUB_TOKEN` |

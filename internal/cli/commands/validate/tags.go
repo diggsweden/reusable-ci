@@ -24,10 +24,42 @@ func tagGroup() *cli.Command {
 		Name:  "tag", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Usage: "validate one aspect of a release tag",
 		Commands: []*cli.Command{
+			tagReleaseGuardCmd(),
 			tagFormatCmd(),
 			tagUniquenessCmd(),
 			tagCommitCmd(),
 			tagSignatureCmd(),
+		},
+	}
+}
+
+func tagReleaseGuardCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "release-guard",
+		Usage: "validate a stable release tag or release-request tag and emit normalized outputs",
+		Description: `EXAMPLE:
+   reusable-ci validate tag release-guard --tag release-request/v1.2.3`,
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:     "tag",
+				Required: true,
+				Sources:  cienv.Tag(),
+				Usage:    "final tag or release-request tag to validate",
+			},
+			&cli.StringFlag{
+				Name:    "pattern",
+				Value:   `^v[0-9]+[.][0-9]+[.][0-9]+$`,
+				Sources: cli.EnvVars("RELEASE_TAG_PATTERN"),
+				Usage:   "anchored regex the final tag must fully match",
+			},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
+				return appvalidate.ReleaseTagGuard(ctx, d.OutputSink, os.Stderr, appvalidate.ReleaseTagGuardInput{
+					Tag:     cmd.String("tag"),
+					Pattern: cmd.String("pattern"),
+				})
+			})
 		},
 	}
 }

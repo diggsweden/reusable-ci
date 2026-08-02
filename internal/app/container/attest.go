@@ -15,6 +15,14 @@ import (
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
 
+// cosign --type aliases for the predicate kinds this package attests and
+// verifies, plus the syft output format used when generating SBOMs.
+const (
+	predicateTypeSLSAProvenance1 = "slsaprovenance1"
+	predicateTypeCycloneDX       = "cyclonedx"
+	sbomFormatCycloneDXJSON      = "cyclonedx-json"
+)
+
 // AttestImageInput drives `reusable-ci container attest`. It attaches a
 // signed in-toto attestation (SLSA provenance or an SBOM) to an image
 // digest via cosign — portable and verifiable with `cosign
@@ -124,7 +132,7 @@ func resolvePredicate(in AttestImageInput) (string, string, func(), error) {
 			"container attest: --type slsaprovenance is SLSA v0.2 and unsupported; use --type slsaprovenance1 (SLSA v1.0): %w", errs.ErrUsage)
 	}
 
-	if in.PredicateType != "slsaprovenance1" {
+	if in.PredicateType != predicateTypeSLSAProvenance1 {
 		return "", "", noop, fmt.Errorf("container attest: --predicate is required for type %q: %w", in.PredicateType, errs.ErrMissingInput)
 	}
 
@@ -147,5 +155,5 @@ func resolvePredicate(in AttestImageInput) (string, string, func(), error) {
 
 	_ = file.Close()
 
-	return file.Name(), "slsaprovenance1", func() { _ = os.Remove(file.Name()) }, nil
+	return file.Name(), predicateTypeSLSAProvenance1, func() { _ = os.Remove(file.Name()) }, nil
 }

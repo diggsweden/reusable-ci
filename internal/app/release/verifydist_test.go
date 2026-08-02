@@ -41,30 +41,24 @@ func writeDist(t *testing.T) string {
 	return dist
 }
 
-// TestDistDigest_MatchesShellPipeline proves byte-compatibility with
-// forgejo-ci's dist-digest.sh by running the exact pipeline and comparing.
-// Skips when the coreutils tools aren't available.
-func TestDistDigest_MatchesShellPipeline(t *testing.T) {
-	t.Parallel()
+func requireShellDigestTools(t *testing.T) {
+	t.Helper()
 
 	for _, tool := range []string{"bash", "find", "sort", "sha256sum", "xargs", "awk"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("missing %s; skipping shell cross-check", tool)
 		}
 	}
+}
 
-	dist := writeDist(t)
-
-	got, err := apprelease.DistDigest(dist)
-	if err != nil {
-		t.Fatal(err)
-	}
+func shellDigest(t *testing.T, dir string) string {
+	t.Helper()
 
 	// The exact dist-digest.sh pipeline, run under the C locale (matches
-	// byte-sort). dist is passed as $1 so both Go and the shell hash the
-	// same absolute paths.
+	// byte-sort). dir is passed as $1 so both Go and the shell hash the
+	// same paths.
 	script := `find "$1" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'`
-	cmd := exec.CommandContext(t.Context(), "bash", "-c", script, "bash", dist) //nolint:gosec // fixed script, test-only.
+	cmd := exec.CommandContext(t.Context(), "bash", "-c", script, "bash", dir) //nolint:gosec // fixed script, test-only.
 
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 
@@ -73,7 +67,80 @@ func TestDistDigest_MatchesShellPipeline(t *testing.T) {
 		t.Fatalf("shell pipeline: %v", err)
 	}
 
-	want := strings.TrimSpace(string(out))
+	return strings.TrimSpace(string(out))
+}
+
+func shellDigestFromInside(t *testing.T, dir string) string {
+	t.Helper()
+
+	// Nanolinter's image-input hand-off historically digested artifact contents
+	// from inside the staging directory so both producer and verifier wrote
+	// ./<file> paths even though the outer artifact directory names differed.
+	script := `cd "$1" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'`
+	cmd := exec.CommandContext(t.Context(), "bash", "-c", script, "bash", dir) //nolint:gosec // fixed script, test-only.
+
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("shell pipeline: %v", err)
+	}
+
+	return strings.TrimSpace(string(out))
+}
+
+// TestDistDigest_MatchesShellPipeline proves byte-compatibility with
+// forgejo-ci's dist-digest.sh by running the exact pipeline and comparing.
+// Skips when the coreutils tools aren't available.
+func TestDistDigest_MatchesShellPipeline(t *testing.T) {
+	t.Parallel()
+
+	requireShellDigestTools(t)
+
+	dist := writeDist(t)
+
+	got, err := apprelease.DistDigest(dist)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := shellDigest(t, dist)
+	if got != want {
+		t.Errorf("DistDigest = %s, shell pipeline = %s", got, want)
+	}
+}
+
+func TestDistDigest_ManifestRootDotMatchesChdirPipeline(t *testing.T) {
+	t.Parallel()
+
+	requireShellDigestTools(t)
+
+	dist := writeDist(t)
+
+	got, err := apprelease.DistDigestWithManifestRoot(dist, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := shellDigestFromInside(t, dist)
+	if got != want {
+		t.Errorf("DistDigestWithManifestRoot = %s, shell pipeline = %s", got, want)
+	}
+}
+
+func TestDistDigest_DotDirMatchesShellPipeline(t *testing.T) {
+	requireShellDigestTools(t)
+
+	dist := writeDist(t)
+
+	t.Chdir(dist)
+
+	got, err := apprelease.DistDigest(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := shellDigest(t, ".")
 	if got != want {
 		t.Errorf("DistDigest = %s, shell pipeline = %s", got, want)
 	}
@@ -114,5 +181,18 @@ func TestVerifyDist_RejectsSymlink(t *testing.T) {
 	digest, _ := apprelease.DistDigest(dist)
 	if err := apprelease.VerifyDist(dist, digest); !errors.Is(err, errs.ErrValidation) {
 		t.Errorf("a symlink in dist must be rejected, got %v", err)
+	}
+}
+
+func TestDistDigest_RejectsEmptyTree(t *testing.T) {
+	t.Parallel()
+
+	dist := filepath.Join(t.TempDir(), "dist")
+	if err := os.Mkdir(dist, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := apprelease.DistDigest(dist); !errors.Is(err, errs.ErrValidation) {
+		t.Errorf("empty dist should be a validation error, got %v", err)
 	}
 }

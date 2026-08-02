@@ -6,10 +6,12 @@ package validate_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	appvalidate "github.com/diggsweden/reusable-ci/v3/internal/app/validate"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
@@ -131,6 +133,66 @@ func TestTagFormat_BadTagShowsHelp(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err missing %q: %s", want, err.Error())
 		}
+	}
+}
+
+func TestReleaseTagGuard_StableTagOutputsReleaseTag(t *testing.T) {
+	t.Parallel()
+
+	sink := fakeoutputsink.New(t)
+
+	var out bytes.Buffer
+	if err := appvalidate.ReleaseTagGuard(context.Background(), sink, &out, appvalidate.ReleaseTagGuardInput{Tag: "refs/tags/v1.2.3"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := sink.Single("release-tag"); got != "v1.2.3" {
+		t.Fatalf("release-tag = %q", got)
+	}
+
+	if got := sink.Single("release-request"); got != "" {
+		t.Fatalf("release-request = %q", got)
+	}
+
+	if !strings.Contains(out.String(), "Release tag accepted: v1.2.3") {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestReleaseTagGuard_RequestTagOutputsBothValues(t *testing.T) {
+	t.Parallel()
+
+	sink := fakeoutputsink.New(t)
+
+	var out bytes.Buffer
+	if err := appvalidate.ReleaseTagGuard(context.Background(), sink, &out, appvalidate.ReleaseTagGuardInput{Tag: "release-request/v2.3.4"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := sink.Single("release-tag"); got != "v2.3.4" {
+		t.Fatalf("release-tag = %q", got)
+	}
+
+	if got := sink.Single("release-request"); got != "release-request/v2.3.4" {
+		t.Fatalf("release-request = %q", got)
+	}
+
+	if !strings.Contains(out.String(), "Release request accepted: release-request/v2.3.4 -> v2.3.4") {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestReleaseTagGuard_RejectsPrereleaseAndUnanchoredPattern(t *testing.T) {
+	t.Parallel()
+
+	err := appvalidate.ReleaseTagGuard(context.Background(), nil, &bytes.Buffer{}, appvalidate.ReleaseTagGuardInput{Tag: "v1.2.3-rc.1"})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("prerelease err = %v, want ErrValidation", err)
+	}
+
+	err = appvalidate.ReleaseTagGuard(context.Background(), nil, &bytes.Buffer{}, appvalidate.ReleaseTagGuardInput{Tag: "v1.2.3", Pattern: "v[0-9]+"})
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("pattern err = %v, want ErrUsage", err)
 	}
 }
 

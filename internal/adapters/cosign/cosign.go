@@ -287,6 +287,18 @@ type AttestImageInput struct {
 	KeyRef string
 }
 
+// PublicKey writes `cosign public-key --key <ref>` to out. It is used by
+// signer-boundary commands that need to verify registry-published evidence with
+// the public key derived from the private signing material, without exporting
+// that public key through workflow shell.
+func (a *Adapter) PublicKey(ctx context.Context, keyRef string, out, errOut io.Writer) error {
+	if keyRef == "" {
+		return fmt.Errorf("cosign public-key: key reference is empty: %w", errs.ErrUsage)
+	}
+
+	return a.runWithStdout(ctx, out, errOut, "public-key", "--key", keyRef)
+}
+
 // AttestImage runs `cosign attest`, producing a signed in-toto
 // attestation stored in the registry alongside the image. Returns
 // errs.ErrUsage on inconsistent input; cosign's exit error otherwise.
@@ -412,6 +424,14 @@ type VerifyAttestationInput struct {
 // OCI image reference. Exit 0 → an attestation of that type verifies and the
 // identity constraints match. errOut receives the redacted cosign stderr.
 func (a *Adapter) VerifyAttestation(ctx context.Context, in VerifyAttestationInput, errOut io.Writer) error {
+	return a.VerifyAttestationOutput(ctx, in, nil, errOut)
+}
+
+// VerifyAttestationOutput runs `cosign verify-attestation --type <type>` and
+// writes cosign's verified in-toto statement(s) to out. This is used by
+// higher-level verifiers that need to inspect predicate fields after cosign has
+// checked the signature, identity, and subject binding.
+func (a *Adapter) VerifyAttestationOutput(ctx context.Context, in VerifyAttestationInput, out, errOut io.Writer) error {
 	if err := in.validate(); err != nil {
 		return err
 	}
@@ -430,7 +450,7 @@ func (a *Adapter) VerifyAttestation(ctx context.Context, in VerifyAttestationInp
 
 	args = append(args, in.ImageRef)
 
-	return a.run(ctx, errOut, args...)
+	return a.runWithStdout(ctx, out, errOut, args...)
 }
 
 func (in VerifyAttestationInput) validate() error {
@@ -514,6 +534,10 @@ func (a *Adapter) CopyImage(ctx context.Context, in CopyImageInput, errOut io.Wr
 // errOut. This keeps a hypothetical regression in cosign that echoes
 // key material on error from leaking into CI logs.
 func (a *Adapter) run(ctx context.Context, errOut io.Writer, args ...string) error {
+	return a.runWithStdout(ctx, nil, errOut, args...)
+}
+
+func (a *Adapter) runWithStdout(ctx context.Context, out, errOut io.Writer, args ...string) error {
 	cmd := safeexec.Command(ctx, a.bin(), args...)
 	if a.Env != nil {
 		cmd.Env = a.Env
@@ -521,6 +545,7 @@ func (a *Adapter) run(ctx context.Context, errOut io.Writer, args ...string) err
 
 	var stderr bytes.Buffer
 
+	cmd.Stdout = out
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()

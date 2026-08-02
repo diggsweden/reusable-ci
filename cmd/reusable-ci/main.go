@@ -29,7 +29,7 @@ import (
 // panic per clig.dev §Errors ("make it effortless to submit bug
 // reports"). Kept as a package-level constant rather than reaching for
 // it from cli.Description so the panic path stays self-contained.
-const bugReportURL = "https://github.com/diggsweden/reusable-ci/v3/issues/new"
+const bugReportURL = "https://github.com/diggsweden/reusable-ci/issues/new"
 
 // Build metadata, injected via -ldflags at link time. See justfile / .goreleaser.yml.
 //

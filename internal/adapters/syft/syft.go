@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
 
@@ -19,6 +20,10 @@ import (
 // Adapter wraps the syft binary. Bin is overridable for tests.
 type Adapter struct {
 	Bin string // empty → "syft"
+	// UnsetEnv removes sensitive variables from the syft subprocess environment.
+	// Most callers leave this nil; signer-boundary callers use it so SBOM
+	// generation cannot inherit signing or registry tokens.
+	UnsetEnv []string
 }
 
 // New returns an Adapter using the system syft.
@@ -54,6 +59,9 @@ func (a *Adapter) Generate(ctx context.Context, target string, outputs map[strin
 	}
 
 	cmd := safeexec.Command(ctx, a.bin(), args...)
+	if len(a.UnsetEnv) > 0 {
+		cmd.Env = envWithout(os.Environ(), a.UnsetEnv)
+	}
 
 	cmd.Stderr = errOut
 	if err := cmd.Run(); err != nil {
@@ -61,6 +69,23 @@ func (a *Adapter) Generate(ctx context.Context, target string, outputs map[strin
 	}
 
 	return nil
+}
+
+func envWithout(env, names []string) []string {
+	drop := make(map[string]bool, len(names))
+	for _, name := range names {
+		drop[name] = true
+	}
+
+	out := env[:0]
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if !drop[name] {
+			out = append(out, kv)
+		}
+	}
+
+	return out
 }
 
 // RunInherit invokes `syft` with args, streaming stdout/stderr to the

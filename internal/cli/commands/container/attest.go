@@ -54,10 +54,10 @@ func attestCmd() *cli.Command {
 			),
 			&cli.StringFlag{Name: "builder-id", Sources: cli.EnvVars("BUILDER_ID"), Usage: "override the SLSA provenance builder.id (e.g. an operator's documented KMS builder identity for an isolated L3 attestor); defaults to the CI-derived workflow identity"},
 			&cli.StringFlag{Name: flagFlavor, Sources: cli.EnvVars("BUILD_FLAVOR"), Usage: "build variant recorded as externalParameters.flavor (e.g. a ci-builder flavor like \"rust\")"},
-			&cli.StringFlag{Name: "base-input-id", Sources: cli.EnvVars("BASE_INPUT_ID"), Usage: "sha256 content id of this build's base inputs, recorded as externalParameters.base_input_id (the SLSA-standard home for base lineage)"},
+			&cli.StringFlag{Name: flagBaseInputID, Sources: cli.EnvVars("BASE_INPUT_ID"), Usage: "sha256 content id of this build's base inputs, recorded as externalParameters.base_input_id (the SLSA-standard home for base lineage)"},
 			&cli.StringFlag{Name: "base-ref", Sources: cli.EnvVars("BASE_IMAGE_REF"), Usage: "the base image this was built FROM, recorded as a resolvedDependency annotated role=base-image (requires --base-digest)"},
 			&cli.StringFlag{Name: "base-digest", Sources: cli.EnvVars("BASE_IMAGE_DIGEST"), Usage: "sha256 digest of --base-ref (with or without the sha256: prefix)"},
-			&cli.BoolFlag{Name: "recursive", Value: true, Sources: cli.EnvVars("ATTEST_RECURSIVE"), Usage: "also attest each per-arch child of a manifest list (one provenance for the whole release). Default true."},
+			&cli.BoolFlag{Name: flagRecursive, Value: true, Sources: cli.EnvVars("ATTEST_RECURSIVE"), Usage: "also attest each per-arch child of a manifest list (one provenance for the whole release). Default true."},
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			image := cmd.Args().First()
@@ -76,7 +76,7 @@ func attestCmd() *cli.Command {
 			}
 
 			prov.Flavor = cmd.String(flagFlavor)
-			prov.BaseInputID = cmd.String("base-input-id")
+			prov.BaseInputID = cmd.String(flagBaseInputID)
 
 			baseRef, baseDigest := cmd.String("base-ref"), cmd.String("base-digest")
 			if (baseRef == "") != (baseDigest == "") {
@@ -93,7 +93,7 @@ func attestCmd() *cli.Command {
 				PredicateType: cmd.String("type"),
 				PredicatePath: cmd.String("predicate"),
 				Provenance:    prov,
-				Recursive:     cmd.Bool("recursive"),
+				Recursive:     cmd.Bool(flagRecursive),
 				KeyRef:        cmd.String("key"),
 				OIDCIssuer:    cmd.String("oidc-issuer"),
 			})

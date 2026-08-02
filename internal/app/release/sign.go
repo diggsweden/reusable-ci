@@ -40,10 +40,17 @@ type Signer interface {
 
 // SignInput drives `reusable-ci release sign`.
 type SignInput struct {
-	ChecksumsFile       string // default: domainrelease.ChecksumsFile
-	ReleaseArtifactsDir string // default: ./release-artifacts; signatures land in cwd as <basename>.asc
-	AttachArtifacts     string // comma-separated glob list; signatures land in cwd as <basename>.asc
-	AssemblyFile        string // when set, sign exactly the staged release assembly
+	ChecksumsFile           string // default: domainrelease.ChecksumsFile
+	SkipChecksumsFile       bool
+	ReleaseArtifactsDir     string // default: ./release-artifacts; signatures land in cwd as <basename>.asc
+	SkipReleaseArtifactsDir bool
+	AttachArtifacts         string // comma-separated glob list; signatures land in cwd as <basename>.asc
+	Files                   []string
+	AssemblyFile            string // when set, sign exactly the staged release assembly
+	ReleaseFilesManifest    string // release-file manifest used by ManifestSections / ChecksumsFromManifest
+	ReleaseFilesDistDir     string // dist directory used by ReleaseFilesManifest
+	ManifestSections        []string
+	ChecksumsFromManifest   bool
 }
 
 // SignArtifacts signs the checksums file in place (if present), each release
@@ -59,25 +66,109 @@ func SignArtifacts(ctx context.Context, signer Signer, out io.Writer, in SignInp
 		return signAssemblyArtifacts(ctx, signer, out, in.AssemblyFile)
 	}
 
-	if in.ChecksumsFile == "" {
-		in.ChecksumsFile = domainrelease.ChecksumsFile
+	resolved, err := resolveSignInput(in)
+	if err != nil {
+		return err
 	}
 
-	if in.ReleaseArtifactsDir == "" {
-		in.ReleaseArtifactsDir = domainrelease.DefaultReleaseArtifactsDir
+	in = resolved
+
+	if !in.SkipChecksumsFile {
+		if checksumErr := signChecksumsIfPresent(ctx, signer, in.ChecksumsFile, out); checksumErr != nil {
+			return checksumErr
+		}
 	}
 
-	if err := signChecksumsIfPresent(ctx, signer, in.ChecksumsFile, out); err != nil {
+	sectionFiles, err := releaseFilesManifestSectionFiles(in)
+	if err != nil {
+		return err
+	}
+
+	in.Files = append(in.Files, sectionFiles...)
+
+	if err := signExactFiles(ctx, signer, out, in.Files); err != nil {
 		return err
 	}
 
 	signAsset := newAssetSigner(ctx, signer, out)
 
-	if err := signReleaseArtifactsDir(in.ReleaseArtifactsDir, signAsset, out); err != nil {
-		return err
+	if !in.SkipReleaseArtifactsDir {
+		if err := signReleaseArtifactsDir(in.ReleaseArtifactsDir, signAsset, out); err != nil {
+			return err
+		}
 	}
 
 	return signAttachArtifacts(in.AttachArtifacts, out, signAsset)
+}
+
+// resolveSignInput applies the checksums-file and release-artifacts-dir
+// defaults and resolves --checksums-from-manifest before any signing starts.
+func resolveSignInput(in SignInput) (SignInput, error) {
+	if in.ChecksumsFile == "" && !in.SkipChecksumsFile {
+		in.ChecksumsFile = domainrelease.ChecksumsFile
+	}
+
+	if in.ChecksumsFromManifest {
+		checksumFile, err := manifestChecksumsFile(in)
+		if err != nil {
+			return in, err
+		}
+
+		in.ChecksumsFile = checksumFile
+	}
+
+	if in.ReleaseArtifactsDir == "" && !in.SkipReleaseArtifactsDir {
+		in.ReleaseArtifactsDir = domainrelease.DefaultReleaseArtifactsDir
+	}
+
+	return in, nil
+}
+
+// manifestChecksumsFile validates the --checksums-from-manifest flag
+// combination and returns the manifest's single validated checksums file.
+func manifestChecksumsFile(in SignInput) (string, error) {
+	if in.SkipChecksumsFile {
+		return "", fmt.Errorf("sign: --checksums-from-manifest conflicts with skipping checksums: %w", errs.ErrInvalidConfig)
+	}
+
+	if in.ChecksumsFile != "" && in.ChecksumsFile != domainrelease.ChecksumsFile {
+		return "", fmt.Errorf("sign: --checksums-from-manifest conflicts with explicit checksums file %q: %w", in.ChecksumsFile, errs.ErrInvalidConfig)
+	}
+
+	checksumFile, err := FindReleaseChecksumFile(releaseFilesSignInput(in))
+	if err != nil {
+		return "", err
+	}
+
+	if err := ValidateReleaseChecksums(ValidateReleaseChecksumsInput{FilesInput: releaseFilesSignInput(in), ChecksumsFile: checksumFile}); err != nil {
+		return "", err
+	}
+
+	return checksumFile, nil
+}
+
+func releaseFilesSignInput(in SignInput) FilesInput {
+	return FilesInput{DistDir: in.ReleaseFilesDistDir, ManifestFile: in.ReleaseFilesManifest}
+}
+
+func releaseFilesManifestSectionFiles(in SignInput) ([]string, error) {
+	var files []string
+
+	for _, section := range in.ManifestSections {
+		section = strings.TrimSpace(section)
+		if section == "" {
+			continue
+		}
+
+		paths, err := ListReleaseFiles(ListReleaseFilesInput{FilesInput: releaseFilesSignInput(in), Section: section})
+		if err != nil {
+			return nil, err
+		}
+
+		files = append(files, paths...)
+	}
+
+	return files, nil
 }
 
 //nolint:cyclop // iterates the assembly's signable entries, dispatching each to the signer by method — a flat loop, not nested logic.
@@ -131,6 +222,38 @@ func signAssemblyArtifacts(ctx context.Context, signer Signer, out io.Writer, as
 		if len(asm.Assets) > 0 || regularFileExists(asm.SBOMZipFile) {
 			return fmt.Errorf("assembly checksums file %q is missing or empty; run release checksums --assembly first: %w", asm.ChecksumFile, errs.ErrMissingInput)
 		}
+	}
+
+	return nil
+}
+
+// signExactFiles signs operator-supplied files in place. Unlike
+// AttachArtifacts, it does not glob and does not move sidecars to the current
+// directory; callers use this for pre-validated release files whose sidecars
+// must stay adjacent to the input file.
+func signExactFiles(ctx context.Context, signer Signer, out io.Writer, files []string) error {
+	signed := map[string]struct{}{}
+
+	for _, file := range files {
+		file = strings.TrimSpace(file)
+		if file == "" {
+			continue
+		}
+
+		if _, ok := signed[file]; ok {
+			continue
+		}
+
+		if !regularFileExists(file) {
+			return fmt.Errorf("sign file %q is missing or not a regular file: %w", file, errs.ErrMissingInput)
+		}
+
+		_, _ = fmt.Fprintf(out, "Signing %s\n", file)
+		if err := signer.SignFile(ctx, file); err != nil {
+			return fmt.Errorf("sign %q: %w", file, err)
+		}
+
+		signed[file] = struct{}{}
 	}
 
 	return nil

@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/urfave/cli/v3"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/cosign"
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
 	apprelease "github.com/diggsweden/reusable-ci/v3/internal/app/release"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
@@ -47,9 +49,12 @@ EXAMPLE:
    reusable-ci release provenance --checksum-file checksums.sha256 --method sigstore --output provenance.json`,
 		Flags: append(
 			[]cli.Flag{
-				&cli.StringFlag{Name: "checksum-file", Value: cliio.StdSentinel, Sources: cli.EnvVars("CHECKSUM_FILE"), Usage: "GoReleaser checksums file (\"-\" reads stdin)"},
-				&cli.StringFlag{Name: "go-sum", Value: "go.sum", Usage: "go.sum for resolved module deps (empty string to skip)"},
+				&cli.StringFlag{Name: flagChecksumFile, Value: cliio.StdSentinel, Sources: cli.EnvVars("CHECKSUM_FILE"), Usage: "GoReleaser checksums file (\"-\" reads stdin)"},
+				&cli.StringFlag{Name: "go-sum", Value: "go.sum", Sources: cli.EnvVars("GO_SUM_FILE"), Usage: "go.sum for resolved module deps (empty string to skip)"},
+				&cli.StringFlag{Name: "profile", Value: provenanceProfileGenericName, Usage: "provenance profile: generic or forgejo-actions"},
+				&cli.StringFlag{Name: "workflow", Sources: cli.EnvVars("FORGEJO_WORKFLOW"), Usage: "workflow filename/path for the forgejo-actions profile"},
 				&cli.StringFlag{Name: "started-on", Usage: "RFC3339 build timestamp (default: $SOURCE_DATE_EPOCH)"},
+				&cli.StringFlag{Name: "started-on-commit", Usage: "commit/ref whose commit timestamp becomes the RFC3339 build timestamp"},
 				&cli.StringFlag{Name: flagOutput, Value: cliio.StdSentinel, Usage: "output file (\"-\" for stdout)"},
 				&cli.StringFlag{Name: "bundle", Usage: "signature bundle output path (default: <output>.bundle)"},
 			},
@@ -60,19 +65,29 @@ EXAMPLE:
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+				profile, err := parseProvenanceProfile(cmd.String("profile"))
+				if err != nil {
+					return err
+				}
+
 				evt, err := d.Provider.ResolveContext(ctx)
 				if err != nil {
 					return err
 				}
 
-				startedOn, err := resolveStartedOn(cmd.String("started-on"))
+				startedOn, err := resolveStartedOn(ctx, git.New(), cmd.String("started-on"), cmd.String("started-on-commit"))
 				if err != nil {
 					return err
 				}
 
-				checksums, err := cliio.ReadFile(cmd.String("checksum-file"))
+				checksums, err := cliio.ReadFile(cmd.String(flagChecksumFile))
 				if err != nil {
 					return err
+				}
+
+				builderID := cienv.ProvenanceBuilderID()
+				if profile == apprelease.ProvenanceProfileForgejoActions {
+					builderID = forgejoActionsBuilderID(evt.RepoURL, evt.RefName, cmd.String("workflow"))
 				}
 
 				out, err := apprelease.GenerateProvenance(apprelease.ProvenanceInput{
@@ -81,12 +96,14 @@ EXAMPLE:
 					RepositoryURL: evt.RepoURL,
 					Ref:           evt.RefName,
 					SHA:           evt.SHA,
-					// Same forge-neutral builder/invocation identities the
-					// container path uses — the canonical workflow ref, not the
-					// human-facing workflow display name.
-					BuilderID:    cienv.ProvenanceBuilderID(),
+					// Generic provenance uses the same forge-neutral builder /
+					// invocation identity as containers. The forgejo-actions profile
+					// overrides builderID above to match forgejo-ci's shipped shape.
+					BuilderID:    builderID,
 					InvocationID: cienv.ProvenanceInvocationID(),
 					StartedOn:    startedOn,
+					Profile:      profile,
+					Workflow:     cmd.String("workflow"),
 				})
 				if err != nil {
 					return err
@@ -213,18 +230,36 @@ func provenanceSignAllow(keyRef string) []string {
 // passphrase; always allowed alongside an env:// signing key.
 const cosignPasswordEnv = "COSIGN_PASSWORD"
 
-// resolveStartedOn returns the reproducible build timestamp as RFC3339
-// UTC. Precedence: an explicit --started-on (validated as RFC3339), then
-// $SOURCE_DATE_EPOCH (unix seconds, the repo-wide reproducibility
-// convention). One of the two is required — a provenance without an
-// honest timestamp is refused.
-func resolveStartedOn(flagVal string) (string, error) {
+type commitUnixTimer interface {
+	CommitUnixTime(ctx context.Context, ref string) (string, error)
+}
+
+// resolveStartedOn returns the reproducible build timestamp as RFC3339 UTC.
+// Precedence: an explicit --started-on (validated as RFC3339), then a commit
+// timestamp requested with --started-on-commit, then $SOURCE_DATE_EPOCH (unix
+// seconds, the repo-wide reproducibility convention). One of these is required
+// — a provenance without an honest timestamp is refused.
+func resolveStartedOn(ctx context.Context, git commitUnixTimer, flagVal, commitRef string) (string, error) {
 	if flagVal != "" {
 		if _, err := time.Parse(time.RFC3339, flagVal); err != nil {
 			return "", fmt.Errorf("provenance: --started-on %q is not RFC3339: %w", flagVal, errs.ErrUsage)
 		}
 
 		return flagVal, nil
+	}
+
+	if commitRef != "" {
+		epoch, err := git.CommitUnixTime(ctx, commitRef)
+		if err != nil {
+			return "", fmt.Errorf("provenance: resolve --started-on-commit %q: %w", commitRef, err)
+		}
+
+		secs, err := strconv.ParseInt(strings.TrimSpace(epoch), 10, 64)
+		if err != nil {
+			return "", fmt.Errorf("provenance: commit timestamp for %q is not unix seconds: %w", commitRef, errs.ErrUsage)
+		}
+
+		return time.Unix(secs, 0).UTC().Format(time.RFC3339), nil
 	}
 
 	if ts, ok := cienv.SourceDateEpochRFC3339(); ok {
@@ -248,4 +283,31 @@ func openGoSum(path string) io.Reader {
 	}
 
 	return bytes.NewReader(data)
+}
+
+// provenanceProfileGenericName is the CLI name of the generic (default)
+// provenance profile.
+const provenanceProfileGenericName = "generic"
+
+func parseProvenanceProfile(raw string) (apprelease.ProvenanceProfile, error) {
+	switch raw {
+	case "", provenanceProfileGenericName:
+		return apprelease.ProvenanceProfileGeneric, nil
+	case string(apprelease.ProvenanceProfileForgejoActions):
+		return apprelease.ProvenanceProfileForgejoActions, nil
+	default:
+		return "", fmt.Errorf("provenance: unknown --profile %q (use generic or forgejo-actions): %w", raw, errs.ErrUsage)
+	}
+}
+
+func forgejoActionsBuilderID(repoURL, ref, workflow string) string {
+	return strings.TrimRight(repoURL, "/") + "/" + forgejoActionsWorkflowPath(workflow) + "@" + ref
+}
+
+func forgejoActionsWorkflowPath(workflow string) string {
+	if strings.HasPrefix(workflow, ".forgejo/workflows/") {
+		return workflow
+	}
+
+	return ".forgejo/workflows/" + workflow
 }

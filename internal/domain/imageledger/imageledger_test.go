@@ -50,6 +50,15 @@ func TestValidate_Accepts(t *testing.T) {
 	if err := e.Validate("v1.2.3"); err != nil {
 		t.Errorf("valid candidate_tag rejected: %v", err)
 	}
+
+	// moving_tag is accepted when it is a stable pointer, not a staging or
+	// immutable release tag.
+	e = validEntry()
+
+	e.MovingTag = "codeberg.org/itiquette/gommitlint:rust"
+	if err := e.Validate("v1.2.3"); err != nil {
+		t.Errorf("valid moving_tag rejected: %v", err)
+	}
 }
 
 func TestValidate_Rejects(t *testing.T) {
@@ -61,7 +70,13 @@ func TestValidate_Rejects(t *testing.T) {
 		"bad_sbom_path":    func(e *imageledger.Entry) { e.SBOM = "dist/sbom.json" }, // present but not *.cyclonedx.json
 		"final_tag_no_tag": func(e *imageledger.Entry) { e.FinalTag = "codeberg.org/itiquette/gommitlint@" + goodDigest },
 		"final_tag_scope":  func(e *imageledger.Entry) { e.FinalTag = "codeberg.org/itiquette/gommitlint:v9.9.9" },
-		"candidate_scope":  func(e *imageledger.Entry) { e.CandidateTag = "codeberg.org/itiquette/gommitlint:v1.2.3" },
+		"bad_candidate_ref": func(e *imageledger.Entry) {
+			e.CandidateTag = "not-a-registry-path:staging-v1.2.3"
+		},
+		"candidate_scope": func(e *imageledger.Entry) { e.CandidateTag = "codeberg.org/itiquette/gommitlint:v1.2.3" },
+		"bad_moving_ref":  func(e *imageledger.Entry) { e.MovingTag = "not-a-tag" },
+		"moving_staging":  func(e *imageledger.Entry) { e.MovingTag = "codeberg.org/itiquette/gommitlint:staging-v1.2.3" },
+		"moving_release":  func(e *imageledger.Entry) { e.MovingTag = "codeberg.org/itiquette/gommitlint:v1.2.3-rust" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -106,6 +121,23 @@ func TestValidate_RequiresReleaseTag(t *testing.T) {
 
 	if err := validEntry().Validate(""); !errors.Is(err, errs.ErrUsage) {
 		t.Errorf("empty release tag should be usage error, got %v", err)
+	}
+}
+
+func TestValidateEntryRepository(t *testing.T) {
+	t.Parallel()
+
+	entry := validEntry()
+	entry.MovingTag = "codeberg.org/itiquette/gommitlint:latest"
+	entry.CandidateTag = "codeberg.org/itiquette/gommitlint:staging-v1.2.3"
+
+	if err := imageledger.ValidateEntryRepository(entry, "codeberg.org/itiquette/gommitlint"); err != nil {
+		t.Fatalf("expected repository accepted: %v", err)
+	}
+
+	entry.CandidateTag = "codeberg.org/evil/gommitlint:staging-v1.2.3"
+	if err := imageledger.ValidateEntryRepository(entry, "codeberg.org/itiquette/gommitlint"); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("unexpected repository should be validation error, got %v", err)
 	}
 }
 
@@ -158,7 +190,7 @@ func TestAppend_RejectsInvalidEntryBeforeWriting(t *testing.T) {
 func TestParse_RejectsNonArray(t *testing.T) {
 	t.Parallel()
 
-	// Unparseable / wrong-shape JSON is malformed input (EX_DATAERR), not
+	// Unparsable / wrong-shape JSON is malformed input (EX_DATAERR), not
 	// a failed validation rule.
 	if _, err := imageledger.Parse([]byte(`{"not":"an array"}`)); !errors.Is(err, errs.ErrMalformedInput) {
 		t.Errorf("non-array should be a malformed-input error, got %v", err)

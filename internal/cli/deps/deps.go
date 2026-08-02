@@ -82,6 +82,12 @@ func (d *Deps) RequireReleaseCreator() (provider.ReleaseCreator, error) {
 	return requireRole[provider.ReleaseCreator](d, "release creation")
 }
 
+// RequireReleasePublisher returns the ReleasePublisher role when the active
+// provider implements in-place release publishing/reconciliation.
+func (d *Deps) RequireReleasePublisher() (provider.ReleasePublisher, error) {
+	return requireRole[provider.ReleasePublisher](d, "release publishing")
+}
+
 // RequireReleaseAssetUploader returns the ReleaseAssetUploader role
 // when the active provider implements it. Today only github does.
 func (d *Deps) RequireReleaseAssetUploader() (provider.ReleaseAssetUploader, error) {

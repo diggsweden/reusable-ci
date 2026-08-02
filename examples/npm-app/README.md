@@ -91,7 +91,7 @@ npmjs.org production publishing is not implemented yet. Current config
 validation rejects `npmjs`; do not add it unless you are working on that
 implementation.
 
-See [Publishing Guide](../../docs/publishing.md#npm-packages-forge-packages) for details.
+See [Publishing Guide](../../docs/publishing.md#npm-packages-github-packages) for details.
 
 ## See Also
 

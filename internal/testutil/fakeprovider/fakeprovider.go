@@ -7,7 +7,7 @@
 // assert how the use case interacted with it.
 //
 // One Fake satisfies all of provider.Provider, RepoMetadataFetcher,
-// TokenValidator, ReleaseCreator, ReleaseAssetUploader and
+// TokenValidator, ReleaseCreator, ReleasePublisher, ReleaseAssetUploader and
 // SARIFUploader; tests pass the same instance wherever any subset
 // is needed. New roles get matching fields here.
 package fakeprovider
@@ -29,6 +29,7 @@ type Calls struct {
 	ValidateToken          int
 	ValidateBotPermissions int
 	CreateRelease          int
+	PublishRelease         int
 	UploadReleaseAsset     int
 }
 
@@ -51,6 +52,8 @@ type Fake struct {
 	botArgs                 []string
 	createRelErr            error
 	createRelArgs           []ReleaseCall
+	publishRelErr           error
+	publishRelArgs          []ReleaseCall
 	uploadErr               error
 	uploadCalls             []provider.SARIFUpload
 	uploadReleaseAssetErr   error
@@ -284,6 +287,35 @@ func (f *Fake) CreateRelease(_ context.Context, repo string, spec provider.Relea
 	f.calls.CreateRelease++
 	f.createRelArgs = append(f.createRelArgs, ReleaseCall{Repo: repo, Spec: spec})
 	err := f.createRelErr
+	f.mu.Unlock()
+
+	return err
+}
+
+// WithPublishReleaseError makes PublishRelease return the given error.
+func (f *Fake) WithPublishReleaseError(err error) *Fake {
+	f.publishRelErr = err
+
+	return f
+}
+
+// PublishReleaseCalls returns each (repo, spec) tuple passed to PublishRelease.
+func (f *Fake) PublishReleaseCalls() []ReleaseCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := make([]ReleaseCall, len(f.publishRelArgs))
+	copy(out, f.publishRelArgs)
+
+	return out
+}
+
+// PublishRelease implements provider.ReleasePublisher.
+func (f *Fake) PublishRelease(_ context.Context, repo string, spec provider.ReleaseSpec) error {
+	f.mu.Lock()
+	f.calls.PublishRelease++
+	f.publishRelArgs = append(f.publishRelArgs, ReleaseCall{Repo: repo, Spec: spec})
+	err := f.publishRelErr
 	f.mu.Unlock()
 
 	return err

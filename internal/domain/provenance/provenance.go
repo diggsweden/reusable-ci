@@ -11,12 +11,12 @@
 //   - Build(...) + Statement.JSON() → the full statement (predicate +
 //     explicit subjects) that `cosign sign-blob` signs for release blobs.
 //
-// The vocabulary is deliberately forge-neutral: externalParameters carry
-// {source, ref, image}, internalParameters are empty, and the builder id /
+// The default vocabulary is deliberately forge-neutral: externalParameters
+// carry {source, ref, image}, internalParameters are empty, and the builder id /
 // invocation are plain URIs the caller derives from whatever CI env it runs
-// in (GitHub/Forgejo GITHUB_*, GitLab CI_*). There is NO per-forge profile —
-// the same predicate shape is emitted on every forge, so containers and
-// release binaries produce byte-identical buildDefinition/runDetails.
+// in (GitHub/Forgejo GITHUB_*, GitLab CI_*). A Forgejo Actions release profile
+// is available only to preserve forgejo-ci's shipped blob-provenance contract;
+// the generic profile remains the default for new consumers.
 //
 // The package is pure: no env, git, I/O, or signing — callers resolve every
 // value and hand it in, so the predicate is golden-testable in isolation.
@@ -39,6 +39,11 @@ import (
 const (
 	ContainerBuildType = "https://diggsweden.github.io/reusable-ci/container-build/v1"
 	ReleaseBuildType   = "https://diggsweden.github.io/reusable-ci/release-build/v1"
+
+	// ForgejoActionsWorkflowBuildType preserves forgejo-ci's shipped release
+	// blob provenance contract while the generic reusable-ci profile remains the
+	// default for GitHub/GitLab and new consumers.
+	ForgejoActionsWorkflowBuildType = "https://forgejo.org/actions/buildtypes/workflow/v1"
 )
 
 // Subject is one artifact a statement attests: a name and its SHA-256 hex.
@@ -58,6 +63,15 @@ type Dependency struct {
 	DigestType  string
 	Digest      string
 	Annotations map[string]string
+}
+
+// WorkflowExternalParameters is forgejo-ci's historical release provenance
+// externalParameters.workflow object. Keep it explicit so the generic profile
+// can stay forge-neutral by default.
+type WorkflowExternalParameters struct {
+	Ref        string
+	Repository string
+	Path       string
 }
 
 // Input is everything the builder needs; all values are pre-resolved.
@@ -93,6 +107,14 @@ type Input struct {
 	// base_input_id. Optional; emitted as externalParameters.base_input_id.
 	BaseInputID string
 
+	// Workflow optionally replaces the generic {source, ref} external
+	// parameters with forgejo-ci's legacy workflow object for release blobs.
+	Workflow *WorkflowExternalParameters
+
+	// InternalParameters carries profile-specific stable metadata. Generic
+	// reusable-ci provenance leaves this empty.
+	InternalParameters map[string]string
+
 	// InvocationID is the unique run identifier (run/job URL).
 	InvocationID string
 
@@ -113,9 +135,15 @@ type resourceDescriptor struct {
 
 type buildDefinitionJSON struct {
 	BuildType            string               `json:"buildType"`
-	ExternalParameters   map[string]string    `json:"externalParameters"`
+	ExternalParameters   map[string]any       `json:"externalParameters"`
 	InternalParameters   map[string]string    `json:"internalParameters"`
 	ResolvedDependencies []resourceDescriptor `json:"resolvedDependencies"`
+}
+
+type workflowExternalJSON struct {
+	Ref        string `json:"ref"`
+	Repository string `json:"repository"`
+	Path       string `json:"path"`
 }
 
 type builderJSON struct {
@@ -172,13 +200,37 @@ func (in Input) validate() error {
 		}
 	}
 
+	if in.Workflow != nil {
+		for _, miss := range []struct {
+			name string
+			val  string
+		}{
+			{"Workflow.Ref", in.Workflow.Ref},
+			{"Workflow.Repository", in.Workflow.Repository},
+			{"Workflow.Path", in.Workflow.Path},
+		} {
+			if miss.val == "" {
+				return fmt.Errorf("provenance: %s is required: %w", miss.name, errs.ErrUsage)
+			}
+		}
+	}
+
 	return nil
 }
 
 func buildPredicate(in Input) predicateJSON {
-	ext := map[string]string{"source": in.SourceURI}
-	if in.Ref != "" {
-		ext["ref"] = in.Ref
+	ext := map[string]any{}
+	if in.Workflow != nil {
+		ext["workflow"] = workflowExternalJSON{
+			Ref:        in.Workflow.Ref,
+			Repository: in.Workflow.Repository,
+			Path:       in.Workflow.Path,
+		}
+	} else {
+		ext["source"] = in.SourceURI
+		if in.Ref != "" {
+			ext["ref"] = in.Ref
+		}
 	}
 
 	if in.ImageName != "" {
@@ -202,11 +254,19 @@ func buildPredicate(in Input) predicateJSON {
 		})
 	}
 
+	internal := map[string]string{}
+
+	for key, value := range in.InternalParameters {
+		if value != "" {
+			internal[key] = value
+		}
+	}
+
 	return predicateJSON{
 		BuildDefinition: buildDefinitionJSON{
 			BuildType:            in.BuildType,
 			ExternalParameters:   ext,
-			InternalParameters:   map[string]string{},
+			InternalParameters:   internal,
 			ResolvedDependencies: deps,
 		},
 		RunDetails: runDetailsJSON{

@@ -141,6 +141,29 @@ func TestLatestSemverTag(t *testing.T) {
 	}
 }
 
+func TestIsStableSemverTag(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]bool{
+		"v1.2.3":       true,
+		"v0.0.0":       true,
+		"1.2.3":        false,
+		"v1.2":         false,
+		"v1.2.3-rc1":   false,
+		"v1.2.3+build": false,
+		"latest":       false,
+	}
+	for tag, want := range tests {
+		t.Run(tag, func(t *testing.T) {
+			t.Parallel()
+
+			if got := version.IsStableSemverTag(tag); got != want {
+				t.Errorf("IsStableSemverTag(%q) = %v, want %v", tag, got, want)
+			}
+		})
+	}
+}
+
 func TestStripVPrefix(t *testing.T) {
 	t.Parallel()
 

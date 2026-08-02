@@ -6,6 +6,7 @@ package forgejo
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -34,6 +35,10 @@ func (p *Provider) DeleteTag(ctx context.Context, ref string) error {
 	}
 
 	if resp, err := client.DeletePackage(owner, "container", name, tag); err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return nil
+		}
+
 		return fmt.Errorf("forgejo delete container tag %q: %w", ref, classifyErr(resp, err))
 	}
 

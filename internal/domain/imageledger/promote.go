@@ -73,7 +73,7 @@ func PromoteToStage(ctx context.Context, reg Registry, sigCopier SignatureCopier
 			return fmt.Errorf("imageledger: entry %d: %w", idx, err)
 		}
 
-		if entry.CandidateTag == "" {
+		if entry.CandidateTag == "" && !stage.AllowDigestRefFallback {
 			continue
 		}
 
@@ -92,12 +92,24 @@ func PromoteToStage(ctx context.Context, reg Registry, sigCopier SignatureCopier
 // Same-repo destinations use CopyTag; cross-repo destinations use the
 // signature copier (required) so the registry-attached signature travels.
 func promoteEntry(ctx context.Context, reg Registry, sigCopier SignatureCopier, entry Entry, stage Stage) error {
-	if err := verifyRefDigest(ctx, reg, entry.CandidateTag, entry.Digest); err != nil {
-		return fmt.Errorf("candidate %s: %w", entry.CandidateTag, err)
+	source, err := promotionSource(ctx, reg, entry, stage.AllowDigestRefFallback)
+	if err != nil {
+		return err
 	}
 
-	for _, dest := range stage.destinations(entry) {
-		if err := copyToDest(ctx, reg, sigCopier, entry.CandidateTag, dest); err != nil {
+	for idx, dest := range stage.destinations(entry) {
+		if idx == 0 && stage.IsRelease() && stage.UseEntryReleaseTags {
+			ready, err := immutableFinalAlreadyServesDigest(ctx, reg, dest, entry.Digest)
+			if err != nil {
+				return err
+			}
+
+			if ready {
+				continue
+			}
+		}
+
+		if err := copyToDest(ctx, reg, sigCopier, source, dest); err != nil {
 			return err
 		}
 
@@ -109,6 +121,40 @@ func promoteEntry(ctx context.Context, reg Registry, sigCopier SignatureCopier, 
 	return nil
 }
 
+func promotionSource(ctx context.Context, reg DigestResolver, entry Entry, allowDigestRefFallback bool) (string, error) {
+	candidateErr := verifyRefDigest(ctx, reg, entry.CandidateTag, entry.Digest)
+	if candidateErr == nil {
+		return entry.CandidateTag, nil
+	}
+
+	if !allowDigestRefFallback {
+		return "", fmt.Errorf("candidate %s: %w", entry.CandidateTag, candidateErr)
+	}
+
+	if err := verifyRefDigest(ctx, reg, entry.Ref, entry.Digest); err != nil {
+		return "", fmt.Errorf("candidate %s unavailable (%w); digest ref %s unavailable: %w", entry.CandidateTag, candidateErr, entry.Ref, err)
+	}
+
+	return entry.Ref, nil
+}
+
+func immutableFinalAlreadyServesDigest(ctx context.Context, reg DigestResolver, ref, want string) (bool, error) {
+	got, err := reg.ResolveDigest(ctx, ref)
+	if err != nil {
+		return false, nil //nolint:nilerr // deliberate: an unresolvable final tag means "not already promoted"; the promotion copy proceeds and surfaces any real registry failure itself.
+	}
+
+	if got != want {
+		return false, immutableFinalMismatch(ref, got, want)
+	}
+
+	return true, nil
+}
+
+func immutableFinalMismatch(ref, got, want string) error {
+	return fmt.Errorf("immutable final image tag already exists with a different digest: %s existing %s candidate %s: %w", ref, got, want, errs.ErrValidation)
+}
+
 // copyToDest routes a single promotion copy: a same-repository move uses
 // CopyTag (the shared digest already carries the signature); a cross-
 // repository / cross-registry move uses the signature copier so the
@@ -116,7 +162,7 @@ func promoteEntry(ctx context.Context, reg Registry, sigCopier SignatureCopier, 
 // without a configured copier is refused rather than silently dropping the
 // signature.
 func copyToDest(ctx context.Context, reg Registry, sigCopier SignatureCopier, source, dest string) error {
-	if container.StripTag(source) == container.StripTag(dest) {
+	if container.StripTagOrDigest(source) == container.StripTagOrDigest(dest) {
 		if err := reg.CopyTag(ctx, source, dest); err != nil {
 			return fmt.Errorf("copy %s -> %s: %w", source, dest, err)
 		}

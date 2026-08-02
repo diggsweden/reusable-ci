@@ -49,3 +49,22 @@ func TestStripTag(t *testing.T) {
 		}
 	}
 }
+
+func TestStripTagOrDigest(t *testing.T) {
+	t.Parallel()
+
+	digest := "sha256:" + strings.Repeat("a", 64)
+
+	cases := map[string]string{
+		"ghcr.io/org/app:v1.2.3":        "ghcr.io/org/app",
+		"ghcr.io/org/app@" + digest:     "ghcr.io/org/app",
+		"ghcr.io/org/app:tag@" + digest: "ghcr.io/org/app",
+		"localhost:5000/img@" + digest:  "localhost:5000/img",
+		"localhost:5000/img:tag":        "localhost:5000/img",
+	}
+	for in, want := range cases {
+		if got := container.StripTagOrDigest(in); got != want {
+			t.Errorf("StripTagOrDigest(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

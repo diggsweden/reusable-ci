@@ -55,6 +55,7 @@ func appendItemPath(containerURL, itemPath string) string {
 // ("md5 not match" otherwise). md5 here is the protocol's transport checksum,
 // not a security primitive.
 func fileMD5Base64(r io.Reader) (string, error) {
+	// nosemgrep: go.lang.security.audit.crypto.use_of_weak_crypto.use-of-md5
 	hasher := md5.New() //nolint:gosec // protocol-mandated transport checksum, not security.
 	if _, err := io.Copy(hasher, r); err != nil {
 		return "", err
@@ -66,7 +67,7 @@ func fileMD5Base64(r io.Reader) (string, error) {
 // DownloadRunArtifact fetches a current-run artifact by name via the
 // Forgejo Actions runtime service: list artifacts → resolve the file
 // container → download each entry. The runtime token is run-scoped, so a
-// foreign RunID is reported as unsupported rather than silently mis-served.
+// foreign RunID is reported as unsupported rather than silently served to the wrong run.
 //
 // Credentials live only in per-request Bearer headers (never argv, never
 // disk); every entry path is gated by domain/artifact.SafeJoin and each

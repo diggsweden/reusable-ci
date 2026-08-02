@@ -55,6 +55,7 @@ func TestVerifyReleaseTag_Rejects(t *testing.T) {
 		tag string
 	}{
 		"checkout_mismatch":   {fakeTagGit{head: "other", tagCommit: sha, tags: []string{"v1.2.3"}}, "v1.2.3"},
+		"unstable_tag":        {fakeTagGit{head: sha, tagCommit: sha, tags: []string{"v1.2.3-rc1"}}, "v1.2.3-rc1"},
 		"remote_tag_mismatch": {fakeTagGit{head: sha, tagCommit: "other", tags: []string{"v1.2.3"}}, "v1.2.3"},
 		"superseded":          {fakeTagGit{head: sha, tagCommit: sha, tags: []string{"v1.2.3", "v2.0.0"}}, "v1.2.3"},
 	}

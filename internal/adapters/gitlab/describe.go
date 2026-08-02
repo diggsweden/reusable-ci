@@ -25,8 +25,8 @@ func (p *Provider) Describe() provider.Info {
 
 // Capabilities reports the GitLab feature set. GitLab has no Code
 // Scanning SARIF ingestion (it consumes the JSON SAST report directly)
-// and no build-provenance attestation API today; keyless OIDC and
-// release-asset linking are available.
+// and no build-provenance attestation API today. Keyless OIDC and release asset
+// upload/linking are available.
 func (p *Provider) Capabilities() provider.Capabilities {
 	return provider.Capabilities{
 		SARIFUpload:   false,

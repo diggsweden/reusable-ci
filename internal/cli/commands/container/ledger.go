@@ -10,17 +10,24 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/urfave/cli/v3"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/cosign"
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/ociregistry"
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/syft"
+	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/signflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
+	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
 
 // defaultLedgerBasename is the conventional release-image ledger filename;
@@ -32,19 +39,22 @@ const (
 	defaultLedgerPath     = "dist/" + defaultLedgerBasename
 )
 
+var releaseTagFromImageTagRE = regexp.MustCompile(`^(v[0-9]+[.][0-9]+[.][0-9]+)(?:-|$)`) //nolint:gochecknoglobals // compiled regex table; read-only.
+
 // ledgerGroup wires `container ledger`: the digest-first release-image
 // ledger — record image entries from the build stage and re-validate the
 // ledger at the sign/publish trust boundary. Forge-agnostic (pure OCI
 // refs/digests/tags); the Go port of forgejo-ci's record-release-image.
 func ledgerGroup() *cli.Command {
 	return &cli.Command{
-		Name:  "ledger",
+		Name:  flagLedger,
 		Usage: "release-image ledger: record image entries and re-validate at the trust boundary",
 		Commands: []*cli.Command{
 			ledgerAddCmd(),
 			ledgerMergeCmd(),
 			ledgerValidateCmd(),
 			ledgerVerifyDigestsCmd(),
+			ledgerSignCmd(),
 			ledgerPromoteCmd(),
 			ledgerCleanupCmd(),
 			ledgerRollbackCmd(),
@@ -71,38 +81,103 @@ func (r cleanupRegistry) DeleteTag(ctx context.Context, ref string) error {
 	return r.deleter.DeleteTag(ctx, ref)
 }
 
-// ledgerMutation is a cleanup-style domain op (cleanup / rollback) over
-// a CleanupRegistry.
-type ledgerMutation func(context.Context, imageledger.CleanupRegistry, []imageledger.Entry, string) error
+type promotionRollbackRegistry struct {
+	imageledger.Registry
+	deleter provider.TagDeleter
+}
 
-// runLedgerMutation is the shared body for the cleanup/rollback verbs:
-// read + parse the ledger, build the registry (real or dry-run), run the
-// op, and report. doneVerb completes "ledger: <doneVerb> N entr(y/ies)".
-func runLedgerMutation(ctx context.Context, cmd *cli.Command, op ledgerMutation, doneVerb string) error {
-	return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		data, err := cliio.ReadFile(cmd.String("ledger"))
-		if err != nil {
-			return fmt.Errorf("ledger: read %s: %w", cmd.String("ledger"), err)
+func (r promotionRollbackRegistry) DeleteTag(ctx context.Context, ref string) error {
+	return r.deleter.DeleteTag(ctx, ref)
+}
+
+// ledgerEntriesFromCmd is the shared entry-loading prologue of the
+// mutating ledger verbs: read the --ledger file, parse it, and enforce
+// the optional --expected-image-repository confinement.
+func ledgerEntriesFromCmd(cmd *cli.Command) ([]imageledger.Entry, error) {
+	data, err := cliio.ReadFile(cmd.String(flagLedger))
+	if err != nil {
+		return nil, fmt.Errorf("ledger: read %s: %w", cmd.String(flagLedger), err)
+	}
+
+	entries, err := imageledger.Parse(data)
+	if err != nil {
+		return nil, err
+	}
+
+	if repoErr := validateEntryRepositories(entries, cmd.String(flagExpectedImageRepository)); repoErr != nil {
+		return nil, repoErr
+	}
+
+	return entries, nil
+}
+
+// runLedgerCleanup is the shared cleanup body for `ledger cleanup` and
+// `release-images cleanup`: delete each entry's staging candidate tag
+// (the domain verifies the promoted final tag first), then report.
+// msgPrefix names the calling boundary ("ledger" or "release images").
+func runLedgerCleanup(ctx context.Context, reg imageledger.CleanupRegistry, entries []imageledger.Entry, tag, msgPrefix string) error {
+	if err := imageledger.Cleanup(ctx, reg, entries, tag); err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(os.Stderr, "%s: cleaned up candidate tags for %d entr(y/ies) (release tag %q)\n", msgPrefix, len(entries), tag)
+
+	return nil
+}
+
+// loadPromotionJournal reads + parses a promotion rollback journal and
+// enforces the optional expected-repository confinement on every
+// record. errPrefix names the calling boundary ("ledger" or "release
+// images").
+func loadPromotionJournal(journal, errPrefix, expectedRepository string) ([]imageledger.PromotionRecord, error) {
+	data, err := cliio.ReadFile(journal)
+	if err != nil {
+		return nil, fmt.Errorf("%s: read promotion journal %s: %w", errPrefix, journal, err)
+	}
+
+	records, err := imageledger.ParsePromotionJournal(data)
+	if err != nil {
+		return nil, err
+	}
+
+	if repoErr := validatePromotionRecordRepositories(records, expectedRepository); repoErr != nil {
+		return nil, repoErr
+	}
+
+	return records, nil
+}
+
+// runPromotionJournalRollback is the shared rollback body for `ledger
+// rollback --journal` and `release-images rollback`: undo the journaled
+// promotion, then report with the caller's message prefix.
+func runPromotionJournalRollback(ctx context.Context, reg imageledger.PromotionRollbackRegistry, records []imageledger.PromotionRecord, tag, msgPrefix string) error {
+	if err := imageledger.RollbackPromotionJournal(ctx, reg, records, tag); err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(os.Stderr, "%s: rolled back %d promotion journal entr(y/ies)\n", msgPrefix, len(records))
+
+	return nil
+}
+
+func validateEntryRepositories(entries []imageledger.Entry, expectedRepository string) error {
+	for idx, entry := range entries {
+		if err := imageledger.ValidateEntryRepository(entry, expectedRepository); err != nil {
+			return fmt.Errorf("imageledger: entry %d: %w", idx, err)
 		}
+	}
 
-		entries, err := imageledger.Parse(data)
-		if err != nil {
-			return err
+	return nil
+}
+
+func validatePromotionRecordRepositories(records []imageledger.PromotionRecord, expectedRepository string) error {
+	for idx, record := range records {
+		if err := imageledger.ValidatePromotionRecordRepository(record, expectedRepository); err != nil {
+			return fmt.Errorf("imageledger: promotion journal entry %d: %w", idx, err)
 		}
+	}
 
-		reg, err := cleanupReg(d, cmd.Bool("dry-run"))
-		if err != nil {
-			return err
-		}
-
-		if err := op(ctx, reg, entries, cmd.String("tag")); err != nil {
-			return err
-		}
-
-		_, _ = fmt.Fprintf(os.Stderr, "ledger: %s %d entr(y/ies) (release tag %q)\n", doneVerb, len(entries), cmd.String("tag"))
-
-		return nil
-	})
+	return nil
 }
 
 // cleanupReg builds the registry the cleanup flow runs against. In
@@ -124,6 +199,22 @@ func cleanupReg(d *deps.Deps, dryRun bool) (imageledger.CleanupRegistry, error) 
 	return auditDeleter{
 		CleanupRegistry: cleanupRegistry{resolver: ociregistry.New(), deleter: deleter},
 		out:             os.Stderr,
+	}, nil
+}
+
+func promotionRollbackReg(d *deps.Deps, dryRun bool) (imageledger.PromotionRollbackRegistry, error) { //nolint:varnamelen // idiomatic short name.
+	if dryRun {
+		return newDryRunRegistry(ociregistry.New(), os.Stderr), nil
+	}
+
+	deleter, err := d.RequireTagDeleter()
+	if err != nil {
+		return nil, err
+	}
+
+	return auditPromotionRollbackRegistry{
+		PromotionRollbackRegistry: promotionRollbackRegistry{Registry: ociregistry.New(), deleter: deleter},
+		out:                       os.Stderr,
 	}, nil
 }
 
@@ -238,9 +329,35 @@ func (a auditDeleter) DeleteTag(ctx context.Context, ref string) error {
 	return a.CleanupRegistry.DeleteTag(ctx, ref)
 }
 
+type auditPromotionRollbackRegistry struct {
+	imageledger.PromotionRollbackRegistry
+
+	out io.Writer
+}
+
+func (a auditPromotionRollbackRegistry) CopyTag(ctx context.Context, source, dest string) error {
+	_, _ = fmt.Fprintf(a.out, "ledger: restoring %s -> %s\n", source, dest)
+
+	return a.PromotionRollbackRegistry.CopyTag(ctx, source, dest)
+}
+
+func (a auditPromotionRollbackRegistry) DeleteTag(ctx context.Context, ref string) error {
+	_, _ = fmt.Fprintf(a.out, "ledger: deleting %s\n", ref)
+
+	return a.PromotionRollbackRegistry.DeleteTag(ctx, ref)
+}
+
+func promotionJournalFlag() cli.Flag {
+	return &cli.StringFlag{
+		Name:    "journal",
+		Sources: cli.EnvVars("IMAGE_PROMOTIONS_JOURNAL"),
+		Usage:   "JSONL promotion rollback journal; promote writes it before tag moves, rollback restores/deletes from it",
+	}
+}
+
 func releaseTagFlag() cli.Flag {
 	return &cli.StringFlag{
-		Name:    "tag",
+		Name:    flagTag,
 		Sources: cienv.Tag(),
 		Usage:   "release tag that final_tag (and candidate_tag) must be scoped to",
 	}
@@ -263,9 +380,33 @@ func stageRepoFlag() cli.Flag {
 	}
 }
 
+func releaseTagsFromLedgerFlag() cli.Flag {
+	return &cli.BoolFlag{
+		Name:    "release-tags-from-ledger",
+		Sources: cli.EnvVars("PROMOTE_RELEASE_TAGS_FROM_LEDGER"),
+		Usage:   "for the release stage, promote to each entry's final_tag and optional moving_tag instead of the generic <base>:release pointer",
+	}
+}
+
+func digestRefFallbackFlag() cli.Flag {
+	return &cli.BoolFlag{
+		Name:    "allow-digest-ref-fallback",
+		Sources: cli.EnvVars("PROMOTE_ALLOW_DIGEST_REF_FALLBACK"),
+		Usage:   "when candidate_tag is absent or no longer serves the recorded digest, copy from the ledger ref digest instead (Forgejo release rerun recovery)",
+	}
+}
+
+func expectedImageRepositoryFlag() cli.Flag {
+	return &cli.StringFlag{
+		Name:    flagExpectedImageRepository,
+		Sources: cli.EnvVars("LEDGER_EXPECTED_IMAGE_REPOSITORY"),
+		Usage:   "optional exact image repository allowed for ledger refs/tags at the signer/publisher boundary",
+	}
+}
+
 func ledgerPathFlag() cli.Flag {
 	return &cli.StringFlag{
-		Name:    "ledger",
+		Name:    flagLedger,
 		Value:   defaultLedgerPath,
 		Sources: cli.EnvVars("RELEASE_IMAGES_LEDGER"),
 		Usage:   "ledger JSON file (a bare array; created if absent on add)",
@@ -292,46 +433,48 @@ func ledgerAddCmd() *cli.Command {
 			ledgerPathFlag(),
 			releaseTagFlag(),
 			&cli.StringFlag{Name: "kind", Usage: "image role, e.g. distroless, alpine, base"},
-			&cli.StringFlag{Name: "ref", Usage: "digest-pinned image ref (registry/path@sha256:<64 hex>)"},
+			&cli.StringFlag{Name: flagRef, Usage: "digest-pinned image ref (registry/path@sha256:<64 hex>)"},
 			&cli.StringFlag{Name: flagDigest, Usage: "image digest (sha256:<64 hex>)"},
 			&cli.StringFlag{Name: "sbom", Usage: "CycloneDX SBOM path (dist/image-sbom*.cyclonedx.json)"},
 			&cli.StringFlag{Name: "image-name", Usage: "image registry/path (no tag); with --tag, derives --final-tag=<image>:<tag> and --candidate-tag=<image>:staging-<tag> so callers don't hand-assemble both (explicit flags still win)"}, //nolint:goconst // flag name; matches the package convention.
+			&cli.StringFlag{Name: "final-tag-name", Usage: "immutable release tag name/portion combined with --image-name; when --tag is empty, derives the release tag from vMAJOR.MINOR.PATCH[-suffix]"},
 			&cli.StringFlag{Name: "final-tag", Usage: "immutable release tag ref (scoped to --tag); derived from --image-name when omitted"},
+			&cli.StringFlag{Name: "moving-tag-name", Usage: "optional moving tag name/portion combined with --image-name"},
+			&cli.StringFlag{Name: "moving-tag", Usage: "optional moving tag ref, e.g. codeberg.org/owner/repo:rust"},
 			&cli.StringFlag{Name: flagFlavor, Usage: "optional base-image flavour"},
+			&cli.BoolFlag{Name: "derive-candidate-tag", Sources: cli.EnvVars("LEDGER_DERIVE_CANDIDATE_TAG"), Usage: "derive --candidate-tag as <image>:staging-<final-tag-name>; mutually exclusive with explicit candidate tag flags"},
+			&cli.BoolFlag{Name: "default-sbom", Usage: "when --sbom is empty, use dist/image-sbom-<flavor|kind>.cyclonedx.json"},
+			&cli.StringFlag{Name: "candidate-tag-name", Usage: "optional staging tag name/portion combined with --image-name"},
 			&cli.StringFlag{Name: "candidate-tag", Usage: "optional staging tag ref (scoped to staging-<tag>); derived from --image-name when omitted"},
 			&cli.StringFlag{Name: "base-ref", Usage: "optional digest-pinned base image"},
-			&cli.StringFlag{Name: "base-input-id", Usage: "optional base-image input identifier (SLSA lineage)"},
+			&cli.StringFlag{Name: flagBaseInputID, Usage: "optional base-image input identifier (SLSA lineage)"},
 			&cli.BoolFlag{Name: "capture-digest", Usage: "resolve the digest from the registry (single source of truth) instead of --ref/--digest; reads the candidate or final tag"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			path := cmd.String("ledger")
+			path := cmd.String(flagLedger)
 
-			finalTag, candidateTag := cmd.String("final-tag"), cmd.String("candidate-tag")
-			// Single-source the final/candidate convention in Go: a build job can
-			// pass --image-name + --tag and let the domain derive both refs the
-			// validator enforces, instead of re-encoding ":<tag>"/":staging-<tag>"
-			// in each forge's workflow. Explicit flags override.
-			if image := cmd.String("image-name"); image != "" {
-				dFinal, dCandidate := imageledger.DeriveTags(image, cmd.String("tag"))
-				if finalTag == "" {
-					finalTag = dFinal
-				}
-
-				if candidateTag == "" {
-					candidateTag = dCandidate
-				}
-			}
-
-			entry := imageledger.Entry{
-				Kind:         cmd.String("kind"),
-				Flavor:       cmd.String(flagFlavor),
-				Ref:          cmd.String("ref"),
-				Digest:       cmd.String(flagDigest),
-				SBOM:         cmd.String("sbom"),
-				FinalTag:     finalTag,
-				CandidateTag: candidateTag,
-				BaseRef:      cmd.String("base-ref"),
-				BaseInputID:  cmd.String("base-input-id"),
+			entry, releaseTag, err := ledgerAddEntryFromFlags(ledgerAddFlags{
+				ReleaseTag:          cmd.String(flagTag),
+				Kind:                cmd.String("kind"),
+				ImageName:           cmd.String("image-name"),
+				Ref:                 cmd.String(flagRef),
+				Digest:              cmd.String(flagDigest),
+				SBOM:                cmd.String("sbom"),
+				DefaultSBOM:         cmd.Bool("default-sbom"),
+				FinalTagName:        cmd.String("final-tag-name"),
+				FinalTag:            cmd.String("final-tag"),
+				MovingTagName:       cmd.String("moving-tag-name"),
+				MovingTag:           cmd.String("moving-tag"),
+				Flavor:              cmd.String(flagFlavor),
+				DeriveCandidateTag:  cmd.Bool("derive-candidate-tag"),
+				CandidateTagName:    cmd.String("candidate-tag-name"),
+				CandidateTag:        cmd.String("candidate-tag"),
+				BaseRef:             cmd.String("base-ref"),
+				BaseInputID:         cmd.String(flagBaseInputID),
+				LegacyImageNameMode: cmd.String("final-tag-name") == "" && cmd.String("final-tag") == "",
+			})
+			if err != nil {
+				return err
 			}
 
 			// Digest capture hits the registry — do it before taking the
@@ -356,7 +499,7 @@ func ledgerAddCmd() *cli.Command {
 			if err := cliio.WithLock(path, func() error {
 				existing, _ := os.ReadFile(path) //nolint:gosec,errcheck // operator-supplied ledger path; an absent file means an empty ledger.
 
-				out, wasNew, err := imageledger.Append(existing, entry, cmd.String("tag"))
+				out, wasNew, err := imageledger.Append(existing, entry, releaseTag)
 				if err != nil {
 					return err
 				}
@@ -394,6 +537,254 @@ func entryDescriptor(kind string) string {
 	return kind + " entry"
 }
 
+type ledgerAddFlags struct {
+	ReleaseTag          string
+	Kind                string
+	ImageName           string
+	Ref                 string
+	Digest              string
+	SBOM                string
+	DefaultSBOM         bool
+	FinalTagName        string
+	FinalTag            string
+	MovingTagName       string
+	MovingTag           string
+	Flavor              string
+	DeriveCandidateTag  bool
+	CandidateTagName    string
+	CandidateTag        string
+	BaseRef             string
+	BaseInputID         string
+	LegacyImageNameMode bool
+}
+
+func ledgerAddEntryFromFlags(flags ledgerAddFlags) (imageledger.Entry, string, error) {
+	imageName, err := ledgerAddImageName(flags.ImageName)
+	if err != nil {
+		return imageledger.Entry{}, "", err
+	}
+
+	flags, finalTag, finalTagName, err := ledgerAddFinalTag(flags, imageName)
+	if err != nil {
+		return imageledger.Entry{}, "", err
+	}
+
+	movingTag, err := ledgerAddMovingTag(flags, imageName)
+	if err != nil {
+		return imageledger.Entry{}, "", err
+	}
+
+	candidateTag, err := ledgerAddCandidateTag(flags, imageName, finalTagName)
+	if err != nil {
+		return imageledger.Entry{}, "", err
+	}
+
+	releaseTag, err := ledgerAddReleaseTag(flags.ReleaseTag, finalTagName)
+	if err != nil {
+		return imageledger.Entry{}, "", err
+	}
+
+	sbom, err := ledgerAddSBOM(flags)
+	if err != nil {
+		return imageledger.Entry{}, "", err
+	}
+
+	ref := flags.Ref
+	if ref == "" && imageName != "" && flags.Digest != "" {
+		ref = imageName + "@" + flags.Digest
+	}
+
+	return imageledger.Entry{
+		Kind:         flags.Kind,
+		Flavor:       flags.Flavor,
+		Ref:          ref,
+		Digest:       flags.Digest,
+		SBOM:         sbom,
+		FinalTag:     finalTag,
+		MovingTag:    movingTag,
+		CandidateTag: candidateTag,
+		BaseRef:      flags.BaseRef,
+		BaseInputID:  flags.BaseInputID,
+	}, releaseTag, nil
+}
+
+// ledgerAddFinalTag resolves the final tag and its tag name from
+// --final-tag / --final-tag-name plus the legacy image-name derivation.
+// It returns the (possibly legacy-updated) flags for the later
+// candidate-tag resolution.
+func ledgerAddFinalTag(flags ledgerAddFlags, imageName string) (ledgerAddFlags, string, string, error) {
+	finalTag := flags.FinalTag
+
+	finalTagName := flags.FinalTagName
+	if finalTag != "" && finalTagName != "" {
+		return flags, "", "", fmt.Errorf("ledger add: --final-tag and --final-tag-name are mutually exclusive: %w", errs.ErrUsage)
+	}
+
+	flags, finalTag = ledgerAddApplyLegacyTags(flags, imageName, finalTag)
+
+	if finalTag == "" && finalTagName != "" {
+		if imageName == "" {
+			return flags, "", "", fmt.Errorf("ledger add: --final-tag-name requires --image-name: %w", errs.ErrUsage)
+		}
+
+		finalTag = ledgerTagRef(imageName, finalTagName)
+	}
+
+	if finalTagName == "" {
+		finalTagName = ledgerTagName(finalTag)
+	}
+
+	return flags, finalTag, finalTagName, nil
+}
+
+// ledgerAddApplyLegacyTags applies the legacy image-name mode: derive the
+// final tag (and, when no candidate flag is in play, the candidate tag)
+// from the image name and release tag.
+func ledgerAddApplyLegacyTags(flags ledgerAddFlags, imageName, finalTag string) (ledgerAddFlags, string) {
+	if !flags.LegacyImageNameMode || imageName == "" || flags.ReleaseTag == "" {
+		return flags, finalTag
+	}
+
+	dFinal, dCandidate := imageledger.DeriveTags(imageName, flags.ReleaseTag)
+	finalTag = firstNonEmpty(finalTag, dFinal)
+
+	if flags.CandidateTag == "" && flags.CandidateTagName == "" && !flags.DeriveCandidateTag {
+		flags.CandidateTag = dCandidate
+	}
+
+	return flags, finalTag
+}
+
+// ledgerAddMovingTag resolves the moving tag from --moving-tag /
+// --moving-tag-name, enforcing their mutual exclusion.
+func ledgerAddMovingTag(flags ledgerAddFlags, imageName string) (string, error) {
+	movingTag := flags.MovingTag
+	if movingTag != "" && flags.MovingTagName != "" {
+		return "", fmt.Errorf("ledger add: --moving-tag and --moving-tag-name are mutually exclusive: %w", errs.ErrUsage)
+	}
+
+	if movingTag == "" && flags.MovingTagName != "" {
+		if imageName == "" {
+			return "", fmt.Errorf("ledger add: --moving-tag-name requires --image-name: %w", errs.ErrUsage)
+		}
+
+		movingTag = ledgerTagRef(imageName, flags.MovingTagName)
+	}
+
+	return movingTag, nil
+}
+
+// ledgerAddValidateCandidateFlags enforces the mutual exclusions between
+// --candidate-tag, --candidate-tag-name, and --derive-candidate-tag.
+func ledgerAddValidateCandidateFlags(flags ledgerAddFlags) error {
+	if flags.CandidateTag != "" && flags.CandidateTagName != "" {
+		return fmt.Errorf("ledger add: --candidate-tag and --candidate-tag-name are mutually exclusive: %w", errs.ErrUsage)
+	}
+
+	if flags.DeriveCandidateTag && (flags.CandidateTag != "" || flags.CandidateTagName != "") {
+		return fmt.Errorf("ledger add: --derive-candidate-tag is mutually exclusive with explicit candidate tag flags: %w", errs.ErrUsage)
+	}
+
+	return nil
+}
+
+// ledgerAddCandidateTag resolves the candidate tag from --candidate-tag /
+// --candidate-tag-name / --derive-candidate-tag.
+func ledgerAddCandidateTag(flags ledgerAddFlags, imageName, finalTagName string) (string, error) {
+	if err := ledgerAddValidateCandidateFlags(flags); err != nil {
+		return "", err
+	}
+
+	candidateTag := flags.CandidateTag
+	if candidateTag == "" && flags.CandidateTagName != "" {
+		if imageName == "" {
+			return "", fmt.Errorf("ledger add: --candidate-tag-name requires --image-name: %w", errs.ErrUsage)
+		}
+
+		candidateTag = ledgerTagRef(imageName, flags.CandidateTagName)
+	}
+
+	if candidateTag == "" && flags.DeriveCandidateTag {
+		if imageName == "" {
+			return "", fmt.Errorf("ledger add: --derive-candidate-tag requires --image-name: %w", errs.ErrUsage)
+		}
+
+		if finalTagName == "" {
+			return "", fmt.Errorf("ledger add: --derive-candidate-tag requires a final tag name: %w", errs.ErrUsage)
+		}
+
+		candidateTag = ledgerTagRef(imageName, imageledger.StagingTagPrefix+finalTagName)
+	}
+
+	return candidateTag, nil
+}
+
+// ledgerAddSBOM resolves the SBOM path: --sbom wins, else --default-sbom
+// derives the conventional dist path from the flavor or kind.
+func ledgerAddSBOM(flags ledgerAddFlags) (string, error) {
+	sbom := flags.SBOM
+	if sbom == "" && flags.DefaultSBOM {
+		suffix := firstNonEmpty(flags.Flavor, flags.Kind)
+		if suffix == "" {
+			return "", fmt.Errorf("ledger add: --default-sbom requires --flavor or --kind: %w", errs.ErrUsage)
+		}
+
+		sbom = "dist/image-sbom-" + suffix + ".cyclonedx.json"
+	}
+
+	return sbom, nil
+}
+
+func ledgerAddImageName(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+
+	imageName := strings.TrimPrefix(raw, "docker://")
+
+	imageName = domaincontainer.StripTagOrDigest(imageName)
+	if imageName == "" {
+		return "", fmt.Errorf("ledger add: --image-name is empty after normalisation: %w", errs.ErrUsage)
+	}
+
+	return imageName, nil
+}
+
+func ledgerAddReleaseTag(explicit, finalTagName string) (string, error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+
+	matches := releaseTagFromImageTagRE.FindStringSubmatch(finalTagName)
+	if len(matches) == 2 {
+		return matches[1], nil
+	}
+
+	return "", fmt.Errorf("ledger add: --tag is required when final tag name is not scoped to vMAJOR.MINOR.PATCH: %s: %w", finalTagName, errs.ErrUsage)
+}
+
+func ledgerTagRef(imageName, tagName string) string {
+	return imageName + ":" + tagName
+}
+
+func ledgerTagName(ref string) string {
+	if colon := strings.LastIndex(ref, ":"); colon >= 0 {
+		return ref[colon+1:]
+	}
+
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+
+	return ""
+}
+
 // captureEntryDigest resolves the entry's image digest from the registry
 // — the authoritative single source (no hand-typed digest, no
 // transcription gap) — and rewrites Digest + the digest-pinned Ref from
@@ -418,18 +809,19 @@ func captureEntryDigest(ctx context.Context, resolver imageledger.DigestResolver
 
 func ledgerValidateCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "validate",
+		Name:  subCmdValidate,
 		Usage: "re-validate every entry in the ledger against the release tag (trust-boundary check)",
 		Description: `EXAMPLE:
    reusable-ci container ledger validate --ledger release-images.json --tag v1.2.3`,
 		Flags: []cli.Flag{
 			ledgerPathFlag(),
 			releaseTagFlag(),
+			&cli.BoolFlag{Name: "non-empty", Usage: "fail when the ledger contains no entries"},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
-			data, err := cliio.ReadFile(cmd.String("ledger"))
+			data, err := cliio.ReadFile(cmd.String(flagLedger))
 			if err != nil {
-				return fmt.Errorf("ledger: read %s: %w", cmd.String("ledger"), err)
+				return fmt.Errorf("ledger: read %s: %w", cmd.String(flagLedger), err)
 			}
 
 			entries, err := imageledger.Parse(data)
@@ -437,11 +829,15 @@ func ledgerValidateCmd() *cli.Command {
 				return err
 			}
 
-			if err := imageledger.ValidateAll(entries, cmd.String("tag")); err != nil {
+			if err := imageledger.ValidateAll(entries, cmd.String(flagTag)); err != nil {
 				return err
 			}
 
-			_, _ = fmt.Fprintf(os.Stderr, "ledger: %d entr(y/ies) valid for release tag %q\n", len(entries), cmd.String("tag"))
+			if cmd.Bool("non-empty") && len(entries) == 0 {
+				return fmt.Errorf("imageledger: ledger must contain at least one entry: %w", errs.ErrValidation)
+			}
+
+			_, _ = fmt.Fprintf(os.Stderr, "ledger: %d entr(y/ies) valid for release tag %q\n", len(entries), cmd.String(flagTag))
 
 			return nil
 		},
@@ -459,9 +855,9 @@ func ledgerVerifyDigestsCmd() *cli.Command {
 			releaseTagFlag(),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			data, err := cliio.ReadFile(cmd.String("ledger"))
+			data, err := cliio.ReadFile(cmd.String(flagLedger))
 			if err != nil {
-				return fmt.Errorf("ledger: read %s: %w", cmd.String("ledger"), err)
+				return fmt.Errorf("ledger: read %s: %w", cmd.String(flagLedger), err)
 			}
 
 			entries, err := imageledger.Parse(data)
@@ -469,20 +865,119 @@ func ledgerVerifyDigestsCmd() *cli.Command {
 				return err
 			}
 
-			if err := imageledger.Verify(ctx, ociregistry.New(), entries, cmd.String("tag")); err != nil {
+			if err := imageledger.Verify(ctx, ociregistry.New(), entries, cmd.String(flagTag)); err != nil {
 				return err
 			}
 
-			_, _ = fmt.Fprintf(os.Stderr, "ledger: %d entr(y/ies) verified against the registry for %q\n", len(entries), cmd.String("tag"))
+			_, _ = fmt.Fprintf(os.Stderr, "ledger: %d entr(y/ies) verified against the registry for %q\n", len(entries), cmd.String(flagTag))
 
 			return nil
 		},
 	}
 }
 
+func ledgerSignCmd() *cli.Command {
+	return &cli.Command{
+		Name:  subCmdSign,
+		Usage: "sign and attest every release image recorded in the ledger",
+		Description: `Signer-side release-image loop: validates the digest-first ledger,
+resolves each image by candidate_tag or digest ref, cosign-signs the immutable
+digest, generates a CycloneDX image SBOM with syft, attests that SBOM, enriches
+the release SLSA predicate with per-image/base-lineage fields, and attests it.
+
+This is the reusable-ci replacement for forgejo-ci's sign-promote-images.sh sign
+step; promotion remains a separate ledger promote operation.`,
+		Flags: append(
+			[]cli.Flag{
+				ledgerPathFlag(),
+				releaseTagFlag(),
+				&cli.StringFlag{Name: "provenance-predicate", Value: "dist/slsa-provenance.predicate.json", Sources: cli.EnvVars("SLSA_PROVENANCE_PREDICATE"), Usage: "base SLSA provenance predicate JSON enriched per image before attestation"},
+				&cli.StringFlag{Name: flagProvenanceEnvelope, Sources: cli.EnvVars("SLSA_PROVENANCE_ENVELOPE"), Usage: "in-toto statement JSON; its .predicate is enriched per image before attestation"},
+				&cli.BoolFlag{Name: flagRecursive, Sources: cli.EnvVars("LEDGER_SIGN_RECURSIVE"), Usage: "pass --recursive to cosign sign/attest for manifest-list children (default false to match forgejo-ci signer behavior)"},
+				&cli.StringFlag{Name: flagExpectedImageRepository, Sources: cli.EnvVars("LEDGER_SIGN_EXPECTED_IMAGE_REPOSITORY", "LEDGER_EXPECTED_IMAGE_REPOSITORY"), Usage: "optional exact image repository allowed for ref, final_tag, moving_tag, and candidate_tag (for forge-specific signer boundaries)"},
+				&cli.StringFlag{Name: flagExpectedBaseRepository, Sources: cli.EnvVars("LEDGER_SIGN_EXPECTED_BASE_REPOSITORY"), Usage: "optional exact base image repository allowed for base_ref"},
+				&cli.StringFlag{Name: flagSBOMPathPattern, Sources: cli.EnvVars("LEDGER_SIGN_SBOM_PATH_PATTERN"), Usage: "optional regular expression every ledger SBOM path must match"},
+			},
+			signflags.Cosign(signflags.CosignOpts{MethodNote: cosignMethodNoteGPG})...,
+		),
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			data, err := cliio.ReadFile(cmd.String(flagLedger))
+			if err != nil {
+				return fmt.Errorf("ledger: read %s: %w", cmd.String(flagLedger), err)
+			}
+
+			entries, err := imageledger.Parse(data)
+			if err != nil {
+				return err
+			}
+
+			method, err := domainrelease.ParseSignMethod(cmd.String("method"))
+			if err != nil {
+				return err
+			}
+
+			predicatePath := cmd.String("provenance-predicate")
+
+			predicateEnvelopePath := cmd.String(flagProvenanceEnvelope)
+			if predicateEnvelopePath != "" {
+				predicatePath = ""
+			}
+
+			return runLedgerSign(ctx,
+				cosign.New(),
+				ociregistry.New(),
+				appcontainer.SignLedgerImagesInput{
+					Entries:                 entries,
+					ReleaseTag:              cmd.String(flagTag),
+					PredicatePath:           predicatePath,
+					PredicateEnvelopePath:   predicateEnvelopePath,
+					Method:                  method,
+					Recursive:               cmd.Bool(flagRecursive),
+					KeyRef:                  cmd.String("key"),
+					OIDCIssuer:              cmd.String("oidc-issuer"),
+					ExpectedImageRepository: cmd.String(flagExpectedImageRepository),
+					ExpectedBaseRepository:  cmd.String(flagExpectedBaseRepository),
+					SBOMPathPattern:         cmd.String(flagSBOMPathPattern),
+				})
+		},
+	}
+}
+
+// runLedgerSign is the shared sign body for `ledger sign` and
+// `release-images sign`: hand the validated ledger entries to the
+// app-layer signer with the package's syft evidence adapter and stderr
+// streams. The caller picks the cosign environment (ambient vs
+// signer-isolated) and the digest resolver (ambient vs auth-file).
+func runLedgerSign(ctx context.Context, signer *cosign.Adapter, resolver *ociregistry.Adapter, in appcontainer.SignLedgerImagesInput) error {
+	return appcontainer.SignLedgerImages(ctx,
+		signer,
+		&syft.Adapter{UnsetEnv: signerSecretEnv()},
+		resolver,
+		os.Stderr,
+		os.Stderr,
+		in)
+}
+
+func signerSecretEnv() []string {
+	return []string{
+		"COSIGN_KEY",
+		"COSIGN_PASSWORD",
+		"FORGEJO_TOKEN",
+		"GPG_SIGNING_FINGERPRINT",
+		"GPG_SIGNING_KEY",
+		"GPG_SIGNING_PASSWORD",
+		"MISE_FORGEJO_TOKEN",
+		"MISE_GITHUB_TOKEN",
+		"REUSABLE_CI_PROVIDER_TOKEN",
+		"REGISTRY_PASSWORD",
+		"REGISTRY_TOKEN",
+		envRegistryUser,
+	}
+}
+
 func ledgerPromoteCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "promote",
+		Name:  subCmdPromote,
 		Usage: "promote each entry's candidate image to the stage's moving pointer (<base>:<stage>) on the same digest, verifying after each copy; the immutable :<version> tag is build-only",
 		Description: `EXAMPLES:
    # Promote to the :release pointer (release scope requires --tag)
@@ -495,88 +990,141 @@ func ledgerPromoteCmd() *cli.Command {
 			releaseTagFlag(),
 			stageFlag(),
 			stageRepoFlag(),
+			releaseTagsFromLedgerFlag(),
+			digestRefFallbackFlag(),
+			expectedImageRepositoryFlag(),
+			promotionJournalFlag(),
 			dryRunFlag(),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			data, err := cliio.ReadFile(cmd.String("ledger"))
-			if err != nil {
-				return fmt.Errorf("ledger: read %s: %w", cmd.String("ledger"), err)
-			}
-
-			entries, err := imageledger.Parse(data)
+			entries, err := ledgerEntriesFromCmd(cmd)
 			if err != nil {
 				return err
 			}
 
-			stage := imageledger.Stage{Name: cmd.String("stage"), TargetRepo: cmd.String("stage-repo")}
+			stage := imageledger.Stage{
+				Name:                   cmd.String("stage"),
+				TargetRepo:             cmd.String("stage-repo"),
+				UseEntryReleaseTags:    cmd.Bool("release-tags-from-ledger"),
+				AllowDigestRefFallback: cmd.Bool("allow-digest-ref-fallback"),
+			}
 
-			// Real run narrates each copy (audit trail); dry-run simulates +
-			// previews. A cross-registry destination (--stage-repo) copies the
+			// A cross-registry destination (--stage-repo) copies the
 			// signature via cosign; same-repo promotions never consult it.
-			var (
-				reg       imageledger.Registry
-				sigCopier imageledger.SignatureCopier
-			)
-
-			if cmd.Bool("dry-run") {
-				dryRun := newDryRunRegistry(ociregistry.New(), os.Stderr)
-				reg, sigCopier = dryRun, dryRun
-			} else {
-				reg = auditCopier{Registry: ociregistry.New(), out: os.Stderr}
-				if stage.TargetRepo != "" {
-					sigCopier = cosignSigCopier{cosign: cosign.New(), out: os.Stderr}
-				}
+			var realSigCopier imageledger.SignatureCopier
+			if stage.TargetRepo != "" {
+				realSigCopier = cosignSigCopier{cosign: cosign.New(), out: os.Stderr}
 			}
 
-			if err := imageledger.PromoteToStage(ctx, reg, sigCopier, entries, cmd.String("tag"), stage); err != nil {
-				return err
-			}
+			reg, sigCopier := promotionRegistries(ociregistry.New(), cmd.Bool("dry-run"), realSigCopier)
 
-			_, _ = fmt.Fprintf(os.Stderr, "ledger: promoted %d entr(y/ies) to stage %q\n", len(entries), stage.Name)
-
-			return nil
+			return runLedgerPromotion(ctx, promotionRun{
+				reg:            reg,
+				sigCopier:      sigCopier,
+				entries:        entries,
+				releaseTag:     cmd.String(flagTag),
+				stage:          stage,
+				journal:        cmd.String("journal"),
+				journalDirPerm: 0o755, //nolint:mnd // dist-style state dir; 0755 is conventional.
+				errPrefix:      "ledger",
+				done:           fmt.Sprintf("ledger: promoted %d entr(y/ies) to stage %q", len(entries), stage.Name),
+				out:            os.Stderr,
+			})
 		},
 	}
 }
 
+// promotionRun carries the shared promote body's inputs; `ledger
+// promote` and `release-images promote` both build one and call
+// runLedgerPromotion.
+type promotionRun struct {
+	reg            imageledger.Registry
+	sigCopier      imageledger.SignatureCopier
+	entries        []imageledger.Entry
+	releaseTag     string
+	stage          imageledger.Stage
+	journal        string      // empty: skip the journal write
+	journalDirPerm os.FileMode // mode for a created journal parent dir
+	errPrefix      string      // error/message prefix: "ledger" or "release images"
+	done           string      // success line printed after promotion
+	out            io.Writer   // success-line sink (stderr)
+}
+
+// promotionRegistries builds the promote registry pair: dry-run
+// simulates copies in memory and previews them (the simulated registry
+// doubles as the signature copier); a real run narrates each copy via
+// auditCopier (audit trail) and uses the caller's signature copier
+// (cosign for cross-registry promotion, nil when unused).
+func promotionRegistries(resolver imageledger.Registry, dryRun bool, realSigCopier imageledger.SignatureCopier) (imageledger.Registry, imageledger.SignatureCopier) {
+	if dryRun {
+		sim := newDryRunRegistry(resolver, os.Stderr)
+
+		return sim, sim
+	}
+
+	return auditCopier{Registry: resolver, out: os.Stderr}, realSigCopier
+}
+
+// runLedgerPromotion is the shared promote body: journal the promotion
+// plan first (the rollback source of truth), promote every entry to the
+// stage, then report the caller's success line.
+func runLedgerPromotion(ctx context.Context, run promotionRun) error {
+	if err := writePromotionJournal(ctx, run); err != nil {
+		return err
+	}
+
+	if err := imageledger.PromoteToStage(ctx, run.reg, run.sigCopier, run.entries, run.releaseTag, run.stage); err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintln(run.out, run.done)
+
+	return nil
+}
+
+// writePromotionJournal plans the promotion and writes the journal file
+// when a journal path is set; with no journal path it is a no-op.
+func writePromotionJournal(ctx context.Context, run promotionRun) error {
+	if run.journal == "" {
+		return nil
+	}
+
+	records, err := imageledger.PlanPromotionJournal(ctx, run.reg, run.entries, run.releaseTag, run.stage)
+	if err != nil {
+		return err
+	}
+
+	body, err := imageledger.MarshalPromotionJournal(records)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(run.journal), run.journalDirPerm); err != nil {
+		return fmt.Errorf("%s: create dir for promotion journal %s: %w", run.errPrefix, run.journal, err)
+	}
+
+	if err := cliio.WriteFile(run.journal, body, 0o600); err != nil {
+		return fmt.Errorf("%s: write promotion journal %s: %w", run.errPrefix, run.journal, err)
+	}
+
+	return nil
+}
+
 func ledgerCleanupCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "cleanup",
+		Name:  subCmdCleanup,
 		Usage: "delete each entry's staging candidate tag after verifying the promoted final tag (leaves candidates in place if unverified)",
 		Description: `EXAMPLE:
    reusable-ci container ledger cleanup --ledger release-images.json --tag v1.2.3`,
 		Flags: []cli.Flag{
 			ledgerPathFlag(),
 			releaseTagFlag(),
-			dryRunFlag(),
-		},
-		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return runLedgerMutation(ctx, cmd, imageledger.Cleanup, "cleaned up candidate tags for")
-		},
-	}
-}
-
-func ledgerRollbackCmd() *cli.Command {
-	return &cli.Command{
-		Name:  "rollback",
-		Usage: "undo a stage's promotion: delete that stage's pointer tag(s) (e.g. :dev/:staging/:release) that still serve the entry's digest; the immutable :<version> tag is never touched",
-		Description: `EXAMPLE:
-   reusable-ci container ledger rollback --ledger release-images.json --tag v1.2.3 --stage release`,
-		Flags: []cli.Flag{
-			ledgerPathFlag(),
-			releaseTagFlag(),
-			stageFlag(),
-			stageRepoFlag(),
+			expectedImageRepositoryFlag(),
 			dryRunFlag(),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-				data, err := cliio.ReadFile(cmd.String("ledger"))
-				if err != nil {
-					return fmt.Errorf("ledger: read %s: %w", cmd.String("ledger"), err)
-				}
-
-				entries, err := imageledger.Parse(data)
+				entries, err := ledgerEntriesFromCmd(cmd)
 				if err != nil {
 					return err
 				}
@@ -586,17 +1134,81 @@ func ledgerRollbackCmd() *cli.Command {
 					return err
 				}
 
-				stage := imageledger.Stage{Name: cmd.String("stage"), TargetRepo: cmd.String("stage-repo")}
-				if err := imageledger.Rollback(ctx, reg, entries, cmd.String("tag"), stage); err != nil {
-					return err
-				}
-
-				_, _ = fmt.Fprintf(os.Stderr, "ledger: rolled back %d entr(y/ies) for stage %q\n", len(entries), stage.Name)
-
-				return nil
+				return runLedgerCleanup(ctx, reg, entries, cmd.String(flagTag), "ledger")
 			})
 		},
 	}
+}
+
+func ledgerRollbackCmd() *cli.Command {
+	return &cli.Command{
+		Name:  subCmdRollback,
+		Usage: "undo a stage's promotion: delete that stage's pointer tag(s) (e.g. :dev/:staging/:release) that still serve the entry's digest; the immutable :<version> tag is never touched",
+		Description: `EXAMPLE:
+   reusable-ci container ledger rollback --ledger release-images.json --tag v1.2.3 --stage release`,
+		Flags: []cli.Flag{
+			ledgerPathFlag(),
+			releaseTagFlag(),
+			stageFlag(),
+			stageRepoFlag(),
+			releaseTagsFromLedgerFlag(),
+			expectedImageRepositoryFlag(),
+			promotionJournalFlag(),
+			dryRunFlag(),
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return deps.FromCmd(ctx, cmd, func(dep *deps.Deps) error {
+				if journal := cmd.String("journal"); journal != "" {
+					return ledgerRollbackFromJournal(ctx, cmd, dep, journal)
+				}
+
+				return ledgerRollbackFromLedger(ctx, cmd, dep)
+			})
+		},
+	}
+}
+
+// ledgerRollbackFromJournal undoes a promotion from its promotion journal:
+// the journal records exactly which pointer tags the promotion created.
+func ledgerRollbackFromJournal(ctx context.Context, cmd *cli.Command, dep *deps.Deps, journal string) error {
+	records, err := loadPromotionJournal(journal, "ledger", cmd.String(flagExpectedImageRepository))
+	if err != nil {
+		return err
+	}
+
+	reg, err := promotionRollbackReg(dep, cmd.Bool("dry-run"))
+	if err != nil {
+		return err
+	}
+
+	return runPromotionJournalRollback(ctx, reg, records, cmd.String(flagTag), "ledger")
+}
+
+// ledgerRollbackFromLedger undoes a stage's promotion from the ledger
+// itself when no promotion journal is available.
+func ledgerRollbackFromLedger(ctx context.Context, cmd *cli.Command, dep *deps.Deps) error {
+	entries, err := ledgerEntriesFromCmd(cmd)
+	if err != nil {
+		return err
+	}
+
+	reg, err := cleanupReg(dep, cmd.Bool("dry-run"))
+	if err != nil {
+		return err
+	}
+
+	stage := imageledger.Stage{
+		Name:                cmd.String("stage"),
+		TargetRepo:          cmd.String("stage-repo"),
+		UseEntryReleaseTags: cmd.Bool("release-tags-from-ledger"),
+	}
+	if err := imageledger.Rollback(ctx, reg, entries, cmd.String(flagTag), stage); err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(os.Stderr, "ledger: rolled back %d entr(y/ies) for stage %q\n", len(entries), stage.Name)
+
+	return nil
 }
 
 func ledgerMergeCmd() *cli.Command {
@@ -630,7 +1242,7 @@ func ledgerMergeCmd() *cli.Command {
 				deps.Annotator(cmd).Warningf("ledger merge: no entries found under %v — promotion will be a no-op; check the build's ledger upload", cmd.Args().Slice())
 			}
 
-			path := cmd.String("ledger")
+			path := cmd.String(flagLedger)
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec,mnd // dist dir; 0755 is conventional.
 				return fmt.Errorf("ledger: create dir for %s: %w", path, err)
 			}

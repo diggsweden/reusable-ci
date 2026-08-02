@@ -1,0 +1,54 @@
+// SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+// SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
+
+package validate
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+
+	"github.com/urfave/cli/v3"
+
+	appvalidate "github.com/diggsweden/reusable-ci/v3/internal/app/validate"
+)
+
+func pinReachabilityCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "pin-reachability",
+		Usage: "reject forgejo-ci commit pins that are no longer reachable from main or any tag",
+		Description: `Checks workflow files for forgejo-ci@<40-hex-sha> references and fails
+when a pin is not reachable from the configured main branch and is not the
+commit pointed to by any tag. This catches history-rewrite/orphaned-pin failures
+before object GC turns them into confusing runtime failures.
+
+EXAMPLE:
+   reusable-ci validate pin-reachability --workflow .forgejo/workflows/release.yml`,
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: flagRoot, Value: ".", Usage: "repository root used to resolve relative workflow paths"},
+			&cli.StringSliceFlag{Name: flagWorkflow, Usage: "workflow file to scan for forgejo-ci pins (repeatable; required)"},
+			&cli.StringFlag{Name: "remote", Value: "https://codeberg.org/itiquette/forgejo-ci.git", Sources: cli.EnvVars("FORGEJO_CI_REMOTE"), Usage: "forgejo-ci git remote to clone when --repo-dir is unset"},
+			&cli.StringFlag{Name: "repo-dir", Sources: cli.EnvVars("FORGEJO_CI_DIR"), Usage: "local forgejo-ci clone to check instead of cloning --remote"},
+			&cli.StringFlag{Name: "main", Value: "main", Sources: cli.EnvVars("FORGEJO_CI_MAIN"), Usage: "branch ref treated as current main"},
+			&cli.StringFlag{Name: "subject", Value: "forgejo-ci", Usage: "pin subject to scan before @<sha>"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			workflows := cmd.StringSlice(flagWorkflow)
+
+			root := cmd.String(flagRoot)
+			for i, workflow := range workflows {
+				if root != "" && !filepath.IsAbs(workflow) {
+					workflows[i] = filepath.Join(root, workflow)
+				}
+			}
+
+			return appvalidate.PinReachability(ctx, os.Stderr, appvalidate.PinReachabilityInput{
+				Workflows: workflows,
+				Remote:    cmd.String("remote"),
+				RepoDir:   cmd.String("repo-dir"),
+				Main:      cmd.String("main"),
+				Subject:   cmd.String("subject"),
+			})
+		},
+	}
+}

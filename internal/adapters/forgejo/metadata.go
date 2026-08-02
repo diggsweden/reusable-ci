@@ -12,7 +12,7 @@ import (
 
 // FetchRepoMetadata calls GET /api/v1/repos/{owner}/{repo} and maps the
 // description + web URL into RepoMetadata for OCI labels. An empty repo
-// (or an unparseable one) returns empty metadata best-effort, matching
+// (or an unparsable one) returns empty metadata best-effort, matching
 // the gitlab adapter; a network/API failure returns an error.
 func (p *Provider) FetchRepoMetadata(ctx context.Context, repo string) (*provider.RepoMetadata, error) {
 	if repo == "" {
@@ -21,7 +21,7 @@ func (p *Provider) FetchRepoMetadata(ctx context.Context, repo string) (*provide
 
 	owner, name, err := splitRepo(repo)
 	if err != nil {
-		return &provider.RepoMetadata{}, nil //nolint:nilerr // best-effort OCI labels: an unparseable repo yields empty metadata, not a hard failure.
+		return &provider.RepoMetadata{}, nil //nolint:nilerr // best-effort OCI labels: an unparsable repo yields empty metadata, not a hard failure.
 	}
 
 	client, err := p.client(ctx)

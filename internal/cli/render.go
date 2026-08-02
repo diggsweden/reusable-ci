@@ -37,6 +37,10 @@ func Render(root *cli.Command) string {
 	_, _ = fmt.Fprintln(&b, "Every command supports `--help`. Global flags (`--quiet`, `--log-level`, `--format`, `--json`,")
 	_, _ = fmt.Fprintln(&b, "`--provider`, `--runner`) are accepted on every subcommand.")
 	_, _ = fmt.Fprintln(&b)
+	_, _ = fmt.Fprintln(&b, "Value resolution is one fixed precedence everywhere: explicit flag, then (where a")
+	_, _ = fmt.Fprintln(&b, "command supports it) the `$REUSABLE_CI_PLAN` plan-file field for the command's scope,")
+	_, _ = fmt.Fprintln(&b, "then the environment variables listed per flag, then the flag default.")
+	_, _ = fmt.Fprintln(&b)
 
 	// Top-level table of contents.
 	_, _ = fmt.Fprintln(&b, "## Command groups")

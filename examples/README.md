@@ -140,7 +140,7 @@ artifacts:
 npmjs.org production publishing is not implemented yet. Current config
 validation rejects `npmjs`; it is reserved for future support.
 
-See [Publishing Guide](../docs/publishing.md#npm-packages-forge-packages) for setup.
+See [Publishing Guide](../docs/publishing.md#npm-packages-github-packages) for setup.
 
 ---
 

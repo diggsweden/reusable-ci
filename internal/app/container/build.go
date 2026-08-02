@@ -91,7 +91,7 @@ func BuildImage(
 	if sink != nil {
 		key := in.DigestKey
 		if key == "" {
-			key = "digest"
+			key = outputKeyDigest
 		}
 
 		if err := sink.Set(ctx, key, digest); err != nil {

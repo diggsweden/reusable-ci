@@ -5,9 +5,11 @@ package imageledger_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
 )
 
@@ -82,5 +84,246 @@ func TestRollback_SkipsAbsentAndNonPromotedEntries(t *testing.T) {
 
 	if len(reg.deleted) != 0 {
 		t.Errorf("nothing to roll back, got %v", reg.deleted)
+	}
+}
+
+type fakePromotionRollbackRegistry struct {
+	digests map[string]string
+	copied  []string
+	deleted []string
+}
+
+func (r *fakePromotionRollbackRegistry) ResolveDigest(_ context.Context, ref string) (string, error) {
+	dig, ok := r.digests[ref]
+	if !ok {
+		return "", errors.New("ref not found") //nolint:err113 // test mock error
+	}
+
+	return dig, nil
+}
+
+func (r *fakePromotionRollbackRegistry) CopyTag(_ context.Context, source, dest string) error {
+	r.copied = append(r.copied, source+"->"+dest)
+	r.digests[dest] = r.digests[source]
+
+	return nil
+}
+
+func (r *fakePromotionRollbackRegistry) DeleteTag(_ context.Context, ref string) error {
+	r.deleted = append(r.deleted, ref)
+	delete(r.digests, ref)
+
+	return nil
+}
+
+func TestPlanPromotionJournal_RecordsPrePromotionState(t *testing.T) {
+	t.Parallel()
+
+	e := candidateEntry()
+	e.MovingTag = "codeberg.org/itiquette/gommitlint:rust"
+	previous := "sha256:" + "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	reg := &fakePromotionRollbackRegistry{digests: map[string]string{
+		e.CandidateTag: goodDigest,
+		e.MovingTag:    previous,
+	}}
+
+	records, err := imageledger.PlanPromotionJournal(context.Background(), reg, []imageledger.Entry{e}, "v1.2.3", imageledger.Stage{Name: "release", UseEntryReleaseTags: true})
+	if err != nil {
+		t.Fatalf("PlanPromotionJournal: %v", err)
+	}
+
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want 1", len(records))
+	}
+
+	record := records[0]
+	if record.SourceRef != e.CandidateTag+"@"+goodDigest {
+		t.Errorf("SourceRef = %q", record.SourceRef)
+	}
+
+	if record.FinalExisted {
+		t.Error("FinalExisted = true, want false")
+	}
+
+	if record.PreviousMovingDigest != previous {
+		t.Errorf("PreviousMovingDigest = %q", record.PreviousMovingDigest)
+	}
+}
+
+func TestPlanPromotionJournal_DigestRefFallbackRecordsDigestRefSource(t *testing.T) {
+	t.Parallel()
+
+	e := candidateEntry()
+	reg := &fakePromotionRollbackRegistry{digests: map[string]string{e.Ref: goodDigest}}
+
+	records, err := imageledger.PlanPromotionJournal(context.Background(), reg, []imageledger.Entry{e}, "v1.2.3", imageledger.Stage{Name: "release", UseEntryReleaseTags: true, AllowDigestRefFallback: true})
+	if err != nil {
+		t.Fatalf("PlanPromotionJournal with fallback: %v", err)
+	}
+
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want 1", len(records))
+	}
+
+	if records[0].SourceRef != e.Ref {
+		t.Errorf("SourceRef = %q, want digest-pinned ref %q", records[0].SourceRef, e.Ref)
+	}
+}
+
+func TestPlanPromotionJournal_RefusesExistingFinalDifferentDigest(t *testing.T) {
+	t.Parallel()
+
+	e := candidateEntry()
+	other := "sha256:" + "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	reg := &fakePromotionRollbackRegistry{digests: map[string]string{
+		e.CandidateTag: goodDigest,
+		e.FinalTag:     other,
+	}}
+
+	err := func() error {
+		_, planErr := imageledger.PlanPromotionJournal(context.Background(), reg, []imageledger.Entry{e}, "v1.2.3", imageledger.Stage{Name: "release", UseEntryReleaseTags: true})
+
+		return planErr
+	}()
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("existing final tag with another digest must be refused, got %v", err)
+	}
+}
+
+func TestRollbackPromotionJournal_RestoresMovingAndDeletesNewFinal(t *testing.T) {
+	t.Parallel()
+
+	e := candidateEntry()
+	e.MovingTag = "codeberg.org/itiquette/gommitlint:rust"
+	previous := "sha256:" + "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	record := imageledger.PromotionRecord{
+		SourceRef:            e.CandidateTag + "@" + goodDigest,
+		FinalTag:             e.FinalTag,
+		MovingTag:            e.MovingTag,
+		CandidateTag:         e.CandidateTag,
+		FinalExisted:         false,
+		PreviousMovingDigest: previous,
+	}
+	reg := &fakePromotionRollbackRegistry{digests: map[string]string{
+		e.FinalTag:  goodDigest,
+		e.MovingTag: goodDigest,
+		"codeberg.org/itiquette/gommitlint@" + previous: previous,
+	}}
+
+	if err := imageledger.RollbackPromotionJournal(context.Background(), reg, []imageledger.PromotionRecord{record}, "v1.2.3"); err != nil {
+		t.Fatalf("RollbackPromotionJournal: %v", err)
+	}
+
+	if !slices.Equal(reg.copied, []string{"codeberg.org/itiquette/gommitlint@" + previous + "->" + e.MovingTag}) {
+		t.Errorf("restored moving tag copy mismatch: %v", reg.copied)
+	}
+
+	if !slices.Equal(reg.deleted, []string{e.FinalTag}) {
+		t.Errorf("expected new final tag deleted, got %v", reg.deleted)
+	}
+
+	if got := reg.digests[e.MovingTag]; got != previous {
+		t.Errorf("moving tag digest after rollback = %q, want %q", got, previous)
+	}
+}
+
+func TestRollbackPromotionJournal_DeletesNewMovingAndKeepsExistingFinal(t *testing.T) {
+	t.Parallel()
+
+	e := candidateEntry()
+	e.MovingTag = "codeberg.org/itiquette/gommitlint:rust"
+	record := imageledger.PromotionRecord{
+		SourceRef:    e.CandidateTag + "@" + goodDigest,
+		FinalTag:     e.FinalTag,
+		MovingTag:    e.MovingTag,
+		CandidateTag: e.CandidateTag,
+		FinalExisted: true,
+	}
+	reg := &fakePromotionRollbackRegistry{digests: map[string]string{
+		e.FinalTag:  goodDigest,
+		e.MovingTag: goodDigest,
+	}}
+
+	if err := imageledger.RollbackPromotionJournal(context.Background(), reg, []imageledger.PromotionRecord{record}, "v1.2.3"); err != nil {
+		t.Fatalf("RollbackPromotionJournal: %v", err)
+	}
+
+	if len(reg.copied) != 0 {
+		t.Errorf("no restore expected for newly-created moving tag, got %v", reg.copied)
+	}
+
+	if !slices.Equal(reg.deleted, []string{e.MovingTag}) {
+		t.Errorf("expected only new moving tag deleted, got %v", reg.deleted)
+	}
+
+	if _, ok := reg.digests[e.FinalTag]; !ok {
+		t.Errorf("existing final tag must be kept")
+	}
+}
+
+func TestRollbackPromotionJournal_RefusesFinalTagMismatchBeforeDelete(t *testing.T) {
+	t.Parallel()
+
+	e := candidateEntry()
+	other := "sha256:" + "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	record := imageledger.PromotionRecord{
+		SourceRef:    e.CandidateTag + "@" + goodDigest,
+		FinalTag:     e.FinalTag,
+		CandidateTag: e.CandidateTag,
+		FinalExisted: false,
+	}
+	reg := &fakePromotionRollbackRegistry{digests: map[string]string{e.FinalTag: other}}
+
+	err := imageledger.RollbackPromotionJournal(context.Background(), reg, []imageledger.PromotionRecord{record}, "v1.2.3")
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("final tag mismatch must be refused, got %v", err)
+	}
+
+	if len(reg.deleted) != 0 {
+		t.Errorf("must not delete mismatched final tag, got %v", reg.deleted)
+	}
+}
+
+func TestPromotionJournal_RoundTripJSONL(t *testing.T) {
+	t.Parallel()
+
+	records := []imageledger.PromotionRecord{{
+		SourceRef:    "codeberg.org/itiquette/gommitlint:staging-v1.2.3@" + goodDigest,
+		FinalTag:     "codeberg.org/itiquette/gommitlint:v1.2.3",
+		CandidateTag: "codeberg.org/itiquette/gommitlint:staging-v1.2.3",
+	}}
+
+	body, err := imageledger.MarshalPromotionJournal(records)
+	if err != nil {
+		t.Fatalf("MarshalPromotionJournal: %v", err)
+	}
+
+	got, err := imageledger.ParsePromotionJournal(body)
+	if err != nil {
+		t.Fatalf("ParsePromotionJournal: %v", err)
+	}
+
+	if !slices.Equal(got, records) {
+		t.Errorf("round trip = %#v, want %#v", got, records)
+	}
+}
+
+func TestValidatePromotionRecordRepository(t *testing.T) {
+	t.Parallel()
+
+	record := imageledger.PromotionRecord{
+		SourceRef:    "codeberg.org/itiquette/gommitlint@" + goodDigest,
+		FinalTag:     "codeberg.org/itiquette/gommitlint:v1.2.3",
+		MovingTag:    "codeberg.org/itiquette/gommitlint:latest",
+		CandidateTag: "codeberg.org/itiquette/gommitlint:staging-v1.2.3",
+	}
+
+	if err := imageledger.ValidatePromotionRecordRepository(record, "codeberg.org/itiquette/gommitlint"); err != nil {
+		t.Fatalf("expected repository accepted: %v", err)
+	}
+
+	record.MovingTag = "codeberg.org/evil/gommitlint:latest"
+	if err := imageledger.ValidatePromotionRecordRepository(record, "codeberg.org/itiquette/gommitlint"); !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("unexpected repository should be validation error, got %v", err)
 	}
 }

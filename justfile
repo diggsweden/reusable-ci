@@ -322,7 +322,7 @@ gen-cli-reference:
 # already gates PR merges via the standard test infrastructure.
 [group('docs')]
 check-cli-reference:
-    @go test ./internal/cli/docs/... -run '^TestDocsCLIReferenceInSync$' -count=1
+    @go test ./internal/cli -run '^TestDocsCLIReferenceInSync$' -count=1
 
 # ==================================================================================== #
 # BUILD - Local compilation

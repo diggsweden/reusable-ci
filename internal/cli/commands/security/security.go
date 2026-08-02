@@ -14,6 +14,13 @@ package security
 
 import "github.com/urfave/cli/v3"
 
+// flagImageRef is the shared --image-ref flag name across the scan and
+// report verbs, declared once so the spelling cannot drift and the package
+// stays under goconst's literal budget. The value is part of the CLI
+// contract — docs/cli-reference.md is generated from it and a sync test
+// gates any change.
+const flagImageRef = "image-ref"
+
 // New returns the `security` subgroup command tree.
 func New() *cli.Command {
 	return &cli.Command{

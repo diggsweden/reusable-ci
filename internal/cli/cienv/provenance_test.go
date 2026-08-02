@@ -15,7 +15,7 @@ func TestProvenanceBuilderID_CanonicalWorkflowRef(t *testing.T) {
 	// Display name MUST NOT be used — that is the bug this guards against.
 	t.Setenv("GITHUB_WORKFLOW", "Release binary")
 
-	const want = "https://github.com/diggsweden/reusable-ci/v3/.github/workflows/release-binary.yml@refs/tags/v1.2.3"
+	const want = "https://github.com/diggsweden/reusable-ci/.github/workflows/release-binary.yml@refs/tags/v1.2.3"
 	if got := cienv.ProvenanceBuilderID(); got != want {
 		t.Errorf("builder id = %q, want canonical workflow ref %q", got, want)
 	}

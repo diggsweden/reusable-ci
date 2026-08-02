@@ -121,10 +121,21 @@ func (r *Repo) Fetch(ctx context.Context, remoteURL string, refspecs []string, t
 		args = append(args, fmt.Sprintf("--depth=%d", depth))
 	}
 
-	args = append(args, "origin")
+	args = append(args, defaultRemote)
 	args = append(args, refspecs...)
 
 	return r.runEnv(ctx, authEnv(remoteURL, token), args...)
+}
+
+// FetchBranch runs `git fetch <remote> <branch>`.
+func (r *Repo) FetchBranch(ctx context.Context, remote, branch string) error {
+	if remote == "" {
+		remote = defaultRemote
+	}
+
+	_, err := r.Run(ctx, "fetch", remote, branch)
+
+	return err
 }
 
 // FetchTags fetches all tags from origin (git fetch --tags), the additive
@@ -133,7 +144,7 @@ func (r *Repo) Fetch(ctx context.Context, remoteURL string, refspecs []string, t
 // so the common checkout stays lean. Same credential-free auth as Fetch.
 func (r *Repo) FetchTags(ctx context.Context, remoteURL, token string) error {
 	args := append(r.safeDirArgs(), "-c", "protocol.version=2",
-		"fetch", "--quiet", "--tags", "--prune", "--no-recurse-submodules", "origin")
+		"fetch", "--quiet", "--tags", "--prune", "--no-recurse-submodules", defaultRemote)
 
 	return r.runEnv(ctx, authEnv(remoteURL, token), args...)
 }
@@ -145,7 +156,7 @@ func (r *Repo) FetchTags(ctx context.Context, remoteURL, token string) error {
 // rely on. Same credential-free auth as Fetch.
 func (r *Repo) FetchAllRefs(ctx context.Context, remoteURL, token string) error {
 	args := append(r.safeDirArgs(), "-c", "protocol.version=2",
-		"fetch", "--quiet", "--prune", "--no-recurse-submodules", "origin",
+		"fetch", "--quiet", "--prune", "--no-recurse-submodules", defaultRemote,
 		"+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*")
 
 	return r.runEnv(ctx, authEnv(remoteURL, token), args...)
@@ -219,6 +230,27 @@ func (r *Repo) SparseSet(ctx context.Context, patterns []string) error {
 func (r *Repo) CheckoutDetach(ctx context.Context, ref string) error {
 	args := append(r.safeDirArgs(), "checkout", "--quiet", "--detach", ref)
 	_, err := r.Run(ctx, args...)
+
+	return err
+}
+
+// Checkout checks out a ref by name, with hooks disabled for release flows that
+// only need to move the working tree after creating an immutable tag.
+func (r *Repo) Checkout(ctx context.Context, ref string) error {
+	_, err := r.Run(ctx, "-c", "core.hooksPath=/dev/null", "checkout", ref)
+
+	return err
+}
+
+// FetchTagForceFromRemote fetches a single tag ref from remote with --force,
+// matching same-version release recovery where a local tag may already exist.
+func (r *Repo) FetchTagForceFromRemote(ctx context.Context, remote, tag string) error {
+	if remote == "" {
+		remote = defaultRemote
+	}
+
+	ref := refsTagsPrefix + tag
+	_, err := r.Run(ctx, "fetch", "--force", "--no-tags", remote, ref+":"+ref)
 
 	return err
 }

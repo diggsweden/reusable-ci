@@ -27,13 +27,18 @@ Make such producers run unconditionally (if: always()) and always emit the
 output, or annotate the consumer with '# job-graph-guard: allow reason=...'.
 
 EXAMPLE:
-   reusable-ci validate job-graph --root .`,
+   reusable-ci validate job-graph --root .
+   reusable-ci validate job-graph --workflow .forgejo/workflows/release.yml`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagRoot, Value: ".", Usage: "repository root containing .github/workflows"},
+			&cli.StringFlag{Name: "workflows-dir", Usage: "workflow directory to scan (defaults to <root>/.github/workflows)"},
+			&cli.StringSliceFlag{Name: flagWorkflow, Usage: "exact workflow file to check instead of scanning the workflow directory (repeatable)"},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			return appvalidate.JobGraph(os.Stderr, deps.Annotator(cmd), appvalidate.JobGraphInput{
-				Root: cmd.String(flagRoot),
+				Root:         cmd.String(flagRoot),
+				WorkflowsDir: cmd.String("workflows-dir"),
+				Workflows:    cmd.StringSlice(flagWorkflow),
 			})
 		},
 	}

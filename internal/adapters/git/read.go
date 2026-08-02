@@ -33,7 +33,7 @@ func (r *Repo) RevParse(ctx context.Context, ref string) (string, error) {
 		}
 	}
 
-	return r.Run(ctx, "rev-parse", ref)
+	return r.Run(ctx, "-c", "core.hooksPath=/dev/null", "rev-parse", ref)
 }
 
 // DescribeLatestTag returns the most recent tag reachable from HEAD,
@@ -63,6 +63,16 @@ func (r *Repo) TagSHA(ctx context.Context, tag string) (string, error) {
 // ShortSHA returns `git rev-parse --short=<n> <ref>`.
 func (r *Repo) ShortSHA(ctx context.Context, ref string, n int) (string, error) {
 	return r.Run(ctx, "rev-parse", fmt.Sprintf("--short=%d", n), ref)
+}
+
+// StatusPorcelain returns `git status --porcelain -- <pathspec>`.
+func (r *Repo) StatusPorcelain(ctx context.Context, pathspec string) (string, error) {
+	out, err := r.Run(ctx, "status", "--porcelain", "--", pathspec)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(out), nil
 }
 
 // RemoteTagCommit resolves a tag to the commit it points to on the
@@ -103,6 +113,44 @@ func (r *Repo) RemoteTagCommit(ctx context.Context, repoURL, tag string) (string
 	return "", fmt.Errorf("remote tag %q not found on %s: %w", tag, repoURL, errs.ErrValidation)
 }
 
+// RemoteTagCommitIfExists resolves a remote tag to the commit it points to,
+// returning exists=false when the remote has no matching tag.
+func (r *Repo) RemoteTagCommitIfExists(ctx context.Context, remote, tag string) (string, bool, error) {
+	if remote == "" {
+		remote = defaultRemote
+	}
+
+	commit, err := r.RemoteTagCommit(ctx, remote, tag)
+	if err != nil {
+		if errors.Is(err, errs.ErrValidation) {
+			return "", false, nil
+		}
+
+		return "", false, err
+	}
+
+	return commit, true, nil
+}
+
+// CommitSubject returns `git log -1 --format=%s <commit>`.
+func (r *Repo) CommitSubject(ctx context.Context, commit string) (string, error) {
+	return r.Run(ctx, "log", "-1", "--format=%s", commit)
+}
+
+// CommitUnixTime returns `git log -1 --format=%ct <ref>`.
+func (r *Repo) CommitUnixTime(ctx context.Context, ref string) (string, error) {
+	return r.Run(ctx, "log", "-1", "--format=%ct", ref)
+}
+
+// RecentLogOneline returns `git log <ref> --oneline -<limit>`.
+func (r *Repo) RecentLogOneline(ctx context.Context, ref string, limit int) (string, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	return r.Run(ctx, "log", ref, "--oneline", fmt.Sprintf("-%d", limit))
+}
+
 // RemoteVersionTags returns the `v*` tags present on the remote
 // (`git ls-remote --tags --refs`). The git-side `v*` glob is coarse IO
 // narrowing only; deciding which of these are valid release tags (and
@@ -125,6 +173,60 @@ func (r *Repo) RemoteVersionTags(ctx context.Context, repoURL string) ([]string,
 	}
 
 	return tags, nil
+}
+
+// FetchTagFromRemote fetches exactly one tag object into the local refs/tags
+// namespace. It mirrors forgejo-ci's release-request guard: no implicit tag
+// following, no hooks, and no ref mutation beyond the requested tag.
+func (r *Repo) FetchTagFromRemote(ctx context.Context, remote, tag string) error {
+	if remote == "" {
+		remote = defaultRemote
+	}
+
+	ref := refsTagsPrefix + tag
+	_, err := r.Run(ctx, "-c", "core.hooksPath=/dev/null", "fetch", "--no-tags", remote, ref+":"+ref)
+
+	return err
+}
+
+// RemoteTagObject returns the unpeeled object id published at refs/tags/<tag>
+// on remote. For annotated tags this is the tag-object id, not the target
+// commit id; release-request validation compares this value with the local tag
+// object to catch stale or locally moved authorisation tags.
+func (r *Repo) RemoteTagObject(ctx context.Context, remote, tag string) (string, error) {
+	if remote == "" {
+		remote = defaultRemote
+	}
+
+	out, err := r.Run(ctx, "-c", "core.hooksPath=/dev/null", "ls-remote", "--tags", remote, refsTagsPrefix+tag)
+	if err != nil {
+		return "", err
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == refsTagsPrefix+tag {
+			return fields[0], nil
+		}
+	}
+
+	return "", fmt.Errorf("remote tag %q not found on %s: %w", tag, remote, errs.ErrValidation)
+}
+
+// RemoteTagExists reports whether refs/tags/<tag> is present on remote.
+// It intentionally avoids --exit-code so absence is a boolean, not a wrapped
+// git failure, while transport/auth failures still surface as errors.
+func (r *Repo) RemoteTagExists(ctx context.Context, remote, tag string) (bool, error) {
+	if remote == "" {
+		remote = defaultRemote
+	}
+
+	out, err := r.Run(ctx, "-c", "core.hooksPath=/dev/null", "ls-remote", "--tags", remote, refsTagsPrefix+tag)
+	if err != nil {
+		return false, err
+	}
+
+	return strings.TrimSpace(out) != "", nil
 }
 
 // refsTagsPrefix is the git ref namespace for tags.
@@ -155,7 +257,7 @@ func (r *Repo) ListTags(ctx context.Context, pattern string) ([]string, error) {
 // result is an exact-match existence check. Used by the create-once
 // release-tag path to refuse clobbering/moving an existing tag.
 func (r *Repo) TagExists(ctx context.Context, tag string) (bool, error) {
-	out, err := r.Run(ctx, "tag", "-l", tag)
+	out, err := r.Run(ctx, "-c", "core.hooksPath=/dev/null", "tag", "-l", tag)
 	if err != nil {
 		return false, err
 	}
@@ -401,7 +503,7 @@ func (r *Repo) VerifyTagSignature(_ context.Context, tag string, armoredKeyring 
 	return "", fingerprint, true, nil
 }
 
-// VerifyTagSSHAgainstAllowedSigners runs `git verify-tag` with
+// VerifyTagSSHAgainstAllowedSigners runs `git tag -v` with gpg.format=ssh and
 // gpg.ssh.allowedSignersFile pinned to allowedSignersPath. Git
 // invokes ssh-keygen -Y verify internally; exit 0 means the tag is
 // signed AND the signer's public key appears in the allowed_signers
@@ -415,7 +517,11 @@ func (r *Repo) VerifyTagSignature(_ context.Context, tag string, armoredKeyring 
 //     parsing. ErrPermissionDenied wraps the "not in allowed_signers"
 //     case so the prerequisites orchestrator can map it to exit 77.
 func (r *Repo) VerifyTagSSHAgainstAllowedSigners(ctx context.Context, tag, allowedSignersPath string) (bool, string, error) {
-	out, err := r.Run(ctx, "-c", "gpg.ssh.allowedSignersFile="+allowedSignersPath, "verify-tag", tag)
+	out, err := r.Run(ctx,
+		"-c", "core.hooksPath=/dev/null",
+		"-c", "gpg.format=ssh",
+		"-c", "gpg.ssh.allowedSignersFile="+allowedSignersPath,
+		"tag", "-v", tag)
 	if err == nil {
 		return true, out, nil
 	}

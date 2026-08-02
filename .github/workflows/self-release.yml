@@ -25,6 +25,10 @@ jobs:
       packages: write
       id-token: write
       actions: read
+    # Own-repo orchestrator call (dogfooding the release flow); the
+    # orchestrator declares its enumerated secrets at the workflow_call
+    # boundary, and this repo holds no unrelated secrets to overshare.
+    # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     secrets: inherit
     with:
       artifacts-config: .reusable-ci/artifacts.yml

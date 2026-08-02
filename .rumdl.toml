@@ -6,6 +6,11 @@
 # See: https://github.com/rvben/rumdl/blob/main/docs/RULES.md
 
 [global]
+# docs/cli-reference.md is GENERATED from the CLI's usage strings
+# (cmd/gen-cli-reference); value placeholders like <server-url> are
+# not inline HTML, and the file is never hand-edited.
+exclude = ["docs/cli-reference.md"]
+
 # Disable rules that cause issues or are not appropriate for this project
 disable = [
   "MD034",  # no-bare-urls - causes panic with Swedish chars

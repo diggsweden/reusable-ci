@@ -24,7 +24,7 @@ EXAMPLE:
    reusable-ci release assemble --project-name app --version 1.2.3 --release-artifacts-dir dist`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "config-plan-json", Required: true, Sources: cli.EnvVars("CONFIG_PLAN_JSON"), Usage: "typed config plan JSON emitted by config parse-artifacts"},
-			&cli.StringFlag{Name: "artifact-transfer-plan-json", Required: true, Sources: cli.EnvVars("ARTIFACT_TRANSFER_PLAN_JSON"), Usage: "typed artifact-transfer plan JSON used by release download-artifacts"},
+			&cli.StringFlag{Name: flagArtifactTransferPlanJSON, Required: true, Sources: cli.EnvVars("ARTIFACT_TRANSFER_PLAN_JSON"), Usage: "typed artifact-transfer plan JSON used by release download-artifacts"},
 			&cli.StringFlag{Name: flagAttachArtifacts, Sources: cli.EnvVars("ATTACH_ARTIFACTS"), Usage: "comma/newline-separated workspace-relative extra release asset globs"},
 			&cli.StringFlag{Name: "project-name", Required: true, Sources: cli.EnvVars("PROJECT_NAME"), Usage: "project slug used for computed release asset names"},
 			&cli.StringFlag{Name: flagVersion, Required: true, Sources: cli.EnvVars("VERSION"), Usage: "release version used for computed release asset names"},
@@ -36,7 +36,7 @@ EXAMPLE:
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			_, err := apprelease.Assemble(os.Stderr, apprelease.AssembleInput{
 				ConfigPlanJSON:           cmd.String("config-plan-json"),
-				ArtifactTransferPlanJSON: cmd.String("artifact-transfer-plan-json"),
+				ArtifactTransferPlanJSON: cmd.String(flagArtifactTransferPlanJSON),
 				AttachArtifacts:          cmd.String(flagAttachArtifacts),
 				ProjectName:              cmd.String("project-name"),
 				Version:                  cmd.String(flagVersion),

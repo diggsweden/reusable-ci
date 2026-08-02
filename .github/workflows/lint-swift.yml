@@ -92,6 +92,10 @@ jobs:
         with:
           fetch-depth: 1
       - name: Install reusable-ci binary
+        # Same-repo action, resolved at the same release tag the consumer
+        # already pinned; the tag is created once by the release flow and
+        # never force-moved (tag-immutability policy).
+        # nosemgrep: yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag
         uses: diggsweden/reusable-ci/.github/actions/install-reusable-ci@v3.0.0
         with:
           ref: ${{ inputs['reusable-ci-binary-ref'] }}
@@ -123,6 +127,10 @@ jobs:
         with:
           fetch-depth: 1
       - name: Install reusable-ci binary
+        # Same-repo action, resolved at the same release tag the consumer
+        # already pinned; the tag is created once by the release flow and
+        # never force-moved (tag-immutability policy).
+        # nosemgrep: yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag
         uses: diggsweden/reusable-ci/.github/actions/install-reusable-ci@v3.0.0
         with:
           ref: ${{ inputs['reusable-ci-binary-ref'] }}

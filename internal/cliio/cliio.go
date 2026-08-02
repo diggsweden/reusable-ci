@@ -31,9 +31,17 @@ import (
 // or stdout (when writing).
 const StdSentinel = "-"
 
+// maxReadSize bounds ReadFile so a runaway hand-off file (a corrupt or
+// maliciously huge ledger/journal/manifest) cannot OOM the job. Every
+// legitimate input on this path — ledgers, journals, keys, checksums,
+// changelogs, SBOM manifests — is orders of magnitude smaller; large
+// binary artifacts are streamed elsewhere, never slurped through here.
+const maxReadSize = 64 << 20 // 64 MiB
+
 // ReadFile returns the bytes at path, or — when path is exactly "-" —
 // the contents of stdin read to EOF. Mirrors os.ReadFile's interface
-// so call sites migrate by a single-line change.
+// so call sites migrate by a single-line change. Input larger than
+// maxReadSize is refused rather than slurped.
 //
 // When path is "-" and stdin is a TTY (or /dev/null), ReadFile fails
 // fast with errs.ErrUsage instead of hanging on terminal input — the
@@ -44,12 +52,20 @@ func ReadFile(path string) ([]byte, error) {
 			return nil, fmt.Errorf("%q expects piped or redirected input, not a terminal: %w", path, errs.ErrUsage)
 		}
 
-		body, err := io.ReadAll(os.Stdin)
+		body, err := io.ReadAll(io.LimitReader(os.Stdin, maxReadSize+1))
 		if err != nil {
 			return nil, fmt.Errorf("read from stdin: %w", err)
 		}
 
+		if len(body) > maxReadSize {
+			return nil, fmt.Errorf("stdin input exceeds %d MiB: %w", maxReadSize>>20, errs.ErrMalformedInput)
+		}
+
 		return body, nil
+	}
+
+	if info, err := os.Stat(path); err == nil && info.Size() > maxReadSize {
+		return nil, fmt.Errorf("%s is %d MiB, larger than the %d MiB input bound: %w", path, info.Size()>>20, maxReadSize>>20, errs.ErrMalformedInput)
 	}
 
 	body, err := os.ReadFile(path) //nolint:gosec // path is a CLI-flag value under operator control.

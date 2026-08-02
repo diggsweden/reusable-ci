@@ -6,7 +6,8 @@
 // Subcommand tree:
 //
 //   - validate.go — `validate <artifacts|containerfile|namespace>`
-//   - manifest.go — `manifest <merge|inspect>`
+//   - image.go — `image <push>`
+//   - manifest.go — `manifest <digest|inspect|merge|push>`
 //   - container.go (this file) — flat ops: resolve-name, platform-plan,
 //     metadata, write-digest-marker
 //   - tarball.go  — `extract-npm-tarball`
@@ -24,8 +25,10 @@ package container
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/urfave/cli/v3"
 
@@ -56,9 +59,9 @@ func New() *cli.Command {
 		Name:  "container",
 		Usage: "container-image helpers (name resolution, manifests, namespace policy, tag/label metadata, …)",
 		Commands: slices.Concat(
-			cmdmeta.WithCategory("Build & sign", buildCmd(), buildAndScanCmd(), loginCmd(), logoutCmd(), signCmd(), attestCmd()),
-			cmdmeta.WithCategory("Image metadata & manifests", resolveNameCmd(), metadataCmd(), platformPlanCmd(), manifestGroup(), writeDigestMarkerCmd()),
-			cmdmeta.WithCategory("Release promotion", ledgerGroup()),
+			cmdmeta.WithCategory("Build & sign", setupBuildahCmd(), buildCmd(), buildPushOCIImageCmd(), imageGroup(), signerImageGroup(), loginCmd(), logoutCmd(), signCmd(), attestCmd(), baseLineagePredicateCmd()),
+			cmdmeta.WithCategory("Image metadata & manifests", resolveNameCmd(), metadataCmd(), canonicalRefCmd(), imageNameForRefCmd(), platformRefCmd(), containerfileArgDefaultCmd(), releaseLabelsCmd(), releaseIdentityMatchesCmd(), imageLabelsJSONCmd(), imageEvidenceCmd(), platformPlanCmd(), manifestGroup(), writeDigestMarkerCmd()),
+			cmdmeta.WithCategory("Release promotion", ledgerGroup(), releaseImageGroup(), releaseImagesGroup(), baseGraphGroup(), baseImagesGroup()),
 			cmdmeta.WithCategory("Validation", validateGroup()),
 			cmdmeta.WithCategory("Workflow plumbing", materializeBuildSecretsCmd(), extractNPMTarballCmd(), suffixBinariesCmd()),
 		),
@@ -78,46 +81,160 @@ EXAMPLES:
    reusable-ci container login --registry codeberg.org --username bot   # password from $REGISTRY_PASSWORD`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagRegistry, Value: domaincontainer.DefaultRegistry, Sources: cli.EnvVars("CONTAINER_REGISTRY"), Usage: "registry host (e.g. ghcr.io, codeberg.org)"},
-			&cli.StringFlag{Name: "username", Sources: cli.EnvVars("REGISTRY_USERNAME"), Usage: "registry username"},
+			&cli.StringFlag{Name: flagServerURL, Usage: "forge/server URL used to derive the registry host when --registry is empty or omitted"},
+			&cli.StringFlag{Name: "username", Sources: cli.EnvVars("REGISTRY_USERNAME"), Usage: credRegistryUsername},
 			&cli.StringFlag{Name: "password-file", Usage: "file containing the password (\"-\" reads stdin); defaults to $REGISTRY_PASSWORD. The password never appears in argv."},
-			&cli.StringFlag{Name: "auth-file", Usage: "override the auth config path (default: $REGISTRY_AUTH_FILE, else $DOCKER_CONFIG/config.json, else ~/.docker/config.json)"},
+			&cli.StringFlag{Name: flagAuthFile, Usage: "override the auth config path (default: $REGISTRY_AUTH_FILE, else $DOCKER_CONFIG/config.json, else ~/.docker/config.json)"},
+			&cli.BoolFlag{Name: "create-auth-file", Sources: cli.EnvVars("REGISTRY_CREATE_AUTH_FILE"), Usage: "when --auth-file is empty, create a fresh job-local auth file under $RUNNER_TEMP"},
+			&cli.BoolFlag{Name: "export-env", Sources: cli.EnvVars("REGISTRY_EXPORT_AUTH_FILE_ENV"), Usage: "append REGISTRY_AUTH_FILE=<auth-file> to --env-file; requires an explicit or created auth file"},
+			&cli.StringFlag{Name: "env-file", Sources: cli.EnvVars("FORGEJO_ENV", "GITHUB_ENV"), Usage: "runner env file used with --export-env"},
 		},
-		Action: func(_ context.Context, cmd *cli.Command) error {
-			registry := cmd.String(flagRegistry)
-			username := cmd.String("username")
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return deps.FromCmd(ctx, cmd, func(dep *deps.Deps) error {
+				registry, err := registryForLogin(cmd.String(flagRegistry), cmd.String(flagServerURL), cmd.IsSet(flagRegistry))
+				if err != nil {
+					return err
+				}
 
-			password, err := secret.Resolve(cmd.String("password-file"), "REGISTRY_PASSWORD")
-			if err != nil {
-				return err
-			}
+				username := cmd.String("username")
 
-			// When the operator supplied no password, fall back to the forge's
-			// runner-injected registry credentials (GitHub $GITHUB_TOKEN, GitLab
-			// $CI_REGISTRY_PASSWORD, Forgejo token) — shrinking standing secrets.
-			// Only applied when logging in to that forge's own registry; explicit
-			// --username / --password always win.
-			if password == "" {
-				if forgeUser, forgeToken := forgeRegistryCreds(registry); forgeToken != "" {
-					password = forgeToken
+				authFile, err := authFileForLogin(cmd.String(flagAuthFile), cmd.Bool("create-auth-file"))
+				if err != nil {
+					return err
+				}
 
-					if username == "" {
-						username = forgeUser
+				password, err := secret.Resolve(cmd.String("password-file"), "REGISTRY_PASSWORD")
+				if err != nil {
+					return err
+				}
+
+				// When the operator supplied no password, fall back to the forge's
+				// runner-injected registry credentials (GitHub $GITHUB_TOKEN, GitLab
+				// $CI_REGISTRY_PASSWORD, Forgejo token) — shrinking standing secrets.
+				// Only applied when logging in to that forge's own registry; explicit
+				// --username / --password always win.
+				if password == "" {
+					if forgeUser, forgeToken := forgeRegistryCreds(registry); forgeToken != "" {
+						password = forgeToken
+
+						if username == "" {
+							username = forgeUser
+						}
 					}
 				}
-			}
 
-			if password == "" {
-				return errs.CredentialRequired(errs.Credential{What: "registry password", Flag: "password-file", Env: "REGISTRY_PASSWORD"})
-			}
+				if password == "" {
+					return errs.CredentialRequired(errs.Credential{What: credRegistryPassword, Flag: "password-file", Env: "REGISTRY_PASSWORD"})
+				}
 
-			return appcontainer.RegistryLogin(os.Stderr, appcontainer.RegistryLoginInput{
-				Registry: registry,
-				Username: username,
-				Password: password,
-				AuthFile: cmd.String("auth-file"),
+				if err := appcontainer.RegistryLogin(os.Stderr, appcontainer.RegistryLoginInput{
+					Registry: registry,
+					Username: username,
+					Password: password,
+					AuthFile: authFile,
+				}); err != nil {
+					return err
+				}
+
+				if err := dep.OutputSink.Set(ctx, flagAuthFile, authFile); err != nil {
+					return err
+				}
+
+				return maybeExportRegistryAuthFile(cmd.Bool("export-env"), cmd.String("env-file"), authFile)
 			})
 		},
 	}
+}
+
+func registryForLogin(registry, serverURL string, registrySet bool) (string, error) {
+	registry = strings.TrimSpace(registry)
+
+	serverURL = strings.TrimSpace(serverURL)
+	if serverURL != "" && (!registrySet || registry == "") {
+		return registryHostFromServerURL(serverURL)
+	}
+
+	if registry != "" {
+		return registry, nil
+	}
+
+	return domaincontainer.DefaultRegistry, nil
+}
+
+func registryHostFromServerURL(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	value = strings.TrimPrefix(value, "https://")
+	value = strings.TrimPrefix(value, "http://")
+
+	value = strings.Trim(value, "/")
+	if value == "" {
+		return "", fmt.Errorf("container login: --server-url must include a host: %w", errs.ErrUsage)
+	}
+
+	if strings.ContainsAny(value, " \t\n\r") {
+		return "", fmt.Errorf("container login: --server-url contains whitespace: %w", errs.ErrUsage)
+	}
+
+	host, _, _ := strings.Cut(value, "/")
+	if host == "" {
+		return "", fmt.Errorf("container login: --server-url must include a host: %w", errs.ErrUsage)
+	}
+
+	return host, nil
+}
+
+func authFileForLogin(authFile string, create bool) (string, error) {
+	authFile = strings.TrimSpace(authFile)
+	if authFile != "" || !create {
+		return authFile, nil
+	}
+
+	tmp, err := os.CreateTemp(runnerTempDir(), "registry-auth.*.json")
+	if err != nil {
+		return "", fmt.Errorf("container login: create isolated auth file: %w", err)
+	}
+
+	path := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("container login: close isolated auth file %s: %w", path, err)
+	}
+
+	return path, nil
+}
+
+func runnerTempDir() string {
+	if dir := os.Getenv("RUNNER_TEMP"); strings.TrimSpace(dir) != "" {
+		return dir
+	}
+
+	return os.TempDir()
+}
+
+func maybeExportRegistryAuthFile(export bool, envFile, authFile string) error {
+	if !export {
+		return nil
+	}
+
+	if strings.TrimSpace(authFile) == "" {
+		return fmt.Errorf("container login: --export-env requires --auth-file or --create-auth-file: %w", errs.ErrUsage)
+	}
+
+	if strings.TrimSpace(envFile) == "" {
+		return fmt.Errorf("container login: --export-env requires --env-file or $FORGEJO_ENV/$GITHUB_ENV: %w", errs.ErrUsage)
+	}
+
+	file, err := os.OpenFile(envFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // CI runner env file chosen by the caller.
+	if err != nil {
+		return fmt.Errorf("container login: open env file %s: %w", envFile, err)
+	}
+
+	defer func() { _ = file.Close() }()
+
+	if _, err := io.WriteString(file, "REGISTRY_AUTH_FILE="+authFile+"\n"); err != nil {
+		return fmt.Errorf("container login: write REGISTRY_AUTH_FILE to %s: %w", envFile, err)
+	}
+
+	return nil
 }
 
 // forgeRegistryCreds returns the detected forge's runner-injected registry
@@ -153,12 +270,12 @@ EXAMPLES:
    reusable-ci container logout   # defaults to $CONTAINER_REGISTRY, else ` + domaincontainer.DefaultRegistry,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagRegistry, Value: domaincontainer.DefaultRegistry, Sources: cli.EnvVars("CONTAINER_REGISTRY"), Usage: "registry host to log out of (e.g. ghcr.io, codeberg.org)"},
-			&cli.StringFlag{Name: "auth-file", Usage: "override the auth config path (default: $REGISTRY_AUTH_FILE, else $DOCKER_CONFIG/config.json, else ~/.docker/config.json)"},
+			&cli.StringFlag{Name: flagAuthFile, Usage: "override the auth config path (default: $REGISTRY_AUTH_FILE, else $DOCKER_CONFIG/config.json, else ~/.docker/config.json)"},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			return appcontainer.RegistryLogout(os.Stderr, appcontainer.RegistryLogoutInput{
 				Registry: cmd.String(flagRegistry),
-				AuthFile: cmd.String("auth-file"),
+				AuthFile: cmd.String(flagAuthFile),
 			})
 		},
 	}
@@ -201,13 +318,13 @@ func platformPlanCmd() *cli.Command {
    reusable-ci container platform-plan --platforms "linux/amd64,linux/arm64"`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "platforms", Sources: cli.EnvVars("PLATFORMS"), Usage: "comma/space/newline-separated build platforms (linux/amd64,linux/arm64)"},
-			&cli.StringFlag{Name: "platform", Sources: cli.EnvVars("PLATFORM"), Usage: "single build platform; falls back to the first entry of --platforms"},
+			&cli.StringFlag{Name: flagPlatform, Sources: cli.EnvVars("PLATFORM"), Usage: "single build platform; falls back to the first entry of --platforms"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
 				_, err := appcontainer.PlatformPlan(ctx, d.OutputSink, os.Stderr, appcontainer.PlatformPlanInput{
 					Platforms: cmd.String("platforms"),
-					Platform:  cmd.String("platform"),
+					Platform:  cmd.String(flagPlatform),
 				})
 
 				return err
@@ -226,7 +343,7 @@ func resolveNameCmd() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "registry", Required: true, Sources: cli.EnvVars("CONTAINER_REGISTRY"), Usage: "registry hostname (e.g. ghcr.io)"},
 			&cli.StringFlag{Name: "image-name", Sources: cli.EnvVars("IMAGE_NAME"), Usage: "explicit image name override (defaults to <owner>/<repo>)"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			&cli.StringFlag{Name: "repository", Required: true, Sources: cienv.Repository(), Usage: "\"owner/repo\" used to build the default image name"},
+			&cli.StringFlag{Name: flagRepository, Required: true, Sources: cienv.Repository(), Usage: "\"owner/repo\" used to build the default image name"},
 			&cli.StringFlag{Name: "repository-owner", Required: true, Sources: cienv.RepositoryOwner(), Usage: "owner segment used to prefix bare image names on docker.io (Docker Hub); the derived reference is always lowercased for OCI compliance"},
 			&cli.StringFlag{Name: "name", Sources: cli.EnvVars("CONTAINER_NAME"),
 				Usage: "optional sub-name for multi-container projects"},
@@ -236,7 +353,7 @@ func resolveNameCmd() *cli.Command {
 				return appcontainer.ResolveName(ctx, d.OutputSink, appcontainer.ResolveNameInput{
 					Registry:        cmd.String("registry"),
 					ImageName:       cmd.String("image-name"),
-					Repository:      cmd.String("repository"),
+					Repository:      cmd.String(flagRepository),
 					RepositoryOwner: cmd.String("repository-owner"),
 					Name:            cmd.String("name"),
 				})

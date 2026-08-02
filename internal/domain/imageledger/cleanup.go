@@ -5,7 +5,10 @@ package imageledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // TagDeleter removes a tag reference from a registry. Implemented by a
@@ -54,20 +57,85 @@ func Cleanup(ctx context.Context, reg CleanupRegistry, entries []Entry, releaseT
 }
 
 func cleanupEntry(ctx context.Context, reg CleanupRegistry, entry Entry) error {
-	// Pre-check: refuse to delete the candidate unless the promoted final
-	// tag already serves the digest — leave the candidate as a safety net.
-	if err := verifyRefDigest(ctx, reg, entry.FinalTag, entry.Digest); err != nil {
-		return fmt.Errorf("promoted final tag %s unverified; leaving candidate %s in place: %w", entry.FinalTag, entry.CandidateTag, err)
+	candidatePresent, err := refServesDigestIfPresent(ctx, reg, entry.CandidateTag, entry.Digest)
+	if err != nil {
+		return fmt.Errorf("candidate tag %s: %w", entry.CandidateTag, err)
+	}
+
+	promotedReady, err := promotedTagsServeDigest(ctx, reg, entry)
+	if err != nil {
+		return err
+	}
+
+	if !promotedReady {
+		return nil
+	}
+
+	if !candidatePresent {
+		return nil
 	}
 
 	if err := reg.DeleteTag(ctx, entry.CandidateTag); err != nil {
 		return fmt.Errorf("delete candidate %s: %w", entry.CandidateTag, err)
 	}
 
-	// Post-check: deletion must not have disturbed the promoted tag.
+	return verifyPromotedTagsAfterCleanup(ctx, reg, entry)
+}
+
+// promotedTagsServeDigest is the pre-delete safety check: the promoted
+// final tag — and the moving tag, when the entry has one — must serve
+// the recorded digest before the candidate may be deleted.
+func promotedTagsServeDigest(ctx context.Context, reg CleanupRegistry, entry Entry) (bool, error) {
+	finalReady, err := refServesDigestIfPresent(ctx, reg, entry.FinalTag, entry.Digest)
+	if err != nil {
+		return false, fmt.Errorf("promoted final tag %s: %w", entry.FinalTag, err)
+	}
+
+	if !finalReady {
+		return false, nil
+	}
+
+	if entry.MovingTag == "" {
+		return true, nil
+	}
+
+	movingReady, err := refServesDigestIfPresent(ctx, reg, entry.MovingTag, entry.Digest)
+	if err != nil {
+		return false, fmt.Errorf("promoted moving tag %s: %w", entry.MovingTag, err)
+	}
+
+	return movingReady, nil
+}
+
+// verifyPromotedTagsAfterCleanup is the post-delete check: deleting the
+// candidate must not have disturbed the promoted final (and moving) tag.
+func verifyPromotedTagsAfterCleanup(ctx context.Context, reg CleanupRegistry, entry Entry) error {
 	if err := verifyRefDigest(ctx, reg, entry.FinalTag, entry.Digest); err != nil {
 		return fmt.Errorf("after candidate cleanup, promoted final tag %s no longer serves %s: %w", entry.FinalTag, entry.Digest, err)
 	}
 
+	if entry.MovingTag != "" {
+		if err := verifyRefDigest(ctx, reg, entry.MovingTag, entry.Digest); err != nil {
+			return fmt.Errorf("after candidate cleanup, promoted moving tag %s no longer serves %s: %w", entry.MovingTag, entry.Digest, err)
+		}
+	}
+
 	return nil
+}
+
+func refServesDigestIfPresent(ctx context.Context, reg DigestResolver, ref, want string) (bool, error) {
+	got, err := reg.ResolveDigest(ctx, ref)
+	if err != nil {
+		if errors.Is(err, errs.ErrMissingInput) {
+			return false, nil
+		}
+
+		return false, fmt.Errorf("resolve %s: %w", ref, err)
+	}
+
+	if got != want {
+		return false, fmt.Errorf("%s resolves to %s, want %s: %w", ref, got, want, errs.ErrValidation)
+	}
+
+	return true, nil
 }

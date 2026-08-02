@@ -12,6 +12,13 @@
   ],
   "packageRules": [
     {
+      "description": "Supply-chain guard: wait 7 days before proposing updates to newly published versions",
+      "matchPackageNames": [
+        "*"
+      ],
+      "minimumReleaseAge": "7 days"
+    },
+    {
       "description": "Pin base image digests for runtime Containerfile FROM lines (debian, golang); the dockerfile manager updates both the tag and the digest each release.",
       "matchManagers": [
         "dockerfile"
@@ -21,7 +28,8 @@
         "containers"
       ],
       "groupName": "container base images",
-      "groupSlug": "container-base-images"
+      "groupSlug": "container-base-images",
+      "minimumReleaseAge": "7 days"
     },
     {
       "description": "Group all mise tool dependencies",
@@ -32,7 +40,8 @@
         "tools"
       ],
       "groupName": "mise tools",
-      "groupSlug": "mise-tools"
+      "groupSlug": "mise-tools",
+      "minimumReleaseAge": "7 days"
     },
     {
       "description": "Security and compliance tools",
@@ -47,7 +56,8 @@
       "addLabels": [
         "security-tools"
       ],
-      "groupName": "security tools"
+      "groupName": "security tools",
+      "minimumReleaseAge": "7 days"
     },
     {
       "description": "Documentation and build tools",
@@ -63,7 +73,8 @@
       "addLabels": [
         "documentation"
       ],
-      "groupName": "documentation tools"
+      "groupName": "documentation tools",
+      "minimumReleaseAge": "7 days"
     },
     {
       "description": "Group Go module patch bumps so routine x/* and patch-level updates land in one PR per cycle. Major/minor stay individual so they get explicit review.",
@@ -78,7 +89,8 @@
         "go-deps"
       ],
       "groupName": "go module patch updates",
-      "groupSlug": "gomod-patch"
+      "groupSlug": "gomod-patch",
+      "minimumReleaseAge": "7 days"
     },
     {
       "description": "Label and surface Go module minor/major bumps individually for review.",
@@ -91,7 +103,8 @@
       ],
       "addLabels": [
         "go-deps"
-      ]
+      ],
+      "minimumReleaseAge": "7 days"
     }
   ],
   "customManagers": [

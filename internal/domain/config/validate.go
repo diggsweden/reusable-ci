@@ -22,6 +22,14 @@ import (
 //nolint:gochecknoglobals // immutable compiled regexp.
 var buildSecretNamePattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
+// ValidBuildSecretName reports whether name has the env-var identifier
+// shape build-secret entries must fit. Exported so the materialize verb
+// re-checks the same single-sourced rule locally instead of trusting
+// that its input already passed config validation — the shape doubles
+// as the path-safety guarantee (no separators, no dots) when the name
+// becomes a filename in the secrets directory.
+func ValidBuildSecretName(name string) bool { return buildSecretNamePattern.MatchString(name) }
+
 // reusableCIReservedSecretNames are names reusable-ci already uses for
 // its own secret pass-through. Adopters can't shadow them as
 // build-secret entries — that would create a name collision in the

@@ -34,7 +34,7 @@ import (
 // which a future re-tag could invalidate without warning.
 func signCmd() *cli.Command {
 	return &cli.Command{
-		Name:      "sign",
+		Name:      subCmdSign,
 		Usage:     "sign an OCI image with cosign (sigstore or kms). Registry-attached storage; signature lives next to the image, not on disk.",
 		ArgsUsage: "<registry/image@sha256:...>",
 		Description: `EXAMPLES:
@@ -44,9 +44,9 @@ func signCmd() *cli.Command {
    # KMS-backed signing
    reusable-ci container sign ghcr.io/org/app@sha256:abc... --method kms --key awskms:///alias/release`,
 		Flags: append(
-			signflags.Cosign(signflags.CosignOpts{MethodNote: "gpg is rejected — it cannot sign OCI images."}),
+			signflags.Cosign(signflags.CosignOpts{MethodNote: cosignMethodNoteGPG}),
 			&cli.BoolFlag{
-				Name:    "recursive",
+				Name:    flagRecursive,
 				Value:   true,
 				Sources: cli.EnvVars("SIGN_RECURSIVE"),
 				Usage:   "walk manifest-list children, signing each per-arch digest in addition to the list itself. Default true (production releases use multi-arch manifest lists).",
@@ -66,7 +66,7 @@ func signCmd() *cli.Command {
 			return appcontainer.SignImage(ctx, cosign.New(), os.Stderr, appcontainer.SignImageInput{
 				Image:      image,
 				Method:     method,
-				Recursive:  cmd.Bool("recursive"),
+				Recursive:  cmd.Bool(flagRecursive),
 				KeyRef:     cmd.String("key"),
 				OIDCIssuer: cmd.String("oidc-issuer"),
 			})

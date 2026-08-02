@@ -50,7 +50,11 @@ func TestCapabilities_GitLab(t *testing.T) {
 		t.Error("GitLab should not advertise SARIFUpload")
 	}
 
-	if !caps.ReleaseAssets || !caps.KeylessOIDC {
-		t.Errorf("Capabilities = %+v, want ReleaseAssets + KeylessOIDC", caps)
+	if !caps.ReleaseAssets {
+		t.Error("GitLab should advertise ReleaseAssets")
+	}
+
+	if !caps.KeylessOIDC {
+		t.Errorf("Capabilities = %+v, want KeylessOIDC", caps)
 	}
 }

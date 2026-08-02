@@ -28,6 +28,8 @@ func New() *cli.Command {
 		Usage: "version-bump and tag-management helpers",
 		Commands: []*cli.Command{
 			commitPushCmd(),
+			renderChangelogCmd(),
+			commitChangelogReleaseCmd(),
 			deriveReleaseCmd(),
 			tagReleaseCmd(),
 			generateDevCmd(),
@@ -45,21 +47,21 @@ func commitPushCmd() *cli.Command {
    reusable-ci version commit-push --branch main --message "chore: bump to 1.2.3" \
      --file-pattern "pom.xml" --author-name ci-bot --author-email ci@example.com`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "branch", Required: true, Sources: cli.EnvVars("BRANCH"), Usage: "remote branch to push the commit to"},
+			&cli.StringFlag{Name: flagBranch, Required: true, Sources: cli.EnvVars("BRANCH"), Usage: "remote branch to push the commit to"},
 			&cli.StringFlag{Name: "author-name", Required: true, Sources: cli.EnvVars("COMMIT_AUTHOR_NAME"), Usage: "git author name written to the commit"},
 			&cli.StringFlag{Name: "author-email", Required: true, Sources: cli.EnvVars("COMMIT_AUTHOR_EMAIL"), Usage: "git author email written to the commit"},
 			&cli.StringFlag{Name: "message", Required: true, Sources: cli.EnvVars("COMMIT_MESSAGE"), Usage: "commit message subject (signoff is appended automatically)"},
 			&cli.StringFlag{Name: "file-pattern", Required: true, Sources: cli.EnvVars("FILE_PATTERN"), Usage: "whitespace-separated git pathspecs to stage"},
-			&cli.StringFlag{Name: "token", Sources: cienv.ReleaseToken(), Usage: "token authenticating the push; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`)."}, //nolint:lll // single-line flag declaration for grep-ability, matching the package convention.
+			&cli.StringFlag{Name: flagToken, Sources: cienv.ReleaseToken(), Usage: "token authenticating the push; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`)."}, //nolint:lll // single-line flag declaration for grep-ability, matching the package convention.
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return appversion.CommitPush(ctx, git.New(), os.Stderr, appversion.CommitPushInput{
-				Branch:      cmd.String("branch"),
+				Branch:      cmd.String(flagBranch),
 				AuthorName:  cmd.String("author-name"),
 				AuthorEmail: cmd.String("author-email"),
 				Message:     cmd.String("message"),
 				FilePattern: cmd.String("file-pattern"),
-				Token:       cmd.String("token"),
+				Token:       cmd.String(flagToken),
 			})
 		},
 	}
@@ -184,11 +186,19 @@ func deriveReleaseCmd() *cli.Command {
 				Sources:  cienv.RefName(),
 				Usage:    "the pushed ref (e.g. release-request/v1.2.3)",
 			},
+			&cli.BoolFlag{Name: "require-release-request", Sources: cli.EnvVars("RELEASE_CONTEXT_REQUIRE_REQUEST"), Usage: "reject refs outside release-request/vMAJOR.MINOR.PATCH"},
+			&cli.BoolFlag{Name: "require-stable", Sources: cli.EnvVars("RELEASE_CONTEXT_REQUIRE_STABLE"), Usage: "reject final tags outside stable vMAJOR.MINOR.PATCH"},
+			&cli.StringFlag{Name: "trailer-mode", Value: "default", Sources: cli.EnvVars("RELEASE_CONTEXT_TRAILER_MODE"), Usage: "commit trailer mode: default or forgejo-ci"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
+			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 				return appversion.ReleaseContext(ctx, git.New(),
-					appversion.ReleaseContextInput{Ref: cmd.String("ref")},
+					appversion.ReleaseContextInput{
+						Ref:                   cmd.String("ref"),
+						RequireReleaseRequest: cmd.Bool("require-release-request"),
+						RequireStable:         cmd.Bool("require-stable"),
+						TrailerMode:           cmd.String("trailer-mode"),
+					},
 					d.OutputSink, os.Stderr)
 			})
 		},
@@ -203,7 +213,7 @@ func tagReleaseCmd() *cli.Command {
    reusable-ci version tag-release --tag v1.2.3`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
-				Name:     "tag",
+				Name:     flagTag,
 				Required: true,
 				Sources:  cli.EnvVars("RELEASE_TAG", "TAG_NAME"),
 				Usage:    "final release tag to create (e.g. v1.2.3)",
@@ -212,12 +222,18 @@ func tagReleaseCmd() *cli.Command {
 				Name:  "no-sign",
 				Usage: "skip GPG signing (intended for tests; production always signs)",
 			},
-			&cli.StringFlag{Name: "token", Sources: cienv.ReleaseToken(), Usage: "token authenticating the tag push; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`)."}, //nolint:lll // single-line flag declaration for grep-ability, matching the package convention.
+			&cli.BoolFlag{
+				Name:    "signed",
+				Value:   true,
+				Sources: cli.EnvVars("TAG_RELEASE_SIGNED"),
+				Usage:   "create a signed tag; set TAG_RELEASE_SIGNED=false for unsigned annotated test tags",
+			},
+			&cli.StringFlag{Name: flagToken, Sources: cienv.ReleaseToken(), Usage: "token authenticating the tag push; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`)."}, //nolint:lll // single-line flag declaration for grep-ability, matching the package convention.
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
 				_, err := appversion.TagRelease(ctx, git.New(),
-					appversion.TagReleaseInput{Tag: cmd.String("tag"), Signed: !cmd.Bool("no-sign"), Token: cmd.String("token")},
+					appversion.TagReleaseInput{Tag: cmd.String(flagTag), Signed: cmd.Bool("signed") && !cmd.Bool("no-sign"), Token: cmd.String(flagToken)},
 					d.OutputSink, os.Stderr)
 
 				return err

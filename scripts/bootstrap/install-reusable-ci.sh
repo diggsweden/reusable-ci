@@ -20,7 +20,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-common.sh"
 
 # Repository owner/name and release URL base are env-overridable so tests can
 # point at a fake server. Defaults match the production GitHub Releases path.
-: "${REUSABLE_CI_RELEASE_URL_BASE:=https://github.com/diggsweden/reusable-ci/v3/releases/download}"
+: "${REUSABLE_CI_RELEASE_URL_BASE:=https://github.com/diggsweden/reusable-ci/releases/download}"
 : "${REUSABLE_CI_MODULE_PATH:=github.com/diggsweden/reusable-ci/v3/cmd/reusable-ci}"
 
 # resolve_reusable_ci_os prints linux|darwin, or fails on unsupported hosts.
@@ -112,9 +112,9 @@ _reusable_ci_cosign_identity() {
 	if [[ -n "${REUSABLE_CI_COSIGN_IDENTITY:-}" ]]; then
 		printf '%s' "$REUSABLE_CI_COSIGN_IDENTITY"
 	elif [[ "$ref" == *-pre ]]; then
-		printf '%s' '^https://github.com/diggsweden/reusable-ci/v3/\.github/workflows/build-cli\.yml@refs/heads/(main|feat/refactor-go)$'
+		printf '%s' '^https://github.com/diggsweden/reusable-ci/\.github/workflows/build-cli\.yml@refs/heads/(main|feat/refactor-go)$'
 	else
-		printf '%s' '^https://github.com/diggsweden/reusable-ci/v3/\.github/workflows/release-binary\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+.*$'
+		printf '%s' '^https://github.com/diggsweden/reusable-ci/\.github/workflows/release-binary\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+.*$'
 	fi
 }
 

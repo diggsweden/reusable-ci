@@ -66,7 +66,7 @@ conventional meaning. Source of truth: `internal/domain/errs`
 | `0` | OK | success, including `--help` / `--version` and passing gates |
 | `1` | Validation | a rule/gate failed (e.g. bad tag, doctor FAIL, lint gate) |
 | `2` | Usage | CLI misuse: bad flags, wrong args, unknown command, context-cancel |
-| `65` | DataErr | malformed input (bad JSON/YAML payload, unparseable value) |
+| `65` | DataErr | malformed input (bad JSON/YAML payload, unparsable value) |
 | `66` | NoInput | a required input file/ref/artifact is missing |
 | `69` | Unavailable | external dependency missing/unreachable, rate-limited, timed out |
 | `70` | Software | unclassified internal error or panic boundary |

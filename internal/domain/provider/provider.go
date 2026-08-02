@@ -337,10 +337,17 @@ type ReleaseCreator interface {
 	CreateRelease(ctx context.Context, repo string, spec ReleaseSpec) error
 }
 
+// ReleasePublisher creates or updates a release and reconciles its assets to
+// match the supplied spec. Unlike ReleaseCreator, this role never deletes the
+// release object during an update; providers update release metadata in place,
+// replace colliding assets by basename, upload desired assets, and remove stale
+// assets no longer present in spec.Assets.
+type ReleasePublisher interface {
+	PublishRelease(ctx context.Context, repo string, spec ReleaseSpec) error
+}
+
 // ReleaseAssetUploader attaches a single file to an existing release,
-// overwriting any existing asset with the same basename. Today only
-// github implements this; the GitLab release-link API will land
-// alongside the rest of GitLab CI support.
+// overwriting any existing asset with the same basename.
 type ReleaseAssetUploader interface {
 	UploadReleaseAsset(ctx context.Context, tag, file string) error
 }

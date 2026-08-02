@@ -13,7 +13,7 @@ func TestRepoSlugFromModulePath(t *testing.T) {
 	for _, tc := range []struct {
 		name, in, want string
 	}{
-		{"github default", "github.com/diggsweden/reusable-ci/v3", "diggsweden/reusable-ci"},
+		{"github default", "github.com/diggsweden/reusable-ci", "diggsweden/reusable-ci"},
 		{"forked org", "github.com/myagency/reusable-ci", "myagency/reusable-ci"},
 		{"self-hosted forge host", "git.myagency.gov/team/reusable-ci", "team/reusable-ci"},
 		{"major-version suffix dropped", "github.com/foo/bar/v2", "foo/bar"},

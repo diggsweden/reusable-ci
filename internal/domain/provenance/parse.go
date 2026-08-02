@@ -14,9 +14,9 @@ import (
 )
 
 // checksumLine matches a GoReleaser-format checksum line:
-// "<64-hex-sha256>  <relative-path>". Mirrors the jq capture in
-// slsa-provenance.sh.
-var checksumLine = regexp.MustCompile(`^([A-Fa-f0-9]{64})\s+(.+)$`)
+// "<64-hex-sha256>  <relative-path>". Coreutils binary-mode checksums prefix
+// the path with "*"; that marker is not part of the subject name.
+var checksumLine = regexp.MustCompile(`^([A-Fa-f0-9]{64})\s+\*?(.+)$`)
 
 // ParseChecksums reads GoReleaser-format checksum lines and returns one
 // Subject per line (digest lower-cased). Blank lines are skipped; a
@@ -27,7 +27,7 @@ func ParseChecksums(r io.Reader) ([]Subject, error) {
 
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
-		line := scanner.Text()
+		line := strings.TrimSuffix(scanner.Text(), "\r")
 		if strings.TrimSpace(line) == "" {
 			continue
 		}

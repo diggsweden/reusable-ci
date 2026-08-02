@@ -5,7 +5,9 @@ package release
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/urfave/cli/v3"
 
@@ -28,6 +30,7 @@ func gpgGroup() *cli.Command {
 		Usage: "manage the release GPG key (import / cleanup)",
 		Commands: []*cli.Command{
 			gpgImportCmd(),
+			gpgSignPackagesCmd(),
 			gpgCleanupCmd(),
 		},
 	}
@@ -46,7 +49,7 @@ func gpgImportCmd() *cli.Command {
 				Usage: "path to a file containing the armored GPG private key (use \"-\" for stdin; defaults to $GPG_PRIVATE_KEY)",
 			},
 			&cli.StringFlag{
-				Name:  "passphrase-file",
+				Name:  flagPassphraseFile,
 				Usage: "path to a file containing the GPG passphrase (use \"-\" for stdin; defaults to $GPG_PASSPHRASE)",
 			},
 			&cli.BoolFlag{Name: "git-user-signingkey", Sources: cli.EnvVars("GIT_USER_SIGNINGKEY"),
@@ -63,10 +66,10 @@ func gpgImportCmd() *cli.Command {
 			}
 
 			if privateKey == "" {
-				return errs.CredentialRequired(errs.Credential{What: "GPG private key", Flag: flagPrivateKeyFile, Env: "GPG_PRIVATE_KEY"})
+				return errs.CredentialRequired(errs.Credential{What: credentialGPGPrivateKey, Flag: flagPrivateKeyFile, Env: "GPG_PRIVATE_KEY"})
 			}
 
-			passphrase, err := secret.Resolve(cmd.String("passphrase-file"), "GPG_PASSPHRASE")
+			passphrase, err := secret.Resolve(cmd.String(flagPassphraseFile), "GPG_PASSPHRASE")
 			if err != nil {
 				return err
 			}
@@ -81,6 +84,55 @@ func gpgImportCmd() *cli.Command {
 						GitConfigGlobal:   cmd.Bool("git-config-global"),
 					},
 					os.Stderr)
+
+				return err
+			})
+		},
+	}
+}
+
+func gpgSignPackagesCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "sign-packages",
+		Usage: "GPG detach-sign .deb/.rpm/.apk packages with binary .sig sidecars",
+		Description: `Imports the supplied GPG private key into an ephemeral GNUPGHOME,
+verifies the imported key fingerprint, signs distro packages under --dir, and
+then removes the temporary keyring. The private key is passed to gpg via stdin;
+the passphrase is passed via gpg --passphrase-fd 0.`,
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: flagPrivateKeyFile, Usage: "path to armored GPG private key (use \"-\" for stdin; defaults to $GPG_PRIVATE_KEY or $GPG_SIGNING_KEY)"},
+			&cli.StringFlag{Name: flagPassphraseFile, Usage: "path to GPG passphrase (use \"-\" for stdin; defaults to $GPG_PASSPHRASE or $GPG_SIGNING_PASSWORD)"},
+			&cli.StringFlag{Name: "fingerprint", Sources: cli.EnvVars("GPG_FINGERPRINT", "GPG_SIGNING_FINGERPRINT"), Usage: "expected imported key fingerprint (required)"},
+			&cli.StringFlag{Name: "dir", Value: defaultDistDir, Usage: "directory containing .deb/.rpm/.apk packages"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			privateKey, err := resolveSecretAny(cmd.String(flagPrivateKeyFile), "GPG_PRIVATE_KEY", "GPG_SIGNING_KEY")
+			if err != nil {
+				return err
+			}
+
+			if privateKey == "" {
+				return errs.CredentialRequired(errs.Credential{What: credentialGPGPrivateKey, Flag: flagPrivateKeyFile, Env: "GPG_PRIVATE_KEY or GPG_SIGNING_KEY"})
+			}
+
+			passphrase, err := resolveSecretAny(cmd.String(flagPassphraseFile), "GPG_PASSPHRASE", "GPG_SIGNING_PASSWORD")
+			if err != nil {
+				return err
+			}
+
+			if passphrase == "" {
+				return errs.CredentialRequired(errs.Credential{What: "GPG passphrase", Flag: flagPassphraseFile, Env: "GPG_PASSPHRASE or GPG_SIGNING_PASSWORD"})
+			}
+
+			fingerprint := cmd.String("fingerprint")
+
+			return withEphemeralGNUPGHome(func() error {
+				_, err := apprelease.GPGSignPackages(ctx, gpg.NewIsolated(), os.Stderr, apprelease.GPGSignPackagesInput{
+					PrivateKey:  privateKey,
+					Fingerprint: fingerprint,
+					Passphrase:  passphrase,
+					Dir:         cmd.String("dir"),
+				})
 
 				return err
 			})
@@ -103,4 +155,61 @@ func gpgCleanupCmd() *cli.Command {
 			return nil
 		},
 	}
+}
+
+func resolveSecretAny(filePath string, envVars ...string) (string, error) {
+	if filePath != "" {
+		return secret.Resolve(filePath, "")
+	}
+
+	for _, envVar := range envVars {
+		value, err := secret.Resolve("", envVar)
+		if err != nil || value != "" {
+			return value, err
+		}
+	}
+
+	return "", nil
+}
+
+func withEphemeralGNUPGHome(fn func() error) error {
+	base := os.Getenv("RUNNER_TEMP")
+	if base == "" {
+		base = os.TempDir()
+	}
+
+	if info, err := os.Stat(base); err != nil || !info.IsDir() { //nolint:gosec // G703 false positive: RUNNER_TEMP is trusted CI runner configuration, not request input.
+		base = os.TempDir()
+	}
+
+	home, err := os.MkdirTemp(base, "reusable-ci-gnupg-*")
+	if err != nil {
+		return fmt.Errorf("create temporary GNUPGHOME under %s: %w", filepath.Clean(base), err)
+	}
+
+	if err := os.Chmod(home, 0o700); err != nil { //nolint:gosec // G302 false positive: 0o700 is the intentionally private mode gpg requires for GNUPGHOME.
+		_ = os.RemoveAll(home) //nolint:gosec // G703 false positive: home comes from os.MkdirTemp above.
+
+		return fmt.Errorf("chmod temporary GNUPGHOME: %w", err)
+	}
+
+	old, had := os.LookupEnv("GNUPGHOME")
+
+	if err := os.Setenv("GNUPGHOME", home); err != nil {
+		_ = os.RemoveAll(home) //nolint:gosec // G703 false positive: home comes from os.MkdirTemp above.
+
+		return fmt.Errorf("set GNUPGHOME: %w", err)
+	}
+
+	defer func() {
+		if had {
+			_ = os.Setenv("GNUPGHOME", old)
+		} else {
+			_ = os.Unsetenv("GNUPGHOME")
+		}
+
+		_ = os.RemoveAll(home) //nolint:gosec // G703 false positive: home comes from os.MkdirTemp above.
+	}()
+
+	return fn()
 }

@@ -148,7 +148,7 @@ an explicit `@<ref>`.
 
 For full branch execution from a consumer repository:
 
-1. Push the reusable-ci branch to `github.com/diggsweden/reusable-ci/v3`.
+1. Push the reusable-ci branch to `github.com/diggsweden/reusable-ci`.
 2. Run `Self Runtime Container` on that branch with `publish=true`.
 3. Use the resulting `:sha-<short-sha>` runtime image tags for every runtime
    image family the called orchestrator accepts.

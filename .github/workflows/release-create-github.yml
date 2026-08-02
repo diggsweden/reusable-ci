@@ -261,7 +261,7 @@ jobs:
           MAKE_LATEST: ${{ inputs['make-latest'] }}
           RELEASE_ASSEMBLY: .reusable-ci/release-assembly.json
           RELEASE_NOTES_FILE: release-notes.md
-        run: reusable-ci release create
+        run: reusable-ci release publish --strategy=recreate
       - name: Upload release artifacts summary
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

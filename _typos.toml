@@ -28,3 +28,14 @@ hashivault = "hashivault"
 # "support". typos tokenises after the bracket and flags `upport` as
 # a misspelling of "support"; the regex is the correct shape.
 upport = "upport"
+
+# `in-toto` is the attestation framework (in-toto.io); its bare
+# spelling "intoto" appears in cosign predicate-type URIs
+# (`in-toto` media types), test fixtures, and verification docs.
+intoto = "intoto"
+
+# Deliberate user-typo fixture in internal/cli/clierr_test.go: the
+# did-you-mean error-classification test feeds a misspelled
+# subcommand ("relese") through ClassifyError and asserts the
+# suggestion. Correcting it would defeat the test.
+relese = "relese"

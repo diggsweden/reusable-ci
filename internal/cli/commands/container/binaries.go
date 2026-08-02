@@ -26,7 +26,7 @@ func suffixBinariesCmd() *cli.Command {
 				Usage:    "directory holding the extracted binaries",
 			},
 			&cli.StringFlag{
-				Name:     "arch",
+				Name:     flagArch,
 				Required: true,
 				Sources:  cli.EnvVars("ARCH"),
 				Usage:    "target CPU architecture appended to each binary name (e.g. amd64, arm64)",
@@ -40,7 +40,7 @@ func suffixBinariesCmd() *cli.Command {
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			return appcontainer.SuffixExtractedBinaries(os.Stderr, appcontainer.SuffixExtractedBinariesInput{
 				Dir:           cmd.String("binaries-dir"),
-				Arch:          cmd.String("arch"),
+				Arch:          cmd.String(flagArch),
 				ExpectedNames: cmd.String("expected-names"),
 			})
 		},

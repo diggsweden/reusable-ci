@@ -44,6 +44,10 @@ func VerifyReleaseTag(ctx context.Context, git tagVerifyGit, out io.Writer, in V
 		return fmt.Errorf("verify-release-tag: release-sha, tag, and repo-url are required: %w", errs.ErrUsage)
 	}
 
+	if !version.IsStableSemverTag(in.Tag) {
+		return fmt.Errorf("verify-release-tag: release tag must be stable vMAJOR.MINOR.PATCH: %s: %w", in.Tag, errs.ErrValidation)
+	}
+
 	head, err := git.RevParse(ctx, "HEAD")
 	if err != nil {
 		return fmt.Errorf("verify-release-tag: resolve HEAD: %w", err)

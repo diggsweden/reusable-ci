@@ -31,11 +31,11 @@ func New() *cli.Command {
 		Usage: "release-flow helpers (GPG lifecycle, signing, checksums, notes, create, attachments, …)",
 		Commands: slices.Concat(
 			cmdmeta.WithCategory("Assemble & publish",
-				resolveGroup(), assembleCmd(), downloadArtifactsCmd(), checksumsCmd(),
-				notesCmd(), sbomZipCmd(), attachmentsGroup(), createCmd()),
+				resolveGroup(), assembleCmd(), prepareDistCmd(), assembleDistCmd(), downloadArtifactsCmd(), checksumsCmd(),
+				notesCmd(), sbomZipCmd(), filesGroup(), attachmentsGroup(), signPublishContextCmd(), publishCmd()),
 			cmdmeta.WithCategory("Sign", gpgGroup(), sshGroup(), signCmd(), provenanceCmd()),
 			cmdmeta.WithCategory("Verify (trust boundary)",
-				verifyDistCmd(), verifyTagCmd(), verifyChangelogCmd()),
+				distDigestCmd(), verifyDistCmd(), verifyRequestCmd(), verifyTagCmd(), verifyChangelogCmd()),
 		),
 	}
 }

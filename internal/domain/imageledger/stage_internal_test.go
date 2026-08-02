@@ -16,7 +16,8 @@ func TestStageDestinations(t *testing.T) {
 
 	base := "ghcr.io/owner/repo"
 	entry := Entry{
-		FinalTag: base + ":v1.2.3",
+		FinalTag:  base + ":v1.2.3",
+		MovingTag: base + ":rust",
 	}
 
 	for _, tc := range []struct {
@@ -29,6 +30,18 @@ func TestStageDestinations(t *testing.T) {
 		{"release explicit → :release pointer", Stage{Name: "release"}, entry, []string{base + ":release"}},
 		{"dev → <base>:dev pointer", Stage{Name: "dev"}, entry, []string{base + ":dev"}},
 		{"stage → <base>:stage pointer", Stage{Name: "stage"}, entry, []string{base + ":stage"}},
+		{
+			"release with ledger tags → final_tag + moving_tag",
+			Stage{Name: "release", UseEntryReleaseTags: true},
+			entry,
+			[]string{base + ":v1.2.3", base + ":rust"},
+		},
+		{
+			"cross-registry release with ledger tags preserves final and moving names",
+			Stage{Name: "release", TargetRepo: "codeberg.org", UseEntryReleaseTags: true},
+			entry,
+			[]string{"codeberg.org/owner/repo:v1.2.3", "codeberg.org/owner/repo:rust"},
+		},
 		{
 			"named stage with TargetRepo → <prefix>/<source-path> pointer",
 			Stage{Name: "prod", TargetRepo: "codeberg.org/sovereign"},

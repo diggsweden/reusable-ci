@@ -26,6 +26,9 @@ type JobGraphInput struct {
 	Root string
 	// WorkflowsDir overrides the workflows directory. Empty -> <Root>/.github/workflows.
 	WorkflowsDir string
+	// Workflows, when set, is the exact workflow file list to check instead of
+	// scanning WorkflowsDir. Paths are interpreted relative to Root unless absolute.
+	Workflows []string
 	// FS overrides filesystem access for tests. Nil -> the real OS filesystem rooted at Root.
 	FS fs.FS
 }
@@ -50,6 +53,14 @@ func JobGraph(w io.Writer, annot output.Annotator, in JobGraphInput) error { //n
 		workflowsDir = filepath.Join(root, ".github", "workflows")
 	}
 
+	if len(in.Workflows) > 0 {
+		if in.FS != nil {
+			return jobGraphFilesInFS(w, annot, in.FS, workflowFilesForFS(in.Workflows))
+		}
+
+		return jobGraphFilesOS(w, annot, root, in.Workflows)
+	}
+
 	if in.FS != nil {
 		return jobGraphInFS(w, annot, in.FS, workflowDirForFS(filepath.ToSlash(filepath.Clean(workflowsDir))))
 	}
@@ -60,6 +71,60 @@ func JobGraph(w io.Writer, annot output.Annotator, in JobGraphInput) error { //n
 	}
 
 	return jobGraphInFS(w, annot, os.DirFS(root), filepath.ToSlash(relDir))
+}
+
+func workflowFilesForFS(files []string) []string {
+	out := make([]string, 0, len(files))
+	for _, file := range files {
+		out = append(out, workflowDirForFS(filepath.ToSlash(filepath.Clean(file))))
+	}
+
+	return out
+}
+
+func jobGraphFilesOS(out io.Writer, annot output.Annotator, root string, files []string) error {
+	failures := 0
+
+	for _, file := range files {
+		diskPath := file
+		if !filepath.IsAbs(diskPath) {
+			diskPath = filepath.Join(root, diskPath)
+		}
+
+		data, err := os.ReadFile(diskPath) //nolint:gosec // operator-supplied workflow path.
+		if err != nil {
+			return fmt.Errorf("read %s: %w", file, err)
+		}
+
+		count, err := checkJobGraphFile(annot, filepath.ToSlash(filepath.Clean(file)), data)
+		if err != nil {
+			return err
+		}
+
+		failures += count
+	}
+
+	return finishJobGraph(out, failures)
+}
+
+func jobGraphFilesInFS(w io.Writer, annot output.Annotator, fsys fs.FS, files []string) error { //nolint:varnamelen // idiomatic short name.
+	failures := 0
+
+	for _, file := range files {
+		data, err := fs.ReadFile(fsys, file)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", file, err)
+		}
+
+		count, err := checkJobGraphFile(annot, file, data)
+		if err != nil {
+			return err
+		}
+
+		failures += count
+	}
+
+	return finishJobGraph(w, failures)
 }
 
 // collectWorkflowFiles returns the sorted .yml/.yaml workflow paths under
@@ -96,18 +161,31 @@ func jobGraphInFS(w io.Writer, annot output.Annotator, fsys fs.FS, workflowsDir 
 			return fmt.Errorf("read %s: %w", file, err)
 		}
 
-		violations, err := validate.CheckJobGraph(data)
+		count, err := checkJobGraphFile(annot, file, data)
 		if err != nil {
-			return fmt.Errorf("check %s: %w", file, err)
+			return err
 		}
 
-		for _, v := range violations {
-			annot.ErrorAt(output.Annotation{File: file, Line: v.Line}, "%s", v.Msg)
-
-			failures++
-		}
+		failures += count
 	}
 
+	return finishJobGraph(w, failures)
+}
+
+func checkJobGraphFile(annot output.Annotator, file string, data []byte) (int, error) {
+	violations, err := validate.CheckJobGraph(data)
+	if err != nil {
+		return 0, fmt.Errorf("check %s: %w", file, err)
+	}
+
+	for _, v := range violations {
+		annot.ErrorAt(output.Annotation{File: file, Line: v.Line}, "%s", v.Msg)
+	}
+
+	return len(violations), nil
+}
+
+func finishJobGraph(w io.Writer, failures int) error {
 	if failures > 0 {
 		return fmt.Errorf("job-graph masking validation failed: %w", errs.ErrValidation)
 	}

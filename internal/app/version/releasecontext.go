@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
@@ -22,7 +23,10 @@ type releaseContextOps interface {
 
 // ReleaseContextInput drives `reusable-ci version derive-release`.
 type ReleaseContextInput struct {
-	Ref string // the pushed ref, e.g. "release-request/v3.5.7"
+	Ref                   string // the pushed ref, e.g. "release-request/v3.5.7"
+	RequireReleaseRequest bool   // reject refs outside release-request/
+	RequireStable         bool   // reject non-vMAJOR.MINOR.PATCH final tags
+	TrailerMode           string // default or forgejo-ci
 }
 
 // ReleaseContext derives the release identity from the pushed request ref
@@ -45,20 +49,73 @@ func ReleaseContext(ctx context.Context, repo releaseContextOps, in ReleaseConte
 		return fmt.Errorf("release-context: ref is required: %w", errs.ErrUsage)
 	}
 
-	releaseTag := in.Ref
-	requestRef := ""
+	if strings.ContainsAny(in.Ref, "\r\n") {
+		return fmt.Errorf("release-context: ref must be a single-line value: %w", errs.ErrValidation)
+	}
 
-	if final, ok := version.ReleaseRequestVersion(in.Ref); ok {
-		releaseTag = final
-		requestRef = in.Ref
+	trailerMode, err := normalizeTrailerMode(in.TrailerMode)
+	if err != nil {
+		return err
+	}
+
+	releaseTag, requestRef, err := deriveReleaseIdentity(in)
+	if err != nil {
+		return err
 	}
 
 	releaseVersion := version.StripVPrefix(releaseTag)
 
 	_, _ = fmt.Fprintf(w, "%s Release tag %s (version %s)\n", clicolor.Check(w), releaseTag, releaseVersion)
 
-	trailers := buildReleaseTrailers(ctx, repo, requestRef)
+	trailers := buildReleaseTrailers(ctx, repo, requestRef, trailerMode)
 
+	return emitReleaseContextOutputs(ctx, sink, releaseTag, releaseVersion, requestRef, trailers)
+}
+
+// trailerModeDefault and trailerModeForgejoCI are the accepted
+// ReleaseContextInput.TrailerMode values.
+const (
+	trailerModeDefault   = "default"
+	trailerModeForgejoCI = "forgejo-ci"
+)
+
+// normalizeTrailerMode applies the default trailer mode and rejects
+// unknown modes.
+func normalizeTrailerMode(mode string) (string, error) {
+	if mode == "" {
+		return trailerModeDefault, nil
+	}
+
+	if mode != trailerModeDefault && mode != trailerModeForgejoCI {
+		return "", fmt.Errorf("release-context: trailer mode must be default or forgejo-ci (got %q): %w", mode, errs.ErrUsage)
+	}
+
+	return mode, nil
+}
+
+// deriveReleaseIdentity resolves the release tag and (optional) request ref
+// from the pushed ref, enforcing the require-request/require-stable policies.
+func deriveReleaseIdentity(in ReleaseContextInput) (string, string, error) {
+	releaseTag := in.Ref
+	requestRef := ""
+
+	if final, ok := version.ReleaseRequestVersion(in.Ref); ok {
+		releaseTag = final
+		requestRef = strings.TrimPrefix(in.Ref, "refs/tags/")
+	} else if in.RequireReleaseRequest {
+		return "", "", fmt.Errorf("release-context: ref must be %svMAJOR.MINOR.PATCH (got %q): %w", version.ReleaseRequestPrefix, in.Ref, errs.ErrValidation)
+	}
+
+	if in.RequireStable && !version.IsStableSemverTag(releaseTag) {
+		return "", "", fmt.Errorf("release-context: release request must target stable vMAJOR.MINOR.PATCH (got %q): %w", in.Ref, errs.ErrValidation)
+	}
+
+	return releaseTag, requestRef, nil
+}
+
+// emitReleaseContextOutputs writes the derived identity as CI outputs; a
+// nil sink (no CI output file) is a no-op.
+func emitReleaseContextOutputs(ctx context.Context, sink ci.OutputSink, releaseTag, releaseVersion, requestRef string, trailers []string) error {
 	if sink == nil {
 		return nil
 	}
@@ -89,7 +146,7 @@ func ReleaseContext(ctx context.Context, repo releaseContextOps, in ReleaseConte
 // Release-Request pointer plus the tagger identity (Release-Authorized-By +
 // Co-authored-by) read from the signed request tag. Best-effort: a missing
 // or unreadable tagger just yields fewer trailers, never an error.
-func buildReleaseTrailers(ctx context.Context, repo releaseContextOps, requestRef string) []string {
+func buildReleaseTrailers(ctx context.Context, repo releaseContextOps, requestRef, mode string) []string {
 	if requestRef == "" {
 		return nil
 	}
@@ -97,6 +154,14 @@ func buildReleaseTrailers(ctx context.Context, repo releaseContextOps, requestRe
 	trailers := []string{"Release-Request: " + requestRef}
 
 	if info, err := repo.TaggerInfo(ctx, requestRef); err == nil && info.Tagger != "" {
+		if mode == trailerModeForgejoCI {
+			if completeTaggerIdentity(info.Tagger) {
+				trailers = append(trailers, "Co-authored-by: "+info.Tagger)
+			}
+
+			return trailers
+		}
+
 		trailers = append(trailers,
 			"Release-Authorized-By: "+info.Tagger,
 			"Co-authored-by: "+info.Tagger,
@@ -104,4 +169,15 @@ func buildReleaseTrailers(ctx context.Context, repo releaseContextOps, requestRe
 	}
 
 	return trailers
+}
+
+func completeTaggerIdentity(identity string) bool {
+	name, rest, ok := strings.Cut(identity, " <")
+	if !ok || strings.TrimSpace(name) == "" {
+		return false
+	}
+
+	email := strings.TrimSuffix(rest, ">")
+
+	return strings.TrimSpace(email) != ""
 }

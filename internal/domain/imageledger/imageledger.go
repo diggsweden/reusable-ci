@@ -40,10 +40,19 @@ type Entry struct {
 	// SBOM is an optional path to the image's CycloneDX SBOM.
 	SBOM         string `json:"sbom,omitempty"`
 	FinalTag     string `json:"final_tag"`
+	MovingTag    string `json:"moving_tag,omitempty"`
 	CandidateTag string `json:"candidate_tag,omitempty"`
 	BaseRef      string `json:"base_ref,omitempty"`
 	BaseInputID  string `json:"base_input_id,omitempty"`
 }
+
+// finalTagField, movingTagField and candidateTagField are the ledger's tag
+// field names (the Entry JSON keys), used verbatim in validation messages.
+const (
+	finalTagField     = "final_tag"
+	movingTagField    = "moving_tag"
+	candidateTagField = "candidate_tag"
+)
 
 // StagingTagPrefix is the candidate-tag prefix the trust boundary enforces:
 // Entry.Validate requires a candidate of staging-<releaseTag>. Exposed so the
@@ -138,18 +147,11 @@ func (e Entry) Validate(releaseTag string) error {
 		return fmt.Errorf("imageledger: final_tag %q must be scoped to release tag %q: %w", e.FinalTag, releaseTag, errs.ErrValidation)
 	}
 
-	// candidate_tag must be the exact staging counterpart of final_tag:
-	// its tag is "staging-<release><final-suffix>". The exact match (not a
-	// "staging-<release>*" prefix) ties each candidate to one final tag, so
-	// a release promotes precisely the image that was staged for it.
-	if e.CandidateTag != "" {
-		want := StagingTagPrefix + releaseTag + strings.TrimPrefix(finalName, releaseTag)
-		if tagName(e.CandidateTag) != want {
-			return fmt.Errorf("imageledger: candidate_tag %q must have tag %q (staging counterpart of final_tag): %w", e.CandidateTag, want, errs.ErrValidation)
-		}
+	if err := e.validateReleaseCandidateTag(releaseTag, finalName); err != nil {
+		return err
 	}
 
-	return nil
+	return e.validateReleaseMovingTag(releaseTag)
 }
 
 // ValidateForStage scopes the trust-boundary check to a promotion stage.
@@ -166,6 +168,39 @@ func (e Entry) ValidateForStage(stage Stage, releaseTag string) error {
 	return e.validateFormat()
 }
 
+// validateReleaseCandidateTag enforces that candidate_tag, when present, is
+// the exact staging counterpart of final_tag: its tag is
+// "staging-<release><final-suffix>". The exact match (not a
+// "staging-<release>*" prefix) ties each candidate to one final tag, so a
+// release promotes precisely the image that was staged for it.
+func (e Entry) validateReleaseCandidateTag(releaseTag, finalName string) error {
+	if e.CandidateTag == "" {
+		return nil
+	}
+
+	want := StagingTagPrefix + releaseTag + strings.TrimPrefix(finalName, releaseTag)
+	if tagName(e.CandidateTag) != want {
+		return fmt.Errorf("imageledger: candidate_tag %q must have tag %q (staging counterpart of final_tag): %w", e.CandidateTag, want, errs.ErrValidation)
+	}
+
+	return nil
+}
+
+// validateReleaseMovingTag enforces that moving_tag, when present, is
+// neither a staging tag nor an immutable release-scoped tag.
+func (e Entry) validateReleaseMovingTag(releaseTag string) error {
+	if e.MovingTag == "" {
+		return nil
+	}
+
+	movingName := tagName(e.MovingTag)
+	if strings.HasPrefix(movingName, StagingTagPrefix) || movingName == releaseTag || strings.HasPrefix(movingName, releaseTag+"-") {
+		return fmt.Errorf("imageledger: moving_tag %q must not be a staging or immutable release tag: %w", e.MovingTag, errs.ErrValidation)
+	}
+
+	return nil
+}
+
 // validateFormat enforces the stage-agnostic trust-boundary invariants:
 // the promotion-essential fields (ref, digest, final_tag) and their
 // formats. Kind and SBOM are optional release-manifest metadata — SBOM is
@@ -174,7 +209,7 @@ func (e Entry) ValidateForStage(stage Stage, releaseTag string) error {
 // them.
 func (e Entry) validateFormat() error {
 	for _, req := range []struct{ name, val string }{
-		{"ref", e.Ref}, {"digest", e.Digest}, {"final_tag", e.FinalTag},
+		{"ref", e.Ref}, {"digest", e.Digest}, {finalTagField, e.FinalTag},
 	} {
 		if req.val == "" {
 			return fmt.Errorf("imageledger: %s is required: %w", req.name, errs.ErrValidation)
@@ -193,8 +228,23 @@ func (e Entry) validateFormat() error {
 		return fmt.Errorf("imageledger: sbom must be a relative CycloneDX path (*.cyclonedx.json): %q: %w", e.SBOM, errs.ErrValidation)
 	}
 
-	if !tagRefRE.MatchString(e.FinalTag) {
-		return fmt.Errorf("imageledger: final_tag must be a registry path with a tag: %q: %w", e.FinalTag, errs.ErrValidation)
+	return e.validateTagRefs()
+}
+
+// validateTagRefs checks that final_tag (already verified non-empty by
+// validateFormat's required loop) and the optional moving/candidate tags
+// are registry paths carrying a tag.
+func (e Entry) validateTagRefs() error {
+	for _, tag := range []struct{ name, val string }{
+		{finalTagField, e.FinalTag}, {movingTagField, e.MovingTag}, {candidateTagField, e.CandidateTag},
+	} {
+		if tag.val == "" {
+			continue
+		}
+
+		if !tagRefRE.MatchString(tag.val) {
+			return fmt.Errorf("imageledger: %s must be a registry path with a tag: %q: %w", tag.name, tag.val, errs.ErrValidation)
+		}
 	}
 
 	return nil
@@ -221,7 +271,7 @@ func Parse(data []byte) ([]Entry, error) {
 
 	var entries []Entry
 	if err := json.Unmarshal(data, &entries); err != nil {
-		// Unparseable JSON is malformed input (EX_DATAERR), not a failed
+		// Unparsable JSON is malformed input (EX_DATAERR), not a failed
 		// validation rule (EX_VALIDATION); Validate handles the latter.
 		return nil, fmt.Errorf("imageledger: parse ledger (want a JSON array): %w", errs.ErrMalformedInput)
 	}

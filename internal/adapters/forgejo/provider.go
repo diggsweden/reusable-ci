@@ -12,7 +12,7 @@
 // the gitlab adapter.
 //
 // The Provider implements the always-available base plus the
-// RepoMetadataFetcher, TokenValidator, ReleaseCreator, and
+// RepoMetadataFetcher, TokenValidator, ReleaseCreator, ReleasePublisher, and
 // ReleaseAssetUploader roles. Each role lives in its own file
 // (context.go, metadata.go, token.go, release.go, describe.go) sharing
 // the same struct receiver.
@@ -213,6 +213,7 @@ var (
 	_ provider.RepoMetadataFetcher     = (*Provider)(nil)
 	_ provider.TokenValidator          = (*Provider)(nil)
 	_ provider.ReleaseCreator          = (*Provider)(nil)
+	_ provider.ReleasePublisher        = (*Provider)(nil)
 	_ provider.ReleaseAssetUploader    = (*Provider)(nil)
 	_ provider.Describer               = (*Provider)(nil)
 	_ provider.CapabilityReporter      = (*Provider)(nil)

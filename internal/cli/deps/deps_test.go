@@ -226,6 +226,10 @@ func TestRequireRoles_LocalReturnsTypedErrors(t *testing.T) {
 		t.Errorf("RequireReleaseCreator: err = %v, want ErrUnsupported", err)
 	}
 
+	if _, err := d.RequireReleasePublisher(); !errors.Is(err, errs.ErrUnsupported) {
+		t.Errorf("RequireReleasePublisher: err = %v, want ErrUnsupported", err)
+	}
+
 	if _, err := d.RequireReleaseAssetUploader(); !errors.Is(err, errs.ErrUnsupported) {
 		t.Errorf("RequireReleaseAssetUploader: err = %v, want ErrUnsupported", err)
 	}
@@ -240,10 +244,10 @@ func TestRequireRoles_LocalReturnsTypedErrors(t *testing.T) {
 	}
 }
 
-// TestRequireRoles_GitHubSatisfiesEveryRole pins github.Provider's
-// role conformance — every role accessor must succeed when running
-// under GitHub Actions.
-func TestRequireRoles_GitHubSatisfiesEveryRole(t *testing.T) {
+// TestRequireRoles_GitHubSatisfiesReleaseRoles pins github.Provider's release
+// role conformance. In-place release reconciliation is a separate opt-in role
+// and is not implemented for GitHub by default.
+func TestRequireRoles_GitHubSatisfiesReleaseRoles(t *testing.T) {
 	env := testenv.New(t)
 	env.Setenv("GITHUB_ACTIONS", "true")
 	env.Setenv("GITLAB_CI", "")
@@ -261,6 +265,10 @@ func TestRequireRoles_GitHubSatisfiesEveryRole(t *testing.T) {
 		t.Errorf("RequireReleaseCreator: %v", err)
 	}
 
+	if _, err := d.RequireReleasePublisher(); !errors.Is(err, errs.ErrUnsupported) {
+		t.Errorf("RequireReleasePublisher: err = %v, want ErrUnsupported", err)
+	}
+
 	if _, err := d.RequireReleaseAssetUploader(); err != nil {
 		t.Errorf("RequireReleaseAssetUploader: %v", err)
 	}
@@ -270,10 +278,10 @@ func TestRequireRoles_GitHubSatisfiesEveryRole(t *testing.T) {
 	}
 }
 
-// TestRequireRoles_GitLabHasNoSARIFOrAssetUpload pins gitlab.Provider's
-// role conformance — SARIFUploader and ReleaseAssetUploader are
-// deliberately unimplemented.
-func TestRequireRoles_GitLabHasNoSARIFOrAssetUpload(t *testing.T) {
+// TestRequireRoles_GitLabHasNoSARIF pins gitlab.Provider's role conformance —
+// SARIFUploader is deliberately unimplemented because GitLab consumes native
+// SAST JSON reports instead.
+func TestRequireRoles_GitLabHasNoSARIF(t *testing.T) {
 	env := testenv.New(t)
 	env.Setenv("GITHUB_ACTIONS", "")
 	env.Setenv("GITLAB_CI", "true")
@@ -291,11 +299,29 @@ func TestRequireRoles_GitLabHasNoSARIFOrAssetUpload(t *testing.T) {
 		t.Errorf("RequireReleaseCreator: %v", err)
 	}
 
-	if _, err := d.RequireReleaseAssetUploader(); !errors.Is(err, errs.ErrUnsupported) {
-		t.Errorf("RequireReleaseAssetUploader: err = %v, want ErrUnsupported", err)
+	if _, err := d.RequireReleasePublisher(); !errors.Is(err, errs.ErrUnsupported) {
+		t.Errorf("RequireReleasePublisher: err = %v, want ErrUnsupported", err)
+	}
+
+	if _, err := d.RequireReleaseAssetUploader(); err != nil {
+		t.Errorf("RequireReleaseAssetUploader: %v", err)
 	}
 
 	if _, err := d.RequireSARIFUploader(); !errors.Is(err, errs.ErrUnsupported) {
 		t.Errorf("RequireSARIFUploader: err = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestRequireRoles_ForgejoSatisfiesReleasePublisher(t *testing.T) {
+	env := testenv.New(t)
+	env.Setenv("REUSABLE_CI_PROVIDER", "forgejo")
+
+	d, err := deps.Build(context.Background()) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := d.RequireReleasePublisher(); err != nil {
+		t.Errorf("RequireReleasePublisher: %v", err)
 	}
 }

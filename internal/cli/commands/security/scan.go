@@ -6,6 +6,7 @@ package security
 import (
 	"context"
 	"os"
+	"time"
 
 	"github.com/urfave/cli/v3"
 
@@ -36,6 +37,7 @@ func scanGroup() *cli.Command {
 			scanOpengrepCmd(),
 			scanDependenciesCmd(),
 			scanContainerCmd(),
+			scanContainerJSONCmd(),
 		},
 	}
 }
@@ -124,7 +126,7 @@ func scanContainerCmd() *cli.Command {
    reusable-ci security scan container --image-ref ghcr.io/owner/app:v1.2.3 \
      --json-file dist/trivy.json`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "image-ref", Required: true, Sources: cli.EnvVars("IMAGE_REF"), Usage: "fully-qualified image (registry/owner/name@sha256:…) to scan"},
+			&cli.StringFlag{Name: flagImageRef, Required: true, Sources: cli.EnvVars("IMAGE_REF"), Usage: "fully-qualified image (registry/owner/name@sha256:…) to scan"},
 			&cli.StringFlag{Name: "json-file", Value: security.DefaultTrivyContainerJSONFile, Sources: cli.EnvVars("CONTAINER_JSON_FILE"), Usage: "destination path for the raw trivy JSON findings"},
 			&cli.StringFlag{Name: "sarif-file", Value: security.DefaultTrivyContainerSARIFFile, Sources: cli.EnvVars("CONTAINER_SARIF_FILE"), Usage: "destination path for the trivy SARIF findings"},
 			&cli.StringFlag{Name: "gitlab-report-file", Value: security.DefaultTrivyGitLabContainerFile, Sources: cli.EnvVars("CONTAINER_GITLAB_FILE"), Usage: "destination path for the GitLab container-scanning report"},
@@ -135,12 +137,45 @@ func scanContainerCmd() *cli.Command {
 			annot := deps.Annotator(cmd)
 
 			return appsecurity.ScanContainer(ctx, trivy.New(), os.Stderr, os.Stderr, annot, appsecurity.ScanContainerInput{
-				ImageRef:         cmd.String("image-ref"),
+				ImageRef:         cmd.String(flagImageRef),
 				JSONFile:         cmd.String("json-file"),
 				SARIFFile:        cmd.String("sarif-file"),
 				GitLabReportFile: cmd.String("gitlab-report-file"),
 				Severity:         cmd.String(flagFailOnSeverity),
 				TrivyVersion:     cmd.String("trivy-version"),
+			})
+		},
+	}
+}
+
+func scanContainerJSONCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "container-json",
+		Usage: "run `trivy image`, retry transient failures, and validate raw JSON output shape",
+		Description: `Runs Trivy against one image/platform and validates that the raw
+JSON output is an object with a top-level Results array. It does not fail on
+vulnerability findings or derive SARIF/GitLab reports; use ` + "`security scan container`" + ` for a
+severity-gated scanner.`,
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: flagImageRef, Required: true, Sources: cli.EnvVars("SCAN_CONTAINER_IMAGE_REF", "IMAGE_REF"), Usage: "image reference to scan"},
+			&cli.StringFlag{Name: "platform", Value: "linux/amd64", Sources: cli.EnvVars("SCAN_CONTAINER_IMAGE_PLATFORM"), Usage: "OCI platform to scan, for example linux/amd64 or linux/arm64"},
+			&cli.StringFlag{Name: "output", Required: true, Sources: cli.EnvVars("SCAN_CONTAINER_IMAGE_OUTPUT"), Usage: "destination path for the Trivy JSON result"},
+			&cli.StringFlag{Name: "timeout", Value: "30m", Sources: cli.EnvVars("SCAN_CONTAINER_IMAGE_TIMEOUT"), Usage: "Trivy scan timeout"},
+			&cli.IntFlag{Name: "attempts", Value: 3, Sources: cli.EnvVars("SCAN_CONTAINER_IMAGE_ATTEMPTS"), Usage: "scan attempts before failing"},
+			&cli.IntFlag{Name: "retry-delay-seconds", Value: 20, Sources: cli.EnvVars("SCAN_CONTAINER_IMAGE_RETRY_DELAY_SECONDS"), Usage: "base delay between scan retry attempts"},
+			&cli.StringFlag{Name: "scanners", Value: "vuln", Sources: cli.EnvVars("SCAN_CONTAINER_IMAGE_SCANNERS"), Usage: "comma-separated Trivy scanners"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
+				return appsecurity.RawContainerScan(ctx, trivy.New(), d.OutputSink, os.Stderr, os.Stderr, appsecurity.RawContainerScanInput{
+					ImageRef:   cmd.String(flagImageRef),
+					Platform:   cmd.String("platform"),
+					Output:     cmd.String("output"),
+					Timeout:    cmd.String("timeout"),
+					Attempts:   cmd.Int("attempts"),
+					RetryDelay: time.Duration(cmd.Int("retry-delay-seconds")) * time.Second,
+					Scanners:   cmd.String("scanners"),
+				})
 			})
 		},
 	}

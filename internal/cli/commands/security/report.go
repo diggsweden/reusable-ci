@@ -172,7 +172,7 @@ func reportToGitLabContainerCmd() *cli.Command {
 				Usage:    "destination path for the GitLab container-scanning report",
 			},
 			&cli.StringFlag{
-				Name:    "image-ref",
+				Name:    flagImageRef,
 				Sources: cli.EnvVars("IMAGE_REF"),
 				Usage:   "fully qualified image (registry/owner/name@sha256:…); falls back to ArtifactName from the Trivy JSON when empty",
 			},
@@ -189,7 +189,7 @@ func reportToGitLabContainerCmd() *cli.Command {
 				InputPath:    cmd.String(flagInput),
 				OutputPath:   out,
 				TrivyVersion: cmd.String("trivy-version"),
-				ImageRef:     cmd.String("image-ref"),
+				ImageRef:     cmd.String(flagImageRef),
 			})
 			if err != nil {
 				return err
