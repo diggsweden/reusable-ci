@@ -12,28 +12,25 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/git"
+	"github.com/diggsweden/reusable-ci/v3/internal/retry"
 )
 
 const (
-	defaultSignerImageContainerfile = "packaging/signer/Containerfile"
-	defaultSignerImageContext       = "."
-	defaultSignerImageLocalName     = "localhost/signer"
-	defaultSignerImageAttempts      = 3
-	// defaultMultiarchImageName is the neutral metadata basename when --name is
-	// unset; a caller (e.g. a signer image) overrides it.
-	defaultMultiarchImageName = "image"
-)
-
-var (
-	signerSourceSHARe = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
-	signerImageRefRe  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+@sha256:[0-9a-f]{64}$`)
+	// defaultMultiarchImageContainerfile and defaultMultiarchImageName are the
+	// forge/consumer-neutral defaults; a caller (e.g. a signer image) overrides
+	// them with its own Containerfile path and metadata basename.
+	defaultMultiarchImageContainerfile = "Containerfile"
+	defaultMultiarchImageName          = "image"
+	defaultSignerImageContext          = "."
+	defaultSignerImageAttempts         = 3
+	defaultSignerImageRetryDelay       = 10 * time.Second
 )
 
 // SignerImageTool is the buildah+skopeo surface needed by the signer image
@@ -122,7 +119,7 @@ func BuildSignerImageArch(ctx context.Context, tool SignerImageTool, out io.Writ
 		return nil, err
 	}
 
-	if err = retrySignerOperation(ctx, out, retryAttempts(in.RetryAttempts), retryDelay(in.RetryDelay), func() error {
+	if err = retry.Run(ctx, out, retry.Attempts(in.RetryAttempts, defaultSignerImageAttempts), retry.Delay(in.RetryDelay, defaultSignerImageRetryDelay), func() error {
 		return tool.PushImage(ctx, in.AuthFile, derived.LocalImage, derived.ImageTag, out)
 	}); err != nil {
 		return nil, fmt.Errorf("failed to push signer image architecture: %w", err)
@@ -174,7 +171,7 @@ func AssembleSignerImageManifest(ctx context.Context, tool SignerImageTool, sink
 		return nil, err
 	}
 
-	if err = retrySignerOperation(ctx, out, retryAttempts(in.RetryAttempts), retryDelay(in.RetryDelay), func() error {
+	if err = retry.Run(ctx, out, retry.Attempts(in.RetryAttempts, defaultSignerImageAttempts), retry.Delay(in.RetryDelay, defaultSignerImageRetryDelay), func() error {
 		return tool.PushManifest(ctx, in.AuthFile, derived.LocalManifest, derived.ManifestTag, out)
 	}); err != nil {
 		return nil, fmt.Errorf("failed to push signer image manifest: %w", err)
@@ -283,14 +280,14 @@ func deriveSignerImageArch(in SignerImageBuildArchInput) (signerImageArchDerived
 
 	imageRepo := signerImageRepository(in.ServerURL, in.Repository, in.RepositorySuffix)
 	name := defaultSignerString(in.Name, defaultMultiarchImageName)
-	containerfile := defaultSignerString(in.Containerfile, defaultSignerImageContainerfile)
+	containerfile := defaultSignerString(in.Containerfile, defaultMultiarchImageContainerfile)
 	contextDir := defaultSignerString(in.Context, defaultSignerImageContext)
 	metadataDir := defaultSignerString(in.MetadataDir, name+"-arch-"+in.Arch)
 
 	return signerImageArchDerived{
 		ImageRepository: imageRepo,
 		ImageTag:        fmt.Sprintf("%s:%s%s-%s", imageRepo, in.TagPrefix, in.SourceSHA, in.Arch),
-		LocalImage:      fmt.Sprintf("%s:%s-%s", defaultSignerImageLocalName, in.SourceSHA, in.Arch),
+		LocalImage:      fmt.Sprintf("%s:%s-%s", localScratchImage(name), in.SourceSHA, in.Arch),
 		MetadataDir:     metadataDir,
 		Name:            name,
 		Platform:        "linux/" + in.Arch,
@@ -322,7 +319,7 @@ func deriveSignerImageManifest(in SignerImageAssembleInput) (signerImageManifest
 	return signerImageManifestDerived{
 		ImageRepository: imageRepo,
 		ManifestTag:     fmt.Sprintf("%s:%s%s", imageRepo, in.TagPrefix, in.SourceSHA),
-		LocalManifest:   fmt.Sprintf("%s:manifest-%s", defaultSignerImageLocalName, in.SourceSHA),
+		LocalManifest:   fmt.Sprintf("%s:manifest-%s", localScratchImage(name), in.SourceSHA),
 		MetadataDir:     defaultSignerString(in.MetadataDir, name+"-dist"),
 		Name:            name,
 		Archs:           archs,
@@ -338,7 +335,7 @@ func validateSignerImageCommon(authFile, sourceSHA, serverURL, repository string
 		return fmt.Errorf("auth-file not found: %s: %w", authFile, err)
 	}
 
-	if !signerSourceSHARe.MatchString(sourceSHA) {
+	if !git.ValidCommitSHA(sourceSHA) {
 		return fmt.Errorf("SOURCE_SHA must be a git commit hex digest: %w", errs.ErrValidation)
 	}
 
@@ -364,6 +361,13 @@ func signerImageRepository(serverURL, repository, suffix string) string {
 	return registryHost + "/" + strings.ToLower(repository) + suffix
 }
 
+// localScratchImage is the throwaway local buildah tag used while building and
+// assembling; it never leaves the runner. It is derived from the metadata name
+// so a non-signer multiarch build isn't tagged "signer".
+func localScratchImage(name string) string {
+	return "localhost/" + name
+}
+
 func signerArchRef(arch, imageRepository, name string) (string, error) {
 	metadataFile := filepath.Join(name+"-arch-"+arch, name+"-"+arch+".json")
 
@@ -378,7 +382,7 @@ func signerArchRef(arch, imageRepository, name string) (string, error) {
 	}
 
 	ref := meta.Ref
-	if !signerImageRefRe.MatchString(ref) {
+	if !domaincontainer.ValidDigestPinnedRef(ref) {
 		return "", fmt.Errorf("image ref must be digest-pinned: %s: %w", ref, errs.ErrValidation)
 	}
 
@@ -387,57 +391,6 @@ func signerArchRef(arch, imageRepository, name string) (string, error) {
 	}
 
 	return ref, nil
-}
-
-func retrySignerOperation(ctx context.Context, out io.Writer, attempts int, delay time.Duration, fn func() error) error {
-	var err error
-	for attempt := 1; attempt <= attempts; attempt++ {
-		if err = fn(); err == nil {
-			return nil
-		}
-
-		if attempt == attempts {
-			break
-		}
-
-		wait := time.Duration(attempt) * delay
-		if out != nil {
-			_, _ = fmt.Fprintf(out, "Command failed (attempt %d/%d), retrying in %s...\n", attempt, attempts, wait)
-		}
-
-		if wait <= 0 {
-			continue
-		}
-
-		timer := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
-
-			return ctx.Err()
-		case <-timer.C:
-		}
-	}
-
-	return err
-}
-
-func retryAttempts(value int) int {
-	if value > 0 {
-		return value
-	}
-
-	return defaultSignerImageAttempts
-}
-
-func retryDelay(value time.Duration) time.Duration {
-	if value > 0 {
-		return value
-	}
-
-	return 10 * time.Second
 }
 
 func digestRawManifest(raw []byte) string {

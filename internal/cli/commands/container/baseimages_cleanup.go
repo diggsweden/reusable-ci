@@ -15,9 +15,9 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
 )
 
-func baseImagesCleanupStagingCmd() *cli.Command {
+func baseImagesCleanupCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "cleanup-staging",
+		Name:  subCmdCleanup,
 		Usage: "delete promoted and stale staging base-image tags safely",
 		Description: `Deletes staging container package versions through the Forgejo
 package API, never by manifest digest. Final tags are resolved before and after

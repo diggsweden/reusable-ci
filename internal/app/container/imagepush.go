@@ -12,6 +12,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/retry"
 )
 
 // ImagePushTool is the Buildah surface needed to push one local image.
@@ -44,7 +45,7 @@ func PushImage(ctx context.Context, tool ImagePushTool, registry RawManifestRegi
 
 	tlsVerify := in.TLSVerify == tlsVerifyTrue
 
-	buildahDigest, err := retryBuildPushOperation(ctx, out, retryAttemptsValue(in.RetryAttempts), retryDelayValue(in.RetryDelay), func() (string, error) {
+	buildahDigest, err := retry.Do(ctx, out, retry.Attempts(in.RetryAttempts, defaultBuildPushRetryAttempts), retry.Delay(in.RetryDelay, defaultBuildPushRetryDelay), func() (string, error) {
 		return tool.PushImageToRefWithDigest(ctx, in.AuthFile, tlsVerify, in.LocalImage, in.Destination, out)
 	})
 	if err != nil {

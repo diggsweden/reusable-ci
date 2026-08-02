@@ -21,7 +21,7 @@ import (
 
 const (
 	defaultBuildahRunnerTemp = "/tmp"
-	probeImage               = "localhost/forgejo-ci-storage-probe:latest"
+	probeImage               = "localhost/reusable-ci-storage-probe:latest"
 
 	// buildahBinary and fuseOverlayfsBinary are the command/package names of
 	// the Buildah runtime dependencies this setup installs and probes.

@@ -23,9 +23,8 @@ import (
 )
 
 var (
-	baseImageFlavorRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-	baseImageDigestRefRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+@sha256:[0-9a-f]{64}$`)
-	baseImageTagRE       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
+	baseImageFlavorRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	baseImageTagRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
 )
 
 // BaseImageMetadata is the JSON shape exchanged by forgejo-ci's base-image
@@ -198,7 +197,7 @@ func validatePromoteCandidateFields(image BaseImageMetadata, expectedRepository 
 }
 
 func validateBaseImageRef(ref, expectedRepository string) error {
-	if !baseImageDigestRefRE.MatchString(ref) {
+	if !domaincontainer.ValidDigestPinnedRef(ref) {
 		return fmt.Errorf("base images: image ref must be digest-pinned: %s: %w", ref, errs.ErrValidation)
 	}
 

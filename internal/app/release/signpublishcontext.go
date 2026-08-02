@@ -12,12 +12,10 @@ import (
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/git"
 )
 
-var (
-	releaseCommitSHARegex = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
-	stableReleaseTagRE    = regexp.MustCompile(`^v[0-9]+[.][0-9]+[.][0-9]+$`)
-)
+var stableReleaseTagRE = regexp.MustCompile(`^v[0-9]+[.][0-9]+[.][0-9]+$`)
 
 // SignPublishContextInput drives `release sign-publish-context`.
 type SignPublishContextInput struct {
@@ -33,7 +31,7 @@ type SignPublishContextInput struct {
 // sign/promote/publish steps.
 func SignPublishContext(out io.Writer, in SignPublishContextInput) error {
 	releaseSHA := strings.TrimSpace(in.ReleaseSHA)
-	if !releaseCommitSHARegex.MatchString(releaseSHA) {
+	if !git.ValidCommitSHA(releaseSHA) {
 		return fmt.Errorf("sign-publish-context: release-sha must be a 40- or 64-character lowercase commit hex digest: %w", errs.ErrUsage)
 	}
 
@@ -51,7 +49,7 @@ func SignPublishContext(out io.Writer, in SignPublishContextInput) error {
 		return fmt.Errorf("sign-publish-context: env-file is required: %w", errs.ErrUsage)
 	}
 
-	stateDir, err := os.MkdirTemp(defaultReleaseRunnerTemp(in.RunnerTemp), "forgejo-ci-sign-and-publish.*")
+	stateDir, err := os.MkdirTemp(defaultReleaseRunnerTemp(in.RunnerTemp), "reusable-ci-sign-and-publish.*")
 	if err != nil {
 		return fmt.Errorf("sign-publish-context: create state dir: %w", err)
 	}

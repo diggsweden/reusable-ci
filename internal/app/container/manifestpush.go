@@ -16,6 +16,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/retry"
 )
 
 // ManifestPushTool is the Buildah surface needed to push a local manifest list.
@@ -63,7 +64,7 @@ func PushManifest(ctx context.Context, tool ManifestPushTool, registry RawManife
 
 	tlsVerify := in.TLSVerify == tlsVerifyTrue
 
-	buildahDigest, err := retryBuildPushOperation(ctx, out, retryAttemptsValue(in.RetryAttempts), retryDelayValue(in.RetryDelay), func() (string, error) {
+	buildahDigest, err := retry.Do(ctx, out, retry.Attempts(in.RetryAttempts, defaultBuildPushRetryAttempts), retry.Delay(in.RetryDelay, defaultBuildPushRetryDelay), func() (string, error) {
 		return tool.PushManifestToRefWithDigest(ctx, in.AuthFile, tlsVerify, in.LocalManifest, in.Destination, in.RemoveLocal, out)
 	})
 	if err != nil {
@@ -176,7 +177,7 @@ func resolveVerifiedManifestDigest(ctx context.Context, registry RawManifestRegi
 		expectedDigest = ""
 	}
 
-	registryDigest, err := retryBuildPushOperation(ctx, out, retryAttemptsValue(retryAttempts), retryDelayValue(retryDelay), func() (string, error) {
+	registryDigest, err := retry.Do(ctx, out, retry.Attempts(retryAttempts, defaultBuildPushRetryAttempts), retry.Delay(retryDelay, defaultBuildPushRetryDelay), func() (string, error) {
 		return registryManifestDigest(ctx, registry, ref)
 	})
 	if err != nil {

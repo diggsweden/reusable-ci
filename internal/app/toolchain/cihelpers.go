@@ -208,7 +208,7 @@ func ensureBinHome(binHome string) (string, error) {
 // prepareChangelogMiseEnv creates the isolated prepare-mise tree and returns
 // the environment pointing mise at it.
 func prepareChangelogMiseEnv(in InstallChangelogRendererInput, binHome string) ([]string, error) {
-	prepareDir := filepath.Join(defaultRunnerTemp(in.RunnerTemp), "forgejo-ci-prepare-mise-"+defaultRunID(in.RunID))
+	prepareDir := filepath.Join(defaultRunnerTemp(in.RunnerTemp), "reusable-ci-prepare-mise-"+defaultRunID(in.RunID))
 	if err := os.RemoveAll(prepareDir); err != nil {
 		return nil, fmt.Errorf("remove prior prepare mise dir %s: %w", prepareDir, err)
 	}

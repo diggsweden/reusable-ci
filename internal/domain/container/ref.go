@@ -36,6 +36,19 @@ var sha256HexRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // sha256 with no `sha256:` prefix.
 func ValidSHA256Hex(s string) bool { return sha256HexRE.MatchString(s) }
 
+// digestPinnedRefRE matches a fully digest-pinned image reference with NO tag
+// permitted: registry/path@sha256:<64-hex>. The base-image and signer-image
+// trust boundaries require the exact digest form, so they share this pattern
+// rather than each re-compiling it. (The image ledger deliberately keeps its
+// own tag-permitting variant, imageledger.imageRefRE, which is a distinct rule.)
+//
+//nolint:gochecknoglobals // compiled regex, read-only.
+var digestPinnedRefRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+@sha256:[0-9a-f]{64}$`)
+
+// ValidDigestPinnedRef reports whether s is a tag-free, digest-pinned image
+// reference (registry/path@sha256:<64-hex>).
+func ValidDigestPinnedRef(s string) bool { return digestPinnedRefRE.MatchString(s) }
+
 // StripTag removes a trailing `:tag` from an OCI reference, keeping the
 // registry/path. A `:` that precedes the final `/` (a host:port, e.g.
 // `localhost:5000/img`) is left alone, and registry-less refs (`alpine:3.21`)

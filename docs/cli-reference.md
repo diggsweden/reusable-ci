@@ -651,7 +651,7 @@ candidate images to immutable final base tags. Checkout and pinned-binary
 bootstrap remain owned by the caller.
 ```
 
-#### `reusable-ci container base-images cleanup-staging`
+#### `reusable-ci container base-images cleanup`
 
 delete promoted and stale staging base-image tags safely
 
@@ -1771,7 +1771,7 @@ enumerate Swift files via `git ls-files`, run `swift-format lint -s`, and write 
 
 ```
 EXAMPLE:
-   reusable-ci build swift format-lint --working-dir .
+   reusable-ci lint swift format-lint --working-dir .
 ```
 
 | Flag | Description | Env vars |
@@ -1785,7 +1785,7 @@ run `swiftlint lint` with optional --config and write the step-summary block
 
 ```
 EXAMPLE:
-   reusable-ci build swift swiftlint --config .swiftlint.yml --fail-on-warning
+   reusable-ci lint swift swiftlint --config .swiftlint.yml --fail-on-warning
 ```
 
 | Flag | Description | Env vars |

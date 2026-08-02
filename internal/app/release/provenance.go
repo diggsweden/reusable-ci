@@ -6,17 +6,12 @@ package release
 import (
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/git"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provenance"
 )
-
-// commitSHARE pins the source gitCommit shape: the digest is signed into the
-// statement's resolvedDependencies, so a malformed value must fail here
-// rather than become attested evidence.
-var commitSHARE = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 
 // ProvenanceProfile selects the release statement shape. The empty profile is
 // the generic reusable-ci profile; ForgejoActions preserves forgejo-ci's
@@ -60,7 +55,7 @@ type ProvenanceInput struct {
 // the forgejo-actions profile is an explicit compatibility shape for existing
 // forgejo-ci release verifiers.
 func GenerateProvenance(in ProvenanceInput) ([]byte, error) {
-	if !commitSHARE.MatchString(in.SHA) {
+	if !git.ValidCommitSHA(in.SHA) {
 		return nil, fmt.Errorf("provenance: commit SHA must be a 40- or 64-character lowercase hex digest: %q: %w", in.SHA, errs.ErrValidation)
 	}
 

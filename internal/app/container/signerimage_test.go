@@ -158,7 +158,7 @@ func TestAssembleSignerImageManifest_WritesOutputsAndMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantManifest := "localhost/signer:manifest-" + strings.Repeat("b", 40)
+	wantManifest := "localhost/signer-image:manifest-" + strings.Repeat("b", 40)
 	if tool.removedManifest != wantManifest || tool.createdManifest != wantManifest {
 		t.Fatalf("manifest lifecycle remove=%q create=%q", tool.removedManifest, tool.createdManifest)
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/retry"
 )
 
 const (
@@ -88,7 +89,7 @@ func BuildPushOCIImage(ctx context.Context, tool BuildPushTool, git BuildPushGit
 		_, _ = fmt.Fprintf(out, "Pushing multi-arch manifest %s...\n", plan.Manifest)
 	}
 
-	digest, err := retryBuildPushOperation(ctx, out, retryAttemptsValue(in.RetryAttempts), retryDelayValue(in.RetryDelay), func() (string, error) {
+	digest, err := retry.Do(ctx, out, retry.Attempts(in.RetryAttempts, defaultBuildPushRetryAttempts), retry.Delay(in.RetryDelay, defaultBuildPushRetryDelay), func() (string, error) {
 		return tool.PushManifestWithDigest(ctx, in.AuthFile, plan.TLSVerify, plan.Manifest, out)
 	})
 	if err != nil {
@@ -305,62 +306,6 @@ func defaultBuildPushImage(serverURL, repository string) string {
 	}
 
 	return host + "/" + strings.ToLower(repository)
-}
-
-func retryBuildPushOperation(ctx context.Context, out io.Writer, attempts int, delay time.Duration, fn func() (string, error)) (string, error) {
-	var (
-		result string
-		err    error
-	)
-
-	for attempt := 1; attempt <= attempts; attempt++ {
-		result, err = fn()
-		if err == nil {
-			return result, nil
-		}
-
-		if attempt == attempts {
-			break
-		}
-
-		wait := time.Duration(attempt) * delay
-		if out != nil {
-			_, _ = fmt.Fprintf(out, "Command failed (attempt %d/%d), retrying in %s...\n", attempt, attempts, wait)
-		}
-
-		if wait <= 0 {
-			continue
-		}
-
-		timer := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
-
-			return "", ctx.Err()
-		case <-timer.C:
-		}
-	}
-
-	return "", err
-}
-
-func retryAttemptsValue(value int) int {
-	if value > 0 {
-		return value
-	}
-
-	return defaultBuildPushRetryAttempts
-}
-
-func retryDelayValue(value time.Duration) time.Duration {
-	if value > 0 {
-		return value
-	}
-
-	return defaultBuildPushRetryDelay
 }
 
 func defaultBuildPushString(value, fallback string) string {

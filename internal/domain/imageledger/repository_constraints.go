@@ -27,7 +27,7 @@ func ValidateEntryRepository(entry Entry, expectedRepository string) error {
 		{movingTagField, entry.MovingTag},
 		{candidateTagField, entry.CandidateTag},
 	} {
-		if err := validateRepositoryRef(ref.field, ref.value, expectedRepository); err != nil {
+		if err := ValidateRefUnderRepository(ref.field, ref.value, expectedRepository); err != nil {
 			return err
 		}
 	}
@@ -52,7 +52,7 @@ func ValidatePromotionRecordRepository(record PromotionRecord, expectedRepositor
 		{movingTagField, record.MovingTag},
 		{candidateTagField, record.CandidateTag},
 	} {
-		if err := validateRepositoryRef(ref.field, ref.value, expectedRepository); err != nil {
+		if err := ValidateRefUnderRepository(ref.field, ref.value, expectedRepository); err != nil {
 			return err
 		}
 	}
@@ -60,8 +60,14 @@ func ValidatePromotionRecordRepository(record PromotionRecord, expectedRepositor
 	return nil
 }
 
-func validateRepositoryRef(field, ref, expectedRepository string) error {
-	if ref == "" {
+// ValidateRefUnderRepository reports a validation error when ref is set and does
+// not resolve to expectedRepository (after stripping any tag/digest). An empty
+// ref or empty expectedRepository disables the check, keeping the generic ledger
+// registry-agnostic unless a forge boundary opts in. It is the single source of
+// truth for the per-field repository constraint shared by the ledger and the
+// container ledger-sign path.
+func ValidateRefUnderRepository(field, ref, expectedRepository string) error {
+	if ref == "" || expectedRepository == "" {
 		return nil
 	}
 

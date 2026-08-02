@@ -33,7 +33,7 @@ func swiftFormatLintCmd() *cli.Command {
 		Name:  "format-lint",
 		Usage: "enumerate Swift files via `git ls-files`, run `swift-format lint -s`, and write the step-summary block",
 		Description: `EXAMPLE:
-   reusable-ci build swift format-lint --working-dir .`,
+   reusable-ci lint swift format-lint --working-dir .`,
 		Flags: []cli.Flag{
 			commonflags.WorkingDir("directory the file walk is rooted at"),
 			&cli.StringFlag{Name: "file-pattern", Value: "*.swift", Sources: cli.EnvVars("FILE_PATTERN"), Usage: "git pathspec pattern matched against tracked files"},
@@ -56,7 +56,7 @@ func swiftLintLintCmd() *cli.Command {
 		Name:  "swiftlint",
 		Usage: "run `swiftlint lint` with optional --config and write the step-summary block",
 		Description: `EXAMPLE:
-   reusable-ci build swift swiftlint --config .swiftlint.yml --fail-on-warning`,
+   reusable-ci lint swift swiftlint --config .swiftlint.yml --fail-on-warning`,
 		Flags: []cli.Flag{
 			commonflags.WorkingDir("directory the linter is rooted at"),
 			&cli.StringFlag{Name: "config", Sources: cli.EnvVars("SWIFTLINT_CONFIG_PATH"), Usage: "path to a .swiftlint.yml config file (passed via --config)"},

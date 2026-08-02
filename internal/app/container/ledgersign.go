@@ -293,23 +293,23 @@ func validateLedgerSignEntry(entry imageledger.Entry, releaseTag string, constra
 // validateLedgerSignRepositories pins every ref-bearing ledger field to the
 // expected image/base repositories.
 func validateLedgerSignRepositories(entry imageledger.Entry, constraints ledgerSignConstraints) error {
-	if err := validateLedgerSignRepository("ref", entry.Ref, constraints.expectedImageRepository); err != nil {
+	if err := imageledger.ValidateRefUnderRepository("ref", entry.Ref, constraints.expectedImageRepository); err != nil {
 		return err
 	}
 
-	if err := validateLedgerSignRepository("final_tag", entry.FinalTag, constraints.expectedImageRepository); err != nil {
+	if err := imageledger.ValidateRefUnderRepository("final_tag", entry.FinalTag, constraints.expectedImageRepository); err != nil {
 		return err
 	}
 
-	if err := validateLedgerSignRepository("moving_tag", entry.MovingTag, constraints.expectedImageRepository); err != nil {
+	if err := imageledger.ValidateRefUnderRepository("moving_tag", entry.MovingTag, constraints.expectedImageRepository); err != nil {
 		return err
 	}
 
-	if err := validateLedgerSignRepository("candidate_tag", entry.CandidateTag, constraints.expectedImageRepository); err != nil {
+	if err := imageledger.ValidateRefUnderRepository("candidate_tag", entry.CandidateTag, constraints.expectedImageRepository); err != nil {
 		return err
 	}
 
-	return validateLedgerSignRepository("base_ref", entry.BaseRef, constraints.expectedBaseRepository)
+	return imageledger.ValidateRefUnderRepository("base_ref", entry.BaseRef, constraints.expectedBaseRepository)
 }
 
 // validateLedgerSignBase checks the paired base_ref/base_input_id fields.
@@ -340,18 +340,6 @@ func validateLedgerSignBase(entry imageledger.Entry) error {
 		if !domaincontainer.ValidSHA256Hex(entry.BaseInputID) {
 			return fmt.Errorf("imageledger: base_input_id must be a sha256 hex digest: %q: %w", entry.BaseInputID, errs.ErrValidation)
 		}
-	}
-
-	return nil
-}
-
-func validateLedgerSignRepository(field, ref, expectedRepository string) error {
-	if ref == "" || expectedRepository == "" {
-		return nil
-	}
-
-	if got := domaincontainer.StripTagOrDigest(ref); got != expectedRepository {
-		return fmt.Errorf("imageledger: %s must be under %s: %q: %w", field, expectedRepository, ref, errs.ErrValidation)
 	}
 
 	return nil

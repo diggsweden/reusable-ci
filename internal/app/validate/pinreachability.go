@@ -162,7 +162,7 @@ func clonePinReachabilityRepo(ctx context.Context, gitBin, remote, tempDir strin
 		tempDir = os.TempDir()
 	}
 
-	dir, err := os.MkdirTemp(tempDir, "forgejo-ci-pins.*")
+	dir, err := os.MkdirTemp(tempDir, "reusable-ci-pins.*")
 	if err != nil {
 		return "", fmt.Errorf("create temporary clone dir: %w", err)
 	}

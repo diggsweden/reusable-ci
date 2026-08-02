@@ -52,7 +52,7 @@ bootstrap remain owned by the caller.`,
 		Commands: []*cli.Command{
 			baseImagesVerifyCmd(),
 			baseImagesPromoteCmd(),
-			baseImagesCleanupStagingCmd(),
+			baseImagesCleanupCmd(),
 			baseImagesFreshnessCmd(),
 		},
 	}
