@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/forgejo"
@@ -46,12 +47,21 @@ func TestListContainerPackageVersions_FiltersContainerPackageVersions(t *testing
 		t.Fatal(err)
 	}
 
-	if want := "/api/v1/packages/itiquette/container/nanolinter-base"; gotPath != want {
+	// Owner-level listing, NOT /packages/{owner}/{type}/{name}: that route
+	// is Gitea-only and Codeberg's Forgejo answers it "404 page not found"
+	// (v0.8.6 cleanup sweep, run 336).
+	if want := "/api/v1/packages/itiquette"; gotPath != want {
 		t.Fatalf("path = %q, want %q", gotPath, want)
 	}
 
 	if gotQuery == "" {
 		t.Fatal("query is empty, want pagination query")
+	}
+
+	for _, fragment := range []string{"type=container", "q=nanolinter-base"} {
+		if !strings.Contains(gotQuery, fragment) {
+			t.Fatalf("query = %q, want it to contain %q", gotQuery, fragment)
+		}
 	}
 
 	if want := []string{"staging-a-rust", "1.0.0"}; !reflect.DeepEqual(got, want) {

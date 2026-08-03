@@ -142,9 +142,17 @@ func InstallChangelogRenderer(ctx context.Context, runner MiseRunner, out io.Wri
 		return err
 	}
 
-	if _, err = InstallMise(ctx, nil, out, in.Mise); err != nil {
+	misePath, err := InstallMise(ctx, nil, out, in.Mise)
+	if err != nil {
 		return err
 	}
+
+	// Pin the runner to the binary we JUST installed: a bare "mise" is
+	// resolved against the parent process PATH, which cannot contain the
+	// fresh ~/.local/bin entry (the path-file export only reaches LATER
+	// steps). Without this, the verb only works on runner images that
+	// happen to pre-ship mise — the failure mode nanolinter's release hit.
+	adoptInstalledMise(runner, misePath)
 
 	selector, bin, version, err := changelogRendererSelector(in)
 	if err != nil {
@@ -176,6 +184,22 @@ func InstallChangelogRenderer(ctx context.Context, runner MiseRunner, out io.Wri
 	}
 
 	return printToolVersion(ctx, out, link)
+}
+
+// binSetter is the optional capability an installed-binary-aware runner
+// exposes (the mise adapter does); fakes without it are simply left alone.
+type binSetter interface{ SetBin(bin string) }
+
+// adoptInstalledMise pins the runner to the just-installed mise binary when
+// the runner supports it and the installer reported a concrete path.
+func adoptInstalledMise(runner MiseRunner, misePath string) {
+	if misePath == "" {
+		return
+	}
+
+	if setter, ok := runner.(binSetter); ok {
+		setter.SetBin(misePath)
+	}
 }
 
 // validateChangelogRendererInput checks the required runner and path-file inputs.

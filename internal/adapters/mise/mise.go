@@ -20,6 +20,12 @@ type Runner struct {
 // New returns a default mise runner.
 func New() *Runner { return &Runner{} }
 
+// SetBin pins the runner to an explicit mise binary path. Used after an
+// in-process install: exec resolves the binary via the PARENT process PATH,
+// so a mise that was just written to ~/.local/bin is invisible to a bare
+// "mise" lookup even when the child env carries the new PATH.
+func (r *Runner) SetBin(bin string) { r.Bin = bin }
+
 // Run executes mise with typed args and optional environment overrides.
 func (r *Runner) Run(ctx context.Context, env []string, args ...string) (string, error) {
 	bin := r.Bin

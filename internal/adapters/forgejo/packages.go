@@ -14,6 +14,13 @@ const forgejoPackagePageSize = 50
 
 // ListContainerPackageVersions returns every version for one container
 // package. It satisfies the provider.ContainerPackageLister port role.
+//
+// Deliberately the owner-level ListPackages route (one entry per package
+// version, filtered by type + name query): the SDK's ListPackageVersions
+// hits GET /packages/{owner}/{type}/{name}, a Gitea-only route Forgejo
+// does not serve — Codeberg answers it with a literal "404 page not
+// found" (v0.8.6 cleanup sweep, run 336). The q filter is a substring
+// match, so the exact-name filter below still decides membership.
 func (p *Provider) ListContainerPackageVersions(ctx context.Context, owner, name string) ([]string, error) {
 	client, err := p.client(ctx)
 	if err != nil {
@@ -23,8 +30,10 @@ func (p *Provider) ListContainerPackageVersions(ctx context.Context, owner, name
 	versions := make([]string, 0)
 
 	for page := 1; ; page++ {
-		packages, resp, err := client.ListPackageVersions(owner, "container", name, gitea.ListPackagesOptions{
+		packages, resp, err := client.ListPackages(owner, gitea.ListPackagesOptions{
 			ListOptions: gitea.ListOptions{Page: page, PageSize: forgejoPackagePageSize},
+			Type:        "container",
+			Q:           name,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("forgejo list container package versions %s/%s: %w", owner, name, classifyErr(resp, err))
