@@ -58,18 +58,42 @@ type ImageEvidenceInput struct {
 	TempDir             string
 }
 
+// imageEvidenceDeps is the collaborator set the evidence pipeline shares: the
+// two exporters (buildah for local images/manifests, skopeo for per-platform
+// OCI layouts), the two scanners (trivy, syft), and the two writers it narrates
+// on. These six are exactly what ImageEvidence receives, and they thread down
+// the scan tree, so passing them positionally gave the leaves six- to
+// nine-parameter signatures.
+//
+// The set narrows with depth: once a layout exists the source exporters fall
+// away, so the inner leaves leave buildah/skopeo unused. Per the layerDeps
+// precedent in internal/app/sbom, an unused field beats splitting the set into
+// per-depth structs. The one exception is the innermost trivy primitive
+// (runImageEvidenceTrivy): it would leave three fields unused, which obscures
+// what it touches, so it keeps explicit parameters.
+type imageEvidenceDeps struct {
+	buildah ImageEvidenceBuildah
+	skopeo  ImageEvidenceSkopeo
+	trivy   ImageEvidenceTrivy
+	syft    ImageEvidenceSyft
+	out     io.Writer // progress, user-facing
+	stderr  io.Writer // underlying tool output
+}
+
 // ImageEvidence scans an OCI layout with Trivy and optionally writes a CycloneDX SBOM with Syft.
 func ImageEvidence(ctx context.Context, buildah ImageEvidenceBuildah, skopeo ImageEvidenceSkopeo, trivy ImageEvidenceTrivy, syft ImageEvidenceSyft, out, stderr io.Writer, in ImageEvidenceInput) error {
 	if err := normalizeImageEvidenceRegistryDigestRef(&in); err != nil {
 		return err
 	}
 
+	deps := imageEvidenceDeps{buildah: buildah, skopeo: skopeo, trivy: trivy, syft: syft, out: out, stderr: stderr}
+
 	if imageEvidenceSingleRegistryDigestRequested(in) {
-		return imageEvidenceSingleRegistryDigest(ctx, skopeo, trivy, syft, out, stderr, in)
+		return imageEvidenceSingleRegistryDigest(ctx, deps, in)
 	}
 
 	if imageEvidenceMultiArchRequested(in) {
-		return imageEvidenceMultiArch(ctx, buildah, skopeo, trivy, syft, out, stderr, in)
+		return imageEvidenceMultiArch(ctx, deps, in)
 	}
 
 	if err := validateSingleImageEvidenceInput(in); err != nil {
@@ -79,7 +103,7 @@ func ImageEvidence(ctx context.Context, buildah ImageEvidenceBuildah, skopeo Ima
 	layout := in.OCILayout
 
 	if in.LocalImageRef != "" {
-		exported, cleanup, err := exportImageEvidenceLayout(ctx, buildah, out, in)
+		exported, cleanup, err := exportImageEvidenceLayout(ctx, deps.buildah, deps.out, in)
 		if err != nil {
 			return err
 		}
@@ -89,14 +113,14 @@ func ImageEvidence(ctx context.Context, buildah ImageEvidenceBuildah, skopeo Ima
 		layout = exported
 	}
 
-	return scanImageEvidenceLayout(ctx, trivy, syft, out, stderr, layout, in.TrivyOutput, in.SBOMOutput, trivyTimeoutValue(in.TrivyTimeout))
+	return scanImageEvidenceLayout(ctx, deps, layout, in.TrivyOutput, in.SBOMOutput, trivyTimeoutValue(in.TrivyTimeout))
 }
 
 func imageEvidenceSingleRegistryDigestRequested(in ImageEvidenceInput) bool {
 	return in.RegistryDigestRef != "" && in.TrivyOutput != "" && in.TrivyOutputTemplate == "" && in.SBOMOutputTemplate == "" && in.OCILayout == "" && in.LocalImageRef == "" && in.ScanLayout == "" && in.LocalManifest == ""
 }
 
-func imageEvidenceSingleRegistryDigest(ctx context.Context, skopeo ImageEvidenceSkopeo, trivy ImageEvidenceTrivy, syft ImageEvidenceSyft, out, stderr io.Writer, in ImageEvidenceInput) error {
+func imageEvidenceSingleRegistryDigest(ctx context.Context, deps imageEvidenceDeps, in ImageEvidenceInput) error {
 	platforms, err := parseImageEvidencePlatforms(in.Platforms)
 	if err != nil {
 		return err
@@ -114,11 +138,11 @@ func imageEvidenceSingleRegistryDigest(ctx context.Context, skopeo ImageEvidence
 	defer func() { _ = os.RemoveAll(layout) }()
 
 	platform := platforms[0]
-	if err := skopeo.CopyDockerDigestToOCILayout(ctx, in.RegistryRef, in.Digest, layout, platform.OS, platform.Arch, stderr); err != nil {
+	if err := deps.skopeo.CopyDockerDigestToOCILayout(ctx, in.RegistryRef, in.Digest, layout, platform.OS, platform.Arch, deps.stderr); err != nil {
 		return err
 	}
 
-	return scanImageEvidenceLayout(ctx, trivy, syft, out, stderr, layout, in.TrivyOutput, in.SBOMOutput, trivyTimeoutValue(in.TrivyTimeout))
+	return scanImageEvidenceLayout(ctx, deps, layout, in.TrivyOutput, in.SBOMOutput, trivyTimeoutValue(in.TrivyTimeout))
 }
 
 func validateSingleImageEvidenceInput(in ImageEvidenceInput) error {
@@ -143,13 +167,13 @@ func imageEvidenceMultiArchRequested(in ImageEvidenceInput) bool {
 	return in.ScanLayout != "" || in.LocalManifest != "" || in.RegistryDigestRef != "" || in.RegistryRef != "" || in.Digest != "" || len(in.Platforms) > 0 || in.TrivyOutputTemplate != "" || in.SBOMOutputTemplate != ""
 }
 
-func imageEvidenceMultiArch(ctx context.Context, buildah ImageEvidenceBuildah, skopeo ImageEvidenceSkopeo, trivy ImageEvidenceTrivy, syft ImageEvidenceSyft, out, stderr io.Writer, in ImageEvidenceInput) error {
+func imageEvidenceMultiArch(ctx context.Context, deps imageEvidenceDeps, in ImageEvidenceInput) error {
 	platforms, err := validateMultiArchImageEvidenceInput(in)
 	if err != nil {
 		return err
 	}
 
-	fullLayout, cleanup, err := imageEvidenceFullLayout(ctx, buildah, out, in)
+	fullLayout, cleanup, err := imageEvidenceFullLayout(ctx, deps.buildah, deps.out, in)
 	if err != nil {
 		return err
 	}
@@ -158,7 +182,7 @@ func imageEvidenceMultiArch(ctx context.Context, buildah ImageEvidenceBuildah, s
 	var firstScanErr error
 
 	for _, platform := range platforms {
-		scanErr, fatalErr := imageEvidenceScanOnePlatform(ctx, skopeo, trivy, syft, out, stderr, in, fullLayout, platform)
+		scanErr, fatalErr := imageEvidenceScanOnePlatform(ctx, deps, in, fullLayout, platform)
 		if fatalErr != nil {
 			return fatalErr
 		}
@@ -174,16 +198,16 @@ func imageEvidenceMultiArch(ctx context.Context, buildah ImageEvidenceBuildah, s
 // imageEvidenceScanOnePlatform extracts one platform into a temp OCI layout
 // and scans it. The first return value is a non-fatal scan/cleanup error (the
 // caller keeps going); the second aborts the whole run.
-func imageEvidenceScanOnePlatform(ctx context.Context, skopeo ImageEvidenceSkopeo, trivy ImageEvidenceTrivy, syft ImageEvidenceSyft, out, stderr io.Writer, in ImageEvidenceInput, fullLayout string, platform imageEvidencePlatform) (error, error) { //nolint:revive // (scanErr, fatalErr): non-fatal scan error vs run-aborting error.
+func imageEvidenceScanOnePlatform(ctx context.Context, deps imageEvidenceDeps, in ImageEvidenceInput, fullLayout string, platform imageEvidencePlatform) (error, error) { //nolint:revive // (scanErr, fatalErr): non-fatal scan error vs run-aborting error.
 	layout, err := makeImageEvidenceTempDir(in, "image-evidence-"+platform.Arch+".*")
 	if err != nil {
 		return nil, err
 	}
 
 	if fullLayout != "" {
-		err = skopeo.CopyOCILayoutToOCILayout(ctx, fullLayout, layout, platform.OS, platform.Arch, stderr)
+		err = deps.skopeo.CopyOCILayoutToOCILayout(ctx, fullLayout, layout, platform.OS, platform.Arch, deps.stderr)
 	} else {
-		err = skopeo.CopyDockerDigestToOCILayout(ctx, in.RegistryRef, in.Digest, layout, platform.OS, platform.Arch, stderr)
+		err = deps.skopeo.CopyDockerDigestToOCILayout(ctx, in.RegistryRef, in.Digest, layout, platform.OS, platform.Arch, deps.stderr)
 	}
 
 	if err != nil {
@@ -196,7 +220,7 @@ func imageEvidenceScanOnePlatform(ctx context.Context, skopeo ImageEvidenceSkope
 	sbomOutput := renderImageEvidenceTemplate(in.SBOMOutputTemplate, platform)
 
 	var scanErr error
-	if err := scanImageEvidenceLayout(ctx, trivy, syft, out, stderr, layout, trivyOutput, sbomOutput, trivyTimeoutValue(in.TrivyTimeout)); err != nil {
+	if err := scanImageEvidenceLayout(ctx, deps, layout, trivyOutput, sbomOutput, trivyTimeoutValue(in.TrivyTimeout)); err != nil {
 		scanErr = err
 	}
 
@@ -445,8 +469,8 @@ func makeImageEvidenceTempDir(in ImageEvidenceInput, pattern string) (string, er
 	return layout, nil
 }
 
-func scanImageEvidenceLayout(ctx context.Context, trivy ImageEvidenceTrivy, syft ImageEvidenceSyft, out, stderr io.Writer, layout, trivyOutput, sbomOutput, timeout string) error {
-	if err := runImageEvidenceTrivy(ctx, trivy, out, stderr, layout, trivyOutput, timeout); err != nil {
+func scanImageEvidenceLayout(ctx context.Context, deps imageEvidenceDeps, layout, trivyOutput, sbomOutput, timeout string) error {
+	if err := runImageEvidenceTrivy(ctx, deps.trivy, deps.out, deps.stderr, layout, trivyOutput, timeout); err != nil {
 		return err
 	}
 
@@ -455,7 +479,7 @@ func scanImageEvidenceLayout(ctx context.Context, trivy ImageEvidenceTrivy, syft
 	}
 
 	if sbomOutput != "" {
-		if err := syft.Generate(ctx, "oci-dir:"+layout, map[string]string{"cyclonedx-json": sbomOutput}, stderr); err != nil {
+		if err := deps.syft.Generate(ctx, "oci-dir:"+layout, map[string]string{"cyclonedx-json": sbomOutput}, deps.stderr); err != nil {
 			return fmt.Errorf("syft oci-dir:%s: %w", layout, err)
 		}
 	}
