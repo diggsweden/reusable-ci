@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 	"github.com/diggsweden/reusable-ci/v3/internal/safeexec"
 )
 
@@ -114,7 +115,7 @@ func (r *Repo) RemoteAdd(ctx context.Context, name, url string) error {
 //
 // depth > 0 makes a shallow fetch (git --depth=N); depth 0 fetches full
 // history (the JS actions/checkout fetch-depth, where 0 means "all").
-func (r *Repo) Fetch(ctx context.Context, remoteURL string, refspecs []string, token string, depth int) error {
+func (r *Repo) Fetch(ctx context.Context, remoteURL string, refspecs []string, cred runcontext.Credential, depth int) error {
 	args := append(r.safeDirArgs(), "-c", "protocol.version=2",
 		"fetch", "--quiet", "--no-tags", "--prune", "--no-recurse-submodules")
 	if depth > 0 {
@@ -124,7 +125,7 @@ func (r *Repo) Fetch(ctx context.Context, remoteURL string, refspecs []string, t
 	args = append(args, defaultRemote)
 	args = append(args, refspecs...)
 
-	return r.runEnv(ctx, authEnv(remoteURL, token), args...)
+	return r.runEnv(ctx, authEnv(remoteURL, cred), args...)
 }
 
 // FetchBranch runs `git fetch <remote> <branch>`.
@@ -142,11 +143,11 @@ func (r *Repo) FetchBranch(ctx context.Context, remote, branch string) error {
 // opt-in for callers that need them (the JS actions/checkout fetch-tags:true).
 // The default Fetch uses --no-tags; this runs only when explicitly requested,
 // so the common checkout stays lean. Same credential-free auth as Fetch.
-func (r *Repo) FetchTags(ctx context.Context, remoteURL, token string) error {
+func (r *Repo) FetchTags(ctx context.Context, remoteURL string, cred runcontext.Credential) error {
 	args := append(r.safeDirArgs(), "-c", "protocol.version=2",
 		"fetch", "--quiet", "--tags", "--prune", "--no-recurse-submodules", defaultRemote)
 
-	return r.runEnv(ctx, authEnv(remoteURL, token), args...)
+	return r.runEnv(ctx, authEnv(remoteURL, cred), args...)
 }
 
 // FetchAllRefs fetches every branch into refs/remotes/origin/* plus all tags —
@@ -154,21 +155,32 @@ func (r *Repo) FetchTags(ctx context.Context, remoteURL, token string) error {
 // sibling branches (e.g. origin/main) and every tag available, which builds
 // that read git topology (`git rev-list --count origin/main`, `git describe`)
 // rely on. Same credential-free auth as Fetch.
-func (r *Repo) FetchAllRefs(ctx context.Context, remoteURL, token string) error {
+func (r *Repo) FetchAllRefs(ctx context.Context, remoteURL string, cred runcontext.Credential) error {
 	args := append(r.safeDirArgs(), "-c", "protocol.version=2",
 		"fetch", "--quiet", "--prune", "--no-recurse-submodules", defaultRemote,
 		"+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*")
 
-	return r.runEnv(ctx, authEnv(remoteURL, token), args...)
+	return r.runEnv(ctx, authEnv(remoteURL, cred), args...)
 }
 
 // authEnv builds the git environment that injects forge-neutral HTTP Basic
 // auth for remoteURL without the token ever appearing in argv or .git/config.
-// An empty token yields just the no-prompt guard. Shared by every fetch.
-func authEnv(remoteURL, token string) []string {
+// Shared by every fetch and, via pushAuthEnv, every push.
+//
+// This is the only place a git credential becomes an HTTP header, and it is
+// where the credential's audience is checked: cred.For(remoteURL) yields the
+// secret only if it may be sent THERE. Taking a runcontext.Credential rather
+// than a string is what makes that unbypassable — a caller cannot hand this
+// function a bare secret whose issuing forge is unknown.
+//
+// A credential that is absent, or not valid for remoteURL, yields just the
+// no-prompt guard: an anonymous request, which is a normal outcome for a
+// public repository.
+func authEnv(remoteURL string, cred runcontext.Credential) []string {
 	env := make([]string, 0, 4)
 	env = append(env, "GIT_TERMINAL_PROMPT=0")
 
+	token := cred.For(remoteURL)
 	if token == "" {
 		return env
 	}

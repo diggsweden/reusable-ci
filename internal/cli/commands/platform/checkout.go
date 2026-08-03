@@ -13,6 +13,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
 	appci "github.com/diggsweden/reusable-ci/v3/internal/app/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/clitoken"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
@@ -35,7 +36,7 @@ func checkoutCmd() *cli.Command {
 			&cli.StringFlag{Name: "server-url", Sources: cienv.ServerURL(), Usage: "forge base URL (e.g. https://codeberg.org)"},
 			&cli.StringFlag{Name: "ref", Sources: cienv.CheckoutRef(), Usage: "commit SHA, refs/tags/…, refs/heads/…, or a bare tag/branch name to check out. Set via $CHECKOUT_REF; defaults to the triggering commit."},
 			&cli.StringFlag{Name: "workspace", Sources: cienv.Workspace(), Usage: "target directory (default: current directory)"},
-			&cli.StringFlag{Name: "token", Sources: cienv.Token(), Usage: "clone token; empty for an anonymous checkout"},
+			&cli.StringFlag{Name: "token", Usage: "clone token; omit to use the token the runner injected ($CI_TOKEN, $FORGEJO_TOKEN, $GITEA_TOKEN, $GITHUB_TOKEN), which is only ever sent to the server that issued it. Empty means an anonymous checkout."}, //nolint:lll // single-line flag declaration for grep-ability, matching the package convention.
 			&cli.StringFlag{Name: "object-format", Sources: cli.EnvVars("CHECKOUT_OBJECT_FORMAT"), Usage: "override the forge-reported object format (sha1|sha256); skips the metadata lookup"},
 			&cli.StringFlag{Name: "fetch-base", Sources: cli.EnvVars("CHECKOUT_FETCH_BASE"), Usage: "extra branch to also fetch (diff/commit-range checks)"},
 			&cli.BoolFlag{Name: "fetch-tags", Sources: cli.EnvVars("CHECKOUT_FETCH_TAGS"), Usage: "also fetch all tags (the JS actions/checkout fetch-tags:true; needed for git-cliff/changelog)"},
@@ -64,7 +65,7 @@ func checkoutCmd() *cli.Command {
 					ServerURL:    cmd.String("server-url"),
 					Ref:          cmd.String("ref"),
 					Workspace:    workspace,
-					Token:        cmd.String("token"),
+					Token:        clitoken.Resolve(cmd),
 					ObjectFormat: format,
 					FetchBase:    cmd.String("fetch-base"),
 					FetchTags:    cmd.Bool("fetch-tags"),

@@ -13,6 +13,7 @@ import (
 
 	domainci "github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // CheckoutGit is the git operation subset Checkout drives. The adapter's
@@ -22,9 +23,9 @@ import (
 type CheckoutGit interface {
 	InitWithObjectFormat(ctx context.Context, format string) error
 	RemoteAdd(ctx context.Context, name, url string) error
-	Fetch(ctx context.Context, remoteURL string, refspecs []string, token string, depth int) error
-	FetchTags(ctx context.Context, remoteURL, token string) error
-	FetchAllRefs(ctx context.Context, remoteURL, token string) error
+	Fetch(ctx context.Context, remoteURL string, refspecs []string, cred runcontext.Credential, depth int) error
+	FetchTags(ctx context.Context, remoteURL string, cred runcontext.Credential) error
+	FetchAllRefs(ctx context.Context, remoteURL string, cred runcontext.Credential) error
 	EnablePartialClone(ctx context.Context) error
 	SparseInit(ctx context.Context, cone bool) error
 	SparseSet(ctx context.Context, patterns []string) error
@@ -34,18 +35,18 @@ type CheckoutGit interface {
 
 // CheckoutInput drives Checkout.
 type CheckoutInput struct {
-	Repository   string   // "owner/name"
-	ServerURL    string   // e.g. https://codeberg.org
-	Ref          string   // commit SHA, refs/tags/…, refs/heads/…, or a bare tag/branch name
-	Workspace    string   // target directory (must not already contain .git)
-	Token        string   // optional; empty means an anonymous checkout
-	ObjectFormat string   // optional explicit override ("sha1"/"sha256")
-	FetchBase    string   // optional extra branch to also fetch (diff/commit-range checks)
-	FetchTags    bool     // also fetch all tags (the JS actions/checkout fetch-tags:true)
-	FetchAllRefs bool     // fetch every branch into refs/remotes/origin/* plus all tags (actions/checkout fetch-depth:0)
-	Depth        int      // shallow history depth for the primary ref fetch; 0 = full history (mirrors the JS actions/checkout fetch-depth, where 0 means "all"). Ignored for fetch-all-refs/fetch-tags, which are inherently full.
-	Sparse       []string // cone patterns; non-empty restricts the working tree to these dirs
-	OutputKey    string   // OutputSink key for the resolved SHA (default "checkout-sha")
+	Repository   string                // "owner/name"
+	ServerURL    string                // e.g. https://codeberg.org
+	Ref          string                // commit SHA, refs/tags/…, refs/heads/…, or a bare tag/branch name
+	Workspace    string                // target directory (must not already contain .git)
+	Token        runcontext.Credential // optional; absent means an anonymous checkout
+	ObjectFormat string                // optional explicit override ("sha1"/"sha256")
+	FetchBase    string                // optional extra branch to also fetch (diff/commit-range checks)
+	FetchTags    bool                  // also fetch all tags (the JS actions/checkout fetch-tags:true)
+	FetchAllRefs bool                  // fetch every branch into refs/remotes/origin/* plus all tags (actions/checkout fetch-depth:0)
+	Depth        int                   // shallow history depth for the primary ref fetch; 0 = full history (mirrors the JS actions/checkout fetch-depth, where 0 means "all"). Ignored for fetch-all-refs/fetch-tags, which are inherently full.
+	Sparse       []string              // cone patterns; non-empty restricts the working tree to these dirs
+	OutputKey    string                // OutputSink key for the resolved SHA (default "checkout-sha")
 }
 
 // Checkout materializes a consumer repository at an exact ref into the

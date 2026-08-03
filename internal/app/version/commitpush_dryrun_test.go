@@ -13,6 +13,7 @@ import (
 	appversion "github.com/diggsweden/reusable-ci/v3/internal/app/version"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domaingit "github.com/diggsweden/reusable-ci/v3/internal/domain/git"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // fakeCommitPushRepo records the git operations commit-push asks for, so
@@ -52,7 +53,7 @@ func (f *fakeCommitPushRepo) Commit(_ context.Context, in domaingit.CommitInput)
 	return nil
 }
 
-func (f *fakeCommitPushRepo) Push(_ context.Context, localRef, remoteBranch string, _ bool, _ string) error {
+func (f *fakeCommitPushRepo) Push(_ context.Context, localRef, remoteBranch string, _ bool, _ runcontext.Credential) error {
 	f.pushedRef = localRef
 	f.pushedDest = remoteBranch
 

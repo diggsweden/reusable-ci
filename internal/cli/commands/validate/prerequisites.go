@@ -63,8 +63,14 @@ func prerequisitesCmd() *cli.Command {
 					HasCargoTarget:           cmd.Bool("has-cargo"),
 					HasJVMTarget:             cmd.Bool("has-jvm"),
 					// Secrets stay in env — never passed via argv.
-					ReleaseGPGPublicKey:  os.Getenv("RELEASE_GPG_PUBLIC_KEY"),
-					ReleaseToken:         runcontext.ReleaseToken().Resolve(os.Getenv),
+					ReleaseGPGPublicKey: os.Getenv("RELEASE_GPG_PUBLIC_KEY"),
+					// Named destination: this token is about to be sent to the forge
+					// this run targets, so it is only handed over if it was issued
+					// there. A token bound elsewhere yields "", and prerequisites
+					// then reports a missing release token -- fail closed, and
+					// truthful, since it could not have authenticated there anyway.
+					ReleaseToken: runcontext.ReleaseToken().Resolve(os.Getenv).
+						For(runcontext.ServerURL().Resolve(os.Getenv)),
 					MavenCentralUsername: os.Getenv("MAVEN_CENTRAL_USERNAME"),
 					MavenCentralPassword: os.Getenv("MAVEN_CENTRAL_PASSWORD"),
 					PublishStagePlanJSON: os.Getenv("PUBLISH_STAGE_PLAN_JSON"),

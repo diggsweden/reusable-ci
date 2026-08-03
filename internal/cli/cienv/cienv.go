@@ -113,12 +113,19 @@ func TempDir() cli.ValueSourceChain { return Sources(runcontext.TempDir()) }
 // Workspace resolves the checkout target directory.
 func Workspace() cli.ValueSourceChain { return Sources(runcontext.Workspace()) }
 
-// Token resolves the forge API/clone token.
-func Token() cli.ValueSourceChain { return Sources(runcontext.Token()) }
-
-// ReleaseToken resolves the write-scoped token used to push the release
-// commit and tag.
-func ReleaseToken() cli.ValueSourceChain { return Sources(runcontext.ReleaseToken()) }
+// There is deliberately NO Token()/ReleaseToken() binding here.
+//
+// A ValueSourceChain yields a string, and by then the credential has lost the
+// one fact that makes it safe to send: which forge issued it. Auto-filling
+// --token from the chain was a real disclosure — on a GitHub runner checking
+// out from a third-party Forgejo with $FORGEJO_TOKEN unset, --server-url
+// resolved to the Forgejo host while --token fell through to $GITHUB_TOKEN,
+// and the two never had to agree.
+//
+// Tokens are resolved in the command's Action instead, via
+// runcontext.Token().Resolve(os.Getenv), which returns a Credential bound to
+// the destination it may be sent to. The env var names still reach --help and
+// the generated reference through each flag's Usage text.
 
 // Tag resolves a release tag.
 func Tag() cli.ValueSourceChain { return Sources(runcontext.Tag()) }

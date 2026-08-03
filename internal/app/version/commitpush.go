@@ -17,6 +17,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/git"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // commitPushOps is the slice of git.Repo this use case needs. Defined
@@ -27,7 +28,7 @@ type commitPushOps interface {
 	AddPathspecs(ctx context.Context, pathspecs []string)
 	HasStagedChanges(ctx context.Context) (bool, error)
 	Commit(ctx context.Context, in git.CommitInput) error
-	Push(ctx context.Context, localRef, remoteBranch string, force bool, token string) error
+	Push(ctx context.Context, localRef, remoteBranch string, force bool, cred runcontext.Credential) error
 }
 
 // CommitPushInput drives `reusable-ci version commit-push`.
@@ -36,9 +37,9 @@ type CommitPushInput struct {
 	AuthorName  string
 	AuthorEmail string
 	Message     string
-	FilePattern string // space-separated git pathspecs
-	Token       string // optional; authenticates the push when the checkout did not persist credentials
-	DryRun      bool   // preview: narrate the config/commit/push mutations instead of performing them
+	FilePattern string                // space-separated git pathspecs
+	Token       runcontext.Credential // optional; authenticates the push when the checkout did not persist credentials
+	DryRun      bool                  // preview: narrate the config/commit/push mutations instead of performing them
 }
 
 // CommitPush stages the file pattern, commits with --signoff (idempotent

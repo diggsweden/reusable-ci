@@ -13,6 +13,7 @@ import (
 
 	appci "github.com/diggsweden/reusable-ci/v3/internal/app/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 )
 
@@ -45,7 +46,7 @@ func (f *fakeCheckoutGit) InitWithObjectFormat(_ context.Context, format string)
 
 func (f *fakeCheckoutGit) RemoteAdd(_ context.Context, _, _ string) error { return nil }
 
-func (f *fakeCheckoutGit) Fetch(_ context.Context, _ string, refspecs []string, _ string, depth int) error {
+func (f *fakeCheckoutGit) Fetch(_ context.Context, _ string, refspecs []string, _ runcontext.Credential, depth int) error {
 	f.fetches = append(f.fetches, refspecs)
 	f.fetchDepths = append(f.fetchDepths, depth)
 
@@ -56,13 +57,13 @@ func (f *fakeCheckoutGit) Fetch(_ context.Context, _ string, refspecs []string, 
 	return nil
 }
 
-func (f *fakeCheckoutGit) FetchTags(_ context.Context, _, _ string) error {
+func (f *fakeCheckoutGit) FetchTags(_ context.Context, _ string, _ runcontext.Credential) error {
 	f.fetchedTags = true
 
 	return f.failFetchTag
 }
 
-func (f *fakeCheckoutGit) FetchAllRefs(_ context.Context, _, _ string) error {
+func (f *fakeCheckoutGit) FetchAllRefs(_ context.Context, _ string, _ runcontext.Credential) error {
 	f.fetchedAllRefs = true
 
 	return nil

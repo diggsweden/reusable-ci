@@ -27,32 +27,6 @@ func TestNonEmptyEnvSource_SkipsSetButEmpty(t *testing.T) {
 // chain: a RELEASE_TOKEN blanked to "" (an unset `${{ secrets.* }}`) must
 // fall through to the forge's ambient token, not shadow it — and the chain
 // must be forge-generic (FORGEJO_TOKEN works when no GitHub token is set).
-func TestReleaseToken_EmptyReleaseTokenFallsThrough(t *testing.T) {
-	t.Setenv("RELEASE_TOKEN", "") // unset secret resolved to "" (the trap)
-	t.Setenv("CI_TOKEN", "")
-	t.Setenv("FORGEJO_TOKEN", "forgejo-tok") // forge-generic fallback
-	t.Setenv("GITHUB_TOKEN", "")
-
-	chain := ReleaseToken()
-
-	got, ok := chain.Lookup()
-	if !ok || got != "forgejo-tok" {
-		t.Fatalf("ReleaseToken() = %q, ok=%v; want \"forgejo-tok\", true (empty RELEASE_TOKEN must fall through, forge-generic)", got, ok)
-	}
-}
-
-func TestReleaseToken_DedicatedTokenWins(t *testing.T) {
-	t.Setenv("RELEASE_TOKEN", "release-tok")
-	t.Setenv("GITHUB_TOKEN", "github-tok")
-
-	chain := ReleaseToken()
-
-	got, ok := chain.Lookup()
-	if !ok || got != "release-tok" {
-		t.Fatalf("ReleaseToken() = %q, ok=%v; want \"release-tok\", true (dedicated write token wins)", got, ok)
-	}
-}
-
 func TestNonEmptyEnvSource_FirstNonEmptyWins(t *testing.T) {
 	t.Setenv("REPOSITORY", "owner/explicit")
 	t.Setenv("GITHUB_REPOSITORY", "owner/runner")

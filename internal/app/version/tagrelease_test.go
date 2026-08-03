@@ -11,6 +11,7 @@ import (
 
 	appversion "github.com/diggsweden/reusable-ci/v3/internal/app/version"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 )
 
@@ -28,7 +29,7 @@ type fakeTagReleaseRepo struct {
 	createdRef   string
 	createdSign  bool
 	pushed       string
-	pushedToken  string
+	pushedToken  runcontext.Credential
 }
 
 func (f *fakeTagReleaseRepo) TagExists(_ context.Context, _ string) (bool, error) {
@@ -48,9 +49,9 @@ func (f *fakeTagReleaseRepo) CreateTag(_ context.Context, tag, ref string, signe
 	return f.createErr
 }
 
-func (f *fakeTagReleaseRepo) PushTagNoForce(_ context.Context, tag, token string) error {
+func (f *fakeTagReleaseRepo) PushTagNoForce(_ context.Context, tag string, cred runcontext.Credential) error {
 	f.pushed = tag
-	f.pushedToken = token
+	f.pushedToken = cred
 
 	return f.pushErr
 }
@@ -67,7 +68,7 @@ func TestTagRelease_CreatesOnceAtHeadAndPushesNoForce(t *testing.T) {
 	var out bytes.Buffer
 
 	res, err := appversion.TagRelease(context.Background(), repo,
-		appversion.TagReleaseInput{Tag: "v3.5.7", Signed: true, Token: "bot-token"}, fakeoutputsink.New(t), &out)
+		appversion.TagReleaseInput{Tag: "v3.5.7", Signed: true, Token: runcontext.OperatorCredential("bot-token")}, fakeoutputsink.New(t), &out)
 	if err != nil {
 		t.Fatalf("TagRelease: %v", err)
 	}
@@ -81,8 +82,10 @@ func TestTagRelease_CreatesOnceAtHeadAndPushesNoForce(t *testing.T) {
 	}
 
 	// The push token is threaded through so a credential-free checkout can push.
-	if repo.pushedToken != "bot-token" {
-		t.Errorf("push token = %q, want it threaded from the input", repo.pushedToken)
+	// An explicit --token is unrestricted, so it reaches whatever remote the
+	// push targets -- that is what "threaded from the input" now means.
+	if got := repo.pushedToken.For("https://forge.example/o/r"); got != "bot-token" {
+		t.Errorf("push token = %q, want it threaded from the input", got)
 	}
 
 	if repo.pushed != "v3.5.7" {
@@ -122,7 +125,7 @@ func TestTagRelease_DryRunSkipsMutationsAndNarrates(t *testing.T) {
 	var out bytes.Buffer
 
 	res, err := appversion.TagRelease(context.Background(), repo,
-		appversion.TagReleaseInput{Tag: "v3.5.7", Signed: true, Token: "bot-token", DryRun: true}, fakeoutputsink.New(t), &out)
+		appversion.TagReleaseInput{Tag: "v3.5.7", Signed: true, Token: runcontext.OperatorCredential("bot-token"), DryRun: true}, fakeoutputsink.New(t), &out)
 	if err != nil {
 		t.Fatalf("TagRelease: %v", err)
 	}

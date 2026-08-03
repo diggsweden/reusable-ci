@@ -14,6 +14,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domaingit "github.com/diggsweden/reusable-ci/v3/internal/domain/git"
 	domainversion "github.com/diggsweden/reusable-ci/v3/internal/domain/version"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // changelogReleaseOps is the git surface needed to sign/push the release bump
@@ -26,7 +27,7 @@ type changelogReleaseOps interface {
 	StatusPorcelain(ctx context.Context, pathspec string) (string, error)
 	AddPathspecsStrict(ctx context.Context, pathspecs []string) error
 	Commit(ctx context.Context, in domaingit.CommitInput) error
-	PushBranchNoForce(ctx context.Context, branch, token string) error
+	PushBranchNoForce(ctx context.Context, branch string, cred runcontext.Credential) error
 	Checkout(ctx context.Context, ref string) error
 }
 
@@ -43,7 +44,7 @@ type ChangelogReleaseInput struct {
 	AuthorEmail       string // required: git user.email for the release commit (no org default)
 	SigningKeyPath    string // SSH private key path already written to a temp dir; optional in dry-run (the signing setup only serves the skipped push)
 	TagSigned         bool
-	Token             string
+	Token             runcontext.Credential
 	DryRun            bool // preview: narrate the git config/commit/push/tag/checkout mutations instead of performing them
 }
 

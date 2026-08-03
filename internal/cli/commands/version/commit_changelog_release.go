@@ -15,6 +15,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
 	appversion "github.com/diggsweden/reusable-ci/v3/internal/app/version"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/clitoken"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/dryrun"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/secret"
@@ -43,7 +44,7 @@ func commitChangelogReleaseCmd() *cli.Command {
 			&cli.StringFlag{Name: "host-key-fingerprint", Sources: cli.EnvVars("RELEASE_GIT_HOST_KEY_FINGERPRINT"), Usage: "expected SSH host key fingerprint, required (a trust anchor, never defaulted; get it with: ssh-keyscan -t <type> <host> | ssh-keygen -lf -)"},
 			&cli.BoolFlag{Name: "no-sign", Usage: "skip final tag signing (intended for tests; production always signs)"},
 			&cli.BoolFlag{Name: "signed", Value: true, Sources: cli.EnvVars("TAG_RELEASE_SIGNED"), Usage: "create a signed final tag; set TAG_RELEASE_SIGNED=false for unsigned annotated test tags"},
-			&cli.StringFlag{Name: flagToken, Sources: cienv.ReleaseToken(), Usage: "optional token for HTTP remotes; the Forgejo release flow uses the SSH key instead"},
+			&cli.StringFlag{Name: flagToken, Usage: "optional token for HTTP remotes; omit to use the runner-injected token ($RELEASE_TOKEN, $CI_TOKEN, $FORGEJO_TOKEN, $GITEA_TOKEN, $GITHUB_TOKEN), which is only ever sent to the server that issued it. The Forgejo release flow uses the SSH key instead."},
 			dryrun.Flag("git mutations (changelog commit, push, release tag, checkout)"),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -59,7 +60,7 @@ func commitChangelogReleaseCmd() *cli.Command {
 					AuthorName:        cmd.String("author-name"),
 					AuthorEmail:       cmd.String("author-email"),
 					TagSigned:         cmd.Bool("signed") && !cmd.Bool("no-sign"),
-					Token:             cmd.String(flagToken),
+					Token:             clitoken.ResolveRelease(cmd),
 					DryRun:            dryrun.Enabled(cmd),
 				}
 

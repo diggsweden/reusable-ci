@@ -4,6 +4,7 @@
 package forgejo
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -16,8 +17,10 @@ import (
 // (serverURL). Username is the runner actor; the token is the standard
 // $FORGEJO_TOKEN / $GITEA_TOKEN / $GITHUB_TOKEN cascade. No separate secret.
 func (p *Provider) ResolveRegistryAuth() (provider.RegistryAuth, error) {
-	token := p.token()
-	if token == "" {
+	// Presence needs no destination, so "none configured at all" stays the
+	// first and clearest thing to report.
+	cred := p.credential()
+	if !cred.Present() {
 		return provider.RegistryAuth{}, errs.RuntimeRequired(
 			"log in to the container registry", "forgejo", []errs.EnvVar{
 				{Name: "FORGEJO_TOKEN", What: "the runner-injected registry token (or GITEA_TOKEN / GITHUB_TOKEN)"},
@@ -27,6 +30,16 @@ func (p *Provider) ResolveRegistryAuth() (provider.RegistryAuth, error) {
 	server, err := p.serverURL()
 	if err != nil {
 		return provider.RegistryAuth{}, err
+	}
+
+	// The registry lives at the forge's own host, so that is the audience the
+	// credential must be valid for.
+	token := cred.For(server)
+	if token == "" {
+		return provider.RegistryAuth{}, fmt.Errorf(
+			"a token is set, but it was issued by a different server than %s, so it"+
+				" cannot authenticate there; set $FORGEJO_TOKEN (or $GITEA_TOKEN) to a"+
+				" credential for that host: %w", server, errs.ErrUsage)
 	}
 
 	return provider.RegistryAuth{

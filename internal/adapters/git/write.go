@@ -12,6 +12,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domaingit "github.com/diggsweden/reusable-ci/v3/internal/domain/git"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 	"github.com/diggsweden/reusable-ci/v3/internal/safeexec"
 )
 
@@ -128,8 +129,8 @@ func (r *Repo) Commit(ctx context.Context, in domaingit.CommitInput) error {
 // never persists a token to .git/config — can still push. An empty token
 // leaves the push unauthenticated (SSH remotes, or a remote that already
 // carries ambient credentials), preserving the previous behaviour.
-func (r *Repo) Push(ctx context.Context, localRef, remoteBranch string, force bool, token string) error {
-	env, err := r.pushAuthEnv(ctx, token)
+func (r *Repo) Push(ctx context.Context, localRef, remoteBranch string, force bool, cred runcontext.Credential) error {
+	env, err := r.pushAuthEnv(ctx, cred)
 	if err != nil {
 		return err
 	}
@@ -146,8 +147,8 @@ func (r *Repo) Push(ctx context.Context, localRef, remoteBranch string, force bo
 
 // PushBranchNoForce pushes the checked-out branch without --force, matching
 // `git -c core.hooksPath=/dev/null push origin <branch>`.
-func (r *Repo) PushBranchNoForce(ctx context.Context, branch, token string) error {
-	env, err := r.pushAuthEnv(ctx, token)
+func (r *Repo) PushBranchNoForce(ctx context.Context, branch string, cred runcontext.Credential) error {
+	env, err := r.pushAuthEnv(ctx, cred)
 	if err != nil {
 		return err
 	}
@@ -183,8 +184,8 @@ func (r *Repo) CreateTag(ctx context.Context, tag, ref string, signed bool) erro
 // The remote rejects a non-fast-forward update, so this can only create a
 // new tag, never overwrite one — the immutability guarantee for release
 // tags. token authenticates the push transiently, identical to Push.
-func (r *Repo) PushTagNoForce(ctx context.Context, tag, token string) error {
-	env, err := r.pushAuthEnv(ctx, token)
+func (r *Repo) PushTagNoForce(ctx context.Context, tag string, cred runcontext.Credential) error {
+	env, err := r.pushAuthEnv(ctx, cred)
 	if err != nil {
 		return err
 	}
@@ -208,9 +209,9 @@ func (r *Repo) RemoteURL(ctx context.Context) (string, error) {
 // the forge-neutral HTTP Basic extraheader the fetch verbs use, scoped to
 // origin's URL so the token never reaches argv or .git/config. An empty token
 // yields just the no-prompt guard, leaving an unauthenticated push unchanged.
-func (r *Repo) pushAuthEnv(ctx context.Context, token string) ([]string, error) {
-	if token == "" {
-		return authEnv("", ""), nil
+func (r *Repo) pushAuthEnv(ctx context.Context, cred runcontext.Credential) ([]string, error) {
+	if !cred.Present() {
+		return authEnv("", cred), nil
 	}
 
 	remoteURL, err := r.RemoteURL(ctx)
@@ -218,5 +219,5 @@ func (r *Repo) pushAuthEnv(ctx context.Context, token string) ([]string, error) 
 		return nil, fmt.Errorf("resolve origin URL for authenticated push: %w", err)
 	}
 
-	return authEnv(remoteURL, token), nil
+	return authEnv(remoteURL, cred), nil
 }

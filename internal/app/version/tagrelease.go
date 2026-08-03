@@ -12,6 +12,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domainversion "github.com/diggsweden/reusable-ci/v3/internal/domain/version"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // defaultRemoteName is the git remote used when the caller does not name one.
@@ -22,7 +23,7 @@ type tagReleaseOps interface {
 	TagExists(ctx context.Context, tag string) (bool, error)
 	RemoteTagExists(ctx context.Context, remote, tag string) (bool, error)
 	CreateTag(ctx context.Context, tag, ref string, signed bool) error
-	PushTagNoForce(ctx context.Context, tag, token string) error
+	PushTagNoForce(ctx context.Context, tag string, cred runcontext.Credential) error
 	RevParse(ctx context.Context, ref string) (string, error)
 }
 
@@ -31,9 +32,9 @@ type tagReleaseOps interface {
 type TagReleaseInput struct {
 	Tag    string // final release tag, e.g. "v3.5.7"
 	Signed bool
-	Remote string // empty defaults to origin
-	Token  string // optional; authenticates the tag push when the checkout did not persist credentials
-	DryRun bool   // preview: narrate the tag create/push instead of performing them; validation still runs
+	Remote string                // empty defaults to origin
+	Token  runcontext.Credential // optional; authenticates the tag push when the checkout did not persist credentials
+	DryRun bool                  // preview: narrate the tag create/push instead of performing them; validation still runs
 }
 
 // TagReleaseOutput is emitted as release-sha=<hash> on the OutputSink.

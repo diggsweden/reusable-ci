@@ -1974,7 +1974,7 @@ EXAMPLES:
 | `--server-url` | forge base URL (e.g. https://codeberg.org) | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
 | `--ref` | commit SHA, refs/tags/…, refs/heads/…, or a bare tag/branch name to check out. Set via $CHECKOUT_REF; defaults to the triggering commit. | `$CHECKOUT_REF`, `$CI_COMMIT`, `$CI_COMMIT_SHA`, `$FORGEJO_SHA`, `$GITHUB_SHA` |
 | `--workspace` | target directory (default: current directory) | `$CI_WORKSPACE`, `$FORGEJO_WORKSPACE`, `$GITHUB_WORKSPACE` |
-| `--token` | clone token; empty for an anonymous checkout | `$CI_TOKEN`, `$FORGEJO_TOKEN`, `$GITEA_TOKEN`, `$GITHUB_TOKEN` |
+| `--token` | clone token; omit to use the token the runner injected ($CI_TOKEN, $FORGEJO_TOKEN, $GITEA_TOKEN, $GITHUB_TOKEN), which is only ever sent to the server that issued it. Empty means an anonymous checkout. | n/a |
 | `--object-format` | override the forge-reported object format (sha1\|sha256); skips the metadata lookup | `$CHECKOUT_OBJECT_FORMAT` |
 | `--fetch-base` | extra branch to also fetch (diff/commit-range checks) | `$CHECKOUT_FETCH_BASE` |
 | `--fetch-tags` | also fetch all tags (the JS actions/checkout fetch-tags:true; needed for git-cliff/changelog) | `$CHECKOUT_FETCH_TAGS` |
@@ -4075,7 +4075,7 @@ EXAMPLE:
 | `--host-key-fingerprint` | expected SSH host key fingerprint, required (a trust anchor, never defaulted; get it with: ssh-keyscan -t <type> <host> \| ssh-keygen -lf -) | `$RELEASE_GIT_HOST_KEY_FINGERPRINT` |
 | `--no-sign` | skip final tag signing (intended for tests; production always signs) | n/a |
 | `--signed` | create a signed final tag; set TAG_RELEASE_SIGNED=false for unsigned annotated test tags | `$TAG_RELEASE_SIGNED` |
-| `--token` | optional token for HTTP remotes; the Forgejo release flow uses the SSH key instead | `$RELEASE_TOKEN`, `$CI_TOKEN`, `$FORGEJO_TOKEN`, `$GITEA_TOKEN`, `$GITHUB_TOKEN` |
+| `--token` | optional token for HTTP remotes; omit to use the runner-injected token ($RELEASE_TOKEN, $CI_TOKEN, $FORGEJO_TOKEN, $GITEA_TOKEN, $GITHUB_TOKEN), which is only ever sent to the server that issued it. The Forgejo release flow uses the SSH key instead. | n/a |
 | `--dry-run` | preview git mutations (changelog commit, push, release tag, checkout) without performing them | n/a |
 
 ### `reusable-ci version commit-push`
@@ -4095,7 +4095,7 @@ EXAMPLE:
 | `--author-email` | git author email written to the commit (required) | `$COMMIT_AUTHOR_EMAIL` |
 | `--message` | commit message subject (signoff is appended automatically) (required) | `$COMMIT_MESSAGE` |
 | `--file-pattern` | whitespace-separated git pathspecs to stage (required) | `$FILE_PATTERN` |
-| `--token` | token authenticating the push; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`). | `$RELEASE_TOKEN`, `$CI_TOKEN`, `$FORGEJO_TOKEN`, `$GITEA_TOKEN`, `$GITHUB_TOKEN` |
+| `--token` | token authenticating the push; omit to use the runner-injected token ($RELEASE_TOKEN, $CI_TOKEN, $FORGEJO_TOKEN, $GITEA_TOKEN, $GITHUB_TOKEN), which is only ever sent to the server that issued it; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`). | n/a |
 | `--dry-run` | preview git mutations (author config, commit, push) without performing them | n/a |
 
 ### `reusable-ci version derive-release`
@@ -4181,5 +4181,5 @@ EXAMPLE:
 | `--tag` | final release tag to create (e.g. v1.2.3) (required) | `$RELEASE_TAG`, `$TAG_NAME` |
 | `--no-sign` | skip GPG signing (intended for tests; production always signs) | n/a |
 | `--signed` | create a signed tag; set TAG_RELEASE_SIGNED=false for unsigned annotated test tags | `$TAG_RELEASE_SIGNED` |
-| `--token` | token authenticating the tag push; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`). | `$RELEASE_TOKEN`, `$CI_TOKEN`, `$FORGEJO_TOKEN`, `$GITEA_TOKEN`, `$GITHUB_TOKEN` |
+| `--token` | token authenticating the tag push; omit to use the runner-injected token ($RELEASE_TOKEN, $CI_TOKEN, $FORGEJO_TOKEN, $GITEA_TOKEN, $GITHUB_TOKEN), which is only ever sent to the server that issued it; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`). | n/a |
 | `--dry-run` | preview git mutations (tag create, tag push) without performing them | n/a |

@@ -14,6 +14,7 @@ import (
 	appversion "github.com/diggsweden/reusable-ci/v3/internal/app/version"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domaingit "github.com/diggsweden/reusable-ci/v3/internal/domain/git"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 )
 
@@ -64,7 +65,7 @@ func (f *fakeChangelogReleaseRepo) Commit(_ context.Context, in domaingit.Commit
 	return nil
 }
 
-func (f *fakeChangelogReleaseRepo) PushBranchNoForce(_ context.Context, branch, _ string) error {
+func (f *fakeChangelogReleaseRepo) PushBranchNoForce(_ context.Context, branch string, _ runcontext.Credential) error {
 	f.pushedBranch = branch
 
 	return nil
@@ -91,7 +92,7 @@ func (f *fakeChangelogReleaseRepo) CreateTag(_ context.Context, tag, _ string, s
 	return nil
 }
 
-func (f *fakeChangelogReleaseRepo) PushTagNoForce(_ context.Context, tag, _ string) error {
+func (f *fakeChangelogReleaseRepo) PushTagNoForce(_ context.Context, tag string, _ runcontext.Credential) error {
 	f.pushedTag = tag
 
 	return nil

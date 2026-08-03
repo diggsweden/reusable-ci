@@ -111,14 +111,15 @@ func (p *Provider) serverURL() (string, error) {
 
 // token resolves a credential valid at THIS Forgejo server.
 //
-// It uses TokenForForgejo, not the general Token chain: $GITHUB_TOKEN counts
-// only when a Forgejo runner injected it under the GitHub-compatible name.
-// On a GitHub runner publishing to a Forgejo instance it is GitHub's own job
-// token, which cannot authenticate here but would be sent here.
-func (p *Provider) token() string {
-	env := p.envFunc()
-
-	return runcontext.TokenForForgejo(env).Resolve(env)
+// credential resolves the token this run may use at THIS Forgejo server.
+//
+// The audience check replaces the old hand-rolled gate here: $GITHUB_TOKEN
+// counts only when a Forgejo runner injected it under the GitHub-compatible
+// name. Off a Forgejo runner it is GitHub's own job token — it cannot
+// authenticate here, but it could be sent here. Callers name the destination
+// via Credential.For, so that outcome is no longer expressible.
+func (p *Provider) credential() runcontext.Credential {
+	return runcontext.Token().Resolve(p.envFunc())
 }
 
 // httpClient returns the Provider's configured client (tests inject an
@@ -136,7 +137,12 @@ func (p *Provider) httpClient() *http.Client {
 // client builds a Gitea SDK client authenticated with the configured
 // token and bound to ctx.
 func (p *Provider) client(ctx context.Context) (*gitea.Client, error) {
-	return p.clientWithToken(ctx, p.token())
+	server, err := p.serverURL()
+	if err != nil {
+		return nil, err
+	}
+
+	return p.clientWithToken(ctx, p.credential().For(server))
 }
 
 // clientWithToken builds a Gitea SDK client using an explicit token.

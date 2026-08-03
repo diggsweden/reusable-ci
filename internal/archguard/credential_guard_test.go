@@ -13,45 +13,35 @@ import (
 	"testing"
 )
 
-// forgeSpanningChains are the runcontext helpers whose name lists cross
-// forges: CI_TOKEN, FORGEJO_TOKEN, GITEA_TOKEN, GITHUB_TOKEN.
+// TestOnlyCompositionRootMintsOperatorCredentials fails when a package
+// outside the CLI turns a bare string into an unrestricted credential.
 //
-// They are safe where they are used today and nowhere else:
+// # Why this guard changed shape
 //
-//   - cienv binds them to --token / --release-token, where the caller has
-//     explicitly said "use this token for what I asked for";
-//   - validate/prerequisites asks whether a credential EXISTS, and never
-//     transmits it.
+// It used to forbid ADAPTERS from calling runcontext.Token()/ReleaseToken(),
+// whose name lists span forges. That rule is now obsolete in the best way:
+// those chains resolve to a runcontext.Credential, which has no method that
+// yields the secret without being told where it is going. An adapter can call
+// them freely -- the type will not let it send GitHub's token to Forgejo. The
+// compiler enforces what this test used to police.
 //
-// An adapter is the opposite case. It knows exactly which host it is about
-// to call, so a chain that answers "whichever forge's token happens to be
-// set" can hand it a credential issued by a different one.
-var forgeSpanningChains = map[string]bool{ //nolint:gochecknoglobals // guard fixture.
-	"Token":        true,
-	"ReleaseToken": true,
-}
-
-// TestAdaptersDoNotResolveForgeSpanningTokens fails when an adapter obtains
-// a credential from a chain that spans forges.
+// What the compiler cannot see is runcontext.OperatorCredential, the single
+// constructor that mints a Credential from an arbitrary string with NO
+// audience. It has to exist: an operator who types `--token ghs_...` has
+// decided where that secret goes, and no rule here can second-guess them.
+// But it is also the one way to launder an ambient token past its audience --
 //
-// This is a confused-deputy guard. An adapter holds authority (a token) and
-// a destination (its forge's API). If it resolves the credential from a
-// chain naming several forges' variables, a run that sets more than one --
-// a job publishing across forges -- can talk it into presenting forge A's
-// credential to forge B. A cross-forge token cannot authenticate anyway, so
-// the only two outcomes are an auth failure or a disclosure.
+//	runcontext.OperatorCredential(os.Getenv("GITHUB_TOKEN")).For(anywhere)
 //
-// This was not hypothetical: the forgejo package-registry resolver used
-// runcontext.Token(), whose chain ends in GITHUB_TOKEN. On a GitHub runner
-// publishing to a third-party Forgejo instance with FORGEJO_TOKEN unset (an
-// unset ${{ secrets.X }} interpolates to "", and empty means absent, so it
-// fell through), it transmitted the GitHub job token to that host.
+// -- which is precisely the disclosure the type exists to prevent. So the
+// mint is confined to the composition root, where "the operator said so" is
+// actually true because that is the layer holding the operator's input.
 //
-// The fix an offender should reach for is a forge-scoped resolver --
-// runcontext.TokenForForgejo, which admits $GITHUB_TOKEN only when a Forgejo
-// runner injected it under the GitHub-compatible name -- or simply naming
-// its own forge's variable, as the github adapter does.
-func TestAdaptersDoNotResolveForgeSpanningTokens(t *testing.T) {
+// internal/cli/clitoken is the intended home; the whole of internal/cli is
+// allowed because the composition root is exempt from the run-context rules
+// generally (see runcontext_guard_test.go) and drawing a finer line here
+// would be a rule about one package rather than about layers.
+func TestOnlyCompositionRootMintsOperatorCredentials(t *testing.T) {
 	t.Parallel()
 
 	root := filepath.Join("..", "..", "internal")
@@ -70,11 +60,11 @@ func TestAdaptersDoNotResolveForgeSpanningTokens(t *testing.T) {
 			return relErr
 		}
 
-		if layerOf(filepath.ToSlash(filepath.Dir(rel))) != "adapters" {
+		if layer := layerOf(filepath.ToSlash(filepath.Dir(rel))); layer == "cli" {
 			return nil
 		}
 
-		reportSpanningTokenUse(t, path)
+		reportOperatorCredentialMint(t, path)
 
 		return nil
 	})
@@ -83,9 +73,9 @@ func TestAdaptersDoNotResolveForgeSpanningTokens(t *testing.T) {
 	}
 }
 
-// reportSpanningTokenUse flags each runcontext.Token()/ReleaseToken() call
+// reportOperatorCredentialMint flags each runcontext.OperatorCredential call
 // in path.
-func reportSpanningTokenUse(t *testing.T, path string) {
+func reportOperatorCredentialMint(t *testing.T, path string) {
 	t.Helper()
 
 	fset := token.NewFileSet()
@@ -107,19 +97,21 @@ func reportSpanningTokenUse(t *testing.T, path string) {
 		}
 
 		pkg, ok := sel.X.(*ast.Ident)
-		if !ok || pkg.Name != "runcontext" || !forgeSpanningChains[sel.Sel.Name] {
+		if !ok || pkg.Name != "runcontext" || sel.Sel.Name != "OperatorCredential" {
 			return true
 		}
 
 		t.Errorf(
-			"%s: resolves a credential from runcontext.%s(), whose chain spans forges.\n"+
-				"    An adapter knows which host it is about to call, so this can hand it a\n"+
-				"    token issued by a DIFFERENT forge -- which cannot authenticate there, but\n"+
-				"    would be transmitted there. That is a credential disclosure, not a bug in\n"+
-				"    the happy path.\n"+
-				"    Fix: use a forge-scoped resolver (runcontext.TokenForForgejo), or name your\n"+
-				"    own forge's variable directly as the github adapter does.",
-			fset.Position(n.Pos()), sel.Sel.Name,
+			"%s: mints an unrestricted credential from a string.\n"+
+				"    OperatorCredential means \"an operator typed this secret next to the\n"+
+				"    command it is for\", which only the composition root can know. Anywhere\n"+
+				"    else it strips a credential of its audience and re-enables sending one\n"+
+				"    forge's token to another -- the disclosure runcontext.Credential exists\n"+
+				"    to make unwritable.\n"+
+				"    Fix: resolve via runcontext.Token()/ReleaseToken(), which bind the\n"+
+				"    credential to the server that issued it, and name your destination with\n"+
+				"    Credential.For.",
+			fset.Position(n.Pos()),
 		)
 
 		return true

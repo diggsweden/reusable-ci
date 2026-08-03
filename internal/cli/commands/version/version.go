@@ -17,6 +17,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/npm"
 	appversion "github.com/diggsweden/reusable-ci/v3/internal/app/version"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/clitoken"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/commonflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/dryrun"
@@ -54,7 +55,7 @@ func commitPushCmd() *cli.Command {
 			&cli.StringFlag{Name: "author-email", Required: true, Sources: cli.EnvVars("COMMIT_AUTHOR_EMAIL"), Usage: "git author email written to the commit"},
 			&cli.StringFlag{Name: "message", Required: true, Sources: cli.EnvVars("COMMIT_MESSAGE"), Usage: "commit message subject (signoff is appended automatically)"},
 			&cli.StringFlag{Name: "file-pattern", Required: true, Sources: cli.EnvVars("FILE_PATTERN"), Usage: "whitespace-separated git pathspecs to stage"},
-			&cli.StringFlag{Name: flagToken, Sources: cienv.ReleaseToken(), Usage: "token authenticating the push; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`)."}, //nolint:lll // single-line flag declaration for grep-ability, matching the package convention.
+			&cli.StringFlag{Name: flagToken, Usage: "token authenticating the push; omit to use the runner-injected token ($RELEASE_TOKEN, $CI_TOKEN, $FORGEJO_TOKEN, $GITEA_TOKEN, $GITHUB_TOKEN), which is only ever sent to the server that issued it; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`)."}, //nolint:lll // single-line flag declaration for grep-ability, matching the package convention.
 			dryrun.Flag("git mutations (author config, commit, push)"),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -64,7 +65,7 @@ func commitPushCmd() *cli.Command {
 				AuthorEmail: cmd.String("author-email"),
 				Message:     cmd.String("message"),
 				FilePattern: cmd.String("file-pattern"),
-				Token:       cmd.String(flagToken),
+				Token:       clitoken.ResolveRelease(cmd),
 				DryRun:      dryrun.Enabled(cmd),
 			})
 		},
@@ -233,13 +234,13 @@ func tagReleaseCmd() *cli.Command {
 				Sources: cli.EnvVars("TAG_RELEASE_SIGNED"),
 				Usage:   "create a signed tag; set TAG_RELEASE_SIGNED=false for unsigned annotated test tags",
 			},
-			&cli.StringFlag{Name: flagToken, Sources: cienv.ReleaseToken(), Usage: "token authenticating the tag push; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`)."}, //nolint:lll // single-line flag declaration for grep-ability, matching the package convention.
+			&cli.StringFlag{Name: flagToken, Usage: "token authenticating the tag push; omit to use the runner-injected token ($RELEASE_TOKEN, $CI_TOKEN, $FORGEJO_TOKEN, $GITEA_TOKEN, $GITHUB_TOKEN), which is only ever sent to the server that issued it; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`)."}, //nolint:lll // single-line flag declaration for grep-ability, matching the package convention.
 			dryrun.Flag("git mutations (tag create, tag push)"),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
 				_, err := appversion.TagRelease(ctx, git.New(),
-					appversion.TagReleaseInput{Tag: cmd.String(flagTag), Signed: cmd.Bool("signed") && !cmd.Bool("no-sign"), Token: cmd.String(flagToken), DryRun: dryrun.Enabled(cmd)},
+					appversion.TagReleaseInput{Tag: cmd.String(flagTag), Signed: cmd.Bool("signed") && !cmd.Bool("no-sign"), Token: clitoken.ResolveRelease(cmd), DryRun: dryrun.Enabled(cmd)},
 					d.OutputSink, os.Stderr)
 
 				return err
