@@ -58,8 +58,8 @@ func ownedNames() map[string]string {
 	owned := make(map[string]string)
 
 	for _, v := range runcontext.All() {
-		for _, name := range v.Names {
-			owned[name] = v.Concept
+		for _, key := range v.Keys() {
+			owned[key] = v.Concept
 		}
 	}
 

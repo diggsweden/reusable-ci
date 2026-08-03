@@ -16,6 +16,7 @@ func TestResolveKeylessIdentity_GitLab(t *testing.T) {
 
 	p := &gitlab.Provider{Env: func(k string) string {
 		return map[string]string{
+			"GITLAB_CI":      "true",
 			"CI_PROJECT_URL": "https://gitlab.com/grp/sub/proj",
 			"CI_SERVER_URL":  "https://gitlab.com",
 		}[k]

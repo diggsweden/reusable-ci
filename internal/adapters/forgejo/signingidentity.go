@@ -5,7 +5,6 @@ package forgejo
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
@@ -43,26 +42,37 @@ func (p *Provider) SupportsKeyless() bool { return p.Capabilities().KeylessOIDC 
 func (p *Provider) ResolveKeylessIdentity() (provider.KeylessIdentity, error) {
 	env := p.envFunc()
 
-	repo := strings.TrimSpace(runcontext.AttestedForgejoRepository(env).Resolve(env))
-	if repo == "" {
+	// A Forgejo job's identity only exists on a Forgejo runner. Stating that
+	// precondition here, rather than encoding it in a name list, is what keeps
+	// the chains single: off a Forgejo runner the attested names would resolve
+	// to the HOST runner's repository ($GITHUB_REPOSITORY on GitHub), which is
+	// a real repository and the wrong one to anchor a Forgejo verification to.
+	if !runcontext.ForgejoRunner(env) {
+		return provider.KeylessIdentity{}, fmt.Errorf(
+			"not executing on a Forgejo runner, so there is no Forgejo job identity to"+
+				" anchor verification on: %w", errs.ErrUsage)
+	}
+
+	repo, ok := runcontext.Repository().ResolveAttested(env)
+	if !ok {
 		return provider.KeylessIdentity{}, fmt.Errorf(
 			"a runner-provided repository (%s) is required to resolve the keyless signing identity: %w",
-			runcontext.AttestedForgejoRepository(env), errs.ErrUsage)
+			runcontext.Repository(), errs.ErrUsage)
 	}
 
-	server := strings.TrimRight(strings.TrimSpace(runcontext.AttestedForgejoServerURL(env).Resolve(env)), "/")
-	if server == "" {
+	server, ok := runcontext.ServerURL().ResolveAttested(env)
+	if !ok {
 		return provider.KeylessIdentity{}, fmt.Errorf(
 			"a runner-provided server URL (%s) is required to resolve the keyless signing identity: %w",
-			runcontext.AttestedForgejoServerURL(env), errs.ErrUsage)
+			runcontext.ServerURL(), errs.ErrUsage)
 	}
 
-	repoURL := provider.AttestedRepoURL(server + "/" + repo)
+	repoURL := runcontext.JoinAttested("/", server, repo)
 
 	return provider.KeylessIdentity{
 		OIDCIssuer:    p.Describe().OIDCIssuer,
 		TokenAudience: provider.KeylessAudience,
-		SubjectID:     string(repoURL),
+		SubjectID:     repoURL.String(),
 		SubjectRegexp: provider.AnchorIdentity(repoURL),
 	}, nil
 }

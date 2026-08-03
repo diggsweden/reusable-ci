@@ -9,6 +9,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // SupportsKeyless reports whether GitHub Actions can supply an OIDC token for
@@ -35,26 +36,38 @@ func (p *Provider) SupportsKeyless() bool { return p.Capabilities().KeylessOIDC 
 func (p *Provider) ResolveKeylessIdentity() (provider.KeylessIdentity, error) {
 	env := p.envFunc()
 
-	repo := strings.TrimSpace(env("GITHUB_REPOSITORY"))
-	if repo == "" {
+	// Both reads are ATTESTED: they walk only the names this runner injected,
+	// so the $REPOSITORY the orchestration layer computed cannot reach the
+	// anchor below. $GITHUB_SERVER_URL has no default here on purpose --
+	// context.go may guess github.com when merely describing a run, but a GHES
+	// runner also sets $GITHUB_ACTIONS=true, so guessing the forge for a trust
+	// anchor would accept certificates issued for a same-named repository on a
+	// different host.
+	repo, ok := runcontext.Repository().ResolveAttested(env)
+	if !ok {
 		return provider.KeylessIdentity{}, fmt.Errorf(
-			"$GITHUB_REPOSITORY is required to resolve the keyless signing identity: %w", errs.ErrUsage)
+			"a runner-provided repository (%s) is required to resolve the keyless signing identity: %w",
+			runcontext.Repository(), errs.ErrUsage)
 	}
 
-	server := strings.TrimRight(strings.TrimSpace(env("GITHUB_SERVER_URL")), "/")
-	if server == "" {
-		server = "https://github.com"
+	server, ok := runcontext.ServerURL().ResolveAttested(env)
+	if !ok {
+		return provider.KeylessIdentity{}, fmt.Errorf(
+			"a runner-provided server URL (%s) is required to resolve the keyless signing identity: %w",
+			runcontext.ServerURL(), errs.ErrUsage)
 	}
 
 	subjectID := ""
 	if ref := strings.TrimSpace(env("GITHUB_WORKFLOW_REF")); ref != "" {
-		subjectID = server + "/" + ref
+		subjectID = server.String() + "/" + ref
 	}
+
+	attested := runcontext.JoinAttested("/", server, repo)
 
 	return provider.KeylessIdentity{
 		OIDCIssuer:    p.Describe().OIDCIssuer,
 		TokenAudience: provider.KeylessAudience,
 		SubjectID:     subjectID,
-		SubjectRegexp: provider.AnchorIdentity(provider.AttestedRepoURL(server + "/" + repo)),
+		SubjectRegexp: provider.AnchorIdentity(attested),
 	}, nil
 }

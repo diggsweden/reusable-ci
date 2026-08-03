@@ -9,6 +9,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // SupportsKeyless reports whether GitLab CI can supply an OIDC token for
@@ -27,19 +28,22 @@ func (p *Provider) SupportsKeyless() bool { return p.Capabilities().KeylessOIDC 
 func (p *Provider) ResolveKeylessIdentity() (provider.KeylessIdentity, error) {
 	env := p.envFunc()
 
-	// $CI_PROJECT_URL is read by name: the anchor decides which certificates
-	// verification accepts, so it must be the runner's own value rather than
-	// anything the orchestration layer computed.
-	projectURL := strings.TrimRight(strings.TrimSpace(env("CI_PROJECT_URL")), "/")
-	if projectURL == "" {
+	// The anchor decides which certificates verification accepts, so it must
+	// be the runner's own value rather than anything the orchestration layer
+	// computed. $CI_PROJECT_URL is GitLab's, and has no neutral alias.
+	attested, ok := runcontext.ProjectURL().ResolveAttested(env)
+	if !ok {
 		return provider.KeylessIdentity{}, fmt.Errorf(
-			"$CI_PROJECT_URL is required to resolve the keyless signing identity: %w", errs.ErrUsage)
+			"a runner-provided project URL (%s) is required to resolve the keyless signing identity: %w",
+			runcontext.ProjectURL(), errs.ErrUsage)
 	}
+
+	projectURL := strings.TrimRight(attested.String(), "/")
 
 	return provider.KeylessIdentity{
 		OIDCIssuer:    p.Describe().OIDCIssuer,
 		TokenAudience: provider.KeylessAudience,
 		SubjectID:     projectURL,
-		SubjectRegexp: provider.AnchorIdentity(provider.AttestedRepoURL(projectURL)),
+		SubjectRegexp: provider.AnchorIdentity(attested),
 	}, nil
 }

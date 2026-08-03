@@ -101,7 +101,7 @@ func conceptOf(flag urfavecli.Flag) (string, bool) {
 	}
 
 	for _, v := range runcontext.All() {
-		if slicesEqual(keys, v.Names) {
+		if slicesEqual(keys, v.Keys()) {
 			return v.Concept, true
 		}
 	}

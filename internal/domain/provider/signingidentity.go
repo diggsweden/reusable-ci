@@ -6,6 +6,8 @@ package provider
 import (
 	"regexp"
 	"strings"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // KeylessIdentity is the resolved Sigstore identity for the job currently
@@ -19,7 +21,7 @@ import (
 // here claimed both sides read it; they do not, and the difference matters:
 // every field below feeds a decision about which certificates to ACCEPT, so
 // each must resolve from what the runner injected rather than from anything
-// computed upstream. See AttestedRepoURL.
+// computed upstream. See AnchorIdentity and runcontext.Attested.
 type KeylessIdentity struct {
 	// OIDCIssuer is the issuer URL the Fulcio certificate must claim —
 	// e.g. https://token.actions.githubusercontent.com on GitHub, or the
@@ -69,24 +71,6 @@ type SigningIdentityResolver interface {
 	ResolveKeylessIdentity() (KeylessIdentity, error)
 }
 
-// AttestedRepoURL is a repository URL fit to anchor a TRUST decision:
-// resolved from values the runner injected, not from a chain that prefers
-// whatever the orchestration layer computed.
-//
-// It is a distinct type because the two kinds of repository URL are
-// interchangeable to the compiler and opposite in meaning. The descriptive
-// chains (runcontext.Repository / ServerURL) sort by "most deliberate wins",
-// which is right for naming what to build and wrong for deciding what to
-// accept — an anchor must sort by "least forgeable wins". Requiring an
-// explicit conversion here does not make the mistake impossible, but it does
-// make it a deliberate, greppable act rather than a passing resemblance
-// between two strings.
-//
-// Obtain one from runcontext's Attested* chains. See
-// internal/archguard/anchor_guard_test.go, which fails a ResolveKeylessIdentity
-// that reaches for a descriptive chain.
-type AttestedRepoURL string
-
 // AnchorIdentity builds the anchored certificate-identity regexp for a
 // repository URL. The result matches every Sigstore SAN that begins with the
 // repository URL followed by a path separator — i.e. any workflow/ref under
@@ -95,7 +79,14 @@ type AttestedRepoURL string
 // This regexp is what `cosign verify-*` receives as
 // --certificate-identity-regexp, so it decides which certificates are
 // ACCEPTED. Whatever widens repoURL widens what verification will trust,
-// which is why the parameter is typed.
+// which is why the parameter is a runcontext.Attested rather than a string.
+//
+// Only runcontext.Var.ResolveAttested and JoinAttested mint one, and they
+// walk ONLY the names the runner injected. So a value resolved through the
+// descriptive chains — which prefer the $REPOSITORY the orchestration layer
+// computed — cannot reach this sink at all. That is a compiler property, not
+// a convention: the earlier named-string type still allowed an explicit
+// conversion, and the guard that covered the gap is now redundant.
 //
 // Security: the repository URL is regexp-escaped (QuoteMeta) before anchoring,
 // so a '.' in "github.com" cannot act as a wildcard, and the leading '^' plus
@@ -103,8 +94,8 @@ type AttestedRepoURL string
 // "…/acme/app" must not also accept "…/acme/app-evil"). An empty or
 // whitespace-only repoURL yields a regexp that matches no real SAN ("^$"),
 // failing closed rather than open.
-func AnchorIdentity(repoURL AttestedRepoURL) string {
-	trimmed := strings.TrimRight(strings.TrimSpace(string(repoURL)), "/")
+func AnchorIdentity(repoURL runcontext.Attested) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(repoURL.String()), "/")
 	if trimmed == "" {
 		return "^$"
 	}

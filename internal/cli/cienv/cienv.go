@@ -58,8 +58,10 @@ func (s nonEmptyEnvSource) GoString() string { return fmt.Sprintf("&nonEmptyEnvS
 // Sources binds a run-context concept to a non-empty env ValueSourceChain,
 // preserving its precedence order.
 func Sources(v runcontext.Var) cli.ValueSourceChain {
-	srcs := make([]cli.ValueSource, len(v.Names))
-	for i, k := range v.Names {
+	keys := v.Keys()
+
+	srcs := make([]cli.ValueSource, len(keys))
+	for i, k := range keys {
 		srcs[i] = nonEmptyEnvSource{key: k}
 	}
 

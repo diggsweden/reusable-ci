@@ -16,6 +16,7 @@ func TestResolveKeylessIdentity_GitHub(t *testing.T) {
 
 	p := &github.Provider{Env: func(k string) string {
 		return map[string]string{
+			"GITHUB_ACTIONS":      "true",
 			"GITHUB_REPOSITORY":   "acme/app",
 			"GITHUB_SERVER_URL":   "https://github.com",
 			"GITHUB_WORKFLOW_REF": "acme/app/.github/workflows/release.yml@refs/tags/v1.2.3",
@@ -48,13 +49,18 @@ func TestResolveKeylessIdentity_GitHub(t *testing.T) {
 	}
 }
 
-func TestResolveKeylessIdentity_GitHub_DefaultServerAndNoRef(t *testing.T) {
+// TestResolveKeylessIdentity_GitHub_NoRef covers the workflow-ref-less job:
+// SubjectID is empty (nothing exact to report) but the anchor still pins
+// verification to the repository.
+func TestResolveKeylessIdentity_GitHub_NoRef(t *testing.T) {
 	t.Parallel()
 
-	// GITHUB_SERVER_URL absent → defaults to github.com; no workflow ref →
-	// SubjectID empty but SubjectRegexp still anchored.
 	p := &github.Provider{Env: func(k string) string {
-		return map[string]string{"GITHUB_REPOSITORY": "acme/app"}[k]
+		return map[string]string{
+			"GITHUB_ACTIONS":    "true",
+			"GITHUB_REPOSITORY": "acme/app",
+			"GITHUB_SERVER_URL": "https://github.com",
+		}[k]
 	}}
 
 	id, err := p.ResolveKeylessIdentity()
@@ -68,6 +74,31 @@ func TestResolveKeylessIdentity_GitHub_DefaultServerAndNoRef(t *testing.T) {
 
 	if want := `^https://github\.com/acme/app/`; id.SubjectRegexp != want {
 		t.Errorf("SubjectRegexp = %q, want %q", id.SubjectRegexp, want)
+	}
+}
+
+// TestResolveKeylessIdentity_GitHub_MissingServerFailsClosed pins that the
+// anchor does NOT fall back to github.com when $GITHUB_SERVER_URL is absent.
+//
+// The old default guessed a FORGE, which is the one thing an anchor must
+// never guess: a GitHub Enterprise Server runner also sets
+// $GITHUB_ACTIONS=true, so defaulting would anchor a GHES repository to
+// github.com and accept certificates issued for a same-named repo on a
+// different host. Describing a run may default (see context.go, where the
+// worst case is a cosmetic link); deciding what a signature check accepts may
+// not. Erroring leaves the operator's own --cert-identity-regexp in place.
+func TestResolveKeylessIdentity_GitHub_MissingServerFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	p := &github.Provider{Env: func(k string) string {
+		return map[string]string{
+			"GITHUB_ACTIONS":    "true",
+			"GITHUB_REPOSITORY": "acme/app",
+		}[k]
+	}}
+
+	if _, err := p.ResolveKeylessIdentity(); !errors.Is(err, errs.ErrUsage) {
+		t.Errorf("absent $GITHUB_SERVER_URL must fail closed, not default to github.com; got %v", err)
 	}
 }
 

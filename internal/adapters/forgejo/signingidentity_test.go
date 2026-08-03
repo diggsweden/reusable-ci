@@ -19,6 +19,8 @@ func TestResolveKeylessIdentity_Forgejo(t *testing.T) {
 
 	p := &forgejo.Provider{Env: func(k string) string {
 		return map[string]string{
+			"GITHUB_ACTIONS":     "true",
+			"FORGEJO_ACTIONS":    "true",
 			"FORGEJO_SERVER_URL": "https://codeberg.org",
 			"FORGEJO_REPOSITORY": "acme/app",
 		}[k]
@@ -129,7 +131,13 @@ func TestResolveKeylessIdentity_GithubAliasNeedsForgejoRunner(t *testing.T) {
 		return map[string]string{
 			"GITHUB_ACTIONS":     "true", // a GitHub runner...
 			"FORGEJO_SERVER_URL": "https://third-party.example",
-			"GITHUB_REPOSITORY":  "github-owner/github-repo",
+			// A COMPLETE GitHub identity. Both names are set deliberately:
+			// with either one missing, resolution would fail on the absent
+			// value and this test would pass without ever exercising the
+			// runner gate it exists to pin (mutation testing caught exactly
+			// that -- deleting the gate left this test green).
+			"GITHUB_SERVER_URL": "https://github.com",
+			"GITHUB_REPOSITORY": "github-owner/github-repo",
 		}[k]
 	}}
 

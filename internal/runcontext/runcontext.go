@@ -43,6 +43,62 @@ package runcontext
 
 import "strings"
 
+// Name is one environment variable that can carry a concept, together with
+// the metadata that decides what its value may be USED for.
+//
+// The Key alone is not enough, because provenance is not a property of the
+// name in the abstract: $GITHUB_REPOSITORY is the runner's own value on
+// GitHub AND on Forgejo (act_runner sets the GITHUB_* names as compat
+// aliases), while on GitLab the same name could only have been set by a
+// workflow. So provenance is a question about (name, runner), answered at
+// resolution time — which is exactly what injected holds.
+type Name struct {
+	// Key is the environment variable name.
+	Key string
+
+	// injected reports whether the runner we are executing on sets this
+	// name ITSELF. False means the value, if present, was computed by the
+	// orchestration layer — convenient, and not a thing to anchor trust on.
+	injected func(env func(string) string) bool
+}
+
+// orchestrated marks a name the reusable-ci workflows set deliberately
+// (REPOSITORY, CI_REPO, and the FORGEJO_REPO / FORGEJO_SERVER aliases). No
+// runner injects it, so it is never attested — however trustworthy the
+// orchestration layer is, a trust anchor must not depend on a computation
+// upstream of it.
+func orchestrated(key string) Name {
+	return Name{Key: key, injected: func(func(string) string) bool { return false }}
+}
+
+// forgejoInjected marks a name a Forgejo/Gitea runner sets about its own run.
+func forgejoInjected(key string) Name {
+	return Name{Key: key, injected: ForgejoRunner}
+}
+
+// valueTrue is the exact value the runners write into their own marker
+// variables. Markers are matched exactly rather than through truthy(): a
+// runner either sets its marker or it does not, and loosening that would let
+// an operator-set "yes" impersonate a runner.
+const valueTrue = "true"
+
+// githubInjected marks a name injected by any GitHub-Actions-compatible
+// runner — which includes Forgejo's act_runner, since it sets the GITHUB_*
+// names as aliases for its own values. That is precisely why $GITHUB_TOKEN is
+// Forgejo's credential on Forgejo and GitHub's on GitHub.
+func githubInjected(key string) Name {
+	return Name{Key: key, injected: func(env func(string) string) bool {
+		return env("GITHUB_ACTIONS") == valueTrue
+	}}
+}
+
+// gitlabInjected marks a name GitLab CI sets about its own run.
+func gitlabInjected(key string) Name {
+	return Name{Key: key, injected: func(env func(string) string) bool {
+		return env("GITLAB_CI") == valueTrue
+	}}
+}
+
 // Var is an ordered set of environment variable names that all carry the
 // same run-context concept. The first NON-EMPTY name wins.
 type Var struct {
@@ -52,7 +108,17 @@ type Var struct {
 	Concept string
 
 	// Names is the precedence order, most-preferred first. Never empty.
-	Names []string
+	Names []Name
+}
+
+// Keys returns the variable names in precedence order.
+func (v Var) Keys() []string {
+	out := make([]string, len(v.Names))
+	for i, n := range v.Names {
+		out[i] = n.Key
+	}
+
+	return out
 }
 
 // Resolve returns the first non-empty value among v.Names, or "" when the
@@ -64,12 +130,70 @@ type Var struct {
 // the cli layer.
 func (v Var) Resolve(env func(string) string) string {
 	for _, name := range v.Names {
-		if value := env(name); value != "" {
+		if value := env(name.Key); value != "" {
 			return value
 		}
 	}
 
 	return ""
+}
+
+// Attested is a value that came from a name the RUNNER injected.
+//
+// It is a distinct, opaque type so that a sink which must not be widened by
+// anything upstream can demand one. Only ResolveAttested and JoinAttested
+// mint a non-empty Attested, so a string obtained from Resolve — which
+// deliberately prefers the orchestration layer's computed value — cannot
+// reach such a sink by resembling it.
+//
+// The zero value is empty on purpose: a sink handed one fails closed rather
+// than matching something.
+type Attested struct{ value string }
+
+// String returns the attested value.
+func (a Attested) String() string { return a.value }
+
+// JoinAttested concatenates attested parts with sep, staying attested. It
+// exists so composing "<server>/<owner>/<repo>" does not force a caller
+// through plain strings and back, which is where the guarantee would be lost.
+func JoinAttested(sep string, parts ...Attested) Attested {
+	raw := make([]string, len(parts))
+	for idx, part := range parts {
+		if part.value == "" {
+			// One missing part would silently yield a shorter, WIDER
+			// value ("https://host//repo" or just "https://host") -- so
+			// fail closed rather than anchor on a truncated identity.
+			return Attested{}
+		}
+
+		raw[idx] = part.value
+	}
+
+	return Attested{value: strings.Join(raw, sep)}
+}
+
+// ResolveAttested returns the first non-empty value among the names THIS
+// RUNNER injects, skipping the ones the orchestration layer computes.
+//
+// It is a different traversal, not a filter on Resolve's answer, and the
+// difference is the whole point. The chains are ordered for describing a run,
+// so a computed name comes FIRST: on a Forgejo runner with $REPOSITORY set,
+// Resolve returns that, and asking afterwards "was the winner injected?"
+// would answer no while $FORGEJO_REPOSITORY sat right behind it, unused. One
+// chain, two orderings — "most deliberate wins" for describing, "least
+// forgeable wins" for trusting.
+func (v Var) ResolveAttested(env func(string) string) (Attested, bool) {
+	for _, name := range v.Names {
+		if !name.injected(env) {
+			continue
+		}
+
+		if value := env(name.Key); value != "" {
+			return Attested{value: value}, true
+		}
+	}
+
+	return Attested{}, false
 }
 
 // String renders the names as "$A / $B / $C".
@@ -79,7 +203,7 @@ func (v Var) Resolve(env func(string) string) string {
 // one the author happened to have in mind — which is how a caller ends up
 // told to set $FORGEJO_REPOSITORY when $CI_REPO was the neutral answer.
 func (v Var) String() string {
-	return "$" + strings.Join(v.Names, " / $")
+	return "$" + strings.Join(v.Keys(), " / $")
 }
 
 // Run-context concepts. One definition each — every consumer, in every
@@ -99,7 +223,13 @@ func (v Var) String() string {
 func Repository() Var {
 	return Var{
 		Concept: "repository",
-		Names:   []string{"REPOSITORY", "CI_REPO", "FORGEJO_REPOSITORY", "FORGEJO_REPO", "GITHUB_REPOSITORY"},
+		Names: []Name{
+			orchestrated("REPOSITORY"),
+			orchestrated("CI_REPO"),
+			forgejoInjected("FORGEJO_REPOSITORY"),
+			orchestrated("FORGEJO_REPO"),
+			githubInjected("GITHUB_REPOSITORY"),
+		},
 	}
 }
 
@@ -107,7 +237,11 @@ func Repository() Var {
 func RepositoryOwner() Var {
 	return Var{
 		Concept: "repository owner",
-		Names:   []string{"REPOSITORY_OWNER", "FORGEJO_REPOSITORY_OWNER", "GITHUB_REPOSITORY_OWNER"},
+		Names: []Name{
+			orchestrated("REPOSITORY_OWNER"),
+			forgejoInjected("FORGEJO_REPOSITORY_OWNER"),
+			githubInjected("GITHUB_REPOSITORY_OWNER"),
+		},
 	}
 }
 
@@ -115,18 +249,31 @@ func RepositoryOwner() Var {
 func RefName() Var {
 	return Var{
 		Concept: "ref name",
-		Names:   []string{"REF_NAME", "CI_REF_NAME", "FORGEJO_REF_NAME", "GITHUB_REF_NAME"},
+		Names: []Name{
+			orchestrated("REF_NAME"),
+			orchestrated("CI_REF_NAME"),
+			forgejoInjected("FORGEJO_REF_NAME"),
+			githubInjected("GITHUB_REF_NAME"),
+		},
 	}
 }
 
 // Ref resolves the full git ref (refs/heads/…, refs/tags/…).
 func Ref() Var {
-	return Var{Concept: "ref", Names: []string{"REF", "FORGEJO_REF", "GITHUB_REF"}}
+	return Var{Concept: "ref", Names: []Name{
+			orchestrated("REF"),
+			forgejoInjected("FORGEJO_REF"),
+			githubInjected("GITHUB_REF"),
+		}}
 }
 
 // RefType resolves the ref kind ("branch" or "tag").
 func RefType() Var {
-	return Var{Concept: "ref type", Names: []string{"REF_TYPE", "FORGEJO_REF_TYPE", "GITHUB_REF_TYPE"}}
+	return Var{Concept: "ref type", Names: []Name{
+			orchestrated("REF_TYPE"),
+			forgejoInjected("FORGEJO_REF_TYPE"),
+			githubInjected("GITHUB_REF_TYPE"),
+		}}
 }
 
 // EventName resolves the workflow trigger event in the canonical vocabulary
@@ -140,7 +287,11 @@ func RefType() Var {
 func EventName() Var {
 	return Var{
 		Concept: "event name",
-		Names:   []string{"EVENT_NAME", "FORGEJO_EVENT_NAME", "GITHUB_EVENT_NAME"},
+		Names: []Name{
+			orchestrated("EVENT_NAME"),
+			forgejoInjected("FORGEJO_EVENT_NAME"),
+			githubInjected("GITHUB_EVENT_NAME"),
+		},
 	}
 }
 
@@ -150,7 +301,13 @@ func EventName() Var {
 func Commit() Var {
 	return Var{
 		Concept: "commit",
-		Names:   []string{"CI_COMMIT", "CI_COMMIT_SHA", "COMMIT_SHA", "FORGEJO_SHA", "GITHUB_SHA"},
+		Names: []Name{
+			orchestrated("CI_COMMIT"),
+			gitlabInjected("CI_COMMIT_SHA"),
+			orchestrated("COMMIT_SHA"),
+			forgejoInjected("FORGEJO_SHA"),
+			githubInjected("GITHUB_SHA"),
+		},
 	}
 }
 
@@ -161,18 +318,30 @@ func Commit() Var {
 func CheckoutRef() Var {
 	return Var{
 		Concept: "checkout ref",
-		Names:   []string{"CHECKOUT_REF", "CI_COMMIT", "CI_COMMIT_SHA", "FORGEJO_SHA", "GITHUB_SHA"},
+		Names: []Name{
+			orchestrated("CHECKOUT_REF"),
+			orchestrated("CI_COMMIT"),
+			gitlabInjected("CI_COMMIT_SHA"),
+			forgejoInjected("FORGEJO_SHA"),
+			githubInjected("GITHUB_SHA"),
+		},
 	}
 }
 
 // RunID resolves the CI run identifier.
 func RunID() Var {
-	return Var{Concept: "run id", Names: []string{"CI_RUN_ID", "FORGEJO_RUN_ID", "GITHUB_RUN_ID"}}
+	return Var{Concept: "run id", Names: []Name{
+			orchestrated("CI_RUN_ID"),
+			forgejoInjected("FORGEJO_RUN_ID"),
+			githubInjected("GITHUB_RUN_ID"),
+		}}
 }
 
 // RunURL resolves the human-facing CI run URL.
 func RunURL() Var {
-	return Var{Concept: "run url", Names: []string{"CI_RUN_URL"}}
+	return Var{Concept: "run url", Names: []Name{
+			orchestrated("CI_RUN_URL"),
+		}}
 }
 
 // Actor resolves the triggering user.
@@ -182,7 +351,11 @@ func RunURL() Var {
 // native FORGEJO_ACTOR/GITHUB_ACTOR, so they shared no name at all and a
 // runner-provided actor was invisible to the flag. This is their union.
 func Actor() Var {
-	return Var{Concept: "actor", Names: []string{"CI_ACTOR", "FORGEJO_ACTOR", "GITHUB_ACTOR"}}
+	return Var{Concept: "actor", Names: []Name{
+			orchestrated("CI_ACTOR"),
+			forgejoInjected("FORGEJO_ACTOR"),
+			githubInjected("GITHUB_ACTOR"),
+		}}
 }
 
 // ServerURL resolves the forge base URL (e.g. https://codeberg.org). It
@@ -195,20 +368,32 @@ func Actor() Var {
 func ServerURL() Var {
 	return Var{
 		Concept: "server url",
-		Names:   []string{"CI_SERVER_URL", "FORGEJO_SERVER_URL", "FORGEJO_SERVER", "GITHUB_SERVER_URL"},
+		Names: []Name{
+			gitlabInjected("CI_SERVER_URL"),
+			forgejoInjected("FORGEJO_SERVER_URL"),
+			orchestrated("FORGEJO_SERVER"),
+			githubInjected("GITHUB_SERVER_URL"),
+		},
 	}
 }
 
 // TempDir resolves the runner scratch directory.
 func TempDir() Var {
-	return Var{Concept: "temp dir", Names: []string{"CI_TEMP_DIR", "RUNNER_TEMP"}}
+	return Var{Concept: "temp dir", Names: []Name{
+			orchestrated("CI_TEMP_DIR"),
+			orchestrated("RUNNER_TEMP"),
+		}}
 }
 
 // Workspace resolves the checkout target directory.
 func Workspace() Var {
 	return Var{
 		Concept: "workspace",
-		Names:   []string{"CI_WORKSPACE", "FORGEJO_WORKSPACE", "GITHUB_WORKSPACE"},
+		Names: []Name{
+			orchestrated("CI_WORKSPACE"),
+			forgejoInjected("FORGEJO_WORKSPACE"),
+			githubInjected("GITHUB_WORKSPACE"),
+		},
 	}
 }
 
@@ -234,7 +419,7 @@ func Workspace() Var {
 // TokenForForgejo, or read the forge's own name, and see the note on
 // github/forgeregistry.go's Token field.
 func Token() Var {
-	return Var{Concept: conceptToken, Names: append(forgeNeutralTokenNames(), nameGitHubToken)}
+	return Var{Concept: conceptToken, Names: append(forgeNeutralTokenNames(), githubInjected(nameGitHubToken))}
 }
 
 // conceptToken labels both token chains: they name the same concept, only
@@ -253,8 +438,12 @@ const nameGitHubToken = "GITHUB_TOKEN" //nolint:gosec // G101: an env var NAME; 
 //
 // Returned fresh so callers can append without aliasing a shared backing
 // array — and declared once so the two chains below cannot drift.
-func forgeNeutralTokenNames() []string {
-	return []string{"CI_TOKEN", "FORGEJO_TOKEN", "GITEA_TOKEN"}
+func forgeNeutralTokenNames() []Name {
+	return []Name{
+		orchestrated("CI_TOKEN"),
+		forgejoInjected("FORGEJO_TOKEN"),
+		forgejoInjected("GITEA_TOKEN"),
+	}
 }
 
 // TokenForForgejo resolves a credential valid at a FORGEJO server, given the
@@ -275,7 +464,7 @@ func forgeNeutralTokenNames() []string {
 func TokenForForgejo(env func(string) string) Var {
 	names := forgeNeutralTokenNames()
 	if ForgejoRunner(env) {
-		names = append(names, nameGitHubToken)
+		names = append(names, githubInjected(nameGitHubToken))
 	}
 
 	return Var{Concept: conceptToken, Names: names}
@@ -293,7 +482,7 @@ func TokenForForgejo(env func(string) string) Var {
 func ReleaseToken() Var {
 	return Var{
 		Concept: "release token",
-		Names:   append([]string{"RELEASE_TOKEN"}, Token().Names...),
+		Names:   append([]Name{orchestrated("RELEASE_TOKEN")}, Token().Names...),
 	}
 }
 
@@ -302,8 +491,13 @@ func ReleaseToken() Var {
 func Tag() Var {
 	return Var{
 		Concept: "tag",
-		Names: []string{
-			"TAG_NAME", "RELEASE_TAG", "REF_NAME", "CI_REF_NAME", "FORGEJO_REF_NAME", "GITHUB_REF_NAME",
+		Names: []Name{
+			orchestrated("TAG_NAME"),
+			orchestrated("RELEASE_TAG"),
+			orchestrated("REF_NAME"),
+			orchestrated("CI_REF_NAME"),
+			forgejoInjected("FORGEJO_REF_NAME"),
+			githubInjected("GITHUB_REF_NAME"),
 		},
 	}
 }
@@ -334,7 +528,7 @@ func ForgejoRunner(env func(string) string) bool {
 	// A Forgejo/Gitea runner also sets GITHUB_ACTIONS=true; without that
 	// marker we are not on a GitHub-Actions-compatible runner at all.
 	// Matched exactly, as platform's ciFlag has always done.
-	if env("GITHUB_ACTIONS") != "true" {
+	if env("GITHUB_ACTIONS") != valueTrue {
 		return false
 	}
 
@@ -375,37 +569,13 @@ func truthy(v string) bool {
 // than inferring one. An Attested chain is the same idea for the FALLBACK
 // used when no expectation was supplied.
 
-// AttestedForgejoRepository resolves "owner/repo" for a TRUST decision on
-// Forgejo, from names the runner injects.
-//
-// $FORGEJO_REPO and the bare $REPOSITORY / $CI_REPO are deliberately absent
-// even though Repository() prefers them: those are the orchestration layer's
-// computed values, and an anchor must not depend on a computation upstream of
-// it. $GITHUB_REPOSITORY is admitted only on a Forgejo runner, where
-// act_runner injects it as a compat alias for its own value — the same gate,
-// and for the same reason, as TokenForForgejo.
-func AttestedForgejoRepository(env func(string) string) Var {
-	names := []string{"FORGEJO_REPOSITORY"}
-	if ForgejoRunner(env) {
-		names = append(names, "GITHUB_REPOSITORY")
-	}
 
-	return Var{Concept: "attested repository", Names: names}
-}
 
-// AttestedForgejoServerURL resolves the forge base URL for a TRUST decision
-// on Forgejo.
-//
-// $CI_SERVER_URL is absent: it is GitLab's runner-injected name, so on a
-// Forgejo runner it can only have come from a workflow. $FORGEJO_SERVER is
-// absent as the orchestration layer's alias. See AttestedForgejoRepository.
-func AttestedForgejoServerURL(env func(string) string) Var {
-	names := []string{"FORGEJO_SERVER_URL"}
-	if ForgejoRunner(env) {
-		names = append(names, "GITHUB_SERVER_URL")
-	}
-
-	return Var{Concept: "attested server url", Names: names}
+// ProjectURL resolves GitLab's project web URL. GitLab injects it and there
+// is no neutral alias, so it exists as a concept mainly to give the gitlab
+// signing identity an ATTESTED source rather than a bare env read.
+func ProjectURL() Var {
+	return Var{Concept: "project url", Names: []Name{gitlabInjected("CI_PROJECT_URL")}}
 }
 
 // All returns every run-context concept.
@@ -417,6 +587,6 @@ func All() []Var {
 	return []Var{
 		Repository(), RepositoryOwner(), RefName(), Ref(), RefType(), EventName(),
 		Commit(), CheckoutRef(), RunID(), RunURL(), Actor(), ServerURL(),
-		TempDir(), Workspace(), Token(), ReleaseToken(), Tag(),
+		TempDir(), Workspace(), Token(), ReleaseToken(), Tag(), ProjectURL(),
 	}
 }

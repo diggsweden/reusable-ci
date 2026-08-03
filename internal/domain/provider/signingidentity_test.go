@@ -8,7 +8,34 @@ import (
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
+
+// attested mints a runcontext.Attested the only way production can: by
+// resolving a concept against names a runner injected. There is deliberately
+// no test-only constructor -- one would be a laundering hole in the very type
+// whose point is that unattested values cannot reach AnchorIdentity, and a
+// backdoor open to tests is a backdoor. Resolving a fake GitHub runner's
+// $GITHUB_SERVER_URL exercises the real path instead.
+//
+// An empty url resolves to the zero Attested (ok=false), which is exactly how
+// a missing runner value reaches the sink in production.
+func attested(t *testing.T, url string) runcontext.Attested {
+	t.Helper()
+
+	a, _ := runcontext.ServerURL().ResolveAttested(func(key string) string {
+		switch key {
+		case "GITHUB_ACTIONS":
+			return "true"
+		case "GITHUB_SERVER_URL":
+			return url
+		default:
+			return ""
+		}
+	})
+
+	return a
+}
 
 func TestAnchorIdentity(t *testing.T) {
 	t.Parallel()
@@ -30,7 +57,7 @@ func TestAnchorIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := provider.AnchorIdentity(provider.AttestedRepoURL(tc.repoURL)); got != tc.want {
+			if got := provider.AnchorIdentity(attested(t, tc.repoURL)); got != tc.want {
 				t.Errorf("AnchorIdentity(%q) = %q, want %q", tc.repoURL, got, tc.want)
 			}
 		})
@@ -44,7 +71,7 @@ func TestAnchorIdentity(t *testing.T) {
 func TestAnchorIdentity_NoSiblingRepoMatch(t *testing.T) {
 	t.Parallel()
 
-	re := regexp.MustCompile(provider.AnchorIdentity(provider.AttestedRepoURL("https://github.com/acme/app")))
+	re := regexp.MustCompile(provider.AnchorIdentity(attested(t, "https://github.com/acme/app")))
 
 	accept := []string{
 		"https://github.com/acme/app/.github/workflows/release.yml@refs/tags/v1.2.3",
