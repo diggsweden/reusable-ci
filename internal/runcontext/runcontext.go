@@ -210,8 +210,17 @@ func Workspace() Var {
 // Token resolves the forge API/clone token. Non-empty semantics matter: an
 // empty GITHUB_TOKEN must not shadow a populated FORGEJO_TOKEN, and an
 // empty result means an anonymous (public-repo) checkout.
+//
+// GITEA_TOKEN is the Gitea-native name that Forgejo still accepts. It was
+// honoured only by the forgejo package-registry adapter, which resolved the
+// token from its own inline list; folding it in here is what lets that
+// adapter share this chain without dropping Gitea support. It sits after
+// FORGEJO_TOKEN, preserving the adapter's original relative order.
 func Token() Var {
-	return Var{Concept: "token", Names: []string{"CI_TOKEN", "FORGEJO_TOKEN", "GITHUB_TOKEN"}}
+	return Var{
+		Concept: "token",
+		Names:   []string{"CI_TOKEN", "FORGEJO_TOKEN", "GITEA_TOKEN", "GITHUB_TOKEN"},
+	}
 }
 
 // ReleaseToken resolves the write-scoped token used to push the release
@@ -224,7 +233,7 @@ func Token() Var {
 func ReleaseToken() Var {
 	return Var{
 		Concept: "release token",
-		Names:   []string{"RELEASE_TOKEN", "CI_TOKEN", "FORGEJO_TOKEN", "GITHUB_TOKEN"},
+		Names:   []string{"RELEASE_TOKEN", "CI_TOKEN", "FORGEJO_TOKEN", "GITEA_TOKEN", "GITHUB_TOKEN"},
 	}
 }
 
