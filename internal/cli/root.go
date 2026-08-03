@@ -379,10 +379,10 @@ Issues:  https://github.com/diggsweden/reusable-ci/issues`, common.String(), doc
 
 // applyProviderOverrides validates the --provider / --runner flags and
 // bridges their argv values into the REUSABLE_CI_PROVIDER /
-// REUSABLE_CI_RUNNER env vars that internal/platform reads. Detection
+// REUSABLE_CI_RUNNER env vars that internal/adapters/platform reads. Detection
 // lives in one place (the platform package); the flags are sugar over
 // the env, so bridging argv → env keeps a single source of truth. The
-// env-var names must match the override constants in internal/platform
+// env-var names must match the override constants in internal/adapters/platform
 // and the flags' EnvVars sources above.
 func applyProviderOverrides(cmd *cli.Command) error {
 	if err := bridgeOverride(cmd, "provider", "REUSABLE_CI_PROVIDER",
@@ -423,7 +423,7 @@ func runnerFlagValues() string {
 
 // bridgeOverride validates one override flag and, when it was set on the
 // command line, mirrors its normalised value into envName so
-// internal/platform (which reads only env) observes it. "auto" and the
+// internal/adapters/platform (which reads only env) observes it. "auto" and the
 // empty string defer to auto-detection. valid reports whether a concrete
 // value is recognised; want is the accepted-values hint for the error.
 func bridgeOverride(cmd *cli.Command, flag, envName string, valid func(string) bool, want string) error {

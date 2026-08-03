@@ -18,7 +18,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
-	"github.com/diggsweden/reusable-ci/v3/internal/platform"
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/platform"
 )
 
 // New returns the `doctor` top-level subcommand.
@@ -110,7 +110,7 @@ Exit codes:
 
 // resolveEnvironment gathers the active forge/runner/capabilities for
 // the doctor environment block. Detection (env reads) lives in
-// internal/platform and the provider factory in internal/cli/deps; this
+// internal/adapters/platform and the provider factory in internal/cli/deps; this
 // helper only assembles their results into the app-layer Environment.
 func resolveEnvironment() appdoctor.Environment {
 	return appdoctor.Environment{

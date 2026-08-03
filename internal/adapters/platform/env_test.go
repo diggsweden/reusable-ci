@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
-	"github.com/diggsweden/reusable-ci/v3/internal/platform"
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/platform"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testenv"
 )
 

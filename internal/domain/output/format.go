@@ -9,7 +9,7 @@
 // "auto" is a request for Resolve to map the active CI platform to the
 // matching format; after resolution the effective format is always one
 // of the four concrete values. Detecting which platform is active lives
-// in package internal/platform (the boundary that reads env), so this
+// in package internal/adapters/platform (the boundary that reads env), so this
 // package never touches env-var strings.
 package output
 
@@ -121,7 +121,7 @@ func ParseAndResolve(s string, runner provider.RunnerKind) (Format, error) {
 //   - anything else          → FormatText
 //
 // JSON is never auto-selected; ask for it explicitly. Callers obtain
-// the runner from internal/platform.DetectRunner() (which owns the
+// the runner from internal/adapters/platform.DetectRunner() (which owns the
 // env-var reads); this package stays pure.
 func Resolve(f Format, runner provider.RunnerKind) Format {
 	if f != FormatAuto {

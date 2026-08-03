@@ -21,7 +21,7 @@ import (
 //
 // The single legitimate provider-construction switch lives in
 // internal/cli/deps (providerFor); the runtime detection switch lives in
-// internal/platform. Neither is under internal/app, so this guard stays
+// internal/adapters/platform. Neither is under internal/app, so this guard stays
 // green as long as the app layer asks the provider instead of branching
 // on its name.
 func TestAppLayerDoesNotBranchOnPlatform(t *testing.T) {

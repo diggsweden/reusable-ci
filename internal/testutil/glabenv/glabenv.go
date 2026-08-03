@@ -42,7 +42,7 @@ func (e *Env) Setenv(key, value string) {
 }
 
 // Setup exports the CI_* env vars expected by the GitLab platform branch
-// of internal/platform.Detect(), creates an empty CI_OUTPUT dotenv file,
+// of internal/adapters/platform.Detect(), creates an empty CI_OUTPUT dotenv file,
 // and returns a handle for reading it.
 func Setup(t *testing.T) *Env {
 	t.Helper()

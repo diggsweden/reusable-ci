@@ -7,7 +7,7 @@
 // but provider/output/summary/manifest selection lives here so the
 // platform-specific wiring has one home.
 //
-// Build(ctx) reads the platform via internal/platform.Detect() and
+// Build(ctx) reads the platform via internal/adapters/platform.Detect() and
 // returns a typed *Deps with adapters wired in.
 package deps
 
@@ -32,7 +32,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
-	"github.com/diggsweden/reusable-ci/v3/internal/platform"
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/platform"
 )
 
 // Deps is what use cases receive. Provider is the always-available
