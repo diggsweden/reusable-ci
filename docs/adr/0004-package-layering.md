@@ -39,10 +39,20 @@ Three things were missing, and they compound:
    the right one.
 
 The `internal/cli/*_guard_test.go` family already solved this exact class of
-problem for the verb lexicon (ADR 0003), env names, and single-sourced
+problem for env names, commit-SHA and hex-digest spellings, and single-sourced
 regexes: write the rule down, then guard it with a test that explains the fix
 in its failure message. The layering is the most consequential rule in the
 codebase and it was the one rule with neither half.
+
+ADR 0003 §3 sets the bar a guard has to clear, and it is worth checking this
+one against it rather than reaching for the family by analogy. A guard has to
+pin a fact with one correct value, not a judgement with a long tail of
+legitimate answers, and it earns its keep when the violation is expensive to
+reverse. An import edge clears both tests where a verb does not. The edge is
+present or it is not, with no tail to argue about; and a violation is not a
+one-comment review fix, because once one use case constructs an adapter inline
+the next one copies it. That is not hypothetical: it is how `pinreachability`
+drifted while `tags.go` next door stayed correct.
 
 ## Decision
 
