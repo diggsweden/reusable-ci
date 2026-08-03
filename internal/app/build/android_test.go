@@ -308,6 +308,19 @@ func TestAndroidDecodeKeystore_DefaultDirFallsBackToTempWhenRunnerTempUnset(t *t
 	}
 
 	got := strings.TrimPrefix(line, prefix)
+
+	// The dir belongs to the production fallback (os.MkdirTemp), not to the
+	// test, so t.TempDir cannot own it and nothing else will remove it.
+	// Without this the test leaves a keystore in the host's temp on every
+	// run. Guarded because this is an unconditional RemoveAll: only ever
+	// clean a fresh dir under the temp root the fallback was told to use.
+	keystoreDir := filepath.Dir(got)
+	if !strings.HasPrefix(keystoreDir, filepath.Join(os.TempDir(), "reusable-ci-keystore-")) {
+		t.Fatalf("fallback dir %q is not a fresh dir under %s; refusing to remove it", keystoreDir, os.TempDir())
+	}
+
+	t.Cleanup(func() { _ = os.RemoveAll(keystoreDir) })
+
 	if strings.HasPrefix(got, wd+string(os.PathSeparator)) || got == filepath.Join(wd, "release.keystore") {
 		t.Errorf("keystore landed inside cwd %s — must live outside the project working dir; got %s", wd, got)
 	}
