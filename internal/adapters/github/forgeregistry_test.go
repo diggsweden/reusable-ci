@@ -54,3 +54,58 @@ func TestResolveForgeNPMRegistry_GitHub(t *testing.T) {
 		t.Errorf("npm registry = %+v", reg)
 	}
 }
+
+// TestResolveForgeMavenRegistry_ForgeNeutralNames pins the fix: the GitHub
+// package registry understands the forge-neutral $REPOSITORY, so a run
+// configured with it no longer resolves in `release publish` and fails here
+// with "$GITHUB_REPOSITORY is required".
+func TestResolveForgeMavenRegistry_ForgeNeutralNames(t *testing.T) {
+	t.Parallel()
+
+	p := &github.Provider{Env: func(k string) string {
+		return map[string]string{"REPOSITORY": "owner/repo", "GITHUB_TOKEN": "gt"}[k]
+	}}
+
+	reg, err := p.ResolveForgeMavenRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if reg.URL != "https://maven.pkg.github.com/owner/repo" {
+		t.Errorf("registry = %+v", reg)
+	}
+}
+
+// TestResolveForgeMavenRegistry_TokenIsNotCrossForge is a SECURITY boundary,
+// not a style preference.
+//
+// The obvious "finish the migration" change here is Token:
+// runcontext.Token().Resolve(env). That chain consults FORGEJO_TOKEN BEFORE
+// GITHUB_TOKEN, so with both set this resolver would hand a Forgejo
+// credential to github.com. A cross-forge token cannot authenticate anyway,
+// so the only outcomes are auth failure or disclosure to a host the token
+// was never issued for.
+//
+// This test fails the moment the token starts spanning forges.
+func TestResolveForgeMavenRegistry_TokenIsNotCrossForge(t *testing.T) {
+	t.Parallel()
+
+	p := &github.Provider{Env: func(k string) string {
+		return map[string]string{
+			"REPOSITORY":    "owner/repo",
+			"FORGEJO_TOKEN": "forgejo-secret-for-another-host",
+			"CI_TOKEN":      "neutral-secret-for-another-host",
+			"GITHUB_TOKEN":  "github-token",
+		}[k]
+	}}
+
+	reg, err := p.ResolveForgeMavenRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if reg.Token != "github-token" {
+		t.Errorf("token sent to github.com = %q, want the $GITHUB_TOKEN value;"+
+			" a non-GitHub credential must never be transmitted to github.com", reg.Token)
+	}
+}
