@@ -506,3 +506,133 @@ func TestUploadRunArtifact_EmptyFileWireShape(t *testing.T) {
 		t.Errorf("sized file wire shape = %+v, want plain Content-Length upload", sized)
 	}
 }
+
+// multiArtifactServer fakes the runtime service with SEVERAL distinctly-named
+// artifacts, each with its own file container. runtimeServer above serves one
+// name repeated, which cannot exercise pattern matching across names.
+//
+// artifacts maps artifact name → (item path → body).
+func multiArtifactServer(t *testing.T, artifacts map[string]map[string]string) *httptest.Server {
+	t.Helper()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+runtimeToken {
+			w.WriteHeader(http.StatusUnauthorized)
+
+			return
+		}
+
+		base := "http://" + r.Host
+
+		switch {
+		case r.URL.Path == "/_apis/pipelines/workflows/7/artifacts":
+			arts := make([]jsonObj, 0, len(artifacts))
+			for name := range artifacts {
+				arts = append(arts, jsonObj{"name": name, "fileContainerResourceUrl": base + "/container/" + name})
+			}
+
+			writeJSON(w, jsonObj{"value": arts})
+
+		case strings.HasPrefix(r.URL.Path, "/container/"):
+			name := strings.TrimPrefix(r.URL.Path, "/container/")
+
+			vals := make([]jsonObj, 0)
+			for itemPath, body := range artifacts[name] {
+				vals = append(vals, jsonObj{
+					"path": itemPath, "itemType": "file",
+					"contentLocation": base + "/file?a=" + name + "&p=" + itemPath,
+					"fileLength":      len(body),
+				})
+			}
+
+			writeJSON(w, jsonObj{"value": vals})
+
+		case r.URL.Path == "/file":
+			body, ok := artifacts[r.URL.Query().Get("a")][r.URL.Query().Get("p")]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+
+				return
+			}
+
+			_, _ = w.Write([]byte(body))
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv
+}
+
+// TestDownloadRunArtifact_Pattern covers the pattern / merge-multiple path,
+// which had no test at all: downloadMatchingContainers and
+// resolveMatchingContainers were both at 0% coverage, so the glob, the
+// per-artifact destination, and the flattening were unverified.
+func TestDownloadRunArtifact_Pattern(t *testing.T) {
+	fixture := map[string]map[string]string{
+		"dist-linux": {"bin/app": "linux-body"},
+		"dist-mac":   {"bin/app": "mac-body"},
+		"sboms":      {"sbom.json": "{}"}, // must NOT match dist-*
+	}
+
+	t.Run("each match lands under its own artifact dir", func(t *testing.T) {
+		dir := t.TempDir()
+
+		info, err := runtimeProvider(multiArtifactServer(t, fixture)).
+			DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Pattern: "dist-*", Dir: dir})
+		if err != nil {
+			t.Fatalf("download: %v", err)
+		}
+
+		if info.FileCount != 2 {
+			t.Errorf("FileCount = %d, want 2 (the non-matching artifact must be skipped)", info.FileCount)
+		}
+
+		for name, want := range map[string]string{"dist-linux": "linux-body", "dist-mac": "mac-body"} {
+			got, readErr := os.ReadFile(filepath.Join(dir, name, "bin", "app"))
+			if readErr != nil {
+				t.Fatalf("%s: %v", name, readErr)
+			}
+
+			if string(got) != want {
+				t.Errorf("%s = %q, want %q — the wrong container was downloaded for this name",
+					name, got, want)
+			}
+		}
+
+		if _, statErr := os.Stat(filepath.Join(dir, "sboms")); statErr == nil {
+			t.Error("an artifact not matching the pattern was downloaded")
+		}
+	})
+
+	t.Run("merge-multiple flattens into Dir", func(t *testing.T) {
+		dir := t.TempDir()
+
+		if _, err := runtimeProvider(multiArtifactServer(t, fixture)).
+			DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{
+				Pattern: "dist-*", Dir: dir, MergeMultiple: true,
+			}); err != nil {
+			t.Fatalf("download: %v", err)
+		}
+
+		// Both artifacts carry bin/app, so the flattened tree has one at the
+		// top; the point is that no per-artifact directory was created.
+		if _, err := os.Stat(filepath.Join(dir, "bin", "app")); err != nil {
+			t.Errorf("merge-multiple did not flatten into Dir: %v", err)
+		}
+
+		if _, err := os.Stat(filepath.Join(dir, "dist-linux")); err == nil {
+			t.Error("merge-multiple still created a per-artifact directory")
+		}
+	})
+
+	t.Run("a bad glob is a usage error", func(t *testing.T) {
+		_, err := runtimeProvider(multiArtifactServer(t, fixture)).
+			DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Pattern: "[", Dir: t.TempDir()})
+		if !errors.Is(err, errs.ErrUsage) {
+			t.Fatalf("err = %v, want ErrUsage", err)
+		}
+	})
+}

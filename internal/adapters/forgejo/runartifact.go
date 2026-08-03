@@ -83,43 +83,39 @@ func (p *Provider) DownloadRunArtifact(ctx context.Context, in provider.RunArtif
 		return provider.RunArtifactInfo{}, fmt.Errorf("destination dir is required: %w", errs.ErrUsage)
 	}
 
-	env := p.envFunc()
-
-	runID := firstNonEmpty(env, "FORGEJO_RUN_ID", "GITHUB_RUN_ID")
+	// The run-id scoping check reads the run id directly rather than via
+	// resolveRuntimeCreds, and must stay ahead of it: a caller naming a
+	// different run gets "the token is scoped to this run" even when the run
+	// id is absent entirely, which is the more useful of the two errors.
+	runID := firstNonEmpty(p.envFunc(), "FORGEJO_RUN_ID", "GITHUB_RUN_ID")
 	if in.RunID != "" && in.RunID != runID {
 		return provider.RunArtifactInfo{}, fmt.Errorf(
 			"forgejo runtime token is scoped to the current run %q, cannot read run %q: %w",
 			runID, in.RunID, errs.ErrUnsupported)
 	}
 
-	if runID == "" {
-		return provider.RunArtifactInfo{}, fmt.Errorf("FORGEJO_RUN_ID/GITHUB_RUN_ID is required: %w", errs.ErrUsage)
-	}
-
-	runtimeURL := strings.TrimRight(env("ACTIONS_RUNTIME_URL"), "/")
-	token := env("ACTIONS_RUNTIME_TOKEN")
-
-	if credErr := validateRuntimeCreds(runtimeURL, token); credErr != nil {
-		return provider.RunArtifactInfo{}, credErr
-	}
-
-	if in.Pattern != "" {
-		return p.downloadMatchingContainers(ctx, runtimeURL, token, runID, in)
-	}
-
-	containerURL, err := p.resolveContainerURL(ctx, runtimeURL, token, runID, in.Name)
+	creds, err := p.resolveRuntimeCreds()
 	if err != nil {
 		return provider.RunArtifactInfo{}, err
 	}
 
-	return p.downloadContainer(ctx, containerURL, token, in.Name, in.Dir)
+	if in.Pattern != "" {
+		return p.downloadMatchingContainers(ctx, creds, in)
+	}
+
+	containerURL, err := p.resolveContainerURL(ctx, creds, in.Name)
+	if err != nil {
+		return provider.RunArtifactInfo{}, err
+	}
+
+	return p.downloadContainer(ctx, creds, containerURL, in.Name, in.Dir)
 }
 
 // downloadMatchingContainers implements pattern/merge-multiple for Forgejo:
 // list the run's artifacts, keep those whose name matches the glob, and
 // download each — flattened into Dir (MergeMultiple) or into Dir/<name>/.
-func (p *Provider) downloadMatchingContainers(ctx context.Context, runtimeURL, token, runID string, in provider.RunArtifactDownload) (provider.RunArtifactInfo, error) {
-	matches, err := p.resolveMatchingContainers(ctx, runtimeURL, token, runID, in.Pattern)
+func (p *Provider) downloadMatchingContainers(ctx context.Context, creds runtimeUploadCreds, in provider.RunArtifactDownload) (provider.RunArtifactInfo, error) {
+	matches, err := p.resolveMatchingContainers(ctx, creds, in.Pattern)
 	if err != nil {
 		return provider.RunArtifactInfo{}, err
 	}
@@ -147,7 +143,7 @@ func (p *Provider) downloadMatchingContainers(ctx context.Context, runtimeURL, t
 			dest = safeDest
 		}
 
-		info, derr := p.downloadContainer(ctx, match.url, token, match.name, dest)
+		info, derr := p.downloadContainer(ctx, creds, match.url, match.name, dest)
 		if derr != nil {
 			return provider.RunArtifactInfo{}, derr
 		}
@@ -159,21 +155,28 @@ func (p *Provider) downloadMatchingContainers(ctx context.Context, runtimeURL, t
 	return provider.RunArtifactInfo{Name: in.Pattern, Bytes: totalBytes, FileCount: totalFiles}, nil
 }
 
-func validateRuntimeCreds(runtimeURL, token string) error {
+func (c runtimeUploadCreds) validate() error {
 	return provider.ValidateRunArtifactCreds(provider.RunArtifactCreds{
 		Forge:    "forgejo",
 		URLVar:   "ACTIONS_RUNTIME_URL",
 		URLWhat:  "the runner's artifact service endpoint",
 		TokenVar: "ACTIONS_RUNTIME_TOKEN",
-		URL:      runtimeURL,
-		Token:    token,
+		URL:      c.url,
+		Token:    c.token,
 	})
+}
+
+// artifactsURL is the run's artifact-list endpoint, which every call below
+// derives identically from the endpoint and run id.
+func (c runtimeUploadCreds) artifactsURL() string {
+	return fmt.Sprintf("%s/_apis/pipelines/workflows/%s/artifacts?api-version=%s",
+		c.url, c.runID, runArtifactAPIVersion)
 }
 
 // resolveContainerURL lists the run's artifacts and returns the file
 // container URL for the exactly-one artifact matching name.
-func (p *Provider) resolveContainerURL(ctx context.Context, runtimeURL, token, runID, name string) (string, error) {
-	listURL := fmt.Sprintf("%s/_apis/pipelines/workflows/%s/artifacts?api-version=%s", runtimeURL, runID, runArtifactAPIVersion)
+func (p *Provider) resolveContainerURL(ctx context.Context, creds runtimeUploadCreds, name string) (string, error) {
+	listURL := creds.artifactsURL()
 
 	var list struct {
 		Value []struct {
@@ -182,8 +185,8 @@ func (p *Provider) resolveContainerURL(ctx context.Context, runtimeURL, token, r
 		} `json:"value"`
 	}
 
-	if err := p.getRuntimeJSON(ctx, listURL, token, &list); err != nil {
-		return "", fmt.Errorf("list run %s artifacts: %w", runID, err)
+	if err := p.getRuntimeJSON(ctx, listURL, creds.token, &list); err != nil {
+		return "", fmt.Errorf("list run %s artifacts: %w", creds.runID, err)
 	}
 
 	var matches []string
@@ -202,9 +205,9 @@ func (p *Provider) resolveContainerURL(ctx context.Context, runtimeURL, token, r
 
 		return matches[0], nil
 	case 0:
-		return "", fmt.Errorf("no artifact named %q on run %s: %w", name, runID, errs.ErrReleaseNotFound)
+		return "", fmt.Errorf("no artifact named %q on run %s: %w", name, creds.runID, errs.ErrReleaseNotFound)
 	default:
-		return "", fmt.Errorf("%d artifacts named %q on run %s (expected exactly one): %w", len(matches), name, runID, errs.ErrValidation)
+		return "", fmt.Errorf("%d artifacts named %q on run %s (expected exactly one): %w", len(matches), name, creds.runID, errs.ErrValidation)
 	}
 }
 
@@ -217,8 +220,8 @@ type containerMatch struct {
 // resolveMatchingContainers lists the run's artifacts and returns every one
 // whose name matches the glob pattern. Names carry no "/", so path.Match is
 // the right matcher.
-func (p *Provider) resolveMatchingContainers(ctx context.Context, runtimeURL, token, runID, pattern string) ([]containerMatch, error) {
-	listURL := fmt.Sprintf("%s/_apis/pipelines/workflows/%s/artifacts?api-version=%s", runtimeURL, runID, runArtifactAPIVersion)
+func (p *Provider) resolveMatchingContainers(ctx context.Context, creds runtimeUploadCreds, pattern string) ([]containerMatch, error) {
+	listURL := creds.artifactsURL()
 
 	var list struct {
 		Value []struct {
@@ -227,8 +230,8 @@ func (p *Provider) resolveMatchingContainers(ctx context.Context, runtimeURL, to
 		} `json:"value"`
 	}
 
-	if err := p.getRuntimeJSON(ctx, listURL, token, &list); err != nil {
-		return nil, fmt.Errorf("list run %s artifacts: %w", runID, err)
+	if err := p.getRuntimeJSON(ctx, listURL, creds.token, &list); err != nil {
+		return nil, fmt.Errorf("list run %s artifacts: %w", creds.runID, err)
 	}
 
 	var matches []containerMatch
@@ -255,7 +258,7 @@ func (p *Provider) resolveMatchingContainers(ctx context.Context, runtimeURL, to
 
 // downloadContainer lists the container's file entries and writes each one
 // safely under dir, returning the byte/file totals.
-func (p *Provider) downloadContainer(ctx context.Context, containerURL, token, name, dir string) (provider.RunArtifactInfo, error) {
+func (p *Provider) downloadContainer(ctx context.Context, creds runtimeUploadCreds, containerURL, name, dir string) (provider.RunArtifactInfo, error) {
 	itemURL := appendItemPath(containerURL, name)
 
 	var container struct {
@@ -267,7 +270,7 @@ func (p *Provider) downloadContainer(ctx context.Context, containerURL, token, n
 		} `json:"value"`
 	}
 
-	if err := p.getRuntimeJSON(ctx, itemURL, token, &container); err != nil {
+	if err := p.getRuntimeJSON(ctx, itemURL, creds.token, &container); err != nil {
 		return provider.RunArtifactInfo{}, fmt.Errorf("list artifact %q files: %w", name, err)
 	}
 
@@ -289,7 +292,7 @@ func (p *Provider) downloadContainer(ctx context.Context, containerURL, token, n
 			return provider.RunArtifactInfo{}, fmt.Errorf("mkdir %q: %w", filepath.Dir(dest), mkErr)
 		}
 
-		n, err := p.writeEntry(ctx, entry.ContentLocation, token, dest, entry.FileLength)
+		n, err := p.writeEntry(ctx, entry.ContentLocation, creds.token, dest, entry.FileLength)
 		if err != nil {
 			return provider.RunArtifactInfo{}, err
 		}
@@ -448,7 +451,7 @@ func (p *Provider) UploadRunArtifact(ctx context.Context, in provider.RunArtifac
 		retentionDays = defaultForgejoRetentionDays
 	}
 
-	containerURL, err := p.createContainer(ctx, creds.url, creds.token, creds.runID, in.Name, retentionDays)
+	containerURL, err := p.createContainer(ctx, creds, in.Name, retentionDays)
 	if err != nil {
 		return provider.RunArtifactInfo{}, err
 	}
@@ -456,14 +459,14 @@ func (p *Provider) UploadRunArtifact(ctx context.Context, in provider.RunArtifac
 	var total int64
 
 	for _, item := range files {
-		if err := p.putFile(ctx, containerURL, creds.token, item); err != nil {
+		if err := p.putFile(ctx, creds, containerURL, item); err != nil {
 			return provider.RunArtifactInfo{}, err
 		}
 
 		total += item.size
 	}
 
-	if err := p.finalizeArtifact(ctx, creds.url, creds.token, creds.runID, in.Name, total); err != nil {
+	if err := p.finalizeArtifact(ctx, creds, in.Name, total); err != nil {
 		return provider.RunArtifactInfo{}, err
 	}
 
@@ -494,7 +497,7 @@ func (p *Provider) resolveRuntimeCreds() (runtimeUploadCreds, error) {
 		runID: runID,
 	}
 
-	if err := validateRuntimeCreds(creds.url, creds.token); err != nil {
+	if err := creds.validate(); err != nil {
 		return runtimeUploadCreds{}, err
 	}
 
@@ -535,15 +538,15 @@ func collectUploadFiles(in provider.RunArtifactUpload) ([]uploadFile, error) {
 
 // createContainer POSTs the artifact creation request and returns the file
 // container URL the per-file PUTs target.
-func (p *Provider) createContainer(ctx context.Context, runtimeURL, token, runID, name string, retentionDays int) (string, error) {
+func (p *Provider) createContainer(ctx context.Context, creds runtimeUploadCreds, name string, retentionDays int) (string, error) {
 	body, _ := json.Marshal(struct { //nolint:errchkjson // fixed-shape struct is always encodable.
 		Type          string `json:"Type"`
 		Name          string `json:"Name"`
 		RetentionDays int    `json:"RetentionDays"`
 	}{Type: "actions_storage", Name: name, RetentionDays: retentionDays})
-	createURL := fmt.Sprintf("%s/_apis/pipelines/workflows/%s/artifacts?api-version=%s", runtimeURL, runID, runArtifactAPIVersion)
+	createURL := creds.artifactsURL()
 
-	resp, err := p.runtimeSend(ctx, http.MethodPost, createURL, token, "application/json", bytes.NewReader(body), int64(len(body)), nil)
+	resp, err := p.runtimeSend(ctx, http.MethodPost, createURL, creds.token, "application/json", bytes.NewReader(body), int64(len(body)), nil)
 	if err != nil {
 		return "", fmt.Errorf("create artifact container: %w", err)
 	}
@@ -573,7 +576,7 @@ func (p *Provider) createContainer(ctx context.Context, runtimeURL, token, runID
 // whole-file Content-Range (the empty-file form "bytes 0--1/0" for zero-byte
 // files, which Forgejo's range parser requires) plus the x-actions-results-md5
 // digest of the body, which Forgejo verifies against the bytes it receives.
-func (p *Provider) putFile(ctx context.Context, containerURL, token string, item uploadFile) error {
+func (p *Provider) putFile(ctx context.Context, creds runtimeUploadCreds, containerURL string, item uploadFile) error {
 	file, err := os.Open(item.abs) //nolint:gosec // item.abs comes from a caller-provided dir/file list.
 	if err != nil {
 		return fmt.Errorf("open %q: %w", item.abs, err)
@@ -602,7 +605,7 @@ func (p *Provider) putFile(ctx context.Context, containerURL, token string, item
 
 	putURL := appendItemPath(containerURL, item.itemPath)
 
-	resp, err := p.runtimeSend(ctx, http.MethodPut, putURL, token, "application/octet-stream", file, item.size, headers)
+	resp, err := p.runtimeSend(ctx, http.MethodPut, putURL, creds.token, "application/octet-stream", file, item.size, headers)
 	if err != nil {
 		return fmt.Errorf("upload %q: %w", item.itemPath, err)
 	}
@@ -617,12 +620,12 @@ func (p *Provider) putFile(ctx context.Context, containerURL, token string, item
 }
 
 // finalizeArtifact PATCHes the total size, sealing the artifact.
-func (p *Provider) finalizeArtifact(ctx context.Context, runtimeURL, token, runID, name string, total int64) error {
+func (p *Provider) finalizeArtifact(ctx context.Context, creds runtimeUploadCreds, name string, total int64) error {
 	body, _ := json.Marshal(map[string]int64{"Size": total}) //nolint:errchkjson // single int field is always encodable.
 	patchURL := fmt.Sprintf("%s/_apis/pipelines/workflows/%s/artifacts?artifactName=%s&api-version=%s",
-		runtimeURL, runID, url.QueryEscape(name), runArtifactAPIVersion)
+		creds.url, creds.runID, url.QueryEscape(name), runArtifactAPIVersion)
 
-	resp, err := p.runtimeSend(ctx, http.MethodPatch, patchURL, token, "application/json", bytes.NewReader(body), int64(len(body)), nil)
+	resp, err := p.runtimeSend(ctx, http.MethodPatch, patchURL, creds.token, "application/json", bytes.NewReader(body), int64(len(body)), nil)
 	if err != nil {
 		return fmt.Errorf("finalize artifact %q: %w", name, err)
 	}
