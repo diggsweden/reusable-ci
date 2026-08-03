@@ -21,6 +21,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 var baseImagesRepositorySuffixRE = regexp.MustCompile(`^(-[A-Za-z0-9][A-Za-z0-9._-]*)?$`)
@@ -217,7 +218,7 @@ func (c baseImagesCommon) login(authFile string) error {
 }
 
 func withBaseImagesDockerConfig(fn func(authFile string) error) error {
-	root := os.Getenv("RUNNER_TEMP")
+	root := runcontext.TempDir().Resolve(os.Getenv)
 	if root == "" {
 		root = os.TempDir()
 	}

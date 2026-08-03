@@ -41,6 +41,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // flagRegistry is the shared flag name for the registry host, named once so the
@@ -205,7 +206,7 @@ func authFileForLogin(authFile string, create bool) (string, error) {
 }
 
 func runnerTempDir() string {
-	if dir := os.Getenv("RUNNER_TEMP"); strings.TrimSpace(dir) != "" {
+	if dir := runcontext.TempDir().Resolve(os.Getenv); strings.TrimSpace(dir) != "" {
 		return dir
 	}
 

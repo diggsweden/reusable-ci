@@ -19,6 +19,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/dryrun"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/secret"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 	"github.com/diggsweden/reusable-ci/v3/internal/safeexec"
 )
 
@@ -120,7 +121,7 @@ func commitChangelogReleaseCmd() *cli.Command {
 // pinned known_hosts, ssh config) in a private temp dir and returns the
 // GIT_SSH_COMMAND value, the signing-key path and a cleanup func.
 func setupChangelogReleaseSSH(ctx context.Context, privateKey, host, keyType, expectedFingerprint string) (string, string, func(), error) {
-	base := os.Getenv("RUNNER_TEMP")
+	base := runcontext.TempDir().Resolve(os.Getenv)
 	if base == "" {
 		base = os.TempDir()
 	}

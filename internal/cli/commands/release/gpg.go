@@ -18,6 +18,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/secret"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // gpgGroup wires `reusable-ci release gpg <verb>` — manages the GPG
@@ -173,7 +174,7 @@ func resolveSecretAny(filePath string, envVars ...string) (string, error) {
 }
 
 func withEphemeralGNUPGHome(fn func() error) error {
-	base := os.Getenv("RUNNER_TEMP")
+	base := runcontext.TempDir().Resolve(os.Getenv)
 	if base == "" {
 		base = os.TempDir()
 	}

@@ -14,6 +14,7 @@ import (
 	appvalidate "github.com/diggsweden/reusable-ci/v3/internal/app/validate"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // prerequisitesCmd is the collapsed entry that replaces ~10 sequential
@@ -63,7 +64,7 @@ func prerequisitesCmd() *cli.Command {
 					HasJVMTarget:             cmd.Bool("has-jvm"),
 					// Secrets stay in env — never passed via argv.
 					ReleaseGPGPublicKey:  os.Getenv("RELEASE_GPG_PUBLIC_KEY"),
-					ReleaseToken:         os.Getenv("RELEASE_TOKEN"),
+					ReleaseToken:         runcontext.ReleaseToken().Resolve(os.Getenv),
 					MavenCentralUsername: os.Getenv("MAVEN_CENTRAL_USERNAME"),
 					MavenCentralPassword: os.Getenv("MAVEN_CENTRAL_PASSWORD"),
 					PublishStagePlanJSON: os.Getenv("PUBLISH_STAGE_PLAN_JSON"),

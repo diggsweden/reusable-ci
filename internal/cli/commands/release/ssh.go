@@ -15,6 +15,7 @@ import (
 	apprelease "github.com/diggsweden/reusable-ci/v3/internal/app/release"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/secret"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // sshGroup wires `reusable-ci release ssh <verb>` — the SSH sibling of the
@@ -131,7 +132,7 @@ func resolveSSHKeyPath(override string) string {
 		return override
 	}
 
-	base := os.Getenv("RUNNER_TEMP")
+	base := runcontext.TempDir().Resolve(os.Getenv)
 	if base == "" {
 		base = os.TempDir()
 	}

@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,30 +17,38 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
-// insideLayers are the layers that must never read a run-context variable
-// from the environment.
+// guardedLayers are the layers that must not name a run-context variable
+// themselves. The rule they share:
 //
-// They are the INSIDE of the hexagon: they are handed what they need and do
-// not go looking for it. domain has always been at zero; app reached zero
-// once the four --temp-dir flags were threaded.
+//	Only an adapter may name a forge's variables, because an adapter IS a
+//	dialect. Everyone else resolves the shared chain.
 //
-// adapters and cli are deliberately absent, and that is not laziness:
+// adapters is therefore the ONE exemption, and it is principled rather than
+// pragmatic. adapters/github/context.go reading $GITHUB_SHA, or
+// adapters/gitlab reading $CI_SERVER_URL, is that adapter doing its job:
+// normalizing one forge's names into a neutral Context. cienv's EventName
+// doc turns on exactly this -- GitLab's CI_PIPELINE_SOURCE is kept OUT of
+// the shared chain precisely so the gitlab adapter can normalize its
+// dialect. A rule forbidding those reads would forbid the provider-adapter
+// design itself.
 //
-//   - An adapter IS a forge's dialect. adapters/github/context.go reading
-//     $GITHUB_SHA, or adapters/gitlab reading $CI_SERVER_URL, is that
-//     adapter doing its job -- normalizing one forge's names into a neutral
-//     Context. cienv's EventName doc turns on exactly this: GitLab's
-//     CI_PIPELINE_SOURCE is kept OUT of the flag chain precisely so the
-//     gitlab adapter can normalize its dialect. A rule forbidding those
-//     reads would forbid the provider-adapter design itself.
-//   - cli is where the environment is SUPPOSED to be read -- through flag
-//     Sources. Its reads are the composition root doing its job.
+// The failure this catches is narrow and real: a hand-written read resolves
+// the names its author remembered, so it drifts from the chain beside it.
+// Every instance found in this codebase had drifted -- app was blind to
+// $CI_TEMP_DIR; cienv's OWN provenance helpers had lost $FORGEJO_SERVER and
+// $CI_REPO from the SLSA builder identity; the release prerequisites check
+// demanded $RELEASE_TOKEN while the push it gates accepted four more names.
 //
-// The failure this catches is narrower and real: an inside-layer read
-// resolves ONE name, so it cannot honour the precedence its own flag
-// already implements. Every such read found in this codebase was blind to
-// $CI_TEMP_DIR while the flag beside it honoured it.
-func insideLayers() []string { return []string{"domain", "app"} }
+// The fix differs by layer, which is why the message names both:
+//
+//   - domain/app are the INSIDE: they receive the run context. Add a flag
+//     with Sources: cienv.X(), carry it on the use case's *Input.
+//   - cli is the composition root: it may read the environment, but through
+//     the shared chain -- a flag, or runcontext.X().Resolve(os.Getenv) when
+//     a flag is wrong. Secrets are the case where a flag IS wrong: argv is
+//     world-readable, so validate/prerequisites.go keeps its os.Getenv and
+//     only borrows the chain.
+func guardedLayers() []string { return []string{"domain", "app", "cli"} }
 
 // ownedNames returns every environment variable runcontext defines,
 // derived from runcontext.All() rather than restated here -- a hand-copied
@@ -57,14 +66,15 @@ func ownedNames() map[string]string {
 	return owned
 }
 
-// TestInsideLayersDoNotReadRunContextEnv fails when domain or app resolves a
-// run-context variable itself instead of receiving it.
+// TestLayersDoNotNameRunContextVars fails when a guarded layer resolves a
+// run-context variable by name instead of through the shared chain.
 //
-// The fix is always the same, and the tree already demonstrates it: declare
-// a flag whose Sources is the matching cienv chain, carry the value on the
-// use case's *Input, and delete the read. See app/build/xcodesigning.go's
-// TempDir field for the shape.
-func TestInsideLayersDoNotReadRunContextEnv(t *testing.T) {
+// cienv itself is NOT exempt: it is the package the rule exists to protect,
+// and it is where the rule was most visibly broken -- its provenance helpers
+// hand-rolled chains that had drifted from the ones it publishes ten lines
+// away. It resolves runcontext.Var against os.Getenv now, like any other
+// caller that needs a value rather than a flag.
+func TestLayersDoNotNameRunContextVars(t *testing.T) {
 	t.Parallel()
 
 	owned := ownedNames()
@@ -84,11 +94,12 @@ func TestInsideLayersDoNotReadRunContextEnv(t *testing.T) {
 			return relErr
 		}
 
-		if !slicesContains(insideLayers(), layerOf(filepath.ToSlash(filepath.Dir(rel)))) {
+		layer := layerOf(filepath.ToSlash(filepath.Dir(rel)))
+		if !slices.Contains(guardedLayers(), layer) {
 			return nil
 		}
 
-		reportEnvReads(t, path, owned)
+		reportEnvReads(t, path, layer, owned)
 
 		return nil
 	})
@@ -99,7 +110,7 @@ func TestInsideLayersDoNotReadRunContextEnv(t *testing.T) {
 
 // reportEnvReads flags each os.Getenv/os.LookupEnv in path whose argument is
 // a run-context variable name.
-func reportEnvReads(t *testing.T, path string, owned map[string]string) {
+func reportEnvReads(t *testing.T, path, layer string, owned map[string]string) {
 	t.Helper()
 
 	fset := token.NewFileSet()
@@ -127,16 +138,30 @@ func reportEnvReads(t *testing.T, path string, owned map[string]string) {
 		t.Errorf(
 			"%s: reads $%s directly.\n"+
 				"    $%s is the %q run context, owned by internal/runcontext.\n"+
-				"    An os.Getenv here resolves that ONE name, so it cannot honour the\n"+
-				"    precedence the matching cienv chain implements (%s) -- the run would\n"+
-				"    answer differently here than at every flag.\n"+
-				"    Fix: give the command a flag with Sources: cienv.<Concept>(), carry the\n"+
-				"    value on the use case's *Input, and delete the read.",
-			fset.Position(n.Pos()), name, name, concept, conceptNames(name, owned),
+				"    This read resolves that ONE name, so it cannot honour the precedence\n"+
+				"    the shared chain implements (%s) --\n"+
+				"    the same run would answer differently here than at every flag.\n"+
+				"    Fix: %s",
+			fset.Position(n.Pos()), name, name, concept, conceptNames(name, owned), runContextFix(layer),
 		)
 
 		return true
 	})
+}
+
+// runContextFix states the remedy in the terms the offending layer can act on.
+// domain/app cannot import cienv at all (the layering forbids it), so
+// telling them to "use cienv" would be advice they cannot take.
+func runContextFix(layer string) string {
+	if layer == "cli" {
+		return "bind a flag with Sources: cienv.<Concept>(), or -- when the value is\n" +
+			"    needed outside a flag (a helper, or a secret that must not reach argv) --\n" +
+			"    resolve the shared chain: runcontext.<Concept>().Resolve(os.Getenv)."
+	}
+
+	return "this layer receives the run context, it does not look for it. Give the\n" +
+		"    command a flag with Sources: cienv.<Concept>(), carry the value on the use\n" +
+		"    case's *Input, and delete the read."
 }
 
 // envReadArg reports the literal variable name when n is an os.Getenv or
@@ -184,14 +209,4 @@ func conceptNames(name string, owned map[string]string) string {
 	}
 
 	return "$" + name
-}
-
-func slicesContains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-
-	return false
 }

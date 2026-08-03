@@ -26,6 +26,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 const (
@@ -547,7 +548,7 @@ func releaseImagesSecret(filePath string, envVars ...string) (string, error) {
 }
 
 func withReleaseImagesDockerConfig(fn func(authFile string) error) error {
-	root := os.Getenv("RUNNER_TEMP")
+	root := runcontext.TempDir().Resolve(os.Getenv)
 	if root == "" {
 		root = os.TempDir()
 	}

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // SourceDateEpochRFC3339 returns $SOURCE_DATE_EPOCH (unix seconds, the
@@ -31,15 +33,15 @@ func SourceDateEpochRFC3339() (string, bool) {
 }
 
 // envServerURL reads the forge server URL forge-neutrally, trailing slash
-// trimmed: CI_SERVER_URL (GitLab/neutral) → Forgejo's native
-// FORGEJO_SERVER_URL → the GITHUB_SERVER_URL compat alias. Forgejo's own
-// name comes before the alias (matching ServerURL()), since Forgejo Runner
-// 7.0.0 lets workflows drop the GITHUB_ names.
+// trimmed.
+//
+// These helpers resolve a VALUE rather than declare a flag, which is why
+// they once hand-rolled their own cmp.Or(os.Getenv(...)) chains — and why
+// they drifted from the chains in this very package: this one had lost
+// $FORGEJO_SERVER. Resolving the shared runcontext.Var against os.Getenv
+// gives the value without a second name list.
 func envServerURL() string {
-	return strings.TrimSuffix(
-		cmp.Or(os.Getenv("CI_SERVER_URL"), os.Getenv("FORGEJO_SERVER_URL"), os.Getenv("GITHUB_SERVER_URL")),
-		"/",
-	)
+	return strings.TrimSuffix(runcontext.ServerURL().Resolve(os.Getenv), "/")
 }
 
 // ProvenanceInvocationID returns the run/job URL identifying this CI
@@ -52,8 +54,14 @@ func ProvenanceInvocationID() string {
 	}
 
 	server := envServerURL()
-	repo := cmp.Or(os.Getenv("FORGEJO_REPOSITORY"), os.Getenv("GITHUB_REPOSITORY"), os.Getenv("CI_PROJECT_PATH"))
-	runID := cmp.Or(os.Getenv("FORGEJO_RUN_ID"), os.Getenv("GITHUB_RUN_ID"), os.Getenv("CI_PIPELINE_ID"))
+
+	// The GitLab-native names stay OUTSIDE the shared chains on purpose:
+	// commands get GitLab's dialect from the gitlab adapter's ResolveContext
+	// (see EventName's doc). Provenance has no resolved context to fall back
+	// on — it is a helper, not a flag — so it appends them here, after the
+	// shared chain rather than instead of it.
+	repo := cmp.Or(runcontext.Repository().Resolve(os.Getenv), os.Getenv("CI_PROJECT_PATH"))
+	runID := cmp.Or(runcontext.RunID().Resolve(os.Getenv), os.Getenv("CI_PIPELINE_ID"))
 
 	if server != "" && repo != "" && runID != "" {
 		return server + "/" + repo + "/actions/runs/" + runID

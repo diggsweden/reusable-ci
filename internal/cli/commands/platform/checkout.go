@@ -4,7 +4,6 @@
 package platform
 
 import (
-	"cmp"
 	"context"
 	"os"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 	appci "github.com/diggsweden/reusable-ci/v3/internal/app/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 func checkoutCmd() *cli.Command {
@@ -88,7 +88,7 @@ func checkoutCmd() *cli.Command {
 // --workspace, else the current directory.
 func resolveWorkspace(workspace, path string) (string, error) {
 	if path != "" {
-		base := cmp.Or(os.Getenv("FORGEJO_WORKSPACE"), os.Getenv("GITHUB_WORKSPACE"))
+		base := runcontext.Workspace().Resolve(os.Getenv)
 		if base == "" {
 			cwd, err := os.Getwd()
 			if err != nil {
