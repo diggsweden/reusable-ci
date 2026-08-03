@@ -22,6 +22,7 @@ import (
 	domainartifact "github.com/diggsweden/reusable-ci/v3/internal/domain/artifact"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // runArtifactAPIVersion is the Actions runtime artifact protocol version
@@ -87,7 +88,7 @@ func (p *Provider) DownloadRunArtifact(ctx context.Context, in provider.RunArtif
 	// resolveRuntimeCreds, and must stay ahead of it: a caller naming a
 	// different run gets "the token is scoped to this run" even when the run
 	// id is absent entirely, which is the more useful of the two errors.
-	runID := firstNonEmpty(p.envFunc(), "FORGEJO_RUN_ID", "GITHUB_RUN_ID")
+	runID := runcontext.RunID().Resolve(p.envFunc())
 	if in.RunID != "" && in.RunID != runID {
 		return provider.RunArtifactInfo{}, fmt.Errorf(
 			"forgejo runtime token is scoped to the current run %q, cannot read run %q: %w",
@@ -486,7 +487,7 @@ type runtimeUploadCreds struct {
 func (p *Provider) resolveRuntimeCreds() (runtimeUploadCreds, error) {
 	env := p.envFunc()
 
-	runID := firstNonEmpty(env, "FORGEJO_RUN_ID", "GITHUB_RUN_ID")
+	runID := runcontext.RunID().Resolve(env)
 	if runID == "" {
 		return runtimeUploadCreds{}, fmt.Errorf("FORGEJO_RUN_ID/GITHUB_RUN_ID is required: %w", errs.ErrUsage)
 	}

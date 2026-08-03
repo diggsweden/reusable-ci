@@ -176,8 +176,13 @@ func RunURL() Var {
 }
 
 // Actor resolves the triggering user.
+//
+// The two bindings of this concept had disjoint name lists: the flag chain
+// knew only CI_ACTOR while every registry-auth adapter read the runner's
+// native FORGEJO_ACTOR/GITHUB_ACTOR, so they shared no name at all and a
+// runner-provided actor was invisible to the flag. This is their union.
 func Actor() Var {
-	return Var{Concept: "actor", Names: []string{"CI_ACTOR"}}
+	return Var{Concept: "actor", Names: []string{"CI_ACTOR", "FORGEJO_ACTOR", "GITHUB_ACTOR"}}
 }
 
 // ServerURL resolves the forge base URL (e.g. https://codeberg.org). It

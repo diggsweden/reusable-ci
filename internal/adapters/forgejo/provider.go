@@ -34,6 +34,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/httpretry"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // assumedServerVersion is fed to the SDK so NewClient does NOT probe the
@@ -91,26 +92,27 @@ func (p *Provider) envFunc() func(string) string {
 }
 
 // serverURL resolves the Forgejo server base URL (no trailing slash).
-// Precedence: explicit override → $FORGEJO_SERVER_URL → $GITHUB_SERVER_URL
-// (the runner sets both). Unlike GitHub/GitLab, Forgejo is self-hosted with no
-// canonical host, so there is no safe default to fall back to: when none is
-// set, resolution fails rather than silently targeting a specific instance.
+// Precedence: explicit override → runcontext.ServerURL. Unlike GitHub/GitLab,
+// Forgejo is self-hosted with no canonical host, so there is no safe default
+// to fall back to: when none is set, resolution fails rather than silently
+// targeting a specific instance.
 func (p *Provider) serverURL() (string, error) {
 	if p.APIBaseOverride != "" {
 		return strings.TrimRight(p.APIBaseOverride, "/"), nil
 	}
 
-	if v := firstNonEmpty(p.envFunc(), "FORGEJO_SERVER_URL", "GITHUB_SERVER_URL"); v != "" {
+	if v := runcontext.ServerURL().Resolve(p.envFunc()); v != "" {
 		return strings.TrimRight(v, "/"), nil
 	}
 
-	return "", fmt.Errorf("forgejo: server URL is required (set $FORGEJO_SERVER_URL or $GITHUB_SERVER_URL): %w", errs.ErrUsage)
+	return "", fmt.Errorf("forgejo: server URL is required (set one of %s): %w",
+		runcontext.ServerURL(), errs.ErrUsage)
 }
 
-// token resolves the API token. Precedence: $FORGEJO_TOKEN →
-// $GITEA_TOKEN → $GITHUB_TOKEN (the runner-injected token).
+// token resolves the API token from the shared run context, so the token a
+// command accepts via --token is the token this provider authenticates with.
 func (p *Provider) token() string {
-	return firstNonEmpty(p.envFunc(), "FORGEJO_TOKEN", "GITEA_TOKEN", "GITHUB_TOKEN")
+	return runcontext.Token().Resolve(p.envFunc())
 }
 
 // httpClient returns the Provider's configured client (tests inject an
@@ -164,7 +166,7 @@ func (p *Provider) clientWithToken(ctx context.Context, token string) (*gitea.Cl
 // repoFromEnv resolves owner/repo from the runner context for roles
 // whose interface carries no repo argument (UploadReleaseAsset).
 func (p *Provider) repoFromEnv() (string, string, error) {
-	return splitRepo(firstNonEmpty(p.envFunc(), "FORGEJO_REPOSITORY", "GITHUB_REPOSITORY"))
+	return splitRepo(runcontext.Repository().Resolve(p.envFunc()))
 }
 
 // firstNonEmpty returns the first non-empty env value among keys.

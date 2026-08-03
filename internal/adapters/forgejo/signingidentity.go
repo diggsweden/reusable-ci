@@ -9,6 +9,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // SupportsKeyless reports whether this Forgejo instance can drive Sigstore
@@ -26,7 +27,7 @@ func (p *Provider) SupportsKeyless() bool { return p.Capabilities().KeylessOIDC 
 // a keyless caller must supply --oidc-issuer explicitly. SubjectRegexp is still
 // anchored to the repository so verification, when configured, stays pinned.
 func (p *Provider) ResolveKeylessIdentity() (provider.KeylessIdentity, error) {
-	repo := strings.TrimSpace(firstNonEmpty(p.envFunc(), "FORGEJO_REPOSITORY", "GITHUB_REPOSITORY"))
+	repo := strings.TrimSpace(runcontext.Repository().Resolve(p.envFunc()))
 	if repo == "" {
 		return provider.KeylessIdentity{}, fmt.Errorf(
 			"$FORGEJO_REPOSITORY (or $GITHUB_REPOSITORY) is required to resolve the keyless signing identity: %w", errs.ErrUsage)

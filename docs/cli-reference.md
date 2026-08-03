@@ -2969,7 +2969,7 @@ EXAMPLE:
 | `--project-type` | primary ecosystem of the project (shown in the header) | `$PROJECT_TYPE` |
 | `--source-branch` | PR source branch | `$CI_BRANCH` |
 | `--commit` | head commit SHA of the PR | `$CI_COMMIT`, `$CI_COMMIT_SHA`, `$COMMIT_SHA`, `$FORGEJO_SHA`, `$GITHUB_SHA` |
-| `--actor` | user who opened/updated the PR | `$CI_ACTOR` |
+| `--actor` | user who opened/updated the PR | `$CI_ACTOR`, `$FORGEJO_ACTOR`, `$GITHUB_ACTOR` |
 | `--run-url` | URL of the CI run linked from the summary | `$CI_RUN_URL` |
 | `--quality-stage-result-json` | inline JSON of the quality-stage result table | `$QUALITY_STAGE_RESULT_JSON` |
 | `--quality-stage-result-path` | path to the quality-stage result JSON file (alternative to inline) | `$QUALITY_STAGE_RESULT_PATH` |

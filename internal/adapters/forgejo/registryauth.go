@@ -8,6 +8,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // ResolveRegistryAuth returns the runner-injected credentials for the Forgejo
@@ -32,7 +33,7 @@ func (p *Provider) ResolveRegistryAuth() (provider.RegistryAuth, error) {
 		// serverURL carries a scheme; RegistryAuth.MatchesRegistry strips it
 		// before comparing, so the host lines up with the login target.
 		Registry: server,
-		Username: strings.TrimSpace(firstNonEmpty(p.envFunc(), "FORGEJO_ACTOR", "GITHUB_ACTOR")),
+		Username: strings.TrimSpace(runcontext.Actor().Resolve(p.envFunc())),
 		Token:    token,
 	}, nil
 }
