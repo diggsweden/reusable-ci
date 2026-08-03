@@ -148,10 +148,17 @@ func Generate(
 	sha, _ := gitRepo.Run(ctx, "rev-parse", "--short", "HEAD")
 	sha = strings.TrimSpace(sha)
 
-	safeName := version.SanitizePathToken(resolvedName)
-	safeVersion := version.SanitizePathToken(resolvedVersion)
+	// Sanitised here, once: every layer filename is derived from these, so the
+	// subject that flows down is already path-safe.
+	subj := subject{
+		name:    version.SanitizePathToken(resolvedName),
+		version: version.SanitizePathToken(resolvedVersion),
+		sha:     sha,
+	}
 
-	if err := generateLayers(ctx, ws, syft, gen, parsedLayers, projectType, safeName, safeVersion, sha, in.ContainerImage, w, stderr); err != nil {
+	deps := layerDeps{ws: ws, syft: syft, gen: gen, w: w, stderr: stderr}
+
+	if err := generateLayers(ctx, deps, parsedLayers, projectType, subj, in.ContainerImage); err != nil {
 		return err
 	}
 
@@ -213,32 +220,30 @@ func resolveNameAndVersion(ctx context.Context, ws workspace, mvn MavenOps, proj
 // a typed error from the domain (UnknownLayerError).
 func generateLayers(
 	ctx context.Context,
-	ws workspace,
-	syft SyftOps,
-	gen BuildSBOMGenerator,
+	deps layerDeps,
 	parsedLayers []string,
 	projectType projecttype.Type,
-	safeName, safeVersion, sha, containerImage string,
-	w, stderr io.Writer, //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	subj subject,
+	containerImage string,
 ) error {
 	for _, layer := range parsedLayers {
 		if !domainsbom.IsValidLayer(layer) {
-			_, _ = fmt.Fprintf(w, "   ⚠️  Unknown layer: %s (valid: build, analyzed-artifact, analyzed-container)\n", layer)
+			_, _ = fmt.Fprintf(deps.w, "   ⚠️  Unknown layer: %s (valid: build, analyzed-artifact, analyzed-container)\n", layer)
 
 			return domainsbom.UnknownLayerError(layer)
 		}
 
 		switch domainsbom.LayerName(layer) {
 		case domainsbom.LayerBuild:
-			if err := generateBuildLayer(ctx, ws, gen, projectType, safeName, safeVersion, sha, w, stderr); err != nil {
+			if err := generateBuildLayer(ctx, deps, projectType, subj); err != nil {
 				return err
 			}
 		case domainsbom.LayerAnalyzedArtifact:
-			if err := generateArtifactLayer(ctx, ws, syft, projectType, safeName, safeVersion, sha, w, stderr); err != nil {
+			if err := generateArtifactLayer(ctx, deps, projectType, subj); err != nil {
 				return err
 			}
 		case domainsbom.LayerAnalyzedContainer:
-			if err := generateContainerLayer(ctx, ws, syft, containerImage, safeName, safeVersion, sha, w, stderr); err != nil {
+			if err := generateContainerLayer(ctx, deps, containerImage, subj); err != nil {
 				return err
 			}
 		}
