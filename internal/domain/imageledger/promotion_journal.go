@@ -79,18 +79,16 @@ func planPromotionRecord(ctx context.Context, reg DigestResolver, entry Entry, s
 		return PromotionRecord{}, err
 	}
 
-	dests := stage.destinations(entry)
-	if len(dests) == 0 {
-		return PromotionRecord{}, fmt.Errorf("imageledger: release promotion has no destination tags: %w", errs.ErrValidation)
+	finalTag, movingTag, err := releaseDestinationTags(stage, entry)
+	if err != nil {
+		return PromotionRecord{}, err
 	}
 
 	record := PromotionRecord{
 		SourceRef:    journalSourceRef(source, entry.Digest),
-		FinalTag:     dests[0],
+		FinalTag:     finalTag,
+		MovingTag:    movingTag,
 		CandidateTag: entry.CandidateTag,
-	}
-	if len(dests) > 1 {
-		record.MovingTag = dests[1]
 	}
 
 	if got, err := reg.ResolveDigest(ctx, record.FinalTag); err == nil {
@@ -107,6 +105,28 @@ func planPromotionRecord(ctx context.Context, reg DigestResolver, entry Entry, s
 	}
 
 	return record, nil
+}
+
+// releaseDestinationTags selects the promotion's final and moving tags from
+// the stage destinations by their immutability, not slice position: the
+// immutable destination is the final tag, the mutable one the moving tag.
+func releaseDestinationTags(stage Stage, entry Entry) (string, string, error) {
+	var finalTag, movingTag string
+
+	for _, dest := range stage.destinations(entry) {
+		switch {
+		case dest.Immutable && finalTag == "":
+			finalTag = dest.Ref
+		case !dest.Immutable && movingTag == "":
+			movingTag = dest.Ref
+		}
+	}
+
+	if finalTag == "" {
+		return "", "", fmt.Errorf("imageledger: release promotion has no immutable final destination: %w", errs.ErrValidation)
+	}
+
+	return finalTag, movingTag, nil
 }
 
 func journalSourceRef(source, digest string) string {

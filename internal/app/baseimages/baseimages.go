@@ -2,12 +2,17 @@
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
 // Package baseimages implements the base-image lifecycle behind the
-// `reusable-ci container base-*` and freshness commands: computing
-// base-graph content IDs, collecting built/verified images into fan-in
-// JSON, verifying existing final tags and their signed evidence, signing
-// candidates with SBOM and SLSA base-lineage attestations, promoting
-// candidates to immutable final tags, cleaning up staging tags, and
-// checking that release images still sit on fresh bases.
+// `reusable-ci container base-*` and freshness commands: collecting
+// built/verified images into fan-in JSON, verifying existing final tags
+// and their signed evidence, signing candidates with SBOM and SLSA
+// base-lineage attestations, promoting candidates to immutable final
+// tags, cleaning up staging tags, and checking that release images still
+// sit on fresh bases.
+//
+// Base-graph content-ID computation is deliberately NOT here: the graph
+// schema and its deterministic hashing migrated to the consumer's policy
+// CLI (nanolinter-ci base-graph). This package consumes the resulting
+// base_input_id / content_id values as opaque, shape-validated pins.
 package baseimages
 
 import (

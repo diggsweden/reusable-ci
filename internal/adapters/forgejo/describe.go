@@ -32,20 +32,16 @@ func (p *Provider) Describe() provider.Info {
 	}
 }
 
-// Capabilities reports the Forgejo feature set. Forgejo has no Code
-// Scanning SARIF ingestion (codeberg.org/forgejo/forgejo#3669) and no
-// build-provenance attestation API today; release-asset upload is
-// available. KeylessOIDC=false reflects out-of-the-box Sigstore signing:
-// although Forgejo v15.0+ issues OIDC id-tokens (enable-openid-connect),
-// public Fulcio does not trust a Forgejo issuer, so keyless needs an
-// explicit --oidc-issuer + a trusting Fulcio. SARIFUpload=false is what
-// makes security commands degrade to a step-summary / artifact sink.
+// Capabilities reports the Forgejo feature set. The role-backed bools are
+// derived from the roles this adapter implements — SARIFUpload comes out
+// false because the SARIFUploader role is deliberately unimplemented
+// (codeberg.org/forgejo/forgejo#3669), which is what makes security
+// commands degrade to a step-summary / artifact sink. KeylessOIDC=false is
+// the deliberate role-present-but-capability-false case: Forgejo v15.0+
+// issues OIDC id-tokens (enable-openid-connect) and this adapter implements
+// SigningIdentityResolver, but public Fulcio does not trust a Forgejo
+// issuer, so keyless needs an explicit --oidc-issuer + a trusting Fulcio.
+// Attestation=false: no build-provenance attestation API today.
 func (p *Provider) Capabilities() provider.Capabilities {
-	return provider.Capabilities{
-		SARIFUpload:   false,
-		Attestation:   false,
-		KeylessOIDC:   false,
-		ReleaseAssets: true,
-		RunArtifacts:  true,
-	}
+	return provider.DeriveCapabilities(p, false, false)
 }

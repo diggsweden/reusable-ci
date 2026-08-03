@@ -81,9 +81,10 @@ func (p *Provider) Describe() provider.Info {
 	}
 }
 
-// Capabilities reports no forge features: local mode has no API to call.
+// Capabilities reports no forge features: local mode implements none of the
+// capability roles (there is no API to call), so derivation yields all-false.
 func (p *Provider) Capabilities() provider.Capabilities {
-	return provider.Capabilities{}
+	return provider.DeriveCapabilities(p, false, false)
 }
 
 // Compile-time conformance checks. local.Provider satisfies the

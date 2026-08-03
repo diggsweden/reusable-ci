@@ -68,6 +68,7 @@ var (
 	_ provider.RepoMetadataFetcher     = (*Provider)(nil)
 	_ provider.TokenValidator          = (*Provider)(nil)
 	_ provider.ReleaseCreator          = (*Provider)(nil)
+	_ provider.ReleasePublisher        = (*Provider)(nil)
 	_ provider.ReleaseAssetUploader    = (*Provider)(nil)
 	_ provider.Describer               = (*Provider)(nil)
 	_ provider.CapabilityReporter      = (*Provider)(nil)

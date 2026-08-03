@@ -142,6 +142,30 @@ type Capabilities struct {
 // feature set. Every adapter implements it.
 type CapabilityReporter interface{ Capabilities() Capabilities }
 
+// DeriveCapabilities computes the role-backed capability bools from what p
+// actually implements, so the reported feature set can never drift from what
+// the requireRole gates enforce. Two capabilities are not pure role
+// membership and stay explicit: keylessOIDC (a provider may implement
+// SigningIdentityResolver yet report false because no public Fulcio trusts
+// its issuer — Forgejo) and attestation (no role interface exists yet).
+//
+// RunArtifacts requires the full Uploader+Downloader pair; a half-implemented
+// pair reports false rather than promising a store that cannot round-trip.
+func DeriveCapabilities(p any, keylessOIDC, attestation bool) Capabilities {
+	_, sarif := p.(SARIFUploader)
+	_, assets := p.(ReleaseAssetUploader)
+	_, upload := p.(RunArtifactUploader)
+	_, download := p.(RunArtifactDownloader)
+
+	return Capabilities{
+		SARIFUpload:   sarif,
+		Attestation:   attestation,
+		KeylessOIDC:   keylessOIDC,
+		ReleaseAssets: assets,
+		RunArtifacts:  upload && download,
+	}
+}
+
 // TokenAdviser is implemented by providers whose tokens have
 // recognisable shapes worth advising on (e.g. GitHub classic vs
 // fine-grained PATs). Optional: providers without token conventions

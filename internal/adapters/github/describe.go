@@ -20,17 +20,12 @@ func (p *Provider) Describe() provider.Info {
 	}
 }
 
-// Capabilities reports the GitHub feature set: SARIF ingestion (Code
-// Scanning), SLSA build-provenance attestation, keyless OIDC signing,
-// and release-asset upload are all available.
+// Capabilities reports the GitHub feature set. The role-backed bools
+// (SARIF ingestion, release assets, run-artifact store) are derived from
+// the roles this adapter implements; keyless OIDC and the SLSA
+// build-provenance attestation API are both available on GitHub.
 func (p *Provider) Capabilities() provider.Capabilities {
-	return provider.Capabilities{
-		SARIFUpload:   true,
-		Attestation:   true,
-		KeylessOIDC:   true,
-		ReleaseAssets: true,
-		RunArtifacts:  true,
-	}
+	return provider.DeriveCapabilities(p, true, true)
 }
 
 // AdviseToken classifies a release-bot token by prefix and advises on

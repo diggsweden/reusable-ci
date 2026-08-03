@@ -75,11 +75,18 @@ single `workflow_call:` entry:
 
 ### Getting Started
 
-Most projects require two or three files:
+Most projects need only the workflow files:
 
 1. `.github/workflows/pullrequest-workflow.yml` - For PR checks
 2. `.github/workflows/release-workflow.yml` - For production releases
 3. `.github/workflows/release-snapshot-workflow.yml` - (Optional) For snapshot (feature-branch) releases
+
+A single-manifest repository (one root `go.mod`, `Cargo.toml`, `pom.xml`,
+`package.json`, or Gradle build) needs **no configuration file at all** —
+the plan is auto-derived from the manifest. Add `.reusable-ci/artifacts.yml`
+only when you need more than the derived defaults (multiple artifacts,
+containers, publish targets). Verify a setup any time with
+`reusable-ci doctor`.
 
 ### How it works
 
@@ -137,7 +144,7 @@ jobs:
 
 ### For New Projects
 
-1. **Create artifacts configuration** - Define what to build:
+1. **Create artifacts configuration** *(optional — skip for a single-manifest repo; the plan is auto-derived from the root `go.mod`/`Cargo.toml`/`pom.xml`/`package.json`)* - Define what to build:
    ```yaml
    # .reusable-ci/artifacts.yml
    artifacts:
@@ -146,8 +153,8 @@ jobs:
        working-directory: .
        config:
          java-version: 25  # or node-version for npm, xcode-version for xcode-ios
-         # For project-type: go OR cargo, set:
-         # build-mode: artifact-first   # standalone CLI binaries
+         # For project-type: go OR cargo (default: artifact-first):
+         # build-mode: artifact-first   # standalone CLI binaries (default)
          # build-mode: container-first  # Containerfile owns the compile
    ```
 

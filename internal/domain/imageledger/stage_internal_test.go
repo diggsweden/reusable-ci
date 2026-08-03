@@ -24,35 +24,35 @@ func TestStageDestinations(t *testing.T) {
 		name  string
 		stage Stage
 		entry Entry
-		want  []string
+		want  []stageDest
 	}{
-		{"release zero-value → :release pointer", Stage{}, entry, []string{base + ":release"}},
-		{"release explicit → :release pointer", Stage{Name: "release"}, entry, []string{base + ":release"}},
-		{"dev → <base>:dev pointer", Stage{Name: "dev"}, entry, []string{base + ":dev"}},
-		{"stage → <base>:stage pointer", Stage{Name: "stage"}, entry, []string{base + ":stage"}},
+		{"release zero-value → :release pointer", Stage{}, entry, []stageDest{{Ref: base + ":release"}}},
+		{"release explicit → :release pointer", Stage{Name: "release"}, entry, []stageDest{{Ref: base + ":release"}}},
+		{"dev → <base>:dev pointer", Stage{Name: "dev"}, entry, []stageDest{{Ref: base + ":dev"}}},
+		{"stage → <base>:stage pointer", Stage{Name: "stage"}, entry, []stageDest{{Ref: base + ":stage"}}},
 		{
-			"release with ledger tags → final_tag + moving_tag",
+			"release with ledger tags → immutable final_tag + moving_tag",
 			Stage{Name: "release", UseEntryReleaseTags: true},
 			entry,
-			[]string{base + ":v1.2.3", base + ":rust"},
+			[]stageDest{{Ref: base + ":v1.2.3", Immutable: true}, {Ref: base + ":rust"}},
 		},
 		{
 			"cross-registry release with ledger tags preserves final and moving names",
 			Stage{Name: "release", TargetRepo: "codeberg.org", UseEntryReleaseTags: true},
 			entry,
-			[]string{"codeberg.org/owner/repo:v1.2.3", "codeberg.org/owner/repo:rust"},
+			[]stageDest{{Ref: "codeberg.org/owner/repo:v1.2.3", Immutable: true}, {Ref: "codeberg.org/owner/repo:rust"}},
 		},
 		{
 			"named stage with TargetRepo → <prefix>/<source-path> pointer",
 			Stage{Name: "prod", TargetRepo: "codeberg.org/sovereign"},
 			entry,
-			[]string{"codeberg.org/sovereign/owner/repo:prod"},
+			[]stageDest{{Ref: "codeberg.org/sovereign/owner/repo:prod"}},
 		},
 		{
 			"cross-registry release → immutable :<version> + :release, source path preserved",
 			Stage{Name: "release", TargetRepo: "codeberg.org"},
 			entry,
-			[]string{"codeberg.org/owner/repo:v1.2.3", "codeberg.org/owner/repo:release"},
+			[]stageDest{{Ref: "codeberg.org/owner/repo:v1.2.3", Immutable: true}, {Ref: "codeberg.org/owner/repo:release"}},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -75,8 +75,8 @@ func TestStageDestinations_MultiContainerSovereigntyNoCollision(t *testing.T) {
 	apiEntry := Entry{FinalTag: "ghcr.io/org/api:v1.2.3"}
 	webEntry := Entry{FinalTag: "ghcr.io/org/web:v1.2.3"}
 
-	api := stage.destinations(apiEntry)
-	web := stage.destinations(webEntry)
+	api := destRefs(stage.destinations(apiEntry))
+	web := destRefs(stage.destinations(webEntry))
 
 	wantAPI := []string{"codeberg.org/sovereign/org/api:v1.2.3", "codeberg.org/sovereign/org/api:release"}
 	wantWeb := []string{"codeberg.org/sovereign/org/web:v1.2.3", "codeberg.org/sovereign/org/web:release"}
@@ -90,6 +90,15 @@ func TestStageDestinations_MultiContainerSovereigntyNoCollision(t *testing.T) {
 			t.Errorf("api and web share destination %q — images would overwrite each other", a)
 		}
 	}
+}
+
+func destRefs(dests []stageDest) []string {
+	refs := make([]string, len(dests))
+	for i, d := range dests {
+		refs[i] = d.Ref
+	}
+
+	return refs
 }
 
 func TestStageIsRelease(t *testing.T) {

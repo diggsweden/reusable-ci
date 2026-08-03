@@ -97,9 +97,13 @@ func promoteEntry(ctx context.Context, reg Registry, sigCopier SignatureCopier, 
 		return err
 	}
 
-	for idx, dest := range stage.destinations(entry) {
-		if idx == 0 && stage.IsRelease() && stage.UseEntryReleaseTags {
-			ready, err := immutableFinalAlreadyServesDigest(ctx, reg, dest, entry.Digest)
+	for _, dest := range stage.destinations(entry) {
+		if dest.Immutable {
+			// An immutable destination (final tag, or the cross-registry copy
+			// of the :<version> tag) is idempotent: already serving the digest
+			// means done; serving a different digest is a refusal, never an
+			// overwrite.
+			ready, err := immutableFinalAlreadyServesDigest(ctx, reg, dest.Ref, entry.Digest)
 			if err != nil {
 				return err
 			}
@@ -109,12 +113,12 @@ func promoteEntry(ctx context.Context, reg Registry, sigCopier SignatureCopier, 
 			}
 		}
 
-		if err := copyToDest(ctx, reg, sigCopier, source, dest); err != nil {
+		if err := copyToDest(ctx, reg, sigCopier, source, dest.Ref); err != nil {
 			return err
 		}
 
-		if err := verifyRefDigest(ctx, reg, dest, entry.Digest); err != nil {
-			return fmt.Errorf("after promote, %s: %w", dest, err)
+		if err := verifyRefDigest(ctx, reg, dest.Ref, entry.Digest); err != nil {
+			return fmt.Errorf("after promote, %s: %w", dest.Ref, err)
 		}
 	}
 

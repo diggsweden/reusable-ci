@@ -89,6 +89,18 @@ func (s Stage) Validate() error {
 	return nil
 }
 
+// stageDest is one promotion destination tag. Immutable marks a tag that
+// must never move once present — the release final tag, or the cross-registry
+// copy of the immutable :<version> tag. Promotion treats an existing
+// immutable destination already serving the recorded digest as done
+// (idempotent rerun) and refuses to overwrite one serving a different
+// digest. Carrying this as a field, rather than by slice position, keeps
+// promote and the rollback-journal planner from depending on ordering.
+type stageDest struct {
+	Ref       string
+	Immutable bool
+}
+
 // destinations returns the ordered tags the recorded digest is promoted to
 // for this stage, relative to the entry. Every stage — dev, staging, release —
 // adds one moving pointer <base>:<stage> on the same digest; the immutable
@@ -99,7 +111,7 @@ func (s Stage) Validate() error {
 // RELEASE (TargetRepo set) also copies the immutable :<version> tag to the
 // target, so a sovereign registry holds the complete release — the version tag
 // and the :release pointer — not just a dangling pointer.
-func (s Stage) destinations(entry Entry) []string {
+func (s Stage) destinations(entry Entry) []stageDest {
 	if s.IsRelease() && s.UseEntryReleaseTags {
 		return s.entryReleaseDestinations(entry)
 	}
@@ -118,21 +130,21 @@ func (s Stage) destinations(entry Entry) []string {
 		base = s.TargetRepo + "/" + repoPathAfterHost(entry.FinalTag)
 	}
 
-	dests := make([]string, 0, 2)
+	dests := make([]stageDest, 0, 2)
 	if s.IsRelease() && s.TargetRepo != "" {
-		dests = append(dests, base+":"+tagName(entry.FinalTag))
+		dests = append(dests, stageDest{Ref: base + ":" + tagName(entry.FinalTag), Immutable: true})
 	}
 
-	dests = append(dests, base+":"+name)
+	dests = append(dests, stageDest{Ref: base + ":" + name})
 
 	return dests
 }
 
-func (s Stage) entryReleaseDestinations(entry Entry) []string {
+func (s Stage) entryReleaseDestinations(entry Entry) []stageDest {
 	if s.TargetRepo == "" {
-		dests := []string{entry.FinalTag}
+		dests := []stageDest{{Ref: entry.FinalTag, Immutable: true}}
 		if entry.MovingTag != "" {
-			dests = append(dests, entry.MovingTag)
+			dests = append(dests, stageDest{Ref: entry.MovingTag})
 		}
 
 		return dests
@@ -140,9 +152,9 @@ func (s Stage) entryReleaseDestinations(entry Entry) []string {
 
 	base := s.TargetRepo + "/" + repoPathAfterHost(entry.FinalTag)
 
-	dests := []string{base + ":" + tagName(entry.FinalTag)}
+	dests := []stageDest{{Ref: base + ":" + tagName(entry.FinalTag), Immutable: true}}
 	if entry.MovingTag != "" {
-		dests = append(dests, base+":"+tagName(entry.MovingTag))
+		dests = append(dests, stageDest{Ref: base + ":" + tagName(entry.MovingTag)})
 	}
 
 	return dests
