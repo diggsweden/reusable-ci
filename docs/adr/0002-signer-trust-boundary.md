@@ -129,3 +129,16 @@ sign` (still Go, in the signer) is not.
   config plan. A caller's egress allowlist should be read from that rather
   than re-derived in prose: an allowlist that omits Rekor while the plan
   publishes to it fails the signing step hard, at release time.
+- The isolated environment (`runtimeKeep`) carries the proxy configuration as
+  well as the TLS trust roots. These are the two halves of one thing — how to
+  trust the endpoint, and how to reach it — and keeping only the first left
+  isolated signing broken on a proxy-only network. It broke *only* for `env://`
+  keys, since those alone take the isolated path, so a file key would sign
+  while an `env://` key did not; forgejo-ci signs with `--key env://COSIGN_KEY`.
+  A proxy URL may embed credentials, so this set is no longer strictly
+  non-secret. That is a deliberate trade: rule 1 bounds what a cosign
+  compromise could *do*, and cosign already holds the signing key, so
+  withholding the proxy config bought no containment — cosign must reach Rekor
+  by design on the public path — while breaking the feature. A run that must
+  touch no network at all is `transparency=none`, which removes the reason for
+  a proxy rather than hiding it.
