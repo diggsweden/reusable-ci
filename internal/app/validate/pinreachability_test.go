@@ -12,10 +12,26 @@ import (
 	"strings"
 	"testing"
 
+	adaptergit "github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
 	appvalidate "github.com/diggsweden/reusable-ci/v3/internal/app/validate"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/isolatedgit"
 )
+
+// realPinGit drives the checks against a real git binary, mirroring
+// newRealGit in tags_test.go: these tests assert reachability semantics, so
+// a fake would only restate the answer we are trying to verify.
+type realPinGit struct{}
+
+func (realPinGit) Open(dir string) appvalidate.PinGitOps {
+	return &adaptergit.Repo{Dir: dir}
+}
+
+func (realPinGit) Clone(ctx context.Context, remote, dir string) error {
+	_, err := adaptergit.New().Run(ctx, "clone", "--quiet", remote, dir)
+
+	return err
+}
 
 func writePinnedWorkflow(t *testing.T, sha string) string {
 	t.Helper()
@@ -36,7 +52,7 @@ func TestPinReachability_ReachablePinPasses(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := appvalidate.PinReachability(context.Background(), &out, appvalidate.PinReachabilityInput{
+	err := appvalidate.PinReachability(context.Background(), realPinGit{}, &out, appvalidate.PinReachabilityInput{
 		Workflows: []string{writePinnedWorkflow(t, reachable)},
 		RepoDir:   repo.Dir,
 		Main:      "main",
@@ -59,7 +75,7 @@ func TestPinReachability_OrphanedPinFails(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := appvalidate.PinReachability(context.Background(), &out, appvalidate.PinReachabilityInput{
+	err := appvalidate.PinReachability(context.Background(), realPinGit{}, &out, appvalidate.PinReachabilityInput{
 		Workflows: []string{writePinnedWorkflow(t, orphan)},
 		RepoDir:   repo.Dir,
 		Main:      "main",
@@ -83,7 +99,7 @@ func TestPinReachability_TaggedPinPasses(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := appvalidate.PinReachability(context.Background(), &out, appvalidate.PinReachabilityInput{
+	err := appvalidate.PinReachability(context.Background(), realPinGit{}, &out, appvalidate.PinReachabilityInput{
 		Workflows: []string{writePinnedWorkflow(t, tagged)},
 		RepoDir:   repo.Dir,
 		Main:      "main",
@@ -102,7 +118,7 @@ func TestPinReachability_NoPinsPasses(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := appvalidate.PinReachability(context.Background(), &out, appvalidate.PinReachabilityInput{Workflows: []string{path}, Subject: "forgejo-ci"})
+	err := appvalidate.PinReachability(context.Background(), realPinGit{}, &out, appvalidate.PinReachabilityInput{Workflows: []string{path}, Subject: "forgejo-ci"})
 	if err != nil {
 		t.Fatalf("PinReachability no pins: %v", err)
 	}

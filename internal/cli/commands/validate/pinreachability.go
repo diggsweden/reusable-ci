@@ -10,8 +10,24 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
 	appvalidate "github.com/diggsweden/reusable-ci/v3/internal/app/validate"
 )
+
+// pinGit wires the git adapter to appvalidate.PinGit. Open has to hand back
+// the interface the use case declares rather than *git.Repo, because Go has
+// no covariant returns. That indirection is the whole point of the port.
+type pinGit struct{}
+
+func (pinGit) Open(dir string) appvalidate.PinGitOps {
+	return &git.Repo{Dir: dir}
+}
+
+func (pinGit) Clone(ctx context.Context, remote, dir string) error {
+	_, err := git.New().Run(ctx, "clone", "--quiet", "--filter=blob:none", "--no-checkout", remote, dir)
+
+	return err
+}
 
 func pinReachabilityCmd() *cli.Command {
 	return &cli.Command{
@@ -42,7 +58,7 @@ EXAMPLE:
 				}
 			}
 
-			return appvalidate.PinReachability(ctx, os.Stderr, appvalidate.PinReachabilityInput{
+			return appvalidate.PinReachability(ctx, pinGit{}, os.Stderr, appvalidate.PinReachabilityInput{
 				Workflows: workflows,
 				Remote:    cmd.String("remote"),
 				RepoDir:   cmd.String("repo-dir"),
