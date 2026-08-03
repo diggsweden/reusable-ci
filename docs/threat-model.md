@@ -26,6 +26,7 @@ reflected here.
 | Runtime images | reusable-ci | Tag-pinned (`@vN.N.N`) by default — **see Known trust boundaries below** |
 | Third-party GitHub Actions | upstream | SHA-pinned by reusable-ci's Renovate base config |
 | Toolchain base images (`debian:13-slim` etc.) | upstream | Digest-pinned (`@sha256:…`) by reusable-ci's Renovate `dockerfile` manager |
+| Forge run-artifact store (GitHub Actions artifacts / Forgejo Actions artifacts) | upstream (forge) | Carries build output between jobs, so the build → publish hand-off rests on the forge serving back what was uploaded. Every downloaded entry is gated for path traversal, symlinks, and size (`domainartifact.SafeJoin`), but nothing binds the downloaded bytes to the built bytes. Contrast the image ledger, which can bind them because a registry is content-addressed and independent of the run — see [Artifact and image flows](flows.md#where-the-two-flows-differ). |
 
 ## What reusable-ci defends against
 

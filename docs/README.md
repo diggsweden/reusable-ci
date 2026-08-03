@@ -39,6 +39,7 @@ Look up exact fields, defaults, commands, and requirements.
 
 Understand the design and tradeoffs.
 
+- [Artifact and Image Flows](flows.md) - How a declared artifact becomes a released one: run artifacts between jobs, and the image ledger from build to signature to final tag. Starts jargon-free and layers up.
 - [Workflow Architecture](workflows.md) - Orchestrator, stage, and component interaction model.
 - [Ecosystem Support](ecosystems.md) - Artifact-first vs container-first ecosystem model and current support status.
 - [Providers and Runners](providers.md) - Forge detection, the runner/forge-API axes, overrides, and the per-forge capability matrix (GitHub, GitLab, Forgejo, local).
