@@ -6,7 +6,7 @@ package config
 // Per-ecosystem typed configurations for the `config:` block.
 //
 // One of these is non-nil on each Artifact / PlannedArtifact, matching
-// the artefact's project type. The plan JSON exposes them via snake_case
+// the artifact's project type. The plan JSON exposes them via snake_case
 // field names — workflows access them as `matrix.artifact.go.binary_name`
 // rather than the legacy `matrix.artifact.config['binary-name']` shape.
 //

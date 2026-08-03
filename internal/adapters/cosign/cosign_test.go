@@ -23,7 +23,7 @@ func TestSignBlob_KeylessArgvShape(t *testing.T) {
 	a := &cosign.Adapter{Bin: bins.Path("cosign")}
 
 	err := a.SignBlob(context.Background(), cosign.SignBlobInput{
-		Artefact:   "app.tgz",
+		Artifact:   "app.tgz",
 		BundlePath: "app.tgz.bundle",
 		Keyless:    true,
 		OIDCIssuer: "https://token.actions.githubusercontent.com",
@@ -87,7 +87,7 @@ func TestSignBlob_KeylessNoIssuerOmitsFlag(t *testing.T) {
 	a := &cosign.Adapter{Bin: bins.Path("cosign")}
 
 	if err := a.SignBlob(context.Background(), cosign.SignBlobInput{
-		Artefact:   "app.tgz",
+		Artifact:   "app.tgz",
 		BundlePath: "app.tgz.bundle",
 		Keyless:    true,
 	}, nil); err != nil {
@@ -107,7 +107,7 @@ func TestSignBlob_KMSArgvShape(t *testing.T) {
 	a := &cosign.Adapter{Bin: bins.Path("cosign")}
 
 	err := a.SignBlob(context.Background(), cosign.SignBlobInput{
-		Artefact:   "app.tgz",
+		Artifact:   "app.tgz",
 		BundlePath: "app.tgz.bundle",
 		KeyRef:     "hashivault://transit/keys/release",
 	}, nil)
@@ -132,7 +132,7 @@ func TestSignBlob_RejectsKeylessWithKey(t *testing.T) {
 	a := cosign.New()
 
 	err := a.SignBlob(context.Background(), cosign.SignBlobInput{
-		Artefact:   "app.tgz",
+		Artifact:   "app.tgz",
 		BundlePath: "app.tgz.bundle",
 		Keyless:    true,
 		KeyRef:     "awskms:///alias/X",
@@ -146,7 +146,7 @@ func TestSignBlob_RejectsNonKeylessWithoutKey(t *testing.T) {
 	a := cosign.New()
 
 	err := a.SignBlob(context.Background(), cosign.SignBlobInput{
-		Artefact:   "app.tgz",
+		Artifact:   "app.tgz",
 		BundlePath: "app.tgz.bundle",
 	}, nil)
 	if !errors.Is(err, errs.ErrUsage) {
@@ -158,7 +158,7 @@ func TestSignBlob_RejectsIssuerInKMSMode(t *testing.T) {
 	a := cosign.New()
 
 	err := a.SignBlob(context.Background(), cosign.SignBlobInput{
-		Artefact:   "app.tgz",
+		Artifact:   "app.tgz",
 		BundlePath: "app.tgz.bundle",
 		OIDCIssuer: "https://example",
 		KeyRef:     "awskms:///alias/X",
@@ -175,7 +175,7 @@ func TestSignBlob_PropagatesCosignFailure(t *testing.T) {
 	a := &cosign.Adapter{Bin: bins.Path("cosign")}
 
 	err := a.SignBlob(context.Background(), cosign.SignBlobInput{
-		Artefact:   "app.tgz",
+		Artifact:   "app.tgz",
 		BundlePath: "app.tgz.bundle",
 		Keyless:    true,
 	}, nil)
@@ -202,7 +202,7 @@ exit 1`)
 	var captured bytes.Buffer
 
 	_ = a.SignBlob(context.Background(), cosign.SignBlobInput{
-		Artefact:   "app.tgz",
+		Artifact:   "app.tgz",
 		BundlePath: "app.tgz.bundle",
 		Keyless:    true,
 	}, &captured)
@@ -223,7 +223,7 @@ func TestVerifyBlob_KeylessArgvShape(t *testing.T) {
 	a := &cosign.Adapter{Bin: bins.Path("cosign")}
 
 	err := a.VerifyBlob(context.Background(), cosign.VerifyBlobInput{
-		Artefact:           "app.tgz",
+		Artifact:           "app.tgz",
 		BundlePath:         "app.tgz.bundle",
 		Keyless:            true,
 		CertIdentityRegexp: "^https://github.com/diggsweden/",
@@ -255,7 +255,7 @@ func TestVerifyBlob_KMSArgvShape(t *testing.T) {
 	a := &cosign.Adapter{Bin: bins.Path("cosign")}
 
 	err := a.VerifyBlob(context.Background(), cosign.VerifyBlobInput{
-		Artefact:   "app.tgz",
+		Artifact:   "app.tgz",
 		BundlePath: "app.tgz.bundle",
 		KeyRef:     "./release-pubkey.pem",
 	}, nil)
@@ -460,7 +460,7 @@ func TestVerifyBlob_RejectsKeylessWithoutIdentity(t *testing.T) {
 	a := cosign.New()
 
 	err := a.VerifyBlob(context.Background(), cosign.VerifyBlobInput{
-		Artefact:   "app.tgz",
+		Artifact:   "app.tgz",
 		BundlePath: "app.tgz.bundle",
 		Keyless:    true,
 	}, nil)

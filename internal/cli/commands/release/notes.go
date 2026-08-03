@@ -38,10 +38,10 @@ func notesCmd() *cli.Command {
 
 func verifyChangelogCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "verify-changelog",
-		Usage: "verify the generated changelog artifact for this release exists and print a preview",
+		Name:  "validate-changelog",
+		Usage: "validate the generated changelog artifact for this release exists and print a preview",
 		Description: `EXAMPLE:
-   reusable-ci release verify-changelog --changelog-file CHANGELOG.md`,
+   reusable-ci release validate-changelog --changelog-file CHANGELOG.md`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:     "changelog-file",

@@ -14,6 +14,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 )
 
 // tagGroup wires `reusable-ci validate tag <verb>` — every subcommand
@@ -48,7 +49,7 @@ func tagReleaseGuardCmd() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:    "pattern",
-				Value:   `^v[0-9]+[.][0-9]+[.][0-9]+$`,
+				Value:   version.StableSemverTagRE.String(),
 				Sources: cli.EnvVars("RELEASE_TAG_PATTERN"),
 				Usage:   "anchored regex the final tag must fully match",
 			},

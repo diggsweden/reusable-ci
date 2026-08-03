@@ -35,7 +35,7 @@ func prerequisitesCmd() *cli.Command {
 			&cli.BoolFlag{Name: "sign-artifacts", Sources: cli.EnvVars("SIGN_ARTIFACTS"), Usage: "require a GPG public key (release-artifact signing is enabled)"},
 			&cli.BoolFlag{Name: "has-maven-central", Sources: cli.EnvVars("HAS_MAVEN_CENTRAL_TARGET"), Usage: "the plan targets Maven Central (enables credential check)"},
 			&cli.BoolFlag{Name: "has-cargo", Sources: cli.EnvVars("HAS_CARGO_TARGET"), Usage: "the plan targets crates.io (enables Cargo prerequisites check)"},
-			&cli.BoolFlag{Name: "has-jvm", Sources: cli.EnvVars("HAS_JVM_TARGET"), Usage: "the plan includes a Maven/Gradle/Gradle-Android artefact (enables JVM reproducibility check)"},
+			&cli.BoolFlag{Name: "has-jvm", Sources: cli.EnvVars("HAS_JVM_TARGET"), Usage: "the plan includes a Maven/Gradle/Gradle-Android artifact (enables JVM reproducibility check)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).

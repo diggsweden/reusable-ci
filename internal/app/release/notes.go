@@ -88,7 +88,7 @@ func PrepareNotes(_ context.Context, out io.Writer, in PrepareNotesInput) error 
 	return f.Close()
 }
 
-// VerifyChangelogInput drives `release verify-changelog`.
+// VerifyChangelogInput drives `release validate-changelog`.
 type VerifyChangelogInput struct {
 	ChangelogFile string
 }

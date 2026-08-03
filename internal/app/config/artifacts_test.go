@@ -356,7 +356,7 @@ containers:
 
 // TestEmitConfigPlan_CargoBuildModeOutputs is the Cargo counterpart of
 // TestEmitConfigPlan_GoBuildModeOutputs — it confirms config parse
-// emits artefact-first vs container-first cargo splits and surfaces the
+// emits artifact-first vs container-first cargo splits and surfaces the
 // upload name on the consuming container. Same shape, same exit codes,
 // same data flow.
 func TestEmitConfigPlan_CargoBuildModeOutputs(t *testing.T) {

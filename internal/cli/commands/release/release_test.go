@@ -150,7 +150,7 @@ func TestPublishCmd_DryRunStillFailsOnMissingAsset(t *testing.T) {
 func TestVerifyChangelogCmd_RequiresFlag(t *testing.T) {
 	cmd := releasecmd.New()
 
-	err := cmd.Run(context.Background(), []string{"release", "verify-changelog"})
+	err := cmd.Run(context.Background(), []string{"release", "validate-changelog"})
 	if err == nil || !strings.Contains(err.Error(), `Required flag "changelog-file" not set`) {
 		t.Errorf("err = %v", err)
 	}
@@ -162,7 +162,7 @@ func TestVerifyChangelogCmd_SucceedsWhenFileExists(t *testing.T) {
 	fsys.WriteFile("CHANGELOG.md", []byte("# Changelog\n\n- entry\n"))
 
 	cmd := releasecmd.New()
-	if err := cmd.Run(context.Background(), []string{"release", "verify-changelog", "--changelog-file", "CHANGELOG.md"}); err != nil {
+	if err := cmd.Run(context.Background(), []string{"release", "validate-changelog", "--changelog-file", "CHANGELOG.md"}); err != nil {
 		t.Fatal(err)
 	}
 }

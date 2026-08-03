@@ -205,7 +205,7 @@ func signProvenance(ctx context.Context, in signProvenanceInput) error {
 // (cosign --key) for backward compatibility. gpg is rejected — OpenPGP
 // signs differently and is not a cosign blob backend.
 func provenanceSignBlobInput(in signProvenanceInput, bundle string) (cosign.SignBlobInput, error) {
-	blob := cosign.SignBlobInput{Artefact: in.output, BundlePath: bundle}
+	blob := cosign.SignBlobInput{Artifact: in.output, BundlePath: bundle}
 
 	// A bare --key with no --method means KMS/key signing.
 	raw := in.method

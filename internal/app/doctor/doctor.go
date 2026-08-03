@@ -403,7 +403,7 @@ func checkSignBlock(sign config.SignConfig) Check {
 			Name:        "sign block valid",
 			Severity:    SeverityFail,
 			Message:     err.Error(),
-			Remediation: "see docs/verification.md#signing-methods-for-release-artefacts for the per-method invariants",
+			Remediation: "see docs/verification.md#signing-methods-for-release-artifacts for the per-method invariants",
 		}
 	}
 

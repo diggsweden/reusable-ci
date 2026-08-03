@@ -120,7 +120,7 @@ toolchain build wrappers (go, cargo, maven, npm, gradle, gradle-android, xcode-i
 
 ### `reusable-ci build cargo`
 
-Cargo build helpers (artefact-first Rust projects)
+Cargo build helpers (artifact-first Rust projects)
 
 #### `reusable-ci build cargo metadata`
 
@@ -722,9 +722,9 @@ verify base-image evidence and promote candidate refs to immutable final tags
 | `--registry-username` | registry username; the password is read from --registry-password-file or $REGISTRY_TOKEN / $REGISTRY_PASSWORD | `$REGISTRY_USER`, `$REGISTRY_USERNAME` |
 | `--registry-password-file` | file containing the registry password/token ("-" reads stdin); defaults to $REGISTRY_TOKEN then $REGISTRY_PASSWORD. The password never appears in argv. | n/a |
 
-#### `reusable-ci container base-images verify`
+#### `reusable-ci container base-images validate`
 
-verify existing immutable final base-image tags and report missing flavors
+validate existing immutable final base-image tags and report missing flavors
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
@@ -977,7 +977,7 @@ EXAMPLES:
 | `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
 | `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 | `--kind` | image role, e.g. distroless, alpine, base | n/a |
-| `--image-kind` | entry pipeline role recorded as image_kind: release, base, or signer | n/a |
+| `--image-kind` | entry validation scope recorded as image_kind: release (default) or base | n/a |
 | `--ref` | digest-pinned image ref (registry/path@sha256:<64 hex>) | n/a |
 | `--digest` | image digest (sha256:<64 hex>) | n/a |
 | `--sbom` | CycloneDX SBOM path (dist/image-sbom*.cyclonedx.json) | n/a |
@@ -1116,13 +1116,13 @@ EXAMPLE:
 | `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 | `--non-empty` | fail when the ledger contains no entries | n/a |
 
-#### `reusable-ci container ledger verify-digests`
+#### `reusable-ci container ledger validate-digests`
 
-re-verify each entry's recorded digest against what the registry serves (candidate_tag → final_tag → digest ref); distinct from `validate`, which checks entries against the release tag offline
+re-validate each entry's recorded digest against what the registry serves (candidate_tag → final_tag → digest ref); distinct from `validate`, which checks entries against the release tag offline
 
 ```
 EXAMPLE:
-   reusable-ci container ledger verify-digests --ledger release-images.json --tag v1.2.3
+   reusable-ci container ledger validate-digests --ledger release-images.json --tag v1.2.3
 ```
 
 | Flag | Description | Env vars |
@@ -1542,9 +1542,9 @@ sign and attest release images from the confined release-image ledger
 | `--key` | cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
 
-#### `reusable-ci container release-images verify`
+#### `reusable-ci container release-images validate`
 
-verify an existing digest-pinned release image before reusing it
+validate an existing digest-pinned release image before reusing it
 
 ```
 Checks Cosign signature, CycloneDX SBOM attestation, and SLSA
@@ -1815,7 +1815,7 @@ EXAMPLE:
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--build-stage-plan-json` | typed build-stage plan JSON (from 'plan release') | `$BUILD_STAGE_PLAN_JSON` |
-| `--component-base` | Catalog path prefix for the build-<eco> components | `$COMPONENT_BASE` |
+| `--component-base` | CI/CD Catalog path prefix for the build-<eco> components (default: this project's own catalog) | `$COMPONENT_BASE` |
 | `--component-ref` | component version to pin (e.g. 1.0.0) (required) | `$COMPONENT_REF` |
 | `--version` | release version forwarded to each build component | `$VERSION` |
 | `--output` | destination path for the child pipeline (default: stdout) | `$OUTPUT_FILE` |
@@ -1838,7 +1838,7 @@ EXAMPLE:
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--publish-stage-plan-json` | typed publish-stage plan JSON (from 'plan release') | `$PUBLISH_STAGE_PLAN_JSON` |
-| `--component-base` | Catalog path prefix for the publish-<target> components | `$COMPONENT_BASE` |
+| `--component-base` | CI/CD Catalog path prefix for the publish-<target> components (default: this project's own catalog) | `$COMPONENT_BASE` |
 | `--component-ref` | component version to pin (e.g. 1.0.0) (required) | `$COMPONENT_REF` |
 | `--version` | release version forwarded to each publish component | `$VERSION` |
 | `--output` | destination path for the child pipeline (default: stdout) | `$OUTPUT_FILE` |
@@ -2003,7 +2003,9 @@ EXAMPLE:
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--remote-url` | remote git URL queried with 'git ls-remote' | `$REMOTE_URL` |
+| `--remote-url` | remote git URL queried with 'git ls-remote' (default: this repository, derived from --server-url + --repository) | `$REMOTE_URL` |
+| `--server-url` | forge base URL used to derive --remote-url when it is unset | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
+| `--repository` | "owner/repo" used to derive --remote-url when it is unset | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
 | `--ref` | ref to resolve (tag, branch, or full refs/X/Y) | `$REF`, `$FORGEJO_REF`, `$GITHUB_REF` |
 | `--output-key` | key written to the platform output sink | `$OUTPUT_KEY` |
 
@@ -2293,7 +2295,7 @@ EXAMPLE:
 
 ### `reusable-ci release checksums`
 
-compute SHA256 over release artefacts, attached patterns, and SBOM layers
+compute SHA256 over release artifacts, attached patterns, and SBOM layers
 
 ```
 EXAMPLE:
@@ -2313,7 +2315,7 @@ EXAMPLE:
 print the current release dist/ hand-off digest
 
 ```
-Computes the digest used by release verify-dist: the SHA-256 of
+Computes the digest used by release validate-dist: the SHA-256 of
 the sorted sha256sum manifest for every regular file under --dist-dir. This is
 byte-compatible with forgejo-ci's dist-digest.sh and exists for compatibility
 while release hand-offs migrate to the reusable-ci binary.
@@ -2721,22 +2723,22 @@ EXAMPLE:
 | `--git-commit-sign` | additionally write commit.gpgsign=true | `$GIT_COMMIT_GPGSIGN` |
 | `--git-config-global` | use --global on the git config writes (env $REUSABLE_CI_GIT_CONFIG_GLOBAL — NOT git's reserved $GIT_CONFIG_GLOBAL, which is a path) | `$REUSABLE_CI_GIT_CONFIG_GLOBAL` |
 
-### `reusable-ci release verify-changelog`
+### `reusable-ci release validate-changelog`
 
-verify the generated changelog artifact for this release exists and print a preview
+validate the generated changelog artifact for this release exists and print a preview
 
 ```
 EXAMPLE:
-   reusable-ci release verify-changelog --changelog-file CHANGELOG.md
+   reusable-ci release validate-changelog --changelog-file CHANGELOG.md
 ```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--changelog-file` | path to the generated changelog file to verify (required) | `$CHANGELOG_FILE` |
 
-### `reusable-ci release verify-dist`
+### `reusable-ci release validate-dist`
 
-verify a dist/ tree is structurally safe and matches an expected digest (cross-job integrity)
+validate a dist/ tree is structurally safe and matches an expected digest (cross-job integrity)
 
 ```
 Rejects a dist/ that is a symlink, contains symlinks, contains
@@ -2749,7 +2751,7 @@ digest recomputation; use --manifest-root . for artifact contents that are
 staged under different directory names by producer and verifier.
 
 EXAMPLE:
-   reusable-ci release verify-dist --dist-dir dist --expected-digest sha256:abc...
+   reusable-ci release validate-dist --dist-dir dist --expected-digest sha256:abc...
 ```
 
 | Flag | Description | Env vars |
@@ -2758,13 +2760,13 @@ EXAMPLE:
 | `--expected-digest` | expected dist digest (from the build job) | `$EXPECTED_DIGEST`, `$DIST_DIGEST` |
 | `--manifest-root` | path prefix written into the sha256sum manifest during digest recomputation (defaults to --dist-dir) | n/a |
 
-### `reusable-ci release verify-request`
+### `reusable-ci release validate-request`
 
-verify an SSH-signed release-request tag authorizes creating a final release tag
+validate an SSH-signed release-request tag authorizes creating a final release tag
 
 ```
 EXAMPLE:
-   reusable-ci release verify-request --release-request release-request/v1.2.3 --tag v1.2.3 --allowed-signers-file .forgejo/release-request.allowed_signers
+   reusable-ci release validate-request --release-request release-request/v1.2.3 --tag v1.2.3 --allowed-signers-file .forgejo/release-request.allowed_signers
 ```
 
 | Flag | Description | Env vars |
@@ -2774,13 +2776,13 @@ EXAMPLE:
 | `--allowed-signers-file` | OpenSSH allowed_signers file for release-request SSH signatures (required) | `$RELEASE_REQUEST_ALLOWED_SIGNERS` |
 | `--remote` | git remote queried for request/final tags | n/a |
 
-### `reusable-ci release verify-tag`
+### `reusable-ci release validate-tag`
 
-re-verify the release tag against the remote: checkout==release-sha, tag points to it, and not superseded
+re-validate the release tag against the remote: checkout==release-sha, tag points to it, and not superseded
 
 ```
 EXAMPLE:
-   reusable-ci release verify-tag --tag v1.2.3 --release-sha abc... --repo-url https://github.com/org/app
+   reusable-ci release validate-tag --tag v1.2.3 --release-sha abc... --repo-url https://github.com/org/app
 ```
 
 | Flag | Description | Env vars |
@@ -3298,7 +3300,7 @@ EXAMPLE:
 
 ### `reusable-ci sbom find`
 
-locate an existing SBOM artefact on disk
+locate an existing SBOM artifact on disk
 
 #### `reusable-ci sbom find container`
 
@@ -3655,10 +3657,10 @@ Verb convention across the CLI — three distinct concerns:
                      `tag commit` checks remote reachability). The point is to gate
                      the next step, not to be offline. (Here.)
    release verify-*  RE-verify an already-produced or remote thing at the trust
-                     boundary, against tampering between jobs: `verify-tag` re-checks
-                     the remote tag still points to the release commit, `verify-dist`
+                     boundary, against tampering between jobs: `validate-tag` re-checks
+                     the remote tag still points to the release commit, `validate-dist`
                      recomputes the dist digest. Lives under the command that owns
-                     the artefact, not here.
+                     the artifact, not here.
    report status *   render a step-summary block (no checking).
 
 Some validate subcommands read "verify …" in their Usage (signature checks,
@@ -3668,7 +3670,7 @@ something rather than asserting a local fact.
 
 ### `reusable-ci validate artifact-signature`
 
-verify a release artefact's signature (gpg .asc, or cosign .bundle for sigstore/kms); method auto-detected from sidecars unless --method is set
+verify a release artifact's signature (gpg .asc, or cosign .bundle for sigstore/kms); method auto-detected from sidecars unless --method is set
 
 ```
 EXAMPLES:
@@ -3682,8 +3684,8 @@ EXAMPLES:
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--artifact` | path to the artefact whose signature is verified (e.g. ./app.tgz) (required) | `$ARTIFACT` |
-| `--signature` | path to the signature sidecar (default: <artefact>.sig or <artefact>.asc, auto-detected) | `$SIGNATURE` |
+| `--artifact` | path to the artifact whose signature is verified (e.g. ./app.tgz) (required) | `$ARTIFACT` |
+| `--signature` | path to the signature sidecar (default: <artifact>.sig or <artifact>.asc, auto-detected) | `$SIGNATURE` |
 | `--method` | force verification method (gpg\|sigstore\|kms); omit to auto-detect from sidecar files | `$SIGN_METHOD` |
 | `--public-key` | armored GPG public key for --method=gpg verification (PEM literal) | `$PUBLIC_KEY` |
 | `--public-key-file` | path to an armored GPG public key file for --method=gpg (alternative to --public-key) | `$PUBLIC_KEY_FILE` |
@@ -3740,7 +3742,7 @@ EXAMPLE:
 
 ### `reusable-ci validate cargo`
 
-verify Cargo.lock/toolchain state for every planned Cargo artefact (both build-modes)
+verify Cargo.lock/toolchain state for every planned Cargo artifact (both build-modes)
 
 ```
 CONFIG_PLAN_JSON is produced by `config parse-artifacts`.
@@ -3751,8 +3753,8 @@ EXAMPLE:
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--config-plan-json` | typed config-plan JSON; carries every Cargo artefact regardless of build-mode (preferred input) | `$CONFIG_PLAN_JSON` |
-| `--publish-stage-plan-json` | typed publish-stage plan JSON listing container-first Cargo artefacts (fallback when config-plan-json is not available; misses artefact-first cargo) | `$PUBLISH_STAGE_PLAN_JSON` |
+| `--config-plan-json` | typed config-plan JSON; carries every Cargo artifact regardless of build-mode (preferred input) | `$CONFIG_PLAN_JSON` |
+| `--publish-stage-plan-json` | typed publish-stage plan JSON listing container-first Cargo artifacts (fallback when config-plan-json is not available; misses artifact-first cargo) | `$PUBLISH_STAGE_PLAN_JSON` |
 
 ### `reusable-ci validate changelog`
 
@@ -3883,7 +3885,7 @@ EXAMPLE:
 
 ### `reusable-ci validate jvm-reproducibility`
 
-warn when Maven/Gradle artefacts lack reproducible-build settings (outputTimestamp / archive-task config)
+warn when Maven/Gradle artifacts lack reproducible-build settings (outputTimestamp / archive-task config)
 
 ```
 CONFIG_PLAN_JSON is produced by `config parse-artifacts`.
@@ -3917,7 +3919,7 @@ EXAMPLE:
 | `--remote` | forgejo-ci git remote to clone when --repo-dir is unset (required unless --repo-dir is set; no org default) | `$FORGEJO_CI_REMOTE` |
 | `--repo-dir` | local forgejo-ci clone to check instead of cloning --remote | `$FORGEJO_CI_DIR` |
 | `--main` | branch ref treated as current main | `$FORGEJO_CI_MAIN` |
-| `--subject` | pin subject to scan before @<sha> | n/a |
+| `--subject` | pin subject to scan before @<sha> (your reusable-workflow repo slug, e.g. forgejo-ci) (required) | n/a |
 
 ### `reusable-ci validate prerequisites`
 
@@ -3939,7 +3941,7 @@ EXAMPLE:
 | `--sign-artifacts` | require a GPG public key (release-artifact signing is enabled) | `$SIGN_ARTIFACTS` |
 | `--has-maven-central` | the plan targets Maven Central (enables credential check) | `$HAS_MAVEN_CENTRAL_TARGET` |
 | `--has-cargo` | the plan targets crates.io (enables Cargo prerequisites check) | `$HAS_CARGO_TARGET` |
-| `--has-jvm` | the plan includes a Maven/Gradle/Gradle-Android artefact (enables JVM reproducibility check) | `$HAS_JVM_TARGET` |
+| `--has-jvm` | the plan includes a Maven/Gradle/Gradle-Android artifact (enables JVM reproducibility check) | `$HAS_JVM_TARGET` |
 
 ### `reusable-ci validate ref-type`
 
@@ -4186,7 +4188,7 @@ EXAMPLE:
 | `--ref` | the pushed ref (e.g. release-request/v1.2.3) (required) | `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 | `--require-release-request` | reject refs outside release-request/vMAJOR.MINOR.PATCH | `$RELEASE_CONTEXT_REQUIRE_REQUEST` |
 | `--require-stable` | reject final tags outside stable vMAJOR.MINOR.PATCH | `$RELEASE_CONTEXT_REQUIRE_STABLE` |
-| `--trailer-mode` | commit trailer mode: default or forgejo-ci | `$RELEASE_CONTEXT_TRAILER_MODE` |
+| `--trailer-mode` | commit trailer mode: default (Release-Authorized-By + Co-authored-by) or coauthor-only | `$RELEASE_CONTEXT_TRAILER_MODE` |
 
 ### `reusable-ci version file-pattern`
 

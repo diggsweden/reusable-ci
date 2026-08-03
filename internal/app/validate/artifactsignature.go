@@ -28,11 +28,11 @@ import (
 // vs KMS) is decided by whether --key or --cert-identity-regexp is
 // supplied.
 type ArtifactSignatureInput struct {
-	// Artefact is the file whose signature is verified. Required.
-	Artefact string
+	// Artifact is the file whose signature is verified. Required.
+	Artifact string
 
 	// SignaturePath overrides the sidecar lookup. Empty means
-	// "look next to Artefact for .bundle (cosign) or .asc (gpg)".
+	// "look next to Artifact for .bundle (cosign) or .asc (gpg)".
 	SignaturePath string
 
 	// Method overrides the auto-detection result. Empty enables
@@ -69,7 +69,7 @@ type ArtifactSignatureInput struct {
 func VerifyArtifactSignature(
 	ctx context.Context, cosignVerifier cosignBlobVerifier, out io.Writer, in ArtifactSignatureInput,
 ) error {
-	if in.Artefact == "" {
+	if in.Artifact == "" {
 		return fmt.Errorf("validate artifact-signature: --artifact is required: %w", errs.ErrMissingInput)
 	}
 
@@ -78,14 +78,14 @@ func VerifyArtifactSignature(
 		return err
 	}
 
-	_, _ = fmt.Fprintf(out, "Verifying %s (method=%s, signature=%s)\n", in.Artefact, resolved.method, resolved.signaturePath)
+	_, _ = fmt.Fprintf(out, "Verifying %s (method=%s, signature=%s)\n", in.Artifact, resolved.method, resolved.signaturePath)
 
 	switch resolved.method {
 	case domainrelease.SignMethodGPG:
-		return verifyGPG(in.Artefact, resolved.signaturePath, in.PublicKey)
+		return verifyGPG(in.Artifact, resolved.signaturePath, in.PublicKey)
 	case domainrelease.SignMethodSigstore:
 		return verifyCosign(ctx, cosignVerifier, domainrelease.BlobVerifyRequest{
-			Artefact:           in.Artefact,
+			Artifact:           in.Artifact,
 			BundlePath:         resolved.signaturePath,
 			Keyless:            true,
 			CertIdentityRegexp: in.CertIdentityRegexp,
@@ -93,7 +93,7 @@ func VerifyArtifactSignature(
 		}, out)
 	case domainrelease.SignMethodKMS:
 		return verifyCosign(ctx, cosignVerifier, domainrelease.BlobVerifyRequest{
-			Artefact:   in.Artefact,
+			Artifact:   in.Artifact,
 			BundlePath: resolved.signaturePath,
 			KeyRef:     in.KeyRef,
 		}, out)
@@ -116,14 +116,14 @@ type resolvedLayout struct {
 }
 
 // resolveSignatureLayout inspects the sidecar files next to the
-// artefact and returns the method that produced them. Operator
+// artifact and returns the method that produced them. Operator
 // overrides (explicit Method, SignaturePath) win over the inspection
 // result.
 //
 // Detection rules:
 //
-//   - <artefact>.bundle present → cosign (sigstore OR kms, per flags)
-//   - <artefact>.asc present     → gpg
+//   - <artifact>.bundle present → cosign (sigstore OR kms, per flags)
+//   - <artifact>.asc present     → gpg
 //   - none of the above          → error
 //
 // When .bundle AND .asc both exist (dual-sign transitional state),
@@ -135,13 +135,13 @@ type resolvedLayout struct {
 // flags: --key present → kms; --cert-identity-regexp present →
 // sigstore. Both empty / neither → error at verify time.
 func resolveSignatureLayout(in ArtifactSignatureInput) (resolvedLayout, error) {
-	hasBundle := regularFileExists(in.Artefact + ".bundle")
-	hasAsc := regularFileExists(in.Artefact + ".asc")
+	hasBundle := regularFileExists(in.Artifact + ".bundle")
+	hasAsc := regularFileExists(in.Artifact + ".asc")
 
 	if in.Method == "" && hasBundle && hasAsc {
 		return resolvedLayout{}, fmt.Errorf(
 			"validate artifact-signature: both %s.bundle and %s.asc present (dual-signed state); pass --method=gpg|sigstore|kms explicitly: %w",
-			in.Artefact, in.Artefact, errs.ErrInvalidConfig,
+			in.Artifact, in.Artifact, errs.ErrInvalidConfig,
 		)
 	}
 
@@ -157,7 +157,7 @@ func resolveSignatureLayout(in ArtifactSignatureInput) (resolvedLayout, error) {
 
 	sigPath := in.SignaturePath
 	if sigPath == "" {
-		sigPath = defaultSigPath(in.Artefact, method)
+		sigPath = defaultSigPath(in.Artifact, method)
 	}
 
 	return resolvedLayout{
@@ -167,7 +167,7 @@ func resolveSignatureLayout(in ArtifactSignatureInput) (resolvedLayout, error) {
 }
 
 // autoDetectSignMethod picks a SignMethod from the sidecar files
-// present next to the artefact, plus the identity flags the caller
+// present next to the artifact, plus the identity flags the caller
 // supplied. Called only when --method is not explicit.
 //
 // .bundle alone is ambiguous between sigstore and kms — pick based on
@@ -184,7 +184,7 @@ func autoDetectSignMethod(in ArtifactSignatureInput, hasBundle, hasAsc bool) (do
 		default:
 			return "", fmt.Errorf(
 				"validate artifact-signature: %s.bundle present but no identity constraint supplied — pass --key (kms) or --cert-identity-regexp (sigstore): %w",
-				in.Artefact, errs.ErrMissingInput,
+				in.Artifact, errs.ErrMissingInput,
 			)
 		}
 	case hasAsc:
@@ -192,31 +192,31 @@ func autoDetectSignMethod(in ArtifactSignatureInput, hasBundle, hasAsc bool) (do
 	default:
 		return "", fmt.Errorf(
 			"validate artifact-signature: no signature sidecar next to %s (looked for .bundle, .asc): %w",
-			in.Artefact, errs.ErrMissingInput,
+			in.Artifact, errs.ErrMissingInput,
 		)
 	}
 }
 
-func defaultSigPath(artefact string, method domainrelease.SignMethod) string {
+func defaultSigPath(artifact string, method domainrelease.SignMethod) string {
 	exts := method.SignatureExtensions()
 	if len(exts) == 0 {
 		return ""
 	}
 
-	return artefact + exts[0]
+	return artifact + exts[0]
 }
 
-func verifyGPG(artefactPath, signaturePath string, pubKeyArmor []byte) error {
+func verifyGPG(artifactPath, signaturePath string, pubKeyArmor []byte) error {
 	if len(pubKeyArmor) == 0 {
 		return fmt.Errorf("validate artifact-signature (gpg): --public-key is required: %w", errs.ErrMissingInput)
 	}
 
-	artefact, err := os.Open(artefactPath) //nolint:gosec // caller-controlled artefact path.
+	artifact, err := os.Open(artifactPath) //nolint:gosec // caller-controlled artifact path.
 	if err != nil {
-		return fmt.Errorf("open artefact %q: %w", artefactPath, err)
+		return fmt.Errorf("open artifact %q: %w", artifactPath, err)
 	}
 
-	defer func() { _ = artefact.Close() }()
+	defer func() { _ = artifact.Close() }()
 
 	sig, err := os.Open(signaturePath) //nolint:gosec // caller-controlled signature path.
 	if err != nil {
@@ -225,7 +225,7 @@ func verifyGPG(artefactPath, signaturePath string, pubKeyArmor []byte) error {
 
 	defer func() { _ = sig.Close() }()
 
-	return openpgp.VerifyDetachedArmored(artefact, sig, pubKeyArmor)
+	return openpgp.VerifyDetachedArmored(artifact, sig, pubKeyArmor)
 }
 
 func verifyCosign(ctx context.Context, verifier cosignBlobVerifier, in domainrelease.BlobVerifyRequest, errOut io.Writer) error {

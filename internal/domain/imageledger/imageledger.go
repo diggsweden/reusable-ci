@@ -33,16 +33,31 @@ import (
 // present. This keeps a promotion entry minimal while still letting a full
 // release record carry the audit fields.
 type Entry struct {
-	// Kind is an optional image-role label (e.g. distroless, alpine).
+	// Kind, ImageKind, and Flavor are three distinct axes. The Go names
+	// mirror the wire keys (kind / image_kind / flavor) of the shared
+	// release-images JSON schema rather than being renamed:
+	//
+	//   Kind      — the image's free-form variant label (e.g. "distroless",
+	//               "alpine"). Human descriptor and the SBOM path fallback
+	//               when Flavor is empty. Wire key: "kind".
+	//   ImageKind — the entry's validation SCOPE. Only ImageKindBase changes
+	//               engine behavior (content-addressed tags checked by
+	//               validateBaseTags); ImageKindRelease (the default) and a
+	//               legacy-empty value take the release-scoped rules.
+	//               Wire key: "image_kind".
+	//   Flavor    — the docker/metadata-action FLAVOR value for tag
+	//               composition. Wire key: "flavor".
+	//
+	// Kind is an optional image variant label (e.g. distroless, alpine).
 	Kind string `json:"kind,omitempty"`
-	// ImageKind self-describes the entry's pipeline role: one of
-	// ImageKindRelease, ImageKindBase, or ImageKindSigner. Empty means a
-	// legacy entry recorded before the field existed and is treated as
-	// "release"; validation therefore accepts absent values.
-	ImageKind string `json:"image_kind,omitempty"`
-	Flavor    string `json:"flavor,omitempty"`
-	Ref       string `json:"ref"`
-	Digest    string `json:"digest"`
+	// ImageKind is the entry's validation scope (see the ImageKind type).
+	// Empty is a legacy entry recorded before the field existed and
+	// validates as ImageKindRelease, so absence never fails.
+	ImageKind ImageKind `json:"image_kind,omitempty"`
+	// Flavor is the docker metadata-action FLAVOR value for tag composition.
+	Flavor string `json:"flavor,omitempty"`
+	Ref    string `json:"ref"`
+	Digest string `json:"digest"`
 	// SBOM is an optional path to the image's CycloneDX SBOM.
 	SBOM string `json:"sbom,omitempty"`
 	// SBOMSHA256 optionally pins the SBOM file's exact content: when set,
@@ -70,13 +85,43 @@ const (
 	candidateTagField = "candidate_tag"
 )
 
-// ImageKind values: the pipeline roles an Entry may self-describe as. An
-// empty ImageKind is a legacy entry and means ImageKindRelease.
+// ImageKind is an Entry's validation scope. Only ImageKindBase changes
+// engine behavior; ImageKindRelease (the default) and a legacy-empty value
+// share the release-scoped trust-boundary rules. It marshals as its plain
+// string value, so the wire key "image_kind" is unaffected by the type.
+type ImageKind string
+
 const (
-	ImageKindRelease = "release"
-	ImageKindBase    = "base"
-	ImageKindSigner  = "signer"
+	// ImageKindRelease is a release-scoped image (the default): its final
+	// tag must be scoped to the release tag.
+	ImageKindRelease ImageKind = "release"
+	// ImageKindBase is a content-addressed base image whose final tag
+	// (<base-input-id>-<flavor>) lives outside any release scope; it is
+	// checked by validateBaseTags instead of the release-scoped rules.
+	ImageKindBase ImageKind = "base"
 )
+
+// OrDefault resolves a legacy-empty ImageKind to ImageKindRelease: entries
+// recorded before the field existed are treated as release images.
+func (k ImageKind) OrDefault() ImageKind {
+	if k == "" {
+		return ImageKindRelease
+	}
+
+	return k
+}
+
+// Validate accepts the two engine-known scopes or the empty (legacy) value;
+// absence must never fail validation.
+func (k ImageKind) Validate() error {
+	switch k {
+	case "", ImageKindRelease, ImageKindBase:
+		return nil
+	default:
+		return fmt.Errorf("imageledger: image_kind must be %q or %q: %q: %w",
+			ImageKindRelease, ImageKindBase, k, errs.ErrValidation)
+	}
+}
 
 // StagingTagPrefix is the candidate-tag prefix the trust boundary enforces:
 // Entry.Validate requires a candidate of staging-<releaseTag>. Exposed so the
@@ -97,8 +142,8 @@ func DeriveTags(imageName, releaseTag string) (string, string) {
 //
 //nolint:gochecknoglobals // compiled regex table — read-only.
 var (
-	imageRefRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?@sha256:[0-9a-f]{64}$`)
-	tagRefRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
+	imageRefRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+(:` + container.OCITagComponent + `)?@sha256:[0-9a-f]{64}$`)
+	tagRefRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+:` + container.OCITagComponent + `$`)
 	// sbomRE accepts any relative CycloneDX path, matching the filenames
 	// the sbom package emits (domain/sbom/filenames.go), rather than a
 	// single fixed name. Anchored to a leaf-relative path (no leading '/').
@@ -276,7 +321,7 @@ func (e Entry) validateFormat() error {
 		}
 	}
 
-	if err := validateImageKind(e.ImageKind); err != nil {
+	if err := e.ImageKind.Validate(); err != nil {
 		return err
 	}
 
@@ -332,19 +377,6 @@ func (e Entry) validateProvenance() error {
 	}
 
 	return nil
-}
-
-// validateImageKind accepts the three self-described pipeline roles or the
-// empty string. Empty is a legacy entry (recorded before the field existed)
-// and is treated as "release", so absence must never fail validation.
-func validateImageKind(kind string) error {
-	switch kind {
-	case "", ImageKindRelease, ImageKindBase, ImageKindSigner:
-		return nil
-	default:
-		return fmt.Errorf("imageledger: image_kind must be %q, %q, or %q: %q: %w",
-			ImageKindRelease, ImageKindBase, ImageKindSigner, kind, errs.ErrValidation)
-	}
 }
 
 // validateTagRefs checks that final_tag (already verified non-empty by

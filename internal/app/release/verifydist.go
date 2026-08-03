@@ -41,7 +41,7 @@ func DistDigestWithManifestRoot(dir, manifestRoot string) (string, error) {
 	}
 
 	if len(files) == 0 {
-		return "", fmt.Errorf("verify-dist: no files under %s; refusing to digest an empty hand-off: %w", dir, errs.ErrValidation)
+		return "", fmt.Errorf("validate-dist: no files under %s; refusing to digest an empty hand-off: %w", dir, errs.ErrValidation)
 	}
 
 	sort.Slice(files, func(i, j int) bool {
@@ -76,20 +76,20 @@ func VerifyDist(dir, expectedDigest string) error {
 // digest recomputation. See DistDigestWithManifestRoot.
 func VerifyDistWithManifestRoot(dir, expectedDigest, manifestRoot string) error {
 	if expectedDigest == "" {
-		return fmt.Errorf("verify-dist: --expected-digest is required: %w", errs.ErrUsage)
+		return fmt.Errorf("validate-dist: --expected-digest is required: %w", errs.ErrUsage)
 	}
 
 	info, err := os.Lstat(dir)
 	if err != nil {
-		return fmt.Errorf("verify-dist: stat %s: %w", dir, err)
+		return fmt.Errorf("validate-dist: stat %s: %w", dir, err)
 	}
 
 	if info.Mode()&fs.ModeSymlink != 0 {
-		return fmt.Errorf("verify-dist: %s must be a real directory, not a symlink: %w", dir, errs.ErrValidation)
+		return fmt.Errorf("validate-dist: %s must be a real directory, not a symlink: %w", dir, errs.ErrValidation)
 	}
 
 	if !info.IsDir() {
-		return fmt.Errorf("verify-dist: %s is not a directory: %w", dir, errs.ErrValidation)
+		return fmt.Errorf("validate-dist: %s is not a directory: %w", dir, errs.ErrValidation)
 	}
 
 	if err = walkSafe(dir); err != nil {
@@ -102,7 +102,7 @@ func VerifyDistWithManifestRoot(dir, expectedDigest, manifestRoot string) error 
 	}
 
 	if actual != expectedDigest {
-		return fmt.Errorf("verify-dist: %s digest mismatch across job boundary: got %s, want %s: %w",
+		return fmt.Errorf("validate-dist: %s digest mismatch across job boundary: got %s, want %s: %w",
 			dir, actual, expectedDigest, errs.ErrValidation)
 	}
 
@@ -123,16 +123,16 @@ func walkSafe(dir string) error {
 		}
 
 		if strings.ContainsAny(path, "\n\r") {
-			return fmt.Errorf("verify-dist: path contains control characters: %q: %w", path, errs.ErrValidation)
+			return fmt.Errorf("validate-dist: path contains control characters: %q: %w", path, errs.ErrValidation)
 		}
 
 		mode := entry.Type()
 		if mode&fs.ModeSymlink != 0 {
-			return fmt.Errorf("verify-dist: %s contains a symlink: %s: %w", dir, path, errs.ErrValidation)
+			return fmt.Errorf("validate-dist: %s contains a symlink: %s: %w", dir, path, errs.ErrValidation)
 		}
 
 		if !entry.IsDir() && !mode.IsRegular() {
-			return fmt.Errorf("verify-dist: %s contains a non-regular entry: %s: %w", dir, path, errs.ErrValidation)
+			return fmt.Errorf("validate-dist: %s contains a non-regular entry: %s: %w", dir, path, errs.ErrValidation)
 		}
 
 		return nil
@@ -165,7 +165,7 @@ func regularFiles(dir, manifestRoot string) ([]digestFile, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("verify-dist: walk %s: %w", dir, err)
+		return nil, fmt.Errorf("validate-dist: walk %s: %w", dir, err)
 	}
 
 	return files, nil
@@ -188,14 +188,14 @@ func manifestPath(root, rel string) string {
 func fileSHA256(path string) (string, error) {
 	file, err := os.Open(path) //nolint:gosec // G304: dist artifact path from a controlled directory walk, not attacker input.
 	if err != nil {
-		return "", fmt.Errorf("verify-dist: open %s: %w", path, err)
+		return "", fmt.Errorf("validate-dist: open %s: %w", path, err)
 	}
 
 	defer func() { _ = file.Close() }()
 
 	h := sha256.New()
 	if _, err := io.Copy(h, file); err != nil {
-		return "", fmt.Errorf("verify-dist: hash %s: %w", path, err)
+		return "", fmt.Errorf("validate-dist: hash %s: %w", path, err)
 	}
 
 	return hex.EncodeToString(h.Sum(nil)), nil

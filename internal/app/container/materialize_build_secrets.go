@@ -46,7 +46,7 @@ type MaterializeBuildSecretsInput struct {
 //     key — the alternative (silently producing an empty mount) would
 //     surface as an inscrutable build failure deep inside BuildKit.
 //   - The envelope MAY contain additional keys (the caller could pack
-//     more than the artefact declares). Extra keys are ignored.
+//     more than the artifact declares). Extra keys are ignored.
 //   - Each value is written to <OutputDir>/<lowercased-name> with mode
 //     0600. buildah mounts via `src=` so the file's contents become
 //     /run/secrets/<id> inside the RUN step's mount namespace.

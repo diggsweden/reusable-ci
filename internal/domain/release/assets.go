@@ -8,7 +8,7 @@ import "path/filepath"
 // CollectAssets dedupes a list of candidate file paths by basename,
 // preserving declaration order. The bash uses an associative-array
 // dedupe by basename — same approach so a pattern-glob match and a
-// release-artefacts-dir match for the same basename don't double up.
+// release-artifacts-dir match for the same basename don't double up.
 func CollectAssets(candidates []string) []string {
 	seen := make(map[string]struct{}, len(candidates))
 

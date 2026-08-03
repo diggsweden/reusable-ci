@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/retry"
 )
 
 const (
@@ -134,35 +135,13 @@ func runMise(ctx context.Context, runner MiseRunner, env []string, out io.Writer
 }
 
 func runMiseWithRetry(ctx context.Context, runner MiseRunner, env []string, out io.Writer, attempts int, delay time.Duration, args ...string) error {
-	var lastErr error
-
-	for attempt := 1; attempt <= attempts; attempt++ {
-		if err := runMise(ctx, runner, env, out, args...); err != nil {
-			lastErr = err
-
-			if attempt == attempts {
-				break
-			}
-
-			if out != nil {
-				_, _ = fmt.Fprintf(out, "mise %s failed (attempt %d/%d); retrying...\n", strings.Join(args, " "), attempt, attempts)
-			}
-
-			if delay > 0 {
-				select {
-				case <-ctx.Done():
-					return fmt.Errorf("mise %s: %w", strings.Join(args, " "), ctx.Err())
-				case <-time.After(delay):
-				}
-			}
-
-			continue
+	return retry.Run(ctx, nil, attempts, delay, func() error {
+		return runMise(ctx, runner, env, out, args...)
+	}, retry.WithBackoff(retry.Constant), retry.OnRetry(func(attempt, total int, _ time.Duration, _ error) {
+		if out != nil {
+			_, _ = fmt.Fprintf(out, "mise %s failed (attempt %d/%d); retrying...\n", strings.Join(args, " "), attempt, total)
 		}
-
-		return nil
-	}
-
-	return lastErr
+	}))
 }
 
 func miseInstallFlags(locked bool) []string {

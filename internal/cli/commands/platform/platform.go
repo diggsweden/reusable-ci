@@ -9,7 +9,9 @@ package platform
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strings"
 
 	"github.com/urfave/cli/v3"
 
@@ -17,6 +19,7 @@ import (
 	appci "github.com/diggsweden/reusable-ci/v3/internal/app/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // New returns the `platform` subgroup command tree.
@@ -39,14 +42,21 @@ func resolveRefCmd() *cli.Command {
 		Description: `EXAMPLE:
    reusable-ci platform resolve-ref --remote-url https://github.com/org/app --ref v1.2.3`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "remote-url", Value: "https://github.com/diggsweden/reusable-ci", Sources: cli.EnvVars("REMOTE_URL"), Usage: "remote git URL queried with 'git ls-remote'"},
+			&cli.StringFlag{Name: "remote-url", Sources: cli.EnvVars("REMOTE_URL"), Usage: "remote git URL queried with 'git ls-remote' (default: this repository, derived from --server-url + --repository)"},
+			&cli.StringFlag{Name: "server-url", Sources: cienv.ServerURL(), Usage: "forge base URL used to derive --remote-url when it is unset"},
+			&cli.StringFlag{Name: "repository", Sources: cienv.Repository(), Usage: `"owner/repo" used to derive --remote-url when it is unset`},
 			&cli.StringFlag{Name: "ref", Sources: cienv.Ref(), Usage: "ref to resolve (tag, branch, or full refs/X/Y)"},
 			&cli.StringFlag{Name: "output-key", Value: "sha", Sources: cli.EnvVars("OUTPUT_KEY"), Usage: "key written to the platform output sink"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
+			remoteURL, err := resolveRemoteURL(cmd.String("remote-url"), cmd.String("server-url"), cmd.String("repository"))
+			if err != nil {
+				return err
+			}
+
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
 				_, err := appci.ResolveRef(ctx, git.New(), d.OutputSink, os.Stderr, appci.ResolveRefInput{
-					RemoteURL: cmd.String("remote-url"),
+					RemoteURL: remoteURL,
 					Ref:       cmd.String("ref"),
 					OutputKey: cmd.String("output-key"),
 				})
@@ -55,6 +65,24 @@ func resolveRefCmd() *cli.Command {
 			})
 		},
 	}
+}
+
+// resolveRemoteURL returns the explicit --remote-url, or derives it from the
+// run context (server-url + repository) so `resolve-ref` targets the current
+// repository on any forge without a baked-in org default.
+func resolveRemoteURL(remoteURL, serverURL, repository string) (string, error) {
+	if u := strings.TrimSpace(remoteURL); u != "" {
+		return u, nil
+	}
+
+	server := strings.TrimRight(strings.TrimSpace(serverURL), "/")
+	repo := strings.Trim(strings.TrimSpace(repository), "/")
+
+	if server != "" && repo != "" {
+		return server + "/" + repo, nil
+	}
+
+	return "", fmt.Errorf("platform resolve-ref: --remote-url is required (or provide --server-url and --repository): %w", errs.ErrUsage)
 }
 
 func debugWorkspaceCmd() *cli.Command {

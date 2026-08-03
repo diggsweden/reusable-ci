@@ -20,8 +20,8 @@ import (
 
 func baseImagesVerifyCmd() *cli.Command {
 	return &cli.Command{
-		Name:  subCmdVerify,
-		Usage: "verify existing immutable final base-image tags and report missing flavors",
+		Name:  subCmdValidate,
+		Usage: "validate existing immutable final base-image tags and report missing flavors",
 		Flags: append(baseImagesCommonFlags(),
 			&cli.StringFlag{Name: flagBaseInputID, Sources: cli.EnvVars("BASE_INPUT_ID"), Usage: "optional single sha256 base input ID expected for every flavor"},
 			&cli.StringFlag{Name: flagBaseInputsJSON, Value: "[]", Sources: cli.EnvVars("BASE_INPUTS_JSON"), Usage: "JSON array mapping flavors to sha256 base input IDs"},

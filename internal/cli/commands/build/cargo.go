@@ -19,7 +19,7 @@ import (
 func cargoCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "cargo",
-		Usage: "Cargo build helpers (artefact-first Rust projects)",
+		Usage: "Cargo build helpers (artifact-first Rust projects)",
 		Commands: []*cli.Command{
 			cargoRunCmd(),
 			cargoMetadataCmd(),

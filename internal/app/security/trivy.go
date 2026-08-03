@@ -21,7 +21,7 @@ import (
 // reproducible-builds.org convention) wins when set so two runs over
 // the same trivy input produce byte-identical reports; otherwise
 // time.Now().UTC() is used. Mirrors resolveBuildDate in app/build/go.go
-// — keeping the same env-var contract across artefact production AND
+// — keeping the same env-var contract across artifact production AND
 // security-report production means a deterministic pipeline run is
 // reproducible end-to-end.
 func reportTimestamp() time.Time {

@@ -52,14 +52,33 @@ func (p *Provider) CreateRelease(ctx context.Context, repo string, spec provider
 		return cleanupErr
 	}
 
-	name := spec.Name
-	if name == "" {
-		name = spec.Tag
-	}
-
 	body, err := readNotesFile(spec.NotesFile)
 	if err != nil {
 		return err
+	}
+
+	rel, _, err := client.Repositories.CreateRelease(ctx, owner, repoName, releaseRequest(spec, body))
+	if err != nil {
+		return fmt.Errorf("create release %q: %w", spec.Tag, classifyGitHubError(err))
+	}
+
+	releaseID := rel.GetID()
+	for _, asset := range spec.Assets {
+		if err := p.uploadAsset(ctx, client, owner, repoName, releaseID, asset); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// releaseRequest builds the GitHub release payload shared by CreateRelease
+// (delete-and-recreate) and PublishRelease (in-place upsert), so the two
+// strategies never drift in how they map a ReleaseSpec onto the API fields.
+func releaseRequest(spec provider.ReleaseSpec, body string) *gogithub.RepositoryRelease {
+	name := spec.Name
+	if name == "" {
+		name = spec.Tag
 	}
 
 	makeLatest := string(spec.MakeLatest)
@@ -78,15 +97,101 @@ func (p *Provider) CreateRelease(ctx context.Context, repo string, spec provider
 		req.Body = gogithub.Ptr(body)
 	}
 
-	rel, _, err := client.Repositories.CreateRelease(ctx, owner, repoName, req)
-	if err != nil {
-		return fmt.Errorf("create release %q: %w", spec.Tag, classifyGitHubError(err))
+	return req
+}
+
+// PublishRelease creates the release for spec.Tag if it is missing, or updates
+// it and reconciles its assets in place otherwise. Unlike CreateRelease it
+// never deletes the release object: an existing release (draft, prerelease, or
+// stable) is edited in place, colliding assets are replaced by basename,
+// desired assets are uploaded, and assets no longer in spec.Assets are removed.
+// It satisfies the provider.ReleasePublisher role.
+func (p *Provider) PublishRelease(ctx context.Context, repo string, spec provider.ReleaseSpec) error {
+	if spec.Tag == "" {
+		return fmt.Errorf("PublishRelease: tag is empty: %w", errs.ErrUsage)
 	}
 
-	releaseID := rel.GetID()
-	for _, asset := range spec.Assets {
-		if err := p.uploadAsset(ctx, client, owner, repoName, releaseID, asset); err != nil {
+	if repo == "" {
+		return fmt.Errorf("PublishRelease: repo is empty: %w", errs.ErrUsage)
+	}
+
+	owner, repoName, err := splitRepo(repo)
+	if err != nil {
+		return err
+	}
+
+	client, err := p.releaseClient(ctx)
+	if err != nil {
+		return err
+	}
+
+	body, err := readNotesFile(spec.NotesFile)
+	if err != nil {
+		return err
+	}
+
+	releaseID, err := p.upsertRelease(ctx, client, owner, repoName, spec, body)
+	if err != nil {
+		return err
+	}
+
+	return p.reconcileReleaseAssets(ctx, client, owner, repoName, releaseID, spec.Assets)
+}
+
+// upsertRelease returns the id of the release for spec.Tag, creating it when
+// absent (404) and otherwise editing it in place — never deleting it.
+func (p *Provider) upsertRelease(ctx context.Context, client *gogithub.Client, owner, repo string, spec provider.ReleaseSpec, body string) (int64, error) {
+	req := releaseRequest(spec, body)
+
+	existing, resp, err := client.Repositories.GetReleaseByTag(ctx, owner, repo, spec.Tag)
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			rel, _, createErr := client.Repositories.CreateRelease(ctx, owner, repo, req)
+			if createErr != nil {
+				return 0, fmt.Errorf("create release %q: %w", spec.Tag, classifyGitHubError(createErr))
+			}
+
+			return rel.GetID(), nil
+		}
+
+		return 0, fmt.Errorf("look up release %q: %w", spec.Tag, classifyGitHubError(err))
+	}
+
+	rel, _, err := client.Repositories.EditRelease(ctx, owner, repo, existing.GetID(), req)
+	if err != nil {
+		return 0, fmt.Errorf("update release %q: %w", spec.Tag, classifyGitHubError(err))
+	}
+
+	return rel.GetID(), nil
+}
+
+// reconcileReleaseAssets makes the release's asset set match desired: each
+// desired file is uploaded (clobbering a same-name asset), then any remaining
+// asset whose basename is not in desired is deleted.
+func (p *Provider) reconcileReleaseAssets(ctx context.Context, client *gogithub.Client, owner, repo string, releaseID int64, desired []string) error {
+	for _, asset := range desired {
+		if err := p.uploadAsset(ctx, client, owner, repo, releaseID, asset); err != nil {
 			return err
+		}
+	}
+
+	assets, err := listAllReleaseAssets(ctx, client, owner, repo, releaseID)
+	if err != nil {
+		return fmt.Errorf("list assets for reconcile: %w", err)
+	}
+
+	desiredNames := make(map[string]struct{}, len(desired))
+	for _, file := range desired {
+		desiredNames[filepath.Base(file)] = struct{}{}
+	}
+
+	for _, existing := range assets {
+		if _, keep := desiredNames[existing.GetName()]; keep {
+			continue
+		}
+
+		if _, err := client.Repositories.DeleteReleaseAsset(ctx, owner, repo, existing.GetID()); err != nil {
+			return fmt.Errorf("delete stale asset %q: %w", existing.GetName(), classifyGitHubError(err))
 		}
 	}
 

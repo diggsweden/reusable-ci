@@ -215,7 +215,7 @@ func TestPrerequisites_PublishToTargets(t *testing.T) {
 		"| MAVEN_CENTRAL_USERNAME | Maven Central auth | ✓ Available |",
 		"| MAVEN_CENTRAL_PASSWORD | Maven Central auth | ✓ Available |",
 		"| Maven Central | ✓ Pass | Credentials configured |",
-		"| GitHub Packages | ✓ Pass | Using GITHUB_TOKEN |",
+		"| Forge Packages | ✓ Pass | Using forge token |",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q\nfull:\n%s", want, body)
@@ -249,7 +249,7 @@ func TestPrerequisites_ConfigPlanDerivesConfiguration(t *testing.T) {
 		"| **Project Types** | maven,npm |",
 		"| **Build Types** | application,library |",
 		"| MAVEN_CENTRAL_USERNAME | Maven Central auth | ✓ Available |",
-		"| GitHub Packages | ✓ Pass | Using GITHUB_TOKEN |",
+		"| Forge Packages | ✓ Pass | Using forge token |",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q\nfull:\n%s", want, body)

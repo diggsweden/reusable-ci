@@ -46,7 +46,7 @@ var SBOMSupportedTypes = map[projecttype.Type]bool{
 	projecttype.Cargo:         true,
 }
 
-// BuildType is the artefact build kind for ecosystems that distinguish
+// BuildType is the artifact build kind for ecosystems that distinguish
 // between deployable applications and reusable libraries (currently only
 // Maven). Empty / unrecognised values are treated as library by the
 // publish-target filter rule: "Maven applications should not publish to

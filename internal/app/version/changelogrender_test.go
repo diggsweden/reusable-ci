@@ -146,7 +146,7 @@ func TestChangelogRender_ExistingReleaseRecoverySkipsRenderer(t *testing.T) {
 		t.Fatalf("recovery result mismatch: res=%+v renderer=%+v git=%+v", res, renderer, gitr)
 	}
 
-	if got := readTestFile(t, ".forgejo-ci-existing-release-sha"); !strings.Contains(got, res.ExistingReleaseSHA) {
+	if got := readTestFile(t, ".existing-release-sha"); !strings.Contains(got, res.ExistingReleaseSHA) {
 		t.Fatalf("existing sha marker = %q, want %q", got, res.ExistingReleaseSHA)
 	}
 }

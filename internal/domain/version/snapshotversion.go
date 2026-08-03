@@ -34,22 +34,21 @@ func ComposeSnapshotVersion(baseVersion, branch, shortSHA string) string {
 		baseVersion, SanitizePathToken(branch), shortSHA)
 }
 
-// semverTagPattern matches strict v-prefixed semver tags (no pre-release
-// suffix). Used internally when picking the "latest stable" tag for the
-// snapshot-version base. Matches glob `v[0-9]*.[0-9]*.[0-9]*`
-// interpreted strictly.
+// StableSemverTagRE is the single definition of a strict v-prefixed release
+// tag: vMAJOR.MINOR.PATCH with no pre-release or build suffix. Callers that
+// only need the boolean use IsStableSemverTag; those needing the compiled
+// pattern (e.g. runtimetags) reference this. It is distinct from
+// domain/validate.SemverTagPattern, which is permissive and admits a
+// pre-release suffix.
 //
-// Unexported: the package-level public "is this a semver tag?" answer
-// lives in domain/validate.SemverTagPattern (permissive, includes
-// pre-release suffix). This pattern is the stricter snapshot-version-specific
-// variant and is not part of any consumer's API.
-var semverTagPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
+//nolint:gochecknoglobals // shared compiled pattern — read-only.
+var StableSemverTagRE = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 
 // IsStableSemverTag reports whether tag strictly matches vMAJOR.MINOR.PATCH.
 // It deliberately rejects prerelease/build metadata; release signing paths use
 // this narrower predicate so a request like v1.2.3-rc1 cannot reach signing.
 func IsStableSemverTag(tag string) bool {
-	return semverTagPattern.MatchString(tag)
+	return StableSemverTagRE.MatchString(tag)
 }
 
 // StripVPrefix turns "v1.2.3" into "1.2.3". Idempotent on already-stripped
@@ -63,7 +62,7 @@ func StripVPrefix(tag string) string {
 }
 
 // LatestSemverTag returns the highest-versioned tag that strictly matches
-// semverTagPattern, comparing lexically by their numeric components.
+// StableSemverTagRE, comparing lexically by their numeric components.
 // Returns "" when the input is empty or no tag matches.
 //
 // Pure: callers gather the candidate tags (e.g. via `git tag -l`).
@@ -75,7 +74,7 @@ func LatestSemverTag(tags []string) string {
 	)
 
 	for _, t := range tags { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		if !semverTagPattern.MatchString(t) {
+		if !StableSemverTagRE.MatchString(t) {
 			continue
 		}
 

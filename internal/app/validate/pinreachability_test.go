@@ -40,6 +40,7 @@ func TestPinReachability_ReachablePinPasses(t *testing.T) {
 		Workflows: []string{writePinnedWorkflow(t, reachable)},
 		RepoDir:   repo.Dir,
 		Main:      "main",
+		Subject:   "forgejo-ci",
 	})
 	if err != nil {
 		t.Fatalf("PinReachability: %v\n%s", err, out.String())
@@ -62,6 +63,7 @@ func TestPinReachability_OrphanedPinFails(t *testing.T) {
 		Workflows: []string{writePinnedWorkflow(t, orphan)},
 		RepoDir:   repo.Dir,
 		Main:      "main",
+		Subject:   "forgejo-ci",
 	})
 	if !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("err = %v, want ErrValidation\n%s", err, out.String())
@@ -85,6 +87,7 @@ func TestPinReachability_TaggedPinPasses(t *testing.T) {
 		Workflows: []string{writePinnedWorkflow(t, tagged)},
 		RepoDir:   repo.Dir,
 		Main:      "main",
+		Subject:   "forgejo-ci",
 	})
 	if err != nil {
 		t.Fatalf("PinReachability tagged pin: %v\n%s", err, out.String())
@@ -99,7 +102,7 @@ func TestPinReachability_NoPinsPasses(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := appvalidate.PinReachability(context.Background(), &out, appvalidate.PinReachabilityInput{Workflows: []string{path}})
+	err := appvalidate.PinReachability(context.Background(), &out, appvalidate.PinReachabilityInput{Workflows: []string{path}, Subject: "forgejo-ci"})
 	if err != nil {
 		t.Fatalf("PinReachability no pins: %v", err)
 	}

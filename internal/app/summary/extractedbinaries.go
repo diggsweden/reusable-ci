@@ -44,7 +44,7 @@ func ExtractedBinaries(ctx context.Context, sink ci.SummarySink, in ExtractedBin
 
 	_, _ = fmt.Fprintf(&b, "### Extracted Binaries - %s (%s)\n\n", in.DisplayName, in.Platform)
 	_, _ = fmt.Fprintf(&b, "- **Stage:** %s\n", in.ExtractTarget)
-	_, _ = fmt.Fprintf(&b, "- **Artefact:** %s\n", in.ArtifactName)
+	_, _ = fmt.Fprintf(&b, "- **Artifact:** %s\n", in.ArtifactName)
 	_, _ = fmt.Fprintf(&b, "- **Platform:** %s\n", in.Platform)
 
 	if strings.TrimSpace(in.ExpectedNames) != "" {

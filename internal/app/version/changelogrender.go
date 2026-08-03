@@ -45,7 +45,7 @@ type ChangelogRenderInput struct {
 	ChangelogPath          string // empty defaults to CHANGELOG.md
 	CommitBodyPath         string // empty defaults to commit-body.txt
 	CommitMessagePath      string // empty defaults to commit-msg.txt
-	ExistingReleaseSHAPath string // empty defaults to .forgejo-ci-existing-release-sha
+	ExistingReleaseSHAPath string // empty defaults to .existing-release-sha
 	CommitTrailers         string
 }
 
@@ -202,7 +202,7 @@ func withChangelogRenderDefaults(in ChangelogRenderInput) ChangelogRenderInput {
 	}
 
 	if in.ExistingReleaseSHAPath == "" {
-		in.ExistingReleaseSHAPath = ".forgejo-ci-existing-release-sha"
+		in.ExistingReleaseSHAPath = ".existing-release-sha"
 	}
 
 	return in

@@ -88,6 +88,88 @@ func TestDo_AbortsOnContextCancellation(t *testing.T) {
 	}
 }
 
+func TestDo_LinearBackoffGrowsWaitPerAttempt(t *testing.T) {
+	var waits []time.Duration
+
+	_, _ = retry.Do(context.Background(), io.Discard, 3, 5*time.Nanosecond, func() (struct{}, error) {
+		return struct{}{}, errBoom
+	}, retry.OnRetry(func(_, _ int, wait time.Duration, _ error) {
+		waits = append(waits, wait)
+	}))
+
+	want := []time.Duration{5 * time.Nanosecond, 10 * time.Nanosecond}
+	if len(waits) != len(want) || waits[0] != want[0] || waits[1] != want[1] {
+		t.Fatalf("linear waits = %v, want %v", waits, want)
+	}
+}
+
+func TestDo_ConstantBackoffKeepsWaitFixed(t *testing.T) {
+	var waits []time.Duration
+
+	_, _ = retry.Do(context.Background(), io.Discard, 3, 5*time.Nanosecond, func() (struct{}, error) {
+		return struct{}{}, errBoom
+	}, retry.WithBackoff(retry.Constant), retry.OnRetry(func(_, _ int, wait time.Duration, _ error) {
+		waits = append(waits, wait)
+	}))
+
+	for i, w := range waits {
+		if w != 5*time.Nanosecond {
+			t.Fatalf("constant wait[%d] = %s, want 5ns", i, w)
+		}
+	}
+
+	if len(waits) != 2 {
+		t.Fatalf("expected 2 retries logged, got %d", len(waits))
+	}
+}
+
+func TestDo_PermanentStopsImmediatelyAndUnwraps(t *testing.T) {
+	calls := 0
+
+	got, err := retry.Do(context.Background(), io.Discard, 5, time.Nanosecond, func() (string, error) {
+		calls++
+
+		return "partial", retry.Permanent(errBoom)
+	})
+	if !errors.Is(err, errBoom) {
+		t.Fatalf("err = %v, want errBoom unwrapped", err)
+	}
+
+	if got != "" {
+		t.Fatalf("got = %q, want zero on permanent failure", got)
+	}
+
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1 (no retry on Permanent)", calls)
+	}
+}
+
+func TestPermanentNilReturnsNil(t *testing.T) {
+	if retry.Permanent(nil) != nil {
+		t.Fatal("Permanent(nil) should be nil so callers can wrap unconditionally")
+	}
+}
+
+func TestDo_OnRetrySuppressesDefaultProgressLine(t *testing.T) {
+	var out strings.Builder
+
+	hookCalls := 0
+
+	_, _ = retry.Do(context.Background(), &out, 2, time.Nanosecond, func() (struct{}, error) {
+		return struct{}{}, errBoom
+	}, retry.OnRetry(func(_, _ int, _ time.Duration, _ error) {
+		hookCalls++
+	}))
+
+	if hookCalls != 1 {
+		t.Fatalf("hook calls = %d, want 1", hookCalls)
+	}
+
+	if out.String() != "" {
+		t.Fatalf("default progress line should be suppressed when OnRetry is set, got %q", out.String())
+	}
+}
+
 func TestAttemptsAndDelayClampNonPositiveToFallback(t *testing.T) {
 	if got := retry.Attempts(0, 3); got != 3 {
 		t.Fatalf("Attempts(0,3) = %d", got)

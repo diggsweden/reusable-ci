@@ -73,11 +73,23 @@ func getJSON(ctx context.Context, client *http.Client, url string, headers map[s
 // postJSON sends a POST request with the given body and headers,
 // classifying non-2xx responses via errs.FromHTTPStatus when possible.
 func postJSON(ctx context.Context, client *http.Client, url string, headers map[string]string, body []byte) error {
+	return sendJSON(ctx, client, http.MethodPost, url, headers, body)
+}
+
+// putJSON is the in-place update (PUT) counterpart of postJSON, used by the
+// reconcile publish strategy.
+func putJSON(ctx context.Context, client *http.Client, url string, headers map[string]string, body []byte) error {
+	return sendJSON(ctx, client, http.MethodPut, url, headers, body)
+}
+
+// sendJSON performs a body-carrying request (POST/PUT) with the given headers,
+// classifying non-2xx responses via errs.FromHTTPStatus when possible.
+func sendJSON(ctx context.Context, client *http.Client, method, url string, headers map[string]string, body []byte) error {
 	if client == nil {
 		client = defaultHTTPClient()
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}

@@ -70,7 +70,7 @@ func TestDerive_InvalidSBOMNamesArtifact(t *testing.T) {
 	cfg := &config.Config{Artifacts: []config.Artifact{{Name: "bad", ProjectType: projecttype.NPM, SBOMs: "build,bogus"}}}
 
 	err := config.Derive(cfg)
-	if err == nil || !strings.Contains(err.Error(), `artefact "bad"`) || !strings.Contains(err.Error(), "unknown token") {
+	if err == nil || !strings.Contains(err.Error(), `artifact "bad"`) || !strings.Contains(err.Error(), "unknown token") {
 		t.Fatalf("err = %v", err)
 	}
 }

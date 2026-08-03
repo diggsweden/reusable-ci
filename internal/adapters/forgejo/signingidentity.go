@@ -32,7 +32,12 @@ func (p *Provider) ResolveKeylessIdentity() (provider.KeylessIdentity, error) {
 			"$FORGEJO_REPOSITORY (or $GITHUB_REPOSITORY) is required to resolve the keyless signing identity: %w", errs.ErrUsage)
 	}
 
-	repoURL := p.serverURL() + "/" + repo
+	server, err := p.serverURL()
+	if err != nil {
+		return provider.KeylessIdentity{}, err
+	}
+
+	repoURL := server + "/" + repo
 
 	return provider.KeylessIdentity{
 		OIDCIssuer:    p.Describe().OIDCIssuer,

@@ -96,14 +96,14 @@ func Release(ctx context.Context, sink ci.OutputSink, summary ci.SummarySink, in
 }
 
 func warnSBOMConflict(ctx context.Context, summary ci.SummarySink, releaseSBOMs, pipelineSBOMs string) {
-	slog.Warn("sbom misconfiguration: release cap and artefact config have no overlap — no SBOMs will be generated",
+	slog.Warn("sbom misconfiguration: release cap and artifact config have no overlap — no SBOMs will be generated",
 		"release_sboms", releaseSBOMs,
 		"pipeline_sboms", pipelineSBOMs,
 	)
 
 	if summary != nil {
 		block := fmt.Sprintf(
-			"\n### ⚠️ SBOM misconfiguration\nsboms: release cap %q has no overlap with artefact config %q — no SBOMs will be generated.\nSet the release-level `sboms` input and the per-artefact `sboms` field so they share at least one CISA layer, or use `sboms: none` if intentional.\n",
+			"\n### ⚠️ SBOM misconfiguration\nsboms: release cap %q has no overlap with artifact config %q — no SBOMs will be generated.\nSet the release-level `sboms` input and the per-artifact `sboms` field so they share at least one CISA layer, or use `sboms: none` if intentional.\n",
 			releaseSBOMs, pipelineSBOMs,
 		)
 		_ = summary.Append(ctx, block)

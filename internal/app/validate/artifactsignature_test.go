@@ -51,7 +51,7 @@ func TestVerifyArtifactSignature_DetectsKMSWhenBundleAndKeyRef(t *testing.T) {
 	v := &recordingVerifier{}
 
 	err := appvalidate.VerifyArtifactSignature(context.Background(), v, &bytes.Buffer{}, appvalidate.ArtifactSignatureInput{
-		Artefact: art,
+		Artifact: art,
 		KeyRef:   "./pubkey.pem",
 	})
 	if err != nil {
@@ -80,7 +80,7 @@ func TestVerifyArtifactSignature_DetectsSigstoreWhenBundleAndIdentity(t *testing
 	v := &recordingVerifier{}
 
 	err := appvalidate.VerifyArtifactSignature(context.Background(), v, &bytes.Buffer{}, appvalidate.ArtifactSignatureInput{
-		Artefact:           art,
+		Artifact:           art,
 		CertIdentityRegexp: "^https://github.com/diggsweden/",
 		CertOIDCIssuer:     "https://token.actions.githubusercontent.com",
 	})
@@ -104,7 +104,7 @@ func TestVerifyArtifactSignature_BundleWithoutIdentityFlags(t *testing.T) {
 	touch(t, art+".bundle")
 
 	err := appvalidate.VerifyArtifactSignature(context.Background(), &recordingVerifier{}, &bytes.Buffer{}, appvalidate.ArtifactSignatureInput{
-		Artefact: art,
+		Artifact: art,
 		// neither --key nor --cert-identity-regexp supplied → reject
 	})
 	if !errors.Is(err, errs.ErrMissingInput) {
@@ -120,7 +120,7 @@ func TestVerifyArtifactSignature_DualSidecarsRejectsWithoutMethod(t *testing.T) 
 	touch(t, art+".asc")
 
 	err := appvalidate.VerifyArtifactSignature(context.Background(), &recordingVerifier{}, &bytes.Buffer{}, appvalidate.ArtifactSignatureInput{
-		Artefact: art,
+		Artifact: art,
 	})
 	if !errors.Is(err, errs.ErrInvalidConfig) {
 		t.Errorf("dual-sign state without --method must reject as ErrInvalidConfig, got %v", err)
@@ -133,7 +133,7 @@ func TestVerifyArtifactSignature_NoSidecarsErrors(t *testing.T) {
 	touch(t, art)
 
 	err := appvalidate.VerifyArtifactSignature(context.Background(), &recordingVerifier{}, &bytes.Buffer{}, appvalidate.ArtifactSignatureInput{
-		Artefact: art,
+		Artifact: art,
 	})
 	if !errors.Is(err, errs.ErrMissingInput) {
 		t.Errorf("no sidecars must reject as ErrMissingInput, got %v", err)
@@ -147,7 +147,7 @@ func TestVerifyArtifactSignature_GPGRequiresPublicKey(t *testing.T) {
 	touch(t, art+".asc")
 
 	err := appvalidate.VerifyArtifactSignature(context.Background(), &recordingVerifier{}, &bytes.Buffer{}, appvalidate.ArtifactSignatureInput{
-		Artefact: art,
+		Artifact: art,
 		// PublicKey missing
 	})
 	if !errors.Is(err, errs.ErrMissingInput) {
@@ -205,7 +205,7 @@ func TestVerifyArtifactSignature_GPGRoundtripVerifies(t *testing.T) {
 	}
 
 	err = appvalidate.VerifyArtifactSignature(context.Background(), &recordingVerifier{}, &bytes.Buffer{}, appvalidate.ArtifactSignatureInput{
-		Artefact:  art,
+		Artifact:  art,
 		PublicKey: pubArmor.Bytes(),
 	})
 	if err != nil {
@@ -213,7 +213,7 @@ func TestVerifyArtifactSignature_GPGRoundtripVerifies(t *testing.T) {
 	}
 }
 
-func TestVerifyArtifactSignature_GPGTamperedArtefactFails(t *testing.T) {
+func TestVerifyArtifactSignature_GPGTamperedArtifactFails(t *testing.T) {
 	entity, err := gocrypto.NewEntity("Test", "", "test@example.com", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -240,7 +240,7 @@ func TestVerifyArtifactSignature_GPGTamperedArtefactFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Tamper: overwrite artefact with different content; sig is now
+	// Tamper: overwrite artifact with different content; sig is now
 	// for a hash that doesn't match.
 	if err = os.WriteFile(art, []byte("tampered"), 0o644); err != nil { //nolint:gosec // test fixture.
 		t.Fatal(err)
@@ -262,11 +262,11 @@ func TestVerifyArtifactSignature_GPGTamperedArtefactFails(t *testing.T) {
 	}
 
 	err = appvalidate.VerifyArtifactSignature(context.Background(), &recordingVerifier{}, &bytes.Buffer{}, appvalidate.ArtifactSignatureInput{
-		Artefact:  art,
+		Artifact:  art,
 		PublicKey: pubArmor.Bytes(),
 	})
 	if !errors.Is(err, errs.ErrPermissionDenied) {
-		t.Errorf("tampered artefact must yield ErrPermissionDenied, got %v", err)
+		t.Errorf("tampered artifact must yield ErrPermissionDenied, got %v", err)
 	}
 }
 
@@ -287,7 +287,7 @@ func TestVerifyArtifactSignature_ExplicitMethodOverridesDetection(t *testing.T) 
 	// Auto-detect would inspect flags to choose between sigstore
 	// and kms; setting --method=sigstore short-circuits that.
 	err := appvalidate.VerifyArtifactSignature(context.Background(), v, &bytes.Buffer{}, appvalidate.ArtifactSignatureInput{
-		Artefact:           art,
+		Artifact:           art,
 		Method:             domainrelease.SignMethodSigstore,
 		CertIdentityRegexp: "^x",
 		CertOIDCIssuer:     "https://x",

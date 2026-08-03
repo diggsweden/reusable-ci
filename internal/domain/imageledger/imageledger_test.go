@@ -126,14 +126,13 @@ func TestValidate_AcceptsOptionalManifestMetadata(t *testing.T) {
 func TestValidateAll_AcceptsEveryImageKindAndLegacyAbsence(t *testing.T) {
 	t.Parallel()
 
-	// Each self-described pipeline role validates; the empty string is a
-	// legacy entry (recorded before image_kind existed, treated as
-	// "release") and must not fail either.
-	kinds := []string{
+	// Each engine-known scope validates; the empty string is a legacy entry
+	// (recorded before image_kind existed, treated as "release") and must
+	// not fail either.
+	kinds := []imageledger.ImageKind{
 		"",
 		imageledger.ImageKindRelease,
 		imageledger.ImageKindBase,
-		imageledger.ImageKindSigner,
 	}
 
 	entries := make([]imageledger.Entry, 0, len(kinds))

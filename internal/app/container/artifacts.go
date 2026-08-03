@@ -70,7 +70,7 @@ func ValidateArtifacts(w, stderr io.Writer, annot output.Annotator, in ValidateA
 	}
 
 	// Go + Cargo land binaries at dist/<goos>-<goarch>/<binary>-<goos>-<goarch>
-	// (nested), so recurse. JVM/NPM artefacts sit at the top level of the
+	// (nested), so recurse. JVM/NPM artifacts sit at the top level of the
 	// matrix-uploaded directory.
 	var hits []string
 
@@ -85,7 +85,7 @@ func ValidateArtifacts(w, stderr io.Writer, annot output.Annotator, in ValidateA
 		annot.Errorf("No %s artifacts found in %s/", typeLabel, in.ArtifactDir)
 
 		_, _ = fmt.Fprintf(w, "Expected %s in %s/ — the upstream build job should have uploaded them.\n", expectLabel, in.ArtifactDir)
-		_, _ = fmt.Fprintln(w, "If this container does not actually depend on this ecosystem's artefacts,")
+		_, _ = fmt.Fprintln(w, "If this container does not actually depend on this ecosystem's artifacts,")
 		_, _ = fmt.Fprintln(w, "drop the matching `from:` entry in artifacts.yml so the verify step is skipped.")
 
 		return fmt.Errorf("no %s artifacts in %s: %w", typeLabel, in.ArtifactDir, errs.ErrValidation)

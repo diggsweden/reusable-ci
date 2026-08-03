@@ -40,7 +40,7 @@ func ledgerAddCmd() *cli.Command {
 			ledgerPathFlag(),
 			releaseTagFlag(),
 			&cli.StringFlag{Name: "kind", Usage: "image role, e.g. distroless, alpine, base"},
-			&cli.StringFlag{Name: "image-kind", Value: imageledger.ImageKindRelease, Usage: "entry pipeline role recorded as image_kind: release, base, or signer"},
+			&cli.StringFlag{Name: "image-kind", Value: string(imageledger.ImageKindRelease), Usage: "entry validation scope recorded as image_kind: release (default) or base"},
 			&cli.StringFlag{Name: flagRef, Usage: "digest-pinned image ref (registry/path@sha256:<64 hex>)"},
 			&cli.StringFlag{Name: flagDigest, Usage: "image digest (sha256:<64 hex>)"},
 			&cli.StringFlag{Name: "sbom", Usage: "CycloneDX SBOM path (dist/image-sbom*.cyclonedx.json)"},
@@ -212,7 +212,7 @@ func ledgerAddEntryFromFlags(flags ledgerAddFlags) (imageledger.Entry, string, e
 
 	return imageledger.Entry{
 		Kind:         flags.Kind,
-		ImageKind:    flags.ImageKind,
+		ImageKind:    imageledger.ImageKind(flags.ImageKind),
 		Flavor:       flags.Flavor,
 		Ref:          ref,
 		Digest:       flags.Digest,

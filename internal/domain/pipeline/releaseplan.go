@@ -280,7 +280,7 @@ func NewReleasePublishStagePlan(configPlan ConfigPlan, buildSBOM bool) ReleasePu
 	goContainerFirst := []PlannedArtifact{}
 
 	if buildSBOM {
-		// Container-first cargo / go only — artefact-first variants
+		// Container-first cargo / go only — artifact-first variants
 		// emit their Build SBOMs inline in build-cargo.yml / build-go.yml
 		// at the build stage. Listing them here would double-emit the
 		// same bom.json under two upload-artifact paths.

@@ -187,7 +187,7 @@ func deriveReleaseCmd() *cli.Command {
 			},
 			&cli.BoolFlag{Name: "require-release-request", Sources: cli.EnvVars("RELEASE_CONTEXT_REQUIRE_REQUEST"), Usage: "reject refs outside release-request/vMAJOR.MINOR.PATCH"},
 			&cli.BoolFlag{Name: "require-stable", Sources: cli.EnvVars("RELEASE_CONTEXT_REQUIRE_STABLE"), Usage: "reject final tags outside stable vMAJOR.MINOR.PATCH"},
-			&cli.StringFlag{Name: "trailer-mode", Value: "default", Sources: cli.EnvVars("RELEASE_CONTEXT_TRAILER_MODE"), Usage: "commit trailer mode: default or forgejo-ci"},
+			&cli.StringFlag{Name: "trailer-mode", Value: "default", Sources: cli.EnvVars("RELEASE_CONTEXT_TRAILER_MODE"), Usage: "commit trailer mode: default (Release-Authorized-By + Co-authored-by) or coauthor-only"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).

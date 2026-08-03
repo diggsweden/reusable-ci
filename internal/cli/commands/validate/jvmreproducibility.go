@@ -14,13 +14,13 @@ import (
 )
 
 // jvmReproducibilityCmd exposes the JVM-side counterpart of `validate
-// cargo`: scans every planned Maven/Gradle artefact and warns when its
+// cargo`: scans every planned Maven/Gradle artifact and warns when its
 // manifest lacks the reproducibility knob. Warnings, not errors —
 // see appvalidate.JVMReproducibility for the rationale.
 func jvmReproducibilityCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "jvm-reproducibility",
-		Usage: "warn when Maven/Gradle artefacts lack reproducible-build settings (outputTimestamp / archive-task config)",
+		Usage: "warn when Maven/Gradle artifacts lack reproducible-build settings (outputTimestamp / archive-task config)",
 		Description: `CONFIG_PLAN_JSON is produced by ` + "`config parse-artifacts`" + `.
 
 EXAMPLE:

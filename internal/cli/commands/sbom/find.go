@@ -14,13 +14,13 @@ import (
 )
 
 // findGroup wires `reusable-ci sbom find <kind>` — locate an existing
-// SBOM artefact on disk and emit its path through the output sink.
+// SBOM artifact on disk and emit its path through the output sink.
 // Currently only the analyzed-container layer is searchable; more
 // kinds (artifacts, build) land here when needed.
 func findGroup() *cli.Command {
 	return &cli.Command{
 		Name:  "find",
-		Usage: "locate an existing SBOM artefact on disk",
+		Usage: "locate an existing SBOM artifact on disk",
 		Commands: []*cli.Command{
 			findContainerCmd(),
 		},

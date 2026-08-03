@@ -30,7 +30,7 @@ EXAMPLE:
 			&cli.StringFlag{Name: "remote", Sources: cli.EnvVars("FORGEJO_CI_REMOTE"), Usage: "forgejo-ci git remote to clone when --repo-dir is unset (required unless --repo-dir is set; no org default)"},
 			&cli.StringFlag{Name: "repo-dir", Sources: cli.EnvVars("FORGEJO_CI_DIR"), Usage: "local forgejo-ci clone to check instead of cloning --remote"},
 			&cli.StringFlag{Name: "main", Value: "main", Sources: cli.EnvVars("FORGEJO_CI_MAIN"), Usage: "branch ref treated as current main"},
-			&cli.StringFlag{Name: "subject", Value: "forgejo-ci", Usage: "pin subject to scan before @<sha>"},
+			&cli.StringFlag{Name: "subject", Required: true, Usage: "pin subject to scan before @<sha> (your reusable-workflow repo slug, e.g. forgejo-ci)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			workflows := cmd.StringSlice(flagWorkflow)

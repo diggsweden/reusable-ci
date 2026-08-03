@@ -213,7 +213,7 @@ func (s *Signer) SignFile(_ context.Context, path string) error {
 
 	defer func() { _ = in.Close() }()
 
-	out, err := os.OpenFile(path+".asc", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644) //nolint:gosec // sig file lives next to artefact; both are caller paths.
+	out, err := os.OpenFile(path+".asc", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644) //nolint:gosec // sig file lives next to artifact; both are caller paths.
 	if err != nil {
 		return fmt.Errorf("create %q: %w", path+".asc", err)
 	}
@@ -234,7 +234,7 @@ func (s *Signer) SignFile(_ context.Context, path string) error {
 func (s *Signer) Extensions() []string { return []string{".asc"} }
 
 // VerifyDetachedArmored verifies an armored detached signature
-// against an artefact, using the supplied armored public key(s) as
+// against an artifact, using the supplied armored public key(s) as
 // the trust anchor. Wraps go-crypto's CheckArmoredDetachedSignature
 // so the validate flow doesn't need to import openpgp directly.
 //
@@ -242,7 +242,7 @@ func (s *Signer) Extensions() []string { return []string{".asc"} }
 // pubKeyArmor. Any failure (parse, verify, IO) is wrapped with
 // errs.ErrPermissionDenied so callers can detect verification
 // failures distinct from infrastructure errors.
-func VerifyDetachedArmored(artefact io.Reader, signature io.Reader, pubKeyArmor []byte) error {
+func VerifyDetachedArmored(artifact io.Reader, signature io.Reader, pubKeyArmor []byte) error {
 	keyring, err := openpgp.ReadArmoredKeyRing(bytes.NewReader(pubKeyArmor))
 	if err != nil {
 		return fmt.Errorf("parse armored public key: %w: %w", err, errs.ErrMalformedInput)
@@ -252,7 +252,7 @@ func VerifyDetachedArmored(artefact io.Reader, signature io.Reader, pubKeyArmor 
 		return fmt.Errorf("public key armor is empty: %w", errs.ErrMissingInput)
 	}
 
-	if _, err := openpgp.CheckArmoredDetachedSignature(keyring, artefact, signature, nil); err != nil {
+	if _, err := openpgp.CheckArmoredDetachedSignature(keyring, artifact, signature, nil); err != nil {
 		return fmt.Errorf("verify detached signature: %w: %w", err, errs.ErrPermissionDenied)
 	}
 

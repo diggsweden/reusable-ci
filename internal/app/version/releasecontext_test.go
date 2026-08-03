@@ -69,7 +69,7 @@ func TestReleaseContext_ForgejoStrictModeMatchesLegacyShellContract(t *testing.T
 		Ref:                   "refs/tags/release-request/v1.2.3",
 		RequireReleaseRequest: true,
 		RequireStable:         true,
-		TrailerMode:           "forgejo-ci",
+		TrailerMode:           "coauthor-only",
 	}, sink, nil, &bytes.Buffer{})
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +99,7 @@ func TestReleaseContext_ForgejoStrictModeSkipsIncompleteTagger(t *testing.T) {
 		Ref:                   "release-request/v1.2.3",
 		RequireReleaseRequest: true,
 		RequireStable:         true,
-		TrailerMode:           "forgejo-ci",
+		TrailerMode:           "coauthor-only",
 	}, sink, nil, &bytes.Buffer{})
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestReleaseContext_StrictModeRejectsLegacyShellInvalidRefs(t *testing.T) {
 				Ref:                   ref,
 				RequireReleaseRequest: true,
 				RequireStable:         true,
-				TrailerMode:           "forgejo-ci",
+				TrailerMode:           "coauthor-only",
 			}, fakeoutputsink.New(t), nil, &bytes.Buffer{})
 			if !errors.Is(err, errs.ErrValidation) {
 				t.Fatalf("err = %v, want validation", err)

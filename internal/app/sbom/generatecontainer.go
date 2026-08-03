@@ -40,7 +40,7 @@ type GenerateContainerInput struct {
 // When ArtifactTypes contains multiple comma-separated entries the
 // inner generator runs once per entry, but every invocation writes to
 // the same output filename — the analyzed-container layer is
-// artefact-type-agnostic, so the loop is functionally a single write.
+// artifact-type-agnostic, so the loop is functionally a single write.
 // The last entry's run wins; in practice every entry produces
 // identical output, so the loop is observationally idempotent.
 func GenerateContainer(

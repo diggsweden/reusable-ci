@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/retry"
 )
 
 const defaultMiseBaseURL = "https://github.com/jdx/mise/releases/download"
@@ -144,27 +145,14 @@ func downloadMiseArchive(ctx context.Context, client *http.Client, url string) (
 		client = &http.Client{Timeout: 2 * time.Minute}
 	}
 
-	var lastErr error
-
-	for attempt := 1; attempt <= miseDownloadAttempts; attempt++ {
-		body, retry, err := downloadMiseArchiveOnce(ctx, client, url)
-		if err == nil {
-			return body, nil
+	return retry.Do(ctx, nil, miseDownloadAttempts, miseDownloadRetryDelay, func() ([]byte, error) {
+		body, retryable, err := downloadMiseArchiveOnce(ctx, client, url)
+		if err != nil && !retryable {
+			return nil, retry.Permanent(err)
 		}
 
-		lastErr = err
-		if !retry || attempt == miseDownloadAttempts {
-			return nil, err
-		}
-
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("download %s: %w", url, ctx.Err())
-		case <-time.After(miseDownloadRetryDelay):
-		}
-	}
-
-	return nil, lastErr
+		return body, err
+	}, retry.WithBackoff(retry.Constant))
 }
 
 func downloadMiseArchiveOnce(ctx context.Context, client *http.Client, url string) ([]byte, bool, error) {

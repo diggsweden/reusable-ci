@@ -11,7 +11,7 @@ import (
 // Merge concatenates the entries of several ledger documents into one,
 // dropping exact duplicates while preserving first-seen order. It checks only
 // that each document parses; per-entry release-scope and digest rules are the
-// trust boundary's job (validate / verify-digests / promote), run on the
+// trust boundary's job (validate / validate-digests / promote), run on the
 // merged result.
 //
 // Merge exists for the multi-container release: each container's build job

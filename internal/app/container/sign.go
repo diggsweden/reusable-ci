@@ -24,7 +24,7 @@ type SignImageInput struct {
 	Image string
 
 	// Method is sigstore | kms. gpg returns an error — it cannot
-	// sign OCI artefacts.
+	// sign OCI artifacts.
 	Method domainrelease.SignMethod
 
 	// Recursive walks manifest lists, signing each per-arch digest.

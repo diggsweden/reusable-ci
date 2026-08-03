@@ -125,7 +125,7 @@ func setupChangelogReleaseSSH(ctx context.Context, privateKey, host, keyType, ex
 		base = os.TempDir()
 	}
 
-	dir, err := os.MkdirTemp(base, "forgejo-ci-ssh.")
+	dir, err := os.MkdirTemp(base, "reusable-ci-ssh.")
 	if err != nil {
 		return "", "", func() {}, fmt.Errorf("commit-changelog: create ssh temp dir: %w", err)
 	}

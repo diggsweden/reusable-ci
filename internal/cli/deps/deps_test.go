@@ -245,8 +245,8 @@ func TestRequireRoles_LocalReturnsTypedErrors(t *testing.T) {
 }
 
 // TestRequireRoles_GitHubSatisfiesReleaseRoles pins github.Provider's release
-// role conformance. In-place release reconciliation is a separate opt-in role
-// and is not implemented for GitHub by default.
+// role conformance, including in-place release reconciliation (ReleasePublisher)
+// so `release publish` works on GitHub under the default reconcile strategy.
 func TestRequireRoles_GitHubSatisfiesReleaseRoles(t *testing.T) {
 	env := testenv.New(t)
 	env.Setenv("GITHUB_ACTIONS", "true")
@@ -265,8 +265,8 @@ func TestRequireRoles_GitHubSatisfiesReleaseRoles(t *testing.T) {
 		t.Errorf("RequireReleaseCreator: %v", err)
 	}
 
-	if _, err := d.RequireReleasePublisher(); !errors.Is(err, errs.ErrUnsupported) {
-		t.Errorf("RequireReleasePublisher: err = %v, want ErrUnsupported", err)
+	if _, err := d.RequireReleasePublisher(); err != nil {
+		t.Errorf("RequireReleasePublisher: %v", err)
 	}
 
 	if _, err := d.RequireReleaseAssetUploader(); err != nil {
@@ -299,8 +299,8 @@ func TestRequireRoles_GitLabHasNoSARIF(t *testing.T) {
 		t.Errorf("RequireReleaseCreator: %v", err)
 	}
 
-	if _, err := d.RequireReleasePublisher(); !errors.Is(err, errs.ErrUnsupported) {
-		t.Errorf("RequireReleasePublisher: err = %v, want ErrUnsupported", err)
+	if _, err := d.RequireReleasePublisher(); err != nil {
+		t.Errorf("RequireReleasePublisher: %v", err)
 	}
 
 	if _, err := d.RequireReleaseAssetUploader(); err != nil {

@@ -22,12 +22,12 @@ import (
 // whether --cert-identity-regexp or --key was supplied.
 //
 // Distinct from `validate tag signature`, which verifies the git
-// tag itself. This subcommand verifies a release artefact (the
+// tag itself. This subcommand verifies a release artifact (the
 // `.tgz` / `.jar` / `.crate`) against its sidecar signature file.
 func artifactSignatureCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "artifact-signature",
-		Usage: "verify a release artefact's signature (gpg .asc, or cosign .bundle for sigstore/kms); method auto-detected from sidecars unless --method is set",
+		Usage: "verify a release artifact's signature (gpg .asc, or cosign .bundle for sigstore/kms); method auto-detected from sidecars unless --method is set",
 		Description: `EXAMPLES:
    # GPG signature with an armored public key
    reusable-ci validate artifact-signature --artifact app.tgz --method gpg --public-key-file release.asc
@@ -40,12 +40,12 @@ func artifactSignatureCmd() *cli.Command {
 				Name:     "artifact",
 				Required: true,
 				Sources:  cli.EnvVars("ARTIFACT"),
-				Usage:    "path to the artefact whose signature is verified (e.g. ./app.tgz)",
+				Usage:    "path to the artifact whose signature is verified (e.g. ./app.tgz)",
 			},
 			&cli.StringFlag{
 				Name:    "signature",
 				Sources: cli.EnvVars("SIGNATURE"),
-				Usage:   "path to the signature sidecar (default: <artefact>.sig or <artefact>.asc, auto-detected)",
+				Usage:   "path to the signature sidecar (default: <artifact>.sig or <artifact>.asc, auto-detected)",
 			},
 			&cli.StringFlag{
 				Name:    flagMethod,
@@ -98,7 +98,7 @@ func artifactSignatureCmd() *cli.Command {
 			}
 
 			in := appvalidate.ArtifactSignatureInput{
-				Artefact:           cmd.String("artifact"),
+				Artifact:           cmd.String("artifact"),
 				SignaturePath:      cmd.String("signature"),
 				Method:             method,
 				CertIdentityRegexp: identityRegexp,

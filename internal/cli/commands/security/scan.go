@@ -26,7 +26,7 @@ const flagFailOnSeverity = "fail-on-severity"
 
 // scanGroup wires `reusable-ci security scan <subcmd>` — every
 // subcommand here invokes a scanner against the workspace or an
-// image. Subcommands write findings + secondary report artefacts
+// image. Subcommands write findings + secondary report artifacts
 // (SARIF, GitLab SAST / container / dep schemas) for downstream
 // `security report ...` steps to upload or convert.
 func scanGroup() *cli.Command {

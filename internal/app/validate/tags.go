@@ -203,7 +203,7 @@ type TagSignatureInput struct {
 	// or an unverifiable signature fails closed (ErrPermissionDenied).
 	// When false, the check still runs informationally and warns loudly if
 	// no allowlist is present — release-authorisation policy lives in the
-	// per-artefact `require-authorization` flag.
+	// per-artifact `require-authorization` flag.
 	RequireAllowlistedSigner bool
 
 	// AllowedSignersPath is the OpenSSH allowed_signers file for SSH

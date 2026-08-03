@@ -35,7 +35,7 @@ func ResolveRef(ctx context.Context, git GitOps, sink domainci.OutputSink, w io.
 
 	remote := in.RemoteURL
 	if remote == "" {
-		remote = "https://github.com/diggsweden/reusable-ci"
+		return "", fmt.Errorf("resolve-ref: remote URL is required: %w", errs.ErrUsage)
 	}
 
 	key := in.OutputKey

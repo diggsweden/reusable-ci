@@ -54,7 +54,7 @@ type SignInput struct {
 }
 
 // SignArtifacts signs the checksums file in place (if present), each release
-// artefact in ReleaseArtifactsDir, and each AttachArtifacts match. Asset
+// artifact in ReleaseArtifactsDir, and each AttachArtifacts match. Asset
 // signatures land in the working directory under <basename>.asc. The CLI wires
 // openpgp.NewSignerFromArmor (env-sourced key); tests pass an in-memory fake.
 func SignArtifacts(ctx context.Context, signer Signer, out io.Writer, in SignInput) error {
@@ -277,7 +277,7 @@ func signChecksumsIfPresent(ctx context.Context, signer Signer, checksumsFile st
 	return nil
 }
 
-// newAssetSigner returns a closure that signs a single artefact and
+// newAssetSigner returns a closure that signs a single artifact and
 // moves each sidecar file (one or more per method — see
 // Signer.Extensions) next to it (renaming when the source path
 // differs from the cwd-relative target). The closure dedupes by

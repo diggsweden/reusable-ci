@@ -49,6 +49,23 @@ var digestPinnedRefRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-
 // reference (registry/path@sha256:<64-hex>).
 func ValidDigestPinnedRef(s string) bool { return digestPinnedRefRE.MatchString(s) }
 
+// OCITagComponent is the unanchored regex fragment for a single OCI tag
+// component: the value after `:` in a reference, and equally a promotion stage
+// name (which is used verbatim as that tag). It is the single source of the
+// tag charset — an alphanumeric/underscore lead followed by up to 127 more of
+// `[A-Za-z0-9._-]` — so the ledger's composed ref patterns and the stage-name
+// validator embed THIS constant rather than re-spelling the class. Kept
+// unanchored so callers can splice it into a larger pattern; the anchored
+// standalone form is ociTagComponentRE / ValidOCITagComponent.
+const OCITagComponent = `[A-Za-z0-9_][A-Za-z0-9._-]{0,127}`
+
+//nolint:gochecknoglobals // compiled regex, read-only.
+var ociTagComponentRE = regexp.MustCompile(`^` + OCITagComponent + `$`)
+
+// ValidOCITagComponent reports whether s is a single valid OCI tag component
+// (also the rule for a promotion stage name).
+func ValidOCITagComponent(s string) bool { return ociTagComponentRE.MatchString(s) }
+
 // StripTag removes a trailing `:tag` from an OCI reference, keeping the
 // registry/path. A `:` that precedes the final `/` (a host:port, e.g.
 // `localhost:5000/img`) is left alone, and registry-less refs (`alpine:3.21`)

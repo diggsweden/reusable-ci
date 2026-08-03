@@ -39,7 +39,7 @@ const (
 	Go            Type = "go"
 	Cargo         Type = "cargo"
 
-	// Meta is a non-buildable / changelog-only artefact. Valid in
+	// Meta is a non-buildable / changelog-only artifact. Valid in
 	// artifacts.yml as an explicit declaration that no version file
 	// exists and no SBOM is generated.
 	Meta Type = "meta"

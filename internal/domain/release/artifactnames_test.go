@@ -74,13 +74,13 @@ func TestResolveArtifactNames_GradleDefault(t *testing.T) {
 	}
 }
 
-func TestResolveArtifactNames_CargoArtefactFirstShape(t *testing.T) {
+func TestResolveArtifactNames_CargoArtifactFirstShape(t *testing.T) {
 	t.Parallel()
-	// Cargo mirrors Go: artefact-first cargo uploads a real
+	// Cargo mirrors Go: artifact-first cargo uploads a real
 	// `<name>-cargo-build-artifacts` plus a separate `<name>-cargo-build-sbom`.
 	// Container-first cargo still uses the SBOM name (via sbom-cargo.yml);
 	// its BuildArtifact slot is gated to "" by buildArtifactName in the
-	// planner, so the value here is only consulted when artefact-first.
+	// planner, so the value here is only consulted when artifact-first.
 	got := release.ResolveArtifactNames(projecttype.Cargo, "")
 	if got.BuildArtifact != "cargo-build-artifacts" {
 		t.Errorf("cargo default build-artifact = %q, want %q", got.BuildArtifact, "cargo-build-artifacts")

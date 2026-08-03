@@ -27,7 +27,7 @@ func TestRollback_DeletesStagePointerServingTheDigest(t *testing.T) {
 		e.FinalTag:     goodDigest, // immutable :<version> — must NOT be touched
 	}}
 
-	if err := imageledger.Rollback(context.Background(), reg, []imageledger.Entry{e}, "v1.2.3", imageledger.Stage{}); err != nil {
+	if err := imageledger.RollbackStage(context.Background(), reg, []imageledger.Entry{e}, "v1.2.3", imageledger.Stage{}); err != nil {
 		t.Fatalf("rollback failed: %v", err)
 	}
 
@@ -44,7 +44,7 @@ func TestRollback_NamedStageDeletesItsPointer(t *testing.T) {
 	e := candidateEntry()
 	reg := &fakeCleanupRegistry{digests: map[string]string{devPointer: goodDigest}}
 
-	if err := imageledger.Rollback(context.Background(), reg, []imageledger.Entry{e}, "", imageledger.Stage{Name: "dev"}); err != nil {
+	if err := imageledger.RollbackStage(context.Background(), reg, []imageledger.Entry{e}, "", imageledger.Stage{Name: "dev"}); err != nil {
 		t.Fatalf("rollback failed: %v", err)
 	}
 
@@ -62,7 +62,7 @@ func TestRollback_LeavesTagsNotServingOurDigest(t *testing.T) {
 	// the :release pointer exists but serves a DIFFERENT image — not ours.
 	reg := &fakeCleanupRegistry{digests: map[string]string{releasePointer: other}}
 
-	if err := imageledger.Rollback(context.Background(), reg, []imageledger.Entry{e}, "v1.2.3", imageledger.Stage{}); err != nil {
+	if err := imageledger.RollbackStage(context.Background(), reg, []imageledger.Entry{e}, "v1.2.3", imageledger.Stage{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -78,7 +78,7 @@ func TestRollback_SkipsAbsentAndNonPromotedEntries(t *testing.T) {
 	noCandidate := validEntry()  // never promoted
 	reg := &fakeCleanupRegistry{digests: map[string]string{}}
 
-	if err := imageledger.Rollback(context.Background(), reg, []imageledger.Entry{promoted, noCandidate}, "v1.2.3", imageledger.Stage{}); err != nil {
+	if err := imageledger.RollbackStage(context.Background(), reg, []imageledger.Entry{promoted, noCandidate}, "v1.2.3", imageledger.Stage{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -116,7 +116,7 @@ func (r *fakePromotionRollbackRegistry) DeleteTag(_ context.Context, ref string)
 	return nil
 }
 
-func TestPlanPromotionJournal_RecordsPrePromotionState(t *testing.T) {
+func TestPlanReleasePromotionRollback_RecordsPrePromotionState(t *testing.T) {
 	t.Parallel()
 
 	e := candidateEntry()
@@ -127,9 +127,9 @@ func TestPlanPromotionJournal_RecordsPrePromotionState(t *testing.T) {
 		e.MovingTag:    previous,
 	}}
 
-	records, err := imageledger.PlanPromotionJournal(context.Background(), reg, []imageledger.Entry{e}, "v1.2.3", imageledger.Stage{Name: "release", UseEntryReleaseTags: true})
+	records, err := imageledger.PlanReleasePromotionRollback(context.Background(), reg, []imageledger.Entry{e}, "v1.2.3", imageledger.Stage{Name: "release", UseEntryReleaseTags: true})
 	if err != nil {
-		t.Fatalf("PlanPromotionJournal: %v", err)
+		t.Fatalf("PlanReleasePromotionRollback: %v", err)
 	}
 
 	if len(records) != 1 {
@@ -150,15 +150,15 @@ func TestPlanPromotionJournal_RecordsPrePromotionState(t *testing.T) {
 	}
 }
 
-func TestPlanPromotionJournal_DigestRefFallbackRecordsDigestRefSource(t *testing.T) {
+func TestPlanReleasePromotionRollback_DigestRefFallbackRecordsDigestRefSource(t *testing.T) {
 	t.Parallel()
 
 	e := candidateEntry()
 	reg := &fakePromotionRollbackRegistry{digests: map[string]string{e.Ref: goodDigest}}
 
-	records, err := imageledger.PlanPromotionJournal(context.Background(), reg, []imageledger.Entry{e}, "v1.2.3", imageledger.Stage{Name: "release", UseEntryReleaseTags: true, AllowDigestRefFallback: true})
+	records, err := imageledger.PlanReleasePromotionRollback(context.Background(), reg, []imageledger.Entry{e}, "v1.2.3", imageledger.Stage{Name: "release", UseEntryReleaseTags: true, AllowDigestRefFallback: true})
 	if err != nil {
-		t.Fatalf("PlanPromotionJournal with fallback: %v", err)
+		t.Fatalf("PlanReleasePromotionRollback with fallback: %v", err)
 	}
 
 	if len(records) != 1 {
@@ -170,7 +170,7 @@ func TestPlanPromotionJournal_DigestRefFallbackRecordsDigestRefSource(t *testing
 	}
 }
 
-func TestPlanPromotionJournal_RefusesExistingFinalDifferentDigest(t *testing.T) {
+func TestPlanReleasePromotionRollback_RefusesExistingFinalDifferentDigest(t *testing.T) {
 	t.Parallel()
 
 	e := candidateEntry()
@@ -181,7 +181,7 @@ func TestPlanPromotionJournal_RefusesExistingFinalDifferentDigest(t *testing.T) 
 	}}
 
 	err := func() error {
-		_, planErr := imageledger.PlanPromotionJournal(context.Background(), reg, []imageledger.Entry{e}, "v1.2.3", imageledger.Stage{Name: "release", UseEntryReleaseTags: true})
+		_, planErr := imageledger.PlanReleasePromotionRollback(context.Background(), reg, []imageledger.Entry{e}, "v1.2.3", imageledger.Stage{Name: "release", UseEntryReleaseTags: true})
 
 		return planErr
 	}()
@@ -190,7 +190,7 @@ func TestPlanPromotionJournal_RefusesExistingFinalDifferentDigest(t *testing.T) 
 	}
 }
 
-func TestRollbackPromotionJournal_RestoresMovingAndDeletesNewFinal(t *testing.T) {
+func TestRollbackReleasePromotion_RestoresMovingAndDeletesNewFinal(t *testing.T) {
 	t.Parallel()
 
 	e := candidateEntry()
@@ -210,8 +210,8 @@ func TestRollbackPromotionJournal_RestoresMovingAndDeletesNewFinal(t *testing.T)
 		"codeberg.org/itiquette/gommitlint@" + previous: previous,
 	}}
 
-	if err := imageledger.RollbackPromotionJournal(context.Background(), reg, []imageledger.PromotionRecord{record}, "v1.2.3"); err != nil {
-		t.Fatalf("RollbackPromotionJournal: %v", err)
+	if err := imageledger.RollbackReleasePromotion(context.Background(), reg, []imageledger.PromotionRecord{record}, "v1.2.3"); err != nil {
+		t.Fatalf("RollbackReleasePromotion: %v", err)
 	}
 
 	if !slices.Equal(reg.copied, []string{"codeberg.org/itiquette/gommitlint@" + previous + "->" + e.MovingTag}) {
@@ -227,7 +227,7 @@ func TestRollbackPromotionJournal_RestoresMovingAndDeletesNewFinal(t *testing.T)
 	}
 }
 
-func TestRollbackPromotionJournal_DeletesNewMovingAndKeepsExistingFinal(t *testing.T) {
+func TestRollbackReleasePromotion_DeletesNewMovingAndKeepsExistingFinal(t *testing.T) {
 	t.Parallel()
 
 	e := candidateEntry()
@@ -244,8 +244,8 @@ func TestRollbackPromotionJournal_DeletesNewMovingAndKeepsExistingFinal(t *testi
 		e.MovingTag: goodDigest,
 	}}
 
-	if err := imageledger.RollbackPromotionJournal(context.Background(), reg, []imageledger.PromotionRecord{record}, "v1.2.3"); err != nil {
-		t.Fatalf("RollbackPromotionJournal: %v", err)
+	if err := imageledger.RollbackReleasePromotion(context.Background(), reg, []imageledger.PromotionRecord{record}, "v1.2.3"); err != nil {
+		t.Fatalf("RollbackReleasePromotion: %v", err)
 	}
 
 	if len(reg.copied) != 0 {
@@ -261,7 +261,7 @@ func TestRollbackPromotionJournal_DeletesNewMovingAndKeepsExistingFinal(t *testi
 	}
 }
 
-func TestRollbackPromotionJournal_RefusesFinalTagMismatchBeforeDelete(t *testing.T) {
+func TestRollbackReleasePromotion_RefusesFinalTagMismatchBeforeDelete(t *testing.T) {
 	t.Parallel()
 
 	e := candidateEntry()
@@ -274,7 +274,7 @@ func TestRollbackPromotionJournal_RefusesFinalTagMismatchBeforeDelete(t *testing
 	}
 	reg := &fakePromotionRollbackRegistry{digests: map[string]string{e.FinalTag: other}}
 
-	err := imageledger.RollbackPromotionJournal(context.Background(), reg, []imageledger.PromotionRecord{record}, "v1.2.3")
+	err := imageledger.RollbackReleasePromotion(context.Background(), reg, []imageledger.PromotionRecord{record}, "v1.2.3")
 	if !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("final tag mismatch must be refused, got %v", err)
 	}

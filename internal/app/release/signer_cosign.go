@@ -103,7 +103,7 @@ func (s *CosignSigner) Extensions() []string { return s.method.SignatureExtensio
 // any subsequent rename.
 func (s *CosignSigner) SignFile(ctx context.Context, file string) error {
 	in := domainrelease.BlobSignRequest{
-		Artefact:   file,
+		Artifact:   file,
 		BundlePath: file + ".bundle",
 	}
 

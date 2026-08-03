@@ -12,7 +12,8 @@ import (
 
 const forgejoPackagePageSize = 50
 
-// ListContainerPackageVersions returns every version for one container package.
+// ListContainerPackageVersions returns every version for one container
+// package. It satisfies the provider.ContainerPackageLister port role.
 func (p *Provider) ListContainerPackageVersions(ctx context.Context, owner, name string) ([]string, error) {
 	client, err := p.client(ctx)
 	if err != nil {

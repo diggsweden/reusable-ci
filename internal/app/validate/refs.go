@@ -24,6 +24,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/validate"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 )
 
 // RefTypeInput drives `reusable-ci validate ref-type`.
@@ -111,7 +112,7 @@ type ReleaseTagGuardInput struct {
 func ReleaseTagGuard(ctx context.Context, sink ci.OutputSink, out io.Writer, in ReleaseTagGuardInput) error {
 	pattern := in.Pattern
 	if pattern == "" {
-		pattern = `^v[0-9]+[.][0-9]+[.][0-9]+$`
+		pattern = version.StableSemverTagRE.String()
 	}
 
 	if !strings.HasPrefix(pattern, "^") || !strings.HasSuffix(pattern, "$") {

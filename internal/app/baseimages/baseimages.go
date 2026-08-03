@@ -20,11 +20,12 @@ import (
 
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
 var (
 	baseImageFlavorRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-	baseImageTagRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
+	baseImageTagRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+:` + domaincontainer.OCITagComponent + `$`)
 )
 
 // BaseImageMetadata is the JSON shape exchanged by forgejo-ci's base-image
@@ -100,9 +101,13 @@ type imageDigestResolver interface {
 	ResolveDigest(ctx context.Context, ref string) (string, error)
 }
 
+// baseImageStagingCleaner is the forge package-API surface base-image
+// staging cleanup needs: delete a staging tag and enumerate a package's
+// versions. Both are provider port roles, composed here so the app depends
+// on the port rather than re-declaring the method set.
 type baseImageStagingCleaner interface {
-	DeleteTag(ctx context.Context, ref string) error
-	ListContainerPackageVersions(ctx context.Context, owner, name string) ([]string, error)
+	provider.TagDeleter
+	provider.ContainerPackageLister
 }
 
 // imageEvidenceVerifier is the cosign surface base-image evidence

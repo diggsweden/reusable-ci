@@ -120,7 +120,7 @@ func signMethodFlags(planScope string) []cli.Flag {
 //
 // The closure returned by NewCosignSigner reads no extra env at
 // SignFile time — the constructor captures everything (method,
-// keyref, issuer) once, so a multi-artefact loop is configuration-
+// keyref, issuer) once, so a multi-artifact loop is configuration-
 // stable.
 func buildSigner(cmd *cli.Command, errOut io.Writer) (apprelease.Signer, domainrelease.SignMethod, error) {
 	method, err := domainrelease.ParseSignMethod(cmd.String("method"))
@@ -384,7 +384,7 @@ EXAMPLE (as a workflow step):
 func checksumsCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "checksums",
-		Usage: "compute SHA256 over release artefacts, attached patterns, and SBOM layers",
+		Usage: "compute SHA256 over release artifacts, attached patterns, and SBOM layers",
 		Description: `EXAMPLE:
    reusable-ci release checksums --release-artifacts-dir dist --output checksums.sha256`,
 		Flags: []cli.Flag{
@@ -409,7 +409,7 @@ func checksumsCmd() *cli.Command {
 			}
 
 			if n == 0 {
-				_, _ = fmt.Fprintln(os.Stderr, "No artefacts found to checksum.")
+				_, _ = fmt.Fprintln(os.Stderr, "No artifacts found to checksum.")
 			}
 
 			return nil

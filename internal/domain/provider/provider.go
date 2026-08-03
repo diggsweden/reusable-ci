@@ -170,6 +170,21 @@ type TagDeleter interface {
 	DeleteTag(ctx context.Context, ref string) error
 }
 
+// ContainerPackageLister enumerates the versions (tags) of one container
+// package through the forge's package API. Like TagDeleter, this is a
+// per-forge role rather than a generic OCI operation: listing tags via the
+// package API is what lets base-image cleanup enumerate stale staging
+// versions to delete without touching manifests by digest. Only forges with
+// a package API implement it (Forgejo via the Gitea SDK today; GitHub's GHCR
+// packages API could add it); callers reach it through
+// Deps.RequireContainerPackageLister and degrade with a typed ErrUnsupported
+// elsewhere.
+type ContainerPackageLister interface {
+	// ListContainerPackageVersions returns every version recorded for the
+	// container package owner/name.
+	ListContainerPackageVersions(ctx context.Context, owner, name string) ([]string, error)
+}
+
 // RefType describes whether the current ref is a branch, tag, or pull/merge
 // request. Adapters resolve this from their native context (GITHUB_REF_TYPE
 // / CI_COMMIT_TAG presence / etc.).

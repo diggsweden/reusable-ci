@@ -6,6 +6,7 @@ package security
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/retry"
 )
 
 const (
@@ -55,33 +57,29 @@ func RawContainerScan(ctx context.Context, trivy TrivyOps, sink ci.OutputSink, o
 	}
 
 	scanners := rawContainerScanDefault(in.Scanners, defaultRawContainerScanScanners)
-	for attempt := 1; attempt <= attempts; attempt++ {
+
+	scanErr := retry.Run(ctx, nil, attempts, retryDelay, func() error {
 		_ = os.Remove(in.Output)
 
-		scanErr := runRawContainerTrivy(ctx, trivy, out, stderr, RawContainerScanInput{
+		return runRawContainerTrivy(ctx, trivy, out, stderr, RawContainerScanInput{
 			ImageRef: in.ImageRef,
 			Platform: platform,
 			Output:   in.Output,
 			Timeout:  timeoutValue,
 			Scanners: scanners,
 		})
-		if scanErr == nil {
-			return finishRawContainerScan(ctx, sink, out, platform, in)
+	}, retry.OnRetry(func(attempt, total int, _ time.Duration, _ error) {
+		_, _ = fmt.Fprintf(stderr, "Trivy image scan failed (attempt %d/%d) for %s, retrying...\n", attempt, total, platform)
+	}))
+	if scanErr != nil {
+		if errors.Is(scanErr, context.Canceled) || errors.Is(scanErr, context.DeadlineExceeded) {
+			return fmt.Errorf("trivy image scan retry canceled: %w", scanErr)
 		}
 
-		if attempt == attempts {
-			return fmt.Errorf("trivy image scan failed after %d attempts for %s %s: %w", attempt, platform, in.ImageRef, scanErr)
-		}
-
-		_, _ = fmt.Fprintf(stderr, "Trivy image scan failed (attempt %d/%d) for %s, retrying...\n", attempt, attempts, platform)
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("trivy image scan retry canceled: %w", ctx.Err())
-		case <-time.After(time.Duration(attempt) * retryDelay):
-		}
+		return fmt.Errorf("trivy image scan failed for %s %s: %w", platform, in.ImageRef, scanErr)
 	}
 
-	return nil
+	return finishRawContainerScan(ctx, sink, out, platform, in)
 }
 
 // finishRawContainerScan validates the successful scan's JSON shape and emits result-path.

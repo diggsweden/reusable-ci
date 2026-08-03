@@ -275,7 +275,7 @@ jobs:
       - name: Verify dist integrity
         env:
           EXPECTED_DIGEST: ${{ inputs.dist-digest }}
-        run: reusable-ci release verify-dist --dist-dir dist --expected-digest "${EXPECTED_DIGEST}"
+        run: reusable-ci release validate-dist --dist-dir dist --expected-digest "${EXPECTED_DIGEST}"
 `
 
 	mem := testfs.NewMemory(t)

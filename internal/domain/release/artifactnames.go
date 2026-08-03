@@ -56,7 +56,7 @@ func ResolveArtifactNames(pt projecttype.Type, artifactName string) ArtifactName
 
 		return ArtifactNamePair{"go-build-artifacts", "go-build-sbom"}
 	case projecttype.Cargo:
-		// Symmetric with Go: artefact-first cargo produces real binaries
+		// Symmetric with Go: artifact-first cargo produces real binaries
 		// uploaded as `<name>-cargo-build-artifacts`; the inline Build SBOM
 		// uploads as `<name>-cargo-build-sbom`. Container-first cargo also
 		// uses the SBOM name (sbom-cargo.yml emits it at publish stage), but

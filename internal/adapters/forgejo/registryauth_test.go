@@ -45,3 +45,17 @@ func TestResolveRegistryAuth_Forgejo_NoToken(t *testing.T) {
 		t.Errorf("missing token should be ErrCIRuntimeRequired, got %v", err)
 	}
 }
+
+func TestResolveRegistryAuth_Forgejo_NoServerFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	// Token present but neither FORGEJO_SERVER_URL nor GITHUB_SERVER_URL set:
+	// self-hosted Forgejo has no canonical host, so this fails rather than
+	// silently targeting a specific instance.
+	p := &forgejo.Provider{Env: func(k string) string {
+		return map[string]string{"FORGEJO_TOKEN": "ftok"}[k]
+	}}
+	if _, err := p.ResolveRegistryAuth(); !errors.Is(err, errs.ErrUsage) {
+		t.Errorf("missing server URL should be ErrUsage, got %v", err)
+	}
+}

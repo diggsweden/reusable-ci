@@ -393,7 +393,11 @@ func emitPublishRows(in PrerequisitesSummaryInput, row func(name, status, detail
 	}
 
 	if slices.Contains(targets, config.PublishForgePackages) {
-		row("GitHub Packages", "✓ Pass", "Using GITHUB_TOKEN")
+		// Forge-neutral target: the package registry is GitHub Packages,
+		// GitLab Package Registry or Forgejo packages depending on the runner,
+		// each authenticated with the forge-injected token. Label it neutrally
+		// so the summary is truthful on every forge, not just GitHub.
+		row("Forge Packages", "✓ Pass", "Using forge token")
 	}
 }
 

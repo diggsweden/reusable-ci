@@ -510,7 +510,7 @@ func TestSignLedgerImages_BaseKindEntries(t *testing.T) {
 	sbomSum := sha256.Sum256(sbomContent)
 
 	ledgerJSON, err := json.Marshal([]imageledger.Entry{{
-		Kind:         imageledger.ImageKindBase,
+		Kind:         "base",
 		ImageKind:    imageledger.ImageKindBase,
 		Flavor:       "go",
 		Ref:          repo + "@" + digest,

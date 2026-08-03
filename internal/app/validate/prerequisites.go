@@ -52,7 +52,7 @@ type PrerequisitesInput struct {
 	//
 	// RequireAllowlistedSigner gates the tag-signature check on the
 	// committed allowlist files (.reusable-ci/allowed_signers for SSH,
-	// .reusable-ci/allowed_gpg_keys.asc for GPG). True when any artefact's
+	// .reusable-ci/allowed_gpg_keys.asc for GPG). True when any artifact's
 	// require-authorization is set OR the workflow input explicitly enables
 	// it. When true, a missing/empty allowlist or an unverifiable signature
 	// fails closed (ErrPermissionDenied → exit 77).
@@ -60,7 +60,7 @@ type PrerequisitesInput struct {
 	SignArtifacts            bool
 	HasMavenCentralTarget    bool
 	HasCargoTarget           bool
-	HasJVMTarget             bool // any Maven, Gradle, or Gradle-Android artefact in the plan
+	HasJVMTarget             bool // any Maven, Gradle, or Gradle-Android artifact in the plan
 
 	// Secrets — passed in by the orchestrator after reading from env so
 	// nothing winds up in argv. Empty values surface a validator-specific
@@ -77,7 +77,7 @@ type PrerequisitesInput struct {
 	PublishStagePlanJSON string
 
 	// Config plan — drives JVM reproducibility check (it iterates
-	// Maven/Gradle artefacts to read each manifest). Same JSON that
+	// Maven/Gradle artifacts to read each manifest). Same JSON that
 	// the orchestrator passes to every other stage.
 	ConfigPlanJSON string
 }

@@ -16,7 +16,11 @@
 // never bumps them, which is why both the rewriter and the guard exist.
 package runtimetags
 
-import "regexp"
+import (
+	"regexp"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/version"
+)
 
 // RefPattern matches any reusable-ci runtime image reference and
 // captures its tag, e.g. "reusable-ci-runtime-java-25:v3.0.0" → "v3.0.0".
@@ -27,10 +31,12 @@ import "regexp"
 var RefPattern = regexp.MustCompile(`reusable-ci-runtime[a-z0-9-]*:([A-Za-z0-9._-]+)`)
 
 // VersionPattern is the shape every published runtime tag must have:
-// the repo's own release version.
+// the repo's own release version. It is the strict stable-semver shape,
+// single-sourced from domain/version so runtime pins and release tags
+// cannot drift apart.
 //
 //nolint:gochecknoglobals // shared compiled pattern — read-only.
-var VersionPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
+var VersionPattern = version.StableSemverTagRE
 
 // pinnedRefPattern matches only version-pinned references (never the
 // local ":verify" build tags), splitting the ref stem from the version.

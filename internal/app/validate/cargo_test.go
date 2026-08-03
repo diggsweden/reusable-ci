@@ -98,13 +98,13 @@ func TestCargoPrerequisites_SkipsWhenTargetDoesNotRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(stderr.String(), "No Cargo artefacts") {
+	if !strings.Contains(stderr.String(), "No Cargo artifacts") {
 		t.Errorf("stderr = %s", stderr.String())
 	}
 }
 
 // TestCargoPrerequisites_FailsWhenToolchainPinMissing pins the
-// deterministic-pipeline guarantee: a Cargo artefact without
+// deterministic-pipeline guarantee: a Cargo artifact without
 // rust-toolchain.toml (or its legacy plain-text sibling) fails the
 // pipeline. The pinned toolchain is the only way CI and local-dev
 // builds produce byte-identical Rust binaries.
@@ -142,9 +142,9 @@ func TestCargoPrerequisites_RejectsEscapingWorkingDirectory(t *testing.T) {
 }
 
 // TestCargoPrerequisites_CoversBothBuildModesViaConfigPlan exercises the
-// config-plan path so artefact-first cargo (which never shows up in the
+// config-plan path so artifact-first cargo (which never shows up in the
 // publish-stage projection) still gets its Cargo.lock + toolchain
-// validated. The historical bug this guards against: artefact-first
+// validated. The historical bug this guards against: artifact-first
 // cargo silently skipping prerequisite checks because only the publish
 // projection was wired in.
 func TestCargoPrerequisites_CoversBothBuildModesViaConfigPlan(t *testing.T) {
@@ -158,8 +158,8 @@ func TestCargoPrerequisites_CoversBothBuildModesViaConfigPlan(t *testing.T) {
 	var out, stderr bytes.Buffer
 
 	err := appvalidate.CargoPrerequisites(context.Background(), fakeCargoTool{version: "cargo 1.90.0"}, &out, output.NewAnnotator(&stderr, output.FormatGitHub), appvalidate.CargoPrerequisitesInput{
-		// The config-plan-json carries every Cargo artefact regardless of
-		// build-mode. `api` is container-first, `cli` is artefact-first.
+		// The config-plan-json carries every Cargo artifact regardless of
+		// build-mode. `api` is container-first, `cli` is artifact-first.
 		ConfigPlanJSON: `{"version":1,"artifacts":{"cargo":[
 			{"name":"api","project_type":"cargo","working_directory":"crates/api","cargo_build_mode":"container-first"},
 			{"name":"cli","project_type":"cargo","working_directory":"crates/cli","cargo_build_mode":"artifact-first"}

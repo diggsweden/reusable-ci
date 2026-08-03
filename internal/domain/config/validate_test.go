@@ -202,7 +202,7 @@ func TestValidate_CargoRejectsInvalidBuildMode(t *testing.T) {
 
 // TestValidate_RejectsMultipleArtifactFirstCargoDepsForOneContainer
 // mirrors the equivalent Go test. publish-container.yml exposes one
-// `cargo-artifact-name` slot per container; two artefact-first cargo
+// `cargo-artifact-name` slot per container; two artifact-first cargo
 // deps would collide on it, so the validator rejects this shape at
 // config-parse time.
 func TestValidate_RejectsMultipleArtifactFirstCargoDepsForOneContainer(t *testing.T) {
@@ -350,7 +350,7 @@ func TestValidate_RejectsEmptyArtifactName(t *testing.T) {
 
 // TestValidate_RejectsEnvLeakingWorkingDirectory codifies the
 // 12-Factor App split inside artifacts.yml: working-directory describes
-// what to build (application configuration, ships with the artefact)
+// what to build (application configuration, ships with the artifact)
 // and must not encode environment-specific state. Absolute paths,
 // `..`-escaping, and `${…}` shell refs are all rejected at parse time.
 func TestValidate_RejectsEnvLeakingWorkingDirectory(t *testing.T) {
@@ -387,14 +387,14 @@ func TestValidate_RejectsEnvLeakingWorkingDirectory(t *testing.T) {
 	}
 }
 
-// TestValidate_RejectsPathTraversalInArtefactNames pins input hygiene
+// TestValidate_RejectsPathTraversalInArtifactNames pins input hygiene
 // for scalar fields that flow into constructed filenames. Not a
 // security boundary (the runner is fresh per job) but a foot-gun
 // guard: a `binary-name: "../tmp/x"` lands the compiled file one dir
 // up from where upload-artifact / release-attach look for it, surfacing
 // as "file not found" deep in the publish stage rather than a clear
 // rejection at config-parse.
-func TestValidate_RejectsPathTraversalInArtefactNames(t *testing.T) {
+func TestValidate_RejectsPathTraversalInArtifactNames(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -453,11 +453,11 @@ func TestValidate_RejectsPathTraversalInArtefactNames(t *testing.T) {
 	}
 }
 
-// TestValidate_AcceptsNormalArtefactNames pins the positive path: the
+// TestValidate_AcceptsNormalArtifactNames pins the positive path: the
 // shapes adopters use in practice stay valid. Includes dashed names
 // (`my-app`), dotted versions (`my.app`), and the typical empty
 // binary-name (Go/Cargo derive from module/package name).
-func TestValidate_AcceptsNormalArtefactNames(t *testing.T) {
+func TestValidate_AcceptsNormalArtifactNames(t *testing.T) {
 	t.Parallel()
 
 	cases := []*config.Config{
@@ -512,7 +512,7 @@ func TestValidate_ContainerReferencesUnknownArtifact(t *testing.T) {
 	}
 
 	if !strings.Contains(err.Error(), "missing") {
-		t.Errorf("err should mention missing artefact: %v", err)
+		t.Errorf("err should mention missing artifact: %v", err)
 	}
 }
 

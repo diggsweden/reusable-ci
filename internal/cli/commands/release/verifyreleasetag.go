@@ -20,10 +20,10 @@ import (
 // refusing to publish a stale or hijacked release.
 func verifyTagCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "verify-tag",
-		Usage: "re-verify the release tag against the remote: checkout==release-sha, tag points to it, and not superseded",
+		Name:  "validate-tag",
+		Usage: "re-validate the release tag against the remote: checkout==release-sha, tag points to it, and not superseded",
 		Description: `EXAMPLE:
-   reusable-ci release verify-tag --tag v1.2.3 --release-sha abc... --repo-url https://github.com/org/app`,
+   reusable-ci release validate-tag --tag v1.2.3 --release-sha abc... --repo-url https://github.com/org/app`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagReleaseSHA, Sources: cli.EnvVars("RELEASE_SHA"), Usage: "commit the release is built from"},
 			&cli.StringFlag{Name: flagTag, Sources: cienv.Tag(), Usage: "release tag (e.g. v1.2.3)"},

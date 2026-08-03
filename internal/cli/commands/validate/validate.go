@@ -36,10 +36,10 @@ import (
 //     "gate the next step," not "offline." These live here in the reusable
 //     `validate` group.
 //   - verify-*  — RECOMPUTE or CROSS-CHECK an already-produced or remote
-//     thing against expected truth (e.g. `release verify-dist` recomputes
-//     the dist digest, `release verify-tag` re-checks the remote,
-//     `container ledger verify-digests` cross-checks registry digests). These live
-//     under the command that owns the produced artefact, not here.
+//     thing against expected truth (e.g. `release validate-dist` recomputes
+//     the dist digest, `release validate-tag` re-checks the remote,
+//     `container ledger validate-digests` cross-checks registry digests). These live
+//     under the command that owns the produced artifact, not here.
 //
 // Several validate subcommands read "verify …" in their Usage (signature checks,
 // remote-reachability checks); that wording is intentional where the check
@@ -56,10 +56,10 @@ func New() *cli.Command {
                      ` + "`tag commit`" + ` checks remote reachability). The point is to gate
                      the next step, not to be offline. (Here.)
    release verify-*  RE-verify an already-produced or remote thing at the trust
-                     boundary, against tampering between jobs: ` + "`verify-tag`" + ` re-checks
-                     the remote tag still points to the release commit, ` + "`verify-dist`" + `
+                     boundary, against tampering between jobs: ` + "`validate-tag`" + ` re-checks
+                     the remote tag still points to the release commit, ` + "`validate-dist`" + `
                      recomputes the dist digest. Lives under the command that owns
-                     the artefact, not here.
+                     the artifact, not here.
    report status *   render a step-summary block (no checking).
 
 Some validate subcommands read "verify …" in their Usage (signature checks,

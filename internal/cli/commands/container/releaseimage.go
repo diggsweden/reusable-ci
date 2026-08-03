@@ -29,8 +29,8 @@ import (
 // a singleton release-image group.
 func releaseImagesVerifyCmd() *cli.Command {
 	return &cli.Command{
-		Name:  subCmdVerify,
-		Usage: "verify an existing digest-pinned release image before reusing it",
+		Name:  subCmdValidate,
+		Usage: "validate an existing digest-pinned release image before reusing it",
 		Description: `Checks Cosign signature, CycloneDX SBOM attestation, and SLSA
 provenance fields for a digest-pinned release image. With --allow-reattest, a
 provenance mismatch may still return status "reattestable" when the image is

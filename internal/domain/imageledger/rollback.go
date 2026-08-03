@@ -8,7 +8,7 @@ import (
 	"fmt"
 )
 
-// Rollback undoes a stage's promotion after a failure: for every entry that
+// RollbackStage undoes a stage's promotion after a failure: for every entry that
 // was promoted (has a candidate_tag), it deletes that stage's pointer tag(s) —
 // the same <base>:<stage> destinations promote wrote — but only when the tag
 // currently serves the entry's recorded digest, so a pre-existing or
@@ -17,7 +17,7 @@ import (
 // absent or serves a different digest is skipped. Rather than keeping a
 // separate promotions journal, it derives "what was promoted" from the ledger
 // and the stage, and confirms each digest before deleting.
-func Rollback(ctx context.Context, reg CleanupRegistry, entries []Entry, releaseTag string, stage Stage) error {
+func RollbackStage(ctx context.Context, reg CleanupRegistry, entries []Entry, releaseTag string, stage Stage) error {
 	if err := stage.Validate(); err != nil {
 		return err
 	}

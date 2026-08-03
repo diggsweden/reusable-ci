@@ -88,7 +88,7 @@ func ScanContainer(
 	}
 
 	// Empty JSON means "trivy ran but found nothing at threshold". The
-	// pipeline passes; no SARIF / GitLab artefacts to upload.
+	// pipeline passes; no SARIF / GitLab artifacts to upload.
 	if empty || len(ids) == 0 {
 		_, _ = fmt.Fprintf(out, "%s No vulnerabilities found at severity %s or above\n", clicolor.Check(out), severity)
 
@@ -96,7 +96,7 @@ func ScanContainer(
 	}
 
 	// Always derive SARIF + GitLab reports — even when the gate fails,
-	// the artefacts must reach Code Scanning so the failure is visible
+	// the artifacts must reach Code Scanning so the failure is visible
 	// in the same places adopters use for vulnerability triage.
 	deriveContainerReports(out, annot, TransformInput{
 		InputPath:    jsonPath,
@@ -164,7 +164,7 @@ func loadContainerVulnIDs(jsonPath string) ([]string, bool, error) {
 
 // deriveContainerReports derives the SARIF + GitLab container-scanning
 // reports from the trivy JSON. Both transforms are best-effort: if
-// either fails, the gate still fires below but the artefacts may be
+// either fails, the gate still fires below but the artifacts may be
 // incomplete. annot.Warningf surfaces the failure.
 func deriveContainerReports(out io.Writer, annot output.Annotator, in TransformInput, gitlabPath string) {
 	_, _ = fmt.Fprintln(out, "Converting JSON to SARIF...")

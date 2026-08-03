@@ -52,7 +52,7 @@ func TestValidateArtifacts_GoFindsNestedBinaries(t *testing.T) {
 }
 
 // TestValidateArtifacts_CargoFindsNestedBinaries is the Cargo counterpart
-// — artefact-first cargo lands binaries in the same dist/<goos>-<goarch>/...
+// — artifact-first cargo lands binaries in the same dist/<goos>-<goarch>/...
 // layout as Go, so the recursive scan must find them and report under
 // the "Cargo" type label.
 func TestValidateArtifacts_CargoFindsNestedBinaries(t *testing.T) {
@@ -83,8 +83,8 @@ func TestValidateArtifacts_UnknownTypeErrors(t *testing.T) {
 
 // TestValidateArtifacts_MissingArtifactsFail is the deployable-pipeline
 // guarantee: every Verify step in publish-container.yml only runs when
-// the per-ecosystem artefact-name is non-empty (i.e. an artefact-first
-// dep is declared). When the step runs, the artefact MUST be present —
+// the per-ecosystem artifact-name is non-empty (i.e. an artifact-first
+// dep is declared). When the step runs, the artifact MUST be present —
 // a missing one is an upstream build failure, not "rebuild from source."
 // The old soft-warn path masked these as yellow warnings; the verifier
 // now errors with ErrValidation.
@@ -126,7 +126,7 @@ func TestValidateArtifacts_MissingArtifactsFail(t *testing.T) {
 				ArtifactDir: fsys.Root,
 			})
 			if err == nil {
-				t.Fatalf("expected error when %s artefacts are missing, got nil", testCase.projectType)
+				t.Fatalf("expected error when %s artifacts are missing, got nil", testCase.projectType)
 			}
 
 			if !errors.Is(err, errs.ErrValidation) {

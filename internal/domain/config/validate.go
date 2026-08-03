@@ -145,7 +145,7 @@ func unsupportedTargetReason(artifact Artifact, target PublishTarget) string {
 
 // Validate checks Config against the schema rules: artifacts list non-empty,
 // every project-type recognised, publish targets are supported for the
-// artifact type, and container `from` references existing artefacts.
+// artifact type, and container `from` references existing artifacts.
 // Maven-application-to-forge-packages combinations only emit a warning
 // (returned via Warnings); they don't fail validation.
 func Validate(cfg *Config) error {
@@ -184,7 +184,7 @@ func Validate(cfg *Config) error {
 }
 
 // validProjectTypeSet materialises the ordered ValidProjectTypes slice
-// as a lookup set for per-artefact validation.
+// as a lookup set for per-artifact validation.
 func validProjectTypeSet() map[projecttype.Type]bool {
 	out := make(map[projecttype.Type]bool, len(ValidProjectTypes))
 	for _, t := range ValidProjectTypes {
@@ -204,11 +204,11 @@ func validPublishTargetSet() map[PublishTarget]bool {
 	return out
 }
 
-// walkArtifacts validates every artefact and builds the two lookup
+// walkArtifacts validates every artifact and builds the two lookup
 // maps the container-level validator needs: artifactNames (set used
 // for `from:` reference checks and duplicate detection) and
-// artifactByName (full artefact, used by build-mode / ecosystem-pair
-// rules). Appends per-artefact violations to *violations.
+// artifactByName (full artifact, used by build-mode / ecosystem-pair
+// rules). Appends per-artifact violations to *violations.
 func walkArtifacts(artifacts []Artifact, validTypes map[projecttype.Type]bool, validPublishTargets map[PublishTarget]bool, violations *[]string) (map[string]bool, map[string]Artifact) {
 	artifactNames := make(map[string]bool, len(artifacts))
 	artifactByName := make(map[string]Artifact, len(artifacts))
@@ -272,12 +272,12 @@ func validateArtifact(a Artifact, idx int, artifactNames map[string]bool, validT
 	}
 
 	v = append(v, validateWorkingDirectory(a)...)
-	v = append(v, validateArtefactFileNames(a)...)
+	v = append(v, validateArtifactFileNames(a)...)
 
 	return v
 }
 
-// validateArtefactFileNames rejects scalar fields that flow into
+// validateArtifactFileNames rejects scalar fields that flow into
 // constructed filenames from carrying path separators or dot-segment
 // escapes. This is input hygiene, not a security boundary: the runner
 // is fresh per job and the workspace contains only the consumer's own
@@ -292,7 +292,7 @@ func validateArtifact(a Artifact, idx int, artifactNames map[string]bool, validT
 //   - Artifact.Name              (SBOM filename prefix, upload-artifact tag)
 //   - Artifact.Go.BinaryName     (dist/<goos>-<goarch>/<bin>-<goos>-<goarch>)
 //   - Artifact.Cargo.BinaryName  (same)
-func validateArtefactFileNames(a Artifact) []string { //nolint:varnamelen // idiomatic short name (matches sibling validators).
+func validateArtifactFileNames(a Artifact) []string { //nolint:varnamelen // idiomatic short name (matches sibling validators).
 	var v []string //nolint:varnamelen // idiomatic short name.
 
 	if err := checkNoPathSeparators(fmt.Sprintf("artifact %q name", a.Name), a.Name); err != "" {
@@ -340,7 +340,7 @@ func checkNoPathSeparators(fieldRef, value string) string {
 }
 
 // validateWorkingDirectory rejects working-directory values that would
-// leak environment-specific state into the immutable artefact contract.
+// leak environment-specific state into the immutable artifact contract.
 //
 // reusable-ci treats artifacts.yml as application configuration (per
 // 12-Factor App): it ships with the source and must not vary by
@@ -427,7 +427,7 @@ func validateCargoBuildMode(a Artifact) []string { //nolint:varnamelen // idioma
 // every From entry resolves to a known artifact, and at most one
 // artifact-first dep per compiled-native ecosystem (publish-container.yml
 // carries exactly one *-artifact-name slot per language, so two
-// artefact-first deps from the same ecosystem would collide).
+// artifact-first deps from the same ecosystem would collide).
 func validateContainer(ct Container, artifactNames map[string]bool, artifactByName map[string]Artifact) []string {
 	var v []string //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 

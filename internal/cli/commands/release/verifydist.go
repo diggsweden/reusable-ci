@@ -21,7 +21,7 @@ func distDigestCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "dist-digest",
 		Usage: "print the current release dist/ hand-off digest",
-		Description: `Computes the digest used by release verify-dist: the SHA-256 of
+		Description: `Computes the digest used by release validate-dist: the SHA-256 of
 the sorted sha256sum manifest for every regular file under --dist-dir. This is
 byte-compatible with forgejo-ci's dist-digest.sh and exists for compatibility
 while release hand-offs migrate to the reusable-ci binary.
@@ -55,8 +55,8 @@ EXAMPLE:
 // byte-identical to what was built — refusing to sign tampered artifacts.
 func verifyDistCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "verify-dist",
-		Usage: "verify a dist/ tree is structurally safe and matches an expected digest (cross-job integrity)",
+		Name:  "validate-dist",
+		Usage: "validate a dist/ tree is structurally safe and matches an expected digest (cross-job integrity)",
 		Description: `Rejects a dist/ that is a symlink, contains symlinks, contains
 non-regular entries, or has control characters in any path, then
 recomputes its canonical digest and fails on mismatch. The digest
@@ -67,7 +67,7 @@ digest recomputation; use --manifest-root . for artifact contents that are
 staged under different directory names by producer and verifier.
 
 EXAMPLE:
-   reusable-ci release verify-dist --dist-dir dist --expected-digest sha256:abc...`,
+   reusable-ci release validate-dist --dist-dir dist --expected-digest sha256:abc...`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagDistDir, Value: defaultDistDir, Usage: "directory to verify"},
 			&cli.StringFlag{Name: "expected-digest", Sources: cli.EnvVars("EXPECTED_DIGEST", "DIST_DIGEST"), Usage: "expected dist digest (from the build job)"},

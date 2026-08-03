@@ -107,7 +107,7 @@ func (a *Adapter) CopyTag(ctx context.Context, source, dest string) error {
 }
 
 // PushLayoutByDigest reads the single image from an OCI image layout on disk
-// (the artefact buildah exports after a build) and writes it to imageRef's
+// (the artifact buildah exports after a build) and writes it to imageRef's
 // repository addressed by its OWN digest — a TAGLESS push (PUT manifest by
 // digest), the daemonless equivalent of docker/build-push-action's
 // push-by-digest=true. The per-arch manifest therefore exists only as an

@@ -37,11 +37,12 @@ type PromotionRollbackRegistry interface {
 	CopyTag(ctx context.Context, source, dest string) error
 }
 
-// PlanPromotionJournal validates release-tag promotion and captures rollback
-// state before any tag is moved. It intentionally only supports release-stage
-// promotion using ledger-carried release tags, matching Forgejo CI's sign-before-
-// publish contract.
-func PlanPromotionJournal(ctx context.Context, reg DigestResolver, entries []Entry, releaseTag string, stage Stage) ([]PromotionRecord, error) {
+// PlanReleasePromotionRollback validates release-tag promotion and captures the
+// rollback state before any tag is moved. It only supports the release stage
+// using ledger-carried release tags, the sign-before-publish contract where the
+// immutable final tag and its previous moving-tag digest cannot be recovered
+// from the ledger alone once the promotion has run.
+func PlanReleasePromotionRollback(ctx context.Context, reg DigestResolver, entries []Entry, releaseTag string, stage Stage) ([]PromotionRecord, error) {
 	if !stage.IsRelease() || !stage.UseEntryReleaseTags {
 		return nil, fmt.Errorf("imageledger: promotion journal requires release stage with ledger release tags: %w", errs.ErrUsage)
 	}
@@ -116,8 +117,8 @@ func journalSourceRef(source, digest string) string {
 	return source + "@" + digest
 }
 
-// MarshalPromotionJournal renders records as JSON Lines, matching the existing
-// Forgejo CI rollback journal shape so the migration can be staged safely.
+// MarshalPromotionJournal renders records as JSON Lines: one self-describing
+// rollback record per line, so a partial write still yields replayable records.
 func MarshalPromotionJournal(records []PromotionRecord) ([]byte, error) {
 	var out bytes.Buffer
 
@@ -135,7 +136,7 @@ func MarshalPromotionJournal(records []PromotionRecord) ([]byte, error) {
 }
 
 // ParsePromotionJournal decodes the JSON Lines rollback journal written by
-// PlanPromotionJournal/MarshalPromotionJournal.
+// PlanReleasePromotionRollback/MarshalPromotionJournal.
 func ParsePromotionJournal(data []byte) ([]PromotionRecord, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -167,11 +168,11 @@ func ParsePromotionJournal(data []byte) ([]PromotionRecord, error) {
 	return records, nil
 }
 
-// RollbackPromotionJournal restores the registry state captured before a
+// RollbackReleasePromotion restores the registry state captured before a
 // release-tag promotion: a moving tag is restored to its previous digest when it
 // existed, otherwise deleted; a final tag is deleted only when the journal says
 // it was created by this promotion.
-func RollbackPromotionJournal(ctx context.Context, reg PromotionRollbackRegistry, records []PromotionRecord, releaseTag string) error {
+func RollbackReleasePromotion(ctx context.Context, reg PromotionRollbackRegistry, records []PromotionRecord, releaseTag string) error {
 	seen := map[string]bool{}
 
 	for idx, record := range records {

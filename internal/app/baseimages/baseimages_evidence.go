@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -15,7 +16,12 @@ import (
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provenance"
+	"github.com/diggsweden/reusable-ci/v3/internal/retry"
 )
+
+// baseImageEvidenceRetryDelay is the base wait between base-image evidence
+// verification attempts; with linear backoff attempt N waits N×this.
+const baseImageEvidenceRetryDelay = 15 * time.Second
 
 type baseImageLineageExpectation struct {
 	Source      string
@@ -25,9 +31,7 @@ type baseImageLineageExpectation struct {
 }
 
 func verifyBaseImageEvidence(ctx context.Context, verifier imageEvidenceVerifier, out io.Writer, ref, publicKey string, expected baseImageLineageExpectation, attempts int) error {
-	if attempts < 1 {
-		attempts = 1
-	}
+	attempts = retry.Attempts(attempts, 1)
 
 	if err := validateBaseImageRef(ref, domaincontainer.StripTagOrDigest(ref)); err != nil {
 		return err
@@ -35,27 +39,34 @@ func verifyBaseImageEvidence(ctx context.Context, verifier imageEvidenceVerifier
 
 	digest := digestFromRef(ref)
 
-	for attempt := 1; attempt <= attempts; attempt++ {
-		verifyStep, cosignErr, err := verifyBaseImageEvidenceOnce(ctx, verifier, ref, publicKey, expected)
-		if err == nil {
-			_, _ = fmt.Fprintf(out, "Verified base image signature and lineage: flavor=%s digest=%s\n", expected.Flavor, digest)
+	var (
+		lastVerifyStep string
+		lastCosignErr  []byte
+	)
 
-			return nil
+	_, err := retry.Do(ctx, nil, attempts, baseImageEvidenceRetryDelay, func() (struct{}, error) {
+		verifyStep, cosignErr, oneErr := verifyBaseImageEvidenceOnce(ctx, verifier, ref, publicKey, expected)
+		lastVerifyStep, lastCosignErr = verifyStep, cosignErr
+
+		return struct{}{}, oneErr
+	}, retry.OnRetry(func(attempt, total int, _ time.Duration, _ error) {
+		_, _ = fmt.Fprintf(out, "Base image signature/attestation verification did not pass (attempt %d/%d); retrying.\n", attempt, total)
+		printBaseImageVerificationError(out, expected.Flavor, digest, lastVerifyStep, lastCosignErr)
+	}))
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("base images: verify base image signature and lineage: %w", err)
 		}
 
-		if attempt < attempts {
-			_, _ = fmt.Fprintf(out, "Base image signature/attestation verification did not pass (attempt %d/%d); retrying.\n", attempt, attempts)
-			printBaseImageVerificationError(out, expected.Flavor, digest, verifyStep, cosignErr)
-			time.Sleep(time.Duration(attempt*15) * time.Second)
-		} else {
-			_, _ = fmt.Fprintln(out, "ERROR: failed to verify base image signature and lineage after retries")
-			printBaseImageVerificationError(out, expected.Flavor, digest, verifyStep, cosignErr)
+		_, _ = fmt.Fprintln(out, "ERROR: failed to verify base image signature and lineage after retries")
+		printBaseImageVerificationError(out, expected.Flavor, digest, lastVerifyStep, lastCosignErr)
 
-			return fmt.Errorf("base images: failed to verify base image signature and lineage: %w", errs.ErrValidation)
-		}
+		return fmt.Errorf("base images: failed to verify base image signature and lineage: %w", errs.ErrValidation)
 	}
 
-	return fmt.Errorf("base images: failed to verify base image signature and lineage: %w", errs.ErrValidation)
+	_, _ = fmt.Fprintf(out, "Verified base image signature and lineage: flavor=%s digest=%s\n", expected.Flavor, digest)
+
+	return nil
 }
 
 // verifyBaseImageEvidenceOnce runs one signature/SBOM/lineage verification

@@ -55,10 +55,10 @@ func ledgerValidateCmd() *cli.Command {
 
 func ledgerVerifyDigestsCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "verify-digests",
-		Usage: "re-verify each entry's recorded digest against what the registry serves (candidate_tag → final_tag → digest ref); distinct from `validate`, which checks entries against the release tag offline",
+		Name:  "validate-digests",
+		Usage: "re-validate each entry's recorded digest against what the registry serves (candidate_tag → final_tag → digest ref); distinct from `validate`, which checks entries against the release tag offline",
 		Description: `EXAMPLE:
-   reusable-ci container ledger verify-digests --ledger release-images.json --tag v1.2.3`,
+   reusable-ci container ledger validate-digests --ledger release-images.json --tag v1.2.3`,
 		Flags: []cli.Flag{
 			ledgerPathFlag(),
 			releaseTagFlag(),

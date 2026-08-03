@@ -12,14 +12,14 @@ import (
 )
 
 // ReleaseArtifactExtensions is the set of file extensions considered
-// release artefacts. Mirrors `ci_find_release_artifacts` in.
+// release artifacts. Mirrors `ci_find_release_artifacts` in.
 //
 //nolint:gochecknoglobals // canonical extension list — read-only.
 var ReleaseArtifactExtensions = []string{
 	".jar", ".tgz", ".tar.gz", ".zip", ".war",
 }
 
-// IsReleaseArtifact reports whether path looks like a release artefact:
+// IsReleaseArtifact reports whether path looks like a release artifact:
 // has one of the recognised extensions and is not a Maven "original-*.jar"
 // (those are pre-shaded copies kept for diagnostics).
 func IsReleaseArtifact(path string) bool {

@@ -343,8 +343,8 @@ func buildArtifactName(art config.Artifact) string {
 	}
 }
 
-// artifactFirstGoName returns the build-stage artefact name for a Go
-// artefact, empty when the artefact uses container-first build mode.
+// artifactFirstGoName returns the build-stage artifact name for a Go
+// artifact, empty when the artifact uses container-first build mode.
 func artifactFirstGoName(art config.Artifact) string {
 	if config.GoArtifactBuildMode(art) != config.GoBuildModeArtifactFirst {
 		return ""
@@ -354,7 +354,7 @@ func artifactFirstGoName(art config.Artifact) string {
 }
 
 // artifactFirstCargoName mirrors artifactFirstGoName for Cargo: only
-// artefact-first cargo produces a binary upload at build-stage.
+// artifact-first cargo produces a binary upload at build-stage.
 // Container-first cargo's binary stays inside the container build and
 // (optionally) ships via extract.binary, not as a build-artifact.
 func artifactFirstCargoName(art config.Artifact) string {

@@ -8,14 +8,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/git"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 )
-
-var stableReleaseTagRE = regexp.MustCompile(`^v[0-9]+[.][0-9]+[.][0-9]+$`)
 
 // SignPublishContextInput drives `release sign-publish-context`.
 type SignPublishContextInput struct {
@@ -36,7 +34,7 @@ func SignPublishContext(out io.Writer, in SignPublishContextInput) error {
 	}
 
 	releaseTag := strings.TrimSpace(in.ReleaseTag)
-	if !stableReleaseTagRE.MatchString(releaseTag) {
+	if !version.IsStableSemverTag(releaseTag) {
 		return fmt.Errorf("sign-publish-context: release-tag must be stable vMAJOR.MINOR.PATCH: %w", errs.ErrUsage)
 	}
 
@@ -63,7 +61,9 @@ func SignPublishContext(out io.Writer, in SignPublishContextInput) error {
 		"FORGEJO_REF_NAME=" + releaseTag,
 		"RELEASE_SHA=" + releaseSHA,
 		"DIST_DIR=" + distDir,
-		"RELEASE_FILES_MANIFEST=" + distDir + "/forgejo-ci-release-files.json",
+		// Neutral default basename (matches DefaultReleaseFilesManifest); a
+		// consumer overrides the whole path via $RELEASE_FILES_MANIFEST.
+		"RELEASE_FILES_MANIFEST=" + distDir + "/release-files.json",
 		"SIGN_AND_PUBLISH_STATE_DIR=" + stateDir,
 	}
 	if err := appendReleaseEnvFile(in.EnvFile, entries...); err != nil {

@@ -26,7 +26,7 @@ type ReleaseContextInput struct {
 	Ref                   string // the pushed ref, e.g. "release-request/v3.5.7"
 	RequireReleaseRequest bool   // reject refs outside release-request/
 	RequireStable         bool   // reject non-vMAJOR.MINOR.PATCH final tags
-	TrailerMode           string // default or forgejo-ci
+	TrailerMode           string // default or coauthor-only
 }
 
 // ReleaseContext derives the release identity from the pushed request ref
@@ -72,25 +72,27 @@ func ReleaseContext(ctx context.Context, repo releaseContextOps, in ReleaseConte
 	return emitReleaseContextOutputs(ctx, sink, manifest, releaseTag, releaseVersion, requestRef, trailers)
 }
 
-// trailerModeDefault and trailerModeForgejoCI are the accepted
-// ReleaseContextInput.TrailerMode values.
+// trailerModeDefault and trailerModeCoauthorOnly are the accepted
+// ReleaseContextInput.TrailerMode values, named after the trailer shape they
+// emit rather than any consumer: "default" adds Release-Authorized-By +
+// Co-authored-by; "coauthor-only" emits Co-authored-by alone.
 const (
-	trailerModeDefault   = "default"
-	trailerModeForgejoCI = "forgejo-ci"
+	trailerModeDefault      = "default"
+	trailerModeCoauthorOnly = "coauthor-only"
 )
 
-// normalizeTrailerMode applies the default trailer mode and rejects
-// unknown modes.
+// normalizeTrailerMode applies the default trailer mode and rejects unknown
+// modes.
 func normalizeTrailerMode(mode string) (string, error) {
-	if mode == "" {
+	switch mode {
+	case "":
 		return trailerModeDefault, nil
+	case trailerModeDefault, trailerModeCoauthorOnly:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("release-context: trailer mode must be %q or %q (got %q): %w",
+			trailerModeDefault, trailerModeCoauthorOnly, mode, errs.ErrUsage)
 	}
-
-	if mode != trailerModeDefault && mode != trailerModeForgejoCI {
-		return "", fmt.Errorf("release-context: trailer mode must be default or forgejo-ci (got %q): %w", mode, errs.ErrUsage)
-	}
-
-	return mode, nil
 }
 
 // deriveReleaseIdentity resolves the release tag and (optional) request ref
@@ -155,7 +157,7 @@ func buildReleaseTrailers(ctx context.Context, repo releaseContextOps, requestRe
 	trailers := []string{"Release-Request: " + requestRef}
 
 	if info, err := repo.TaggerInfo(ctx, requestRef); err == nil && info.Tagger != "" {
-		if mode == trailerModeForgejoCI {
+		if mode == trailerModeCoauthorOnly {
 			if completeTaggerIdentity(info.Tagger) {
 				trailers = append(trailers, "Co-authored-by: "+info.Tagger)
 			}

@@ -351,8 +351,14 @@ model behind these is the *Artifact & credential model* section above:
 - **Run-artifact role** — implement `RunArtifactDownloader` for GitLab
   (`CI_JOB_TOKEN` / `CI_API_V4_URL`; map `--name` → producing job name);
   imperative upload stays `ErrUnsupported`-with-guidance.
-- **Release-asset upload/link** (Generic Package Registry + asset links) — the
-  adapter's `CreateRelease` works, but asset linking is still stubbed.
+- **Release-asset upload/link** (Generic Package Registry + asset links) — ✅
+  shipped. `CreateRelease` (delete-and-recreate) and `UploadReleaseAsset`
+  (project upload + release link, clobber-by-name) both work, and
+  **`PublishRelease` (the default in-place reconcile strategy) is now
+  implemented for GitLab too** — GET-probe → POST-create or PUT-update, upload
+  and link desired assets, delete stale links. So `release publish` works under
+  its default `--strategy reconcile` on GitHub, GitLab, and Forgejo alike (no
+  longer Forgejo-only).
 - **`CI_PIPELINE_SOURCE` event reader — ✅ shipped (canonical vocabulary via the
   provider context).** `validate event-context` now sources the event through
   `cienv.EventName()` and falls back to the provider-resolved `EventName` when

@@ -12,7 +12,7 @@
 //   - artifacts.go   — `sign`, `download-artifacts`
 //   - checksums.go   — `checksums` (write the SHA256 manifest)
 //   - create.go      — `create` (create the platform release)
-//   - notes.go       — `notes`, `verify-changelog`
+//   - notes.go       — `notes`, `validate-changelog`
 //   - sbomzip.go     — `sbom-zip` (bundle layered SBOMs)
 package release
 

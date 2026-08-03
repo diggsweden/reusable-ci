@@ -55,6 +55,11 @@ their version names pass the base-image staging policy.`,
 				registry = ociregistry.WithAuthFile(authFile)
 			}
 
+			// Base-image cleanup is forge-gated (it drives the package API's
+			// TagDeleter + ContainerPackageLister roles — Forgejo today) and
+			// needs the normalized --server-url injected as the Forgejo server,
+			// so it constructs the provider directly rather than resolving the
+			// env-detected one through deps.
 			forgeProvider := &forgejo.Provider{Env: func(key string) string {
 				if key == "FORGEJO_SERVER_URL" && common.ServerURL != "" {
 					return common.ServerURL

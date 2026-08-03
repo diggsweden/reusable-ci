@@ -24,7 +24,7 @@ type releasePolicyInputs struct {
 	ChangelogSkipVersionBump        bool
 	RefName                         string // CI_REF_NAME (tag name)
 	PipelineSBOMs                   string // union from parse-artifacts-config
-	AnyRequireAuthorization         bool   // any artefact's require_authorization
+	AnyRequireAuthorization         bool   // any artifact's require_authorization
 	HasContainers                   bool   // CONTAINERS != []
 }
 

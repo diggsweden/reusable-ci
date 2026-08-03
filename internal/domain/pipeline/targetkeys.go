@@ -21,7 +21,7 @@ package pipeline
 // stage-target struct.
 const (
 	// Build-stage targets (release + dev share these names).
-	// Go and Cargo are the artefact-first cross-compile jobs; their
+	// Go and Cargo are the artifact-first cross-compile jobs; their
 	// container-first counterparts live in the publish-stage block below.
 	TargetMaven         = "maven"
 	TargetNPM           = "npm"
@@ -35,9 +35,9 @@ const (
 	TargetVersionBump = "version_bump"
 
 	// Publish-stage targets (release + dev). The *ContainerFirst pair
-	// holds the artefacts whose Build SBOM ships from sbom-{lang}.yml at
+	// holds the artifacts whose Build SBOM ships from sbom-{lang}.yml at
 	// publish stage. The *ArtifactFirst pair (dev only today) carries
-	// the artefact-first set so dev-publish can disambiguate without
+	// the artifact-first set so dev-publish can disambiguate without
 	// re-deriving build-mode from the planned-artifact list.
 	TargetForgePackages       = "forge_packages"
 	TargetMavenCentral        = "maven_central"

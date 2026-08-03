@@ -18,9 +18,15 @@ import "github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 // issuer, so there is no issuer we can safely auto-supply: keyless signing
 // needs an explicit --oidc-issuer plus a Fulcio configured to trust it.
 func (p *Provider) Describe() provider.Info {
+	// SetupURL is a display hint. When the server is unresolved (a
+	// misconfigured runner) it degrades to the bare settings path rather than
+	// failing a describe — the operations that must not target the wrong host
+	// (client, registry auth, keyless identity) fail closed on their own.
+	server, _ := p.serverURL()
+
 	return provider.Info{
 		DisplayName: "Forgejo",
-		SetupURL:    p.serverURL() + "/user/settings/applications",
+		SetupURL:    server + "/user/settings/applications",
 		ScopesHint:  "A Forgejo access token with repository read/write scope is required.",
 		OIDCIssuer:  "",
 	}

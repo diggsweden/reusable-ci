@@ -362,7 +362,7 @@ func secretsContractHeader(body string) map[string]struct{} {
 }
 
 func signerVerifiesDistDigest(body string) bool {
-	return strings.Contains(body, "verify-dist") ||
+	return strings.Contains(body, "validate-dist") ||
 		(strings.Contains(body, "EXPECTED_DIGEST") && strings.Contains(body, "dist-digest")) ||
 		strings.Contains(body, "sha256sum.*sha256sum") ||
 		(strings.Contains(body, "sha256sum") && strings.Count(body, "sha256sum") >= 2)

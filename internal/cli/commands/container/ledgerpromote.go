@@ -141,7 +141,7 @@ func writePromotionJournal(ctx context.Context, run promotionRun) error {
 		return nil
 	}
 
-	records, err := imageledger.PlanPromotionJournal(ctx, run.reg, run.entries, run.releaseTag, run.stage)
+	records, err := imageledger.PlanReleasePromotionRollback(ctx, run.reg, run.entries, run.releaseTag, run.stage)
 	if err != nil {
 		return err
 	}

@@ -5,18 +5,17 @@ package imageledger
 
 import (
 	"fmt"
-	"regexp"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-// stageNameRE matches a stage name safe to use as the tag component of a
-// promoted ref (<base>:<name>) — the OCI tag charset. A release stage
-// (empty name) is exempt; it uses the entry's existing tags verbatim.
-//
-//nolint:gochecknoglobals // compiled regex — read-only.
-var stageNameRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
+// validStageName reports whether a stage name is safe to use as the tag
+// component of a promoted ref (<base>:<name>). A stage name IS an OCI tag
+// component, so it shares container's single-sourced charset rather than
+// re-spelling it. A release stage (empty name) is exempt; it uses the entry's
+// existing tags verbatim.
+func validStageName(name string) bool { return container.ValidOCITagComponent(name) }
 
 // Stage names a promotion target and computes the destination tags the
 // recorded digest is retagged to for that stage. It encodes the
@@ -83,7 +82,7 @@ func (s Stage) Validate() error {
 		return nil
 	}
 
-	if !stageNameRE.MatchString(s.Name) {
+	if !validStageName(s.Name) {
 		return fmt.Errorf("imageledger: invalid stage name %q (must be a valid OCI tag component): %w", s.Name, errs.ErrUsage)
 	}
 

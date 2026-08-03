@@ -144,7 +144,7 @@ func (p *Provider) downloadMatchingArtifacts(ctx context.Context, runIDStr strin
 			return provider.RunArtifactInfo{}, fmt.Errorf("get download URL for %q: %w", art.name, derr)
 		}
 
-		if mkErr := os.MkdirAll(dest, 0o755); mkErr != nil { //nolint:gosec // artefact dir read by downstream steps.
+		if mkErr := os.MkdirAll(dest, 0o755); mkErr != nil { //nolint:gosec // artifact dir read by downstream steps.
 			return provider.RunArtifactInfo{}, fmt.Errorf("mkdir %q: %w", dest, mkErr)
 		}
 
@@ -195,7 +195,7 @@ func (p *Provider) downloadRunArtifact(ctx context.Context, runIDStr, repository
 		return provider.RunArtifactInfo{}, fmt.Errorf("get artifact download URL: %w", err)
 	}
 
-	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil { //nolint:gosec // artefact dir read by downstream workflow steps.
+	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil { //nolint:gosec // artifact dir read by downstream workflow steps.
 		return provider.RunArtifactInfo{}, fmt.Errorf("mkdir %q: %w", dir, mkErr)
 	}
 
@@ -357,7 +357,7 @@ func extractZipInto(zr *zip.ReadCloser, dir string) (int64, int, error) {
 			continue
 		}
 
-		if mkErr := os.MkdirAll(filepath.Dir(dest), 0o755); mkErr != nil { //nolint:gosec // artefact dirs read by build steps.
+		if mkErr := os.MkdirAll(filepath.Dir(dest), 0o755); mkErr != nil { //nolint:gosec // artifact dirs read by build steps.
 			return 0, 0, fmt.Errorf("mkdir parent of %q: %w", dest, mkErr)
 		}
 

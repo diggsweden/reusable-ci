@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
 // Package cosign shells out to the system `cosign` binary for
-// Sigstore-keyless and KMS-backed artefact signing. The runtime
+// Sigstore-keyless and KMS-backed artifact signing. The runtime
 // image bakes cosign in; local runs need it on PATH.
 //
 // This adapter only handles the cosign subprocess. The dispatch
@@ -58,7 +58,7 @@ type SignBlobInput = release.BlobSignRequest
 //
 //   - nil when cosign exits 0 and the signature file is on disk.
 //   - errs.ErrUsage when the input is inconsistent (keyless + key,
-//     missing artefact, etc.).
+//     missing artifact, etc.).
 //   - cosign's exit-error otherwise; the underlying *exec.ExitError
 //     is preserved via %w so callers can extract the exit code.
 //
@@ -82,7 +82,7 @@ func (a *Adapter) SignBlob(ctx context.Context, in SignBlobInput, errOut io.Writ
 		args = append(args, "--key", in.KeyRef)
 	}
 
-	args = append(args, in.Artefact)
+	args = append(args, in.Artifact)
 
 	return a.run(ctx, errOut, args...)
 }
@@ -119,7 +119,7 @@ func (a *Adapter) VerifyBlob(ctx context.Context, in VerifyBlobInput, errOut io.
 		args = append(args, "--key", in.KeyRef)
 	}
 
-	args = append(args, in.Artefact)
+	args = append(args, in.Artifact)
 
 	return a.run(ctx, errOut, args...)
 }

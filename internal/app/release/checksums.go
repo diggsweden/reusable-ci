@@ -94,7 +94,7 @@ func Checksums(out io.Writer, in ChecksumsInput) (int, error) {
 		return outputAbs != "" && absOrSelf(path) == outputAbs
 	}
 
-	// Release artefacts: basename labels.
+	// Release artifacts: basename labels.
 	if err := checksumReleaseArtifacts(in.ReleaseArtifactsDir, out, write, skip); err != nil {
 		return count, err
 	}
@@ -288,7 +288,7 @@ func checksumWorkdirSBOMs(workdir string, out io.Writer, write func(absPath, lab
 }
 
 func sha256File(path string) (string, error) {
-	f, err := os.Open(path) //nolint:gosec,varnamelen // checksumming caller-supplied artefact path.
+	f, err := os.Open(path) //nolint:gosec,varnamelen // checksumming caller-supplied artifact path.
 	if err != nil {
 		return "", fmt.Errorf("open %q: %w", path, err)
 	}

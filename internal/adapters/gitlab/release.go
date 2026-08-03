@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -20,6 +21,24 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
+
+// contentTypeJSON is the request Content-Type for GitLab's JSON endpoints.
+const contentTypeJSON = "application/json"
+
+// releasePayload builds the GitLab release create/update body shared by
+// CreateRelease and PublishRelease so the two never drift. includeTag adds
+// tag_name (create only; on update the tag is in the URL, not the body).
+func releasePayload(spec provider.ReleaseSpec, desc string, includeTag bool) map[string]any {
+	payload := map[string]any{
+		"name":        cmp.Or(spec.Name, spec.Tag),
+		"description": desc,
+	}
+	if includeTag {
+		payload["tag_name"] = spec.Tag
+	}
+
+	return payload
+}
 
 // CreateRelease creates a GitLab release via REST API. Two-stage:
 //
@@ -56,7 +75,7 @@ func (p *Provider) CreateRelease(ctx context.Context, repo string, spec provider
 
 	headers := map[string]string{
 		"PRIVATE-TOKEN": token, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		"Content-Type":  "application/json",
+		"Content-Type":  contentTypeJSON,
 	}
 	encoded := url.PathEscape(repo)
 	endpoint := strings.TrimRight(apiBase, "/") + "/api/v4/projects/" + encoded + "/releases"
@@ -69,11 +88,7 @@ func (p *Provider) CreateRelease(ctx context.Context, repo string, spec provider
 		}
 	}
 
-	payload, err := json.Marshal(map[string]any{
-		"name":        cmp.Or(spec.Name, spec.Tag),
-		"tag_name":    spec.Tag,
-		"description": desc,
-	})
+	payload, err := json.Marshal(releasePayload(spec, desc, true))
 	if err != nil {
 		return fmt.Errorf("marshal release payload: %w", err)
 	}
@@ -85,6 +100,138 @@ func (p *Provider) CreateRelease(ctx context.Context, repo string, spec provider
 	for _, asset := range spec.Assets {
 		if err := p.uploadAndLinkReleaseAsset(ctx, apiBase, encoded, repo, spec.Tag, asset, headers); err != nil {
 			return err
+		}
+	}
+
+	return nil
+}
+
+// PublishRelease creates the release for spec.Tag if it is missing, or updates
+// it and reconciles its asset links in place otherwise. Unlike CreateRelease it
+// never deletes the release object: an existing release is updated via
+// PUT /releases/:tag, colliding asset links are replaced by name, desired
+// assets are uploaded and linked, and links no longer in spec.Assets are
+// removed. It satisfies the provider.ReleasePublisher role.
+func (p *Provider) PublishRelease(ctx context.Context, repo string, spec provider.ReleaseSpec) error {
+	if spec.Tag == "" {
+		return fmt.Errorf("PublishRelease: tag is empty: %w", errs.ErrUsage)
+	}
+
+	if repo == "" {
+		return fmt.Errorf("PublishRelease: repo is empty: %w", errs.ErrUsage)
+	}
+
+	apiBase, headers := p.releaseAPIContext()
+	encoded := url.PathEscape(repo)
+
+	desc := spec.Name
+	if spec.NotesFile != "" {
+		if body, err := os.ReadFile(spec.NotesFile); err == nil {
+			desc = string(body)
+		}
+	}
+
+	if err := p.upsertRelease(ctx, apiBase, encoded, spec, desc, headers); err != nil {
+		return err
+	}
+
+	for _, asset := range spec.Assets {
+		if err := p.uploadAndLinkReleaseAsset(ctx, apiBase, encoded, repo, spec.Tag, asset, headers); err != nil {
+			return err
+		}
+	}
+
+	return p.deleteStaleReleaseLinks(ctx, apiBase, encoded, spec.Tag, spec.Assets, headers)
+}
+
+// upsertRelease creates the release when it does not yet exist, otherwise
+// updates its name/description in place via PUT (never deleting it).
+func (p *Provider) upsertRelease(ctx context.Context, apiBase, encoded string, spec provider.ReleaseSpec, desc string, headers map[string]string) error {
+	releasesEndpoint := strings.TrimRight(apiBase, "/") + "/api/v4/projects/" + encoded + "/releases"
+
+	jsonHeaders := make(map[string]string, len(headers)+1)
+	for key, value := range headers {
+		jsonHeaders[key] = value
+	}
+
+	jsonHeaders["Content-Type"] = contentTypeJSON
+
+	exists, err := p.releaseExists(ctx, releasesEndpoint, spec.Tag, headers)
+	if err != nil {
+		return err
+	}
+
+	if exists {
+		payload, marshalErr := json.Marshal(releasePayload(spec, desc, false))
+		if marshalErr != nil {
+			return fmt.Errorf("marshal release update payload: %w", marshalErr)
+		}
+
+		endpoint := releasesEndpoint + "/" + url.PathEscape(spec.Tag)
+		if err := putJSON(ctx, p.HTTPClient, endpoint, jsonHeaders, payload); err != nil {
+			return fmt.Errorf("gitlab update release %s: %w", spec.Tag, err)
+		}
+
+		return nil
+	}
+
+	payload, marshalErr := json.Marshal(releasePayload(spec, desc, true))
+	if marshalErr != nil {
+		return fmt.Errorf("marshal release payload: %w", marshalErr)
+	}
+
+	if err := postJSON(ctx, p.HTTPClient, releasesEndpoint, jsonHeaders, payload); err != nil {
+		return fmt.Errorf("gitlab create release: %w", err)
+	}
+
+	return nil
+}
+
+// releaseExists reports whether a release for tag already exists. A typed 404
+// (errs.ErrMissingInput) means "no such release"; any other error propagates.
+func (p *Provider) releaseExists(ctx context.Context, releasesEndpoint, tag string, headers map[string]string) (bool, error) {
+	endpoint := releasesEndpoint + "/" + url.PathEscape(tag)
+
+	if _, err := getJSON(ctx, p.HTTPClient, endpoint, headers); err != nil {
+		if errors.Is(err, errs.ErrMissingInput) {
+			return false, nil
+		}
+
+		return false, fmt.Errorf("gitlab check release %s: %w", tag, err)
+	}
+
+	return true, nil
+}
+
+// deleteStaleReleaseLinks removes every asset link whose name is not among the
+// desired assets' basenames, so a reconcile publish converges the link set.
+func (p *Provider) deleteStaleReleaseLinks(ctx context.Context, apiBase, encoded, tag string, desired []string, headers map[string]string) error {
+	linksEndpoint := strings.TrimRight(apiBase, "/") + "/api/v4/projects/" + encoded +
+		"/releases/" + url.PathEscape(tag) + "/assets/links"
+
+	body, err := getJSON(ctx, p.HTTPClient, linksEndpoint, headers)
+	if err != nil {
+		return fmt.Errorf("gitlab list release asset links for %s: %w", tag, err)
+	}
+
+	var links []gitlabReleaseLink
+	if err := json.Unmarshal(body, &links); err != nil {
+		return fmt.Errorf("gitlab parse release asset links for %s: %w", tag, err)
+	}
+
+	desiredNames := make(map[string]struct{}, len(desired))
+	for _, file := range desired {
+		desiredNames[filepath.Base(file)] = struct{}{}
+	}
+
+	for _, link := range links {
+		if _, keep := desiredNames[link.Name]; keep {
+			continue
+		}
+
+		deleteEndpoint := linksEndpoint + "/" + strconv.Itoa(link.ID)
+		if err := deleteJSON(ctx, p.HTTPClient, deleteEndpoint, headers); err != nil {
+			return fmt.Errorf("gitlab delete stale release asset link %q: %w", link.Name, err)
 		}
 	}
 
@@ -237,7 +384,7 @@ func (p *Provider) createReleaseLink(ctx context.Context, apiBase, encodedProjec
 		linkHeaders[key] = value
 	}
 
-	linkHeaders["Content-Type"] = "application/json"
+	linkHeaders["Content-Type"] = contentTypeJSON
 
 	linksEndpoint := strings.TrimRight(apiBase, "/") + "/api/v4/projects/" + encodedProject +
 		"/releases/" + url.PathEscape(tag) + "/assets/links"

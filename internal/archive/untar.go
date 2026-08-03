@@ -27,7 +27,7 @@ import (
 // entries during one extraction. Defense in depth against decompression
 // bombs: even when each tar.Header.Size is honest, an archive with
 // many large entries could still exhaust the runner's disk. 2 GiB is
-// well above any legitimate artefact this pipeline extracts (npm
+// well above any legitimate artifact this pipeline extracts (npm
 // tarballs are tens of MB, Maven JARs hundreds of MB) and refuses
 // runaway aggregates without breaking real builds.
 const maxTarballUncompressedSize int64 = 2 << 30

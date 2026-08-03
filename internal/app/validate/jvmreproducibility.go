@@ -26,7 +26,7 @@ type JVMReproducibilityInput struct {
 }
 
 // JVMReproducibility checks every planned Maven/Gradle (JVM + Android)
-// artefact for the manifest setting required to make its archive
+// artifact for the manifest setting required to make its archive
 // byte-identical across rebuilds. Cargo has a symmetric check on
 // Cargo.lock; this is the JVM-side counterpart.
 //
@@ -34,8 +34,8 @@ type JVMReproducibilityInput struct {
 // to the deterministic-pipeline contract. The error message includes
 // the exact snippet to paste into pom.xml / build.gradle so the fix is
 // one copy-paste away. Adopters who can't (or won't) fix the upstream
-// build script can drop the JVM artefact from `release-orchestrator`'s
-// matrix; there is no per-artefact opt-out for the reproducibility
+// build script can drop the JVM artifact from `release-orchestrator`'s
+// matrix; there is no per-artifact opt-out for the reproducibility
 // invariant itself.
 //
 // Heuristic detection:
@@ -60,7 +60,7 @@ func JVMReproducibility(_ context.Context, out io.Writer, annot output.Annotator
 
 	maven, gradle, android := jvmArtifactsFromPlan(plan)
 	if len(maven)+len(gradle)+len(android) == 0 {
-		annot.Noticef("No Maven/Gradle artefacts to check for reproducibility")
+		annot.Noticef("No Maven/Gradle artifacts to check for reproducibility")
 
 		return nil
 	}
@@ -84,7 +84,7 @@ func JVMReproducibility(_ context.Context, out io.Writer, annot output.Annotator
 	return nil
 }
 
-// runMavenReproChecks walks every Maven artefact, deduplicates by
+// runMavenReproChecks walks every Maven artifact, deduplicates by
 // working directory, and runs checkMavenReproducibility for each.
 // Returns (true, nil) when every check passed.
 func runMavenReproChecks(artifacts []pipeline.PlannedArtifact, seen map[string]bool, out io.Writer, annot output.Annotator) (bool, error) {
@@ -110,7 +110,7 @@ func runMavenReproChecks(artifacts []pipeline.PlannedArtifact, seen map[string]b
 }
 
 // runGradleReproChecks mirrors runMavenReproChecks for the combined
-// Gradle + Gradle-Android artefact list.
+// Gradle + Gradle-Android artifact list.
 func runGradleReproChecks(artifacts []pipeline.PlannedArtifact, seen map[string]bool, out io.Writer, annot output.Annotator) (bool, error) {
 	allOK := true
 
@@ -136,7 +136,7 @@ func runGradleReproChecks(artifacts []pipeline.PlannedArtifact, seen map[string]
 // parseConfigPlan unwraps the static config-plan JSON; same shape and
 // version-pinning logic as plannedCargoArtifacts but reads the
 // top-level config plan rather than the publish-stage plan, because
-// Maven/Gradle artefacts live in release-build-stage, not publish.
+// Maven/Gradle artifacts live in release-build-stage, not publish.
 func parseConfigPlan(value string) (pipeline.ConfigPlan, error) {
 	if strings.TrimSpace(value) == "" {
 		return pipeline.ConfigPlan{}, fmt.Errorf("config-plan-json is required: %w", errs.ErrUsage)
@@ -167,7 +167,7 @@ func jvmArtifactsFromPlan(plan pipeline.ConfigPlan) ([]pipeline.PlannedArtifact,
 			android = append(android, art)
 		default:
 			// NPM / Go / Cargo / XcodeIOS / Python / Meta / Auto /
-			// Unknown — not JVM artefacts, skipped.
+			// Unknown — not JVM artifacts, skipped.
 		}
 	}
 
@@ -209,7 +209,7 @@ func mavenOutputTimestamp(pom mavenPOM) (string, bool) {
 	return "", false
 }
 
-// checkMavenReproducibility returns true when the Maven artefact at dir
+// checkMavenReproducibility returns true when the Maven artifact at dir
 // satisfies the reproducibility invariant. False = a hard violation
 // that JVMReproducibility surfaces as ErrValidation.
 func checkMavenReproducibility(dir string, out io.Writer, annot output.Annotator) bool {
@@ -268,7 +268,7 @@ var gradleBuildScripts = []string{
 	"build.gradle",
 }
 
-// checkGradleReproducibility returns true when the Gradle artefact at
+// checkGradleReproducibility returns true when the Gradle artifact at
 // dir satisfies the reproducibility invariant. False = a hard violation
 // that JVMReproducibility surfaces as ErrValidation.
 func checkGradleReproducibility(dir string, out io.Writer, annot output.Annotator) bool {

@@ -31,7 +31,7 @@ func renderChangelogCmd() *cli.Command {
 			&cli.StringFlag{Name: "changelog-path", Value: "CHANGELOG.md", Sources: cli.EnvVars("CHANGELOG_PATH"), Usage: "output changelog path"},
 			&cli.StringFlag{Name: "commit-body-path", Value: "commit-body.txt", Sources: cli.EnvVars("COMMIT_BODY_PATH"), Usage: "output commit body path"},
 			&cli.StringFlag{Name: "commit-message-file", Value: defaultCommitMessageFile, Sources: cli.EnvVars("COMMIT_MESSAGE_FILE"), Usage: "output commit message path"},
-			&cli.StringFlag{Name: "existing-release-sha-file", Value: ".forgejo-ci-existing-release-sha", Sources: cli.EnvVars("EXISTING_RELEASE_SHA_FILE"), Usage: "marker file written when same-version recovery reuses an existing release tag"},
+			&cli.StringFlag{Name: "existing-release-sha-file", Value: ".existing-release-sha", Sources: cli.EnvVars("EXISTING_RELEASE_SHA_FILE"), Usage: "marker file written when same-version recovery reuses an existing release tag"},
 			&cli.StringFlag{Name: "remote", Value: "origin", Sources: cli.EnvVars("RELEASE_REMOTE"), Usage: "git remote to query"},
 			&cli.StringFlag{Name: flagBranch, Value: "main", Sources: cli.EnvVars("RELEASE_BRANCH", "BRANCH"), Usage: "branch containing the release bump"},
 		},

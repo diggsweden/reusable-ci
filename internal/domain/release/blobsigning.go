@@ -10,7 +10,7 @@ import (
 )
 
 // BlobSignRequest is the port-level request for producing a Sigstore
-// bundle signature over a release artefact file. The cosign adapter
+// bundle signature over a release artifact file. The cosign adapter
 // implements the operation (its SignBlobInput is an alias of this
 // type); app-layer use cases construct it without importing the
 // adapter — the same pattern as container.ImageSignRequest. The
@@ -19,8 +19,8 @@ import (
 // one self-contained JSON sidecar holding signature, optional Fulcio
 // certificate, and Rekor proof.
 type BlobSignRequest struct {
-	// Artefact is the file being signed.
-	Artefact string
+	// Artifact is the file being signed.
+	Artifact string
 
 	// BundlePath receives the Sigstore v3 bundle JSON. Required for
 	// every method (cosign 3.x removed the split sig+cert layout).
@@ -47,8 +47,8 @@ type BlobSignRequest struct {
 // the specific field at fault rather than a cryptic cosign-exit-1
 // with a stack trace.
 func (in BlobSignRequest) Validate() error {
-	if in.Artefact == "" {
-		return fmt.Errorf("cosign sign: artefact path is empty: %w", errs.ErrUsage)
+	if in.Artifact == "" {
+		return fmt.Errorf("cosign sign: artifact path is empty: %w", errs.ErrUsage)
 	}
 
 	if in.BundlePath == "" {
@@ -71,14 +71,14 @@ func (in BlobSignRequest) Validate() error {
 }
 
 // BlobVerifyRequest is the port-level request for verifying a Sigstore
-// bundle signature over a release artefact file. Like BlobSignRequest,
+// bundle signature over a release artifact file. Like BlobSignRequest,
 // the caller supplies every path; the adapter never guesses. cosign
 // 3.x verify consumes a single bundle file and requires the caller to
 // declare identity constraints (regexp + issuer for keyless; pubkey
 // for KMS) — the bundle itself doesn't encode trust.
 type BlobVerifyRequest struct {
-	// Artefact is the file whose signature is being verified.
-	Artefact string
+	// Artifact is the file whose signature is being verified.
+	Artifact string
 
 	// BundlePath is the v3 bundle JSON sidecar (produced by Sign-
 	// Blob). Required for every method.
@@ -97,8 +97,8 @@ type BlobVerifyRequest struct {
 
 // Validate enforces request consistency before any subprocess runs.
 func (in BlobVerifyRequest) Validate() error {
-	if in.Artefact == "" {
-		return fmt.Errorf("cosign verify: artefact path is empty: %w", errs.ErrUsage)
+	if in.Artifact == "" {
+		return fmt.Errorf("cosign verify: artifact path is empty: %w", errs.ErrUsage)
 	}
 
 	if in.BundlePath == "" {

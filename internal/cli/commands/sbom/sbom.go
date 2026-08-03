@@ -11,7 +11,7 @@
 //     (--image-name/--image-digest for a multi-artifact analyzed-container SBOM)
 //   - build    — the build-layer GENERATE tier: run the ecosystem's native
 //     CycloneDX tool (go/cargo) to emit the build bom.json on a toolchain runner
-//   - find     — locate an existing SBOM artefact on disk
+//   - find     — locate an existing SBOM artifact on disk
 //
 // All SBOM concerns live here, not split across `build`; `build <eco>` only
 // builds artifacts (its `run` still emits the build BOM as a byproduct).

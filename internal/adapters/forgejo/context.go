@@ -50,13 +50,12 @@ func (p *Provider) ResolveContext(_ context.Context) (*provider.EventContext, er
 
 	repo := get("REPOSITORY")
 
+	// No default host: Forgejo is self-hosted, so an unresolved server yields
+	// an empty RepoURL rather than a guess at a specific instance.
 	server := get("SERVER_URL")
-	if server == "" {
-		server = defaultServer
-	}
 
 	repoURL := ""
-	if repo != "" {
+	if repo != "" && server != "" {
 		repoURL = strings.TrimRight(server, "/") + "/" + repo
 	}
 

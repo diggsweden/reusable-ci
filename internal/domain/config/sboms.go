@@ -69,7 +69,7 @@ func ExpandSBOMs(value string) ([]SBOMLayer, error) {
 	return out, nil
 }
 
-// PipelineSBOMs is the union of every artefact's effective layers, returned
+// PipelineSBOMs is the union of every artifact's effective layers, returned
 // in canonical order (build, analyzed-artifact, analyzed-container). The typed
 // config plan carries this value for later release planning.
 //

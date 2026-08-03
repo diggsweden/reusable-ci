@@ -23,10 +23,15 @@ func (p *Provider) ResolveRegistryAuth() (provider.RegistryAuth, error) {
 			})
 	}
 
+	server, err := p.serverURL()
+	if err != nil {
+		return provider.RegistryAuth{}, err
+	}
+
 	return provider.RegistryAuth{
 		// serverURL carries a scheme; RegistryAuth.MatchesRegistry strips it
 		// before comparing, so the host lines up with the login target.
-		Registry: p.serverURL(),
+		Registry: server,
 		Username: strings.TrimSpace(firstNonEmpty(p.envFunc(), "FORGEJO_ACTOR", "GITHUB_ACTOR")),
 		Token:    token,
 	}, nil

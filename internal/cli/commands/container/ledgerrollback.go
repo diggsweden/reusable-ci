@@ -77,7 +77,7 @@ func ledgerRollbackFromLedger(ctx context.Context, cmd *cli.Command, dep *deps.D
 		TargetRepo:          cmd.String("stage-repo"),
 		UseEntryReleaseTags: cmd.Bool("release-tags-from-ledger"),
 	}
-	if err := imageledger.Rollback(ctx, reg, entries, cmd.String(flagTag), stage); err != nil {
+	if err := imageledger.RollbackStage(ctx, reg, entries, cmd.String(flagTag), stage); err != nil {
 		return err
 	}
 
@@ -90,7 +90,7 @@ func ledgerRollbackFromLedger(ctx context.Context, cmd *cli.Command, dep *deps.D
 // rollback --journal` and `release-images rollback`: undo the journaled
 // promotion, then report with the caller's message prefix.
 func runPromotionJournalRollback(ctx context.Context, reg imageledger.PromotionRollbackRegistry, records []imageledger.PromotionRecord, tag, msgPrefix string) error {
-	if err := imageledger.RollbackPromotionJournal(ctx, reg, records, tag); err != nil {
+	if err := imageledger.RollbackReleasePromotion(ctx, reg, records, tag); err != nil {
 		return err
 	}
 

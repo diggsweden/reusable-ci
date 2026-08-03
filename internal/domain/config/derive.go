@@ -35,7 +35,7 @@ func Derive(cfg *Config) error {
 
 		eff, err := ExpandSBOMs(sbomsValue)
 		if err != nil {
-			return fmt.Errorf("artefact %q: %w", a.Name, err)
+			return fmt.Errorf("artifact %q: %w", a.Name, err)
 		}
 
 		a.EffectiveSBOMs = eff
@@ -70,8 +70,8 @@ func GoArtifactBuildMode(a Artifact) GoBuildMode {
 	return GoBuildMode(strings.TrimSpace(string(a.Go.BuildMode)))
 }
 
-// CargoArtifactBuildMode mirrors GoArtifactBuildMode for Cargo artefacts.
-// Returns "" for non-Cargo artefacts or when build-mode was omitted.
+// CargoArtifactBuildMode mirrors GoArtifactBuildMode for Cargo artifacts.
+// Returns "" for non-Cargo artifacts or when build-mode was omitted.
 func CargoArtifactBuildMode(a Artifact) CargoBuildMode {
 	if a.ProjectType != projecttype.Cargo || a.Cargo == nil {
 		return ""
@@ -136,7 +136,7 @@ func resolveContainer(c *Container, byName map[string]*Artifact) { //nolint:varn
 // containerDepScan summarises everything resolveContainer needs from
 // one walk of a container's From list. Returning a struct (rather than
 // four positional results) keeps the call site readable as the set of
-// artefact-first ecosystems grows.
+// artifact-first ecosystems grows.
 type containerDepScan struct {
 	typesSeen         map[projecttype.Type]bool
 	analyzedContainer bool

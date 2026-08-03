@@ -230,10 +230,10 @@ func TestNewConfigPlan_BuildArtifactNamesMatchConditionalUploads(t *testing.T) {
 
 // TestNewConfigPlan_CargoArtifactNameOnContainer pins the Go/Cargo
 // symmetry for the container `from:` referent — when a container
-// consumes an artefact-first cargo artefact, the planner exposes its
+// consumes an artifact-first cargo artifact, the planner exposes its
 // upload name via Container.CargoArtifactName so publish-container.yml
 // can `actions/download-artifact` it into the build context. Missing
-// this slot would mean the documented artefact-first cargo → container
+// this slot would mean the documented artifact-first cargo → container
 // path silently no-ops (the container build sees no binary).
 func TestNewConfigPlan_CargoArtifactNameOnContainer(t *testing.T) {
 	t.Parallel()
@@ -260,7 +260,7 @@ func TestNewConfigPlan_CargoArtifactNameOnContainer(t *testing.T) {
 	}
 
 	if got := byName["cli-image"].CargoArtifactName; got != "cli" {
-		t.Errorf("artefact-first cargo dep: CargoArtifactName = %q, want %q", got, "cli")
+		t.Errorf("artifact-first cargo dep: CargoArtifactName = %q, want %q", got, "cli")
 	}
 
 	if got := byName["svc-image"].CargoArtifactName; got != "" {
@@ -269,14 +269,14 @@ func TestNewConfigPlan_CargoArtifactNameOnContainer(t *testing.T) {
 }
 
 // TestNewConfigPlan_CargoBuildArtifactGatedByBuildMode pins the Go/Cargo
-// symmetry for BuildArtifactName: artefact-first emits a real upload
+// symmetry for BuildArtifactName: artifact-first emits a real upload
 // name (so release-create-github transfers the binary back to the
 // GitHub release); container-first emits "" (no build-stage upload — the
 // binary stays inside the container build or ships via extract.binary).
 //
 // Regression guard for the bug where ResolveArtifactNames(Cargo) used
 // to return the SBOM name in the BuildArtifact slot, leaving
-// artefact-first cargo binaries silently absent from the transfer plan.
+// artifact-first cargo binaries silently absent from the transfer plan.
 func TestNewConfigPlan_CargoBuildArtifactGatedByBuildMode(t *testing.T) {
 	t.Parallel()
 
@@ -296,14 +296,14 @@ func TestNewConfigPlan_CargoBuildArtifactGatedByBuildMode(t *testing.T) {
 	}
 
 	if got := byName["cli"].BuildArtifactName; got != "cli-cargo-build-artifacts" {
-		t.Errorf("artefact-first cargo BuildArtifactName = %q, want %q", got, "cli-cargo-build-artifacts")
+		t.Errorf("artifact-first cargo BuildArtifactName = %q, want %q", got, "cli-cargo-build-artifacts")
 	}
 
 	if got := byName["svc"].BuildArtifactName; got != "" {
 		t.Errorf("container-first cargo BuildArtifactName = %q, want empty", got)
 	}
 
-	// Both modes carry a Build SBOM name (artefact-first inline,
+	// Both modes carry a Build SBOM name (artifact-first inline,
 	// container-first via sbom-cargo.yml at publish stage).
 	for _, name := range []string{"cli", "svc"} {
 		want := name + "-cargo-build-sbom"

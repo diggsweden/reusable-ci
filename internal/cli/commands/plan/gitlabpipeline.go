@@ -35,7 +35,7 @@ EXAMPLE:
    reusable-ci plan gitlab-build-pipeline --component-ref 1.0.0 --output build-pipeline.yml`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "build-stage-plan-json", Sources: cli.EnvVars("BUILD_STAGE_PLAN_JSON"), Usage: "typed build-stage plan JSON (from 'plan release')"},
-			&cli.StringFlag{Name: "component-base", Value: "$CI_SERVER_FQDN/diggsweden/reusable-ci", Sources: cli.EnvVars("COMPONENT_BASE"), Usage: "Catalog path prefix for the build-<eco> components"},
+			&cli.StringFlag{Name: "component-base", Value: "$CI_SERVER_FQDN/$CI_PROJECT_PATH", Sources: cli.EnvVars("COMPONENT_BASE"), Usage: "CI/CD Catalog path prefix for the build-<eco> components (default: this project's own catalog)"},
 			&cli.StringFlag{Name: "component-ref", Required: true, Sources: cli.EnvVars("COMPONENT_REF"), Usage: "component version to pin (e.g. 1.0.0)"},
 			&cli.StringFlag{Name: "version", Sources: cli.EnvVars("VERSION"), Usage: "release version forwarded to each build component"},
 			&cli.StringFlag{Name: "output", Sources: cli.EnvVars("OUTPUT_FILE"), Usage: "destination path for the child pipeline (default: stdout)"},
@@ -86,7 +86,7 @@ EXAMPLE:
    reusable-ci plan gitlab-publish-pipeline --component-ref 1.0.0 --output publish-pipeline.yml`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "publish-stage-plan-json", Sources: cli.EnvVars("PUBLISH_STAGE_PLAN_JSON"), Usage: "typed publish-stage plan JSON (from 'plan release')"},
-			&cli.StringFlag{Name: "component-base", Value: "$CI_SERVER_FQDN/diggsweden/reusable-ci", Sources: cli.EnvVars("COMPONENT_BASE"), Usage: "Catalog path prefix for the publish-<target> components"},
+			&cli.StringFlag{Name: "component-base", Value: "$CI_SERVER_FQDN/$CI_PROJECT_PATH", Sources: cli.EnvVars("COMPONENT_BASE"), Usage: "CI/CD Catalog path prefix for the publish-<target> components (default: this project's own catalog)"},
 			&cli.StringFlag{Name: "component-ref", Required: true, Sources: cli.EnvVars("COMPONENT_REF"), Usage: "component version to pin (e.g. 1.0.0)"},
 			&cli.StringFlag{Name: "version", Sources: cli.EnvVars("VERSION"), Usage: "release version forwarded to each publish component"},
 			&cli.StringFlag{Name: "output", Sources: cli.EnvVars("OUTPUT_FILE"), Usage: "destination path for the child pipeline (default: stdout)"},

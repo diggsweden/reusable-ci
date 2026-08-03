@@ -17,12 +17,10 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-const (
-	// No default remote: the engine must not assume one org's forgejo-ci
-	// fork. The caller supplies --remote (or a local --repo-dir).
-	defaultPinMain    = "main"
-	defaultPinSubject = "forgejo-ci"
-)
+// No default remote or subject: the engine must not assume one org's
+// reusable-workflow repo. The caller supplies --remote (or a local --repo-dir)
+// and --subject (the pin slug to scan for).
+const defaultPinMain = "main"
 
 // PinReachabilityInput drives `validate pin-reachability`.
 type PinReachabilityInput struct {
@@ -39,13 +37,19 @@ type PinReachabilityInput struct {
 // not reachable from the configured main branch and is not the commit pointed to
 // by any tag. This catches history-rewrite/orphaned-pin failures while the git
 // object may still be resolvable before server-side GC.
+//
+//nolint:cyclop // linear validate→collect→clone→check flow; splitting it would obscure the sequence.
 func PinReachability(ctx context.Context, out io.Writer, in PinReachabilityInput) error {
 	if len(in.Workflows) == 0 {
 		return fmt.Errorf("usage: validate pin-reachability --workflow WORKFLOW.yml [--workflow WORKFLOW.yml ...]: %w", errs.ErrUsage)
 	}
 
 	mainBranch := defaultString(in.Main, defaultPinMain)
-	subject := defaultString(in.Subject, defaultPinSubject)
+
+	subject := in.Subject
+	if subject == "" {
+		return fmt.Errorf("validate pin-reachability: --subject is required (the pin slug to scan for, e.g. forgejo-ci): %w", errs.ErrUsage)
+	}
 
 	pins, err := collectPinReachabilitySHAs(in.Workflows, subject)
 	if err != nil {

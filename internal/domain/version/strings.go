@@ -13,7 +13,7 @@ import "strings"
 
 // SanitizePathToken maps any character outside [a-zA-Z0-9._-] to '-' and
 // strips leading/trailing dashes. The result is safe for filesystem paths,
-// Docker/OCI tags, and artefact basenames.
+// Docker/OCI tags, and artifact basenames.
 //
 // Idempotent: sanitising an already-clean token returns it unchanged.
 func SanitizePathToken(in string) string {

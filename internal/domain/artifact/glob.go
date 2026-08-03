@@ -16,6 +16,13 @@ import (
 // CollectUpload resolves an upload set, dispatching on which selector the
 // caller supplied: glob patterns (paths) preserve directory structure, while
 // dir/files use the literal walk/flatten collection. Paths take precedence.
+//
+// Unlike the rest of domain, this and its helpers walk the real filesystem
+// (os.Lstat / filepath.WalkDir) and emit ABSOLUTE paths in UploadEntry.Abs —
+// deliberately, because the transport layer opens those files by path. This is
+// a genuine collect-time boundary, not an fs.FS candidate: fs.FS has no notion
+// of absolute paths, and the least-common-ancestor rooting works in abs-path
+// space. Keep it here rather than "purifying" it into an adapter.
 func CollectUpload(dir string, files, paths []string, includeHidden bool) ([]UploadEntry, error) {
 	if len(paths) > 0 {
 		return CollectGlobEntries(paths, includeHidden)

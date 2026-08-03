@@ -36,12 +36,6 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
-// defaultServer is the fallback Forgejo host when neither
-// FORGEJO_SERVER_URL nor GITHUB_SERVER_URL is set (e.g. a misconfigured
-// runner). Codeberg is the most common public Forgejo instance; this
-// mirrors the gitlab adapter defaulting to gitlab.com.
-const defaultServer = "https://codeberg.org"
-
 // assumedServerVersion is fed to the SDK so NewClient does NOT probe the
 // server's /api/v1/version on every construction (we build one client
 // per call). The endpoints this adapter uses — repos, releases,
@@ -98,17 +92,19 @@ func (p *Provider) envFunc() func(string) string {
 
 // serverURL resolves the Forgejo server base URL (no trailing slash).
 // Precedence: explicit override → $FORGEJO_SERVER_URL → $GITHUB_SERVER_URL
-// (the runner sets both) → defaultServer.
-func (p *Provider) serverURL() string {
+// (the runner sets both). Unlike GitHub/GitLab, Forgejo is self-hosted with no
+// canonical host, so there is no safe default to fall back to: when none is
+// set, resolution fails rather than silently targeting a specific instance.
+func (p *Provider) serverURL() (string, error) {
 	if p.APIBaseOverride != "" {
-		return strings.TrimRight(p.APIBaseOverride, "/")
+		return strings.TrimRight(p.APIBaseOverride, "/"), nil
 	}
 
 	if v := firstNonEmpty(p.envFunc(), "FORGEJO_SERVER_URL", "GITHUB_SERVER_URL"); v != "" {
-		return strings.TrimRight(v, "/")
+		return strings.TrimRight(v, "/"), nil
 	}
 
-	return defaultServer
+	return "", fmt.Errorf("forgejo: server URL is required (set $FORGEJO_SERVER_URL or $GITHUB_SERVER_URL): %w", errs.ErrUsage)
 }
 
 // token resolves the API token. Precedence: $FORGEJO_TOKEN →
@@ -150,7 +146,12 @@ func (p *Provider) clientWithToken(ctx context.Context, token string) (*gitea.Cl
 		gitea.SetHTTPClient(p.httpClient()),
 	}
 
-	client, err := gitea.NewClient(p.serverURL(), opts...)
+	server, err := p.serverURL()
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := gitea.NewClient(server, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("forgejo client: %w", err)
 	}

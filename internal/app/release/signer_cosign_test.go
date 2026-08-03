@@ -83,7 +83,7 @@ func TestCosignSigner_SigstoreSignFileShape(t *testing.T) {
 	}
 
 	want := cosign.SignBlobInput{
-		Artefact:   "/tmp/app.tgz",
+		Artifact:   "/tmp/app.tgz",
 		BundlePath: "/tmp/app.tgz.bundle",
 		Keyless:    true,
 		OIDCIssuer: "https://token.actions.githubusercontent.com",
@@ -109,7 +109,7 @@ func TestCosignSigner_KMSSignFileShape(t *testing.T) {
 	}
 
 	want := cosign.SignBlobInput{
-		Artefact:   "/tmp/app.tgz",
+		Artifact:   "/tmp/app.tgz",
 		BundlePath: "/tmp/app.tgz.bundle",
 		KeyRef:     "hashivault://transit/keys/release",
 	}

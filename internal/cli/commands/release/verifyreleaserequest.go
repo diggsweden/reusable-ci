@@ -19,10 +19,10 @@ import (
 // final vX.Y.Z tag and is SSH-signed by an allowed signer.
 func verifyRequestCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "verify-request",
-		Usage: "verify an SSH-signed release-request tag authorizes creating a final release tag",
+		Name:  "validate-request",
+		Usage: "validate an SSH-signed release-request tag authorizes creating a final release tag",
 		Description: `EXAMPLE:
-   reusable-ci release verify-request --release-request release-request/v1.2.3 --tag v1.2.3 --allowed-signers-file .forgejo/release-request.allowed_signers`,
+   reusable-ci release validate-request --release-request release-request/v1.2.3 --tag v1.2.3 --allowed-signers-file .forgejo/release-request.allowed_signers`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "release-request", Required: true, Sources: cli.EnvVars("RELEASE_REQUEST"), Usage: "release request tag (release-request/vMAJOR.MINOR.PATCH)"},
 			&cli.StringFlag{Name: flagTag, Required: true, Sources: cienv.Tag(), Usage: "final stable release tag (vMAJOR.MINOR.PATCH)"},

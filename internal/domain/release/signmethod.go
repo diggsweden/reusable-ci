@@ -11,13 +11,13 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-// SignMethod selects how `release sign` produces the per-artefact
+// SignMethod selects how `release sign` produces the per-artifact
 // signature. Three methods cover the matrix of operator constraints:
 //
 //   - SignMethodGPG: long-lived OpenPGP key passed via $GPG_PRIVATE_KEY.
 //     The historical default. Subject to the swap-refusal policy
 //     because the decrypted key lives in the Go heap during signing.
-//     Verification is `gpg --verify <artefact>.asc <artefact>`.
+//     Verification is `gpg --verify <artifact>.asc <artifact>`.
 //
 //   - SignMethodSigstore: keyless OIDC-bound signing via cosign +
 //     Fulcio + Rekor. No private key exists for more than ~10 minutes;
@@ -100,7 +100,7 @@ func joinMethods(methods []SignMethod) string {
 }
 
 // SignatureExtensions returns the sidecar file extensions a given
-// method produces alongside an artefact. GPG produces one armored
+// method produces alongside an artifact. GPG produces one armored
 // detached signature (`.asc`); cosign methods (both Sigstore-keyless
 // and KMS) emit a single Sigstore bundle (`.bundle`) — the v3 bundle
 // format wraps the signature, optional Fulcio cert, and Rekor

@@ -23,7 +23,7 @@ type CargoTool interface {
 
 // CargoPrerequisitesInput drives `validate cargo`. Either input is
 // accepted; ConfigPlanJSON is the canonical source (covers cargo
-// artefacts in both build-modes), and PublishStagePlanJSON is kept for
+// artifacts in both build-modes), and PublishStagePlanJSON is kept for
 // backward compatibility with direct callers that only have the
 // publish-stage projection.
 type CargoPrerequisitesInput struct {
@@ -32,9 +32,9 @@ type CargoPrerequisitesInput struct {
 }
 
 // CargoPrerequisites verifies lockfile/toolchain state for every planned
-// Cargo artefact (artefact-first AND container-first) in its own working
+// Cargo artifact (artifact-first AND container-first) in its own working
 // directory. The reproducibility invariants (committed Cargo.lock, pinned
-// rust-toolchain) apply equally to both build-modes — artefact-first
+// rust-toolchain) apply equally to both build-modes — artifact-first
 // crates that ship as standalone binaries get the same scrutiny as
 // container-first ones embedded in a runtime image.
 //
@@ -46,7 +46,7 @@ func CargoPrerequisites(ctx context.Context, cargo CargoTool, w io.Writer, annot
 	}
 
 	if len(artifacts) == 0 {
-		annot.Noticef("No Cargo artefacts")
+		annot.Noticef("No Cargo artifacts")
 
 		return nil
 	}
@@ -100,12 +100,12 @@ func CargoPrerequisites(ctx context.Context, cargo CargoTool, w io.Writer, annot
 	return nil
 }
 
-// plannedCargoArtifacts pulls every cargo artefact (both build-modes)
+// plannedCargoArtifacts pulls every cargo artifact (both build-modes)
 // from whichever plan input the caller supplied. ConfigPlanJSON is
-// preferred — it carries the canonical artefact list. The publish-stage
+// preferred — it carries the canonical artifact list. The publish-stage
 // fallback is the historical input; it sees only container-first cargo
 // and is kept so direct callers without the config plan still get
-// SOMETHING checked (with a notice that artefact-first cargo is invisible
+// SOMETHING checked (with a notice that artifact-first cargo is invisible
 // on this code path).
 func plannedCargoArtifacts(configPlanJSON, publishStagePlanJSON string) ([]pipeline.PlannedArtifact, error) {
 	if strings.TrimSpace(configPlanJSON) != "" {

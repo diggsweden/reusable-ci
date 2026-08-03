@@ -222,13 +222,13 @@ def myReproducibleFileOrder = true
 	}
 }
 
-func TestJVMReproducibility_NoJVMArtefactsNoop(t *testing.T) {
+func TestJVMReproducibility_NoJVMArtifactsNoop(t *testing.T) {
 	_, errs, err := runJVMRepro(t, configPlanJSON(`"cargo":[{"name":"x","project_type":"cargo","working_directory":"."}]`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(errs, "No Maven/Gradle artefacts") {
+	if !strings.Contains(errs, "No Maven/Gradle artifacts") {
 		t.Errorf("expected explicit no-op notice, got:\n%s", errs)
 	}
 }
@@ -241,7 +241,7 @@ func TestJVMReproducibility_EmptyPlanIsUsageError(t *testing.T) {
 }
 
 // configPlanJSON returns a minimal valid config plan with the
-// supplied per-type artefact lists slotted in.
+// supplied per-type artifact lists slotted in.
 func configPlanJSON(inner string) string {
 	allLine := ""
 	// derive an "all" mirror from inner (the validator reads .Artifacts.All).

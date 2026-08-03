@@ -16,7 +16,7 @@ import (
 // distRoot is the conventional Cargo / Python / generic-CLI binary
 // release output directory ("dist/"). reusable-ci's own builders use
 // release-artifacts/ instead, but the discovery code accepts both so
-// adopters who hand-roll the artefact upload step can still wire up
+// adopters who hand-roll the artifact upload step can still wire up
 // SBOM generation.
 const distRoot = "dist"
 

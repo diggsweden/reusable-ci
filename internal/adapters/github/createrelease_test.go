@@ -84,7 +84,7 @@ func (f *fakeGitHub) preloadRelease(draft, prerelease bool) *recordedRelease {
 	return rel
 }
 
-//nolint:cyclop // test fixture mux dispatches every method/path the GitHub adapter touches.
+//nolint:cyclop,gocognit // test fixture mux dispatches every method/path the GitHub adapter touches.
 func (f *fakeGitHub) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/owner/repo/releases/tags/", func(w http.ResponseWriter, r *http.Request) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
@@ -171,6 +171,33 @@ func (f *fakeGitHub) handler() http.Handler {
 			}
 			f.mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPatch:
+			id := releaseIDFromPath(path)
+
+			var in struct {
+				TagName    string `json:"tag_name"`
+				Name       string `json:"name"`
+				Draft      bool   `json:"draft"`
+				Prerelease bool   `json:"prerelease"`
+				MakeLatest string `json:"make_latest"`
+				Body       string `json:"body"`
+			}
+
+			_ = json.Unmarshal(body, &in)
+
+			f.mu.Lock()
+			for _, rel := range f.releases {
+				if rel.ID == id {
+					rel.Name, rel.Draft, rel.Prerelease = in.Name, in.Draft, in.Prerelease
+					rel.MakeLatest, rel.Body = in.MakeLatest, in.Body
+					f.mu.Unlock()
+					writeRelease(w, rel)
+
+					return
+				}
+			}
+			f.mu.Unlock()
+			http.Error(w, "not found", http.StatusNotFound)
 		case r.Method == http.MethodDelete:
 			id := releaseIDFromPath(path)
 
@@ -531,6 +558,92 @@ func TestCreateRelease_ForwardsNotesFileBody(t *testing.T) {
 	}
 
 	t.Fatalf("expected POST body to carry release notes, got: %+v", fake.Calls())
+}
+
+func TestPublishRelease_CreatesWhenMissing(t *testing.T) {
+	fake := newFake()
+
+	srv := httptest.NewServer(combinedHandler(fake))
+	defer srv.Close()
+
+	p := providerForFake(srv)
+
+	if err := p.PublishRelease(context.Background(), "owner/repo", provider.ReleaseSpec{
+		Tag:  "v1.0.0",
+		Name: "v1.0.0",
+	}); err != nil {
+		t.Fatalf("PublishRelease: %v", err)
+	}
+
+	methods := callMethods(fake.Calls())
+	if !equalPrefix(methods, []string{"GET", "POST"}) {
+		t.Errorf("methods = %v, want GET,POST prefix (probe then create)", methods)
+	}
+
+	for _, c := range fake.Calls() {
+		if c.Method == http.MethodDelete || c.Method == http.MethodPatch {
+			t.Errorf("must not edit or delete when the release is absent: %+v", c)
+		}
+	}
+}
+
+func TestPublishRelease_UpdatesInPlaceAndReconcilesAssets(t *testing.T) {
+	fake := newFake()
+	rel := fake.preloadRelease(false, false) // a stable release CreateRelease would refuse
+	rel.Assets = append(rel.Assets, &recordedAsset{ID: 555, Name: "stale.tgz"})
+
+	srv := httptest.NewServer(combinedHandler(fake))
+	defer srv.Close()
+
+	p := providerForFake(srv)
+
+	dir := t.TempDir()
+
+	asset := filepath.Join(dir, "new.tgz")
+	if err := os.WriteFile(asset, []byte("payload"), 0o644); err != nil { //nolint:gosec // test fixture
+		t.Fatal(err)
+	}
+
+	if err := p.PublishRelease(context.Background(), "owner/repo", provider.ReleaseSpec{
+		Tag:    "v1.0.0",
+		Name:   "renamed",
+		Assets: []string{asset},
+	}); err != nil {
+		t.Fatalf("PublishRelease: %v", err)
+	}
+
+	calls := fake.Calls()
+	methods := callMethods(calls)
+
+	if !contains(methods, "PATCH") {
+		t.Errorf("expected in-place PATCH edit of the existing release, got %v", methods)
+	}
+
+	// The release object itself must never be deleted (that is the recreate
+	// strategy, not reconcile).
+	releasePath := fmt.Sprintf("/repos/owner/repo/releases/%d", rel.ID)
+	for _, c := range calls {
+		if c.Method == http.MethodDelete && c.Path == releasePath {
+			t.Errorf("reconcile must not delete the release object: %+v", c)
+		}
+	}
+
+	if !contains(methods, "POST") {
+		t.Errorf("expected the desired asset to be uploaded (POST), got %v", methods)
+	}
+
+	if !contains(methods, "DELETE") {
+		t.Errorf("expected the stale asset to be removed (DELETE), got %v", methods)
+	}
+}
+
+func TestPublishRelease_EmptyTagErrors(t *testing.T) {
+	p := &github.Provider{}
+
+	err := p.PublishRelease(context.Background(), "owner/repo", provider.ReleaseSpec{})
+	if err == nil || !strings.Contains(err.Error(), "tag is empty") {
+		t.Fatalf("err = %v, want tag-empty usage error", err)
+	}
 }
 
 func TestUploadReleaseAsset_NewAssetUploadsDirectly(t *testing.T) {
