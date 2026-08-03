@@ -26,10 +26,10 @@
 ^https://console\.cloud\.google\.com/.*$
 
 # Integration testsuite repo. Lives at
-# github.com/diggsweden/reusable-ci-testsuite but isn't currently a
-# public repo (planned). Until publication, lychee 404s on it; once
+# github.com/diggsweden/reusable-ci-blackbox-tests but isn't currently
+# a public repo (planned). Until publication, lychee 404s on it; once
 # published this line can come out.
-^https://github\.com/diggsweden/reusable-ci-testsuite/?$
+^https://github\.com/diggsweden/reusable-ci-blackbox-tests/?$
 
 # NTIA "SBOM Minimum Elements" report PDF. The canonical citation for
 # the CISA 3-layer SBOM baseline; ntia.gov serves an incomplete TLS

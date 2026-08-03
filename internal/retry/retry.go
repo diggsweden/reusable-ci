@@ -103,6 +103,7 @@ func Do[T any](ctx context.Context, out io.Writer, attempts int, delay time.Dura
 		}
 
 		err = runErr
+
 		if attempt == attempts {
 			break
 		}

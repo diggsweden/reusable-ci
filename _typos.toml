@@ -39,3 +39,11 @@ intoto = "intoto"
 # subcommand ("relese") through ClassifyError and asserts the
 # suggestion. Correcting it would defeat the test.
 relese = "relese"
+
+# Same arrangement in internal/cli/commands/plan/write_test.go: the
+# plan-write tests feed a misspelled scope ("container biuld") and a
+# misspelled --set key ("contxt") to assert that an unknown scope and
+# an unknown flag are both rejected with a suggestion. The misspelling
+# is the input under test.
+biuld = "biuld"
+contxt = "contxt"
