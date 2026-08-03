@@ -232,6 +232,21 @@ unlogged signature; it fails the signing step hard, at release time. The config
 plan precomputes `sign.requires_sigstore_egress` so a caller can derive the
 allowlist instead of guessing.
 
+With `transparency: none`, signing needs **no Sigstore endpoint at all** — not
+even TUF. That is deliberate and slightly subtle: turning off the transparency
+log alone would still leave cosign fetching its trust root from
+`tuf-repo-cdn.sigstore.dev` on every signature, because it verifies each
+signature it has just written. reusable-ci supplies that trust material locally
+instead, so a `transparency: none` signing run makes no outbound connection.
+The black-box suite enforces this through a recording proxy rather than trusting
+the flag (`release_sign_no_egress_test.go`), because "makes no outbound
+connection" is the property people actually assume and argv alone cannot prove.
+
+One exception worth knowing: **verifying a keyless signature still fetches the
+trust root**, regardless of this setting. It has to — validating a short-lived
+Fulcio certificate is exactly what the trust root is for. `transparency` governs
+signing; keyless verification is inherently online.
+
 ### Snapshot-release trust model
 
 Snapshot releases (`release-snapshot-orchestrator.yml`) are intentionally **not**

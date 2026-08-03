@@ -31,6 +31,12 @@ const flagYes = "--yes"
 // flagSigningConfig selects which Sigstore services a write subcommand uses.
 const flagSigningConfig = "--signing-config"
 
+// flagTrustedRoot supplies the trust material cosign uses to verify a signature
+// it has just made. cosign always performs that self-check, and without this
+// flag it fetches the trust root from the public Sigstore TUF CDN — so this is
+// what stops a signing run reaching the network at all.
+const flagTrustedRoot = "--trusted-root"
+
 // flagInsecureIgnoreTlog drops the transparency-log requirement from a verify
 // subcommand. cosign names it "insecure" and prints its own warning; we pass it
 // through under that name rather than a friendlier one so the trade-off is not
@@ -91,6 +97,25 @@ func TransparencyFromEnv() release.Transparency {
 // as a failed signature rather than as a silent fallback to publishing.
 const noLogSigningConfig = `{"mediaType":"application/vnd.dev.sigstore.signingconfig.v0.2+json",` +
 	`"rekorTlogConfig":{},"tsaConfig":{}}`
+
+// emptyTrustedRoot is a Sigstore trusted root naming no services — the
+// counterpart to noLogSigningConfig, and byte-identical to what
+// `cosign trusted-root create` emits with no service flags.
+//
+// It exists because a signing config alone does not make a run offline. cosign
+// verifies each signature it has just written, and to do that it needs a trust
+// root; absent one it fetches it from the public Sigstore TUF CDN. So a run
+// configured to publish nothing would still announce itself to
+// tuf-repo-cdn.sigstore.dev on every signature — measured, once per sign, not
+// cached away.
+//
+// Empty is the honest value rather than a stub: the matching signing config
+// names no Fulcio, no Rekor and no TSA, so there is no service whose material
+// the self-check could meaningfully verify against. The signature itself is
+// still checked — against the key, which is where a kms signature's trust
+// actually comes from. Passed only when the transparency log is off; the public
+// path keeps cosign's own trust root, which it must.
+const emptyTrustedRoot = `{"mediaType":"application/vnd.dev.sigstore.trustedroot+json;version=0.1"}`
 
 // Adapter wraps the cosign binary. Bin is overridable for tests.
 type Adapter struct {
@@ -420,43 +445,77 @@ func (a *Adapter) CopyImage(ctx context.Context, in CopyImageInput, errOut io.Wr
 // The zero-value Adapter publishes, matching cosign's own default.
 func (a *Adapter) publishesToLog() bool { return a.Transparency.PublishesToLog() }
 
-// withSigningConfig appends --signing-config when the transparency log is
-// turned off, materialising the config it points at. It is applied by every
-// cosign subcommand that writes a signature, so the choice is made in exactly
-// one place. The returned cleanup removes the temporary file and is always
-// non-nil, so callers can defer it unconditionally.
+// withSigningConfig appends the flags that keep a signing run off the public
+// Sigstore services when the transparency log is turned off, materialising the
+// two documents they point at. It is applied by every cosign subcommand that
+// writes a signature, so the choice is made in exactly one place. The returned
+// cleanup removes the temporary files and is always non-nil, so callers can
+// defer it unconditionally.
 //
-// The file is written per call rather than cached on the Adapter: a signing run
-// is short, the document is ~100 bytes, and per-call scope means there is no
-// lifetime to manage and nothing to leak into the runner's temp dir.
+// BOTH flags are needed, and the second is not obvious. --signing-config alone
+// stops the Rekor upload but leaves the run reaching tuf-repo-cdn.sigstore.dev
+// on every signature, because cosign verifies what it has just signed and
+// fetches the trust root to do it. --trusted-root supplies that material
+// locally. Together they take a signing run from "publishes nothing" to "makes
+// no outbound connection at all", which is the property worth having: it is
+// what a reader assumes transparency=none already means, and unlike the first
+// it can be enforced by a test rather than reviewed.
+//
+// Files are written per call rather than cached on the Adapter: a signing run
+// is short, the documents are ~100 bytes each, and per-call scope means there
+// is no lifetime to manage and nothing to leak into the runner's temp dir.
 func (a *Adapter) withSigningConfig(args []string) ([]string, func(), error) {
 	noop := func() {}
 	if a.publishesToLog() {
 		return args, noop, nil
 	}
 
-	file, err := os.CreateTemp("", "reusable-ci-signing-config-*.json")
+	config, cleanConfig, err := writeTempJSON("signing-config", noLogSigningConfig)
 	if err != nil {
-		return nil, noop, fmt.Errorf("create signing config: %w", err)
+		return nil, noop, err
+	}
+
+	root, cleanRoot, err := writeTempJSON("trusted-root", emptyTrustedRoot)
+	if err != nil {
+		cleanConfig()
+
+		return nil, noop, err
+	}
+
+	cleanup := func() { cleanConfig(); cleanRoot() }
+
+	return append(args, flagSigningConfig, config, flagTrustedRoot, root), cleanup, nil
+}
+
+// writeTempJSON materialises one of the Sigstore documents above into a
+// temporary file, returning its path and a cleanup that removes it. The cleanup
+// is always non-nil, including on the error paths, so callers can defer it
+// without a nil check.
+func writeTempJSON(name, content string) (string, func(), error) {
+	noop := func() {}
+
+	file, err := os.CreateTemp("", "reusable-ci-"+name+"-*.json")
+	if err != nil {
+		return "", noop, fmt.Errorf("create %s: %w", name, err)
 	}
 
 	cleanup := func() { _ = os.Remove(file.Name()) }
 
-	if _, err := file.WriteString(noLogSigningConfig); err != nil {
+	if _, err := file.WriteString(content); err != nil {
 		_ = file.Close()
 
 		cleanup()
 
-		return nil, noop, fmt.Errorf("write signing config: %w", err)
+		return "", noop, fmt.Errorf("write %s: %w", name, err)
 	}
 
 	if err := file.Close(); err != nil {
 		cleanup()
 
-		return nil, noop, fmt.Errorf("close signing config: %w", err)
+		return "", noop, fmt.Errorf("close %s: %w", name, err)
 	}
 
-	return append(args, flagSigningConfig, file.Name()), cleanup, nil
+	return file.Name(), cleanup, nil
 }
 
 // withTlogPolicy appends --insecure-ignore-tlog when verification has been told

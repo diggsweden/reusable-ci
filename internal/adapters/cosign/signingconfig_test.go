@@ -53,26 +53,35 @@ func writeVerbs() []signWrite {
 const hex64 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 
 // captureSigningConfig returns a mock cosign that copies whatever
-// --signing-config points at into `dest`, plus the dest path.
+// --signing-config and --trusted-root point at into a temp dir, plus a func
+// reading back the named capture.
 //
-// The copy has to happen inside the stub because the adapter writes the config
-// per call and removes it on return — by the time the test regains control the
-// file is gone. Capturing at call time asserts what actually matters: that the
-// document existed, and was correct, at the moment cosign read it.
-func captureSigningConfig(t *testing.T) (*mockbinary.Mock, string) {
+// The copy has to happen inside the stub because the adapter writes both
+// documents per call and removes them on return — by the time the test regains
+// control the files are gone. Capturing at call time asserts what actually
+// matters: that each document existed, and was correct, at the moment cosign
+// read it.
+func captureSigningConfig(t *testing.T) (*mockbinary.Mock, func(flag string) (string, error)) {
 	t.Helper()
 
-	dest := filepath.Join(t.TempDir(), "captured.json")
+	dir := t.TempDir()
 	bins := mockbinary.New(t)
 	bins.Add("cosign", `
 prev=""
 for a in "$@"; do
-  if [ "$prev" = "--signing-config" ]; then cp "$a" "`+dest+`"; fi
+  case "$prev" in
+    --signing-config) cp "$a" "`+dir+`/signing-config" ;;
+    --trusted-root)   cp "$a" "`+dir+`/trusted-root" ;;
+  esac
   prev="$a"
 done
 `)
 
-	return bins, dest
+	return bins, func(flag string) (string, error) {
+		body, err := os.ReadFile(filepath.Join(dir, strings.TrimPrefix(flag, "--")))
+
+		return string(body), err
+	}
 }
 
 // TestEveryWriteVerbSuppressesTheLog is the load-bearing test for "we do not
@@ -106,15 +115,57 @@ func TestEveryWriteVerbSuppressesTheLog(t *testing.T) {
 					verb.name, args)
 			}
 
-			body, err := os.ReadFile(captured)
+			body, err := captured("--signing-config")
 			if err != nil {
 				t.Fatalf("%s: --signing-config named a file cosign could not read: %v", verb.name, err)
 			}
 
 			// A config that still names a Rekor instance would publish while
 			// looking correct in argv, so assert the content, not the flag.
-			if strings.Contains(string(body), "rekorTlogUrls") {
+			if strings.Contains(body, "rekorTlogUrls") {
 				t.Errorf("%s: signing config names a transparency log:\n%s", verb.name, body)
+			}
+		})
+	}
+}
+
+// TestEveryWriteVerbStaysOffline is the second half of "no transparency log",
+// and the one that is easy to forget: --signing-config stops the Rekor upload,
+// but cosign verifies what it has just signed and fetches the trust root from
+// tuf-repo-cdn.sigstore.dev to do it — once per signature, measured, not cached
+// away. A run configured to publish nothing would still announce itself.
+//
+// --trusted-root supplies that material locally. Without it, "transparency:
+// none" means "publishes nothing but still phones home", which is not what any
+// reader assumes it means.
+func TestEveryWriteVerbStaysOffline(t *testing.T) {
+	for _, verb := range writeVerbs() {
+		t.Run(verb.name, func(t *testing.T) {
+			bins, captured := captureSigningConfig(t)
+
+			a := &cosign.Adapter{Bin: bins.Path("cosign"), Transparency: domainrelease.TransparencyNone}
+
+			if err := verb.call(a); err != nil {
+				t.Fatalf("%s: %v", verb.name, err)
+			}
+
+			if args := bins.Invocations("cosign")[0].Args; !slices.Contains(args, "--trusted-root") {
+				t.Fatalf("%s does not pass --trusted-root; it would fetch the trust root from "+
+					"the public Sigstore TUF CDN on every signature\nargv: %v", verb.name, args)
+			}
+
+			body, err := captured("--trusted-root")
+			if err != nil {
+				t.Fatalf("%s: --trusted-root named a file cosign could not read: %v", verb.name, err)
+			}
+
+			// A trusted root naming services would send cosign to fetch from
+			// them while argv still looked correct.
+			for _, service := range []string{"tlogs", "certificateAuthorities", "timestampAuthorities"} {
+				if strings.Contains(body, service) {
+					t.Errorf("%s: trusted root names %q, so cosign may reach out for it:\n%s",
+						verb.name, service, body)
+				}
 			}
 		})
 	}
@@ -143,11 +194,18 @@ func TestSigningConfigDoesNotOutliveTheCall(t *testing.T) {
 		t.Fatalf("SignBlob: %v", err)
 	}
 
+	// Both documents are temporary; a release signs many artifacts, so a leak
+	// per signature accumulates in the runner's temp dir.
 	args := bins.Invocations("cosign")[0].Args
-	idx := slices.Index(args, "--signing-config")
+	for _, flag := range []string{"--signing-config", "--trusted-root"} {
+		idx := slices.Index(args, flag)
+		if idx < 0 {
+			t.Fatalf("%s not passed\nargv: %v", flag, args)
+		}
 
-	if _, err := os.Stat(args[idx+1]); !os.IsNotExist(err) {
-		t.Errorf("signing config %s still exists after the call returned", args[idx+1])
+		if _, err := os.Stat(args[idx+1]); !os.IsNotExist(err) {
+			t.Errorf("%s file %s still exists after the call returned", flag, args[idx+1])
+		}
 	}
 }
 
@@ -167,8 +225,13 @@ func TestPublicTransparencyLeavesCosignOnItsDefault(t *testing.T) {
 		t.Fatalf("SignBlob: %v", err)
 	}
 
-	if args := bins.Invocations("cosign")[0].Args; slices.Contains(args, "--signing-config") {
-		t.Errorf("public transparency must not pass the flag\nargv: %v", args)
+	// Neither flag: keyless needs the real Fulcio and Rekor, and it needs
+	// cosign's own trust root to verify what it signed. Suppressing either on
+	// the public path would break the method that the public path exists for.
+	for _, flag := range []string{"--signing-config", "--trusted-root"} {
+		if args := bins.Invocations("cosign")[0].Args; slices.Contains(args, flag) {
+			t.Errorf("public transparency must not pass %s\nargv: %v", flag, args)
+		}
 	}
 }
 
