@@ -6,7 +6,12 @@ SPDX-License-Identifier: CC0-1.0
 
 # ADR 0003: The CLI verb lexicon
 
-Status: Proposed (2026-07-09)
+Status: Accepted (2026-07-09; §1 and §3 revised 2026-07-14)
+
+Symptom 1 is done: `release verify-*` → `release validate-*` and the
+`{base,release}-images` / `ledger verify-digests` renames landed. Symptoms 2–4
+are structural and remain follow-up work. Enforcement is code review, not a
+guard test (§3).
 
 ## Context
 
@@ -48,19 +53,25 @@ Four concrete symptoms:
 
 None of these break usability, but they make the surface harder to predict
 than the clean root suggests, and — critically — every new command re-opens
-the same coin-flip. A naive round of renames would not fix that: without a
-written rule and a build-time check, the vocabulary re-diverges on the next
-command. This is the same problem the guard-test family already solved for
-single-sourced regexes and env names.
+the same coin-flip. A naive round of renames would not fix that on its own:
+without a written rule, the vocabulary re-diverges on the next command.
+
+The first draft added "and a build-time check", by analogy with the guard-test
+family that single-sources regexes and env names. §3 records why that analogy
+was dropped: those guards pin a fact with one correct value, where verb choice
+is a judgement with a long tail of legitimate answers.
 
 ## Decision
 
-Fix the verb vocabulary as a contract, then enforce it, then rename to match.
+Write the verb vocabulary down as a rule, apply it in review, and rename to
+match.
 
-### 1. The sanctioned verb set
+### 1. The reserved verb set
 
-Every command's leading verb (the first path segment that denotes an action,
-after its noun group) MUST be one of:
+These nine concepts have **one canonical spelling each**. A command performing
+one of them MUST use the sanctioned word rather than a synonym. Commands
+performing an action *outside* this set choose their own verb freely — the set
+is a reserved lexicon, not an exhaustive vocabulary:
 
 | Verb | Meaning | Side effects |
 |---|---|---|
@@ -78,6 +89,14 @@ after its noun group) MUST be one of:
 `validate` (assert-a-rule) operation; the cryptographic nature is the noun,
 not the verb (`validate container-signature`, not `verify signature`).
 
+An earlier draft of this section read "Every command's leading verb MUST be one
+of", which was an over-reach: measured against the live tree, a literal
+nine-verb allowlist rejects **166 of 201** leaf commands, among them
+`container login`, `artifact upload`, `version bump`, `build go run` and
+`container ledger add` — all good names. It also contradicted this ADR's own
+Consequences, which predict only the `verify-*` churn. The reserved-lexicon
+reading above is what was actually decided and what was actually implemented.
+
 ### 2. The altitude rule
 
 - **Checks live under `validate`.** Any pre-flight/credential/artifact check
@@ -92,15 +111,35 @@ not the verb (`validate container-signature`, not `verify signature`).
   `container release-images *` / `base-images *` is the orchestration layer —
   the docs and categories must say so.
 
-### 3. Enforcement
+### 3. Enforcement: code review, not a guard test
 
-Add a guard test (in the existing `internal/cli/*_guard_test.go` family) that
-reflects over the live command tree and fails the build if any command's
-leading action verb is outside the sanctioned set, with a small, justified
-allowlist for legacy names still carrying a deprecation alias. This converts
-the ADR from prose nobody re-reads into a build-time invariant, exactly like
-`cienv_guard_test.go` does for env names and `provider_switch_guard_test.go`
-does for platform branching.
+**Decided 2026-07-14, reversing this ADR's first draft.** The verb lexicon is
+enforced in code review. There is deliberately **no** `*_guard_test.go` for it.
+
+The first draft called for a guard reflecting over the command tree, on the
+reasoning that a build-time invariant beats prose nobody re-reads. That reasoning
+holds for the rest of the guard family and does not hold here:
+
+- **An allowlist is not implementable.** The reserved set covers nine concepts,
+  not the ~35–40 legitimate actions the CLI performs (§1).
+- **A synonym denylist bans good names.** The obvious candidates collide with
+  domain-correct spellings: outlawing `deploy` as a synonym for `publish` would
+  reject `publish maven-central deploy` and `publish forge-packages deploy`,
+  which wrap `mvn deploy` and are named correctly.
+- **A guard for `verify` alone earns little.** It never caught anything (it was
+  written after the renames), and the tree now carries ~24 `validate*` commands
+  as visible precedent. The pattern teaches better than the test does.
+- **The remaining symptoms are structural, not lexical.** Symptoms 2–4 (publish
+  altitude, the `version` grab-bag, `container` promotion triplication) are not
+  reachable by any verb guard. §3's enforcement was aimed at the one symptom
+  already fixed.
+
+A guard is worth its keep when it encodes a decision that was **actually made**
+and whose violation is **expensive to reverse**. Verb choice fails the second
+test in practice: a reviewer catches it in one comment, before it ever reaches
+the clean-break migration in §4.
+
+Removed: `internal/cli/verblexicon_guard_test.go` (`TestNoRetiredCommandVerbs`).
 
 ### 4. Migration (clean break, in dependency order)
 
@@ -119,14 +158,16 @@ lockstep vendoring flow updates every consumer in order:
 
 ## Consequences
 
-- The four symptoms become mechanical renames once the guard is in place — and
-  cannot regress.
+- Symptom 1 (`verify` vs `validate`) is resolved: the renames landed and the
+  reserved spelling is documented in §1. The remaining three are structural and
+  are follow-up work, not renames this ADR can mechanise.
 - One-time churn: `release verify-*` → `release validate-*`, `container
   {base,release}-images verify` → `validate`, and `container ledger
   verify-digests` → `validate-digests`. Each is a separate reviewable commit;
   consumers re-vendor and update their calls in the same change.
-- New commands have a rule to follow and a guard that enforces it, so the
-  surface stays predictable as it grows.
+- New commands have a rule to follow, applied in review. The surface stays
+  predictable by convention and precedent rather than by a build gate; the cost
+  of a miss is a review comment, not a migration.
 - Cost: the rename is a hard break, so it must land in the engine → forgejo-ci →
   nanolinter order with each consumer updated as it re-vendors.
 
