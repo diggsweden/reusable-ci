@@ -16,6 +16,8 @@ const (
 	flagRepository               = "repository"
 	flagArtifactName             = "artifact-name"
 	flagTag                      = "tag"
+	flagKey                      = "key"
+	flagOIDCIssuer               = "oidc-issuer"
 	flagPrivateKeyFile           = "private-key-file"
 	flagPassphraseFile           = "passphrase-file"
 	flagManifest                 = "manifest"

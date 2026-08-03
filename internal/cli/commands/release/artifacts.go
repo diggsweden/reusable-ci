@@ -91,13 +91,13 @@ func signMethodFlags(planScope string) []cli.Flag {
 			Usage:   "signing backend: gpg (default; key from --private-key-file or $GPG_PRIVATE_KEY), sigstore (keyless cosign + OIDC), or kms (cosign + --key)",
 		},
 		&cli.StringFlag{
-			Name:    "key",
-			Sources: signSources(planScope, "key", "SIGN_KEY"),
+			Name:    flagKey,
+			Sources: signSources(planScope, flagKey, "SIGN_KEY"),
 			Usage:   "cosign --key reference for --method=kms: KMS URI (awskms:///alias/X, hashivault://transit/keys/X, gcpkms://..., azurekms://...), PKCS#11 URI, or local key-file path. Forbidden for --method=gpg/sigstore.",
 		},
 		&cli.StringFlag{
-			Name:    "oidc-issuer",
-			Sources: signSources(planScope, "oidc-issuer", "SIGN_OIDC_ISSUER"),
+			Name:    flagOIDCIssuer,
+			Sources: signSources(planScope, flagOIDCIssuer, "SIGN_OIDC_ISSUER"),
 			Usage:   "OIDC issuer URL for --method=sigstore (default: auto-detected — GitHub Actions / GitLab CI / $CI_SERVER_URL). Forbidden for --method=gpg/kms.",
 		},
 		&cli.StringFlag{
@@ -128,8 +128,8 @@ func buildSigner(cmd *cli.Command, errOut io.Writer) (apprelease.Signer, domainr
 		return nil, "", err
 	}
 
-	keyRef := cmd.String("key")
-	oidcIssuer := cmd.String("oidc-issuer")
+	keyRef := cmd.String(flagKey)
+	oidcIssuer := cmd.String(flagOIDCIssuer)
 	keyFile := cmd.String(flagPrivateKeyFile)
 	passFile := cmd.String(flagPassphraseFile)
 
@@ -224,58 +224,96 @@ func buildKMSSigner(method domainrelease.SignMethod, keyRef string, errOut io.Wr
 	return signer, method, nil
 }
 
-// validateSignFlags checks the per-method invariants on --key,
-// --oidc-issuer, and the GPG --private-key-file/--passphrase-file inputs.
-// The CLI rejects illegal combinations before any signing starts so the
-// operator gets a clear "you mixed flags wrong" message instead of a
-// downstream cosign-argv error.
-//
-//nolint:cyclop // flat per-method flag validation: one forbid/require rule per branch is clearer than splitting.
-func validateSignFlags(method domainrelease.SignMethod, keyRef, oidcIssuer, keyFile, passFile string) error {
-	switch method {
-	case domainrelease.SignMethodGPG:
-		if keyRef != "" {
-			return fmt.Errorf("sign: --key is forbidden for --method=gpg (got %q): %w", keyRef, errs.ErrInvalidConfig)
-		}
-
-		if oidcIssuer != "" {
-			return fmt.Errorf("sign: --oidc-issuer is forbidden for --method=gpg (got %q): %w", oidcIssuer, errs.ErrInvalidConfig)
-		}
-	case domainrelease.SignMethodSigstore:
-		if keyRef != "" {
-			return fmt.Errorf("sign: --key is forbidden for --method=sigstore (keyless OIDC has no key) (got %q): %w", keyRef, errs.ErrInvalidConfig)
-		}
-
-		if err := forbidGPGKeyFiles(method, keyFile, passFile); err != nil {
-			return err
-		}
-	case domainrelease.SignMethodKMS:
-		if keyRef == "" {
-			return fmt.Errorf("sign: --key is required for --method=kms (e.g. hashivault://transit/keys/release): %w", errs.ErrInvalidConfig)
-		}
-
-		if oidcIssuer != "" {
-			return fmt.Errorf("sign: --oidc-issuer is forbidden for --method=kms (got %q): %w", oidcIssuer, errs.ErrInvalidConfig)
-		}
-
-		if err := forbidGPGKeyFiles(method, keyFile, passFile); err != nil {
-			return err
-		}
-	}
-
-	return nil
+// signFlagRule is one cell of the sign-method flag matrix: a flag the
+// method requires or forbids, plus the hint that tells the operator why.
+// An empty why prints nothing.
+type signFlagRule struct {
+	flag string
+	why  string
 }
 
-// forbidGPGKeyFiles rejects the GPG-only --private-key-file /
-// --passphrase-file inputs for the cosign-based methods, matching the
-// strict per-method flag validation the other branches apply.
-func forbidGPGKeyFiles(method domainrelease.SignMethod, keyFile, passFile string) error {
-	if keyFile != "" {
-		return fmt.Errorf("sign: --private-key-file is forbidden for --method=%s (GPG only): %w", method, errs.ErrInvalidConfig)
+// whyGPGOnly is the hint on every rule that exists because the GPG key
+// inputs have no meaning for the cosign-backed methods.
+const whyGPGOnly = "GPG only"
+
+// signFlagRules is the per-method flag contract, as data rather than as
+// branches: each method names the flags it requires and the flags it
+// refuses. Written out, the matrix is the documentation — you can see that
+// only kms takes a --key, and that --private-key-file/--passphrase-file are
+// GPG's alone, without reading any control flow.
+//
+// A method absent from the map constrains nothing. A new sign method is a
+// row here, not a new branch plus a new test.
+func signFlagRules() map[domainrelease.SignMethod]struct {
+	require []signFlagRule
+	forbid  []signFlagRule
+} {
+	return map[domainrelease.SignMethod]struct {
+		require []signFlagRule
+		forbid  []signFlagRule
+	}{
+		domainrelease.SignMethodGPG: {
+			forbid: []signFlagRule{
+				{flag: flagKey},
+				{flag: flagOIDCIssuer},
+			},
+		},
+		domainrelease.SignMethodSigstore: {
+			forbid: []signFlagRule{
+				{flag: flagKey, why: "keyless OIDC has no key"},
+				{flag: flagPrivateKeyFile, why: whyGPGOnly},
+				{flag: flagPassphraseFile, why: whyGPGOnly},
+			},
+		},
+		domainrelease.SignMethodKMS: {
+			require: []signFlagRule{
+				{flag: flagKey, why: "e.g. hashivault://transit/keys/release"},
+			},
+			forbid: []signFlagRule{
+				{flag: flagOIDCIssuer},
+				{flag: flagPrivateKeyFile, why: whyGPGOnly},
+				{flag: flagPassphraseFile, why: whyGPGOnly},
+			},
+		},
+	}
+}
+
+// parenthesise renders a rule's hint as " (why)", or "" when there is none.
+func parenthesise(why string) string {
+	if why == "" {
+		return ""
 	}
 
-	if passFile != "" {
-		return fmt.Errorf("sign: --passphrase-file is forbidden for --method=%s (GPG only): %w", method, errs.ErrInvalidConfig)
+	return " (" + why + ")"
+}
+
+// validateSignFlags checks the per-method invariants on --key,
+// --oidc-issuer, and the GPG --private-key-file/--passphrase-file inputs
+// against signFlagRules(). The CLI rejects illegal combinations before any
+// signing starts so the operator gets a clear "you mixed flags wrong"
+// message instead of a downstream cosign-argv error.
+func validateSignFlags(method domainrelease.SignMethod, keyRef, oidcIssuer, keyFile, passFile string) error {
+	given := map[string]string{
+		flagKey:            keyRef,
+		flagOIDCIssuer:     oidcIssuer,
+		flagPrivateKeyFile: keyFile,
+		flagPassphraseFile: passFile,
+	}
+
+	rules := signFlagRules()[method]
+
+	for _, rule := range rules.require {
+		if given[rule.flag] == "" {
+			return fmt.Errorf("sign: --%s is required for --method=%s%s: %w",
+				rule.flag, method, parenthesise(rule.why), errs.ErrInvalidConfig)
+		}
+	}
+
+	for _, rule := range rules.forbid {
+		if value := given[rule.flag]; value != "" {
+			return fmt.Errorf("sign: --%s is forbidden for --method=%s%s (got %q): %w",
+				rule.flag, method, parenthesise(rule.why), value, errs.ErrInvalidConfig)
+		}
 	}
 
 	return nil
