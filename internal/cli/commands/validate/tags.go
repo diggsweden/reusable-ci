@@ -13,7 +13,6 @@ import (
 	appvalidate "github.com/diggsweden/reusable-ci/v3/internal/app/validate"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
-	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 )
 
@@ -60,41 +59,6 @@ func tagReleaseGuardCmd() *cli.Command {
 					Tag:     cmd.String("tag"),
 					Pattern: cmd.String("pattern"),
 				})
-			})
-		},
-	}
-}
-
-func refTypeCmd() *cli.Command {
-	return &cli.Command{
-		Name:  "ref-type", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		Usage: "require that the trigger is a tag push",
-		Description: `EXAMPLE:
-   reusable-ci validate ref-type --ref-type tag --ref-name v1.2.3`,
-		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Name:     "ref-type",
-				Required: true,
-				Sources:  cienv.RefType(),
-				Usage:    "trigger ref type (\"tag\" required for releases)",
-			},
-			&cli.StringFlag{
-				Name:     "ref-name",
-				Required: true,
-				Sources:  cienv.RefName(),
-				Usage:    "trigger ref name (the tag or branch)",
-			},
-			&cli.StringFlag{
-				Name:    "ref",
-				Sources: cienv.Ref(),
-				Usage:   "fully-qualified ref (refs/tags/X); when set the prefix is also checked",
-			},
-		},
-		Action: func(_ context.Context, cmd *cli.Command) error {
-			return appvalidate.RefType(os.Stderr, appvalidate.RefTypeInput{
-				RefType: provider.RefType(cmd.String("ref-type")),
-				RefName: cmd.String("ref-name"),
-				Ref:     cmd.String("ref"),
 			})
 		},
 	}

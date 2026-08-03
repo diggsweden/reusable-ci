@@ -132,18 +132,20 @@ func TestValidate_AcceptsAllKnownTypes(t *testing.T) {
 	}
 }
 
-func TestValidate_GoRequiresBuildMode(t *testing.T) {
+func TestValidate_GoBuildModeDefaultsToArtifactFirst(t *testing.T) {
 	t.Parallel()
 
+	// A bare Go artifact (no config block — what auto-derive produces) is
+	// valid: build-mode defaults to artifact-first; container-first stays
+	// an explicit opt-in.
 	c := &config.Config{Artifacts: []config.Artifact{{Name: "go-app", ProjectType: projecttype.Go}}}
 
-	err := config.Validate(c)
-	if !isValidationError(err) {
-		t.Fatalf("err = %v, want ValidationError", err)
+	if err := config.Validate(c); err != nil {
+		t.Fatalf("bare Go artifact rejected: %v", err)
 	}
 
-	if !strings.Contains(err.Error(), "requires config.build-mode") {
-		t.Errorf("err message: %v", err)
+	if got := config.GoArtifactBuildMode(c.Artifacts[0]); got != config.GoBuildModeArtifactFirst {
+		t.Errorf("default build-mode = %q, want artifact-first", got)
 	}
 }
 
@@ -166,18 +168,17 @@ func TestValidate_GoRejectsInvalidBuildMode(t *testing.T) {
 	}
 }
 
-func TestValidate_CargoRequiresBuildMode(t *testing.T) {
+func TestValidate_CargoBuildModeDefaultsToArtifactFirst(t *testing.T) {
 	t.Parallel()
 
 	c := &config.Config{Artifacts: []config.Artifact{{Name: "rust-app", ProjectType: projecttype.Cargo}}}
 
-	err := config.Validate(c)
-	if !isValidationError(err) {
-		t.Fatalf("err = %v, want ValidationError", err)
+	if err := config.Validate(c); err != nil {
+		t.Fatalf("bare Cargo artifact rejected: %v", err)
 	}
 
-	if !strings.Contains(err.Error(), "requires config.build-mode") {
-		t.Errorf("err message: %v", err)
+	if got := config.CargoArtifactBuildMode(c.Artifacts[0]); got != config.CargoBuildModeArtifactFirst {
+		t.Errorf("default build-mode = %q, want artifact-first", got)
 	}
 }
 

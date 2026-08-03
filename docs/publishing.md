@@ -14,10 +14,10 @@ commands.
 
 ## Targets at a glance
 
-| Target                    | Artefact types     | Authentication              |
+| Target                    | Artifact types     | Authentication              |
 |---------------------------|--------------------|-----------------------------|
 | Maven Central             | Maven libraries    | Sonatype credentials        |
-| GitHub Packages (Maven)   | Maven artefacts    | `GITHUB_TOKEN` (automatic)  |
+| GitHub Packages (Maven)   | Maven artifacts    | `GITHUB_TOKEN` (automatic)  |
 | GitHub Packages (NPM)     | NPM packages       | `GITHUB_TOKEN` (automatic)  |
 | Container registries      | Container images   | `GITHUB_TOKEN` or registry-password |
 | Apple App Store           | iOS / macOS apps   | App Store Connect API v2    |
@@ -513,7 +513,7 @@ jobs:
 
 iOS builds upload to App Store Connect via API v2 (no Fastlane).
 Review submission stays a manual step in App Store Connect; reusable-ci
-gets the artefact uploaded and stops there.
+gets the artifact uploaded and stops there.
 
 ### Prerequisites
 

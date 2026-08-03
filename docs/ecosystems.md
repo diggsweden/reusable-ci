@@ -18,18 +18,18 @@ reusable-ci handles them in two complementary patterns. The pattern is
 determined by **where platform commitment naturally happens** in the
 language's build model.
 
-### artefact-first: platform-agnostic deliverable
+### artifact-first: platform-agnostic deliverable
 
 ```text
-source ─▶ build-<lang>.yml ─▶ artefact (JAR, tarball) ─┐
+source ─▶ build-<lang>.yml ─▶ artifact (JAR, tarball) ─┐
                                                        │
                                                        ▼
                                           publish-container.yml ─▶ image
-                                          (downloads artefact, COPYs in)
+                                          (downloads artifact, COPYs in)
 ```
 
-`build-<lang>.yml` produces a deployable artefact (JAR, NPM tarball,
-APK, IPA). The container build downloads it via `from: [<artefact>]`
+`build-<lang>.yml` produces a deployable artifact (JAR, NPM tarball,
+APK, IPA). The container build downloads it via `from: [<artifact>]`
 and `COPY`s it into a thin runtime image.
 
 **Implemented for:** maven, gradle, gradle-android, npm, xcode-ios, go (when `config.build-mode: artifact-first`).
@@ -44,12 +44,12 @@ source ─┬─▶ sbom-<lang>.yml ─▶ Build SBOM (manifest-derived)
               ├─ Containerfile builder stage compiles the binary
               ├─ runtime stage receives the binary
               └─ optional `extract.binary` re-uses the compile to
-                 produce a CI artefact alongside the image
+                 produce a CI artifact alongside the image
 ```
 
 The Containerfile is the build environment. The runtime image is the
 primary deliverable; the binary is a byproduct, optionally extracted as a
-CI artefact via `extract.binary`. Platform commitment happens at
+CI artifact via `extract.binary`. Platform commitment happens at
 `--platform=` time on the container build, which is where it naturally
 belongs for compiled-native code.
 
@@ -57,24 +57,24 @@ belongs for compiled-native code.
 
 ### Why two patterns
 
-Forcing compiled-native ecosystems into artefact-first would require
+Forcing compiled-native ecosystems into artifact-first would require
 cross-compile machinery in CI (cargo-zigbuild, cross-rs, native-apt
 sysroots) — significant complexity for a problem that split-runner
 multi-arch (`ubuntu-24.04` for amd64 + `ubuntu-24.04-arm` for arm64)
 already solves inside the Containerfile. container-first accepts that the
 container IS the build environment and orchestrates accordingly. The
-naming reflects this: `build-<lang>.yml` for artefact-first (produces the
-artefact), `sbom-<lang>.yml` for container-first (handles platform-agnostic
+naming reflects this: `build-<lang>.yml` for artifact-first (produces the
+artifact), `sbom-<lang>.yml` for container-first (handles platform-agnostic
 side-concerns; SBOM is one of them).
 
 When a future language has both patterns available (e.g., python with
-wheel as artefact-first or pyproject manifest SBOM as container-first), reusable-ci
+wheel as artifact-first or pyproject manifest SBOM as container-first), reusable-ci
 picks the pattern that matches how the language actually ships in
 practice.
 
 ### SBOM placement reflects the pattern
 
-artefact-first ecosystems produce the artefact and its build SBOM together
+artifact-first ecosystems produce the artifact and its build SBOM together
 in `release-build-stage` (the cyclonedx plugin runs inside `mvn package`,
 `npm pack`, `go build`, etc.). Container-first ecosystems have nothing to build in the
 build stage — the actual compile happens inside the Containerfile in the
@@ -152,14 +152,15 @@ be compared at a glance.
 
 | Property | Value |
 |---|---|
-| Pattern | dual-mode (artefact-first OR container-first per artefact) |
+| Pattern | dual-mode (artifact-first OR container-first per artifact) |
 | project-type identifier | `cargo` |
 | Canonical tool | cargo (Rust's universal package manager + build tool) |
-| Status | Production (container-first since v2.9.0; artefact-first since v3.x) |
+| Status | Production (container-first since v2.9.0; artifact-first since v3.x) |
 
-Cargo mirrors Go's dual-mode shape: every Cargo artefact picks `build-mode:
-artifact-first` or `build-mode: container-first`. The field is required at
-config-parse time so the choice is explicit, never silently defaulted.
+Cargo mirrors Go's dual-mode shape: a Cargo artifact picks `build-mode:
+artifact-first` or `build-mode: container-first`. Omitted defaults to
+artifact-first (the binary-releasing shape); container-first is an explicit
+opt-in.
 
 #### When to pick which
 
@@ -180,19 +181,19 @@ config-parse time so the choice is explicit, never silently defaulted.
 
 | Concern | Status | Workflow / Mechanism | Notes |
 |---|---|---|---|
-| Build (standalone deliverable) | ✅ (artefact-first) | `build-cargo.yml` (`cargo build --release --target …`) | Cross-compiles per `platforms` GOOS/GOARCH list. Each value maps to a Rust target triple. Output lands in `dist/<goos>-<goarch>/<binary>-<goos>-<goarch>`, matching Go's shape. |
+| Build (standalone deliverable) | ✅ (artifact-first) | `build-cargo.yml` (`cargo build --release --target …`) | Cross-compiles per `platforms` GOOS/GOARCH list. Each value maps to a Rust target triple. Output lands in `dist/<goos>-<goarch>/<binary>-<goos>-<goarch>`, matching Go's shape. |
 | Build (container-first) | n/a | n/a | Compile happens inside Containerfile |
 | Lint | external | caller's `test.yml` | Workspace-specific clippy, rustfmt, cargo-audit, or cargo-deny checks belong in the consumer repo |
-| Test | external + opt-in `cargo test` (artefact-first) | caller's `test.yml` + `build-cargo.yml` (`cargo test --locked --all-targets`) | Release-build invocation is opt-out via `skip-tests`. Workspace features / testcontainers are still caller-owned. |
-| SBOM — build layer (artefact-first) | ✅ | inline `cargo cyclonedx` in `build-cargo.yml` | Same generator as `sbom-cargo.yml`; emitted as a per-artefact upload alongside the binaries. |
+| Test | external + opt-in `cargo test` (artifact-first) | caller's `test.yml` + `build-cargo.yml` (`cargo test --locked --all-targets`) | Release-build invocation is opt-out via `skip-tests`. Workspace features / testcontainers are still caller-owned. |
+| SBOM — build layer (artifact-first) | ✅ | inline `cargo cyclonedx` in `build-cargo.yml` | Same generator as `sbom-cargo.yml`; emitted as a per-artifact upload alongside the binaries. |
 | SBOM — build layer (container-first) | ✅ | `sbom-cargo.yml` | Lockfile-derived (reads `Cargo.lock`); runs in publish stage as a sibling of the container build. |
-| SBOM — analyzed-artifact | ✅ (artefact-first) / conditional (container-first) | syft scan of binaries | Artefact-first: scans `dist/<goos>-<goarch>/...`. Container-first: scans extracted binaries when the container declares `extract.binary`. |
+| SBOM — analyzed-artifact | ✅ (artifact-first) / conditional (container-first) | syft scan of binaries | Artifact-first: scans `dist/<goos>-<goarch>/...`. Container-first: scans extracted binaries when the container declares `extract.binary`. |
 | SBOM — analyzed-container | ✅ | `publish-container.yml` (syft) | Standard for all containers; derived from `sboms` |
 | Container build | ✅ | `publish-container.yml` | Native split-runner multi-arch (no QEMU) |
 | Multi-arch (linux variants) | ✅ | split-runner matrix | linux/amd64 → `ubuntu-24.04`, linux/arm64 → `ubuntu-24.04-arm`, merged into one manifest list |
-| Multi-arch artefact-first (linux x86 + arm) | ✅ | `build-cargo.yml` with `platforms: linux/amd64,linux/arm64` | The `runtime-rust-stable` image installs `aarch64-unknown-linux-gnu` target + `gcc-aarch64-linux-gnu` cross-linker. |
-| Multi-arch artefact-first (macOS / Windows) | partial | runtime image extension required | The mapping table accepts darwin/windows triples; the default runtime image does not install osxcross / mingw-w64. Adopters extend the image or use a host runner with the right toolchain. |
-| Binary extraction (CI artefact) | ✅ | `extract.binary` field | Opt-in; uploads one `${name}-binaries-${arch}` artefact per architecture |
+| Multi-arch artifact-first (linux x86 + arm) | ✅ | `build-cargo.yml` with `platforms: linux/amd64,linux/arm64` | The `runtime-rust-stable` image installs `aarch64-unknown-linux-gnu` target + `gcc-aarch64-linux-gnu` cross-linker. |
+| Multi-arch artifact-first (macOS / Windows) | partial | runtime image extension required | The mapping table accepts darwin/windows triples; the default runtime image does not install osxcross / mingw-w64. Adopters extend the image or use a host runner with the right toolchain. |
+| Binary extraction (CI artifact) | ✅ | `extract.binary` field | Opt-in; uploads one `${name}-binaries-${arch}` artifact per architecture |
 | Multi-binary in one container | ✅ | `extract.binary.names: [a, b]` | E.g., `hsm-worker` + `digg-hsm-keytool`; basenames suffixed with `-linux-${arch}` to avoid release-asset collision |
 | Workspace (multi-crate) | ✅ | sbom-cargo `--all`; bump-version `[workspace.package]` | One bump per release |
 | Single-crate | ✅ | Same workflows; bump-version `[package].version` | |
@@ -201,13 +202,13 @@ config-parse time so the choice is explicit, never silently defaulted.
 | Publish — container to ghcr | ✅ | `publish-container.yml` | SLSA provenance + scan + analyzed-container SBOM |
 | Publish — container to other OCI registries | ✅ | `publish-container.yml` | docker.io, quay.io, etc. (no SLSA outside ghcr) |
 | Publish — crates.io (libraries) | ❌ | — | Future workflow work |
-| Standalone binary release (no container, GitHub Release attach) | ✅ (artefact-first) | `build-cargo.yml` + `release-create-github.yml` | Binaries land in `dist/`, get checksummed, SBOM'd, signed, and attached to the GitHub Release. |
+| Standalone binary release (no container, GitHub Release attach) | ✅ (artifact-first) | `build-cargo.yml` + `release-create-github.yml` | Binaries land in `dist/`, get checksummed, SBOM'd, signed, and attached to the GitHub Release. |
 | macOS binary distribution | partial | requires darwin runtime image | Mapping table covers `darwin/amd64`, `darwin/arm64`. Default runtime image is Linux; adopters needing darwin extend it or run a separate workflow on a macOS runner. |
 | Windows binary distribution | partial | requires mingw-w64 in runtime image | Same model as macOS. |
 
 #### Caller responsibilities
 
-**Artefact-first only:**
+**Artifact-first only:**
 - **`[[bin]]` or `[package].name` matches the binary you want** — the default. Override with `config.binary-name` only when the package builds multiple bins and you want one specific bin to be the deliverable.
 - **`config.platforms` matches the runtime image's installed Rust targets + cross-linkers** — the default `runtime-rust-stable` image carries `linux/amd64` + `linux/arm64`. Adding `darwin/*` or `windows/*` needs an extended image or a non-default host runner.
 
@@ -216,7 +217,7 @@ config-parse time so the choice is explicit, never silently defaulted.
 - **Native build deps** inside the Containerfile builder stage (`apt-get install`).
 
 **Both modes:**
-- **Workspace tests** in a caller-owned workflow. `cargo test --workspace` can't be expressed per-artefact, and reusable-ci does not invoke project tests automatically (artefact-first's opt-out test invocation is a release-build sanity gate, not a substitute for a PR test workflow).
+- **Workspace tests** in a caller-owned workflow. `cargo test --workspace` can't be expressed per-artifact, and reusable-ci does not invoke project tests automatically (artifact-first's opt-out test invocation is a release-build sanity gate, not a substitute for a PR test workflow).
 - **Native lint deps** in the caller's Rust test/lint job — clippy compiles, so the same packages must be available there.
 - **`Cargo.lock` checked in** — required for reproducible SBOM and release.
 - **`rust-toolchain.toml` recommended** — used by SBOM and build workflows for toolchain selection. Not strictly required.
@@ -230,11 +231,11 @@ config-parse time so the choice is explicit, never silently defaulted.
 
 ---
 
-### Maven (artefact-first)
+### Maven (artifact-first)
 
 | Property | Value |
 |---|---|
-| Pattern | artefact-first (platform-agnostic deliverable) |
+| Pattern | artifact-first (platform-agnostic deliverable) |
 | project-type identifier | `maven` |
 | Canonical tool | Maven |
 | Status | Production |
@@ -244,18 +245,18 @@ config-parse time so the choice is explicit, never silently defaulted.
 
 | Concern | Status | Workflow / Mechanism | Notes |
 |---|---|---|---|
-| Build (standalone deliverable) | ✅ | `build-maven.yml` (`mvn package`) | Produces `.jar` (and optionally `-sources.jar`, `-javadoc.jar` for libraries) under `target/`. The artefact is uploaded as a workflow artifact named per `artifact-name`. |
+| Build (standalone deliverable) | ✅ | `build-maven.yml` (`mvn package`) | Produces `.jar` (and optionally `-sources.jar`, `-javadoc.jar` for libraries) under `target/`. The artifact is uploaded as a workflow artifact named per `artifact-name`. |
 | Lint | external | caller's `test.yml` | Checkstyle, SpotBugs, PMD belong in the consumer repo's PR workflow. |
 | Test | external | caller's `test.yml` | `mvn test` isn't invoked by reusable-ci. |
 | SBOM — build layer | ✅ | `build-maven.yml` via cyclonedx-maven-plugin | Runs inside `mvn package`; observes the resolved dependency graph including provided/runtime scopes. |
 | SBOM — analyzed-artifact | ✅ | syft scan of the produced `.jar` | Detects bundled dependencies (fat jars) the build-layer SBOM may miss. |
-| SBOM — analyzed-container | ✅ | `publish-container.yml` (syft) | Standard for containers wrapping Maven artefacts. |
-| Container build (wrapping the jar) | ✅ | `publish-container.yml` (artefact-first → container) | The build artifact is downloaded into the build context; the Containerfile `COPY`s it in. |
+| SBOM — analyzed-container | ✅ | `publish-container.yml` (syft) | Standard for containers wrapping Maven artifacts. |
+| Container build (wrapping the jar) | ✅ | `publish-container.yml` (artifact-first → container) | The build artifact is downloaded into the build context; the Containerfile `COPY`s it in. |
 | Multi-arch container (same jar) | ✅ | split-runner matrix | The JAR is platform-agnostic; the runtime base image is what differs per arch. |
 | Build reproducibility | ✅ | `validate jvm-reproducibility` checks `<project.build.outputTimestamp>` in pom.xml | Warns when missing; reproducible builds require the property to be set. |
 | Multi-module Maven (parent + children) | ✅ | one Maven artifact entry pointing at parent POM | Inheritance handles children; `mvn package` at the parent builds everything. |
-| Library artefact (sources + javadoc) | ✅ | `build-type: library` | Sources jar + Javadoc jar attached automatically. |
-| Application artefact (executable jar) | ✅ | `build-type: application` (default) | The main jar only. |
+| Library artifact (sources + javadoc) | ✅ | `build-type: library` | Sources jar + Javadoc jar attached automatically. |
+| Application artifact (executable jar) | ✅ | `build-type: application` (default) | The main jar only. |
 | Version-bump (pom.xml + multi-module child POMs) | ✅ | `reusable-ci version bump maven` | Uses `versions:set` semantics; multi-module aware. |
 | Release prerequisite checks | ✅ | `validate-release-prerequisites.yml` | Confirms `MAVEN_CENTRAL_USERNAME`/`PASSWORD` set when publishing there; validates GPG availability when sign.method=gpg. |
 | Publish — Maven Central | ✅ | `publish-maven-central.yml` | Sonatype Central Portal (the `central-publishing-maven-plugin`); requires `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `RELEASE_GPG_PRIVATE_KEY`, `RELEASE_GPG_PASSPHRASE`. |
@@ -278,11 +279,11 @@ config-parse time so the choice is explicit, never silently defaulted.
 
 ---
 
-### NPM (artefact-first)
+### NPM (artifact-first)
 
 | Property | Value |
 |---|---|
-| Pattern | artefact-first (platform-agnostic deliverable) |
+| Pattern | artifact-first (platform-agnostic deliverable) |
 | project-type identifier | `npm` |
 | Canonical tool | npm (dominant package manager for the Node.js ecosystem) |
 | Status | Production |
@@ -292,13 +293,13 @@ config-parse time so the choice is explicit, never silently defaulted.
 
 | Concern | Status | Workflow / Mechanism | Notes |
 |---|---|---|---|
-| Build (standalone deliverable) | ✅ | `build-npm.yml` (`npm pack`) | Produces a tarball under `<name>-<version>.tgz`; uploaded as the build artefact. Library shape (no build script) and app shape (with build script writing `dist/`) are both supported. |
+| Build (standalone deliverable) | ✅ | `build-npm.yml` (`npm pack`) | Produces a tarball under `<name>-<version>.tgz`; uploaded as the build artifact. Library shape (no build script) and app shape (with build script writing `dist/`) are both supported. |
 | Lint | external | caller's `test.yml` | ESLint / Prettier belong in the consumer repo. |
 | Test | external | caller's `test.yml` | `npm test` isn't invoked by reusable-ci. |
 | SBOM — build layer | ✅ | syft on the `npm pack` tarball | npm has no canonical cyclonedx plugin; syft observes the packed tree. |
 | SBOM — analyzed-artifact | ✅ | syft scan of `dist/` (when present) | Catches transitive bundling via webpack/rollup/esbuild. |
-| SBOM — analyzed-container | ✅ | `publish-container.yml` (syft) | Standard for containers wrapping NPM artefacts. |
-| Container build (wrapping the tarball) | ✅ | `publish-container.yml` (artefact-first → container) | Containerfile `COPY`s the tarball or `dist/` into the runtime image. |
+| SBOM — analyzed-container | ✅ | `publish-container.yml` (syft) | Standard for containers wrapping NPM artifacts. |
+| Container build (wrapping the tarball) | ✅ | `publish-container.yml` (artifact-first → container) | Containerfile `COPY`s the tarball or `dist/` into the runtime image. |
 | Multi-arch container (same tarball) | ✅ | split-runner matrix | Node tarballs are platform-agnostic; native add-ons require their own multi-arch wheels (not handled here). |
 | Build reproducibility | ✅ | npm ≥ 10 (npm/cli#3536 fix) | Runtime image pins Node 24 LTS; uses npm 10+. `package-lock.json` checked in is required. |
 | Library shape (no build script) | ✅ | `npm pack` produces the publishable tarball directly | Matches scoped npm-package conventions. |
@@ -324,11 +325,11 @@ config-parse time so the choice is explicit, never silently defaulted.
 
 ---
 
-### Gradle (artefact-first — JVM)
+### Gradle (artifact-first — JVM)
 
 | Property | Value |
 |---|---|
-| Pattern | artefact-first (platform-agnostic deliverable) |
+| Pattern | artifact-first (platform-agnostic deliverable) |
 | project-type identifier | `gradle` |
 | Canonical tool | Gradle |
 | Status | Production |
@@ -367,11 +368,11 @@ config-parse time so the choice is explicit, never silently defaulted.
 
 ---
 
-### Gradle Android (artefact-first)
+### Gradle Android (artifact-first)
 
 | Property | Value |
 |---|---|
-| Pattern | artefact-first (Android-specific deliverable: APK / AAB) |
+| Pattern | artifact-first (Android-specific deliverable: APK / AAB) |
 | project-type identifier | `gradle-android` |
 | Canonical tool | Gradle + Android SDK |
 | Status | Production |
@@ -415,11 +416,11 @@ config-parse time so the choice is explicit, never silently defaulted.
 
 ---
 
-### Xcode iOS (artefact-first)
+### Xcode iOS (artifact-first)
 
 | Property | Value |
 |---|---|
-| Pattern | artefact-first (iOS/macOS-specific deliverable: IPA) |
+| Pattern | artifact-first (iOS/macOS-specific deliverable: IPA) |
 | project-type identifier | `xcode-ios` |
 | Canonical tool | Xcode + xcodebuild |
 | Status | Production |
@@ -478,7 +479,7 @@ loud failure now that the alternative is worse than fixing the typo
 or removing the artifact.
 
 Python's build-tool landscape (pip, poetry, uv, hatch, flit, setuptools)
-has no canonical winner, so the eventual choice between artefact-first
+has no canonical winner, so the eventual choice between artifact-first
 (build wheel, COPY into container) and container-first (manifest-based
 SBOM only, container does the build) depends on the first real caller's
 shape. Re-enabling Python is a one-line change to `ValidProjectTypes`
@@ -496,10 +497,11 @@ shape. Re-enabling Python is a one-line change to `ValidProjectTypes`
 | Status | Production |
 | Tracked since | v2.0.0 (container-first), v2.7.0 (artifact-first) |
 
-Go requires `config.build-mode` so the orchestrator knows whether to run
+Go's `config.build-mode` tells the orchestrator whether to run
 `build-go.yml` in the build stage or `sbom-go.yml` in the publish stage.
-This is the only ecosystem where the caller picks the flow — for every
-other ecosystem, the pattern is fixed by the deliverable shape.
+Omitted defaults to `artifact-first`; `container-first` is an explicit
+opt-in. Go and Cargo are the ecosystems where the caller picks the flow —
+for every other ecosystem, the pattern is fixed by the deliverable shape.
 
 #### Capabilities
 
@@ -512,14 +514,14 @@ other ecosystem, the pattern is fixed by the deliverable shape.
 | SBOM — analyzed-artifact | ✅ syft on each per-arch binary | partial — only when `extract.binary` is set |
 | SBOM — analyzed-container | n/a | ✅ `publish-container.yml` (syft on pushed image) |
 | Container image | optional — `publish-container.yml` downloads `<name>-go-build-artifacts` into the build context's `dist/` and the Containerfile COPYs the binary in | ✅ primary deliverable |
-| Binary extraction (CI artefact) | n/a (binaries already are the artefact) | ✅ `containers[].extract.binary` re-extracts the compiled binary as a separate CI artefact alongside the image |
-| Multi-binary per container | n/a (one artefact = one binary) | ✅ `extract.binary.names: [a, b]` |
+| Binary extraction (CI artifact) | n/a (binaries already are the artifact) | ✅ `containers[].extract.binary` re-extracts the compiled binary as a separate CI artifact alongside the image |
+| Multi-binary per container | n/a (one artifact = one binary) | ✅ `extract.binary.names: [a, b]` |
 | Reproducibility | ✅ `-trimpath` + `SOURCE_DATE_EPOCH`-derived ldflags (`-X main.date={{.CommitDate}}`); BuildKit cache mounts | ✅ same; `SOURCE_DATE_EPOCH` flows from the publish-container `prep` job |
 | Skip-tests opt-in | ✅ `config.skip-tests: true` | n/a (tests run during Containerfile build if the Containerfile invokes them) |
 | Version-bump (go.mod doesn't store version) | partial — no version-bump-go workflow; uses tag-only | partial — same |
 | Release prerequisite checks | ✅ `validate-release-prerequisites.yml` | ✅ same |
 | Publish — release tarball | ✅ via `release-create-github` (binaries attached to GitHub Release) | n/a |
-| Publish — container to ghcr | optional — wrap the artefact-first binary in a container | ✅ primary path |
+| Publish — container to ghcr | optional — wrap the artifact-first binary in a container | ✅ primary path |
 | Publish — module proxy / `go install`-able | ✅ implicit (tag = module version per Go's contract) | ✅ implicit |
 | govulncheck / golangci-lint / staticcheck | external | external (in caller's PR workflow) |
 
@@ -550,18 +552,18 @@ other ecosystem, the pattern is fixed by the deliverable shape.
 
 ---
 
-### Meta (no buildable artefact)
+### Meta (no buildable artifact)
 
 | Property | Value |
 |---|---|
-| Pattern | n/a — no artefact to build |
+| Pattern | n/a — no artifact to build |
 | project-type identifier | `meta` |
 | Status | Production |
 | Tracked since | v3.0.0 |
 
 The `meta` project-type exists for repositories that have a release
 cadence (changelog generation, tagged GitHub Releases, signed release
-commits) but **no buildable artefact**. Used internally by
+commits) but **no buildable artifact**. Used internally by
 `reusable-ci`'s own `self-release.yml` — the actual binaries come
 from a separate `release-binary.yml` (goreleaser); the orchestrator
 handles changelog + GitHub Release creation.
@@ -570,7 +572,7 @@ External use cases:
 - Documentation-only repos that publish versioned docs but don't build software
 - Specification repos (the spec text IS the deliverable; no compile step)
 - Configuration-repos used as central sources of truth (e.g., a renovate config repo)
-- "Bundle" / "umbrella" repos that consume other artefacts and merely tag a coherent release set
+- "Bundle" / "umbrella" repos that consume other artifacts and merely tag a coherent release set
 
 #### Capabilities
 
@@ -580,7 +582,7 @@ External use cases:
 | SBOM | n/a | `sboms: none` enforced |
 | Container | n/a | No `containers:` block honoured |
 | Publish | n/a | `release-publish-stage.yml` runs zero jobs |
-| Changelog generation | ✅ | `generate-changelog.yml` runs against the meta artefact |
+| Changelog generation | ✅ | `generate-changelog.yml` runs against the meta artifact |
 | GitHub Release creation | ✅ | `release-create-github.yml` creates the release |
 | Tag signing | ✅ | Same `validate tag signature` flow as any other ecosystem |
 | `require-authorization` allowlist | ✅ | Same `.reusable-ci/allowed_signers` enforcement |
@@ -601,7 +603,7 @@ When adding support for a new ecosystem:
    production (don't force-fit).
 2. Add the project-type identifier to `internal/domain/config/schema.go`
    (`ValidProjectTypes`, and `SBOMSupportedTypes` if it produces SBOMs).
-3. For artefact-first: add `build-<tool>.yml`. For container-first: add
+3. For artifact-first: add `build-<tool>.yml`. For container-first: add
    `sbom-<tool>.yml` plus document the caller's Containerfile contract.
 4. Wire into `release-build-stage.yml` matrix (if a build/sbom workflow
    produces something) and/or `release-publish-stage.yml` (if a new

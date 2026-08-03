@@ -47,7 +47,7 @@ instead. See the [examples](../examples/).
 
 High-security verification methods use industry-standard cryptographic signatures and attestations. NPM package verification is currently registry-integrity based.
 
-## Signing Methods for Release Artefacts
+## Signing Methods for Release Artifacts
 
 `reusable-ci release sign` supports three signing backends — pick per repo via `--method` (or `sign.method` in `.reusable-ci/artifacts.yml`). All three produce verification material the consumer reads via `reusable-ci validate artifact-signature`, which auto-detects the method from the sidecar layout (`.asc` vs `.bundle`).
 
@@ -78,7 +78,7 @@ env:
   GPG_PASSPHRASE:  ${{ secrets.GPG_PASSPHRASE }}
 ```
 
-Produces `<artefact>.asc`. Consumer verifies with `gpg --verify <art>.asc <art>` against an out-of-band-distributed public key, or with `reusable-ci validate artifact-signature --artifact <art> --public-key-file pubkey.asc`.
+Produces `<artifact>.asc`. Consumer verifies with `gpg --verify <art>.asc <art>` against an out-of-band-distributed public key, or with `reusable-ci validate artifact-signature --artifact <art> --public-key-file pubkey.asc`.
 
 This is the lowest-friction backend for downstream consumers (gpg is in every distro) but has the heaviest operator burden: the long-lived private key requires rotation discipline, swap-page-safe handling (see [Swap policy](#swap-policy)), and a distribution mechanism for the matching pubkey.
 
@@ -103,7 +103,7 @@ OIDC issuer auto-detection per platform:
 
 Override the detected default with `--oidc-issuer <URL>` when needed.
 
-Produces `<artefact>.bundle` (v3 Sigstore bundle JSON).
+Produces `<artifact>.bundle` (v3 Sigstore bundle JSON).
 
 **Verifying inside CI (zero-config):** when `validate artifact-signature` runs on
 a keyless-capable forge (GitHub / GitLab) and you pass neither
@@ -168,7 +168,7 @@ bao read -format=json transit/keys/release-signing \
 git add release-pubkey.pem && git commit -m "Add release signing pubkey"
 ```
 
-Produces `<artefact>.bundle`. The signature was computed inside OpenBao; the private key has never been in the Go heap (so the [swap policy](#swap-policy) doesn't apply). Consumer verifies with the committed pubkey:
+Produces `<artifact>.bundle`. The signature was computed inside OpenBao; the private key has never been in the Go heap (so the [swap policy](#swap-policy) doesn't apply). Consumer verifies with the committed pubkey:
 
 ```bash
 reusable-ci validate artifact-signature --artifact app.tgz --key release-pubkey.pem
@@ -313,7 +313,7 @@ A repo can switch backends by changing one line in `artifacts.yml`. No swap-poli
 
 ### Signing the release commit & tag (git objects)
 
-The `sign:` block above selects how *release artefacts* are signed. Signing the **release commit and tag** (git objects) is a separate, independent axis, configured under `git-signing:`:
+The `sign:` block above selects how *release artifacts* are signed. Signing the **release commit and tag** (git objects) is a separate, independent axis, configured under `git-signing:`:
 
 ```yaml
 # .reusable-ci/artifacts.yml
@@ -366,7 +366,7 @@ Setting it at the caller layer (not hardcoding it non-overridable in the engine)
 
 Two switches enable it:
 
-- **Per-artefact**: `require-authorization: true` on any artefact in `artifacts.yml`. Use this when a *specific* deliverable (e.g. a public library) needs the gate; other artefacts in the same repo aren't gated.
+- **Per-artifact**: `require-authorization: true` on any artifact in `artifacts.yml`. Use this when a *specific* deliverable (e.g. a public library) needs the gate; other artifacts in the same repo aren't gated.
 - **Per-release**: `release.requireallowlistedsigner: true` on `release-orchestrator.yml` (the org default). Use this when *every* release of the repo must pass the gate.
 
 If either is true, the gate runs. Behaviour when the gate is on:
@@ -507,7 +507,7 @@ Idempotent under failure; the cleanup runs even when the previous step exited no
 
 The release pipeline crosses several `workflow_call` boundaries (orchestrator → prepare → build → publish → create-release). Data flowing across those boundaries is **either non-secret structured JSON** (config-plan / release-plan / publish-stage-plan) **or registered GitHub secrets** (`secrets.X`). Specifics:
 
-- **JSON payloads** between stages contain artefact names, project types, working directories, publish-target enums, SBOM layer selections. Derived from the committed `.reusable-ci/artifacts.yml`; no field shape carries a secret value. The schema is in `internal/domain/pipeline/configplan.go`.
+- **JSON payloads** between stages contain artifact names, project types, working directories, publish-target enums, SBOM layer selections. Derived from the committed `.reusable-ci/artifacts.yml`; no field shape carries a secret value. The schema is in `internal/domain/pipeline/configplan.go`.
 - **`$GITHUB_OUTPUT`** writes are limited to public identifiers — GPG fingerprints, key IDs, key UserID name/email, tag names, SHAs, basenames, container digests. No private material.
 - **`$GITHUB_ENV`** is written once across the codebase: `build gradle-android decode-keystore` emits `ANDROID_KEYSTORE_PATH=<path>` — a filesystem path, not key bytes.
 - **Secret-presence reporting** uses `${{ secrets.X != '' }}` — the workflow env receives a boolean ("is X configured?"), never the value.
@@ -526,11 +526,11 @@ The reusable-ci uploads, with their retention windows and content:
 
 | Artifact | Retention | Content |
 |---|---|---|
-| Build artefacts (jar / tarball / APK / AAB) | 7 days | The compiled release artefact — designed to be public |
+| Build artifacts (jar / tarball / APK / AAB) | 7 days | The compiled release artifact — designed to be public |
 | Build-layer SBOMs (`bom.json`) | 7 days | Dependency list; no credentials |
 | Analyzed-artifact SBOMs (SPDX / CycloneDX) | 7 days | Syft scan output; no credentials |
 | Container digest markers | 1 day | Short ASCII digest IDs |
-| Release artefacts bundle (`release-files/`, release notes) | 30 days | Files designed to attach to the GitHub Release |
+| Release artifacts bundle (`release-files/`, release notes) | 30 days | Files designed to attach to the GitHub Release |
 | SARIF security reports | 5 days | Vulnerability findings; may contain code snippets, not credentials |
 
 **Two rules that must hold for the upload-artifact contract to stay safe:**
@@ -663,24 +663,24 @@ release without the check is auditable.
 | **Build SBOM** generation (cyclonedx) | Required | `enable-build-sbom: false` per builder, or `release.sboms: none` at orchestrator |
 | **Container vulnerability scan** (trivy, CRITICAL+HIGH) | Required | `enable-scan: false` to skip entirely, or `scan-severity: CRITICAL` to relax the threshold |
 | **Artifact-presence verification** in publish-container | Required | Drop the `from:` entry in artifacts.yml so the verify step is skipped |
-| **JVM reproducibility** (Maven `outputTimestamp`, Gradle archive task settings) | Required | Drop the artefact from the matrix; there is no per-artefact opt-out for the reproducibility invariant |
-| **Cargo lockfile + toolchain pin** | Required | None — `Cargo.lock` and `rust-toolchain.toml` are mandatory for every Cargo artefact |
+| **JVM reproducibility** (Maven `outputTimestamp`, Gradle archive task settings) | Required | Drop the artifact from the matrix; there is no per-artifact opt-out for the reproducibility invariant |
+| **Cargo lockfile + toolchain pin** | Required | None — `Cargo.lock` and `rust-toolchain.toml` are mandatory for every Cargo artifact |
 
-A passing pipeline now implies: artefacts built, signed, SBOM'd,
+A passing pipeline now implies: artifacts built, signed, SBOM'd,
 attested, reproducible, scan-clean. No `continue-on-error: true` on any
 of the above. Adopters who need a non-default policy set it explicitly
 per-call.
 
 ## Reproducible Builds
 
-A reproducible build produces a byte-identical artefact every time the same source is built with the same toolchain. The artefact's SHA256 then becomes a meaningful fingerprint: any verifier can rebuild the tag from scratch and confirm the published artefact matches what the source declares it should be. Without reproducibility, SBOMs and signatures attest to *a* build, not *the* build the source implies.
+A reproducible build produces a byte-identical artifact every time the same source is built with the same toolchain. The artifact's SHA256 then becomes a meaningful fingerprint: any verifier can rebuild the tag from scratch and confirm the published artifact matches what the source declares it should be. Without reproducibility, SBOMs and signatures attest to *a* build, not *the* build the source implies.
 
 ### Per-ecosystem status
 
-| Ecosystem | Artefact | Knob | Wired by reusable-ci? |
+| Ecosystem | Artifact | Knob | Wired by reusable-ci? |
 |---|---|---|---|
-| Go (artefact-first OR container-first) | binary | `-trimpath -buildvcs=false` + `SOURCE_DATE_EPOCH` ldflag | Yes, automatic |
-| Cargo (artefact-first) | release binary | `cargo build --release --locked --target <triple>` + `Cargo.lock` + `SOURCE_DATE_EPOCH` honoured via metadata derivation | Yes, automatic in `build-cargo.yml` |
+| Go (artifact-first OR container-first) | binary | `-trimpath -buildvcs=false` + `SOURCE_DATE_EPOCH` ldflag | Yes, automatic |
+| Cargo (artifact-first) | release binary | `cargo build --release --locked --target <triple>` + `Cargo.lock` + `SOURCE_DATE_EPOCH` honoured via metadata derivation | Yes, automatic in `build-cargo.yml` |
 | Cargo (container-first) | image-embedded binary | Stock cargo + `Cargo.lock` checked in | Caller-owned (validated via `validate cargo` across both build-modes) |
 | Maven | main jar, sources jar | `<project.build.outputTimestamp>` in `pom.xml` | Caller-owned, **enforced** by `validate jvm-reproducibility` (release fails if missing) |
 | Gradle (JVM + Android) | jar, war, distZip, distTar, APK | `preserveFileTimestamps = false` + `reproducibleFileOrder = true` on `AbstractArchiveTask` | Caller-owned, **enforced** by `validate jvm-reproducibility` (release fails if missing) |
@@ -691,44 +691,44 @@ The integration testsuite at [`diggsweden/reusable-ci-testsuite`](https://github
 
 ### What `validate jvm-reproducibility` does
 
-The release-orchestrator runs `validate prerequisites` before every release, and `prerequisites` now includes a `jvm-reproducibility` check when the plan contains a Maven, Gradle, or Gradle-Android artefact.
+The release-orchestrator runs `validate prerequisites` before every release, and `prerequisites` now includes a `jvm-reproducibility` check when the plan contains a Maven, Gradle, or Gradle-Android artifact.
 
-For each artefact it:
+For each artifact it:
 
-- Reads `pom.xml` (Maven) or `build.gradle{,.kts}` (Gradle) under the artefact's `working-directory`.
+- Reads `pom.xml` (Maven) or `build.gradle{,.kts}` (Gradle) under the artifact's `working-directory`.
 - For Maven: real XML parse looking for `<project.build.outputTimestamp>` under `<properties>`.
 - For Gradle: line-by-line substring check for `preserveFileTimestamps = false` AND `reproducibleFileOrder = true`. Tolerates Kotlin and Groovy DSL forms, with or without whitespace around `=`.
 - Emits a GitHub Actions `::error::` annotation when the setting is missing, prints an actionable fix snippet (the exact `<project.build.outputTimestamp>` or `tasks.withType(AbstractArchiveTask)` block to paste), and exits non-zero so the release stops at `validate prerequisites`.
 
-The check is a hard gate — reproducibility is foundational to the deterministic-pipeline contract, so a non-reproducible JVM artefact cannot reach publish. To run standalone (e.g. from the CLI):
+The check is a hard gate — reproducibility is foundational to the deterministic-pipeline contract, so a non-reproducible JVM artifact cannot reach publish. To run standalone (e.g. from the CLI):
 
 ```bash
 export CONFIG_PLAN_JSON="$(reusable-ci config parse-artifacts ...)"
 reusable-ci validate jvm-reproducibility
 ```
 
-#### Scope: each registered artefact's manifest is checked standalone
+#### Scope: each registered artifact's manifest is checked standalone
 
 The validator iterates `artifacts.all[]` from the config plan and reads
-`pom.xml` (or `build.gradle{,.kts}`) under each artefact's
+`pom.xml` (or `build.gradle{,.kts}`) under each artifact's
 `working-directory`. It does not compute Maven's *effective POM* — i.e. it
 does not resolve `<parent>` chains across the workspace.
 
 Practical implications:
 
-- **Single-project Maven (typical case)**: one artefact entry, one pom.xml,
+- **Single-project Maven (typical case)**: one artifact entry, one pom.xml,
   one check. The validator's reading matches Maven's.
-- **Multi-module Maven registered as one artefact** (pointing at the parent
+- **Multi-module Maven registered as one artifact** (pointing at the parent
   POM): the parent POM is the only one inspected, which is correct — the
   build is invoked at the parent and inheritance handles children.
 - **Multi-module Maven where each child is registered as a separate
-  artefact**: each child's pom.xml is inspected standalone. If a child
+  artifact**: each child's pom.xml is inspected standalone. If a child
   relies on inherited `<project.build.outputTimestamp>` from a parent POM
-  that is NOT itself a registered artefact, the validator will warn even
+  that is NOT itself a registered artifact, the validator will warn even
   though the effective build is reproducible. Workarounds:
     - Set `<project.build.outputTimestamp>` explicitly in each child POM
       (acceptable duplication; Maven supports either pattern).
-    - Or register the parent POM as a `meta` artefact too, so the
+    - Or register the parent POM as a `meta` artifact too, so the
       validator inspects it (the parent's property then satisfies the
       check at the parent level; children still warn unless they also
       declare the property explicitly).
@@ -738,11 +738,11 @@ shelling out to `mvn help:effective-pom`, adding a JVM dependency to the
 validator path. The current standalone check covers the typical case
 without that cost.
 
-Gradle has the analogous gap: the validator inspects each artefact's
+Gradle has the analogous gap: the validator inspects each artifact's
 `build.gradle{,.kts}` standalone. If a multi-project build uses
 `subprojects { tasks.withType<AbstractArchiveTask>().configureEach { ... }}`
 in the root build script and registers only subproject directories as
-artefacts (rare), the validator would miss the inherited config. The
+artifacts (rare), the validator would miss the inherited config. The
 substring heuristic does catch the typical case where the config block
 lives in each subproject's own build script or in a shared convention
 plugin applied per-project.
@@ -759,13 +759,13 @@ Result: two rebuilds of the same tag produce the same **image-config digest** an
 
 Two things are NOT byte-stable, by design — verifiers must compare contents, not the wrapping bytes:
 
-- **SLSA provenance attestation** (`enable-slsa: true`, signed via `reusable-ci container attest`) embeds the run-id, invocation, and build timestamps. The attestation differs every run; that's correct — it's identifying a specific build event, not the artefact.
+- **SLSA provenance attestation** (`enable-slsa: true`, signed via `reusable-ci container attest`) embeds the run-id, invocation, and build timestamps. The attestation differs every run; that's correct — it's identifying a specific build event, not the artifact.
 - **Analyzed-container SBOM attestation** (`enable-analyzed-container-sbom: true`) uses syft, which generates fresh UUIDs and embeds scan time per run. The SBOM content (components, versions) is stable, but the document bytes are not.
 
 ### Non-issues that look like reproducibility bugs
 
 - **Registry layer cache** (the dedicated `buildcache` package, tag-scoped per `(image, arch)`) keeps matrix legs from evicting each other. buildah pins the image-config `created` field and layer mtimes to `SOURCE_DATE_EPOCH` via `--timestamp`, so the image-config digest is stable whether the build hits or misses the cache.
-- **`actions/upload-artifact`** wraps uploaded files in a zip whose internal timestamps drift across runs. The **content inside** is byte-identical; only the transport wrapper differs. When hashing artefacts handed off between stages, hash the unpacked content, not the bundle.
+- **`actions/upload-artifact`** wraps uploaded files in a zip whose internal timestamps drift across runs. The **content inside** is byte-identical; only the transport wrapper differs. When hashing artifacts handed off between stages, hash the unpacked content, not the bundle.
 
 ### Verifying reproducibility yourself
 
@@ -774,7 +774,7 @@ Two things are NOT byte-stable, by design — verifiers must compare contents, n
 git checkout v1.2.3 -- .
 SOURCE_DATE_EPOCH="$(git log -1 --format=%ct HEAD)"
 
-# 2. Rebuild your artefact with the ecosystem's repro knobs honoured
+# 2. Rebuild your artifact with the ecosystem's repro knobs honoured
 #    (see the per-ecosystem table above).
 mvn -B -ntp clean package           # Maven
 ./gradlew clean jar                 # Gradle
@@ -790,14 +790,14 @@ If the SHAs differ on a tag that was published with reusable-ci ≥ v3 and the m
 
 ## Application Configuration vs Environment Configuration
 
-reusable-ci follows the [12-Factor App config split](https://12factor.net/config) — application configuration ships with the immutable artefact; environment configuration is supplied at deploy time and never bakes into the build. The split is enforced structurally:
+reusable-ci follows the [12-Factor App config split](https://12factor.net/config) — application configuration ships with the immutable artifact; environment configuration is supplied at deploy time and never bakes into the build. The split is enforced structurally:
 
 | | Application configuration | Environment configuration |
 |---|---|---|
 | **What** | What to build, how to test, what to sign | Where to publish, who to push as, what credentials |
 | **Where it lives** | `artifacts.yml`, workflow YAML defaults, runtime-image versions | Org secrets, workflow inputs, GitHub OIDC token |
 | **Varies by env?** | Never — same value across staging + production | Per deployment target |
-| **Travels in the artefact?** | Yes — baked into the binary's `main.version`/`main.commit`/`main.date` ldflags, the OCI image layers, the SBOM | No — passed through `secrets:` blocks at publish time, dropped after the step |
+| **Travels in the artifact?** | Yes — baked into the binary's `main.version`/`main.commit`/`main.date` ldflags, the OCI image layers, the SBOM | No — passed through `secrets:` blocks at publish time, dropped after the step |
 | **How reusable-ci enforces it** | `artifacts.yml` is parsed literally (no env-var expansion); `validateWorkingDirectory` rejects absolute paths / `${…}` refs / `..` escapes; the typed `PlannedArtifact` plan is pure-data with no secret material | every internal `workflow_call` site names the secrets it forwards (no `secrets: inherit` between reusable workflows); no secret ever passes through `with:` (would log to the run UI); `release sign` reads keys from env not argv |
 
 **Concrete violations the validator now catches at parse-time** (in `validateWorkingDirectory`):
@@ -808,21 +808,21 @@ reusable-ci follows the [12-Factor App config split](https://12factor.net/config
 
 **Things that look like env config but aren't:**
 
-- `version` / `commit` / `build-date` baked into binaries via ldflags — these *identify* the artefact, derived from the git tag + SHA + `SOURCE_DATE_EPOCH`. Same bytes on rebuild = same fingerprint, which is the whole point.
+- `version` / `commit` / `build-date` baked into binaries via ldflags — these *identify* the artifact, derived from the git tag + SHA + `SOURCE_DATE_EPOCH`. Same bytes on rebuild = same fingerprint, which is the whole point.
 - `runtime-image: ghcr.io/diggsweden/reusable-ci-runtime-*:v3.0.0` defaults — pinned to this repo's release version. The default *is* the application config; adopters override per-environment via workflow inputs.
-- `github.run_id` in cross-job artifact-upload names — workflow-internal scoping, never reaches the released artefact.
+- `github.run_id` in cross-job artifact-upload names — workflow-internal scoping, never reaches the released artifact.
 
 **What adopters get for free:**
 
-- An artefact that passes staging is byte-identical to what runs in production (reproducible builds + SBOM attestation)
-- Rolling back = redeploy the previous tag's signed artefact; all bundled app config rolls back with it
-- Environment-specific behavior changes (different DB URL, different feature-flag values per env) happen at the consumer's deploy step, not in the build pipeline — the artefact stays one
+- An artifact that passes staging is byte-identical to what runs in production (reproducible builds + SBOM attestation)
+- Rolling back = redeploy the previous tag's signed artifact; all bundled app config rolls back with it
+- Environment-specific behavior changes (different DB URL, different feature-flag values per env) happen at the consumer's deploy step, not in the build pipeline — the artifact stays one
 
 ## Software Bill of Materials (SBOM)
 
 Every release produces SBOMs at the three CISA layers the toolchain
 can observe: Build (from the ecosystem's own dependency resolver),
-Analyzed-Artifact (Syft scan of the built artefact), and
+Analyzed-Artifact (Syft scan of the built artifact), and
 Analyzed-Container (Syft scan of the pushed image). The mapping
 below names the tool used per layer per ecosystem.
 
@@ -845,7 +845,7 @@ Every release includes up to **three layers** of SBOMs:
 | Layer | Source | Captures | Use Case | Formats |
 |-------|--------|----------|----------|---------|
 | **Build** | Ecosystem CycloneDX tool (`bom.json`) | Precise build-time dependency resolution | Build reproducibility, dependency verification | CycloneDX 1.6 |
-| **Analyzed Artifact** | Built artefacts (JAR, `.tgz`, extracted binaries) | Actual packaged libraries and runtime files | Runtime dependency verification, binary analysis | SPDX 2.3, CycloneDX 1.6 |
+| **Analyzed Artifact** | Built artifacts (JAR, `.tgz`, extracted binaries) | Actual packaged libraries and runtime files | Runtime dependency verification, binary analysis | SPDX 2.3, CycloneDX 1.6 |
 | **Analyzed Container** | Container image | OS packages, JRE, runtime environment | Deployment security, runtime vulnerability scanning | SPDX 2.3, CycloneDX 1.6 |
 
 **Total SBOMs per release:** 5-9+ files (Build CycloneDX + analyzed layers in SPDX/CycloneDX, more if multiple artifacts are scanned)
@@ -856,7 +856,7 @@ SBOMs follow a consistent, CISA-aligned naming scheme. The short commit SHA is i
 
 ```text
 <project>-<version>-<short-sha>-build-sbom.cyclonedx.json
-<artefact-basename>-<short-sha>-analyzed-<artifact-type>-sbom.{spdx,cyclonedx}.json
+<artifact-basename>-<short-sha>-analyzed-<artifact-type>-sbom.{spdx,cyclonedx}.json
 <project>-<version>-<short-sha>-analyzed-container-sbom.{spdx,cyclonedx}.json
 
 Examples:
@@ -869,7 +869,7 @@ Examples:
 - PROJECT-VERSION-abc1234-analyzed-container-sbom.cyclonedx.json
 ```
 
-`<artefact-basename>` is the basename of the scanned file (so multi-JAR projects get unique SBOMs per jar). The `build` layer uses `<project>-<version>` since one Build SBOM is produced per project, not per output file. The `analyzed-container` layer omits the artifact-type modifier (container is its own type).
+`<artifact-basename>` is the basename of the scanned file (so multi-JAR projects get unique SBOMs per jar). The `build` layer uses `<project>-<version>` since one Build SBOM is produced per project, not per output file. The `analyzed-container` layer omits the artifact-type modifier (container is its own type).
 
 **Multiple JAR Artifacts:**
 
@@ -888,7 +888,7 @@ What the generated SBOMs satisfy, and where the line is drawn:
 
 - **[NTIA Minimum Elements for SBOM](https://www.ntia.gov/sites/default/files/publications/sbom_minimum_elements_report_0.pdf)** — every SBOM carries supplier, component, version, dependencies, and unique identifiers.
 - **[CISA SBOM types](https://www.cisa.gov/sbom)** — the three implemented layers (Build, Analyzed-Artifact, Analyzed-Container) map to the CISA taxonomy as in the table above; Source, Design, Deployed, Runtime are out of scope.
-- **[EU Cyber Resilience Act (CRA)](https://digital-strategy.ec.europa.eu/en/policies/cyber-resilience-act)** — the produced SBOMs cover the transparency requirements for shipped artefacts. CRA also imposes obligations on update handling and incident reporting that live outside CI.
+- **[EU Cyber Resilience Act (CRA)](https://digital-strategy.ec.europa.eu/en/policies/cyber-resilience-act)** — the produced SBOMs cover the transparency requirements for shipped artifacts. CRA also imposes obligations on update handling and incident reporting that live outside CI.
 - **[SLSA Provenance](https://slsa.dev/spec/v1.0/levels)** — tag releases produce a SIGNED SLSA v1.0 build-provenance attestation (cosign, portable across registries/forges) when `enable-slsa: true`, verifiable with `cosign verify-attestation`. It is in-job-signed ⇒ ~SLSA Build L2; true L3 requires an isolated builder such as `slsa-github-generator` (GitHub-only, not portable, not adopted here).
 
 ### SBOM Delivery & Access
@@ -913,7 +913,7 @@ unzip PROJECT-VERSION-sboms.zip
 
 Contents can include:
 - Build SBOM (CycloneDX)
-- Analyzed-artifact SBOMs for built artefacts (SPDX + CycloneDX)
+- Analyzed-artifact SBOMs for built artifacts (SPDX + CycloneDX)
 - Analyzed-container SBOMs for published container images (SPDX + CycloneDX)
 
 #### 2. Container Image Attestation (Analyzed-Container Layer)
@@ -1015,7 +1015,7 @@ syft packages PROJECT-VERSION-abc1234-build-sbom.cyclonedx.json -o json | \
 SBOMs are generated and packaged automatically during the release process:
 
 1. **Build workflows** → Generate Build SBOMs when the effective `sboms` includes `build`
-2. **Release SBOM step** → Generates analyzed-artifact SBOMs for built artefacts
+2. **Release SBOM step** → Generates analyzed-artifact SBOMs for built artifacts
 3. **Container publish** → Generates analyzed-container SBOMs for pushed images
 4. **Release assembly** → Stages the canonical release assets and SBOM inputs in `release-files/`
 5. **SBOM ZIP** → Packages all selected SBOM inputs into a ZIP archive

@@ -328,6 +328,11 @@ check-cli-reference:
 [group('docs')]
 gen-artifacts-schema:
     @go run ./cmd/gen-artifacts-schema > .reusable-ci/artifacts.schema.json
+
+# ▪ Regenerate the release-image ledger JSON schema from the Go validator
+[group('generate')]
+gen-release-images-schema:
+    @go run ./cmd/gen-release-images-schema > docs/schemas/release-images.schema.json
     @printf "Regenerated .reusable-ci/artifacts.schema.json\n"
 
 # Verify .reusable-ci/artifacts.schema.json is in sync with the Go schema.

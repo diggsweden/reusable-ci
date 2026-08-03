@@ -291,7 +291,11 @@ func (e Entry) validateReleaseCandidateTag(releaseTag, finalName string) error {
 }
 
 // validateReleaseMovingTag enforces that moving_tag, when present, is
-// neither a staging tag nor an immutable release-scoped tag.
+// neither a staging tag nor an immutable release-scoped tag, and that it
+// lives in final_tag's repository. Cross-registry promotion derives every
+// destination base from final_tag, so a moving tag on a different path
+// would be silently rehomed under final_tag's repository — reject the
+// entry instead of changing the tag's identity.
 func (e Entry) validateReleaseMovingTag(releaseTag string) error {
 	if e.MovingTag == "" {
 		return nil
@@ -300,6 +304,10 @@ func (e Entry) validateReleaseMovingTag(releaseTag string) error {
 	movingName := tagName(e.MovingTag)
 	if strings.HasPrefix(movingName, StagingTagPrefix) || movingName == releaseTag || strings.HasPrefix(movingName, releaseTag+"-") {
 		return fmt.Errorf("imageledger: moving_tag %q must not be a staging or immutable release tag: %w", e.MovingTag, errs.ErrValidation)
+	}
+
+	if container.StripTag(e.MovingTag) != container.StripTag(e.FinalTag) {
+		return fmt.Errorf("imageledger: moving_tag %q must share final_tag's repository %q: %w", e.MovingTag, container.StripTag(e.FinalTag), errs.ErrValidation)
 	}
 
 	return nil

@@ -11,26 +11,31 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-// digestRE matches a canonical OCI content digest: the lowercase `sha256:`
-// prefix followed by 64 hex characters. This is the single source of truth
-// for digest validation across the container, manifest, and image-ledger
-// paths — a security invariant (a mutable tag must never pass where a pinned
-// digest is required), so it lives in one place rather than being re-derived.
-//
+// DigestPattern is the canonical OCI content digest shape: the lowercase
+// `sha256:` prefix followed by 64 hex characters. This is the single source
+// of truth for digest validation across the container, manifest, and
+// image-ledger paths — a security invariant (a mutable tag must never pass
+// where a pinned digest is required), so it lives in one place rather than
+// being re-derived. Exported so schema renderers embed the enforced rule
+// instead of re-spelling it.
+const DigestPattern = `^sha256:[0-9a-f]{64}$`
+
 //nolint:gochecknoglobals // compiled regex, read-only.
-var digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var digestRE = regexp.MustCompile(DigestPattern)
 
 // ValidDigest reports whether s is a canonical `sha256:<64-hex>` digest.
 func ValidDigest(s string) bool { return digestRE.MatchString(s) }
 
-// sha256HexRE matches a bare sha256 as 64 lowercase hex characters, without the
-// `sha256:` algorithm prefix — the shape a content ID (base-input-id), an SBOM
-// content pin, or a digest's hex tail takes. Kept beside digestRE so the two
-// hash-shape invariants are single-sourced together rather than re-derived in
-// every package that records or re-validates ledger entries.
-//
+// SHA256HexPattern is a bare sha256 as 64 lowercase hex characters, without
+// the `sha256:` algorithm prefix — the shape a content ID (base-input-id), an
+// SBOM content pin, or a digest's hex tail takes. Kept beside DigestPattern
+// so the two hash-shape invariants are single-sourced together rather than
+// re-derived in every package that records or re-validates ledger entries.
+// Exported for the same schema-rendering reason as DigestPattern.
+const SHA256HexPattern = `^[0-9a-f]{64}$`
+
 //nolint:gochecknoglobals // compiled regex, read-only.
-var sha256HexRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var sha256HexRE = regexp.MustCompile(SHA256HexPattern)
 
 // ValidSHA256Hex reports whether s is 64 lowercase hex characters — a bare
 // sha256 with no `sha256:` prefix.

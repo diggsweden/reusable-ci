@@ -6,6 +6,11 @@ SPDX-License-Identifier: CC0-1.0
 
 # GitLab CI Support — Architecture & Future Plan
 
+> Status: living plan, moving to active testing. GitLab is second-tier today
+> (see [providers.md](providers.md) for what works); live validation of the
+> catalog components is the next step. This doc records the architecture and
+> the work still ahead.
+
 The single GitLab planning doc: architecture, design rules, the
 capability/orchestration model, the delivery model, and the work still ahead.
 For the authoritative per-forge maturity, see [`providers.md`](providers.md)

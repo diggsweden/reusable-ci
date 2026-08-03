@@ -75,11 +75,17 @@ func (s Stage) IsRelease() bool {
 }
 
 // Validate rejects a stage name that isn't safe as a tag component, so a
-// typo can't mint a bogus <base>:<typo> tag. The release stage (which uses
-// existing tags) always passes.
+// typo can't mint a bogus <base>:<typo> tag, and rejects flag combinations
+// that would otherwise be silently ignored: UseEntryReleaseTags only has
+// meaning on the release stage, so requesting it on a named stage is a
+// caller error, not a no-op.
 func (s Stage) Validate() error {
 	if s.IsRelease() {
 		return nil
+	}
+
+	if s.UseEntryReleaseTags {
+		return fmt.Errorf("imageledger: stage %q cannot use ledger release tags (release stage only): %w", s.Name, errs.ErrUsage)
 	}
 
 	if !validStageName(s.Name) {

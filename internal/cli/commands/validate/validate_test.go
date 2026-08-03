@@ -20,8 +20,7 @@ func TestValidateCommands_UsageErrorsBeforeDeps(t *testing.T) {
 		argv []string
 		want string
 	}{
-		{name: "ref-type no flags", argv: []string{"validate", "ref-type"}, want: `Required flags "ref-type, ref-name" not set`}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		{name: "tag-format no flags", argv: []string{"validate", "tag", "format"}, want: `Required flag "tag" not set`},          //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		{name: "tag-format no flags", argv: []string{"validate", "tag", "format"}, want: `Required flag "tag" not set`}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{name: "tag-uniqueness no flags", argv: []string{"validate", "tag", "uniqueness"}, want: `Required flag "tag" not set`},
 		{name: "tag-commit no flags", argv: []string{"validate", "tag", "commit"}, want: `Required flag "tag" not set`},
 		{name: "tag-signature no flags", argv: []string{"validate", "tag", "signature"}, want: `Required flag "tag" not set`},
@@ -60,18 +59,6 @@ func TestContractResidueCmd_ReportsValidationFailure(t *testing.T) {
 	err := cmd.Run(context.Background(), []string{"validate", "workflow", "contract-residue", "--root", fsys.Root})
 	if err == nil || !strings.Contains(err.Error(), "v3 contract validation failed") {
 		t.Errorf("err = %v", err)
-	}
-}
-
-func TestRefTypeCmd_SucceedsOnTagRef(t *testing.T) {
-	cmd := validatecmd.New()
-	if err := cmd.Run(context.Background(), []string{
-		"validate", "ref-type",
-		"--ref-type", "tag",
-		"--ref-name", "v1.0.0",
-		"--ref", "refs/tags/v1.0.0",
-	}); err != nil {
-		t.Fatal(err)
 	}
 }
 

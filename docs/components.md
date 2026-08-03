@@ -4,7 +4,7 @@
 
 This document describes reusable workflow components and how they relate to the supported orchestrator entrypoints.
 
-> For a per-ecosystem capability matrix and the artefact-first vs container-first framing (when does a language ship via `build-<lang>.yml` vs `sbom-<lang>.yml` + Containerfile compile?), see **[docs/ecosystems.md](ecosystems.md)**.
+> For a per-ecosystem capability matrix and the artifact-first vs container-first framing (when does a language ship via `build-<lang>.yml` vs `sbom-<lang>.yml` + Containerfile compile?), see **[docs/ecosystems.md](ecosystems.md)**.
 
 **Recommended stable GitHub entrypoints:**
 - `pullrequest-orchestrator.yml`
@@ -123,10 +123,10 @@ with:
 ```
 
 #### `build-cargo.yml`
-Builds artefact-first Rust binaries via `cargo build --release --target …`,
+Builds artifact-first Rust binaries via `cargo build --release --target …`,
 cross-compiles per platform into `dist/<goos>-<goarch>/<binary>-<goos>-<goarch>`
 (matching Go's shape), and emits an inline CycloneDX Build SBOM with
-`cargo-cyclonedx`. Used for Cargo artefacts with `config.build-mode:
+`cargo-cyclonedx`. Used for Cargo artifacts with `config.build-mode:
 artifact-first`. Container-first cargo continues to use `sbom-cargo.yml`.
 ```yaml
 uses: diggsweden/reusable-ci/.github/workflows/build-cargo.yml@v3.0.0

@@ -59,7 +59,7 @@ single `workflow_call:` entry:
 
 2. **Release** (`release-orchestrator.yml`) — runs on signed tag push:
    parse `.reusable-ci/artifacts.yml`, validate release prerequisites,
-   build the declared artefacts, publish them to their declared
+   build the declared artifacts, publish them to their declared
    targets (Maven Central / GitHub Packages / npm / Google Play / App
    Store Connect), build and push containers, generate SBOMs at the
    three CISA layers, sign with GPG or cosign, create the GitHub
@@ -286,9 +286,9 @@ adopter's own workflow (the orchestrator doesn't invoke them).
 
 `release-orchestrator.yml` parses `artifacts.yml`, validates every
 release prerequisite up front, then dispatches a build stage (one
-job per declared artefact) and a publish stage (one job per declared
+job per declared artifact) and a publish stage (one job per declared
 target), and finally creates the GitHub release. Container builds
-happen in the publish stage; SBOMs are attested per-artefact and
+happen in the publish stage; SBOMs are attested per-artifact and
 per-image.
 
 ```text
@@ -315,7 +315,7 @@ per-image.
 ┌────────▼────────┐                              ┌────────▼────────┐
 │   Build stage   │                              │  (parallel per  │
 │  one job per    │                              │   declared      │
-│  artefact:      │                              │   artefact)     │
+│  artifact:      │                              │   artifact)     │
 │  build-maven,   │                              │                 │
 │  build-npm,     │                              │                 │
 │  build-gradle-*,│                              │                 │
@@ -347,10 +347,10 @@ per-image.
 
 ### Core concepts
 
-**Build stage** — one job per declared artefact, dispatched by
+**Build stage** — one job per declared artifact, dispatched by
 `release-build-stage.yml`. Builders today: `build-maven`, `build-npm`,
 `build-gradle-app`, `build-gradle-android`, `build-go`,
-`build-cargo`, `build-xcode-ios`. Each produces a typed artefact
+`build-cargo`, `build-xcode-ios`. Each produces a typed artifact
 uploaded for the publish stage to consume.
 
 **Publish stage** — one job per declared target, dispatched by
@@ -361,8 +361,8 @@ in `containers[]`. SBOM-only jobs (`sbom-cargo`, `sbom-go`) run
 alongside for container-first ecosystems.
 
 **Containers** — declared separately under `containers[]` in
-`artifacts.yml`, referencing one or more artefacts via
-`from: [artefact-name]`. Built multi-arch (linux/amd64 +
+`artifacts.yml`, referencing one or more artifacts via
+`from: [artifact-name]`. Built multi-arch (linux/amd64 +
 linux/arm64), signed (cosign), scanned (Trivy gate), and attached to
 SLSA provenance + analyzed-container SBOM attestations.
 

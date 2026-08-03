@@ -385,39 +385,31 @@ func validateWorkingDirectory(a Artifact) []string { //nolint:varnamelen // idio
 	return nil
 }
 
-// validateGoBuildMode rejects an unset / invalid build-mode on a Go
-// artifact. Empty means "missing", anything else means "typo/wrong value".
+// validateGoBuildMode rejects an invalid build-mode on a Go artifact.
+// Omitted is fine — GoArtifactBuildMode defaults it to artifact-first —
+// so only a typo/wrong value fails.
 func validateGoBuildMode(a Artifact) []string { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	switch GoArtifactBuildMode(a) {
 	case GoBuildModeArtifactFirst, GoBuildModeContainerFirst:
 		return nil
-	case "":
-		return []string{fmt.Sprintf(
-			"artifact %q with project-type %q requires config.build-mode (artifact-first or container-first)",
-			a.Name, a.ProjectType,
-		)}
 	default:
 		return []string{fmt.Sprintf(
-			"artifact %q with project-type %q has invalid config.build-mode %q (must be artifact-first or container-first)",
+			"artifact %q with project-type %q has invalid config.build-mode %q (must be artifact-first or container-first; omit for artifact-first)",
 			a.Name, a.ProjectType, GoArtifactBuildMode(a),
 		)}
 	}
 }
 
 // validateCargoBuildMode is the Cargo counterpart of validateGoBuildMode.
-// Both modes are valid; only "missing" and "typo" fail.
+// Omitted is fine — CargoArtifactBuildMode defaults it — so only a
+// typo/wrong value fails.
 func validateCargoBuildMode(a Artifact) []string { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	switch CargoArtifactBuildMode(a) {
 	case CargoBuildModeArtifactFirst, CargoBuildModeContainerFirst:
 		return nil
-	case "":
-		return []string{fmt.Sprintf(
-			"artifact %q with project-type %q requires config.build-mode (artifact-first or container-first)",
-			a.Name, a.ProjectType,
-		)}
 	default:
 		return []string{fmt.Sprintf(
-			"artifact %q with project-type %q has invalid config.build-mode %q (must be artifact-first or container-first)",
+			"artifact %q with project-type %q has invalid config.build-mode %q (must be artifact-first or container-first; omit for artifact-first)",
 			a.Name, a.ProjectType, CargoArtifactBuildMode(a),
 		)}
 	}

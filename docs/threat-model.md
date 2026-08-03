@@ -35,7 +35,7 @@ reflected here.
 | Tampered third-party action versions | Renovate `pinDigests: true` on the `github-actions` manager (base config) |
 | Tampered Containerfile base images | Renovate `pinDigests: true` on the `dockerfile` manager (local config) |
 | Path traversal via `working-directory` | `validateWorkingDirectory` at config-parse time |
-| Path traversal via artefact `name` / `binary-name` | `validateArtefactFileNames` at config-parse time |
+| Path traversal via artifact `name` / `binary-name` | `validateArtifactFileNames` at config-parse time |
 | Env-var refs in artifacts.yml string fields | Rejected by `validateWorkingDirectory` (no silent literal-string fallback) |
 | Silent CVE-laden container release | `publish-container.yml` Trivy scan + severity gate (fail on CRITICAL/HIGH by default) |
 | Silent SBOM-missing release | All SBOM steps mandatory; explicit `enable-build-sbom: false` opt-out |
@@ -44,7 +44,7 @@ reflected here.
 | Workflow contract drift | `TestWorkflowInputContract` fails CI if a `with:` key doesn't match a declared `inputs:` |
 | Plan/code drift | `TestTargetKeys_MatchStructTags` + `TestPlanContracts_Golden` |
 | Docs/code drift | `TestDocsCLIReferenceInSync` (CLI surface); `cmd/reusable-ci/e2e_cli_contract_test.go` maps the black-box scenarios in `docs/cli-black-box.md` to real CLI behaviour |
-| Timestamp non-determinism in artefacts | `SOURCE_DATE_EPOCH` baked from `git log -1 --format=%ct HEAD` for Go + Cargo binaries and security reports |
+| Timestamp non-determinism in artifacts | `SOURCE_DATE_EPOCH` baked from `git log -1 --format=%ct HEAD` for Go + Cargo binaries and security reports |
 | Per-step secret over-scoping | Each publish step's `env:` block lists only the secrets that specific step needs; no step receives the union of its job's secrets |
 | **Untrusted-trigger publish/release** — signing, package, and API secrets reaching a workflow run whose commit context is contributor-controlled | Two layers: (a) `pullrequest-orchestrator.yml` declares only `CODE_SCANNING_TOKEN` in its `workflow_call.secrets` block, so the publish-secret family is unreachable through the documented PR path; (b) every privileged publish / release workflow runs `reusable-ci validate event-context` as its first runtime step — refuses any trigger outside `{push, workflow_dispatch, release, schedule, workflow_run, merge_group}`, catching adopters who wire a direct caller under `pull_request*` by mistake. The opt-out (`--allowed-events` on the guard step) is per-call-site, never an env-var bypass. |
 

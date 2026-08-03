@@ -58,26 +58,46 @@ func AnyRequireAuthorization(artifacts []Artifact) bool {
 	return false
 }
 
-// GoArtifactBuildMode returns the build mode declared on a Go artifact.
-// The typed Artifact.Go sub-struct (populated by Parse with strict YAML
-// decoding) is the canonical source. Returns "" for non-Go artifacts or
-// when build-mode was omitted.
-func GoArtifactBuildMode(a Artifact) GoBuildMode {
-	if a.ProjectType != projecttype.Go || a.Go == nil {
+// GoArtifactBuildMode returns the build mode of a Go artifact. The typed
+// Artifact.Go sub-struct (populated by Parse with strict YAML decoding) is
+// the canonical source; an omitted build-mode defaults to artifact-first —
+// the meaning a binary-releasing repo intends, and the choice that lets a
+// bare {name, project-type: go} entry (including the auto-derived
+// zero-config plan) work without learning the build-mode concept.
+// container-first stays an explicit opt-in. Returns "" for non-Go
+// artifacts.
+func GoArtifactBuildMode(a Artifact) GoBuildMode { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	if a.ProjectType != projecttype.Go {
 		return ""
 	}
 
-	return GoBuildMode(strings.TrimSpace(string(a.Go.BuildMode)))
+	if a.Go == nil {
+		return GoBuildModeArtifactFirst
+	}
+
+	if mode := GoBuildMode(strings.TrimSpace(string(a.Go.BuildMode))); mode != "" {
+		return mode
+	}
+
+	return GoBuildModeArtifactFirst
 }
 
-// CargoArtifactBuildMode mirrors GoArtifactBuildMode for Cargo artifacts.
-// Returns "" for non-Cargo artifacts or when build-mode was omitted.
-func CargoArtifactBuildMode(a Artifact) CargoBuildMode {
-	if a.ProjectType != projecttype.Cargo || a.Cargo == nil {
+// CargoArtifactBuildMode mirrors GoArtifactBuildMode for Cargo artifacts,
+// including the artifact-first default. Returns "" for non-Cargo artifacts.
+func CargoArtifactBuildMode(a Artifact) CargoBuildMode { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	if a.ProjectType != projecttype.Cargo {
 		return ""
 	}
 
-	return CargoBuildMode(strings.TrimSpace(string(a.Cargo.BuildMode)))
+	if a.Cargo == nil {
+		return CargoBuildModeArtifactFirst
+	}
+
+	if mode := CargoBuildMode(strings.TrimSpace(string(a.Cargo.BuildMode))); mode != "" {
+		return mode
+	}
+
+	return CargoBuildModeArtifactFirst
 }
 
 // SupportedPublishTarget reports whether the current workflows support

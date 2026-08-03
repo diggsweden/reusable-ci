@@ -84,6 +84,7 @@ func TestValidate_Rejects(t *testing.T) {
 		"bad_moving_ref":       func(e *imageledger.Entry) { e.MovingTag = "not-a-tag" },
 		"moving_staging":       func(e *imageledger.Entry) { e.MovingTag = "codeberg.org/itiquette/gommitlint:staging-v1.2.3" },
 		"moving_release":       func(e *imageledger.Entry) { e.MovingTag = "codeberg.org/itiquette/gommitlint:v1.2.3-rust" },
+		"moving_foreign_repo":  func(e *imageledger.Entry) { e.MovingTag = "ghcr.io/other/repo:rust" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

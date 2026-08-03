@@ -3223,7 +3223,6 @@ Which SBOM verb do I want?
               --image-name …   multi-artifact analyzed-container SBOM (CI).
    build      GENERATE just the build-layer bom.json with the native tool
               (go/cargo) — the toolchain-runner generate tier `sbom assemble` harvests.
-   find       LOCATE an already-produced SBOM file on disk (emits its path).
 
 Related, outside this group: `release sbom-zip` bundles assembled layers into a release zip.
 ```
@@ -3297,20 +3296,6 @@ EXAMPLE:
 | `--project-type` | ecosystem: "go" or "cargo" (lockfile-read; maven/gradle/npm emit the BOM during the build) (required) | `$PROJECT_TYPE` |
 | `--working-dir` | directory containing the project manifest/lockfile | `$WORKING_DIRECTORY` |
 | `--name` | artifact name used in the SBOM output path (defaults to $ARTIFACT_NAME, then $BINARY_NAME) | `$ARTIFACT_NAME`, `$BINARY_NAME` |
-
-### `reusable-ci sbom find`
-
-locate an existing SBOM artifact on disk
-
-#### `reusable-ci sbom find container`
-
-find a \*-analyzed-container-sbom.spdx.json file in cwd, emit sbom-file=&lt;basename&gt;
-
-```
-EXAMPLE:
-   # Run in the directory holding the SBOM (takes no flags)
-   reusable-ci sbom find container
-```
 
 ## `reusable-ci security`
 
@@ -3772,27 +3757,6 @@ EXAMPLE:
 | `--path` | changelog file path (required) | n/a |
 | `--required` | fail when the file is missing (full-changelog mode) | n/a |
 
-### `reusable-ci validate container-attestation`
-
-verify a signed in-toto attestation (slsaprovenance1 | cyclonedx | spdx) on an OCI image (sigstore or kms). Reads from the registry — no local sidecar.
-
-```
-EXAMPLE:
-   reusable-ci validate container-attestation ghcr.io/org/app@sha256:abc... \
-     --type slsaprovenance1 --method sigstore \
-     --cert-identity-regexp '^https://github\.com/org/' --cert-oidc-issuer https://token.actions.githubusercontent.com
-```
-
-**Usage:** `reusable-ci validate container-attestation <registry/image@sha256:...>`
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--type` | predicate type to verify: slsaprovenance1 (SLSA v1.0; the obsolete v0.2 'slsaprovenance' is rejected) \| cyclonedx \| spdx \| <uri> | `$PREDICATE_TYPE` |
-| `--method` | verification method: sigstore or kms. gpg is rejected — OpenPGP cannot verify OCI attestations. | `$SIGN_METHOD` |
-| `--cert-identity-regexp` | regexp the Fulcio cert identity must match for --method=sigstore (matched against the full identity URL; example: ^https://github\.com/<owner>/<repo>/) | `$CERT_IDENTITY_REGEXP` |
-| `--cert-oidc-issuer` | OIDC issuer URL the Fulcio cert must claim for --method=sigstore | `$CERT_OIDC_ISSUER` |
-| `--key` | cosign --key reference for --method=kms verification: KMS URI or local pubkey file path | `$SIGN_KEY` |
-
 ### `reusable-ci validate container-signature`
 
 verify a cosign signature on an OCI image (sigstore or kms). Reads from the registry — no local sidecar.
@@ -3942,54 +3906,6 @@ EXAMPLE:
 | `--has-maven-central` | the plan targets Maven Central (enables credential check) | `$HAS_MAVEN_CENTRAL_TARGET` |
 | `--has-cargo` | the plan targets crates.io (enables Cargo prerequisites check) | `$HAS_CARGO_TARGET` |
 | `--has-jvm` | the plan includes a Maven/Gradle/Gradle-Android artifact (enables JVM reproducibility check) | `$HAS_JVM_TARGET` |
-
-### `reusable-ci validate ref-type`
-
-require that the trigger is a tag push
-
-```
-EXAMPLE:
-   reusable-ci validate ref-type --ref-type tag --ref-name v1.2.3
-```
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--ref-type` | trigger ref type ("tag" required for releases) (required) | `$REF_TYPE`, `$FORGEJO_REF_TYPE`, `$GITHUB_REF_TYPE` |
-| `--ref-name` | trigger ref name (the tag or branch) (required) | `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
-| `--ref` | fully-qualified ref (refs/tags/X); when set the prefix is also checked | `$REF`, `$FORGEJO_REF`, `$GITHUB_REF` |
-
-### `reusable-ci validate secret`
-
-validate that a release-related secret is present in the environment
-
-#### `reusable-ci validate secret gpg-public-key`
-
-fail when RELEASE_GPG_PUBLIC_KEY is unset
-
-```
-EXAMPLE:
-   # Reads $RELEASE_GPG_PUBLIC_KEY
-   reusable-ci validate secret gpg-public-key
-```
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--release-gpg-public-key` | armored GPG public key whose presence is asserted (defaults to $RELEASE_GPG_PUBLIC_KEY) | `$RELEASE_GPG_PUBLIC_KEY` |
-
-#### `reusable-ci validate secret maven-central`
-
-verify $MAVEN_CENTRAL_USERNAME and $MAVEN_CENTRAL_PASSWORD are set
-
-```
-EXAMPLE:
-   # Reads $MAVEN_CENTRAL_USERNAME / $MAVEN_CENTRAL_PASSWORD
-   reusable-ci validate secret maven-central
-```
-
-| Flag | Description | Env vars |
-|------|-------------|----------|
-| `--username` | Maven Central account username (defaults to $MAVEN_CENTRAL_USERNAME) | `$MAVEN_CENTRAL_USERNAME` |
-| `--password-file` | path to a file containing the Maven Central password (use "-" for stdin; defaults to $MAVEN_CENTRAL_PASSWORD) | n/a |
 
 ### `reusable-ci validate tag`
 

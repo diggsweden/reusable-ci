@@ -118,3 +118,17 @@ func TestStageIsRelease(t *testing.T) {
 		}
 	}
 }
+
+func TestStageValidate_RejectsEntryReleaseTagsOnNamedStage(t *testing.T) {
+	t.Parallel()
+
+	// UseEntryReleaseTags only has meaning on the release stage; on a named
+	// stage it used to be silently ignored — now it is a caller error.
+	if err := (Stage{Name: "dev", UseEntryReleaseTags: true}).Validate(); err == nil {
+		t.Error("named stage with UseEntryReleaseTags should be rejected")
+	}
+
+	if err := (Stage{Name: "release", UseEntryReleaseTags: true}).Validate(); err != nil {
+		t.Errorf("release stage with UseEntryReleaseTags rejected: %v", err)
+	}
+}

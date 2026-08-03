@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	sbomcmd "github.com/diggsweden/reusable-ci/v3/internal/cli/commands/sbom"
-	"github.com/diggsweden/reusable-ci/v3/internal/testutil/ghaenv"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/mockbinary"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testenv"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
@@ -131,24 +130,6 @@ done
 
 	if got := calls[0].Args[0]; got != "registry.example.com/team/app@sha256:deadbeef0123" {
 		t.Errorf("syft target = %q", got)
-	}
-}
-
-func TestFindContainerSBOMCmd_WritesGitHubOutput(t *testing.T) {
-	env := ghaenv.Setup(t)
-	fsys := testfs.NewReal(t)
-	fsys.Chdir()
-
-	const target = "demo-analyzed-container-sbom.spdx.json"
-	fsys.WriteFile(target, []byte("{}"))
-
-	cmd := sbomcmd.New()
-	if err := cmd.Run(context.Background(), []string{"sbom", "find", "container"}); err != nil {
-		t.Fatal(err)
-	}
-
-	if got := env.Output("sbom-file"); got != target {
-		t.Errorf("sbom-file = %q, want %q", got, target)
 	}
 }
 

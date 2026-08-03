@@ -8,7 +8,7 @@ SPDX-License-Identifier: CC0-1.0
 
 Complete reference for the artifacts config format.
 
-> For per-ecosystem capability matrices and the artefact-first vs container-first framing, see **[docs/ecosystems.md](ecosystems.md)**.
+> For per-ecosystem capability matrices and the artifact-first vs container-first framing, see **[docs/ecosystems.md](ecosystems.md)**.
 
 ## Location
 
@@ -43,11 +43,11 @@ When `.reusable-ci/artifacts.yml` is absent AND the repo has **exactly one** eco
 
 | Manifest at root | Synthesised |
 |---|---|
-| `pom.xml` | one Maven artefact, name = `artifactId`, working-directory = `.` |
-| `package.json` | one NPM artefact, name = unscoped package name |
-| `Cargo.toml` | one Cargo artefact, name = `package.name` |
-| `go.mod` | one Go artefact, name = basename of `module` path |
-| `build.gradle` or `build.gradle.kts` | one Gradle artefact, name = `rootProject.name` (or repo dir name as fallback) |
+| `pom.xml` | one Maven artifact, name = `artifactId`, working-directory = `.` |
+| `package.json` | one NPM artifact, name = unscoped package name |
+| `Cargo.toml` | one Cargo artifact, name = `package.name` |
+| `go.mod` | one Go artifact, name = basename of `module` path |
+| `build.gradle` or `build.gradle.kts` | one Gradle artifact, name = `rootProject.name` (or repo dir name as fallback) |
 
 This collapses the common "single-library repo" case to zero configuration. **Polyglot repos** (more than one root manifest) refuse to auto-derive and demand an explicit `artifacts.yml` — the error names every manifest it found.
 
@@ -82,7 +82,7 @@ containers:
 - **Type:** `string`
 - **Description:** Build system type
 - **Valid values:** `maven`, `npm`, `gradle`, `gradle-android`, `xcode-ios`, `cargo`, `meta`, `python`, `go`
-- **Note:** `go` and `cargo` require an explicit `config.build-mode`. `python` is reserved in the schema but has no workflows yet.
+- **Note:** for `go` and `cargo`, `config.build-mode` selects the pipeline shape; omitted defaults to `artifact-first`. `python` is reserved in the schema but has no workflows yet.
 - **Example:** `project-type: maven`
 
 #### `working-directory`
@@ -166,12 +166,12 @@ containers:
   # Compliance minimum
   sboms: build
 
-  # Turn off SBOMs for this artefact
+  # Turn off SBOMs for this artifact
   sboms: none
   ```
 - **Formats produced:** Build layer: CycloneDX 1.6. Analyzed-artifact and analyzed-container layers: SPDX 2.3 and CycloneDX 1.6.
-- **Pipeline cap:** The release orchestrator `release.sboms` input (default `all`) and release-snapshot orchestrator `sboms` input (default `none`) cap aggregate release/snapshot SBOM generation against the pipeline-wide SBOM union. They do not rewrite each artefact's parsed `effective-sboms`.
-- **What it controls:** Effective SBOM layers for this artefact. On the orchestrator path it controls build-time Build SBOM execution and container SBOM generation. Direct build workflow calls still default their Build SBOM input to `true` unless explicitly disabled. See [docs/sbom.md](sbom.md) for the full semantics.
+- **Pipeline cap:** The release orchestrator `release.sboms` input (default `all`) and release-snapshot orchestrator `sboms` input (default `none`) cap aggregate release/snapshot SBOM generation against the pipeline-wide SBOM union. They do not rewrite each artifact's parsed `effective-sboms`.
+- **What it controls:** Effective SBOM layers for this artifact. On the orchestrator path it controls build-time Build SBOM execution and container SBOM generation. Direct build workflow calls still default their Build SBOM input to `true` unless explicitly disabled. See [docs/sbom.md](sbom.md) for the full semantics.
 - **Note:** `analyzed-*` scans use [Syft](https://github.com/anchore/syft); ecosystem coverage varies. Gradle Android currently produces Build SBOMs and analyzed-container SBOMs, but not APK/AAB analyzed-artifact SBOMs. The `build` layer uses the language-native cyclonedx plugin and is the highest-fidelity type.
 
 ---
@@ -213,9 +213,9 @@ containers:
 #### `config.build-mode`
 
 - **Type:** `string`
-- **Required:** Yes for `project-type: go`
-- **Valid values:** `artifact-first`, `container-first`
-- **Description:** Selects whether reusable-ci compiles Go binaries in `build-go.yml` or lets the project's Containerfile compile them.
+- **Required:** No — omitted defaults to `artifact-first`
+- **Valid values:** `artifact-first` (default), `container-first`
+- **Description:** Selects whether reusable-ci compiles Go binaries in `build-go.yml` (artifact-first) or lets the project's Containerfile compile them (container-first).
 
 Use `artifact-first` for CLI/tools released as standalone binaries:
 
@@ -286,9 +286,9 @@ arguments.
 #### `config.build-mode`
 
 - **Type:** `string`
-- **Required:** Yes for `project-type: cargo`
-- **Valid values:** `artifact-first`, `container-first`
-- **Description:** Selects whether reusable-ci cross-compiles Rust binaries in `build-cargo.yml` or lets the project's Containerfile compile them. Symmetric with Go's `build-mode`.
+- **Required:** No — omitted defaults to `artifact-first`
+- **Valid values:** `artifact-first` (default), `container-first`
+- **Description:** Selects whether reusable-ci cross-compiles Rust binaries in `build-cargo.yml` (artifact-first) or lets the project's Containerfile compile them (container-first). Symmetric with Go's `build-mode`.
 
 Use `artifact-first` for CLI/tools released as standalone binaries:
 
@@ -318,7 +318,7 @@ containers:
     target: runtime
 ```
 
-When an artefact-first Cargo binary feeds a container, the downloaded layout
+When an artifact-first Cargo binary feeds a container, the downloaded layout
 inside the build context matches Go's: `dist/<goos>-<goarch>/<binary>-<goos>-<goarch>`.
 Multi-arch Containerfiles can copy `dist/${TARGETOS}-${TARGETARCH}/...` the same
 way Go containers do.
@@ -662,7 +662,7 @@ Containers reference artifacts via the `from:` field and are built after all art
 
 #### Container `enable-sbom` (removed in v3)
 
-The v2.x `enable-sbom: bool` field on the container block is removed in v3. Container scanning is now derived from each source artefact's `sboms` field — the container is scanned if any source artefact has `analyzed-container` in its effective sboms (the default for buildable types). To skip the scan, exclude `analyzed-container` from the source artefact's `sboms` (e.g. `sboms: build,analyzed-artifact`). Hard cutover — the old field is silently ignored.
+The v2.x `enable-sbom: bool` field on the container block is removed in v3. Container scanning is now derived from each source artifact's `sboms` field — the container is scanned if any source artifact has `analyzed-container` in its effective sboms (the default for buildable types). To skip the scan, exclude `analyzed-container` from the source artifact's `sboms` (e.g. `sboms: build,analyzed-artifact`). Hard cutover — the old field is silently ignored.
 
 #### `enable-scan`
 
@@ -686,11 +686,11 @@ The v2.x `enable-sbom: bool` field on the container block is removed in v3. Cont
 - **Default:** empty (builds the last stage; current `docker build` behavior)
 - **Example:** `target: runtime`
 - **Used by:** container-first ecosystems primarily, but the field is generic — any multi-stage Containerfile may set it.
-- **See also:** [artefact-first vs container-first framing](ecosystems.md)
+- **See also:** [artifact-first vs container-first framing](ecosystems.md)
 
 #### `extract.binary`
 
-Opt-in extraction of compiled binaries as CI artefacts. Used by container-first ecosystems (`cargo`, `go`) where the binary is a byproduct of the container build. The same Containerfile is built a second time with `--target` set to the extraction stage; each platform leg uploads `${container.name}-binaries-${arch}`.
+Opt-in extraction of compiled binaries as CI artifacts. Used by container-first ecosystems (`cargo`, `go`) where the binary is a byproduct of the container build. The same Containerfile is built a second time with `--target` set to the extraction stage; each platform leg uploads `${container.name}-binaries-${arch}`.
 
 The extraction shares cache with the runtime image build (same buildah layer cache, same `--mount=type=cache` IDs), so it does not double-compile.
 
@@ -725,7 +725,7 @@ containers:
 
 ##### Output
 
-- GHA artefacts `${container.name}-binaries-${arch}` for each platform leg (for example, `my-service-binaries-amd64` and `my-service-binaries-arm64`).
+- GHA artifacts `${container.name}-binaries-${arch}` for each platform leg (for example, `my-service-binaries-amd64` and `my-service-binaries-arm64`).
 - Automatically included in the GitHub Release when extraction produced files; callers can still add their own `release.attachartifacts` globs for other assets.
 
 #### `build-args`

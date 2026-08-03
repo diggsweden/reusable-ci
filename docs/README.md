@@ -23,6 +23,7 @@ Solve a specific task.
 - [Runtime Images](runtime-images.md) - Override runtime images for reproducibility, mirroring, or branch testing.
 - [Verification](verification.md) - Verify release assets, checksums, signatures, attestations, and SBOMs.
 - [SBOM](sbom.md) - Configure SBOM layers and understand release/snapshot defaults.
+- [Forgejo](forgejo.md) - Adopting on Forgejo/Codeberg: the forgejo-ci middle layer, consumer kit, and platform notes.
 - [Threat Model](threat-model.md) - What reusable-ci defends against, what it deliberately doesn't, and where adopter controls layer on top.
 
 ## Reference
@@ -41,6 +42,8 @@ Understand the design and tradeoffs.
 - [Workflow Architecture](workflows.md) - Orchestrator, stage, and component interaction model.
 - [Ecosystem Support](ecosystems.md) - Artifact-first vs container-first ecosystem model and current support status.
 - [Providers and Runners](providers.md) - Forge detection, the runner/forge-API axes, overrides, and the per-forge capability matrix (GitHub, GitLab, Forgejo, local).
+- [CLI Black Box](cli-black-box.md) - The CLI-as-black-box contract between workflows and the binary.
+- [Signing Convergence](signing-convergence.md) - How the signing backends and verification paths converge across forges.
 
 ## Maintainer And Historical Docs
 
