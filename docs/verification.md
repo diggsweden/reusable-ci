@@ -687,7 +687,7 @@ A reproducible build produces a byte-identical artifact every time the same sour
 | NPM | `.tgz` | npm ≥ 10 (fixed in npm/cli#3536) | Runtime image pins node 24 LTS (npm 10+) |
 | Container image (both flows) | OCI image-config + layer blobs | `SOURCE_DATE_EPOCH` env on the build step (buildah `--timestamp`) | Yes, automatic (computed once in `prep` from `git log -1 --format=%ct HEAD`) |
 
-The integration testsuite at [`diggsweden/reusable-ci-testsuite`](https://github.com/diggsweden/reusable-ci-testsuite) under `tests/integration/reproducibility_test.go` exercises every cell of this table on a clean checkout and asserts byte-identical SHAs across rebuilds. It runs in CI via the testsuite repo's own `Integration Tests` workflow — push/PR/nightly schedule, plus `workflow_dispatch` for ad-hoc validation against any reusable-ci ref.
+The integration testsuite at [`diggsweden/reusable-ci-blackbox-tests`](https://github.com/diggsweden/reusable-ci-blackbox-tests) under `tests/integration/reproducibility_test.go` exercises every cell of this table on a clean checkout and asserts byte-identical SHAs across rebuilds. It runs in CI via the testsuite repo's own `Integration Tests` workflow — push/PR/nightly schedule, plus `workflow_dispatch` for ad-hoc validation against any reusable-ci ref.
 
 ### What `validate jvm-reproducibility` does
 

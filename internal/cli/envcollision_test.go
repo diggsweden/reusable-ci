@@ -45,7 +45,7 @@ var reservedExternalEnvVars = map[string]string{
 
 // TestNoFlagSourcesCollideWithReservedEnvVars walks the whole command
 // tree and fails if any flag sources a value from an env var owned by an
-// external tool. See the reusable-ci-testsuite finding that surfaced the
+// external tool. See the reusable-ci-blackbox-tests finding that surfaced the
 // original $GIT_CONFIG_GLOBAL → bool collision.
 func TestNoFlagSourcesCollideWithReservedEnvVars(t *testing.T) {
 	t.Parallel()
