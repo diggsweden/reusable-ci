@@ -86,7 +86,8 @@ type SigningIdentityResolver interface {
 // descriptive chains — which prefer the $REPOSITORY the orchestration layer
 // computed — cannot reach this sink at all. That is a compiler property, not
 // a convention: the earlier named-string type still allowed an explicit
-// conversion, and the guard that covered the gap is now redundant.
+// conversion, so an archguard test had to police the gap. It was retired when
+// this parameter changed type.
 //
 // Security: the repository URL is regexp-escaped (QuoteMeta) before anchoring,
 // so a '.' in "github.com" cannot act as a wildcard, and the leading '^' plus

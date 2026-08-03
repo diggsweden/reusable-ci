@@ -116,8 +116,15 @@ directly) and no provenance profile.
 
 ### forgejo
 Releases + asset upload via the Gitea `/api/v1` surface (official Gitea Go
-SDK). Auth precedence `$FORGEJO_TOKEN` → `$GITEA_TOKEN` → `$GITHUB_TOKEN`;
-server from `$FORGEJO_SERVER_URL` → `$GITHUB_SERVER_URL` → `codeberg.org`.
+SDK). Auth precedence `$CI_TOKEN` → `$FORGEJO_TOKEN` → `$GITEA_TOKEN` →
+`$GITHUB_TOKEN`; server from `$FORGEJO_SERVER_URL` → `$GITHUB_SERVER_URL` →
+`codeberg.org`. Precedence is only half the rule: a token is handed over only
+if it may be sent to the server being called. A token the current runner
+injected is valid only at that runner's own server — so on a GitHub runner
+publishing to a Forgejo instance, `$GITHUB_TOKEN` is GitHub's job token and is
+withheld rather than transmitted. A token the runner does not inject (a
+workflow that sets `$FORGEJO_TOKEN` on GitHub, or a dedicated `$RELEASE_TOKEN`)
+was set deliberately and is used as asked.
 No SARIF ([forgejo#3669](https://codeberg.org/forgejo/forgejo/issues/3669)).
 Forgejo **v15.0+** issues OIDC id-tokens (job-level
 [`enable-openid-connect`](https://forgejo.org/docs/v15.0/user/actions/security-openid-connect/)),

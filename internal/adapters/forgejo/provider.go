@@ -109,8 +109,6 @@ func (p *Provider) serverURL() (string, error) {
 		runcontext.ServerURL(), errs.ErrUsage)
 }
 
-// token resolves a credential valid at THIS Forgejo server.
-//
 // credential resolves the token this run may use at THIS Forgejo server.
 //
 // The audience check replaces the old hand-rolled gate here: $GITHUB_TOKEN

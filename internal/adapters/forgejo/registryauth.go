@@ -14,8 +14,13 @@ import (
 
 // ResolveRegistryAuth returns the runner-injected credentials for the Forgejo
 // instance's container registry, which lives at the same host as the forge
-// (serverURL). Username is the runner actor; the token is the standard
-// $FORGEJO_TOKEN / $GITEA_TOKEN / $GITHUB_TOKEN cascade. No separate secret.
+// (serverURL). Username is the runner actor; no separate secret.
+//
+// The token comes from the $CI_TOKEN / $FORGEJO_TOKEN / $GITEA_TOKEN /
+// $GITHUB_TOKEN chain, but "which one is set" is only half the answer: the
+// credential is handed over only if it was issued by serverURL. On a GitHub
+// runner publishing to a Forgejo instance, $GITHUB_TOKEN is GitHub's own job
+// token — it cannot authenticate here, and must not be sent here.
 func (p *Provider) ResolveRegistryAuth() (provider.RegistryAuth, error) {
 	// Presence needs no destination, so "none configured at all" stays the
 	// first and clearest thing to report.
