@@ -23,8 +23,9 @@ type DigestInput struct {
 }
 
 // Digest prints the canonical content digest of a directory (64 hex chars +
-// newline) to out — the build->sign tamper-evidence value. The producing job
-// captures it; the signing job re-derives and compares.
+// newline) to out. For the build->sign hand-off use `release dist-digest` and
+// `release validate-dist` instead; that pair, not this one, is wired into the
+// cross-job tamper-evidence channel. See internal/domain/artifact.Digest.
 func Digest(out io.Writer, in DigestInput) error {
 	fsys := in.FS
 	root := in.Dir

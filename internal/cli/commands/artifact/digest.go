@@ -12,15 +12,19 @@ import (
 	appartifact "github.com/diggsweden/reusable-ci/v3/internal/app/artifact"
 )
 
-// digestCmd wires `reusable-ci artifact digest` — the build->sign tamper-evidence
-// primitive. It needs no forge provider; it is a local, reproducible computation.
+// digestCmd wires `reusable-ci artifact digest`. It needs no forge provider;
+// it is a local, reproducible computation. The build->sign hand-off uses
+// `release dist-digest` / `release validate-dist`, not this command.
 func digestCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "digest",
-		Usage: "print a canonical, reproducible content digest of a directory (build->sign tamper-evidence)",
+		Usage: "print a canonical, reproducible content digest of a directory",
 		Description: `Computes a runner- and OS-independent content digest over the regular files
-in a directory. The producing job records it; the signing job re-derives it and
-aborts on mismatch, so an intervening job cannot tamper with the artifact.
+in a directory, committing to each file's path, execute bit, size, and contents.
+
+For the build->sign hand-off, use "release dist-digest" and "release
+validate-dist" instead: that pair is what the signing flow verifies against, and
+its digest is byte-compatible with the shell implementation it replaced.
 
 EXAMPLE (as a workflow step):
    DIGEST="$(reusable-ci artifact digest --dir ./dist)"`,

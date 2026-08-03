@@ -14,10 +14,22 @@ import (
 )
 
 // Digest computes a canonical, reproducible content digest over the regular
-// files under root. It is the tamper-evidence primitive for the build -> sign
-// hand-off: the producing job records it, and the consuming (signing) job
-// re-derives it and aborts on mismatch, so a job in between cannot alter the
-// artifact unnoticed.
+// files under root. It backs `reusable-ci artifact digest`.
+//
+// This is NOT the build -> sign hand-off digest, despite being the obvious
+// candidate for it. That role belongs to release.DistDigest
+// (`release dist-digest` / `release validate-dist`), which uses a different,
+// shell-compatible scheme and is the one actually wired into a cross-job
+// tamper-evidence channel: the producing job emits the digest as a job output,
+// the caller passes it to the signing workflow as an input, and the signer
+// re-derives and compares. The expected value travels the forge control plane
+// rather than the artifact store, which is what makes it evidence rather than
+// a checksum. See docs/flows.md.
+//
+// Reach for release.DistDigest when binding a hand-off. This function is the
+// richer scheme (it commits to the execute bit and the size, which the
+// sha256sum-compatible one cannot), available to adopters who want a strict
+// content digest of a directory in their own flow.
 //
 // The scheme is a manifest hash, deliberately independent of any tar/filesystem
 // quirk so the value is identical on every runner and OS:

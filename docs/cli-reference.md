@@ -42,12 +42,15 @@ upload/download per-run CI artifacts
 
 ### `reusable-ci artifact digest`
 
-print a canonical, reproducible content digest of a directory (build-&gt;sign tamper-evidence)
+print a canonical, reproducible content digest of a directory
 
 ```
 Computes a runner- and OS-independent content digest over the regular files
-in a directory. The producing job records it; the signing job re-derives it and
-aborts on mismatch, so an intervening job cannot tamper with the artifact.
+in a directory, committing to each file's path, execute bit, size, and contents.
+
+For the build->sign hand-off, use "release dist-digest" and "release
+validate-dist" instead: that pair is what the signing flow verifies against, and
+its digest is byte-compatible with the shell implementation it replaced.
 
 EXAMPLE (as a workflow step):
    DIGEST="$(reusable-ci artifact digest --dir ./dist)"

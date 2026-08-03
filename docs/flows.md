@@ -182,29 +182,48 @@ through the forge package API rather than a generic OCI delete, because
 staging and final tags share one manifest and a naive OCI delete would take
 the release tag with it.
 
-## Where the two flows differ
+## How each flow binds build to signature
 
-The image flow and the artifact flow have genuinely different properties, and
-the difference is a consequence of what each one moves.
+Both flows face the same problem, that the job which builds is not the job
+which signs, and both solve it. They solve it differently, because what they
+move is different.
 
-A registry is content-addressed and independent of the CI run, so the ledger
-can afford a real trust boundary: the signer re-resolves the digest from the
-registry using its own release tag. Neither property holds for run artifacts.
-The forge's artifact store is not content-addressed, and it is the transport
-itself. Cross-job records travel the same way (see `JobResultStore`), so there
-is no forge-neutral channel outside the store in which to publish an expected
-value.
+The **image flow** leans on the registry. A registry is content-addressed and
+independent of the CI run, so the signer can simply re-resolve the digest from
+it using a release tag the signer controls. The evidence lives outside the
+pipeline, and the ledger is only a claim about it.
 
-The practical consequence: the integrity of the build-to-publish hand-off for
-ordinary build artifacts rests on the forge's run-artifact store. That is a
-trusted component, and it is named as such in
-[the threat model](threat-model.md#trust-boundaries).
+The **artifact flow** has no such registry. The forge's run-artifact store is
+the transport itself, and it is not content-addressed, so a digest recorded
+beside the artifact would sit in the same trust domain as the bytes it
+describes and would prove nothing. The hand-off therefore carries the expected
+value out of band, over the forge's control plane:
 
-`reusable-ci artifact digest` computes a canonical manifest hash over a
-directory and is available to adopters who want an explicit consistency check
-inside their own flow. It is an integrity check, not a trust boundary: an
-expected digest recorded next to the artifact it describes lives in the same
-trust domain as that artifact. Binding built bytes to signed bytes would need
-an out-of-band, forge-specific channel such as build-time attestation tied to
-the job's OIDC identity, which the shipped workflows deliberately do not
-require.
+1. The producing job computes the digest with `release dist-digest` and emits
+   it as a job output.
+2. The caller passes that output into the signing workflow as an input.
+3. The signing job re-derives the digest of what it downloaded and compares,
+   with `release validate-dist --dist-dir … --expected-digest …`, which also
+   rejects a `dist/` containing symlinks, non-regular entries, or control
+   characters in a path.
+
+The digest never travels inside the artifact it protects. A job that rewrites
+the artifact cannot rewrite the already-emitted output of a completed job, so
+the comparison is evidence rather than a checksum. forgejo-ci's consumer kit
+wires exactly this, and its `check-l3-isolation` action asserts the channel is
+intact as part of the SLSA Build L3 claim.
+
+Two consequences worth knowing:
+
+- The forge's run-artifact store is still a trusted component for availability
+  and for flows that do not bind, and it is named in
+  [the threat model](threat-model.md#trust-boundaries).
+- reusable-ci's own GitHub release builds and signs in a single job, taking its
+  provenance subjects from the checksums produced there, so it has no cross-job
+  hand-off to bind in the first place.
+
+`reusable-ci artifact digest` is a separate primitive with a different scheme:
+it commits to each file's execute bit and size, which the sha256sum-compatible
+`dist-digest` cannot. It is available to adopters who want a strict content
+digest inside their own flow. It is not the hand-off mechanism; reach for
+`release dist-digest` for that.
