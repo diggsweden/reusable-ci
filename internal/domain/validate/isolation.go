@@ -209,13 +209,21 @@ func releaseIdentityViolations(jobs map[string]yaml.Node, cfg IsolationConfig) [
 
 	var violations []IsolationViolation
 
-	prepareOutputs := mappingValue(&prepare, "outputs")
-	for _, outputName := range []string{releaseTagOutput, releaseSHAOutput} {
-		if mappingValue(prepareOutputs, outputName) == nil {
-			violations = append(violations, IsolationViolation{
-				Line: prepare.Line,
-				Msg:  fmt.Sprintf("prepare job %q does not declare %s output", cfg.PrepareJob, outputName),
-			})
+	// A prepare job that is a reusable-workflow call (job-level `uses:`, no
+	// steps) gets its outputs from the CALLED workflow's outputs mapping,
+	// which this static pass cannot see — the call target is covered by the
+	// single-pin invariant instead. Only a step-based prepare job must
+	// declare the release identity outputs itself; the sign-side checks
+	// below apply to both shapes.
+	if mappingValue(&prepare, "uses") == nil {
+		prepareOutputs := mappingValue(&prepare, "outputs")
+		for _, outputName := range []string{releaseTagOutput, releaseSHAOutput} {
+			if mappingValue(prepareOutputs, outputName) == nil {
+				violations = append(violations, IsolationViolation{
+					Line: prepare.Line,
+					Msg:  fmt.Sprintf("prepare job %q does not declare %s output", cfg.PrepareJob, outputName),
+				})
+			}
 		}
 	}
 

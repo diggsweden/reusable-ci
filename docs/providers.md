@@ -138,7 +138,7 @@ Honest maturity per forge, so you know what to rely on:
 |---|---|
 | **github** | ✅ Established production path (the original target). |
 | **gitlab** | 🟡 Partial — release creation, asset upload/linking (project uploads + release links), token validation, and repo metadata; **no** SARIF ingestion (GitLab consumes the JSON SAST report instead) or provenance profile. |
-| **forgejo** | 🟡 Adapter fully implemented (release create + asset upload, token + bot-permission probes, repo metadata, capabilities) and unit-tested against an httptest Gitea server, **but not yet validated against a live instance or wired into forgejo-ci** — that is the next integration step. |
+| **forgejo** | 🟢 Adapter fully implemented (release create + asset upload, token + bot-permission probes, repo metadata, capabilities), unit-tested against an httptest Gitea server, and **live in production via the forgejo-ci middle layer** — its vendored binary drives real Codeberg releases (nanolinter). Consumers adopt via forgejo-ci's reusable workflows + consumer kit (requires Forgejo v15+ for workflow_call job expansion), not via engine-shipped orchestrators. |
 | **local** | ✅ Dev/test fallback; forge-API commands gate with a typed "unsupported" error. |
 
 Cross-forge verbs status:
