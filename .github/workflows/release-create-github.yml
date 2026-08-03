@@ -84,7 +84,7 @@ on:
         default: "true"
         type: string
       egress-policy:
-        description: "Egress policy for the Harden Runner step. Default `audit` (visibility-only). Promote to `block` for strict posture — pair with `egress-allowed-endpoints` covering at minimum: api.github.com:443, objects.githubusercontent.com:443, *.actions.githubusercontent.com:443, github.com:443, codeload.github.com:443. Add fulcio.sigstore.dev:443 + rekor.sigstore.dev:443 + tuf-repo-cdn.sigstore.dev:443 + token.actions.githubusercontent.com:443 when sign.method=sigstore. Add your KMS provider (e.g. *.amazonaws.com, *.googleapis.com, *.vault.azure.net) when sign.method=kms."
+        description: "Egress policy for the Harden Runner step. Default `audit` (visibility-only). Promote to `block` for strict posture — pair with `egress-allowed-endpoints` covering at minimum: api.github.com:443, objects.githubusercontent.com:443, *.actions.githubusercontent.com:443, github.com:443, codeload.github.com:443. Whether you also need Sigstore endpoints is precomputed as `sign.requires_sigstore_egress` in config-plan-json — read that rather than re-deriving it here. When it is true, add rekor.sigstore.dev:443 + tuf-repo-cdn.sigstore.dev:443; sign.method=sigstore additionally needs fulcio.sigstore.dev:443 + token.actions.githubusercontent.com:443 for the keyless OIDC exchange. Note that sign.method=kms reaches Rekor too unless sign.transparency=none — cosign publishes to the transparency log on every method it signs with, and a blocked Rekor fails the signing step hard. Add your KMS provider (e.g. *.amazonaws.com, *.googleapis.com, *.vault.azure.net) when sign.method=kms."
         required: false
         default: "audit"
         type: string

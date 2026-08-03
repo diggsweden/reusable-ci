@@ -174,6 +174,64 @@ Produces `<artifact>.bundle`. The signature was computed inside OpenBao; the pri
 reusable-ci validate artifact-signature --artifact app.tgz --key release-pubkey.pem
 ```
 
+### `sign.transparency` — what the signing run publishes about itself
+
+Signing is not only a local act. cosign writes an entry to the **public**
+Sigstore transparency log (Rekor) for every signature it makes — on `kms` as
+well as `sigstore`. This surprises people, because the KMS key is yours and
+nothing about the signature obviously needs a public service.
+
+What the entry contains: the artifact's SHA-256, the signature, the public key,
+and a timestamp. **Not** the artifact's contents, and not its filename. So what
+becomes public is the *existence and timing* of a signing event, plus a
+fingerprint someone who already has the artifact can use to confirm it is the
+one you signed. The entry is permanent and append-only — it cannot be withdrawn.
+
+For anything you publish openly, this is the point rather than a cost: it makes
+your release independently auditable and gives the signature a trusted
+timestamp. That is why it is the default:
+
+```yaml
+sign:
+  method: kms
+  key: hashivault://transit/keys/release-signing
+  # transparency: public   ← the default; no need to write it
+```
+
+For an artifact you do **not** publish — an internal-only build — the metadata
+is a release-cadence signal you may not want to emit, and the log buys you
+nothing since nobody outside can obtain the artifact to verify anyway:
+
+```yaml
+sign:
+  method: kms
+  key: hashivault://transit/keys/release-signing
+  transparency: none
+```
+
+The signature still verifies against your public key indefinitely — that is
+ordinary PKI. What you give up is public verifiability, so verification needs
+`--insecure-ignore-tlog`, and cosign will warn on every verify. That is
+accurate, not pedantic: an unlogged signature has no independent evidence of
+*when* it was made.
+
+Two rules the config enforces so they fail at `config-validate` rather than deep
+inside cosign:
+
+- `transparency` is rejected for `method: gpg`. OpenPGP has no transparency log
+  and cosign is never invoked.
+- `transparency: none` is rejected for `method: sigstore`. Keyless signs with a
+  ~10-minute Fulcio certificate, so a verifier needs a Rekor inclusion proof to
+  know the certificate was valid when it signed. Without one the signature is
+  unverifiable by anyone, including you. Use `method: kms` to sign without a log.
+
+**Egress:** if you run Harden Runner with `egress-policy: block`, a run that
+publishes needs `rekor.sigstore.dev:443` and `tuf-repo-cdn.sigstore.dev:443`
+allowed — including on `method: kms`. A blocked Rekor does not degrade to an
+unlogged signature; it fails the signing step hard, at release time. The config
+plan precomputes `sign.requires_sigstore_egress` so a caller can derive the
+allowlist instead of guessing.
+
 ### Snapshot-release trust model
 
 Snapshot releases (`release-snapshot-orchestrator.yml`) are intentionally **not**

@@ -59,6 +59,36 @@ already enforced:
    overwrite an engine-computed fact (digest, source, base_input_id) in the
    attested predicate.
 
+5. **What the signer publishes about itself is a written choice.** Signing is
+   not only a local act: cosign writes a Rekor entry to the *public* Sigstore
+   transparency log for every signature it makes, on every method — not just
+   keyless. The entry is a `hashedrekord` carrying the artifact's SHA-256, the
+   signature, the public key, and an integration timestamp. It does not carry
+   the artifact's contents or its filename, so what crosses the boundary
+   outward is the existence and timing of a signing event, plus a fingerprint
+   anyone who later obtains the artifact can use to confirm it is the one
+   signed. A Rekor entry is permanent, public, and append-only: unlike every
+   other rule here, a mistake cannot be corrected afterwards.
+
+   The choice is `sign.transparency` (`internal/domain/release/transparency.go`),
+   and the default is `public`. For keyless it is not really a choice — a
+   ~10-minute Fulcio certificate needs a Rekor inclusion proof (or an RFC3161
+   TSA timestamp, which this engine does not configure) or the signature
+   becomes unverifiable — so `SignConfig.Validate` rejects
+   `method=sigstore` + `transparency=none` rather than letting it fail later
+   inside cosign. For `method=kms` it is a genuine trade: the key is
+   long-lived, so the signature verifies indefinitely on its own, and the log
+   adds public auditability and a trusted timestamp at the cost of publishing
+   release metadata. Public is the default because transparency is the reason
+   to adopt Sigstore at all, and because withholding the public record should
+   be a decision someone wrote down, not the result of leaving a field blank.
+
+   `transparency=none` is correct for artifacts that are not published —
+   internal-only builds — and for test suites, which must never write to a
+   permanent public log. It is the wrong setting for anything whose signatures
+   are meant to be publicly verifiable; in cosign's own words, "artifacts
+   cannot be publicly verified when not included in a log."
+
 **Corollary — the Phase 7.2 port boundary.** A consumer CLI (nanolinter-ci)
 may compute and emit the ledger, because the ledger is *data* that the signer
 re-validates and confines under rules 2–4. But no signer-side verb —
@@ -80,3 +110,22 @@ sign` (still Go, in the signer) is not.
 - A drift-guard (or at minimum this ADR referenced from the sign command's
   doc string) should keep the four enforcement sites from being weakened
   independently.
+- Rule 5 is enforced in one place by construction: `cosign.New` /
+  `cosign.NewIsolated` resolve `$REUSABLE_CI_COSIGN_TRANSPARENCY`, so a
+  signing path cannot opt out by forgetting to thread a flag through one of
+  the ~16 adapter construction sites — the failure mode of a missed one is
+  silent publication, which is exactly the mistake that cannot be undone. A
+  new cosign write verb inherits the setting for free; the count assertions in
+  `internal/adapters/cosign/signingconfig_test.go` trip if one is added
+  without being covered.
+- One setting drives both halves of rule 5 deliberately. cosign couples them:
+  a signature made with no transparency log cannot be verified without
+  `--insecure-ignore-tlog`. Two independent knobs that must always agree would
+  be a footgun, not a safeguard — set one without the other and cosign fails
+  with "not enough verified log entries", naming none of its causes. Deriving
+  both from `Transparency` makes the disagreement unrepresentable.
+- Because a run's transparency choice decides whether it touches
+  sigstore.dev at all, `sign.requires_sigstore_egress` is precomputed into the
+  config plan. A caller's egress allowlist should be read from that rather
+  than re-derived in prose: an allowlist that omits Rekor while the plan
+  publishes to it fails the signing step hard, at release time.
