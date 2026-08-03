@@ -74,6 +74,18 @@ path = "internal/domain/config/artifacts.schema.json.tmpl"
 SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
 SPDX-License-Identifier = "CC0-1.0"
 
+# Same arrangement for the release-image ledger schema: the .json is
+# generated from the .tmpl by cmd/gen-release-images-schema.
+[[annotations]]
+path = "docs/schemas/release-images.schema.json"
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = "internal/domain/imageledger/release-images.schema.json.tmpl"
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
 [[annotations]]
 path = ".gitignore"
 SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
