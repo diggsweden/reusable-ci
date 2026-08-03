@@ -286,13 +286,15 @@ func parseSetupCache(value string) (bool, error) {
 	}
 }
 
+// defaultRunnerTemp falls back to the OS temp dir when the run context
+// carries no scratch directory.
+//
+// It does NOT consult $RUNNER_TEMP: value arrives from --runner-temp, whose
+// sources already include it (via cienv.TempDir()) alongside $CI_TEMP_DIR.
+// See defaultReleaseRunnerTemp in app/release for the same reasoning.
 func defaultRunnerTemp(value string) string {
 	if strings.TrimSpace(value) != "" {
 		return value
-	}
-
-	if env := os.Getenv("RUNNER_TEMP"); strings.TrimSpace(env) != "" {
-		return env
 	}
 
 	return os.TempDir()

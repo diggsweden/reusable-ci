@@ -77,13 +77,18 @@ func SignPublishContext(out io.Writer, in SignPublishContextInput) error {
 	return nil
 }
 
+// defaultReleaseRunnerTemp falls back to the OS temp dir when the run
+// context carries no scratch directory.
+//
+// It does NOT consult $RUNNER_TEMP. value arrives from --runner-temp, whose
+// sources are cienv.TempDir() ($CI_TEMP_DIR, $RUNNER_TEMP) — a superset of
+// that one name — so an env read here could only ever re-answer what value
+// already holds, and would reintroduce the CI_TEMP_DIR-blind precedence the
+// flag exists to avoid. The app layer receives the run context; it does not
+// go looking for it.
 func defaultReleaseRunnerTemp(value string) string {
 	if strings.TrimSpace(value) != "" {
 		return value
-	}
-
-	if env := os.Getenv("RUNNER_TEMP"); strings.TrimSpace(env) != "" {
-		return env
 	}
 
 	return os.TempDir()
