@@ -22,6 +22,11 @@ import (
 //   - Method is one of [gpg, sigstore, kms] or empty (→ gpg default).
 //   - method=kms requires Key; method=sigstore + method=gpg forbid it.
 //   - method=sigstore optionally accepts OIDCIssuer; method=gpg + kms forbid it.
+//   - Transparency is one of [public, none] or empty (→ public default).
+//     method=gpg forbids it (OpenPGP has no transparency log, and the
+//     cosign adapter is never invoked). method=sigstore forbids `none`
+//     — see release.TransparencyNone for why keyless cannot verify
+//     without a log here. method=kms accepts either.
 //   - When Method is kms, Key's URI scheme is restricted to a known
 //     allowlist (see allowedKMSSchemes). This is a security-hardening
 //     measure: the config file is committed to the repo, so a malicious
@@ -34,6 +39,11 @@ type SignConfig struct {
 	Method     domainrelease.SignMethod `yaml:"method,omitempty"`
 	Key        string                   `yaml:"key,omitempty"`
 	OIDCIssuer string                   `yaml:"oidc-issuer,omitempty"`
+	// Transparency selects whether cosign publishes each signature to
+	// the public Sigstore Rekor log. Empty means public: opting out of
+	// the public record is a decision that should be written down, not
+	// arrived at by leaving a field blank.
+	Transparency domainrelease.Transparency `yaml:"transparency,omitempty"`
 }
 
 // allowedKMSSchemes restricts which URI shapes can appear in sign.key.
@@ -63,6 +73,17 @@ func (s SignConfig) EffectiveMethod() domainrelease.SignMethod {
 	return s.Method
 }
 
+// EffectiveTransparency returns the configured transparency or the
+// package default when none is set. Meaningful only for the cosign
+// methods; Validate rejects the field outright for gpg.
+func (s SignConfig) EffectiveTransparency() domainrelease.Transparency {
+	if s.Transparency == "" {
+		return domainrelease.DefaultTransparency
+	}
+
+	return s.Transparency
+}
+
 // Validate enforces the per-method invariants documented on SignConfig.
 // Returns nil when the config is well-formed (including the all-empty
 // case, which defaults to gpg). Errors wrap errs.ErrInvalidConfig so the
@@ -76,6 +97,12 @@ func (s SignConfig) Validate() error {
 		return err
 	}
 
+	if s.Transparency != "" {
+		if _, err := domainrelease.ParseTransparency(string(s.Transparency)); err != nil {
+			return err
+		}
+	}
+
 	switch method {
 	case domainrelease.SignMethodGPG:
 		if s.Key != "" {
@@ -84,6 +111,12 @@ func (s SignConfig) Validate() error {
 
 		if s.OIDCIssuer != "" {
 			return fmt.Errorf("sign.oidc-issuer is forbidden for method=gpg (got %q): %w", s.OIDCIssuer, errs.ErrInvalidConfig)
+		}
+
+		if s.Transparency != "" {
+			return fmt.Errorf(
+				"sign.transparency is forbidden for method=gpg (got %q): OpenPGP has no transparency log: %w",
+				s.Transparency, errs.ErrInvalidConfig)
 		}
 	case domainrelease.SignMethodSigstore:
 		if s.Key != "" {
@@ -94,6 +127,15 @@ func (s SignConfig) Validate() error {
 			if err := validateOIDCIssuer(s.OIDCIssuer); err != nil {
 				return err
 			}
+		}
+
+		if s.Transparency == domainrelease.TransparencyNone {
+			return fmt.Errorf(
+				"sign.transparency=none is forbidden for method=sigstore: a keyless signature is made with a "+
+					"short-lived Fulcio certificate, so a verifier needs a Rekor inclusion proof to know the "+
+					"certificate was valid when it signed; without one the signature is unverifiable. "+
+					"Use method=kms to sign without a transparency log: %w",
+				errs.ErrInvalidConfig)
 		}
 	case domainrelease.SignMethodKMS:
 		if s.Key == "" {

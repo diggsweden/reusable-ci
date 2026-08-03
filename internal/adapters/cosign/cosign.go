@@ -37,8 +37,9 @@ const flagSigningConfig = "--signing-config"
 // disguised at any layer.
 const flagInsecureIgnoreTlog = "--insecure-ignore-tlog"
 
-// EnvSigningConfig names the environment variable that points at a Sigstore
-// signing-config file.
+// EnvTransparency names the environment variable that selects whether cosign
+// publishes each signature to the public Sigstore transparency log. Its values
+// are release.Transparency's: "public" (or unset) and "none".
 //
 // Why an environment variable rather than a per-command flag: every cosign
 // write subcommand (sign-blob, sign, attest) must honour it, the adapter is
@@ -46,62 +47,50 @@ const flagInsecureIgnoreTlog = "--insecure-ignore-tlog"
 // — the signature simply goes to the public Rekor log instead. Resolving it in
 // New/NewIsolated means a signing path cannot opt out by forgetting to thread a
 // flag, and a NEW signing command inherits the setting for free. That property
-// is the point; discoverability is served by documenting it on the signing
-// commands.
-const EnvSigningConfig = "REUSABLE_CI_COSIGN_SIGNING_CONFIG"
+// is the point; discoverability is served by sign.transparency in artifacts.yml,
+// which is the front door operators actually use.
+//
+// Why ONE variable and not two: cosign couples the halves. A signature made
+// with no transparency log cannot be verified without --insecure-ignore-tlog,
+// so a "don't publish" setting and an "don't require a log" setting must always
+// agree. Two independent knobs that must agree is a footgun, not a safeguard —
+// set one without the other and cosign fails with "not enough verified log
+// entries", which tells the operator nothing. One setting drives both halves,
+// and the disagreement is unrepresentable.
+const EnvTransparency = "REUSABLE_CI_COSIGN_TRANSPARENCY"
 
-// SigningConfigFromEnv returns the signing-config path from
-// $REUSABLE_CI_COSIGN_SIGNING_CONFIG, or "" when unset.
+// TransparencyFromEnv resolves $REUSABLE_CI_COSIGN_TRANSPARENCY, defaulting to
+// release.DefaultTransparency (public) when unset or unparsable.
 //
-// Empty keeps cosign's built-in public-Sigstore config: keyless signing needs
-// Fulcio and a Rekor inclusion proof, so uploading is correct there and is the
-// whole point of the transparency log. Set it to a config with no transparency
-// log service to sign without publishing — an air-gapped or private-Sigstore
-// deployment, or a test suite that must not write to a permanent public log.
-// Build one with:
-//
-//	cosign signing-config create --no-default-rekor --no-default-fulcio \
-//	    --no-default-oidc --no-default-tsa --out nolog.json
-//
-// cosign's own --tlog-upload=false is deprecated in cosign 3.x and errors out
-// in favour of this file, so the config is the supported route.
-func SigningConfigFromEnv() string { return os.Getenv(EnvSigningConfig) }
-
-// EnvInsecureIgnoreTlog names the environment variable that drops the
-// transparency-log requirement from verification. Resolved alongside
-// EnvSigningConfig, for the same reason: the verify subcommands are reached
-// from many call sites and a missed one fails closed in a confusing way rather
-// than obviously.
-const EnvInsecureIgnoreTlog = "REUSABLE_CI_COSIGN_INSECURE_IGNORE_TLOG"
-
-// InsecureIgnoreTlogFromEnv reports whether $REUSABLE_CI_COSIGN_INSECURE_IGNORE_TLOG
-// is set to a truthy value.
-//
-// It exists because cosign couples the two halves: verification demands a log
-// inclusion proof, so a signature made against a signing config with no
-// transparency log CANNOT be verified without this. A trusted root with no log
-// service does not relax the requirement — cosign still requires one entry.
-//
-// The honest reading, in cosign's own words: "Artifacts cannot be publicly
-// verified when not included in a log." Turning this on buys the ability to
-// verify unlogged signatures and gives up transparency and auditability for
-// them. It is the right setting for a test suite that must not write to a
-// permanent public log, and for a deployment that has deliberately chosen not
-// to run a transparency log. It is the wrong setting for anything whose
-// signatures are meant to be publicly verifiable — for that, run a private
-// Rekor and point EnvSigningConfig at it instead, which keeps verification
-// fully checked.
-func InsecureIgnoreTlogFromEnv() bool { return isTruthy(os.Getenv(EnvInsecureIgnoreTlog)) }
-
-// isTruthy accepts the same spellings the rest of the CLI treats as "on".
-func isTruthy(v string) bool {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "1", "true", "yes", "on":
-		return true
+// Unparsable falls back to the SAFE value rather than erroring: this runs in a
+// constructor with nowhere to return an error, and the honest failure mode for
+// a typo'd value is "we published when you may not have wanted to", not "we
+// silently withheld the evidence". The typo is caught properly upstream, where
+// sign.transparency is validated against the same enum with a real error.
+func TransparencyFromEnv() release.Transparency {
+	parsed, err := release.ParseTransparency(strings.TrimSpace(os.Getenv(EnvTransparency)))
+	if err != nil {
+		return release.DefaultTransparency
 	}
 
-	return false
+	return parsed
 }
+
+// noLogSigningConfig is a Sigstore signing config naming no transparency-log
+// service and no TSA — the document cosign needs to sign without publishing.
+//
+// It is written literally rather than shelled out to `cosign signing-config
+// create` for two reasons: that would double the cosign invocations per signing
+// call, and the adapter's whole job is to keep cosign's file format from
+// leaking into anyone else's world. It is byte-identical to what cosign 3.1.1's
+// own generator emits for --no-default-{rekor,fulcio,oidc,tsa}.
+//
+// The media type pins a format version, which is the one thing that could rot
+// under a cosign upgrade. The black-box suite drives real cosign through this
+// path (TestReleaseSignPublishesNoTlogEntry), so a format bump surfaces there
+// as a failed signature rather than as a silent fallback to publishing.
+const noLogSigningConfig = `{"mediaType":"application/vnd.dev.sigstore.signingconfig.v0.2+json",` +
+	`"rekorTlogConfig":{},"tsaConfig":{}}`
 
 // Adapter wraps the cosign binary. Bin is overridable for tests.
 type Adapter struct {
@@ -113,31 +102,25 @@ type Adapter struct {
 	// signing subprocess can read.
 	Env []string
 
-	// SigningConfig is a path to a Sigstore signing-config file, passed to
-	// every write subcommand as --signing-config. Empty (the default)
-	// leaves cosign on its built-in public-Sigstore config, which uploads
-	// each signature to the public Rekor transparency log.
+	// Transparency decides whether each signature is published to the
+	// public Sigstore Rekor log. The zero value is empty, which
+	// PublishesToLog treats as publishing — so an Adapter built as a bare
+	// literal behaves like cosign's own default rather than silently
+	// withholding evidence.
 	//
-	// Resolved by New/NewIsolated from $REUSABLE_CI_COSIGN_SIGNING_CONFIG.
-	// See SigningConfigFromEnv for why it is resolved there rather than
-	// threaded per command.
-	SigningConfig string
-
-	// InsecureIgnoreTlog drops the transparency-log requirement from every
-	// verify subcommand. False (the default) keeps verification fully
-	// checked. Resolved by New/NewIsolated from
-	// $REUSABLE_CI_COSIGN_INSECURE_IGNORE_TLOG; see
-	// InsecureIgnoreTlogFromEnv for what it costs.
-	InsecureIgnoreTlog bool
+	// It drives BOTH halves: write subcommands get --signing-config
+	// pointing at a no-transparency-log config, and verify subcommands get
+	// --insecure-ignore-tlog. cosign requires them to agree; see
+	// EnvTransparency for why that is one setting and not two.
+	//
+	// Resolved by New/NewIsolated from $REUSABLE_CI_COSIGN_TRANSPARENCY.
+	Transparency release.Transparency
 }
 
-// New returns an Adapter using the system cosign, with the signing config
-// resolved from the environment.
+// New returns an Adapter using the system cosign, with the transparency
+// setting resolved from the environment.
 func New() *Adapter {
-	return &Adapter{
-		SigningConfig:      SigningConfigFromEnv(),
-		InsecureIgnoreTlog: InsecureIgnoreTlogFromEnv(),
-	}
+	return &Adapter{Transparency: TransparencyFromEnv()}
 }
 
 // SignBlobInput drives a single cosign sign-blob invocation. It is
@@ -167,7 +150,12 @@ func (a *Adapter) SignBlob(ctx context.Context, in SignBlobInput, errOut io.Writ
 		return err
 	}
 
-	args := a.withSigningConfig([]string{"sign-blob", flagYes, "--bundle", in.BundlePath})
+	args, cleanup, err := a.withSigningConfig([]string{"sign-blob", flagYes, "--bundle", in.BundlePath})
+	if err != nil {
+		return err
+	}
+
+	defer cleanup()
 
 	switch {
 	case in.Keyless:
@@ -242,7 +230,12 @@ func (a *Adapter) SignImage(ctx context.Context, in SignImageInput, errOut io.Wr
 		return err
 	}
 
-	args := a.withSigningConfig([]string{"sign", flagYes})
+	args, cleanup, err := a.withSigningConfig([]string{"sign", flagYes})
+	if err != nil {
+		return err
+	}
+
+	defer cleanup()
 
 	if in.Recursive {
 		args = append(args, "--recursive")
@@ -294,7 +287,12 @@ func (a *Adapter) AttestImage(ctx context.Context, in AttestImageInput, errOut i
 		return err
 	}
 
-	args := a.withSigningConfig([]string{"attest", flagYes, "--type", in.PredicateType, "--predicate", in.PredicatePath})
+	args, cleanup, err := a.withSigningConfig([]string{"attest", flagYes, "--type", in.PredicateType, "--predicate", in.PredicatePath})
+	if err != nil {
+		return err
+	}
+
+	defer cleanup()
 
 	if in.Recursive {
 		args = append(args, "--recursive")
@@ -418,22 +416,54 @@ func (a *Adapter) CopyImage(ctx context.Context, in CopyImageInput, errOut io.Wr
 	return a.run(ctx, errOut, "copy", "--force", in.Source, in.Dest)
 }
 
-// withSigningConfig appends --signing-config when one is configured. It is
-// applied by every cosign subcommand that writes a signature, so the choice of
-// Sigstore services is made in exactly one place.
-func (a *Adapter) withSigningConfig(args []string) []string {
-	if a.SigningConfig == "" {
-		return args
+// publishesToLog reports whether this adapter writes transparency-log entries.
+// The zero-value Adapter publishes, matching cosign's own default.
+func (a *Adapter) publishesToLog() bool { return a.Transparency.PublishesToLog() }
+
+// withSigningConfig appends --signing-config when the transparency log is
+// turned off, materialising the config it points at. It is applied by every
+// cosign subcommand that writes a signature, so the choice is made in exactly
+// one place. The returned cleanup removes the temporary file and is always
+// non-nil, so callers can defer it unconditionally.
+//
+// The file is written per call rather than cached on the Adapter: a signing run
+// is short, the document is ~100 bytes, and per-call scope means there is no
+// lifetime to manage and nothing to leak into the runner's temp dir.
+func (a *Adapter) withSigningConfig(args []string) ([]string, func(), error) {
+	noop := func() {}
+	if a.publishesToLog() {
+		return args, noop, nil
 	}
 
-	return append(args, flagSigningConfig, a.SigningConfig)
+	file, err := os.CreateTemp("", "reusable-ci-signing-config-*.json")
+	if err != nil {
+		return nil, noop, fmt.Errorf("create signing config: %w", err)
+	}
+
+	cleanup := func() { _ = os.Remove(file.Name()) }
+
+	if _, err := file.WriteString(noLogSigningConfig); err != nil {
+		_ = file.Close()
+
+		cleanup()
+
+		return nil, noop, fmt.Errorf("write signing config: %w", err)
+	}
+
+	if err := file.Close(); err != nil {
+		cleanup()
+
+		return nil, noop, fmt.Errorf("close signing config: %w", err)
+	}
+
+	return append(args, flagSigningConfig, file.Name()), cleanup, nil
 }
 
 // withTlogPolicy appends --insecure-ignore-tlog when verification has been told
 // not to require a log inclusion proof. Applied by every cosign subcommand that
 // verifies, so the policy is decided in exactly one place.
 func (a *Adapter) withTlogPolicy(args []string) []string {
-	if !a.InsecureIgnoreTlog {
+	if a.publishesToLog() {
 		return args
 	}
 

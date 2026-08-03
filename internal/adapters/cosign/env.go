@@ -67,8 +67,7 @@ func filterEnv(environ []string, allow map[string]bool) []string {
 // only secret cosign can read.
 func NewIsolated(allow ...string) *Adapter {
 	return &Adapter{
-		Env:                IsolatedEnv(allow...),
-		SigningConfig:      SigningConfigFromEnv(),
-		InsecureIgnoreTlog: InsecureIgnoreTlogFromEnv(),
+		Env:          IsolatedEnv(allow...),
+		Transparency: TransparencyFromEnv(),
 	}
 }

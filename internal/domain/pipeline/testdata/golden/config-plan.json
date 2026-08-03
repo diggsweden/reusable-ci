@@ -236,7 +236,8 @@
     "method": "gpg",
     "requires_id_token": false,
     "imports_gpg_key": true,
-    "signs_containers": false
+    "signs_containers": false,
+    "requires_sigstore_egress": false
   },
   "git_signing": {
     "method": "gpg"

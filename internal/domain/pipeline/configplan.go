@@ -53,6 +53,21 @@ type PlannedSign struct {
 	// which can sign OCI manifests; gpg cannot. The container publish stage
 	// gates image signing/attestation on this instead of `method != 'gpg'`.
 	SignsContainers bool `json:"signs_containers"`
+	// Transparency is the resolved transparency-log choice. Always
+	// concrete for the cosign methods (public when artifacts.yml omits
+	// it); empty for gpg, which never invokes cosign.
+	Transparency domainrelease.Transparency `json:"transparency,omitempty"`
+	// RequiresSigstoreEgress precomputes "does this run talk to public
+	// Sigstore infrastructure?" so a caller's egress allowlist is
+	// derived from the plan rather than hand-maintained prose. It is
+	// true for keyless (which must reach Fulcio, Rekor and TUF) and for
+	// kms publishing to the public log (Rekor + TUF). It is false for
+	// gpg, and for kms with transparency=none — those runs need no
+	// sigstore.dev endpoint at all.
+	//
+	// Harden Runner's egress-policy=block makes this load-bearing: a
+	// missing endpoint fails the signing step hard, at release time.
+	RequiresSigstoreEgress bool `json:"requires_sigstore_egress"`
 }
 
 // PlannedGitSigning is the resolved git-object (release commit + tag) signing
@@ -211,8 +226,18 @@ func NewConfigPlan(cfg *config.Config) ConfigPlan {
 // `id-token: write` permission?" decision for the caller workflow —
 // only keyless Sigstore needs it; gpg signs from a secret and kms
 // authenticates to the KMS provider out-of-band.
+//
+// Transparency is resolved only for the cosign methods and left empty
+// for gpg, which never runs cosign — carrying a transparency value there
+// would imply a choice that has no effect.
 func planSign(sign config.SignConfig) PlannedSign {
 	method := sign.EffectiveMethod()
+	signsWithCosign := method == domainrelease.SignMethodSigstore || method == domainrelease.SignMethodKMS
+
+	var transparency domainrelease.Transparency
+	if signsWithCosign {
+		transparency = sign.EffectiveTransparency()
+	}
 
 	return PlannedSign{
 		Method:          method,
@@ -220,7 +245,12 @@ func planSign(sign config.SignConfig) PlannedSign {
 		OIDCIssuer:      sign.OIDCIssuer,
 		RequiresIDToken: method == domainrelease.SignMethodSigstore,
 		ImportsGPGKey:   method == domainrelease.SignMethodGPG,
-		SignsContainers: method == domainrelease.SignMethodSigstore || method == domainrelease.SignMethodKMS,
+		SignsContainers: signsWithCosign,
+		Transparency:    transparency,
+		// Keyless always reaches Sigstore (Fulcio + Rekor + TUF). kms
+		// reaches it only to publish. gpg never does.
+		RequiresSigstoreEgress: method == domainrelease.SignMethodSigstore ||
+			(method == domainrelease.SignMethodKMS && transparency.PublishesToLog()),
 	}
 }
 

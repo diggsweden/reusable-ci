@@ -31,6 +31,7 @@ func RenderArtifactsJSONSchema() string {
 		"{{BUILD_TYPES}}", enumJSON(ValidBuildTypes),
 		"{{PUBLISH_TARGETS}}", enumJSON(ValidPublishTargets),
 		"{{SIGN_METHODS}}", enumJSON(domainrelease.ValidSignMethods),
+		"{{TRANSPARENCIES}}", enumJSON(domainrelease.ValidTransparencies),
 		"{{GIT_SIGN_METHODS}}", enumJSON(ValidGitSignMethods),
 		"{{SBOM_PATTERN}}", sbomsPattern(),
 		"{{KMS_KEY_PATTERN}}", kmsKeyPattern(),

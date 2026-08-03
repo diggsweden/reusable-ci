@@ -52,6 +52,11 @@
           "format": "uri",
           "pattern": "^https://",
           "description": "OIDC issuer URL for method=sigstore (default: auto-detected — GitHub Actions / GitLab / $CI_SERVER_URL). Must be HTTPS."
+        },
+        "transparency": {
+          "type": "string",
+          "enum": {{TRANSPARENCIES}},
+          "description": "Whether cosign publishes each signature to the public Sigstore transparency log (Rekor). public (default) makes the signing event independently auditable and is correct for anything published openly; the entry carries the artifact's SHA-256, signature, public key and a timestamp — not its contents or filename — and is permanent and cannot be withdrawn. none makes no entry: use it for internal-only artifacts and test runs. Only valid for method=kms — gpg has no log, and method=sigstore requires one to be verifiable at all. Verifying an unlogged signature needs --insecure-ignore-tlog."
         }
       }
     },

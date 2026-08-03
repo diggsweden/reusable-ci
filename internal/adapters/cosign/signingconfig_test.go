@@ -5,20 +5,23 @@ package cosign_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/cosign"
+	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/mockbinary"
 )
 
 // signWrite names one cosign subcommand that writes a signature, and drives it
-// through the adapter. Every entry MUST pass --signing-config when one is set:
-// each of these uploads to the public Rekor transparency log otherwise, and a
-// Rekor entry is permanent, public, and append-only. Adding a new write verb
-// without adding it here leaves TestEveryWriteVerbHonoursTheSigningConfig
-// green, so keep the list in step with the adapter's write surface — the count
-// assertion below is the tripwire.
+// through the adapter. Every entry MUST honour the transparency setting: each
+// of these uploads to the public Rekor log otherwise, and a Rekor entry is
+// permanent, public, and append-only. Adding a new write verb without adding it
+// here leaves TestEveryWriteVerbSuppressesTheLog green, so keep the list in
+// step with the adapter's write surface — the count assertion is the tripwire.
 type signWrite struct {
 	name string
 	call func(a *cosign.Adapter) error
@@ -49,20 +52,43 @@ func writeVerbs() []signWrite {
 // mock cosign never looks at it.
 const hex64 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 
-// TestEveryWriteVerbHonoursTheSigningConfig is the load-bearing test for
-// "we do not publish to a transparency log unless we mean to".
+// captureSigningConfig returns a mock cosign that copies whatever
+// --signing-config points at into `dest`, plus the dest path.
+//
+// The copy has to happen inside the stub because the adapter writes the config
+// per call and removes it on return — by the time the test regains control the
+// file is gone. Capturing at call time asserts what actually matters: that the
+// document existed, and was correct, at the moment cosign read it.
+func captureSigningConfig(t *testing.T) (*mockbinary.Mock, string) {
+	t.Helper()
+
+	dest := filepath.Join(t.TempDir(), "captured.json")
+	bins := mockbinary.New(t)
+	bins.Add("cosign", `
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--signing-config" ]; then cp "$a" "`+dest+`"; fi
+  prev="$a"
+done
+`)
+
+	return bins, dest
+}
+
+// TestEveryWriteVerbSuppressesTheLog is the load-bearing test for "we do not
+// publish to a transparency log unless we mean to".
 //
 // cosign uploads to the public Rekor log by default, and cosign 3.x deprecated
-// --tlog-upload in favour of a signing-config file with no transparency-log
+// --tlog-upload in favour of a signing-config file naming no transparency-log
 // service. So the ONLY thing standing between a signing run and a permanent
-// public record is this flag reaching every write subcommand.
-func TestEveryWriteVerbHonoursTheSigningConfig(t *testing.T) {
+// public record is this flag reaching every write subcommand, pointing at a
+// config that actually names no log.
+func TestEveryWriteVerbSuppressesTheLog(t *testing.T) {
 	for _, verb := range writeVerbs() {
 		t.Run(verb.name, func(t *testing.T) {
-			bins := mockbinary.New(t)
-			bins.Add("cosign", ":")
+			bins, captured := captureSigningConfig(t)
 
-			a := &cosign.Adapter{Bin: bins.Path("cosign"), SigningConfig: "/tmp/nolog.json"}
+			a := &cosign.Adapter{Bin: bins.Path("cosign"), Transparency: domainrelease.TransparencyNone}
 
 			if err := verb.call(a); err != nil {
 				t.Fatalf("%s: %v", verb.name, err)
@@ -70,19 +96,25 @@ func TestEveryWriteVerbHonoursTheSigningConfig(t *testing.T) {
 
 			invs := bins.Invocations("cosign")
 			if len(invs) != 1 {
-				t.Fatalf("expected 1 cosign invocation, got %d", len(invs))
+				t.Fatalf("expected 1 cosign invocation, got %d — the adapter must not shell out "+
+					"to build the signing config", len(invs))
 			}
 
 			args := invs[0].Args
-			idx := slices.Index(args, "--signing-config")
-
-			if idx < 0 {
+			if !slices.Contains(args, "--signing-config") {
 				t.Fatalf("%s does not pass --signing-config; it would upload to the public Rekor log\nargv: %v",
 					verb.name, args)
 			}
 
-			if idx+1 >= len(args) || args[idx+1] != "/tmp/nolog.json" {
-				t.Errorf("%s: --signing-config value wrong\nargv: %v", verb.name, args)
+			body, err := os.ReadFile(captured)
+			if err != nil {
+				t.Fatalf("%s: --signing-config named a file cosign could not read: %v", verb.name, err)
+			}
+
+			// A config that still names a Rekor instance would publish while
+			// looking correct in argv, so assert the content, not the flag.
+			if strings.Contains(string(body), "rekorTlogUrls") {
+				t.Errorf("%s: signing config names a transparency log:\n%s", verb.name, body)
 			}
 		})
 	}
@@ -100,15 +132,34 @@ func TestWriteVerbCountIsPinned(t *testing.T) {
 	}
 }
 
-// TestNoSigningConfigLeavesCosignOnItsDefault pins the other direction: an
-// unset config must NOT invent a flag. Keyless signing genuinely needs Fulcio
+// TestSigningConfigDoesNotOutliveTheCall pins the cleanup. The config is
+// written per call; a leaked temp file per signature would accumulate in the
+// runner's temp dir across a release that signs many artifacts.
+func TestSigningConfigDoesNotOutliveTheCall(t *testing.T) {
+	bins, _ := captureSigningConfig(t)
+
+	a := &cosign.Adapter{Bin: bins.Path("cosign"), Transparency: domainrelease.TransparencyNone}
+	if err := writeVerbs()[0].call(a); err != nil {
+		t.Fatalf("SignBlob: %v", err)
+	}
+
+	args := bins.Invocations("cosign")[0].Args
+	idx := slices.Index(args, "--signing-config")
+
+	if _, err := os.Stat(args[idx+1]); !os.IsNotExist(err) {
+		t.Errorf("signing config %s still exists after the call returned", args[idx+1])
+	}
+}
+
+// TestPublicTransparencyLeavesCosignOnItsDefault pins the other direction: the
+// public setting must NOT invent a flag. Keyless signing genuinely needs Fulcio
 // and a Rekor inclusion proof, so the public default has to remain reachable —
 // this is an opt-out, not a new default.
-func TestNoSigningConfigLeavesCosignOnItsDefault(t *testing.T) {
+func TestPublicTransparencyLeavesCosignOnItsDefault(t *testing.T) {
 	bins := mockbinary.New(t)
 	bins.Add("cosign", ":")
 
-	a := &cosign.Adapter{Bin: bins.Path("cosign")} // no SigningConfig
+	a := &cosign.Adapter{Bin: bins.Path("cosign"), Transparency: domainrelease.TransparencyPublic}
 
 	if err := a.SignBlob(context.Background(), cosign.SignBlobInput{
 		Artifact: "app.tgz", BundlePath: "app.tgz.bundle", Keyless: true,
@@ -117,30 +168,52 @@ func TestNoSigningConfigLeavesCosignOnItsDefault(t *testing.T) {
 	}
 
 	if args := bins.Invocations("cosign")[0].Args; slices.Contains(args, "--signing-config") {
-		t.Errorf("unset SigningConfig must not pass the flag\nargv: %v", args)
+		t.Errorf("public transparency must not pass the flag\nargv: %v", args)
 	}
 }
 
-// TestNewResolvesTheSigningConfigFromEnv pins the mechanism that makes this
-// unforgettable: the adapter is built at ~16 call sites, and both constructors
-// must pick the setting up so no signing path can opt out by omission.
-func TestNewResolvesTheSigningConfigFromEnv(t *testing.T) {
-	t.Setenv(cosign.EnvSigningConfig, "/tmp/from-env.json")
+// TestZeroValueAdapterPublishes pins the fail-safe direction of the zero value.
+// An Adapter built as a bare literal (as tests and any future call site might)
+// must behave like cosign's own default. If the zero value meant "none", a
+// forgotten field would silently withhold the public record instead of loudly
+// publishing — the wrong way round for a default nobody typed.
+func TestZeroValueAdapterPublishes(t *testing.T) {
+	bins := mockbinary.New(t)
+	bins.Add("cosign", ":")
 
-	if got := cosign.New().SigningConfig; got != "/tmp/from-env.json" {
-		t.Errorf("New() SigningConfig = %q, want the env value", got)
+	a := &cosign.Adapter{Bin: bins.Path("cosign")} // nothing set
+
+	if err := a.SignBlob(context.Background(), cosign.SignBlobInput{
+		Artifact: "app.tgz", BundlePath: "app.tgz.bundle", Keyless: true,
+	}, nil); err != nil {
+		t.Fatalf("SignBlob: %v", err)
 	}
 
-	if got := cosign.NewIsolated("DOCKER_CONFIG").SigningConfig; got != "/tmp/from-env.json" {
-		t.Errorf("NewIsolated() SigningConfig = %q, want the env value — isolated signing "+
+	if args := bins.Invocations("cosign")[0].Args; slices.Contains(args, "--signing-config") {
+		t.Errorf("the zero-value Adapter suppressed the transparency log\nargv: %v", args)
+	}
+}
+
+// TestNewResolvesTransparencyFromEnv pins the mechanism that makes this
+// unforgettable: the adapter is built at ~16 call sites, and both constructors
+// must pick the setting up so no signing path can opt out by omission.
+func TestNewResolvesTransparencyFromEnv(t *testing.T) {
+	t.Setenv(cosign.EnvTransparency, string(domainrelease.TransparencyNone))
+
+	if got := cosign.New().Transparency; got != domainrelease.TransparencyNone {
+		t.Errorf("New() Transparency = %q, want the env value", got)
+	}
+
+	if got := cosign.NewIsolated("DOCKER_CONFIG").Transparency; got != domainrelease.TransparencyNone {
+		t.Errorf("NewIsolated() Transparency = %q, want the env value — isolated signing "+
 			"paths would otherwise still publish to Rekor", got)
 	}
 }
 
-// verifyRead names one cosign subcommand that verifies a signature. Each must
-// honour the tlog policy: a signature made against a signing config with no
-// transparency log cannot be verified without it, so a verb that ignores the
-// setting fails closed with cosign's "not enough verified log entries" error.
+// verifyVerbs names each cosign subcommand that verifies a signature. Each must
+// honour the same setting the write verbs do: a signature made with no
+// transparency log cannot be verified without --insecure-ignore-tlog, so a verb
+// that ignores it fails with cosign's "not enough verified log entries".
 func verifyVerbs() []signWrite {
 	const digest = "reg/app@sha256:" + hex64
 
@@ -164,16 +237,15 @@ func verifyVerbs() []signWrite {
 }
 
 // TestEveryVerifyVerbHonoursTheTlogPolicy is the counterpart to the write-verb
-// test. cosign couples the halves: verification demands a log inclusion proof,
-// so signing without a transparency log and verifying are a matched pair. A
-// verify verb that drops the policy cannot check what the sign side produced.
+// test. cosign couples the halves, which is why one setting drives both: this
+// asserts the verify side reads the same source of truth as the sign side.
 func TestEveryVerifyVerbHonoursTheTlogPolicy(t *testing.T) {
 	for _, verb := range verifyVerbs() {
 		t.Run(verb.name, func(t *testing.T) {
 			bins := mockbinary.New(t)
 			bins.Add("cosign", ":")
 
-			a := &cosign.Adapter{Bin: bins.Path("cosign"), InsecureIgnoreTlog: true}
+			a := &cosign.Adapter{Bin: bins.Path("cosign"), Transparency: domainrelease.TransparencyNone}
 
 			if err := verb.call(a); err != nil {
 				t.Fatalf("%s: %v", verb.name, err)
@@ -222,29 +294,48 @@ func TestVerifyVerbCountIsPinned(t *testing.T) {
 	}
 }
 
-// TestNewResolvesTheTlogPolicyFromEnv mirrors the signing-config resolution:
-// both constructors must pick it up, or an isolated verify path silently
-// disagrees with the sign path about whether a log entry is required.
-func TestNewResolvesTheTlogPolicyFromEnv(t *testing.T) {
-	t.Setenv(cosign.EnvInsecureIgnoreTlog, "true")
+// TestSignAndVerifyCannotDisagree is why this is one setting and not two. The
+// previous design had an independent env var per half, and cosign requires them
+// to match: suppressing the log while still demanding a proof produces "not
+// enough verified log entries", an error that names none of its causes. Here
+// the halves are derived from one value, so the mismatch has nowhere to live.
+func TestSignAndVerifyCannotDisagree(t *testing.T) {
+	for _, transparency := range domainrelease.ValidTransparencies {
+		t.Run(string(transparency), func(t *testing.T) {
+			suppressed := func(verbs []signWrite, flag string) bool {
+				bins, _ := captureSigningConfig(t)
+				a := &cosign.Adapter{Bin: bins.Path("cosign"), Transparency: transparency}
 
-	if !cosign.New().InsecureIgnoreTlog {
-		t.Error("New() did not resolve the tlog policy from the environment")
-	}
+				if err := verbs[0].call(a); err != nil {
+					t.Fatalf("call: %v", err)
+				}
 
-	if !cosign.NewIsolated("DOCKER_CONFIG").InsecureIgnoreTlog {
-		t.Error("NewIsolated() did not resolve the tlog policy from the environment")
+				return slices.Contains(bins.Invocations("cosign")[0].Args, flag)
+			}
+
+			signs := suppressed(writeVerbs(), "--signing-config")
+			verifies := suppressed(verifyVerbs(), "--insecure-ignore-tlog")
+
+			if signs != verifies {
+				t.Errorf("transparency=%s: sign suppresses=%v but verify suppresses=%v — "+
+					"cosign requires these to agree", transparency, signs, verifies)
+			}
+		})
 	}
 }
 
-// TestTlogPolicyEnvIsNotTruthyByAccident pins that only deliberate spellings
-// turn verification down. A stray value must fail safe (keep checking).
-func TestTlogPolicyEnvIsNotTruthyByAccident(t *testing.T) {
-	for _, v := range []string{"", "0", "false", "no", "off", "maybe", "FALSE"} {
-		t.Setenv(cosign.EnvInsecureIgnoreTlog, v)
+// TestTransparencyEnvFallsBackToPublish pins that a value we cannot parse
+// leaves the log ON. TransparencyFromEnv runs in a constructor with nowhere to
+// return an error, so it must fail towards publishing: a typo that silently
+// withheld the public record is worse than one that published. The typo is
+// caught with a real error upstream, where sign.transparency is validated.
+func TestTransparencyEnvFallsBackToPublish(t *testing.T) {
+	for _, v := range []string{"", "0", "false", "no", "off", "maybe", "NONE", "None"} {
+		t.Setenv(cosign.EnvTransparency, v)
 
-		if cosign.New().InsecureIgnoreTlog {
-			t.Errorf("%q turned off transparency-log verification; only 1/true/yes/on may", v)
+		if got := cosign.New().Transparency; got.PublishesToLog() != true {
+			t.Errorf("%q resolved to %q, which suppresses the transparency log; only the exact "+
+				"value %q may", v, got, domainrelease.TransparencyNone)
 		}
 	}
 }
