@@ -140,7 +140,7 @@ func xcodeIOSSetupXCConfigCmd() *cli.Command {
    XCCONFIG_BASE64="..." reusable-ci build xcode-ios setup-xcconfig`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "base64", Sources: cli.EnvVars("XCCONFIG_BASE64"), Usage: "base64-encoded .xcconfig body; empty value is a no-op"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			&cli.StringFlag{Name: "temp-dir", Sources: cienv.TempDir(), Usage: "directory the decoded .xcconfig is written to"},
+			&cli.StringFlag{Name: flagTempDir, Sources: cienv.TempDir(), Usage: "directory the decoded .xcconfig is written to"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
@@ -148,7 +148,7 @@ func xcodeIOSSetupXCConfigCmd() *cli.Command {
 
 				return appbuild.XcodeXCConfig(ctx, d.OutputSink, annot, appbuild.XcodeXCConfigInput{
 					Base64:  cmd.String("base64"),
-					TempDir: cmd.String("temp-dir"),
+					TempDir: cmd.String(flagTempDir),
 				})
 			})
 		},

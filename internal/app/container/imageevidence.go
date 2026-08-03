@@ -430,13 +430,14 @@ func exportImageEvidenceLayout(ctx context.Context, buildah ImageEvidenceBuildah
 	return layout, cleanup, nil
 }
 
+// makeImageEvidenceTempDir creates a scratch layout under the run context's
+// temp dir, or under the OS default when TempDir is empty (os.MkdirTemp
+// treats "" as os.TempDir()).
+//
+// TempDir arrives from --temp-dir ($CI_TEMP_DIR, $RUNNER_TEMP); the app does
+// not read the environment for it.
 func makeImageEvidenceTempDir(in ImageEvidenceInput, pattern string) (string, error) {
-	tmpRoot := in.TempDir
-	if tmpRoot == "" {
-		tmpRoot = os.Getenv("RUNNER_TEMP")
-	}
-
-	layout, err := os.MkdirTemp(tmpRoot, pattern)
+	layout, err := os.MkdirTemp(in.TempDir, pattern)
 	if err != nil {
 		return "", fmt.Errorf("create image evidence temp layout: %w", err)
 	}

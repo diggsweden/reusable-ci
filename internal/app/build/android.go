@@ -128,11 +128,14 @@ type AndroidDecodeKeystoreInput struct {
 	// $ANDROID_KEYSTORE_BASE64 secret).
 	Base64 string
 	// Dir is the directory the keystore is decoded into. Empty →
-	// $RUNNER_TEMP when set (the GitHub Actions runner-scoped temp
-	// path, cleaned between jobs), else os.MkdirTemp. Never the
-	// project working dir — that would let any later `path: .`
-	// upload-artifact glob pick the keystore up by accident.
+	// TempDir when set, else os.MkdirTemp. Never the project working
+	// dir — that would let any later `path: .` upload-artifact glob
+	// pick the keystore up by accident.
 	Dir string
+	// TempDir is the run context's scratch directory (the CLI binding
+	// reads $CI_TEMP_DIR / $RUNNER_TEMP via flag sources). Empty →
+	// os.MkdirTemp.
+	TempDir string
 }
 
 // AndroidDecodeKeystore base64-decodes Base64 into <Dir>/release.keystore
@@ -166,7 +169,7 @@ func decodeAndroidKeystore(in AndroidDecodeKeystoreInput) (string, error) {
 		return "", fmt.Errorf("ANDROID_KEYSTORE secret not found but enable-signing is true: %w", errs.ErrPermissionDenied)
 	}
 
-	dir, err := resolveKeystoreDir(in.Dir)
+	dir, err := resolveKeystoreDir(in.Dir, in.TempDir)
 	if err != nil {
 		return "", err
 	}
@@ -189,18 +192,21 @@ func decodeAndroidKeystore(in AndroidDecodeKeystoreInput) (string, error) {
 	return absPath, nil
 }
 
-// resolveKeystoreDir applies the runner-temp-first default. Explicit
-// Dir wins (callers know what they're doing); $RUNNER_TEMP wins next
-// (the standard GHA scratch path, cleaned between jobs); a fresh
-// os.MkdirTemp is the last fallback so the keystore never lands in
-// cwd, no matter what the runner is.
-func resolveKeystoreDir(explicit string) (string, error) {
+// resolveKeystoreDir applies the temp-dir-first default. Explicit Dir wins
+// (callers know what they're doing); the run context's scratch dir wins next
+// (runner-scoped, cleaned between jobs); a fresh os.MkdirTemp is the last
+// fallback so the keystore never lands in cwd, no matter what the runner is.
+//
+// tempDir is threaded in from --temp-dir ($CI_TEMP_DIR, $RUNNER_TEMP) rather
+// than read here: an os.Getenv would see only $RUNNER_TEMP and so decode the
+// keystore somewhere other than where the rest of the run puts its scratch.
+func resolveKeystoreDir(explicit, tempDir string) (string, error) {
 	if explicit != "" {
 		return explicit, nil
 	}
 
-	if runnerTemp := os.Getenv("RUNNER_TEMP"); runnerTemp != "" {
-		return runnerTemp, nil
+	if tempDir != "" {
+		return tempDir, nil
 	}
 
 	dir, err := os.MkdirTemp("", "reusable-ci-keystore-")

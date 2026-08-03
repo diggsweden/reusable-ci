@@ -176,10 +176,10 @@ func collectPinReachabilitySHAs(files []string, subject string) ([]string, error
 }
 
 func clonePinReachabilityRepo(ctx context.Context, gitrepo PinGit, remote, tempDir string) (string, error) {
-	if tempDir == "" {
-		tempDir = os.Getenv("RUNNER_TEMP")
-	}
-
+	// tempDir arrives from --temp-dir ($CI_TEMP_DIR, $RUNNER_TEMP). Reading
+	// the environment here instead would see only $RUNNER_TEMP, answering
+	// differently than every other command on a runner that sets the
+	// forge-neutral name.
 	if tempDir == "" {
 		tempDir = os.TempDir()
 	}

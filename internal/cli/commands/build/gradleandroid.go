@@ -11,6 +11,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/gradle"
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/secret"
 )
@@ -66,6 +67,7 @@ EXAMPLE:
 			&cli.BoolFlag{Name: flagSkipTests, Sources: cli.EnvVars("SKIP_TESTS"), Usage: usageSkipTestTask},
 			&cli.BoolFlag{Name: flagBuildSBOM, Value: true, Sources: cli.EnvVars("ENABLE_BUILD_SBOM"), Usage: "generate the cyclonedx-gradle-plugin Build SBOM (default true)"},
 			&cli.StringFlag{Name: flagSBOMToolVersion, Sources: cli.EnvVars("CYCLONEDX_GRADLE_VERSION"), Usage: "pinned cyclonedx-gradle-plugin version (required when --build-sbom)"},
+			&cli.StringFlag{Name: flagTempDir, Sources: cienv.TempDir(), Usage: "scratch directory the signing keystore is decoded into, outside the project dir"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			keystoreBase64, err := secret.Resolve(cmd.String("keystore-base64-file"), "ANDROID_KEYSTORE_BASE64")
@@ -86,6 +88,7 @@ EXAMPLE:
 						SkipTests:       cmd.Bool(flagSkipTests),
 						EnableBuildSBOM: cmd.Bool(flagBuildSBOM),
 					},
+					TempDir:                 cmd.String(flagTempDir),
 					IncludeDateStamp:        cmd.Bool("include-date"),
 					ArtifactNamePrefix:      cmd.String("prefix"),
 					RepoName:                cmd.String(flagRepositoryName),
@@ -157,6 +160,7 @@ func gradleAndroidDecodeKeystoreCmd() *cli.Command {
 				Name:  "base64-file",
 				Usage: "file with the base64-encoded keystore body (\"-\" stdin; defaults to $ANDROID_KEYSTORE_BASE64)",
 			},
+			&cli.StringFlag{Name: flagTempDir, Sources: cienv.TempDir(), Usage: "scratch directory the keystore is decoded into, outside the project dir"},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			base64, err := secret.Resolve(cmd.String("base64-file"), "ANDROID_KEYSTORE_BASE64")
@@ -168,7 +172,8 @@ func gradleAndroidDecodeKeystoreCmd() *cli.Command {
 			// captured by `>> $GITHUB_ENV` / the runner's env file. The value goes
 			// to stdout per clig.dev; progress/errors go to stderr.
 			return appbuild.AndroidDecodeKeystore(os.Stdout, os.Stderr, appbuild.AndroidDecodeKeystoreInput{
-				Base64: base64,
+				Base64:  base64,
+				TempDir: cmd.String(flagTempDir),
 			})
 		},
 	}

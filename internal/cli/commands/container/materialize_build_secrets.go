@@ -10,6 +10,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 )
 
@@ -40,7 +41,12 @@ func materializeBuildSecretsCmd() *cli.Command {
 			&cli.StringFlag{
 				Name:    "output-dir",
 				Sources: cli.EnvVars("BUILD_SECRETS_DIR"),
-				Usage:   "directory for the materialized tmpfiles; defaults to $RUNNER_TEMP/build-secrets",
+				Usage:   "directory for the materialized tmpfiles; defaults to <temp-dir>/build-secrets",
+			},
+			&cli.StringFlag{
+				Name:    "temp-dir",
+				Sources: cienv.TempDir(),
+				Usage:   "scratch directory the default --output-dir is sited under",
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -49,6 +55,7 @@ func materializeBuildSecretsCmd() *cli.Command {
 					Names:        cmd.String("names"),
 					EnvelopeJSON: cmd.String("envelope"),
 					OutputDir:    cmd.String("output-dir"),
+					TempDir:      cmd.String("temp-dir"),
 				})
 			})
 		},

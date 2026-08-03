@@ -36,6 +36,11 @@ type AndroidReleaseBuildInput struct {
 	KeystoreBase64          string
 	SecretsPropertiesBase64 string
 
+	// TempDir is the run context's scratch directory, used to place the
+	// decoded keystore outside the project dir. The CLI binding reads
+	// $CI_TEMP_DIR / $RUNNER_TEMP via flag sources. Empty → os.MkdirTemp.
+	TempDir string
+
 	// Build-task selection (GradleTasksOverride wins; else resolved).
 	GradleTasksOverride string
 	BuildTypes          string
@@ -77,7 +82,7 @@ func AndroidReleaseBuild(ctx context.Context, sink ci.OutputSink, summarySink ci
 		// Decode outside the working dir (Dir empty → RUNNER_TEMP/mktemp) so no
 		// artifact upload can pick the keystore up. gradle reads the path from
 		// the environment, alongside the per-key password secrets.
-		path, err := decodeAndroidKeystore(AndroidDecodeKeystoreInput{Base64: in.KeystoreBase64})
+		path, err := decodeAndroidKeystore(AndroidDecodeKeystoreInput{Base64: in.KeystoreBase64, TempDir: in.TempDir})
 		if err != nil {
 			return err
 		}

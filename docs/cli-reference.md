@@ -291,6 +291,7 @@ EXAMPLE:
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--base64-file` | file with the base64-encoded keystore body ("-" stdin; defaults to $ANDROID_KEYSTORE_BASE64) | n/a |
+| `--temp-dir` | scratch directory the keystore is decoded into, outside the project dir | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
 
 #### `reusable-ci build gradle-android list-artifacts`
 
@@ -353,6 +354,7 @@ EXAMPLE:
 | `--skip-tests` | append -x test to skip the test task | `$SKIP_TESTS` |
 | `--build-sbom` | generate the cyclonedx-gradle-plugin Build SBOM (default true) | `$ENABLE_BUILD_SBOM` |
 | `--sbom-tool-version` | pinned cyclonedx-gradle-plugin version (required when --build-sbom) | `$CYCLONEDX_GRADLE_VERSION` |
+| `--temp-dir` | scratch directory the signing keystore is decoded into, outside the project dir | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
 
 #### `reusable-ci build gradle-android write-secrets-properties`
 
@@ -936,6 +938,7 @@ before Trivy runs, because Trivy's
 | `--trivy-output-template` | destination template for per-platform Trivy JSON; must contain {arch} or {platform} | `$IMAGE_EVIDENCE_TRIVY_OUTPUT_TEMPLATE` |
 | `--sbom-output-template` | optional per-platform CycloneDX SBOM template; must contain {arch} or {platform} | `$IMAGE_EVIDENCE_SBOM_OUTPUT_TEMPLATE` |
 | `--trivy-timeout` | Trivy scan timeout | `$IMAGE_EVIDENCE_TRIVY_TIMEOUT` |
+| `--temp-dir` | scratch directory for the exported OCI layouts | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
 
 ### `reusable-ci container image-labels-json`
 
@@ -1270,7 +1273,8 @@ EXAMPLE:
 |------|-------------|----------|
 | `--names` | newline/comma/space-separated list of build-secret names from containers[].build-secrets | `$BUILD_SECRET_NAMES` |
 | `--envelope` | JSON object mapping each declared name to its value; sourced from the workflow secret of the same name | `$REUSABLE_CI_BUILD_SECRETS_JSON` |
-| `--output-dir` | directory for the materialized tmpfiles; defaults to $RUNNER_TEMP/build-secrets | `$BUILD_SECRETS_DIR` |
+| `--output-dir` | directory for the materialized tmpfiles; defaults to <temp-dir>/build-secrets | `$BUILD_SECRETS_DIR` |
+| `--temp-dir` | scratch directory the default --output-dir is sited under | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
 
 ### `reusable-ci container metadata`
 
@@ -3887,6 +3891,7 @@ EXAMPLE:
 | `--repo-dir` | local forgejo-ci clone to check instead of cloning --remote | `$FORGEJO_CI_DIR` |
 | `--main` | branch ref treated as current main | `$FORGEJO_CI_MAIN` |
 | `--subject` | pin subject to scan before @<sha> (your reusable-workflow repo slug, e.g. forgejo-ci) (required) | n/a |
+| `--temp-dir` | scratch directory for the temporary clone | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
 
 ### `reusable-ci validate prerequisites`
 

@@ -29,6 +29,10 @@ const (
 	flagRepositoryName  = "repository-name"
 	flagFlavor          = "flavor"
 	flagBuildModule     = "build-module"
+	// flagTempDir binds the run context's scratch directory (via
+	// cienv.TempDir()) so the app layer receives it instead of reading
+	// $RUNNER_TEMP and missing $CI_TEMP_DIR.
+	flagTempDir = "temp-dir"
 	flagWorkspace       = "workspace"
 	flagProject         = "project"
 

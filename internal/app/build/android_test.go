@@ -242,13 +242,20 @@ func TestAndroidDecodeKeystore_RejectsEmptySecret(t *testing.T) {
 	}
 }
 
-// TestAndroidDecodeKeystore_DefaultDirHonoursRunnerTemp verifies the
-// v4 hardening: when no explicit Dir is supplied, the keystore lands
-// under $RUNNER_TEMP rather than cwd. Removes the keystore from any
-// `path: .` upload-artifact glob a caller might add later.
-func TestAndroidDecodeKeystore_DefaultDirHonoursRunnerTemp(t *testing.T) {
+// TestAndroidDecodeKeystore_DefaultDirHonoursTempDir verifies the v4
+// hardening: when no explicit Dir is supplied, the keystore lands under the
+// run context's scratch dir rather than cwd. That removes the keystore from
+// any `path: .` upload-artifact glob a caller might add later.
+//
+// The scratch dir arrives as Input.TempDir — the CLI's --temp-dir binds it
+// to $CI_TEMP_DIR/$RUNNER_TEMP. This test used to t.Setenv("RUNNER_TEMP")
+// because the app read the variable itself; passing it in exercises the same
+// hardening without the app reaching for the environment, so the test no
+// longer mutates process state and can run in parallel.
+func TestAndroidDecodeKeystore_DefaultDirHonoursTempDir(t *testing.T) {
+	t.Parallel()
+
 	runnerTemp := t.TempDir()
-	t.Setenv("RUNNER_TEMP", runnerTemp)
 
 	var out bytes.Buffer
 
@@ -258,13 +265,14 @@ func TestAndroidDecodeKeystore_DefaultDirHonoursRunnerTemp(t *testing.T) {
 	if err := appbuild.AndroidDecodeKeystore(&out, io.Discard, appbuild.AndroidDecodeKeystoreInput{
 		Base64: encoded,
 		// Dir intentionally empty — exercise the default path.
+		TempDir: runnerTemp,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	expectedPath := filepath.Join(runnerTemp, "release.keystore")
 	if !strings.Contains(out.String(), "ANDROID_KEYSTORE_PATH="+expectedPath) {
-		t.Errorf("default Dir should resolve to $RUNNER_TEMP; got: %s", out.String())
+		t.Errorf("default Dir should resolve to the run context temp dir; got: %s", out.String())
 	}
 
 	info, err := os.Stat(expectedPath)

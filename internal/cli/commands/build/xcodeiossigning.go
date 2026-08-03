@@ -34,7 +34,7 @@ func xcodeIOSSetupCodeSigningCmd() *cli.Command {
 				Name:  "keychain-password-file",
 				Usage: "path to a file containing the transient keychain password (use \"-\" for stdin; defaults to $KEYCHAIN_PASSWORD)",
 			},
-			&cli.StringFlag{Name: "temp-dir", Sources: cienv.TempDir(), Usage: "directory the decoded cert / profile / keychain are written under"},
+			&cli.StringFlag{Name: flagTempDir, Sources: cienv.TempDir(), Usage: "directory the decoded cert / profile / keychain are written under"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			certPassphrase, err := secret.Resolve(cmd.String("cert-passphrase-file"), "IOS_SIGNING_CERTIFICATE_PASSPHRASE")
@@ -52,7 +52,7 @@ func xcodeIOSSetupCodeSigningCmd() *cli.Command {
 				CertPassphrase:   certPassphrase,
 				PPBase64:         cmd.String("pp-base64"),
 				KeychainPassword: keychainPassword,
-				TempDir:          cmd.String("temp-dir"),
+				TempDir:          cmd.String(flagTempDir),
 			})
 		},
 	}

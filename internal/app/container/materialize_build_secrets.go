@@ -30,9 +30,12 @@ type MaterializeBuildSecretsInput struct {
 	// (one ${{ secrets.X }} interpolation per entry).
 	EnvelopeJSON string
 	// OutputDir is where to write the per-secret tmpfiles. Each file
-	// gets mode 0600. Defaults to $RUNNER_TEMP/build-secrets when
-	// empty.
+	// gets mode 0600. Empty → <TempDir>/build-secrets.
 	OutputDir string
+	// TempDir is the run context's scratch directory, used to site the
+	// default OutputDir. The CLI binding reads $CI_TEMP_DIR /
+	// $RUNNER_TEMP via flag sources. Empty → os.TempDir().
+	TempDir string
 }
 
 // MaterializeBuildSecrets unpacks the JSON envelope into per-secret
@@ -86,13 +89,17 @@ func MaterializeBuildSecrets(
 		return fmt.Errorf("parse REUSABLE_CI_BUILD_SECRETS_JSON (expected object of {name: value}): %w: %w", err, errs.ErrInvalidConfig)
 	}
 
+	// The scratch root is threaded in from --temp-dir ($CI_TEMP_DIR,
+	// $RUNNER_TEMP); reading the environment here would see only the latter
+	// and so site the secrets somewhere other than the run's scratch dir.
 	dir := strings.TrimSpace(in.OutputDir)
 	if dir == "" {
-		if rt := strings.TrimSpace(os.Getenv("RUNNER_TEMP")); rt != "" {
-			dir = filepath.Join(rt, "build-secrets")
-		} else {
-			dir = filepath.Join(os.TempDir(), "build-secrets")
+		root := strings.TrimSpace(in.TempDir)
+		if root == "" {
+			root = os.TempDir()
 		}
+
+		dir = filepath.Join(root, "build-secrets")
 	}
 
 	if err := os.MkdirAll(dir, 0o700); err != nil { //nolint:gosec // private secret directory.

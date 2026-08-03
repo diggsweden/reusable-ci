@@ -12,7 +12,12 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
 	appvalidate "github.com/diggsweden/reusable-ci/v3/internal/app/validate"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 )
+
+// flagTempDir names the scratch-directory flag. Its value reaches the app
+// layer as Input.TempDir; the app never reads the environment for it.
+const flagTempDir = "temp-dir"
 
 // pinGit wires the git adapter to appvalidate.PinGit. Open has to hand back
 // the interface the use case declares rather than *git.Repo, because Go has
@@ -47,6 +52,7 @@ EXAMPLE:
 			&cli.StringFlag{Name: "repo-dir", Sources: cli.EnvVars("FORGEJO_CI_DIR"), Usage: "local forgejo-ci clone to check instead of cloning --remote"},
 			&cli.StringFlag{Name: "main", Value: "main", Sources: cli.EnvVars("FORGEJO_CI_MAIN"), Usage: "branch ref treated as current main"},
 			&cli.StringFlag{Name: "subject", Required: true, Usage: "pin subject to scan before @<sha> (your reusable-workflow repo slug, e.g. forgejo-ci)"},
+			&cli.StringFlag{Name: flagTempDir, Sources: cienv.TempDir(), Usage: "scratch directory for the temporary clone"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			workflows := cmd.StringSlice(flagWorkflow)
@@ -64,6 +70,7 @@ EXAMPLE:
 				RepoDir:   cmd.String("repo-dir"),
 				Main:      cmd.String("main"),
 				Subject:   cmd.String("subject"),
+				TempDir:   cmd.String(flagTempDir),
 			})
 		},
 	}
