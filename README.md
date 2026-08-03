@@ -52,12 +52,12 @@ Start with the [Documentation Index](docs/README.md) for the full Diataxis map.
 Three top-level chains, each invoked from the adopter's repo as a
 single `workflow_call:` entry:
 
-1. **Pull Request** (`pullrequest-orchestrator.yml`) — runs on PR and
+1. **Pull Request** (`pullrequest-orchestrator.yml`) runs on PR and
    push: nanolinter (lint, security scanning, license/REUSE), with security
    findings uploaded to Code Scanning as SARIF. The adopter's own tests are
    wired separately.
 
-2. **Release** (`release-orchestrator.yml`) — runs on signed tag push:
+2. **Release** (`release-orchestrator.yml`) runs on signed tag push:
    parse `.reusable-ci/artifacts.yml`, validate release prerequisites,
    build the declared artifacts, publish them to their declared
    targets (Maven Central / GitHub Packages / npm / Google Play / App
@@ -65,10 +65,10 @@ single `workflow_call:` entry:
    three CISA layers, sign with GPG or cosign, create the GitHub
    release with changelog and checksums.
 
-3. **Snapshot Release** (`release-snapshot-orchestrator.yml`) — same
+3. **Snapshot Release** (`release-snapshot-orchestrator.yml`) uses the same
    control-plane shape on branch pushes, with no signing / no SLSA / no
    permanent release; publishes a branch-suffixed npm snapshot (and
-   optional SBOMs). It builds no containers — a container is built once on
+   optional SBOMs). It builds no containers. A container is built once on
    the release path and promoted to `:dev` by the promotion ladder.
 
 ---
@@ -82,8 +82,8 @@ Most projects need only the workflow files:
 3. `.github/workflows/release-snapshot-workflow.yml` - (Optional) For snapshot (feature-branch) releases
 
 A single-manifest repository (one root `go.mod`, `Cargo.toml`, `pom.xml`,
-`package.json`, or Gradle build) needs **no configuration file at all** —
-the plan is auto-derived from the manifest. Add `.reusable-ci/artifacts.yml`
+`package.json`, or Gradle build) needs no configuration file at all.
+The plan is auto-derived from the manifest. Add `.reusable-ci/artifacts.yml`
 only when you need more than the derived defaults (multiple artifacts,
 containers, publish targets). Verify a setup any time with
 `reusable-ci doctor`.
@@ -144,7 +144,7 @@ jobs:
 
 ### For New Projects
 
-1. **Create artifacts configuration** *(optional — skip for a single-manifest repo; the plan is auto-derived from the root `go.mod`/`Cargo.toml`/`pom.xml`/`package.json`)* - Define what to build:
+1. **Create artifacts configuration** *(optional, skip for a single-manifest repo; the plan is auto-derived from the root `go.mod`/`Cargo.toml`/`pom.xml`/`package.json`)* - Define what to build:
    ```yaml
    # .reusable-ci/artifacts.yml
    artifacts:
@@ -347,26 +347,26 @@ per-image.
 
 ### Core concepts
 
-**Build stage** — one job per declared artifact, dispatched by
+**Build stage**: one job per declared artifact, dispatched by
 `release-build-stage.yml`. Builders today: `build-maven`, `build-npm`,
 `build-gradle-app`, `build-gradle-android`, `build-go`,
 `build-cargo`, `build-xcode-ios`. Each produces a typed artifact
 uploaded for the publish stage to consume.
 
-**Publish stage** — one job per declared target, dispatched by
+**Publish stage**: one job per declared target, dispatched by
 `release-publish-stage.yml`: `publish-maven-github`,
 `publish-maven-central`, `publish-google-play`,
 `publish-apple-appstore`, plus `publish-container` for every entry
 in `containers[]`. SBOM-only jobs (`sbom-cargo`, `sbom-go`) run
 alongside for container-first ecosystems.
 
-**Containers** — declared separately under `containers[]` in
+**Containers**: declared separately under `containers[]` in
 `artifacts.yml`, referencing one or more artifacts via
 `from: [artifact-name]`. Built multi-arch (linux/amd64 +
 linux/arm64), signed (cosign), scanned (Trivy gate), and attached to
 SLSA provenance + analyzed-container SBOM attestations.
 
-**Snapshot releases** — branch pushes go through
+**Snapshot releases**: branch pushes go through
 `release-snapshot-orchestrator.yml`. They publish a content-addressed npm
 snapshot (`0.5.9-snapshot-<branch>-<sha>`, dist-tag `snapshot`); no
 containers, no signing, no SLSA, no GitHub Release. The snapshot flow is
