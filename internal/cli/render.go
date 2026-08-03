@@ -88,13 +88,14 @@ func renderSubtree(b *strings.Builder, cmd *cli.Command, breadcrumb []string, le
 		_, _ = fmt.Fprintln(b, "| Flag | Description | Env vars |")
 		_, _ = fmt.Fprintln(b, "|------|-------------|----------|")
 
-		for _, f := range cmd.Flags {
-			n, usage, sources := flagFields(f)
-			if n == "" {
+		for _, declared := range cmd.Flags {
+			primary, usage, sources := flagFields(declared)
+			if primary == "" {
 				continue
 			}
 
-			_, _ = fmt.Fprintf(b, "| `--%s` | %s | %s |\n", n, escapeCell(usage), escapeCell(sources))
+			_, _ = fmt.Fprintf(b, "| %s | %s | %s |\n",
+				flagNameCell(declared, primary), escapeCell(usage), escapeCell(sources))
 		}
 
 		_, _ = fmt.Fprintln(b)
@@ -103,6 +104,34 @@ func renderSubtree(b *strings.Builder, cmd *cli.Command, breadcrumb []string, le
 	for _, sub := range visibleCommands(cmd.Commands) {
 		renderSubtree(b, sub, append(append([]string{}, breadcrumb...), sub.Name), level+1)
 	}
+}
+
+// flagNameCell renders a flag's primary name followed by any aliases, e.g.
+// "`--temp-dir`, `--runner-temp`".
+//
+// Aliases are part of the CLI contract: they are how a rename stays
+// non-breaking, so a reference that omits them documents a surface narrower
+// than the one that actually exists — and tells a caller still passing the
+// old name that their flag is gone. `--help` has always listed them; this
+// keeps the generated reference in step.
+func flagNameCell(flag cli.Flag, primary string) string {
+	names, ok := flag.(interface{ Names() []string })
+	if !ok {
+		return "`--" + primary + "`"
+	}
+
+	cells := make([]string, 0, len(names.Names()))
+	for _, n := range names.Names() {
+		if n != "" {
+			cells = append(cells, "`--"+n+"`")
+		}
+	}
+
+	if len(cells) == 0 {
+		return "`--" + primary + "`"
+	}
+
+	return strings.Join(cells, ", ")
 }
 
 // flagFields extracts (name, usage, sources) from a cli.Flag without

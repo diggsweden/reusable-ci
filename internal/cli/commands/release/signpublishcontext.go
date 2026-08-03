@@ -22,7 +22,7 @@ func signPublishContextCmd() *cli.Command {
 			&cli.StringFlag{Name: flagTag, Required: true, Sources: cienv.Tag(), Usage: "stable release tag"},
 			&cli.StringFlag{Name: "artifact-path", Value: defaultDistPath, Sources: cli.EnvVars("ARTIFACT_PATH"), Usage: "artifact extraction path whose normalized value becomes DIST_DIR"},
 			&cli.StringFlag{Name: "env-file", Required: true, Sources: cli.EnvVars("FORGEJO_ENV", "GITHUB_ENV"), Usage: "runner env file receiving RELEASE_*, DIST_DIR, and state-dir entries"},
-			&cli.StringFlag{Name: "runner-temp", Sources: cienv.TempDir(), Usage: "runner temp directory for the sign-and-publish state dir"},
+			&cli.StringFlag{Name: "temp-dir", Aliases: []string{"runner-temp"}, Sources: cienv.TempDir(), Usage: "scratch directory for the sign-and-publish state dir"},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			return apprelease.SignPublishContext(os.Stderr, apprelease.SignPublishContextInput{
@@ -30,7 +30,7 @@ func signPublishContextCmd() *cli.Command {
 				ReleaseTag:   cmd.String(flagTag),
 				ArtifactPath: cmd.String("artifact-path"),
 				EnvFile:      cmd.String("env-file"),
-				RunnerTemp:   cmd.String("runner-temp"),
+				RunnerTemp:   cmd.String("temp-dir"),
 			})
 		},
 	}

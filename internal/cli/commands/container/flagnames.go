@@ -13,15 +13,19 @@ import "github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
 // change. The registry-credential family aliases the shared regflags
 // spellings so package-local reads stay in sync with the shared flag set.
 const (
-	flagArch                    = "arch"
-	flagArchRef                 = "arch-ref"
-	flagAuthFile                = regflags.FlagAuthFile
-	flagBaseInputID             = "base-input-id"
-	flagBaseInputsJSON          = "base-inputs-json"
-	flagContainerfile           = "containerfile"
-	flagTitle                   = "title"
-	flagContentID               = "content-id"
-	flagContext                 = "context"
+	flagArch           = "arch"
+	flagArchRef        = "arch-ref"
+	flagAuthFile       = regflags.FlagAuthFile
+	flagBaseInputID    = "base-input-id"
+	flagBaseInputsJSON = "base-inputs-json"
+	flagContainerfile  = "containerfile"
+	flagTitle          = "title"
+	flagContentID      = "content-id"
+	flagContext        = "context"
+	// flagTempDir is the scratch-directory flag; flagTempDirLegacy is its
+	// former spelling, kept as an alias (see setupbuildah).
+	flagTempDir                 = "temp-dir"
+	flagTempDirLegacy           = "runner-temp"
 	flagExpectedBaseRepository  = "expected-base-repository"
 	flagExpectedImageRepository = "expected-image-repository"
 	flagFile                    = "file"

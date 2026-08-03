@@ -50,7 +50,7 @@ before Trivy runs, because Trivy's
 			&cli.StringFlag{Name: "trivy-output-template", Sources: cli.EnvVars("IMAGE_EVIDENCE_TRIVY_OUTPUT_TEMPLATE"), Usage: "destination template for per-platform Trivy JSON; must contain {arch} or {platform}"},
 			&cli.StringFlag{Name: "sbom-output-template", Sources: cli.EnvVars("IMAGE_EVIDENCE_SBOM_OUTPUT_TEMPLATE"), Usage: "optional per-platform CycloneDX SBOM template; must contain {arch} or {platform}"},
 			&cli.StringFlag{Name: "trivy-timeout", Value: "30m", Sources: cli.EnvVars("IMAGE_EVIDENCE_TRIVY_TIMEOUT"), Usage: "Trivy scan timeout"},
-			&cli.StringFlag{Name: "temp-dir", Sources: cienv.TempDir(), Usage: "scratch directory for the exported OCI layouts"},
+			&cli.StringFlag{Name: flagTempDir, Sources: cienv.TempDir(), Usage: "scratch directory for the exported OCI layouts"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			skopeoAdapter := skopeo.New()
@@ -79,7 +79,7 @@ before Trivy runs, because Trivy's
 					TrivyOutputTemplate: cmd.String("trivy-output-template"),
 					SBOMOutputTemplate:  cmd.String("sbom-output-template"),
 					TrivyTimeout:        cmd.String("trivy-timeout"),
-					TempDir:             cmd.String("temp-dir"),
+					TempDir:             cmd.String(flagTempDir),
 				},
 			)
 		},

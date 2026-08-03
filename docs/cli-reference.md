@@ -1628,7 +1628,7 @@ EXAMPLE:
 | `--storage-conf` | containers storage config path (default: $RUNNER_TEMP/containers-storage.conf) | `$CONTAINERS_STORAGE_CONF` |
 | `--storage-root` | containers storage root path (default: $RUNNER_TEMP/containers-storage) | `$CONTAINER_STORAGE_ROOT` |
 | `--tmp-dir` | job-local temp directory (default: $RUNNER_TEMP/container-tmp) | `$CONTAINER_TMPDIR` |
-| `--runner-temp` | runner temp directory used for default paths | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
+| `--temp-dir`, `--runner-temp` | scratch directory used for default paths | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
 | `--env-file` | runner env file receiving CONTAINERS_STORAGE_CONF and TMPDIR | `$FORGEJO_ENV`, `$GITHUB_ENV` |
 
 ### `reusable-ci container sign`
@@ -2692,7 +2692,7 @@ export the sign-and-publish workflow env contract
 | `--tag` | stable release tag (required) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 | `--artifact-path` | artifact extraction path whose normalized value becomes DIST_DIR | `$ARTIFACT_PATH` |
 | `--env-file` | runner env file receiving RELEASE_*, DIST_DIR, and state-dir entries (required) | `$FORGEJO_ENV`, `$GITHUB_ENV` |
-| `--runner-temp` | runner temp directory for the sign-and-publish state dir | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
+| `--temp-dir`, `--runner-temp` | scratch directory for the sign-and-publish state dir | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
 
 ### `reusable-ci release ssh`
 
@@ -3156,7 +3156,7 @@ EXAMPLE:
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--tag` | tag the release is anchored to (e.g. v1.2.3) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
-| `--commit-sha` | commit SHA the tag points at | `$CI_COMMIT`, `$CI_COMMIT_SHA`, `$COMMIT_SHA`, `$FORGEJO_SHA`, `$GITHUB_SHA` |
+| `--commit`, `--commit-sha` | commit SHA the tag points at | `$CI_COMMIT`, `$CI_COMMIT_SHA`, `$COMMIT_SHA`, `$FORGEJO_SHA`, `$GITHUB_SHA` |
 | `--ref-type` | trigger ref type (tag/branch/…) | `$REF_TYPE`, `$FORGEJO_REF_TYPE`, `$GITHUB_REF_TYPE` |
 | `--config-plan-json` | typed config-plan JSON used to describe targets in the summary | `$CONFIG_PLAN_JSON` |
 | `--project-types` | comma-separated ecosystems detected in the project | `$PROJECT_TYPES` |
@@ -3539,7 +3539,7 @@ scope (flag > plan > env > default).
 | `--mise-base-url` | override mise release base URL for tests/mirrors | `$MISE_RELEASE_BASE_URL` |
 | `--bin-home` | directory where the renderer symlink is written (default: $HOME/.local/bin) | `$TOOLCHAIN_BIN_HOME` |
 | `--path-file` | runner path file to append the bin directory to (required) | `$FORGEJO_PATH`, `$GITHUB_PATH` |
-| `--runner-temp` | runner temp directory for the isolated mise tree | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
+| `--temp-dir`, `--runner-temp` | scratch directory for the isolated mise tree | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
 | `--run-id` | run identifier used to name the isolated mise tree | `$CI_RUN_ID`, `$FORGEJO_RUN_ID`, `$GITHUB_RUN_ID` |
 
 ### `reusable-ci toolchain install-mise`
@@ -3609,7 +3609,7 @@ the "toolchain setup-mise-env" scope (flag > plan > env > default).
 | `--bin-home` | directory containing exposed tool symlinks (default: $HOME/.local/bin) | `$TOOLCHAIN_BIN_HOME` |
 | `--path-file` | runner path file to append PATH entries to (required) | `$FORGEJO_PATH`, `$GITHUB_PATH` |
 | `--env-file` | runner env file receiving MISE_* directory exports (required) | `$FORGEJO_ENV`, `$GITHUB_ENV` |
-| `--runner-temp` | runner temp directory for isolated mise dirs | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
+| `--temp-dir`, `--runner-temp` | scratch directory for the isolated mise dirs | `$CI_TEMP_DIR`, `$RUNNER_TEMP` |
 
 ### `reusable-ci toolchain trust-mise-config`
 
@@ -4104,12 +4104,12 @@ derive the release tag, version and original-tagger commit trailers from the pus
 
 ```
 EXAMPLE:
-   reusable-ci version derive-release --ref release-request/v1.2.3
+   reusable-ci version derive-release --ref-name release-request/v1.2.3
 ```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--ref` | the pushed ref (e.g. release-request/v1.2.3) (required) | `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--ref-name`, `--ref` | the pushed ref name (e.g. release-request/v1.2.3) (required) | `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 | `--require-release-request` | reject refs outside release-request/vMAJOR.MINOR.PATCH | `$RELEASE_CONTEXT_REQUIRE_REQUEST` |
 | `--require-stable` | reject final tags outside stable vMAJOR.MINOR.PATCH | `$RELEASE_CONTEXT_REQUIRE_STABLE` |
 | `--trailer-mode` | commit trailer mode: default (Release-Authorized-By + Co-authored-by) or coauthor-only | `$RELEASE_CONTEXT_TRAILER_MODE` |

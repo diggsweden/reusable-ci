@@ -44,7 +44,7 @@ func materializeBuildSecretsCmd() *cli.Command {
 				Usage:   "directory for the materialized tmpfiles; defaults to <temp-dir>/build-secrets",
 			},
 			&cli.StringFlag{
-				Name:    "temp-dir",
+				Name:    flagTempDir,
 				Sources: cienv.TempDir(),
 				Usage:   "scratch directory the default --output-dir is sited under",
 			},
@@ -55,7 +55,7 @@ func materializeBuildSecretsCmd() *cli.Command {
 					Names:        cmd.String("names"),
 					EnvelopeJSON: cmd.String("envelope"),
 					OutputDir:    cmd.String("output-dir"),
-					TempDir:      cmd.String("temp-dir"),
+					TempDir:      cmd.String(flagTempDir),
 				})
 			})
 		},

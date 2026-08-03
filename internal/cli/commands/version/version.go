@@ -177,13 +177,19 @@ func deriveReleaseCmd() *cli.Command {
 		Name:  "derive-release",
 		Usage: "derive the release tag, version and original-tagger commit trailers from the pushed request ref (release-request/vX.Y.Z); emits CI outputs so workflows don't parse refs in bash",
 		Description: `EXAMPLE:
-   reusable-ci version derive-release --ref release-request/v1.2.3`,
+   reusable-ci version derive-release --ref-name release-request/v1.2.3`,
 		Flags: []cli.Flag{
+			// --ref-name, not --ref: this resolves cienv.RefName(), the SHORT
+			// name (release-request/v1.2.3). Every other command binding that
+			// concept spells it --ref-name, while --ref elsewhere means the
+			// FULL ref (refs/heads/...) from cienv.Ref() -- so the old spelling
+			// was the one name meaning two different things. Kept as an alias.
 			&cli.StringFlag{
-				Name:     "ref",
+				Name:     "ref-name",
+				Aliases:  []string{"ref"},
 				Required: true,
 				Sources:  cienv.RefName(),
-				Usage:    "the pushed ref (e.g. release-request/v1.2.3)",
+				Usage:    "the pushed ref name (e.g. release-request/v1.2.3)",
 			},
 			&cli.BoolFlag{Name: "require-release-request", Sources: cli.EnvVars("RELEASE_CONTEXT_REQUIRE_REQUEST"), Usage: "reject refs outside release-request/vMAJOR.MINOR.PATCH"},
 			&cli.BoolFlag{Name: "require-stable", Sources: cli.EnvVars("RELEASE_CONTEXT_REQUIRE_STABLE"), Usage: "reject final tags outside stable vMAJOR.MINOR.PATCH"},

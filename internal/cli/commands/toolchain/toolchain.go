@@ -29,7 +29,29 @@ const (
 	planScopeInstallMiseTools         = "toolchain install-mise-tools"
 	planScopeInstallChangelogRenderer = "toolchain install-changelog-renderer"
 	planScopeSetupMiseEnv             = "toolchain setup-mise-env"
+
+	// flagTempDir is the scratch-directory flag. flagTempDirLegacy is its
+	// former name, kept as an alias: --runner-temp echoed GitHub's
+	// $RUNNER_TEMP vocabulary in a tool whose point is forge neutrality,
+	// and it read oddly beside the $CI_TEMP_DIR it also honours.
+	flagTempDir       = "temp-dir"
+	flagTempDirLegacy = "runner-temp"
 )
+
+// tempDirPlan sources the scratch directory for scope: the plan file under
+// the current flag name, then under the former one, then the env chain.
+//
+// A plan file "maps flag names to values" (see planfile's doc), so renaming
+// the flag renames its plan key. Honouring the old key too makes the rename
+// a true alias rather than a silent break: a plan still saying "runner-temp"
+// would otherwise fall through to $RUNNER_TEMP and usually resolve to the
+// same path anyway — hiding the breakage from exactly the person who set the
+// key deliberately to override it.
+func tempDirPlan(scope string) cli.ValueSourceChain {
+	return planfile.Chain(scope, flagTempDir,
+		planfile.Chain(scope, flagTempDirLegacy, cienv.TempDir()),
+	)
+}
 
 // Shared flag names, defaults and usage strings across the toolchain
 // subcommands, declared once so spellings cannot drift and the package stays
@@ -168,7 +190,7 @@ scope (flag > plan > env > default).`,
 			&cli.StringFlag{Name: "mise-base-url", Sources: planfile.Vars(planScopeInstallChangelogRenderer, "mise-base-url", "MISE_RELEASE_BASE_URL"), Usage: "override mise release base URL for tests/mirrors"},
 			&cli.StringFlag{Name: flagBinHome, Sources: planfile.Vars(planScopeInstallChangelogRenderer, flagBinHome, "TOOLCHAIN_BIN_HOME"), Usage: "directory where the renderer symlink is written (default: $HOME/.local/bin)"},
 			&cli.StringFlag{Name: flagPathFile, Required: true, Sources: planfile.Vars(planScopeInstallChangelogRenderer, flagPathFile, "FORGEJO_PATH", "GITHUB_PATH"), Usage: "runner path file to append the bin directory to"},
-			&cli.StringFlag{Name: "runner-temp", Sources: planfile.Chain(planScopeInstallChangelogRenderer, "runner-temp", cienv.TempDir()), Usage: "runner temp directory for the isolated mise tree"},
+			&cli.StringFlag{Name: flagTempDir, Aliases: []string{flagTempDirLegacy}, Sources: tempDirPlan(planScopeInstallChangelogRenderer), Usage: "scratch directory for the isolated mise tree"},
 			&cli.StringFlag{Name: "run-id", Sources: planfile.Chain(planScopeInstallChangelogRenderer, "run-id", cienv.RunID()), Usage: "run identifier used to name the isolated mise tree"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -186,7 +208,7 @@ scope (flag > plan > env > default).`,
 				},
 				BinHome:    cmd.String(flagBinHome),
 				PathFile:   cmd.String(flagPathFile),
-				RunnerTemp: cmd.String("runner-temp"),
+				RunnerTemp: cmd.String(flagTempDir),
 				RunID:      cmd.String("run-id"),
 			})
 		},
@@ -204,7 +226,7 @@ the "toolchain setup-mise-env" scope (flag > plan > env > default).`,
 			&cli.StringFlag{Name: flagBinHome, Sources: planfile.Vars(planScopeSetupMiseEnv, flagBinHome, "TOOLCHAIN_BIN_HOME"), Usage: "directory containing exposed tool symlinks (default: $HOME/.local/bin)"},
 			&cli.StringFlag{Name: flagPathFile, Required: true, Sources: planfile.Vars(planScopeSetupMiseEnv, flagPathFile, "FORGEJO_PATH", "GITHUB_PATH"), Usage: "runner path file to append PATH entries to"},
 			&cli.StringFlag{Name: "env-file", Required: true, Sources: planfile.Vars(planScopeSetupMiseEnv, "env-file", "FORGEJO_ENV", "GITHUB_ENV"), Usage: "runner env file receiving MISE_* directory exports"},
-			&cli.StringFlag{Name: "runner-temp", Sources: planfile.Chain(planScopeSetupMiseEnv, "runner-temp", cienv.TempDir()), Usage: "runner temp directory for isolated mise dirs"},
+			&cli.StringFlag{Name: flagTempDir, Aliases: []string{flagTempDirLegacy}, Sources: tempDirPlan(planScopeSetupMiseEnv), Usage: "scratch directory for the isolated mise dirs"},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			return apptoolchain.SetupMiseEnv(apptoolchain.SetupMiseEnvInput{
@@ -212,7 +234,7 @@ the "toolchain setup-mise-env" scope (flag > plan > env > default).`,
 				BinHome:    cmd.String(flagBinHome),
 				PathFile:   cmd.String(flagPathFile),
 				EnvFile:    cmd.String("env-file"),
-				RunnerTemp: cmd.String("runner-temp"),
+				RunnerTemp: cmd.String(flagTempDir),
 			})
 		},
 	}

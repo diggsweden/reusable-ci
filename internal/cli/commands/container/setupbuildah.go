@@ -37,7 +37,7 @@ EXAMPLE:
 			&cli.StringFlag{Name: "storage-conf", Sources: cli.EnvVars("CONTAINERS_STORAGE_CONF"), Usage: "containers storage config path (default: $RUNNER_TEMP/containers-storage.conf)"},
 			&cli.StringFlag{Name: "storage-root", Sources: cli.EnvVars("CONTAINER_STORAGE_ROOT"), Usage: "containers storage root path (default: $RUNNER_TEMP/containers-storage)"},
 			&cli.StringFlag{Name: "tmp-dir", Sources: cli.EnvVars("CONTAINER_TMPDIR"), Usage: "job-local temp directory (default: $RUNNER_TEMP/container-tmp)"},
-			&cli.StringFlag{Name: "runner-temp", Sources: cienv.TempDir(), Usage: "runner temp directory used for default paths"},
+			&cli.StringFlag{Name: flagTempDir, Aliases: []string{flagTempDirLegacy}, Sources: cienv.TempDir(), Usage: "scratch directory used for default paths"},
 			&cli.StringFlag{Name: "env-file", Sources: cli.EnvVars("FORGEJO_ENV", "GITHUB_ENV"), Usage: "runner env file receiving CONTAINERS_STORAGE_CONF and TMPDIR"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -51,7 +51,7 @@ EXAMPLE:
 					StorageConf:     cmd.String("storage-conf"),
 					StorageRoot:     cmd.String("storage-root"),
 					TmpDir:          cmd.String("tmp-dir"),
-					RunnerTemp:      cmd.String("runner-temp"),
+					RunnerTemp:      cmd.String(flagTempDir),
 					EnvFile:         cmd.String("env-file"),
 				})
 
