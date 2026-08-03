@@ -30,7 +30,7 @@ func TestAnchorIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := provider.AnchorIdentity(tc.repoURL); got != tc.want {
+			if got := provider.AnchorIdentity(provider.AttestedRepoURL(tc.repoURL)); got != tc.want {
 				t.Errorf("AnchorIdentity(%q) = %q, want %q", tc.repoURL, got, tc.want)
 			}
 		})
@@ -44,7 +44,7 @@ func TestAnchorIdentity(t *testing.T) {
 func TestAnchorIdentity_NoSiblingRepoMatch(t *testing.T) {
 	t.Parallel()
 
-	re := regexp.MustCompile(provider.AnchorIdentity("https://github.com/acme/app"))
+	re := regexp.MustCompile(provider.AnchorIdentity(provider.AttestedRepoURL("https://github.com/acme/app")))
 
 	accept := []string{
 		"https://github.com/acme/app/.github/workflows/release.yml@refs/tags/v1.2.3",

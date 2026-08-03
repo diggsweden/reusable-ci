@@ -27,6 +27,9 @@ func (p *Provider) SupportsKeyless() bool { return p.Capabilities().KeylessOIDC 
 func (p *Provider) ResolveKeylessIdentity() (provider.KeylessIdentity, error) {
 	env := p.envFunc()
 
+	// $CI_PROJECT_URL is read by name: the anchor decides which certificates
+	// verification accepts, so it must be the runner's own value rather than
+	// anything the orchestration layer computed.
 	projectURL := strings.TrimRight(strings.TrimSpace(env("CI_PROJECT_URL")), "/")
 	if projectURL == "" {
 		return provider.KeylessIdentity{}, fmt.Errorf(
@@ -37,6 +40,6 @@ func (p *Provider) ResolveKeylessIdentity() (provider.KeylessIdentity, error) {
 		OIDCIssuer:    p.Describe().OIDCIssuer,
 		TokenAudience: provider.KeylessAudience,
 		SubjectID:     projectURL,
-		SubjectRegexp: provider.AnchorIdentity(projectURL),
+		SubjectRegexp: provider.AnchorIdentity(provider.AttestedRepoURL(projectURL)),
 	}, nil
 }

@@ -356,6 +356,58 @@ func truthy(v string) bool {
 	}
 }
 
+// Attested* chains: sources for TRUST decisions
+//
+// The chains above sort by "most deliberate wins": the bare REPOSITORY the
+// orchestration layer computes beats the runner's own $GITHUB_REPOSITORY,
+// because a value someone set on purpose is the one they meant. That is the
+// right order for describing a run — what to build, where to put scratch.
+//
+// It is the WRONG order for deciding what to trust. A verification anchor
+// must sort by "least forgeable wins": the value injected by the runner,
+// which nothing upstream had to compute. The two orderings are opposites, so
+// one chain cannot serve both, and reusing a descriptive chain for a trust
+// decision silently widens what a signature check will accept.
+//
+// ADR 0002 states the invariant these serve: consumer-supplied code or data
+// can never cause scope escalation. Rule 3 shows the shape — the signer takes
+// an explicit --expected-image-repository and re-validates against it rather
+// than inferring one. An Attested chain is the same idea for the FALLBACK
+// used when no expectation was supplied.
+
+// AttestedForgejoRepository resolves "owner/repo" for a TRUST decision on
+// Forgejo, from names the runner injects.
+//
+// $FORGEJO_REPO and the bare $REPOSITORY / $CI_REPO are deliberately absent
+// even though Repository() prefers them: those are the orchestration layer's
+// computed values, and an anchor must not depend on a computation upstream of
+// it. $GITHUB_REPOSITORY is admitted only on a Forgejo runner, where
+// act_runner injects it as a compat alias for its own value — the same gate,
+// and for the same reason, as TokenForForgejo.
+func AttestedForgejoRepository(env func(string) string) Var {
+	names := []string{"FORGEJO_REPOSITORY"}
+	if ForgejoRunner(env) {
+		names = append(names, "GITHUB_REPOSITORY")
+	}
+
+	return Var{Concept: "attested repository", Names: names}
+}
+
+// AttestedForgejoServerURL resolves the forge base URL for a TRUST decision
+// on Forgejo.
+//
+// $CI_SERVER_URL is absent: it is GitLab's runner-injected name, so on a
+// Forgejo runner it can only have come from a workflow. $FORGEJO_SERVER is
+// absent as the orchestration layer's alias. See AttestedForgejoRepository.
+func AttestedForgejoServerURL(env func(string) string) Var {
+	names := []string{"FORGEJO_SERVER_URL"}
+	if ForgejoRunner(env) {
+		names = append(names, "GITHUB_SERVER_URL")
+	}
+
+	return Var{Concept: "attested server url", Names: names}
+}
+
 // All returns every run-context concept.
 //
 // It exists so a guard can enumerate the owned names without hand-copying

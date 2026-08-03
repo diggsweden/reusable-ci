@@ -12,6 +12,15 @@ import "github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 // runner environment, so it is both safer and less error-prone than a
 // hand-typed pattern.
 //
+// "Trusted runner environment" is load-bearing, not decoration: this fills a
+// value that decides which certificates are ACCEPTED, so the resolvers behind
+// it read only what the runner injected. They deliberately do NOT use
+// runcontext.Repository()/ServerURL(), which prefer the bare $REPOSITORY /
+// $CI_SERVER_URL the orchestration layer computes — right for describing a
+// run, wrong for anchoring trust. That distinction was once lost to a
+// consistency pass and is now held by
+// archguard.TestKeylessIdentityAnchorsOnAttestedValues.
+//
 // Explicit flag values always win (cross-repo verification stays possible). It
 // is a no-op when the forge exposes no resolver or does not support keyless
 // (Forgejo out of the box, local), preserving the prior behaviour where the

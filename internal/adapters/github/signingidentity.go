@@ -25,6 +25,13 @@ func (p *Provider) SupportsKeyless() bool { return p.Capabilities().KeylessOIDC 
 // with $GITHUB_WORKFLOW_REF (owner/repo/.github/workflows/file@ref) — usable
 // for exact-identity verification; it is empty when the runner did not inject
 // the ref (e.g. outside a workflow).
+// $GITHUB_REPOSITORY and $GITHUB_SERVER_URL are read by NAME here on
+// purpose, not through runcontext.Repository()/ServerURL(). SubjectRegexp
+// becomes cosign's --certificate-identity-regexp, so it decides which
+// certificates verification ACCEPTS: it must come from what the runner
+// injected, never from the bare $REPOSITORY the orchestration layer computes.
+// Nor from a chain spanning forges -- $FORGEJO_REPOSITORY on a GitHub runner
+// names a target, not this repository.
 func (p *Provider) ResolveKeylessIdentity() (provider.KeylessIdentity, error) {
 	env := p.envFunc()
 
@@ -48,6 +55,6 @@ func (p *Provider) ResolveKeylessIdentity() (provider.KeylessIdentity, error) {
 		OIDCIssuer:    p.Describe().OIDCIssuer,
 		TokenAudience: provider.KeylessAudience,
 		SubjectID:     subjectID,
-		SubjectRegexp: provider.AnchorIdentity(server + "/" + repo),
+		SubjectRegexp: provider.AnchorIdentity(provider.AttestedRepoURL(server + "/" + repo)),
 	}, nil
 }

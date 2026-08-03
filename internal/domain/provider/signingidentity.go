@@ -9,11 +9,17 @@ import (
 )
 
 // KeylessIdentity is the resolved Sigstore identity for the job currently
-// running on the detected forge. The producer (cosign sign-blob /
-// cosign attest, keyless) and the consumer (cosign verify-* with
-// --certificate-oidc-issuer / --certificate-identity-regexp) both read it,
-// so signing and verification agree by construction rather than by the
-// caller hand-writing a regexp that can silently be too loose.
+// running on the detected forge. It spares a caller hand-writing a
+// --certificate-identity-regexp that can silently be too loose.
+//
+// It is read by VERIFICATION only: `cosign verify-*` via validate's
+// keylessVerifyIdentity, which fills an empty --cert-identity-regexp /
+// --cert-oidc-issuer. Signing does not read it — the signer derives its
+// issuer from Describe() (see apprelease.DefaultOIDCIssuer). Earlier prose
+// here claimed both sides read it; they do not, and the difference matters:
+// every field below feeds a decision about which certificates to ACCEPT, so
+// each must resolve from what the runner injected rather than from anything
+// computed upstream. See AttestedRepoURL.
 type KeylessIdentity struct {
 	// OIDCIssuer is the issuer URL the Fulcio certificate must claim —
 	// e.g. https://token.actions.githubusercontent.com on GitHub, or the
@@ -63,10 +69,33 @@ type SigningIdentityResolver interface {
 	ResolveKeylessIdentity() (KeylessIdentity, error)
 }
 
+// AttestedRepoURL is a repository URL fit to anchor a TRUST decision:
+// resolved from values the runner injected, not from a chain that prefers
+// whatever the orchestration layer computed.
+//
+// It is a distinct type because the two kinds of repository URL are
+// interchangeable to the compiler and opposite in meaning. The descriptive
+// chains (runcontext.Repository / ServerURL) sort by "most deliberate wins",
+// which is right for naming what to build and wrong for deciding what to
+// accept — an anchor must sort by "least forgeable wins". Requiring an
+// explicit conversion here does not make the mistake impossible, but it does
+// make it a deliberate, greppable act rather than a passing resemblance
+// between two strings.
+//
+// Obtain one from runcontext's Attested* chains. See
+// internal/archguard/anchor_guard_test.go, which fails a ResolveKeylessIdentity
+// that reaches for a descriptive chain.
+type AttestedRepoURL string
+
 // AnchorIdentity builds the anchored certificate-identity regexp for a
 // repository URL. The result matches every Sigstore SAN that begins with the
 // repository URL followed by a path separator — i.e. any workflow/ref under
 // that exact repository — and nothing else.
+//
+// This regexp is what `cosign verify-*` receives as
+// --certificate-identity-regexp, so it decides which certificates are
+// ACCEPTED. Whatever widens repoURL widens what verification will trust,
+// which is why the parameter is typed.
 //
 // Security: the repository URL is regexp-escaped (QuoteMeta) before anchoring,
 // so a '.' in "github.com" cannot act as a wildcard, and the leading '^' plus
@@ -74,8 +103,8 @@ type SigningIdentityResolver interface {
 // "…/acme/app" must not also accept "…/acme/app-evil"). An empty or
 // whitespace-only repoURL yields a regexp that matches no real SAN ("^$"),
 // failing closed rather than open.
-func AnchorIdentity(repoURL string) string {
-	trimmed := strings.TrimRight(strings.TrimSpace(repoURL), "/")
+func AnchorIdentity(repoURL AttestedRepoURL) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(string(repoURL)), "/")
 	if trimmed == "" {
 		return "^$"
 	}

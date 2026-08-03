@@ -26,24 +26,43 @@ func (p *Provider) SupportsKeyless() bool { return p.Capabilities().KeylessOIDC 
 // which is empty by design (no auto-suppliable public-Fulcio-trusted issuer);
 // a keyless caller must supply --oidc-issuer explicitly. SubjectRegexp is still
 // anchored to the repository so verification, when configured, stays pinned.
+//
+// # Why this reads Attested* rather than the chains the rest of the adapter uses
+//
+// SubjectRegexp becomes cosign's --certificate-identity-regexp: it decides
+// which certificates verification ACCEPTS. So it must resolve from what the
+// runner injected, not from Repository()/serverURL(), which prefer the bare
+// $REPOSITORY and $CI_SERVER_URL the orchestration layer computes. Those are
+// the right answer for describing the run and the wrong one for anchoring
+// trust — "most deliberate wins" and "least forgeable wins" sort in opposite
+// directions, so the anchor needs its own source.
+//
+// The API calls elsewhere in this adapter keep the descriptive chains on
+// purpose: pointing a request at a computed server is a feature; accepting a
+// signature because of one is not.
 func (p *Provider) ResolveKeylessIdentity() (provider.KeylessIdentity, error) {
-	repo := strings.TrimSpace(runcontext.Repository().Resolve(p.envFunc()))
+	env := p.envFunc()
+
+	repo := strings.TrimSpace(runcontext.AttestedForgejoRepository(env).Resolve(env))
 	if repo == "" {
 		return provider.KeylessIdentity{}, fmt.Errorf(
-			"$FORGEJO_REPOSITORY (or $GITHUB_REPOSITORY) is required to resolve the keyless signing identity: %w", errs.ErrUsage)
+			"a runner-provided repository (%s) is required to resolve the keyless signing identity: %w",
+			runcontext.AttestedForgejoRepository(env), errs.ErrUsage)
 	}
 
-	server, err := p.serverURL()
-	if err != nil {
-		return provider.KeylessIdentity{}, err
+	server := strings.TrimRight(strings.TrimSpace(runcontext.AttestedForgejoServerURL(env).Resolve(env)), "/")
+	if server == "" {
+		return provider.KeylessIdentity{}, fmt.Errorf(
+			"a runner-provided server URL (%s) is required to resolve the keyless signing identity: %w",
+			runcontext.AttestedForgejoServerURL(env), errs.ErrUsage)
 	}
 
-	repoURL := server + "/" + repo
+	repoURL := provider.AttestedRepoURL(server + "/" + repo)
 
 	return provider.KeylessIdentity{
 		OIDCIssuer:    p.Describe().OIDCIssuer,
 		TokenAudience: provider.KeylessAudience,
-		SubjectID:     repoURL,
+		SubjectID:     string(repoURL),
 		SubjectRegexp: provider.AnchorIdentity(repoURL),
 	}, nil
 }
