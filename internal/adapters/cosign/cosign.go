@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
@@ -27,6 +28,39 @@ import (
 // write subcommand (sign-blob, sign, attest).
 const flagYes = "--yes"
 
+// flagSigningConfig selects which Sigstore services a write subcommand uses.
+const flagSigningConfig = "--signing-config"
+
+// EnvSigningConfig names the environment variable that points at a Sigstore
+// signing-config file.
+//
+// Why an environment variable rather than a per-command flag: every cosign
+// write subcommand (sign-blob, sign, attest) must honour it, the adapter is
+// constructed at ~16 call sites, and the failure mode of missing one is silent
+// — the signature simply goes to the public Rekor log instead. Resolving it in
+// New/NewIsolated means a signing path cannot opt out by forgetting to thread a
+// flag, and a NEW signing command inherits the setting for free. That property
+// is the point; discoverability is served by documenting it on the signing
+// commands.
+const EnvSigningConfig = "REUSABLE_CI_COSIGN_SIGNING_CONFIG"
+
+// SigningConfigFromEnv returns the signing-config path from
+// $REUSABLE_CI_COSIGN_SIGNING_CONFIG, or "" when unset.
+//
+// Empty keeps cosign's built-in public-Sigstore config: keyless signing needs
+// Fulcio and a Rekor inclusion proof, so uploading is correct there and is the
+// whole point of the transparency log. Set it to a config with no transparency
+// log service to sign without publishing — an air-gapped or private-Sigstore
+// deployment, or a test suite that must not write to a permanent public log.
+// Build one with:
+//
+//	cosign signing-config create --no-default-rekor --no-default-fulcio \
+//	    --no-default-oidc --no-default-tsa --out nolog.json
+//
+// cosign's own --tlog-upload=false is deprecated in cosign 3.x and errors out
+// in favour of this file, so the config is the supported route.
+func SigningConfigFromEnv() string { return os.Getenv(EnvSigningConfig) }
+
 // Adapter wraps the cosign binary. Bin is overridable for tests.
 type Adapter struct {
 	Bin string // empty → "cosign"
@@ -36,10 +70,21 @@ type Adapter struct {
 	// (the default). Set via NewIsolated to restrict which secrets the
 	// signing subprocess can read.
 	Env []string
+
+	// SigningConfig is a path to a Sigstore signing-config file, passed to
+	// every write subcommand as --signing-config. Empty (the default)
+	// leaves cosign on its built-in public-Sigstore config, which uploads
+	// each signature to the public Rekor transparency log.
+	//
+	// Resolved by New/NewIsolated from $REUSABLE_CI_COSIGN_SIGNING_CONFIG.
+	// See SigningConfigFromEnv for why it is resolved there rather than
+	// threaded per command.
+	SigningConfig string
 }
 
-// New returns an Adapter using the system cosign.
-func New() *Adapter { return &Adapter{} }
+// New returns an Adapter using the system cosign, with the signing config
+// resolved from the environment.
+func New() *Adapter { return &Adapter{SigningConfig: SigningConfigFromEnv()} }
 
 // SignBlobInput drives a single cosign sign-blob invocation. It is
 // the domain port request (release.BlobSignRequest) — the alias keeps
@@ -68,7 +113,7 @@ func (a *Adapter) SignBlob(ctx context.Context, in SignBlobInput, errOut io.Writ
 		return err
 	}
 
-	args := []string{"sign-blob", flagYes, "--bundle", in.BundlePath}
+	args := a.withSigningConfig([]string{"sign-blob", flagYes, "--bundle", in.BundlePath})
 
 	switch {
 	case in.Keyless:
@@ -143,7 +188,7 @@ func (a *Adapter) SignImage(ctx context.Context, in SignImageInput, errOut io.Wr
 		return err
 	}
 
-	args := []string{"sign", flagYes}
+	args := a.withSigningConfig([]string{"sign", flagYes})
 
 	if in.Recursive {
 		args = append(args, "--recursive")
@@ -195,7 +240,7 @@ func (a *Adapter) AttestImage(ctx context.Context, in AttestImageInput, errOut i
 		return err
 	}
 
-	args := []string{"attest", flagYes, "--type", in.PredicateType, "--predicate", in.PredicatePath}
+	args := a.withSigningConfig([]string{"attest", flagYes, "--type", in.PredicateType, "--predicate", in.PredicatePath})
 
 	if in.Recursive {
 		args = append(args, "--recursive")
@@ -317,6 +362,17 @@ func (a *Adapter) CopyImage(ctx context.Context, in CopyImageInput, errOut io.Wr
 	}
 
 	return a.run(ctx, errOut, "copy", "--force", in.Source, in.Dest)
+}
+
+// withSigningConfig appends --signing-config when one is configured. It is
+// applied by every cosign subcommand that writes a signature, so the choice of
+// Sigstore services is made in exactly one place.
+func (a *Adapter) withSigningConfig(args []string) []string {
+	if a.SigningConfig == "" {
+		return args
+	}
+
+	return append(args, flagSigningConfig, a.SigningConfig)
 }
 
 // run invokes cosign with args. cosign's stderr is captured into a

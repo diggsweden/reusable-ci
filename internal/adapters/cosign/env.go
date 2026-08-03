@@ -66,5 +66,5 @@ func filterEnv(environ []string, allow map[string]bool) []string {
 // Used by the provenance signer so an env-supplied signing key is the
 // only secret cosign can read.
 func NewIsolated(allow ...string) *Adapter {
-	return &Adapter{Env: IsolatedEnv(allow...)}
+	return &Adapter{Env: IsolatedEnv(allow...), SigningConfig: SigningConfigFromEnv()}
 }
