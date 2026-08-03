@@ -212,20 +212,73 @@ func Workspace() Var {
 	}
 }
 
-// Token resolves the forge API/clone token. Non-empty semantics matter: an
-// empty GITHUB_TOKEN must not shadow a populated FORGEJO_TOKEN, and an
-// empty result means an anonymous (public-repo) checkout.
+// Token resolves the forge API/clone token for the forge this run BELONGS
+// to — the one whose runner injected the credential.
 //
-// GITEA_TOKEN is the Gitea-native name that Forgejo still accepts. It was
-// honoured only by the forgejo package-registry adapter, which resolved the
-// token from its own inline list; folding it in here is what lets that
-// adapter share this chain without dropping Gitea support. It sits after
-// FORGEJO_TOKEN, preserving the adapter's original relative order.
+// Non-empty semantics matter: an empty GITHUB_TOKEN must not shadow a
+// populated FORGEJO_TOKEN, and an empty result means an anonymous
+// (public-repo) checkout.
+//
+// GITEA_TOKEN is the Gitea-native name that Forgejo still accepts.
+//
+// # This chain spans forges, and that is safe ONLY here
+//
+// A runner injects its own token name and no other's, so in a normal run at
+// most one of these is set and the chain simply finds it. It is NOT safe as
+// a general "give me a token": if a workflow sets more than one — a job
+// publishing across forges — this returns whichever comes first, which may
+// be a credential issued by a DIFFERENT host than the one you are about to
+// call.
+//
+// So do not reach for this when you know the destination. Use
+// TokenForForgejo, or read the forge's own name, and see the note on
+// github/forgeregistry.go's Token field.
 func Token() Var {
-	return Var{
-		Concept: "token",
-		Names:   []string{"CI_TOKEN", "FORGEJO_TOKEN", "GITEA_TOKEN", "GITHUB_TOKEN"},
+	return Var{Concept: conceptToken, Names: append(forgeNeutralTokenNames(), nameGitHubToken)}
+}
+
+// conceptToken labels both token chains: they name the same concept, only
+// scoped differently.
+const conceptToken = "token"
+
+// nameGitHubToken is the one name whose meaning depends on WHERE we run: a
+// Forgejo runner injects the job token under it as a GitHub-compat alias,
+// while on GitHub it is GitHub's own. Every chain that includes it has to
+// say why.
+const nameGitHubToken = "GITHUB_TOKEN" //nolint:gosec // G101: an env var NAME; this package holds names, never values.
+
+// forgeNeutralTokenNames are the names that mean the same thing on any
+// runner: CI_TOKEN is set deliberately by the workflow, and the Forgejo and
+// Gitea names are unambiguous about which forge they authenticate to.
+//
+// Returned fresh so callers can append without aliasing a shared backing
+// array — and declared once so the two chains below cannot drift.
+func forgeNeutralTokenNames() []string {
+	return []string{"CI_TOKEN", "FORGEJO_TOKEN", "GITEA_TOKEN"}
+}
+
+// TokenForForgejo resolves a credential valid at a FORGEJO server, given the
+// runner we are executing on.
+//
+// $GITHUB_TOKEN is admitted only when the Forgejo runner itself injected it:
+// act_runner exposes the job token under the GitHub-compatible name, so
+// there it IS the Forgejo credential. On any other runner $GITHUB_TOKEN is
+// GitHub's own job token — useless at a Forgejo server (it cannot
+// authenticate) but perfectly capable of being transmitted to it.
+//
+// That asymmetry is the whole point: the fallback has only two possible
+// outcomes off a Forgejo runner — an auth failure, or a GitHub credential
+// disclosed to a third-party host. Dropping it there costs no working case.
+//
+// The neutral and Forgejo-native names need no gate: a workflow that sets
+// CI_TOKEN or FORGEJO_TOKEN while targeting Forgejo has said what it means.
+func TokenForForgejo(env func(string) string) Var {
+	names := forgeNeutralTokenNames()
+	if ForgejoRunner(env) {
+		names = append(names, nameGitHubToken)
 	}
+
+	return Var{Concept: conceptToken, Names: names}
 }
 
 // ReleaseToken resolves the write-scoped token used to push the release
@@ -235,10 +288,12 @@ func Token() Var {
 // semantics matter here too: an unset RELEASE_TOKEN (a `${{ secrets.* }}`
 // that resolved to "") must fall through, not shadow the forge's ambient
 // token.
+// It carries the same forge-spanning caveat as Token, and is built from that
+// chain rather than restating it, so the two cannot drift.
 func ReleaseToken() Var {
 	return Var{
 		Concept: "release token",
-		Names:   []string{"RELEASE_TOKEN", "CI_TOKEN", "FORGEJO_TOKEN", "GITEA_TOKEN", "GITHUB_TOKEN"},
+		Names:   append([]string{"RELEASE_TOKEN"}, Token().Names...),
 	}
 }
 
@@ -250,6 +305,54 @@ func Tag() Var {
 		Names: []string{
 			"TAG_NAME", "RELEASE_TAG", "REF_NAME", "CI_REF_NAME", "FORGEJO_REF_NAME", "GITHUB_REF_NAME",
 		},
+	}
+}
+
+// ForgejoRunner reports whether the code is EXECUTING on a Forgejo/Gitea
+// Actions runner.
+//
+// This answers "where am I running", which is a different question from
+// "which forge am I talking to" — and conflating them is a bug with two
+// heads. It reads only markers a runner injects about ITSELF:
+//
+//   - $FORGEJO_ACTIONS / $GITEA_ACTIONS: the runner's own "this is me" flag;
+//   - $FORGEJO_OUTPUT: the runner-provided step-output sink, a path only a
+//     Forgejo runner has any reason to create.
+//
+// $FORGEJO_SERVER_URL and $FORGEJO_REPOSITORY are deliberately ABSENT even
+// though a Forgejo runner does set them, because a workflow on ANY runner
+// sets them to name a Forgejo TARGET. Treating them as identity is what let
+// a GitHub runner present itself as Forgejo: it suppressed the GitHub
+// annotations the run should have emitted, and it made $GITHUB_TOKEN look
+// like a Forgejo credential.
+//
+// The cost of the narrower set is bounded and cosmetic: a Forgejo runner old
+// enough to set neither flag nor $FORGEJO_OUTPUT is read as GitHub-dialect,
+// so it receives workflow commands it ignores. Noise, not breakage — and the
+// opposite error leaks a token.
+func ForgejoRunner(env func(string) string) bool {
+	// A Forgejo/Gitea runner also sets GITHUB_ACTIONS=true; without that
+	// marker we are not on a GitHub-Actions-compatible runner at all.
+	// Matched exactly, as platform's ciFlag has always done.
+	if env("GITHUB_ACTIONS") != "true" {
+		return false
+	}
+
+	return truthy(env("FORGEJO_ACTIONS")) ||
+		truthy(env("GITEA_ACTIONS")) ||
+		env("FORGEJO_OUTPUT") != ""
+}
+
+// truthy reports whether v holds a conventional truthy value. It matches
+// what internal/adapters/platform already accepted, so moving the predicate
+// here changes WHICH signals are consulted and nothing else — narrowing the
+// accepted spellings would be a separate decision.
+func truthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 

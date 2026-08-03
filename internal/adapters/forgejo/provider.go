@@ -109,10 +109,16 @@ func (p *Provider) serverURL() (string, error) {
 		runcontext.ServerURL(), errs.ErrUsage)
 }
 
-// token resolves the API token from the shared run context, so the token a
-// command accepts via --token is the token this provider authenticates with.
+// token resolves a credential valid at THIS Forgejo server.
+//
+// It uses TokenForForgejo, not the general Token chain: $GITHUB_TOKEN counts
+// only when a Forgejo runner injected it under the GitHub-compatible name.
+// On a GitHub runner publishing to a Forgejo instance it is GitHub's own job
+// token, which cannot authenticate here but would be sent here.
 func (p *Provider) token() string {
-	return runcontext.Token().Resolve(p.envFunc())
+	env := p.envFunc()
+
+	return runcontext.TokenForForgejo(env).Resolve(env)
 }
 
 // httpClient returns the Provider's configured client (tests inject an

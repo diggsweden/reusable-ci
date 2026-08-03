@@ -51,10 +51,13 @@ func TestDetect_GitHubWinsOverGitLab(t *testing.T) {
 	}
 }
 
+// TestDetect_Forgejo_WinsOverGitHubMasquerade covers the FORGE axis: any
+// Forgejo signal means "talk to Forgejo, not api.github.com". Naming the
+// target is enough, which is why $FORGEJO_SERVER_URL alone counts here.
+//
+// Forgejo's act_runner sets GITHUB_ACTIONS=true, so the Forgejo signal must
+// be probed before the GitHub branch.
 func TestDetect_Forgejo_WinsOverGitHubMasquerade(t *testing.T) {
-	// Forgejo's act_runner sets GITHUB_ACTIONS=true; the Forgejo signal
-	// must be probed first so the forge axis resolves to Forgejo, not
-	// GitHub (otherwise release/SARIF calls would hit api.github.com).
 	cases := map[string]string{
 		"FORGEJO_ACTIONS":    "true",
 		"GITEA_ACTIONS":      "true",
@@ -72,9 +75,61 @@ func TestDetect_Forgejo_WinsOverGitHubMasquerade(t *testing.T) {
 			if got := platform.Detect(); got != provider.PlatformForgejo {
 				t.Errorf("Detect() = %q, want Forgejo with %s set", got, signal)
 			}
-			// The runner axis is its own value for Forgejo (not GitHub).
+		})
+	}
+}
+
+// TestDetectRunner_IdentityIsNotTarget covers the RUNNER axis, which asks a
+// different question: not "which forge do I call" but "whose runner am I
+// executing on". Only markers a runner injects about ITSELF may answer it.
+//
+// This split used to not exist — one predicate answered both — so naming a
+// Forgejo TARGET made a GitHub runner claim to be a Forgejo one. That had
+// two heads: RunnerKind picks the output dialect, so the run silently lost
+// its GitHub annotations, log groups and job summaries; and it made
+// $GITHUB_TOKEN look like a Forgejo credential to the token chain.
+func TestDetectRunner_IdentityIsNotTarget(t *testing.T) {
+	runnerMarkers := map[string]string{
+		"FORGEJO_ACTIONS": "true",
+		"GITEA_ACTIONS":   "true",
+		// The runner-provided step-output sink: a path only a Forgejo
+		// runner has any reason to create.
+		"FORGEJO_OUTPUT": "/tmp/out",
+	}
+	for signal, value := range runnerMarkers {
+		t.Run("runner marker "+signal, func(t *testing.T) {
+			env := testenv.New(t)
+			env.Setenv("GITHUB_ACTIONS", "true")
+			env.Setenv("GITLAB_CI", "")
+			env.Setenv(signal, value)
+
 			if got := platform.DetectRunner(); got != provider.RunnerForgejo {
-				t.Errorf("DetectRunner() = %q, want RunnerForgejo for Forgejo", got)
+				t.Errorf("DetectRunner() = %q, want RunnerForgejo for %s", got, signal)
+			}
+		})
+	}
+
+	// A GitHub-hosted repo publishing to a Forgejo instance sets these. It
+	// is still running on GitHub, and must still get GitHub's dialect.
+	targetOnly := map[string]string{
+		"FORGEJO_SERVER_URL": "https://third-party.example",
+		"FORGEJO_REPOSITORY": "owner/repo",
+	}
+	for signal, value := range targetOnly {
+		t.Run("target var "+signal, func(t *testing.T) {
+			env := testenv.New(t)
+			env.Setenv("GITHUB_ACTIONS", "true")
+			env.Setenv("GITLAB_CI", "")
+			env.Setenv(signal, value)
+
+			if got := platform.DetectRunner(); got != provider.RunnerGitHub {
+				t.Errorf("DetectRunner() = %q, want RunnerGitHub: %s names a TARGET,"+
+					" not the runner we execute on", got, signal)
+			}
+
+			// ...while the forge axis still correctly targets Forgejo.
+			if got := platform.Detect(); got != provider.PlatformForgejo {
+				t.Errorf("Detect() = %q, want Forgejo with %s set", got, signal)
 			}
 		})
 	}

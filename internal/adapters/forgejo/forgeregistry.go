@@ -47,7 +47,7 @@ func (p *Provider) resolveRegistry(kind string) (packageRegistry, error) {
 			kind, runcontext.Repository(), errs.ErrUsage)
 	}
 
-	return packageRegistry{server: server, owner: owner, token: runcontext.Token().Resolve(env)}, nil
+	return packageRegistry{server: server, owner: owner, token: runcontext.TokenForForgejo(env).Resolve(env)}, nil
 }
 
 // url builds the registry URL for an ecosystem's path suffix.

@@ -60,6 +60,68 @@ func TestResolveForgeMavenRegistry_ForgeNeutralNames(t *testing.T) {
 	}
 }
 
+// TestResolveForgeMavenRegistry_CrossForgeTokenNotLeaked pins the fix for a
+// PROVEN disclosure: a GitHub-hosted repo publishing to a third-party
+// Forgejo instance, with FORGEJO_TOKEN empty because the secret is unset (it
+// interpolates to "", and empty means absent, so the chain fell through).
+//
+// The old chain ended in GITHUB_TOKEN, so it handed the GitHub job token to
+// third-party.example. A GitHub token cannot authenticate at Forgejo, so the
+// fallback could only ever fail or disclose. Resolving "" makes the run fail
+// loudly at auth instead.
+func TestResolveForgeMavenRegistry_CrossForgeTokenNotLeaked(t *testing.T) {
+	t.Parallel()
+
+	//nolint:gosec // G101: fixture values, not credentials; the literal IS the assertion.
+	p := &forgejo.Provider{Env: func(k string) string {
+		return map[string]string{
+			"GITHUB_ACTIONS":     "true", // executing on a GitHub runner
+			"FORGEJO_SERVER_URL": "https://third-party.example",
+			"FORGEJO_REPOSITORY": "owner/repo",
+			"FORGEJO_TOKEN":      "",
+			"GITHUB_TOKEN":       "ghs_REAL_GITHUB_JOB_TOKEN",
+		}[k]
+	}}
+
+	reg, err := p.ResolveForgeMavenRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if reg.Token != "" {
+		t.Errorf("token sent to %s = %q; a GitHub job token must never be"+
+			" transmitted to a Forgejo host", reg.URL, reg.Token)
+	}
+}
+
+// TestResolveForgeMavenRegistry_ForgejoRunnerGithubTokenAlias is the other
+// half: on a REAL Forgejo runner, act_runner exposes the job token under the
+// GitHub-compatible name, so there $GITHUB_TOKEN IS the Forgejo credential
+// and must keep working. Gating on runner identity is what tells them apart.
+func TestResolveForgeMavenRegistry_ForgejoRunnerGithubTokenAlias(t *testing.T) {
+	t.Parallel()
+
+	//nolint:gosec // G101: fixture values, not credentials; the literal IS the assertion.
+	p := &forgejo.Provider{Env: func(k string) string {
+		return map[string]string{
+			"GITHUB_ACTIONS":     "true",
+			"FORGEJO_ACTIONS":    "true", // ...but a Forgejo runner
+			"FORGEJO_SERVER_URL": "https://codeberg.org",
+			"FORGEJO_REPOSITORY": "owner/repo",
+			"GITHUB_TOKEN":       "forgejo-job-token-under-compat-name",
+		}[k]
+	}}
+
+	reg, err := p.ResolveForgeMavenRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if reg.Token != "forgejo-job-token-under-compat-name" {
+		t.Errorf("token = %q; the Forgejo runner's $GITHUB_TOKEN alias must still work", reg.Token)
+	}
+}
+
 // TestResolveForgeMavenRegistry_GiteaToken guards the one name that folding
 // this adapter's inline list into the shared chain could have dropped:
 // GITEA_TOKEN was honoured here and nowhere else, so it had to move INTO

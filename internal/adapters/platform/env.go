@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // Override env vars. The root --provider / --runner flags bridge their
@@ -52,7 +53,7 @@ func Detect() provider.Platform {
 	}
 
 	switch {
-	case isForgejo():
+	case isForgejoTarget():
 		return provider.PlatformForgejo
 	case ciFlag("GITHUB_ACTIONS"):
 		return provider.PlatformGitHub
@@ -84,7 +85,7 @@ func DetectRunner() provider.RunnerKind {
 	}
 
 	switch {
-	case isForgejo():
+	case isForgejoRunner():
 		return provider.RunnerForgejo
 	case ciFlag("GITHUB_ACTIONS"):
 		return provider.RunnerGitHub
@@ -95,30 +96,38 @@ func DetectRunner() provider.RunnerKind {
 	}
 }
 
-// isForgejo reports whether the runner is Forgejo (or Gitea) Actions
-// rather than GitHub. Forgejo's act_runner sets GITHUB_ACTIONS=true and
-// mirrors the runner context into FORGEJO_* env vars; Gitea sets
-// GITEA_ACTIONS=true. We treat any of those signals — alongside the
-// GitHub-compatible runner — as Forgejo.
-func isForgejo() bool {
+// isForgejoTarget reports whether the FORGE API to talk to is Forgejo/Gitea.
+//
+// This is a question about the destination, so naming one is enough:
+// $FORGEJO_SERVER_URL or $FORGEJO_REPOSITORY set on ANY runner means "talk
+// to Forgejo", which is exactly how a GitHub-hosted repo publishes to a
+// Forgejo instance.
+func isForgejoTarget() bool {
+	if isForgejoRunner() {
+		return true
+	}
+
 	if !ciFlag("GITHUB_ACTIONS") {
 		return false
 	}
 
-	switch {
-	case truthy(os.Getenv("FORGEJO_ACTIONS")):
-		return true
-	case truthy(os.Getenv("GITEA_ACTIONS")):
-		return true
-	case os.Getenv("FORGEJO_SERVER_URL") != "":
-		return true
-	case os.Getenv("FORGEJO_REPOSITORY") != "":
-		return true
-	case os.Getenv("FORGEJO_OUTPUT") != "":
-		return true
-	default:
-		return false
-	}
+	return os.Getenv("FORGEJO_SERVER_URL") != "" || os.Getenv("FORGEJO_REPOSITORY") != ""
+}
+
+// isForgejoRunner reports whether we are EXECUTING on a Forgejo/Gitea runner.
+//
+// Split from isForgejoTarget because the two questions have different
+// answers, and one predicate used to answer both. $FORGEJO_SERVER_URL was
+// the culprit: a Forgejo runner sets it, but so does a workflow on ANY
+// runner that publishes to Forgejo. Reading it as identity made a GitHub
+// runner claim to be Forgejo, which suppressed the GitHub annotations the
+// run should have emitted (RunnerKind picks the output dialect) and made
+// $GITHUB_TOKEN look like a Forgejo credential.
+//
+// runcontext owns the marker names and the rule; this just binds it to the
+// process environment.
+func isForgejoRunner() bool {
+	return runcontext.ForgejoRunner(os.Getenv)
 }
 
 // ciFlag reports whether the named CI marker env var is exactly "true",
@@ -126,14 +135,4 @@ func isForgejo() bool {
 // markers (GITHUB_ACTIONS / GITLAB_CI).
 func ciFlag(name string) bool {
 	return os.Getenv(name) == "true"
-}
-
-// truthy reports whether a string holds a conventional truthy value.
-func truthy(v string) bool {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
 }
