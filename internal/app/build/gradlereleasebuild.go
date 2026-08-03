@@ -29,6 +29,24 @@ type GradleReleaseBuildInput struct {
 	JavaVersion string
 }
 
+// gradleDeps is the collaborator set the gradle build steps share: the summary
+// sink they report status to, the gradle tool they drive, and the two writers
+// they narrate on. All travel unchanged from the release-build entry down to
+// the leaves, so passing them positionally added four parameters to every
+// signature and forced a varnamelen waiver (w, stderr) onto each.
+//
+// summary rides along although the innermost leaf that only runs the SBOM tool
+// does not report status; one unused field beats threading a second struct
+// through one call. androidSBOMStep reuses this set — Android is a gradle
+// variant and already shares this file's helpers (makeGradlewExecutable,
+// GradleSBOM, defaultDir).
+type gradleDeps struct {
+	summary ci.SummarySink
+	ops     GradleOps
+	w       io.Writer // progress, user-facing
+	stderr  io.Writer // underlying tool output
+}
+
 // GradleReleaseBuild runs the whole Gradle release build as one step: make the
 // wrapper executable, resolve metadata, run the gradle tasks, generate the Build
 // SBOM (unless disabled), and write the SBOM-status + build summaries.
@@ -51,7 +69,7 @@ func GradleReleaseBuild(ctx context.Context, summarySink ci.SummarySink, ops Gra
 		return fmt.Errorf("gradle build: %w", err)
 	}
 
-	if err := gradleSBOMStep(ctx, summarySink, ops, in, w, stderr); err != nil {
+	if err := gradleSBOMStep(ctx, gradleDeps{summary: summarySink, ops: ops, w: w, stderr: stderr}, in); err != nil {
 		return err
 	}
 
@@ -82,19 +100,19 @@ func makeGradlewExecutable(dir string) error {
 	return nil
 }
 
-func gradleSBOMStep(ctx context.Context, summarySink ci.SummarySink, ops GradleOps, in GradleReleaseBuildInput, w, stderr io.Writer) error { //nolint:varnamelen // idiomatic short names — testing/http/io conventions.
+func gradleSBOMStep(ctx context.Context, deps gradleDeps, in GradleReleaseBuildInput) error {
 	outcome := outcomeSkipped
 
 	if in.EnableBuildSBOM {
 		outcome = outcomeSuccess
-		if err := gradleBuildSBOM(ctx, ops, in, w, stderr); err != nil {
+		if err := gradleBuildSBOM(ctx, deps, in); err != nil {
 			outcome = outcomeFailure
 
-			_, _ = fmt.Fprintf(stderr, "WARN: Gradle Build SBOM generation failed (continuing): %v\n", err)
+			_, _ = fmt.Fprintf(deps.stderr, "WARN: Gradle Build SBOM generation failed (continuing): %v\n", err)
 		}
 	}
 
-	if err := appsummary.BuildSBOMStatus(ctx, summarySink, appsummary.BuildSBOMStatusInput{
+	if err := appsummary.BuildSBOMStatus(ctx, deps.summary, appsummary.BuildSBOMStatusInput{
 		Ecosystem: "gradle",
 		Outcome:   outcome,
 		WorkDir:   defaultDir(in.Dir),
@@ -105,10 +123,10 @@ func gradleSBOMStep(ctx context.Context, summarySink ci.SummarySink, ops GradleO
 	return nil
 }
 
-func gradleBuildSBOM(ctx context.Context, ops GradleOps, in GradleReleaseBuildInput, w, stderr io.Writer) error { //nolint:varnamelen // idiomatic short names — testing/http/io conventions.
+func gradleBuildSBOM(ctx context.Context, deps gradleDeps, in GradleReleaseBuildInput) error {
 	if in.SBOMToolVersion == "" {
 		return fmt.Errorf("SBOM tool version is required (set --sbom-tool-version or $CYCLONEDX_GRADLE_VERSION): %w", errs.ErrUsage)
 	}
 
-	return GradleSBOM(ctx, ops, w, stderr, GradleSBOMInput{CycloneDXVersion: in.SBOMToolVersion, WorkingDir: in.Dir})
+	return GradleSBOM(ctx, deps.ops, deps.w, deps.stderr, GradleSBOMInput{CycloneDXVersion: in.SBOMToolVersion, WorkingDir: in.Dir})
 }

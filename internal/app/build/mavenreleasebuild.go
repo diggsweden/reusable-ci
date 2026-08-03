@@ -66,6 +66,21 @@ func MavenBuildSBOM(ctx context.Context, ops MavenOps, cliOpts []string, toolVer
 	return ops.RunInherit(ctx, w, stderr, args...)
 }
 
+// mavenDeps is the collaborator set the maven build steps share: the summary
+// sink they report status to, the maven tool they drive, and the two writers
+// they narrate on. All travel unchanged from MavenReleaseBuild down to the
+// leaves, so passing them positionally added four parameters to every
+// signature and forced a varnamelen waiver (w, stderr) onto each.
+//
+// summary rides along although mavenBuildArtifact does not report status; one
+// unused field beats threading a second struct through one call.
+type mavenDeps struct {
+	summary ci.SummarySink
+	ops     MavenOps
+	w       io.Writer // progress, user-facing
+	stderr  io.Writer // underlying tool output
+}
+
 // MavenReleaseBuild runs the whole Maven release build as one step: install
 // modules, resolve metadata, build the app or library, generate the Build SBOM
 // (unless disabled), and write the SBOM-status + build summaries.
@@ -92,11 +107,13 @@ func MavenReleaseBuild(ctx context.Context, summarySink ci.SummarySink, ops Mave
 
 	_, _ = fmt.Fprintf(w, "Maven release build (%s): %s:%s:%s\n", in.BuildType, meta.groupID, meta.artifactID, meta.version)
 
-	if err := mavenBuildArtifact(ctx, ops, in, w, stderr); err != nil {
+	deps := mavenDeps{summary: summarySink, ops: ops, w: w, stderr: stderr}
+
+	if err := mavenBuildArtifact(ctx, deps, in); err != nil {
 		return err
 	}
 
-	if err := mavenSBOMStep(ctx, summarySink, ops, in, w, stderr); err != nil {
+	if err := mavenSBOMStep(ctx, deps, in); err != nil {
 		return err
 	}
 
@@ -115,14 +132,14 @@ func MavenReleaseBuild(ctx context.Context, summarySink ci.SummarySink, ops Mave
 	return nil
 }
 
-func mavenBuildArtifact(ctx context.Context, ops MavenOps, in MavenReleaseBuildInput, w, stderr io.Writer) error { //nolint:varnamelen // idiomatic short names (w) — testing/http/io conventions.
+func mavenBuildArtifact(ctx context.Context, deps mavenDeps, in MavenReleaseBuildInput) error {
 	switch in.BuildType {
 	case mavenBuildTypeApp:
-		if err := MavenApplication(ctx, ops, w, stderr, MavenApplicationInput{CLIOpts: in.CLIOpts, SkipTests: in.SkipTests}); err != nil {
+		if err := MavenApplication(ctx, deps.ops, deps.w, deps.stderr, MavenApplicationInput{CLIOpts: in.CLIOpts, SkipTests: in.SkipTests}); err != nil {
 			return fmt.Errorf("mvn application build: %w", err)
 		}
 	case mavenBuildTypeLib:
-		if err := MavenLibrary(ctx, ops, w, stderr, MavenLibraryInput{CLIOpts: in.CLIOpts, Profile: in.Profile, SkipTests: in.SkipTests}); err != nil {
+		if err := MavenLibrary(ctx, deps.ops, deps.w, deps.stderr, MavenLibraryInput{CLIOpts: in.CLIOpts, Profile: in.Profile, SkipTests: in.SkipTests}); err != nil {
 			return fmt.Errorf("mvn library build: %w", err)
 		}
 	}
@@ -130,19 +147,19 @@ func mavenBuildArtifact(ctx context.Context, ops MavenOps, in MavenReleaseBuildI
 	return nil
 }
 
-func mavenSBOMStep(ctx context.Context, summarySink ci.SummarySink, ops MavenOps, in MavenReleaseBuildInput, w, stderr io.Writer) error { //nolint:varnamelen // idiomatic short names — testing/http/io conventions.
+func mavenSBOMStep(ctx context.Context, deps mavenDeps, in MavenReleaseBuildInput) error {
 	outcome := outcomeSkipped
 
 	if in.EnableBuildSBOM {
 		outcome = outcomeSuccess
-		if err := MavenBuildSBOM(ctx, ops, in.CLIOpts, in.SBOMToolVersion, w, stderr); err != nil {
+		if err := MavenBuildSBOM(ctx, deps.ops, in.CLIOpts, in.SBOMToolVersion, deps.w, deps.stderr); err != nil {
 			outcome = outcomeFailure
 
-			_, _ = fmt.Fprintf(stderr, "WARN: Maven Build SBOM generation failed (continuing): %v\n", err)
+			_, _ = fmt.Fprintf(deps.stderr, "WARN: Maven Build SBOM generation failed (continuing): %v\n", err)
 		}
 	}
 
-	if err := appsummary.BuildSBOMStatus(ctx, summarySink, appsummary.BuildSBOMStatusInput{
+	if err := appsummary.BuildSBOMStatus(ctx, deps.summary, appsummary.BuildSBOMStatusInput{
 		Ecosystem: "maven",
 		Outcome:   outcome,
 		WorkDir:   defaultDir(in.Dir),

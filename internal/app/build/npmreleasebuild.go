@@ -35,6 +35,25 @@ type NPMReleaseBuildInput struct {
 
 const npmEcosystem = "npm"
 
+// npmSBOMDeps is the collaborator set the npm SBOM steps share: the summary
+// sink they report status to, the npx runner they drive the pinned cyclonedx
+// tool through, the annotator they warn on, and the two writers they narrate
+// on. They travel unchanged from NPMReleaseBuild into the SBOM leaves, so
+// passing them positionally added parameters to each and forced a varnamelen
+// waiver (w, stderr).
+//
+// summary and annot ride along although the innermost leaf that only runs npx
+// uses neither; unused fields beat threading a second struct through one call.
+// npmRunner is not here: it drives ci/test/pack in the entry only and never
+// reaches these leaves.
+type npmSBOMDeps struct {
+	summary ci.SummarySink
+	npx     NPMRunner
+	annot   output.Annotator
+	w       io.Writer // progress, user-facing
+	stderr  io.Writer // underlying tool output
+}
+
 // NPMReleaseBuild runs the whole npm release build as one step: resolve
 // metadata, install deps, test (unless skipped), run the build script, generate
 // the Build SBOM (unless disabled), pack the tarball, and write the summaries.
@@ -78,7 +97,8 @@ func NPMReleaseBuild(ctx context.Context, summarySink ci.SummarySink, npmRunner,
 		return fmt.Errorf("npm run build: %w", err)
 	}
 
-	if err := npmBuildSBOMStep(ctx, summarySink, npxRunner, annot, dir, in.EnableBuildSBOM, in.SBOMToolVersion, w, stderr); err != nil {
+	sbomDeps := npmSBOMDeps{summary: summarySink, npx: npxRunner, annot: annot, w: w, stderr: stderr}
+	if err := npmBuildSBOMStep(ctx, sbomDeps, dir, in.EnableBuildSBOM, in.SBOMToolVersion); err != nil {
 		return err
 	}
 
@@ -102,20 +122,20 @@ func NPMReleaseBuild(ctx context.Context, summarySink ci.SummarySink, npmRunner,
 // with npx) and appends its status block. A failing SBOM warns rather than
 // failing the build (it is a best-effort compliance deliverable), mirroring the
 // workflow's `if: always()` status step.
-func npmBuildSBOMStep(ctx context.Context, summarySink ci.SummarySink, npxRunner NPMRunner, annot output.Annotator, dir string, enabled bool, toolVersion string, w, stderr io.Writer) error { //nolint:varnamelen // idiomatic short names — testing/http/io conventions.
+func npmBuildSBOMStep(ctx context.Context, deps npmSBOMDeps, dir string, enabled bool, toolVersion string) error {
 	outcome := outcomeSkipped
 
 	if enabled {
 		outcome = outcomeSuccess
 
-		if err := npmBuildSBOM(ctx, npxRunner, dir, toolVersion, w, stderr); err != nil {
+		if err := npmBuildSBOM(ctx, deps, dir, toolVersion); err != nil {
 			outcome = outcomeFailure
 
-			annot.Warningf("npm Build SBOM generation failed (continuing): %v", err)
+			deps.annot.Warningf("npm Build SBOM generation failed (continuing): %v", err)
 		}
 	}
 
-	if err := appsummary.BuildSBOMStatus(ctx, summarySink, appsummary.BuildSBOMStatusInput{
+	if err := appsummary.BuildSBOMStatus(ctx, deps.summary, appsummary.BuildSBOMStatusInput{
 		Ecosystem: npmEcosystem,
 		Outcome:   outcome,
 		WorkDir:   dir,
@@ -126,12 +146,12 @@ func npmBuildSBOMStep(ctx context.Context, summarySink ci.SummarySink, npxRunner
 	return nil
 }
 
-func npmBuildSBOM(ctx context.Context, npxRunner NPMRunner, dir, toolVersion string, w, stderr io.Writer) error { //nolint:varnamelen // idiomatic short names — testing/http/io conventions.
+func npmBuildSBOM(ctx context.Context, deps npmSBOMDeps, dir, toolVersion string) error {
 	version := strings.TrimSpace(toolVersion)
 	if version == "" {
 		return fmt.Errorf("SBOM tool version is required (set --sbom-tool-version or $CYCLONEDX_VERSION): %w", errs.ErrUsage)
 	}
 
-	return npxRunner.RunInherit(ctx, dir, w, stderr,
+	return deps.npx.RunInherit(ctx, dir, deps.w, deps.stderr,
 		"--yes", "@cyclonedx/cyclonedx-npm@"+version, "--output-format", "json", "--output", "bom.json")
 }

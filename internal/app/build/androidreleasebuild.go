@@ -116,22 +116,22 @@ func AndroidReleaseBuild(ctx context.Context, sink ci.OutputSink, summarySink ci
 		return fmt.Errorf("gradle build: %w", err)
 	}
 
-	return androidSBOMStep(ctx, summarySink, ops, in, w, stderr)
+	return androidSBOMStep(ctx, gradleDeps{summary: summarySink, ops: ops, w: w, stderr: stderr}, in)
 }
 
-func androidSBOMStep(ctx context.Context, summarySink ci.SummarySink, ops GradleOps, in AndroidReleaseBuildInput, w, stderr io.Writer) error { //nolint:varnamelen // idiomatic short names — testing/http/io conventions.
+func androidSBOMStep(ctx context.Context, deps gradleDeps, in AndroidReleaseBuildInput) error {
 	outcome := outcomeSkipped
 
 	if in.EnableBuildSBOM {
 		outcome = outcomeSuccess
-		if err := GradleSBOM(ctx, ops, w, stderr, GradleSBOMInput{CycloneDXVersion: in.SBOMToolVersion, WorkingDir: in.Dir}); err != nil {
+		if err := GradleSBOM(ctx, deps.ops, deps.w, deps.stderr, GradleSBOMInput{CycloneDXVersion: in.SBOMToolVersion, WorkingDir: in.Dir}); err != nil {
 			outcome = outcomeFailure
 
-			_, _ = fmt.Fprintf(stderr, "WARN: gradle-android Build SBOM generation failed (continuing): %v\n", err)
+			_, _ = fmt.Fprintf(deps.stderr, "WARN: gradle-android Build SBOM generation failed (continuing): %v\n", err)
 		}
 	}
 
-	if err := appsummary.BuildSBOMStatus(ctx, summarySink, appsummary.BuildSBOMStatusInput{
+	if err := appsummary.BuildSBOMStatus(ctx, deps.summary, appsummary.BuildSBOMStatusInput{
 		Ecosystem: "gradle-android",
 		Outcome:   outcome,
 		WorkDir:   defaultDir(in.Dir),
