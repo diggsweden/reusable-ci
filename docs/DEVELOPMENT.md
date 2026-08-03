@@ -91,6 +91,37 @@
 
 Run `just` to see all available commands.
 
+## Where code goes
+
+`internal/` is ports and adapters. Every import points inward at `domain`:
+
+```text
+cli  ──►  app  ──►  domain  ◄──  adapters
+```
+
+| You are writing | It goes in |
+|---|---|
+| A business rule, or the interface a rule needs | `internal/domain/…` |
+| The ordering of steps in a use case | `internal/app/…` |
+| A wrapper around a real tool, API, or the environment | `internal/adapters/…` |
+| Flag parsing, output rendering, adapter construction | `internal/cli/…` |
+| A helper with no domain knowledge (`listval`, `safeexec`) | `internal/<name>` |
+
+The layers are siblings on disk because the layering is expressed by import
+direction, not by nesting. Two rules cover most decisions:
+
+- **Need a tool from a use case?** Do not import the adapter. Declare a small
+  interface listing only the methods you need, next to the code that uses it
+  (`gitOps` in `internal/app/validate/tags.go` is the reference example), and
+  construct the real adapter in `internal/cli`.
+- **Adapters never import `app` or `cli`,** and `domain` imports neither
+  those nor `adapters`.
+
+`internal/archguard` enforces this at test time and names the fix when it
+fails. The full rule, including why `platform` is an adapter and why pure
+functions like `openpgp.VerifyDetachedArmored` are exempt, is in
+[ADR 0004](adr/0004-package-layering.md).
+
 ## Test discipline
 
 The pipeline's verdict is definitive — passing means deploy, failing means
