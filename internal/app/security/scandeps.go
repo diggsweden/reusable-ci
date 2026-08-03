@@ -73,6 +73,8 @@ func ScanDependencies(
 	cfg := resolveScanDepsConfig(in, annot)
 	printScanDepsBanner(w, cfg)
 
+	deps := scanDepsDeps{trivy: trivy, gitRepo: gitRepo, w: w, stderr: stderr, annot: annot}
+
 	workDir, err := os.MkdirTemp("", "scan-deps-")
 	if err != nil {
 		return fmt.Errorf("mkdir tmp: %w", err)
@@ -82,23 +84,43 @@ func ScanDependencies(
 
 	headJSON := filepath.Join(workDir, "head-vulns.json")
 
-	headBody, headIDs, err := scanHead(ctx, trivy, w, stderr, cfg, headJSON)
+	headBody, headIDs, err := scanHead(ctx, deps, cfg, headJSON)
 	if err != nil {
 		return err
 	}
 
-	newIDs, modeUsed, err := diffAgainstBase(ctx, trivy, gitRepo, w, stderr, annot, cfg, workDir, headIDs)
+	newIDs, modeUsed, err := diffAgainstBase(ctx, deps, cfg, workDir, headIDs)
 	if err != nil {
 		return err
 	}
 
-	deriveSecondaryReports(ctx, trivy, w, annot, cfg, headJSON)
+	deriveSecondaryReports(ctx, deps, cfg, headJSON)
 
 	if err := writeScanDepsSummary(ctx, summary, cfg, modeUsed, headBody, newIDs); err != nil {
 		return err
 	}
 
 	return reportScanDepsVerdict(w, annot, cfg, newIDs)
+}
+
+// scanDepsDeps is the collaborator set the dependency-scan phases share:
+// the trivy scanner, the git repo (for the base-ref worktree), and the
+// three sinks they narrate on (w, stderr, annot). All thread unchanged from
+// ScanDependencies through the phase functions, which gave the two worktree
+// phases nine-parameter signatures.
+//
+// As with the layerDeps precedent in internal/app/sbom, the set narrows at
+// the edges: scanHead does not touch git, deriveSecondaryReports does not
+// touch stderr, so those leave a field or two unused. The two leaves that
+// narrow to w-only (printScanDepsBanner, reportScanDepsVerdict) keep explicit
+// parameters — passing the whole set to print a banner would hide what it
+// uses.
+type scanDepsDeps struct {
+	trivy   TrivyOps
+	gitRepo GitOps
+	w       io.Writer // progress, user-facing
+	stderr  io.Writer // underlying tool output
+	annot   output.Annotator
 }
 
 // scanDepsConfig is the resolved, defaulted input view used internally
@@ -144,14 +166,13 @@ func printScanDepsBanner(w io.Writer, cfg scanDepsConfig) {
 // body alongside the extracted vulnerability IDs.
 func scanHead(
 	ctx context.Context,
-	trivy TrivyOps,
-	w, stderr io.Writer, //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	deps scanDepsDeps,
 	cfg scanDepsConfig,
 	outputJSON string,
 ) ([]byte, []string, error) {
-	_, _ = fmt.Fprintln(w, "Scanning HEAD for vulnerabilities...")
+	_, _ = fmt.Fprintln(deps.w, "Scanning HEAD for vulnerabilities...")
 
-	if _, runErr := trivy.RunInherit(ctx, w, stderr,
+	if _, runErr := deps.trivy.RunInherit(ctx, deps.w, deps.stderr,
 		"fs", "--format", "json", "--severity", cfg.severityFilter,
 		"--scanners", "vuln", "--output", outputJSON, cfg.scanPath); runErr != nil {
 		return nil, nil, fmt.Errorf("trivy fs: %w", runErr)
@@ -177,25 +198,22 @@ func scanHead(
 // of the typed ScanMode enum.
 func diffAgainstBase(
 	ctx context.Context,
-	trivy TrivyOps,
-	gitRepo GitOps,
-	w, stderr io.Writer, //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	annot output.Annotator,
+	deps scanDepsDeps,
 	cfg scanDepsConfig,
 	workDir string,
 	headIDs []string,
 ) ([]string, string, error) {
 	switch {
 	case cfg.mode == security.ScanModeDiff && cfg.baseRef != "":
-		return scanBaseRefViaWorktree(ctx, trivy, gitRepo, w, stderr, annot, cfg, workDir, headIDs)
+		return scanBaseRefViaWorktree(ctx, deps, cfg, workDir, headIDs)
 	case cfg.mode == security.ScanModeDiff && cfg.baseRef == "":
-		annot.Warningf("Diff mode requested but no base ref available. Running full scan.")
+		deps.annot.Warningf("Diff mode requested but no base ref available. Running full scan.")
 
-		_, _ = fmt.Fprintf(w, "Total vulnerabilities: %d\n\n", len(headIDs))
+		_, _ = fmt.Fprintf(deps.w, "Total vulnerabilities: %d\n\n", len(headIDs))
 
 		return headIDs, "full (no base ref)", nil
 	default:
-		_, _ = fmt.Fprintf(w, "Total vulnerabilities: %d\n\n", len(headIDs))
+		_, _ = fmt.Fprintf(deps.w, "Total vulnerabilities: %d\n\n", len(headIDs))
 
 		return headIDs, "full", nil
 	}
@@ -215,32 +233,29 @@ func diffAgainstBase(
 // same checkout.
 func scanBaseRefViaWorktree(
 	ctx context.Context,
-	trivy TrivyOps,
-	gitRepo GitOps,
-	w, stderr io.Writer, //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	annot output.Annotator,
+	deps scanDepsDeps,
 	cfg scanDepsConfig,
 	workDir string,
 	headIDs []string,
 ) ([]string, string, error) {
-	_, _ = fmt.Fprintf(w, "Diff mode: scanning base ref %q for comparison...\n", cfg.baseRef)
+	_, _ = fmt.Fprintf(deps.w, "Diff mode: scanning base ref %q for comparison...\n", cfg.baseRef)
 
 	worktreeDir := filepath.Join(workDir, "base-worktree")
 
-	ok := tryWorktreeAdd(ctx, gitRepo, worktreeDir, "origin/"+cfg.baseRef) ||
-		tryWorktreeAdd(ctx, gitRepo, worktreeDir, cfg.baseRef)
+	ok := tryWorktreeAdd(ctx, deps.gitRepo, worktreeDir, "origin/"+cfg.baseRef) ||
+		tryWorktreeAdd(ctx, deps.gitRepo, worktreeDir, cfg.baseRef)
 	if !ok {
-		annot.Warningf("Could not create worktree for base ref %q. Falling back to full scan.", cfg.baseRef)
+		deps.annot.Warningf("Could not create worktree for base ref %q. Falling back to full scan.", cfg.baseRef)
 
 		return headIDs, "full (worktree fallback)", nil
 	}
 
 	defer func() {
-		_, _ = gitRepo.Run(ctx, "worktree", "remove", "-f", worktreeDir)
+		_, _ = deps.gitRepo.Run(ctx, "worktree", "remove", "-f", worktreeDir)
 	}()
 
 	baseJSON := filepath.Join(workDir, "base-vulns.json")
-	if _, runErr := trivy.RunInherit(ctx, w, stderr,
+	if _, runErr := deps.trivy.RunInherit(ctx, deps.w, deps.stderr,
 		"fs", "--format", "json", "--severity", cfg.severityFilter,
 		"--scanners", "vuln", "--output", baseJSON, worktreeDir); runErr != nil {
 		return nil, "", fmt.Errorf("trivy fs (base): %w", runErr)
@@ -257,9 +272,9 @@ func scanBaseRefViaWorktree(
 	}
 
 	newIDs := security.DiffNewIDs(baseIDs, headIDs)
-	_, _ = fmt.Fprintf(w, "Base vulnerabilities: %d\n", len(baseIDs))
-	_, _ = fmt.Fprintf(w, "Head vulnerabilities: %d\n", len(headIDs))
-	_, _ = fmt.Fprintf(w, "New vulnerabilities:  %d\n\n", len(newIDs))
+	_, _ = fmt.Fprintf(deps.w, "Base vulnerabilities: %d\n", len(baseIDs))
+	_, _ = fmt.Fprintf(deps.w, "Head vulnerabilities: %d\n", len(headIDs))
+	_, _ = fmt.Fprintf(deps.w, "New vulnerabilities:  %d\n\n", len(newIDs))
 
 	return newIDs, "diff", nil
 }
@@ -270,9 +285,7 @@ func scanBaseRefViaWorktree(
 // abort the scan.
 func deriveSecondaryReports(
 	ctx context.Context,
-	trivy TrivyOps,
-	w io.Writer, //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	annot output.Annotator,
+	deps scanDepsDeps,
 	cfg scanDepsConfig,
 	headJSON string,
 ) {
@@ -280,21 +293,21 @@ func deriveSecondaryReports(
 		return
 	}
 
-	_, _ = fmt.Fprintln(w, "Converting JSON to SARIF...")
+	_, _ = fmt.Fprintln(deps.w, "Converting JSON to SARIF...")
 
-	if _, err := trivy.RunInherit(ctx, w, w,
+	if _, err := deps.trivy.RunInherit(ctx, deps.w, deps.w,
 		"convert", "--format", "sarif", "--output", cfg.sarifFile, headJSON); err != nil {
-		annot.Warningf("trivy convert failed: %v", err)
+		deps.annot.Warningf("trivy convert failed: %v", err)
 	}
 
-	_, _ = fmt.Fprintln(w, "Generating GitLab dependency-scanning report...")
+	_, _ = fmt.Fprintln(deps.w, "Generating GitLab dependency-scanning report...")
 
 	if _, err := TrivyToGitLabDep(TransformInput{
 		InputPath:    headJSON,
 		OutputPath:   cfg.gitlabDepFile,
 		TrivyVersion: cfg.trivyVersion,
 	}); err != nil {
-		annot.Warningf("TrivyToGitLabDep: %v", err)
+		deps.annot.Warningf("TrivyToGitLabDep: %v", err)
 	}
 }
 
