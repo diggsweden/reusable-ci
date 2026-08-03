@@ -47,3 +47,9 @@ relese = "relese"
 # is the input under test.
 biuld = "biuld"
 contxt = "contxt"
+
+# `validate tagg` in internal/cli/root.go is the worked example in the
+# fail-closed rationale: it contrasts the typo case, which already
+# exits 2 as an unknown subcommand, with the quieter omission case the
+# parent guard closes. The misspelling is the illustration.
+tagg = "tagg"

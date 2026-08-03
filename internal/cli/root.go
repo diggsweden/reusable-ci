@@ -107,6 +107,9 @@ func New(b BuildInfo) *cli.Command {
 	// Reject unexpected positional args on leaf commands (urfave/cli does
 	// not do this by default — it silently ignores extras).
 	applyArgGuards(root)
+	// Make group commands fail closed when invoked without a subcommand
+	// (urfave/cli prints help and exits 0 — see applyParentGuards).
+	applyParentGuards(root)
 	// Order every group's subcommands alphabetically so terminal --help matches
 	// the generated reference (cmd/gen-cli-reference already sorts) and lists are
 	// predictable.
@@ -158,6 +161,71 @@ func applyArgGuards(cmd *cli.Command) {
 
 		return inner(ctx, leaf)
 	}
+}
+
+// applyParentGuards walks the tree and gives every group command (one with
+// subcommands but no Action of its own) an Action that fails closed: a usage
+// error (exit 2) instead of urfave/cli's default of printing help and exiting
+// 0.
+//
+// Why this matters more than it looks: a workflow step that loses its last
+// path segment — `reusable-ci validate tag` where `validate tag signature` was
+// meant, whether by a typo, a bad edit, or a rename — otherwise passes green
+// having validated nothing. No existing guard catches it. The verb path exists,
+// so forgejo-ci's test-cli-invocation-contract.sh is satisfied; the surface is
+// unchanged, so the CLI guard family and the generated reference are satisfied;
+// and exit 0 reads as success to the runner. It is a runtime behaviour, and
+// every other check we have inspects surface facts. A gating tool must fail
+// closed here.
+//
+// A typo in the subcommand already fails (`validate tagg` → unknown subcommand,
+// exit 2). This closes the omission case, which is the quieter of the two.
+//
+// The root itself is deliberately exempt — hence the walk starts at root's
+// children: `reusable-ci` with no arguments is the discovery path, and the
+// failure mode guarded here is a command that lost its *last* segment, not one
+// that lost every segment. A group with an Action of its own is left alone —
+// that Action is an intentional default.
+func applyParentGuards(root *cli.Command) {
+	for _, child := range root.Commands {
+		applyParentGuard(child)
+	}
+}
+
+// applyParentGuard applies the fail-closed rule to cmd and, recursively, to
+// every command beneath it.
+func applyParentGuard(cmd *cli.Command) {
+	for _, child := range cmd.Commands {
+		applyParentGuard(child)
+	}
+
+	if len(cmd.Commands) == 0 || cmd.Action != nil {
+		return
+	}
+
+	cmd.Action = func(_ context.Context, group *cli.Command) error {
+		return fmt.Errorf("%q requires a subcommand (one of: %s): %w",
+			group.Name, strings.Join(subcommandNames(group), ", "), errs.ErrUsage)
+	}
+}
+
+// subcommandNames lists a group's invocable subcommand names for the
+// missing-subcommand usage error, skipping urfave/cli's built-in help entry
+// (which is not a real operation and only adds noise to the list).
+func subcommandNames(group *cli.Command) []string {
+	names := make([]string, 0, len(group.Commands))
+
+	for _, child := range group.Commands {
+		if child.Name == "help" {
+			continue
+		}
+
+		names = append(names, child.Name)
+	}
+
+	slices.Sort(names)
+
+	return names
 }
 
 // applyDiagnosticHooks walks the command tree and sets the
