@@ -31,6 +31,12 @@ const flagYes = "--yes"
 // flagSigningConfig selects which Sigstore services a write subcommand uses.
 const flagSigningConfig = "--signing-config"
 
+// flagInsecureIgnoreTlog drops the transparency-log requirement from a verify
+// subcommand. cosign names it "insecure" and prints its own warning; we pass it
+// through under that name rather than a friendlier one so the trade-off is not
+// disguised at any layer.
+const flagInsecureIgnoreTlog = "--insecure-ignore-tlog"
+
 // EnvSigningConfig names the environment variable that points at a Sigstore
 // signing-config file.
 //
@@ -61,6 +67,42 @@ const EnvSigningConfig = "REUSABLE_CI_COSIGN_SIGNING_CONFIG"
 // in favour of this file, so the config is the supported route.
 func SigningConfigFromEnv() string { return os.Getenv(EnvSigningConfig) }
 
+// EnvInsecureIgnoreTlog names the environment variable that drops the
+// transparency-log requirement from verification. Resolved alongside
+// EnvSigningConfig, for the same reason: the verify subcommands are reached
+// from many call sites and a missed one fails closed in a confusing way rather
+// than obviously.
+const EnvInsecureIgnoreTlog = "REUSABLE_CI_COSIGN_INSECURE_IGNORE_TLOG"
+
+// InsecureIgnoreTlogFromEnv reports whether $REUSABLE_CI_COSIGN_INSECURE_IGNORE_TLOG
+// is set to a truthy value.
+//
+// It exists because cosign couples the two halves: verification demands a log
+// inclusion proof, so a signature made against a signing config with no
+// transparency log CANNOT be verified without this. A trusted root with no log
+// service does not relax the requirement — cosign still requires one entry.
+//
+// The honest reading, in cosign's own words: "Artifacts cannot be publicly
+// verified when not included in a log." Turning this on buys the ability to
+// verify unlogged signatures and gives up transparency and auditability for
+// them. It is the right setting for a test suite that must not write to a
+// permanent public log, and for a deployment that has deliberately chosen not
+// to run a transparency log. It is the wrong setting for anything whose
+// signatures are meant to be publicly verifiable — for that, run a private
+// Rekor and point EnvSigningConfig at it instead, which keeps verification
+// fully checked.
+func InsecureIgnoreTlogFromEnv() bool { return isTruthy(os.Getenv(EnvInsecureIgnoreTlog)) }
+
+// isTruthy accepts the same spellings the rest of the CLI treats as "on".
+func isTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+
+	return false
+}
+
 // Adapter wraps the cosign binary. Bin is overridable for tests.
 type Adapter struct {
 	Bin string // empty → "cosign"
@@ -80,11 +122,23 @@ type Adapter struct {
 	// See SigningConfigFromEnv for why it is resolved there rather than
 	// threaded per command.
 	SigningConfig string
+
+	// InsecureIgnoreTlog drops the transparency-log requirement from every
+	// verify subcommand. False (the default) keeps verification fully
+	// checked. Resolved by New/NewIsolated from
+	// $REUSABLE_CI_COSIGN_INSECURE_IGNORE_TLOG; see
+	// InsecureIgnoreTlogFromEnv for what it costs.
+	InsecureIgnoreTlog bool
 }
 
 // New returns an Adapter using the system cosign, with the signing config
 // resolved from the environment.
-func New() *Adapter { return &Adapter{SigningConfig: SigningConfigFromEnv()} }
+func New() *Adapter {
+	return &Adapter{
+		SigningConfig:      SigningConfigFromEnv(),
+		InsecureIgnoreTlog: InsecureIgnoreTlogFromEnv(),
+	}
+}
 
 // SignBlobInput drives a single cosign sign-blob invocation. It is
 // the domain port request (release.BlobSignRequest) — the alias keeps
@@ -152,7 +206,7 @@ func (a *Adapter) VerifyBlob(ctx context.Context, in VerifyBlobInput, errOut io.
 		return err
 	}
 
-	args := []string{"verify-blob", "--bundle", in.BundlePath, "--new-bundle-format"}
+	args := a.withTlogPolicy([]string{"verify-blob", "--bundle", in.BundlePath, "--new-bundle-format"})
 
 	switch {
 	case in.Keyless:
@@ -272,7 +326,7 @@ func (a *Adapter) VerifyImage(ctx context.Context, in VerifyImageInput, errOut i
 		return err
 	}
 
-	args := []string{"verify"}
+	args := a.withTlogPolicy([]string{"verify"})
 
 	switch {
 	case in.Keyless:
@@ -310,7 +364,7 @@ func (a *Adapter) VerifyAttestationOutput(ctx context.Context, in VerifyAttestat
 		return err
 	}
 
-	args := []string{"verify-attestation", "--type", in.PredicateType}
+	args := a.withTlogPolicy([]string{"verify-attestation", "--type", in.PredicateType})
 
 	switch {
 	case in.Keyless:
@@ -373,6 +427,17 @@ func (a *Adapter) withSigningConfig(args []string) []string {
 	}
 
 	return append(args, flagSigningConfig, a.SigningConfig)
+}
+
+// withTlogPolicy appends --insecure-ignore-tlog when verification has been told
+// not to require a log inclusion proof. Applied by every cosign subcommand that
+// verifies, so the policy is decided in exactly one place.
+func (a *Adapter) withTlogPolicy(args []string) []string {
+	if !a.InsecureIgnoreTlog {
+		return args
+	}
+
+	return append(args, flagInsecureIgnoreTlog)
 }
 
 // run invokes cosign with args. cosign's stderr is captured into a

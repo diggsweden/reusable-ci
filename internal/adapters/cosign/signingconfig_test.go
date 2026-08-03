@@ -33,23 +33,21 @@ func writeVerbs() []signWrite {
 		}},
 		{"sign", func(a *cosign.Adapter) error {
 			return a.SignImage(context.Background(), cosign.SignImageInput{
-				ImageRef: "reg/app@sha256:" + strings64(), KeyRef: "k.key",
+				ImageRef: "reg/app@sha256:" + hex64, KeyRef: "k.key",
 			}, nil)
 		}},
 		{"attest", func(a *cosign.Adapter) error {
 			return a.AttestImage(context.Background(), cosign.AttestImageInput{
-				ImageRef: "reg/app@sha256:" + strings64(), KeyRef: "k.key",
+				ImageRef: "reg/app@sha256:" + hex64, KeyRef: "k.key",
 				PredicateType: "slsaprovenance1", PredicatePath: "p.json",
 			}, nil)
 		}},
 	}
 }
 
-func strings64() string {
-	const hex = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
-
-	return hex
-}
+// hex64 is a syntactically valid sha256 hex digest for argv-shape tests; the
+// mock cosign never looks at it.
+const hex64 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 
 // TestEveryWriteVerbHonoursTheSigningConfig is the load-bearing test for
 // "we do not publish to a transparency log unless we mean to".
@@ -136,5 +134,117 @@ func TestNewResolvesTheSigningConfigFromEnv(t *testing.T) {
 	if got := cosign.NewIsolated("DOCKER_CONFIG").SigningConfig; got != "/tmp/from-env.json" {
 		t.Errorf("NewIsolated() SigningConfig = %q, want the env value — isolated signing "+
 			"paths would otherwise still publish to Rekor", got)
+	}
+}
+
+// verifyRead names one cosign subcommand that verifies a signature. Each must
+// honour the tlog policy: a signature made against a signing config with no
+// transparency log cannot be verified without it, so a verb that ignores the
+// setting fails closed with cosign's "not enough verified log entries" error.
+func verifyVerbs() []signWrite {
+	const digest = "reg/app@sha256:" + hex64
+
+	return []signWrite{
+		{"verify-blob", func(a *cosign.Adapter) error {
+			return a.VerifyBlob(context.Background(), cosign.VerifyBlobInput{
+				Artifact: "app.tgz", BundlePath: "app.tgz.bundle", KeyRef: "k.pub",
+			}, nil)
+		}},
+		{"verify", func(a *cosign.Adapter) error {
+			return a.VerifyImage(context.Background(), cosign.VerifyImageInput{
+				ImageRef: digest, KeyRef: "k.pub",
+			}, nil)
+		}},
+		{"verify-attestation", func(a *cosign.Adapter) error {
+			return a.VerifyAttestation(context.Background(), cosign.VerifyAttestationInput{
+				ImageRef: digest, KeyRef: "k.pub", PredicateType: "slsaprovenance1",
+			}, nil)
+		}},
+	}
+}
+
+// TestEveryVerifyVerbHonoursTheTlogPolicy is the counterpart to the write-verb
+// test. cosign couples the halves: verification demands a log inclusion proof,
+// so signing without a transparency log and verifying are a matched pair. A
+// verify verb that drops the policy cannot check what the sign side produced.
+func TestEveryVerifyVerbHonoursTheTlogPolicy(t *testing.T) {
+	for _, verb := range verifyVerbs() {
+		t.Run(verb.name, func(t *testing.T) {
+			bins := mockbinary.New(t)
+			bins.Add("cosign", ":")
+
+			a := &cosign.Adapter{Bin: bins.Path("cosign"), InsecureIgnoreTlog: true}
+
+			if err := verb.call(a); err != nil {
+				t.Fatalf("%s: %v", verb.name, err)
+			}
+
+			if args := bins.Invocations("cosign")[0].Args; !slices.Contains(args, "--insecure-ignore-tlog") {
+				t.Errorf("%s ignores the tlog policy; it cannot verify an unlogged signature\nargv: %v",
+					verb.name, args)
+			}
+		})
+	}
+}
+
+// TestTlogPolicyDefaultsToFullyChecked pins the default. Verification must
+// require a log inclusion proof unless explicitly told not to: cosign's own
+// warning is that artifacts "cannot be publicly verified when not included in
+// a log", so this is the setting that must never drift on by accident.
+func TestTlogPolicyDefaultsToFullyChecked(t *testing.T) {
+	for _, verb := range verifyVerbs() {
+		t.Run(verb.name, func(t *testing.T) {
+			bins := mockbinary.New(t)
+			bins.Add("cosign", ":")
+
+			a := &cosign.Adapter{Bin: bins.Path("cosign")} // nothing set
+
+			if err := verb.call(a); err != nil {
+				t.Fatalf("%s: %v", verb.name, err)
+			}
+
+			if args := bins.Invocations("cosign")[0].Args; slices.Contains(args, "--insecure-ignore-tlog") {
+				t.Errorf("%s skips transparency-log verification by default\nargv: %v", verb.name, args)
+			}
+		})
+	}
+}
+
+// TestVerifyVerbCountIsPinned is the tripwire for the verify surface, matching
+// the write-verb one: a new verify subcommand that this file does not know
+// about would silently keep its own tlog policy.
+func TestVerifyVerbCountIsPinned(t *testing.T) {
+	const known = 3 // verify-blob, verify, verify-attestation
+
+	if got := len(verifyVerbs()); got != known {
+		t.Fatalf("verifyVerbs() has %d entries, expected %d — if the adapter gained a "+
+			"verifying subcommand, cover it here and bump this count", got, known)
+	}
+}
+
+// TestNewResolvesTheTlogPolicyFromEnv mirrors the signing-config resolution:
+// both constructors must pick it up, or an isolated verify path silently
+// disagrees with the sign path about whether a log entry is required.
+func TestNewResolvesTheTlogPolicyFromEnv(t *testing.T) {
+	t.Setenv(cosign.EnvInsecureIgnoreTlog, "true")
+
+	if !cosign.New().InsecureIgnoreTlog {
+		t.Error("New() did not resolve the tlog policy from the environment")
+	}
+
+	if !cosign.NewIsolated("DOCKER_CONFIG").InsecureIgnoreTlog {
+		t.Error("NewIsolated() did not resolve the tlog policy from the environment")
+	}
+}
+
+// TestTlogPolicyEnvIsNotTruthyByAccident pins that only deliberate spellings
+// turn verification down. A stray value must fail safe (keep checking).
+func TestTlogPolicyEnvIsNotTruthyByAccident(t *testing.T) {
+	for _, v := range []string{"", "0", "false", "no", "off", "maybe", "FALSE"} {
+		t.Setenv(cosign.EnvInsecureIgnoreTlog, v)
+
+		if cosign.New().InsecureIgnoreTlog {
+			t.Errorf("%q turned off transparency-log verification; only 1/true/yes/on may", v)
+		}
 	}
 }
