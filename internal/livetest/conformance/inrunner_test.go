@@ -97,3 +97,88 @@ jobs:
           test "${FORGEJO_ACTIONS:-unset}" != "unset" || test "${GITEA_ACTIONS:-unset}" != "unset"
 `
 }
+
+// PAR-RUN-2: the product, running inside a real job, reports the runtime it is
+// actually in.
+//
+// PAR-RUN-1 proved the forges present distinguishable runtimes. This proves
+// reusable-ci draws the right conclusion from that, which is the claim anyone
+// actually depends on — the runner dialect decides whether annotations render,
+// whether step summaries land anywhere, and which output-file convention is
+// written.
+//
+// The binary reaches the job as a release asset on the scratch repository, which
+// needs no new machinery: PAR-REL-1/2 already prove assets round-trip
+// byte-identically on both forges, the repositories are public so the job fetches
+// without a credential, and nothing about it is lab-specific — the same shape
+// works on k3s and against a real forge.
+func TestInRunner_ProductDetectsItsRunner(t *testing.T) {
+	const tag = "v0.0.1-inrunner"
+
+	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
+		if !livetest.RunsInRunner(kind) {
+			t.Logf("SKIP %s: the in-runner tier does not drive this forge yet", kind)
+
+			continue
+		}
+
+		t.Run(string(kind), func(t *testing.T) {
+			target := livetest.Accept(t, kind)
+			repo := livetest.NewScratchRepo(t, target, "inrunner-product")
+
+			livetest.PrepareTag(t, target, repo, tag)
+			livetest.PublishBinaryAsset(t, target, repo, tag, t.TempDir())
+
+			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
+
+			// The job asserts and fails itself, so the run's conclusion is the
+			// result; the expected dialect is passed in rather than derived in
+			// the job, because what is under test is the product's answer, not
+			// the fixture's cleverness.
+			conclusion := livetest.RunWorkflow(t, target, repo, "detect-runner",
+				productProbe(kind, assetURL, expectedRunner(kind)))
+			if conclusion != "success" {
+				t.Errorf("%s: the product's runner detection concluded %q inside a real job — it is reporting the wrong runtime, so annotations and step summaries go to the wrong place",
+					kind, conclusion)
+			}
+		})
+	}
+}
+
+// expectedRunner is the dialect each forge's runner must be recognised as. The
+// interesting one is Forgejo: it is NOT github, despite presenting GITHUB_*.
+func expectedRunner(kind provider.Platform) string {
+	if kind == provider.PlatformGitLab {
+		return "gitlab"
+	}
+
+	return "forgejo"
+}
+
+func productProbe(kind provider.Platform, assetURL, want string) string {
+	if kind == provider.PlatformGitLab {
+		return `detect:
+  image: quay.io/podman/stable:v5.6.2
+  script:
+    - curl -fsSLk -o reusable-ci "` + assetURL + `"
+    - chmod +x reusable-ci
+    - ./reusable-ci doctor --json > report.json || true
+    - cat report.json
+    - grep -qE '"runner":[[:space:]]*"` + want + `"' report.json
+`
+	}
+
+	return `on: [push]
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: the product reports its own runner
+        run: |
+          curl -fsSLk -o reusable-ci "` + assetURL + `"
+          chmod +x reusable-ci
+          ./reusable-ci doctor --json > report.json || true
+          cat report.json
+          grep -qE '"runner":[[:space:]]*"` + want + `"' report.json
+`
+}

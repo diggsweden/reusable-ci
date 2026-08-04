@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
@@ -190,4 +192,107 @@ func latestRunStatus(ctx context.Context, target Target, repo string) string {
 // failure, for the polling loop.
 func decodeQuiet(ctx context.Context, target Target, endpoint string, into any) (int, error) {
 	return decode(ctx, target, http.MethodGet, endpoint, nil, into, http.StatusOK)
+}
+
+// ReleaseAssetURL asks the forge where a release asset can be downloaded.
+//
+// The URL is read back rather than derived, because on GitLab it cannot be
+// derived: the adapter uploads to project uploads, which mints a path containing
+// a server-generated secret, and then links that URL to the release. GitLab does
+// offer a predictable alternative in the generic packages API, but the URL a
+// consumer actually follows is the one on the release, so asking for it tests
+// the real path instead of a parallel one.
+//
+// Forgejo could be derived (releases/download/<tag>/<name>) and is still read
+// back, so both forges answer the same question the same way and neither has a
+// second source of truth to drift from.
+func ReleaseAssetURL(tb TB, target Target, repo, tag, name string) string {
+	tb.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	switch target.Kind {
+	case provider.PlatformGitLab:
+		var release struct {
+			Assets struct {
+				Links []struct {
+					Name string `json:"name"`
+					URL  string `json:"url"`
+				} `json:"links"`
+			} `json:"assets"`
+		}
+
+		endpoint := target.BaseURL() + "/api/v4/projects/" +
+			url.PathEscape(target.Owner+"/"+repo) + "/releases/" + url.PathEscape(tag)
+		if _, err := decodeQuiet(ctx, target, endpoint, &release); err != nil {
+			tb.Fatalf("livetest: read release %s: %v", tag, err)
+		}
+
+		for _, link := range release.Assets.Links {
+			if link.Name == name {
+				return link.URL
+			}
+		}
+	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
+		var release struct {
+			Assets []struct {
+				Name string `json:"name"`
+				URL  string `json:"browser_download_url"`
+			} `json:"assets"`
+		}
+
+		endpoint := target.BaseURL() + "/api/v1/repos/" + target.Owner + "/" + repo +
+			"/releases/tags/" + url.PathEscape(tag)
+		if _, err := decodeQuiet(ctx, target, endpoint, &release); err != nil {
+			tb.Fatalf("livetest: read release %s: %v", tag, err)
+		}
+
+		for _, asset := range release.Assets {
+			if asset.Name == name {
+				return asset.URL
+			}
+		}
+	}
+
+	tb.Fatalf("livetest: release %s has no asset named %q", tag, name)
+
+	return ""
+}
+
+// PublishBinaryAsset attaches the binary under test to a release, which is how
+// it reaches a job. Named plainly ("reusable-ci") so the workflow fetching it
+// does not have to know the build's filename.
+func PublishBinaryAsset(tb TB, target Target, repo, tag, stageDir string) {
+	tb.Helper()
+
+	forge := Provider(tb, target, repo)
+
+	creator, ok := forge.(provider.ReleaseCreator)
+	if !ok {
+		tb.Fatalf("livetest: %s cannot create releases", target.Kind)
+	}
+
+	staged := filepath.Join(stageDir, "reusable-ci")
+	if err := copyFile(Binary(tb), staged); err != nil {
+		tb.Fatalf("livetest: stage binary: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	if err := creator.CreateRelease(ctx, RepoSlug(target, repo), provider.ReleaseSpec{
+		Tag: tag, Name: "in-runner fixture", Assets: []string{staged},
+	}); err != nil {
+		tb.Fatalf("livetest: publish binary asset: %v", err)
+	}
+}
+
+func copyFile(from, to string) error {
+	data, err := os.ReadFile(from) //nolint:gosec // the built product, handed over by the recipe.
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(to, data, 0o755) //nolint:gosec // must be executable inside the job.
 }
