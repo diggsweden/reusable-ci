@@ -120,14 +120,8 @@ func prepareTag(ctx context.Context, target Target, repo, tag string) error {
 		// async worker, so a tag issued right after creation can race it. The
 		// first API commit to an empty repo creates the default branch
 		// synchronously, which is the deterministic path.
-		commit := map[string]any{
-			"branch":         defaultBranch,
-			"content":        "livetest scratch fixture\n",
-			"commit_message": "livetest: seed a commit to tag",
-		}
-		files := target.BaseURL() + "/api/v4/projects/" + id + "/repository/files/README.md"
-
-		if err := discard(ctx, target, http.MethodPost, files, commit, http.StatusCreated); err != nil {
+		if err := commitFile(ctx, target, repo, "README.md",
+			"livetest: seed a commit to tag", "livetest scratch fixture\n"); err != nil {
 			return err
 		}
 

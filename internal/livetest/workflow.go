@@ -77,17 +77,25 @@ func RunWorkflow(tb TB, target Target, repo, name, yaml string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	commitWorkflow(ctx, tb, target, repo, path, name, yaml)
+	if err := commitFile(ctx, target, repo, path, "livetest: "+name, yaml); err != nil {
+		tb.Fatalf("livetest: commit workflow %s: %v", path, err)
+	}
 
 	return waitForRun(ctx, tb, target, repo, name)
 }
 
-// commitWorkflow writes the workflow through each forge's own file API. The two
-// disagree on everything except the idea: Forgejo takes base64 under "content"
-// with the path in the URL, GitLab takes plain text and calls the message
-// "commit_message".
-func commitWorkflow(ctx context.Context, tb TB, target Target, repo, path, name, yaml string) {
-	tb.Helper()
+// commitFile writes one file to the default branch through whichever file API
+// the forge offers.
+//
+// The two disagree on everything except the idea: Forgejo takes base64 under
+// "content" with the path in the URL, GitLab takes plain text and calls the
+// message "commit_message". Knowing that twice is how the shapes drift, so the
+// scratch fixtures and the workflow fixtures share this one.
+func commitFile(ctx context.Context, target Target, repo, path, message, content string) error {
+	const (
+		fieldBranch  = "branch"
+		fieldContent = "content"
+	)
 
 	var endpoint string
 
@@ -98,22 +106,20 @@ func commitWorkflow(ctx context.Context, tb TB, target Target, repo, path, name,
 		endpoint = target.BaseURL() + "/api/v4/projects/" +
 			url.PathEscape(target.Owner+"/"+repo) + "/repository/files/" + url.PathEscape(path)
 		body = map[string]any{
-			"branch":         defaultBranch,
-			"content":        yaml,
-			"commit_message": "livetest: " + name,
+			fieldBranch:      defaultBranch,
+			fieldContent:     content,
+			"commit_message": message,
 		}
 	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
 		endpoint = target.BaseURL() + "/api/v1/repos/" + target.Owner + "/" + repo + "/contents/" + path
 		body = map[string]any{
-			"content": base64.StdEncoding.EncodeToString([]byte(yaml)),
-			"message": "livetest: " + name,
-			"branch":  defaultBranch,
+			fieldContent: base64.StdEncoding.EncodeToString([]byte(content)),
+			"message":    message,
+			fieldBranch:  defaultBranch,
 		}
 	}
 
-	if _, err := decode(ctx, target, http.MethodPost, endpoint, body, nil, http.StatusCreated); err != nil {
-		tb.Fatalf("livetest: commit workflow %s: %v", path, err)
-	}
+	return discard(ctx, target, http.MethodPost, endpoint, body, http.StatusCreated)
 }
 
 // waitForRun polls until the run reaches a terminal state.
