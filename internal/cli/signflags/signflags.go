@@ -50,6 +50,16 @@ func Cosign(opts CosignOpts) []cli.Flag {
 			Sources: sources(opts.PlanScope, "oidc-issuer", "SIGN_OIDC_ISSUER"),
 			Usage:   "OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms.",
 		},
+		&cli.StringFlag{
+			Name:    "fulcio-url",
+			Sources: sources(opts.PlanScope, "fulcio-url", "SIGN_FULCIO_URL"),
+			Usage:   "certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=kms.",
+		},
+		&cli.StringFlag{
+			Name:    "rekor-url",
+			Sources: sources(opts.PlanScope, "rekor-url", "SIGN_REKOR_URL"),
+			Usage:   "transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=kms.",
+		},
 	}
 }
 

@@ -36,6 +36,23 @@ type BlobSignRequest struct {
 	// Keyless is false.
 	OIDCIssuer string
 
+	// FulcioURL overrides the certificate authority keyless signing asks for
+	// a certificate. Empty uses cosign's default, the public Sigstore CA.
+	//
+	// Needed because a self-hosted Sigstore is not reachable by naming its
+	// OIDC issuer alone: cosign still calls the public Fulcio, and the
+	// signature comes back vouched for by the wrong CA. Regulated and
+	// air-gapped deployments run their own, and until this existed they could
+	// not use keyless signing here at all.
+	FulcioURL string
+
+	// RekorURL overrides the transparency log. Empty uses cosign's default.
+	//
+	// Separate from Transparency, which decides WHETHER to publish: this
+	// decides where. A private Sigstore usually has both, and a lab has a
+	// private Fulcio and no log at all.
+	RekorURL string
+
 	// KeyRef is the cosign --key argument: a KMS URI
 	// (awskms://, gcpkms://, hashivault://, …), a PKCS#11 URI, or
 	// a local key-file path. Must be empty when Keyless is true.

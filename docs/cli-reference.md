@@ -637,6 +637,8 @@ EXAMPLES:
 | `--method` | signing backend: sigstore (keyless cosign + OIDC) or kms (cosign + --key). | `$SIGN_METHOD` |
 | `--key` | cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
+| `--fulcio-url` | certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=kms. | `$SIGN_FULCIO_URL` |
+| `--rekor-url` | transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=kms. | `$SIGN_REKOR_URL` |
 | `--builder-id` | override the SLSA provenance builder.id (e.g. an operator's documented KMS builder identity for an isolated L3 attestor); defaults to the CI-derived workflow identity | `$BUILDER_ID` |
 | `--flavor` | build variant recorded as externalParameters.flavor (e.g. a ci-builder flavor like "rust") | `$BUILD_FLAVOR` |
 | `--base-input-id` | sha256 content id of this build's base inputs, recorded as externalParameters.base_input_id (the SLSA-standard home for base lineage) | `$BASE_INPUT_ID` |
@@ -1116,6 +1118,8 @@ step; promotion remains a separate ledger promote operation.
 | `--method` | signing backend: sigstore (keyless cosign + OIDC) or kms (cosign + --key). gpg is rejected — it cannot sign OCI images. | `$SIGN_METHOD` |
 | `--key` | cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
+| `--fulcio-url` | certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=kms. | `$SIGN_FULCIO_URL` |
+| `--rekor-url` | transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=kms. | `$SIGN_REKOR_URL` |
 
 #### `reusable-ci container ledger validate`
 
@@ -1559,6 +1563,8 @@ sign and attest release images from the confined release-image ledger
 | `--method` | signing backend: sigstore (keyless cosign + OIDC) or kms (cosign + --key). gpg is rejected — it cannot sign OCI images. | `$SIGN_METHOD` |
 | `--key` | cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
+| `--fulcio-url` | certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=kms. | `$SIGN_FULCIO_URL` |
+| `--rekor-url` | transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=kms. | `$SIGN_REKOR_URL` |
 
 #### `reusable-ci container release-images validate`
 
@@ -1662,6 +1668,8 @@ EXAMPLES:
 | `--method` | signing backend: sigstore (keyless cosign + OIDC) or kms (cosign + --key). gpg is rejected — it cannot sign OCI images. | `$SIGN_METHOD` |
 | `--key` | cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
+| `--fulcio-url` | certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=kms. | `$SIGN_FULCIO_URL` |
+| `--rekor-url` | transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=kms. | `$SIGN_REKOR_URL` |
 | `--recursive` | walk manifest-list children, signing each per-arch digest in addition to the list itself. Default true (production releases use multi-arch manifest lists). | `$SIGN_RECURSIVE` |
 
 ### `reusable-ci container suffix-extracted-binaries`
@@ -2553,6 +2561,8 @@ EXAMPLE:
 | `--method` | signing backend: sigstore (keyless cosign + OIDC) or kms (cosign + --key). Omit to generate the statement only (signs when --method or --key is set). | `$SIGN_METHOD` |
 | `--key` | cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore. Empty = generate only. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
+| `--fulcio-url` | certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=kms. | `$SIGN_FULCIO_URL` |
+| `--rekor-url` | transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=kms. | `$SIGN_REKOR_URL` |
 
 ### `reusable-ci release publish`
 

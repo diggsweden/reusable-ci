@@ -57,6 +57,23 @@ type ImageSignRequest struct {
 	// Only meaningful when Keyless is true; must be empty otherwise.
 	OIDCIssuer string
 
+	// FulcioURL overrides the certificate authority keyless signing asks for
+	// a certificate. Empty uses cosign's default, the public Sigstore CA.
+	//
+	// Needed because a self-hosted Sigstore is not reachable by naming its
+	// OIDC issuer alone: cosign still calls the public Fulcio, and the
+	// signature comes back vouched for by the wrong CA. Regulated and
+	// air-gapped deployments run their own, and until this existed they could
+	// not use keyless signing here at all.
+	FulcioURL string
+
+	// RekorURL overrides the transparency log. Empty uses cosign's default.
+	//
+	// Separate from Transparency, which decides WHETHER to publish: this
+	// decides where. A private Sigstore usually has both, and a lab has a
+	// private Fulcio and no log at all.
+	RekorURL string
+
 	// KeyRef is the cosign --key URI for non-keyless signing
 	// (awskms://, hashivault://, etc.). Must be empty when
 	// Keyless is true; required otherwise.
@@ -120,6 +137,12 @@ type ImageAttestRequest struct {
 
 	// OIDCIssuer overrides the default issuer; keyless-only.
 	OIDCIssuer string
+
+	// FulcioURL and RekorURL override the Sigstore services, for a
+	// self-hosted deployment. Keyless-only, and the same reasoning as
+	// ImageSignRequest: an issuer override alone still asks the public CA.
+	FulcioURL string
+	RekorURL  string
 
 	// KeyRef is the cosign --key URI for non-keyless attestation.
 	KeyRef string

@@ -184,12 +184,14 @@ func (a *Adapter) SignBlob(ctx context.Context, in SignBlobInput, errOut io.Writ
 
 	switch {
 	case in.Keyless:
-		// cosign infers OIDC token from the runner; --oidc-issuer
-		// is only set when the caller wants to override (e.g.
-		// self-hosted Fulcio, GitLab, Forgejo).
+		// cosign infers the OIDC token from the runner; --oidc-issuer is only
+		// set when the caller overrides it (GitLab, Forgejo, or a self-hosted
+		// identity provider).
 		if in.OIDCIssuer != "" {
 			args = append(args, "--oidc-issuer", in.OIDCIssuer)
 		}
+
+		args = keylessEndpoints(args, in.FulcioURL, in.RekorURL)
 	default:
 		args = append(args, "--key", in.KeyRef)
 	}
@@ -271,6 +273,8 @@ func (a *Adapter) SignImage(ctx context.Context, in SignImageInput, errOut io.Wr
 		if in.OIDCIssuer != "" {
 			args = append(args, "--oidc-issuer", in.OIDCIssuer)
 		}
+
+		args = keylessEndpoints(args, in.FulcioURL, in.RekorURL)
 	default:
 		args = append(args, "--key", in.KeyRef)
 	}
@@ -278,6 +282,32 @@ func (a *Adapter) SignImage(ctx context.Context, in SignImageInput, errOut io.Wr
 	args = append(args, in.ImageRef)
 
 	return a.run(ctx, errOut, args...)
+}
+
+// keylessEndpoints appends the service overrides a self-hosted Sigstore needs.
+//
+// cosign takes these as flags with no environment equivalent, so an operator
+// running their own Fulcio cannot configure it out of band -- the URL has to be
+// on the argv or the request goes to public Sigstore. Naming the OIDC issuer is
+// not enough on its own and looks like it should be, which is the trap: the
+// token is minted by the right issuer and then presented to the wrong CA.
+//
+// Not folded into the --signing-config document this adapter already writes.
+// That document names services as structured entries carrying API versions and
+// validity windows, and the version written here is deliberately minimal
+// because it names nothing at all. Hand-assembling a service entry would mean
+// encoding a schema this package does not otherwise depend on, to reach the
+// same place two documented flags reach.
+func keylessEndpoints(args []string, fulcioURL, rekorURL string) []string {
+	if fulcioURL != "" {
+		args = append(args, "--fulcio-url", fulcioURL)
+	}
+
+	if rekorURL != "" {
+		args = append(args, "--rekor-url", rekorURL)
+	}
+
+	return args
 }
 
 // AttestImageInput drives a single `cosign attest <image-ref>`
@@ -328,6 +358,8 @@ func (a *Adapter) AttestImage(ctx context.Context, in AttestImageInput, errOut i
 		if in.OIDCIssuer != "" {
 			args = append(args, "--oidc-issuer", in.OIDCIssuer)
 		}
+
+		args = keylessEndpoints(args, in.FulcioURL, in.RekorURL)
 	default:
 		args = append(args, "--key", in.KeyRef)
 	}

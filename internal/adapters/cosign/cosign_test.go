@@ -468,3 +468,71 @@ func TestVerifyBlob_RejectsKeylessWithoutIdentity(t *testing.T) {
 		t.Errorf("keyless verify without identity constraints must reject as ErrUsage, got %v", err)
 	}
 }
+
+// A self-hosted Sigstore is reached by naming its CA, not only its issuer.
+//
+// The failure this pins is quiet and expensive: with only --oidc-issuer set,
+// cosign mints a token from the operator's own identity provider and then
+// presents it to the PUBLIC Fulcio, which either refuses it or -- worse for an
+// air-gapped deployment -- is contacted at all. The URLs are cosign flags with
+// no environment equivalent, so nothing outside the argv can correct it.
+func TestSignBlob_KeylessSelfHostedSigstoreArgvShape(t *testing.T) {
+	bins := mockbinary.New(t)
+	bins.Add("cosign", ":")
+
+	a := &cosign.Adapter{Bin: bins.Path("cosign")}
+
+	err := a.SignBlob(context.Background(), cosign.SignBlobInput{
+		Artifact:   "app.tgz",
+		BundlePath: "app.tgz.bundle",
+		Keyless:    true,
+		OIDCIssuer: "https://gitlab.example.internal",
+		FulcioURL:  "https://fulcio.example.internal",
+		RekorURL:   "https://rekor.example.internal",
+	}, nil)
+	if err != nil {
+		t.Fatalf("SignBlob: %v", err)
+	}
+
+	want := []string{
+		"sign-blob", "--yes",
+		"--bundle", "app.tgz.bundle",
+		"--oidc-issuer", "https://gitlab.example.internal",
+		"--fulcio-url", "https://fulcio.example.internal",
+		"--rekor-url", "https://rekor.example.internal",
+		"app.tgz",
+	}
+
+	invs := bins.Invocations("cosign")
+	if len(invs) != 1 {
+		t.Fatalf("expected 1 cosign invocation, got %d", len(invs))
+	}
+
+	if !slices.Equal(invs[0].Args, want) {
+		t.Errorf("argv:\n got=%v\nwant=%v", invs[0].Args, want)
+	}
+}
+
+// Unset endpoints must not appear at all, so the default stays cosign's own
+// rather than an empty flag value cosign would reject.
+func TestSignBlob_KeylessWithoutEndpointsOmitsThem(t *testing.T) {
+	bins := mockbinary.New(t)
+	bins.Add("cosign", ":")
+
+	a := &cosign.Adapter{Bin: bins.Path("cosign")}
+
+	if err := a.SignBlob(context.Background(), cosign.SignBlobInput{
+		Artifact:   "app.tgz",
+		BundlePath: "app.tgz.bundle",
+		Keyless:    true,
+	}, nil); err != nil {
+		t.Fatalf("SignBlob: %v", err)
+	}
+
+	got := bins.Invocations("cosign")[0].Args
+	for _, flag := range []string{"--fulcio-url", "--rekor-url"} {
+		if slices.Contains(got, flag) {
+			t.Errorf("argv carries %s with nothing set: %v", flag, got)
+		}
+	}
+}
