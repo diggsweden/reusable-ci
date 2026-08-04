@@ -37,7 +37,6 @@ func validContract(now time.Time) (Target, contract, tokenMetadata) {
 		schemaVersion:  contractSchemaVersion,
 		runID:          "run-live-1",
 		refs:           []targetRef{{kind: "forgejo", host: "forgejo.compose.gitproviderlab:8443", owner: "garga"}},
-		road:           "compose",
 		resourcePrefix: ResourcePrefix,
 		identity:       identity,
 		confirmation:   confirmDestroy + "|" + identity,
@@ -72,11 +71,6 @@ func TestValidate_Contract_Scenarios(t *testing.T) {
 		{
 			name:    "malformed_run_id",
 			mutate:  func(_ *Target, c *contract, _ *tokenMetadata) { c.runID = "Run-Live-1" },
-			wantErr: true,
-		},
-		{
-			name:    "unknown_road",
-			mutate:  func(_ *Target, c *contract, _ *tokenMetadata) { c.road = "podman" },
 			wantErr: true,
 		},
 		{

@@ -128,7 +128,6 @@ type contract struct {
 	schemaVersion  string
 	runID          string
 	refs           []targetRef
-	road           string
 	resourcePrefix string
 	identity       string
 	confirmation   string
@@ -179,7 +178,6 @@ func Accept(tb TB, kind provider.Platform) Target {
 		schemaVersion:  os.Getenv("LAB_TARGETS_SCHEMA_VERSION"),
 		runID:          os.Getenv("LAB_RUN_ID"),
 		refs:           selectedRefs(),
-		road:           os.Getenv("LAB_ROAD"),
 		resourcePrefix: os.Getenv("LAB_RESOURCE_PREFIX"),
 		identity:       os.Getenv("LAB_LIVE_EXPECTED_IDENTITY"),
 		confirmation:   os.Getenv(confirmDestroyEnv),
@@ -231,10 +229,6 @@ func validateContractShape(sourced contract) error {
 
 	if !runIDPattern.MatchString(sourced.runID) {
 		return fmt.Errorf("run ID %q does not match [a-z0-9][a-z0-9-]{2,39}: %w", sourced.runID, errs.ErrValidation)
-	}
-
-	if sourced.road != "compose" && sourced.road != "k3s" {
-		return fmt.Errorf("road must be compose or k3s, got %q: %w", sourced.road, errs.ErrValidation)
 	}
 
 	// The prefix must both be well-formed and be *ours*. A contract minted for
