@@ -299,6 +299,53 @@ func SignaturePublishedToTransparencyLog(tb TB, target Target, repo, digest stri
 	return false
 }
 
+// RegistrySnapshot records every tag in a repository and the digest it serves.
+//
+// It exists for the dry-run scenarios, where the claim is "the registry is
+// exactly as it was". Comparing whole snapshots rather than the tags a verb was
+// expected to touch is the point: a dry-run that quietly wrote some OTHER tag
+// would pass a narrower check, and the promise is that nothing was mutated, not
+// that the predicted mutation was skipped.
+func RegistrySnapshot(tb TB, target Target, repo string) map[string]string {
+	tb.Helper()
+
+	host, err := RegistryHost(target)
+	if err != nil {
+		tb.Fatalf("livetest: %v", err)
+	}
+
+	auth := remote.WithAuth(&authn.Basic{Username: target.Owner, Password: target.Token})
+
+	repository, err := name.NewRepository(fmt.Sprintf("%s/%s/%s", host, target.Owner, repo))
+	if err != nil {
+		tb.Fatalf("livetest: parse repository: %v", err)
+	}
+
+	tags, err := remote.List(repository, auth)
+	if err != nil {
+		// A repository with nothing pushed yet is an empty snapshot, not a
+		// failure: a scenario may snapshot before its first push.
+		if strings.Contains(err.Error(), "NAME_UNKNOWN") || strings.Contains(err.Error(), "404") {
+			return map[string]string{}
+		}
+
+		tb.Fatalf("livetest: list tags for %s: %v", repo, err)
+	}
+
+	snapshot := make(map[string]string, len(tags))
+
+	for _, tag := range tags {
+		digest, found := ImageDigest(tb, target, repo, tag)
+		if !found {
+			continue
+		}
+
+		snapshot[tag] = digest
+	}
+
+	return snapshot
+}
+
 // ImageDigest asks the registry what it currently serves for a tag. Absent is
 // ("", false, nil): a tag that is gone is an answer scenarios assert on.
 func ImageDigest(tb TB, target Target, repo, tag string) (string, bool) {
