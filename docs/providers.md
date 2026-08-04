@@ -93,8 +93,17 @@ than fail when a capability is missing.
 | Container tag listing (package/registry API) | ❌ | ✅ | ✅ | ❌ |
 
 This matrix is not maintained by hand: `PAR-CAP-1` renders it from what the
-adapters actually implement and fails when the two drift, and the live
-conformance tier exercises each claim against a real forge.
+adapters actually implement and fails when the two drift.
+
+Two things it does **not** say. Each row is read from an adapter given an *empty*
+environment, so it describes the forge's canonical hosted instance — a
+self-hosted deployment can differ, and for the public-Fulcio row it does: only
+github.com and gitlab.com publish an issuer public Fulcio trusts, so the product
+reports `false` there on GitHub Enterprise Server or behind a `$CI_SERVER_URL`,
+and says so up front rather than failing inside cosign. And the live conformance
+tier exercises what the *lab* can host, which is GitLab and Forgejo; the rows
+that only github claims — SARIF upload and the attestation API — are covered
+only by their absence elsewhere (`PAR-CAP-2`).
 
 How commands degrade when a capability is absent:
 
