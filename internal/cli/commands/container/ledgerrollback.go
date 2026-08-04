@@ -24,6 +24,7 @@ func ledgerRollbackCmd() *cli.Command {
 		Flags: []cli.Flag{
 			ledgerPathFlag(),
 			releaseTagFlag(),
+			ledgerAuthFileFlag("registry auth file for the digest checks the rollback makes before deleting"),
 			stageFlag(),
 			stageRepoFlag(),
 			releaseTagsFromLedgerFlag(),
@@ -51,7 +52,7 @@ func ledgerRollbackFromJournal(ctx context.Context, cmd *cli.Command, dep *deps.
 		return err
 	}
 
-	reg, err := promotionRollbackReg(dep, dryrun.Enabled(cmd))
+	reg, err := promotionRollbackReg(dep, dryrun.Enabled(cmd), ledgerRegistry(cmd))
 	if err != nil {
 		return err
 	}
@@ -67,7 +68,7 @@ func ledgerRollbackFromLedger(ctx context.Context, cmd *cli.Command, dep *deps.D
 		return err
 	}
 
-	reg, err := cleanupReg(dep, dryrun.Enabled(cmd))
+	reg, err := cleanupReg(dep, dryrun.Enabled(cmd), ledgerRegistry(cmd))
 	if err != nil {
 		return err
 	}

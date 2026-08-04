@@ -9,8 +9,10 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/ociregistry"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/dryrun"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
 )
@@ -127,6 +129,27 @@ func promotionJournalFlag() cli.Flag {
 		Sources: cli.EnvVars("IMAGE_PROMOTIONS_JOURNAL"),
 		Usage:   "JSONL promotion rollback journal; promote writes it before tag moves, rollback restores/deletes from it",
 	}
+}
+
+// ledgerAuthFileFlag is the shared --auth-file flag of every ledger verb that
+// reaches a registry. The ledger family is the most registry-dependent part of
+// the product — capture, verify, promote, cleanup and rollback all read or write
+// one — so leaving them keychain-only made them the only container verbs whose
+// credentials could not be stated explicitly. usage carries the verb-specific
+// wording, matching how the image/manifest verbs declare the same flag.
+func ledgerAuthFileFlag(usage string) cli.Flag {
+	return regflags.AuthFile(regflags.AuthFileOpts{Usage: usage})
+}
+
+// ledgerRegistry builds the registry adapter for a ledger verb: an explicit
+// --auth-file (or $REUSABLE_CI_REGISTRY_AUTH_FILE) when given, otherwise the
+// ambient keychain, which is what a `docker login` in the job leaves behind.
+func ledgerRegistry(cmd *cli.Command) *ociregistry.Adapter {
+	if authFile := cmd.String(flagAuthFile); authFile != "" {
+		return ociregistry.WithAuthFile(authFile)
+	}
+
+	return ociregistry.New()
 }
 
 func releaseTagFlag() cli.Flag {

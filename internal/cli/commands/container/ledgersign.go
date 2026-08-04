@@ -35,6 +35,7 @@ step; promotion remains a separate ledger promote operation.`,
 			[]cli.Flag{
 				ledgerPathFlag(),
 				releaseTagFlag(),
+				ledgerAuthFileFlag("registry auth file for resolving each image before signing"),
 				&cli.StringFlag{Name: "provenance-predicate", Value: "dist/slsa-provenance.predicate.json", Sources: cli.EnvVars("SLSA_PROVENANCE_PREDICATE"), Usage: "base SLSA provenance predicate JSON enriched per image before attestation"},
 				&cli.StringFlag{Name: flagProvenanceEnvelope, Sources: cli.EnvVars("SLSA_PROVENANCE_ENVELOPE"), Usage: "in-toto statement JSON; its .predicate is enriched per image before attestation"},
 				&cli.BoolFlag{Name: flagRecursive, Sources: cli.EnvVars("LEDGER_SIGN_RECURSIVE"), Usage: "pass --recursive to cosign sign/attest for manifest-list children (default false to match forgejo-ci signer behavior)"},
@@ -69,7 +70,7 @@ step; promotion remains a separate ledger promote operation.`,
 
 			return runLedgerSign(ctx,
 				cosign.New(),
-				ociregistry.New(),
+				ledgerRegistry(cmd),
 				appcontainer.SignLedgerImagesInput{
 					Entries:                 entries,
 					ReleaseTag:              cmd.String(flagTag),

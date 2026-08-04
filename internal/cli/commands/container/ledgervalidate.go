@@ -10,7 +10,6 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/adapters/ociregistry"
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
@@ -62,6 +61,7 @@ func ledgerVerifyDigestsCmd() *cli.Command {
 		Flags: []cli.Flag{
 			ledgerPathFlag(),
 			releaseTagFlag(),
+			ledgerAuthFileFlag("registry auth file for the recorded-digest checks"),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			data, err := cliio.ReadFile(cmd.String(flagLedger))
@@ -74,7 +74,7 @@ func ledgerVerifyDigestsCmd() *cli.Command {
 				return err
 			}
 
-			if err := imageledger.Verify(ctx, ociregistry.New(), entries, cmd.String(flagTag)); err != nil {
+			if err := imageledger.Verify(ctx, ledgerRegistry(cmd), entries, cmd.String(flagTag)); err != nil {
 				return err
 			}
 

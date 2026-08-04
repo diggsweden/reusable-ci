@@ -12,7 +12,6 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/adapters/ociregistry"
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -58,6 +57,7 @@ func ledgerAddCmd() *cli.Command {
 			&cli.StringFlag{Name: "candidate-tag", Usage: "optional staging tag ref (scoped to staging-<tag>); derived from --image-name when omitted"},
 			&cli.StringFlag{Name: "base-ref", Usage: "optional digest-pinned base image"},
 			&cli.StringFlag{Name: flagBaseInputID, Usage: "optional base-image input identifier (SLSA lineage)"},
+			ledgerAuthFileFlag("registry auth file for --capture-digest"),
 			&cli.BoolFlag{Name: "capture-digest", Usage: "resolve the digest from the registry (single source of truth) instead of --ref/--digest; reads the candidate or final tag"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -93,7 +93,7 @@ func ledgerAddCmd() *cli.Command {
 			// Digest capture hits the registry — do it before taking the
 			// lock so we never hold the ledger lock across a network call.
 			if cmd.Bool("capture-digest") {
-				if err := captureEntryDigest(ctx, ociregistry.New(), &entry); err != nil {
+				if err := captureEntryDigest(ctx, ledgerRegistry(cmd), &entry); err != nil {
 					return err
 				}
 			}

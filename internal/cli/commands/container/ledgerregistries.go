@@ -48,9 +48,9 @@ func (r promotionRollbackRegistry) DeleteTag(ctx context.Context, ref string) er
 // dry-run it previews via the in-memory decorator (no forge needed); a
 // real run resolves digests via docker and deletes via the active
 // forge's tag-scoped package API (gated by RequireTagDeleter).
-func cleanupReg(d *deps.Deps, dryRun bool) (imageledger.CleanupRegistry, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+func cleanupReg(d *deps.Deps, dryRun bool, reg *ociregistry.Adapter) (imageledger.CleanupRegistry, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if dryRun {
-		return newDryRunRegistry(ociregistry.New(), os.Stderr), nil
+		return newDryRunRegistry(reg, os.Stderr), nil
 	}
 
 	deleter, err := d.RequireTagDeleter()
@@ -61,14 +61,14 @@ func cleanupReg(d *deps.Deps, dryRun bool) (imageledger.CleanupRegistry, error) 
 	// Narrate each real deletion to stderr (audit trail), matching the
 	// per-tag visibility the dry-run path already gives.
 	return auditDeleter{
-		CleanupRegistry: cleanupRegistry{resolver: ociregistry.New(), deleter: deleter},
+		CleanupRegistry: cleanupRegistry{resolver: reg, deleter: deleter},
 		out:             os.Stderr,
 	}, nil
 }
 
-func promotionRollbackReg(d *deps.Deps, dryRun bool) (imageledger.PromotionRollbackRegistry, error) { //nolint:varnamelen // idiomatic short name.
+func promotionRollbackReg(d *deps.Deps, dryRun bool, reg *ociregistry.Adapter) (imageledger.PromotionRollbackRegistry, error) { //nolint:varnamelen // idiomatic short name.
 	if dryRun {
-		return newDryRunRegistry(ociregistry.New(), os.Stderr), nil
+		return newDryRunRegistry(reg, os.Stderr), nil
 	}
 
 	deleter, err := d.RequireTagDeleter()
@@ -77,7 +77,7 @@ func promotionRollbackReg(d *deps.Deps, dryRun bool) (imageledger.PromotionRollb
 	}
 
 	return auditPromotionRollbackRegistry{
-		PromotionRollbackRegistry: promotionRollbackRegistry{Registry: ociregistry.New(), deleter: deleter},
+		PromotionRollbackRegistry: promotionRollbackRegistry{Registry: reg, deleter: deleter},
 		out:                       os.Stderr,
 	}, nil
 }

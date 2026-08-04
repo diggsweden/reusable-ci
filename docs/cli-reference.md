@@ -1001,6 +1001,7 @@ EXAMPLES:
 | `--candidate-tag` | optional staging tag ref (scoped to staging-<tag>); derived from --image-name when omitted | n/a |
 | `--base-ref` | optional digest-pinned base image | n/a |
 | `--base-input-id` | optional base-image input identifier (SLSA lineage) | n/a |
+| `--auth-file` | registry auth file for --capture-digest | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
 | `--capture-digest` | resolve the digest from the registry (single source of truth) instead of --ref/--digest; reads the candidate or final tag | n/a |
 
 #### `reusable-ci container ledger cleanup`
@@ -1016,6 +1017,7 @@ EXAMPLE:
 |------|-------------|----------|
 | `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
 | `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--auth-file` | registry auth file for the promoted-tag verification | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
 | `--expected-image-repository` | optional exact image repository allowed for ledger refs/tags at the signer/publisher boundary | `$LEDGER_EXPECTED_IMAGE_REPOSITORY` |
 | `--dry-run` | preview registry mutations (copies/deletes) without performing them | n/a |
 
@@ -1051,6 +1053,7 @@ EXAMPLES:
 |------|-------------|----------|
 | `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
 | `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--auth-file` | registry auth file for the promotion copies and digest verification | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
 | `--stage` | promotion stage: 'release' adds the <base>:release pointer and enforces the release scope; a named stage ('dev', 'staging') adds <base>:<stage> on the same digest and needs no --tag. The immutable :<version> tag is build-only. | `$PROMOTE_STAGE` |
 | `--stage-repo` | rehome the promotion onto a destination registry/namespace PREFIX (e.g. a sovereign codeberg.org/owner); each image lands at <prefix>/<image-name>, so a multi-container release never collides. A different registry is a cross-registry promotion that copies the signature via cosign | `$PROMOTE_STAGE_REPO` |
 | `--release-tags-from-ledger` | for the release stage, promote to each entry's final_tag and optional moving_tag instead of the generic <base>:release pointer | `$PROMOTE_RELEASE_TAGS_FROM_LEDGER` |
@@ -1072,6 +1075,7 @@ EXAMPLE:
 |------|-------------|----------|
 | `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
 | `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--auth-file` | registry auth file for the digest checks the rollback makes before deleting | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
 | `--stage` | promotion stage: 'release' adds the <base>:release pointer and enforces the release scope; a named stage ('dev', 'staging') adds <base>:<stage> on the same digest and needs no --tag. The immutable :<version> tag is build-only. | `$PROMOTE_STAGE` |
 | `--stage-repo` | rehome the promotion onto a destination registry/namespace PREFIX (e.g. a sovereign codeberg.org/owner); each image lands at <prefix>/<image-name>, so a multi-container release never collides. A different registry is a cross-registry promotion that copies the signature via cosign | `$PROMOTE_STAGE_REPO` |
 | `--release-tags-from-ledger` | for the release stage, promote to each entry's final_tag and optional moving_tag instead of the generic <base>:release pointer | `$PROMOTE_RELEASE_TAGS_FROM_LEDGER` |
@@ -1097,6 +1101,7 @@ step; promotion remains a separate ledger promote operation.
 |------|-------------|----------|
 | `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
 | `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--auth-file` | registry auth file for resolving each image before signing | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
 | `--provenance-predicate` | base SLSA provenance predicate JSON enriched per image before attestation | `$SLSA_PROVENANCE_PREDICATE` |
 | `--provenance-envelope` | in-toto statement JSON; its .predicate is enriched per image before attestation | `$SLSA_PROVENANCE_ENVELOPE` |
 | `--recursive` | pass --recursive to cosign sign/attest for manifest-list children (default false to match forgejo-ci signer behavior) | `$LEDGER_SIGN_RECURSIVE` |
@@ -1135,6 +1140,7 @@ EXAMPLE:
 |------|-------------|----------|
 | `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
 | `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
+| `--auth-file` | registry auth file for the recorded-digest checks | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
 
 ### `reusable-ci container login`
 

@@ -24,6 +24,7 @@ func ledgerCleanupCmd() *cli.Command {
 		Flags: []cli.Flag{
 			ledgerPathFlag(),
 			releaseTagFlag(),
+			ledgerAuthFileFlag("registry auth file for the promoted-tag verification"),
 			expectedImageRepositoryFlag(),
 			dryRunFlag(),
 		},
@@ -34,7 +35,7 @@ func ledgerCleanupCmd() *cli.Command {
 					return err
 				}
 
-				reg, err := cleanupReg(d, dryrun.Enabled(cmd))
+				reg, err := cleanupReg(d, dryrun.Enabled(cmd), ledgerRegistry(cmd))
 				if err != nil {
 					return err
 				}

@@ -13,7 +13,6 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/cosign"
-	"github.com/diggsweden/reusable-ci/v3/internal/adapters/ociregistry"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/dryrun"
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
@@ -40,6 +39,7 @@ func ledgerPromoteCmd() *cli.Command {
 		Flags: []cli.Flag{
 			ledgerPathFlag(),
 			releaseTagFlag(),
+			ledgerAuthFileFlag("registry auth file for the promotion copies and digest verification"),
 			stageFlag(),
 			stageRepoFlag(),
 			releaseTagsFromLedgerFlag(),
@@ -68,7 +68,7 @@ func ledgerPromoteCmd() *cli.Command {
 				realSigCopier = cosignSigCopier{cosign: cosign.New(), out: os.Stderr}
 			}
 
-			reg, sigCopier := promotionRegistries(ociregistry.New(), dryrun.Enabled(cmd), realSigCopier)
+			reg, sigCopier := promotionRegistries(ledgerRegistry(cmd), dryrun.Enabled(cmd), realSigCopier)
 
 			return runLedgerPromotion(ctx, promotionRun{
 				reg:            reg,
