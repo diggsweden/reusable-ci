@@ -73,10 +73,12 @@ var (
 	_ provider.ReleasePublisher        = (*Provider)(nil)
 	_ provider.ReleaseAssetUploader    = (*Provider)(nil)
 	_ provider.Describer               = (*Provider)(nil)
+	_ provider.WebURLBuilder           = (*Provider)(nil)
 	_ provider.CapabilityReporter      = (*Provider)(nil)
 	_ provider.SigningIdentityResolver = (*Provider)(nil)
 	_ provider.RegistryAuthResolver    = (*Provider)(nil)
 	_ provider.TagDeleter              = (*Provider)(nil)
+	_ provider.ContainerPackageLister  = (*Provider)(nil)
 )
 
 // apiContext resolves the API root and auth headers every GitLab call needs:

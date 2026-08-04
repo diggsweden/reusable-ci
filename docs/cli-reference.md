@@ -661,10 +661,15 @@ bootstrap remain owned by the caller.
 delete promoted and stale staging base-image tags safely
 
 ```
-Deletes staging container package versions through the Forgejo
-package API, never by manifest digest. Final tags are resolved before and after
-each promoted candidate deletion; stale staging versions are swept only after
-their version names pass the base-image staging policy.
+Deletes staging container versions through the active forge's
+package/registry API, never by manifest digest — staging and final tags share one
+manifest, so a digest delete would destroy the promoted image. Final tags are
+resolved before and after each promoted candidate deletion; stale staging versions
+are swept only after their version names pass the base-image staging policy.
+
+Requires a forge implementing both container tag listing and tag deletion
+(see the capability matrix in docs/providers.md); others refuse with an
+"unsupported" error rather than deleting unsafely.
 ```
 
 | Flag | Description | Env vars |
@@ -1057,7 +1062,7 @@ EXAMPLES:
 | `--stage` | promotion stage: 'release' adds the <base>:release pointer and enforces the release scope; a named stage ('dev', 'staging') adds <base>:<stage> on the same digest and needs no --tag. The immutable :<version> tag is build-only. | `$PROMOTE_STAGE` |
 | `--stage-repo` | rehome the promotion onto a destination registry/namespace PREFIX (e.g. a sovereign codeberg.org/owner); each image lands at <prefix>/<image-name>, so a multi-container release never collides. A different registry is a cross-registry promotion that copies the signature via cosign | `$PROMOTE_STAGE_REPO` |
 | `--release-tags-from-ledger` | for the release stage, promote to each entry's final_tag and optional moving_tag instead of the generic <base>:release pointer | `$PROMOTE_RELEASE_TAGS_FROM_LEDGER` |
-| `--allow-digest-ref-fallback` | when candidate_tag is absent or no longer serves the recorded digest, copy from the ledger ref digest instead (Forgejo release rerun recovery) | `$PROMOTE_ALLOW_DIGEST_REF_FALLBACK` |
+| `--allow-digest-ref-fallback` | when candidate_tag is absent or no longer serves the recorded digest, copy from the ledger ref digest instead; recovers a re-run release whose candidate tag has since been cleaned up | `$PROMOTE_ALLOW_DIGEST_REF_FALLBACK` |
 | `--expected-image-repository` | optional exact image repository allowed for ledger refs/tags at the signer/publisher boundary | `$LEDGER_EXPECTED_IMAGE_REPOSITORY` |
 | `--journal` | JSONL promotion rollback journal; promote writes it before tag moves, rollback restores/deletes from it | `$IMAGE_PROMOTIONS_JOURNAL` |
 | `--dry-run` | preview registry mutations (copies/deletes) without performing them | n/a |

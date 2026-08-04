@@ -9,20 +9,26 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/adapters/forgejo"
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/ociregistry"
 	appbaseimages "github.com/diggsweden/reusable-ci/v3/internal/app/baseimages"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
 func baseImagesCleanupCmd() *cli.Command {
 	return &cli.Command{
 		Name:  subCmdCleanup,
 		Usage: "delete promoted and stale staging base-image tags safely",
-		Description: `Deletes staging container package versions through the Forgejo
-package API, never by manifest digest. Final tags are resolved before and after
-each promoted candidate deletion; stale staging versions are swept only after
-their version names pass the base-image staging policy.`,
+		Description: `Deletes staging container versions through the active forge's
+package/registry API, never by manifest digest — staging and final tags share one
+manifest, so a digest delete would destroy the promoted image. Final tags are
+resolved before and after each promoted candidate deletion; stale staging versions
+are swept only after their version names pass the base-image staging policy.
+
+Requires a forge implementing both container tag listing and tag deletion
+(see the capability matrix in docs/providers.md); others refuse with an
+"unsupported" error rather than deleting unsafely.`,
 		Flags: append(baseImagesRepositoryFlags(),
 			&cli.StringFlag{Name: "shared-core-images-json", Value: "[]", Sources: cli.EnvVars("SHARED_CORE_IMAGES_JSON"), Usage: "JSON array of shared-core base image metadata"},
 			&cli.StringFlag{Name: "base-images-json", Value: "[]", Sources: cli.EnvVars("BASE_IMAGES_JSON"), Usage: "JSON array of base image metadata"},
@@ -55,19 +61,22 @@ their version names pass the base-image staging policy.`,
 				registry = ociregistry.WithAuthFile(authFile)
 			}
 
-			// Base-image cleanup is forge-gated (it drives the package API's
-			// TagDeleter + ContainerPackageLister roles, and Forgejo is the
-			// only forge implementing both) and
-			// needs the normalized --server-url injected as the Forgejo server,
-			// so it constructs the provider directly rather than resolving the
-			// env-detected one through deps.
-			forgeProvider := &forgejo.Provider{Env: func(key string) string {
-				if key == "FORGEJO_SERVER_URL" && common.ServerURL != "" {
-					return common.ServerURL
-				}
+			// Base-image cleanup drives two package-API roles, TagDeleter and
+			// ContainerPackageLister. It used to construct a Forgejo provider
+			// outright, which meant it ran on one forge no matter which roles
+			// the others implemented; it now resolves the active forge and
+			// refuses by role, so any forge implementing both is supported and
+			// the rest get the same typed "unsupported" refusal as every other
+			// capability gap.
+			forge, err := deps.ProviderWithServerURL(common.ServerURL)
+			if err != nil {
+				return err
+			}
 
-				return os.Getenv(key)
-			}}
+			forgeProvider, err := deps.RoleFrom[baseImageStagingCleaner](forge, "base-image staging cleanup")
+			if err != nil {
+				return err
+			}
 
 			return appbaseimages.CleanupStagingBaseImages(ctx, registry, forgeProvider, os.Stderr, appbaseimages.BaseImageCleanupStagingInput{
 				Images:             append(sharedImages, baseImages...),
@@ -76,4 +85,13 @@ their version names pass the base-image staging policy.`,
 			})
 		},
 	}
+}
+
+// baseImageStagingCleaner is the package-API surface base-image staging cleanup
+// needs. It mirrors the app's own composition of the two port roles so the CLI
+// can refuse before doing any work, with a message naming the whole capability
+// rather than whichever half was missing.
+type baseImageStagingCleaner interface {
+	provider.TagDeleter
+	provider.ContainerPackageLister
 }

@@ -89,6 +89,7 @@ than fail when a capability is missing.
 | Release asset upload | ✅ | ✅ | ✅ | ❌ |
 | Run artifact upload/download | ✅ | ❌ | ✅ | ❌ |
 | Container tag deletion (package/registry API) | ❌ | ✅ | ✅ | ❌ |
+| Container tag listing (package/registry API) | ❌ | ✅ | ✅ | ❌ |
 
 How commands degrade when a capability is absent:
 

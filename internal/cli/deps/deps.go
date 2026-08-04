@@ -176,6 +176,16 @@ func (d *Deps) RepoMetadataFetcher() provider.RepoMetadataFetcher {
 	return d.Provider.(provider.RepoMetadataFetcher) //nolint:forcetypeassert // every wired Provider implements it; compile-time enforced by adapter conformance vars
 }
 
+// WebURLBuilder returns the role when the active provider implements it, and
+// nil when it does not. Absence is an ordinary outcome here rather than an
+// error: a platform with no hosted web UI renders a placeholder, so this does
+// not go through requireRole.
+func (d *Deps) WebURLBuilder() provider.WebURLBuilder {
+	builder, _ := d.Provider.(provider.WebURLBuilder)
+
+	return builder
+}
+
 func unsupportedRoleError(p provider.Platform, capability string) error {
 	return fmt.Errorf("%s is not supported on platform %q: %w", capability, p, errs.ErrUnsupported)
 }
@@ -307,6 +317,83 @@ func providerFor(forge provider.Platform) (provider.Provider, error) {
 	default:
 		return nil, fmt.Errorf("unsupported platform: %q: %w", forge, errs.ErrValidation)
 	}
+}
+
+// serverURLEnvKey names the variable each adapter reads its server URL from.
+// A verb with a --server-url flag needs to reach whichever forge is active
+// without knowing which one that is, and every adapter already resolves its
+// server from the environment, so overlaying the right key is the whole
+// mechanism. Platforms with no such variable (local) return "".
+func serverURLEnvKey(forge provider.Platform) string {
+	switch forge {
+	case provider.PlatformGitHub:
+		return "GITHUB_SERVER_URL"
+	case provider.PlatformGitLab:
+		return "CI_SERVER_URL"
+	case provider.PlatformForgejo:
+		return "FORGEJO_SERVER_URL"
+	case provider.PlatformLocal:
+		return ""
+	}
+
+	return ""
+}
+
+// ProviderWithServerURL builds the adapter for the detected forge with an
+// explicit server URL overlaid on the environment.
+//
+// It exists so a verb that takes --server-url stays forge-agnostic: previously
+// the one such verb constructed a Forgejo provider directly, which is why it
+// worked on exactly one forge regardless of what the roles supported. An empty
+// serverURL is the ordinary env-detected provider.
+func ProviderWithServerURL(serverURL string) (provider.Provider, error) {
+	forge := platform.Detect()
+
+	key := serverURLEnvKey(forge)
+	if serverURL == "" || key == "" {
+		return providerFor(forge)
+	}
+
+	return providerForWithEnv(forge, func(name string) string {
+		if name == key {
+			return serverURL
+		}
+
+		return os.Getenv(name)
+	})
+}
+
+// providerForWithEnv is providerFor with the adapter's environment source
+// replaced. Every adapter carries the same Env seam, so this stays a single
+// switch rather than per-forge construction at each call site.
+func providerForWithEnv(forge provider.Platform, env func(string) string) (provider.Provider, error) {
+	switch forge {
+	case provider.PlatformGitHub:
+		return &github.Provider{Env: env}, nil
+	case provider.PlatformGitLab:
+		return &gitlab.Provider{Env: env}, nil
+	case provider.PlatformForgejo:
+		return &forgejo.Provider{Env: env}, nil
+	case provider.PlatformLocal:
+		return &local.Provider{Env: env}, nil
+	default:
+		return nil, fmt.Errorf("unsupported platform: %q: %w", forge, errs.ErrValidation)
+	}
+}
+
+// RoleFrom asserts a port role on a provider the caller built itself (e.g. via
+// ProviderWithServerURL), producing the same typed "unsupported on this
+// platform" refusal the Require* gates give. Keeping one spelling means a verb
+// that resolves its own provider still degrades exactly like every other.
+func RoleFrom[R any](p provider.Provider, capability string) (R, error) {
+	role, ok := p.(R)
+	if !ok {
+		var zero R
+
+		return zero, unsupportedRoleError(p.Name(), capability)
+	}
+
+	return role, nil
 }
 
 // DescriberForDetected returns the forge self-description for the

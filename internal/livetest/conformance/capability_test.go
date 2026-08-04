@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/security"
 	"github.com/diggsweden/reusable-ci/v3/internal/livetest"
 )
 
@@ -39,6 +40,9 @@ func capabilityRows() map[string]func(provider.Capabilities) bool {
 
 		"Container tag deletion (package/registry API)": func(c provider.Capabilities) bool {
 			return c.ContainerTagDeletion
+		},
+		"Container tag listing (package/registry API)": func(c provider.Capabilities) bool {
+			return c.ContainerPackageListing
 		},
 	}
 }
@@ -156,4 +160,40 @@ func splitRow(line string) []string {
 	}
 
 	return cells
+}
+
+// The SARIF summary labels are written per platform, deliberately: they are
+// prose for an adopter, and a generic sentence derived from a bool would read
+// worse than "Forgejo has no Code Scanning ingestion". What must not happen is
+// the prose and the model disagreeing — a forge that gains SARIF ingestion while
+// the summary still tells the reader its findings only become an artifact.
+//
+// So the wording stays hand-written and this pins it to the capability, the same
+// bargain the matrix rows above strike.
+func TestOpengrepSummary_AgreesWithTheSARIFCapability(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range livetest.Platforms() {
+		capabilities, known := livetest.Capabilities(kind)
+		if !known {
+			t.Fatalf("no adapter for platform %q", kind)
+		}
+
+		for _, withToken := range []bool{true, false} {
+			label := security.OpengrepCodeScanningLabel(security.OpengrepPlatformContext{
+				Platform:             kind,
+				HasCodeScanningToken: withToken,
+			})
+
+			// "upload" is claimed only where the forge can actually ingest.
+			claimsUpload := strings.Contains(strings.ToLower(label), "upload")
+			if claimsUpload && !capabilities.SARIFUpload {
+				t.Errorf("%s: summary says %q but the adapter reports no SARIF ingestion", kind, label)
+			}
+
+			if !claimsUpload && capabilities.SARIFUpload {
+				t.Errorf("%s: adapter ingests SARIF but the summary never mentions upload: %q", kind, label)
+			}
+		}
+	}
 }

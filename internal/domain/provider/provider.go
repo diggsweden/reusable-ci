@@ -143,13 +143,19 @@ type Capabilities struct {
 	// because a capability the matrix cannot see is one no test can hold the
 	// adapters to.
 	ContainerTagDeletion bool `json:"container_tag_deletion"`
+
+	// ContainerPackageListing enumerates a container image's tags through the
+	// forge's own package/registry API (the ContainerPackageLister role). With
+	// ContainerTagDeletion it is what base-image staging cleanup needs: list
+	// the versions, then delete the stale ones.
+	ContainerPackageListing bool `json:"container_package_listing"`
 }
 
 // CapabilityReporter is implemented by providers that report their
 // feature set. Every adapter implements it.
 type CapabilityReporter interface{ Capabilities() Capabilities }
 
-// DeriveCapabilities computes the role-backed capability bools from what p
+// DeriveCapabilities computes the role-backed capability bools from what impl
 // actually implements, so the reported feature set can never drift from what
 // the requireRole gates enforce. Two capabilities are not pure role
 // membership and stay explicit: keylessOIDC (a provider may implement
@@ -158,12 +164,13 @@ type CapabilityReporter interface{ Capabilities() Capabilities }
 //
 // RunArtifacts requires the full Uploader+Downloader pair; a half-implemented
 // pair reports false rather than promising a store that cannot round-trip.
-func DeriveCapabilities(p any, keylessOIDC, attestation bool) Capabilities {
-	_, sarif := p.(SARIFUploader)
-	_, assets := p.(ReleaseAssetUploader)
-	_, upload := p.(RunArtifactUploader)
-	_, download := p.(RunArtifactDownloader)
-	_, tagDelete := p.(TagDeleter)
+func DeriveCapabilities(impl any, keylessOIDC, attestation bool) Capabilities {
+	_, sarif := impl.(SARIFUploader)
+	_, assets := impl.(ReleaseAssetUploader)
+	_, upload := impl.(RunArtifactUploader)
+	_, download := impl.(RunArtifactDownloader)
+	_, tagDelete := impl.(TagDeleter)
+	_, packageList := impl.(ContainerPackageLister)
 
 	return Capabilities{
 		SARIFUpload:   sarif,
@@ -172,7 +179,8 @@ func DeriveCapabilities(p any, keylessOIDC, attestation bool) Capabilities {
 		ReleaseAssets: assets,
 		RunArtifacts:  upload && download,
 
-		ContainerTagDeletion: tagDelete,
+		ContainerTagDeletion:    tagDelete,
+		ContainerPackageListing: packageList,
 	}
 }
 
@@ -185,6 +193,26 @@ type TokenAdviser interface {
 	// whether the token must be refused. Empty advice with reject=false
 	// means "the shape is fine; say nothing".
 	AdviseToken(token string) (advice string, reject bool)
+}
+
+// WebURLBuilder builds links to the forge's own web pages for a run summary —
+// the release page, the packages page.
+//
+// This is a role rather than a switch in the summary code because the routing is
+// forge knowledge: GitLab inserts "/-/", Forgejo hangs packages off the owner
+// rather than the repository. Knowledge like that belongs beside the adapter
+// that already owns every other fact about its forge, so adding a fourth forge
+// never means editing the domain.
+//
+// Optional: a platform with no hosted web UI (local) simply does not implement
+// it, and the summary renders a textual placeholder.
+type WebURLBuilder interface {
+	// ReleaseWebURL links to the page for one release. server is the forge
+	// root without a trailing slash; repo is the canonical "owner/name".
+	ReleaseWebURL(server, repo, version string) string
+
+	// PackagesWebURL links to the packages page for a repository.
+	PackagesWebURL(server, repo string) string
 }
 
 // TagDeleter removes a single container tag from the forge's registry,
