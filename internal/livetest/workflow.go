@@ -309,6 +309,15 @@ func copyFile(from, to string) error {
 // requires a subcommand, and its usage error was scored as summary output on one
 // forge while the other correctly produced nothing. One red, one green, both
 // meaningless.
+//
+// The `|| status=$?` is load-bearing rather than stylistic. Both runners execute
+// job scripts under `set -e`, so a bare failing command aborts the shell at that
+// line — which is *before* the output is printed. A probe whose product call
+// failed therefore reported nothing at all: the job died with the product's exit
+// code and an empty log, leaving no way to tell a real defect from a mistyped
+// flag without re-running by hand. Making the call part of a compound command
+// suspends `set -e` for it, so the diagnostics are always printed and the status
+// is still returned to the caller.
 func ProbePrelude(assetURL string) string {
 	return `curl -fsSLk -o reusable-ci "` + assetURL + `"
 chmod +x reusable-ci
@@ -316,12 +325,20 @@ chmod +x reusable-ci
 # Fails the job when the CLI could not parse the invocation, so a mistyped probe
 # cannot be mistaken for the product's answer.
 run_product() {
-  ./reusable-ci "$@" > product-out.txt 2>&1
-  status=$?
+  status=0
+  ./reusable-ci "$@" > product-out.txt 2>&1 || status=$?
   cat product-out.txt
-  if grep -qE 'usage error|flag provided but not defined|requires a subcommand|is required' product-out.txt; then
+  # Only a non-zero exit can be a parse failure: a command that completed
+  # successfully parsed its arguments by definition, and its output may
+  # legitimately quote these words -- a notice reporting the usage error it
+  # deliberately degraded past reads exactly like a mistyped flag otherwise.
+  if [ "$status" -ne 0 ] &&
+     grep -qE 'usage error|flag provided but not defined|requires a subcommand|is required' product-out.txt; then
     echo "FAIL: the probe invoked the product incorrectly; this is a fixture bug, not a result"
     return 1
+  fi
+  if [ "$status" -ne 0 ]; then
+    echo "FAIL: the product exited $status; see its output above"
   fi
   return $status
 }`
