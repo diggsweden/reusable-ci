@@ -28,6 +28,8 @@ package conformance_test
 import (
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+
 	"github.com/diggsweden/reusable-ci/v3/internal/livetest"
 )
 
@@ -43,15 +45,44 @@ func TestInRunner_DetectsItsOwnRuntime(t *testing.T) {
 			target := livetest.Accept(t, kind)
 			repo := livetest.NewScratchRepo(t, target, "inrunner")
 
-			// The job asserts the two halves that matter and prints what it saw,
-			// so a failure names the wrong answer rather than only reporting that
-			// something was wrong.
-			//
-			// Deliberately checked without the product binary: this is about the
-			// runtime the forge presents, and the variables below are exactly what
-			// the detector reads. Proving Forgejo sets GITHUB_ACTIONS while also
-			// setting its own marker is what makes the detection question real.
-			workflow := `on: [push]
+			// The workflow itself must differ: these are different runtimes, and
+			// pretending otherwise is what this tier exists to disprove. What is
+			// held constant is the claim — each forge presents a runtime a
+			// detector can identify unambiguously — so the scenario is one
+			// assertion expressed in each dialect rather than two tests.
+			conclusion := livetest.RunWorkflow(t, target, repo, "detect-runtime", runtimeProbe(kind))
+			if conclusion != "success" {
+				t.Errorf("%s: the in-runner runtime check concluded %q — this forge no longer presents the runtime the detector assumes",
+					kind, conclusion)
+			}
+		})
+	}
+}
+
+// runtimeProbe is the same question in each forge's dialect: does this runtime
+// identify itself in a way the detector can trust?
+//
+// The answers differ in a way worth stating. Forgejo sets GITHUB_ACTIONS because
+// it implements the same workflow syntax, so it must ALSO set a marker of its
+// own or nothing could tell the two apart — the job checks both. GitLab shares
+// no vocabulary with Actions, so its claim is the mirror image: it identifies
+// itself, and must NOT look like GitHub.
+//
+// Each probe also pins its own premise. If Forgejo stopped presenting
+// GITHUB_ACTIONS, or GitLab started, the detection question would have changed
+// shape and the scenario would be worth rewriting rather than quietly passing.
+func runtimeProbe(kind provider.Platform) string {
+	if kind == provider.PlatformGitLab {
+		return `detect:
+  script:
+    - echo "GITLAB_CI=${GITLAB_CI:-unset}"
+    - echo "GITHUB_ACTIONS=${GITHUB_ACTIONS:-unset}"
+    - test "${GITLAB_CI:-unset}" != "unset"
+    - test "${GITHUB_ACTIONS:-unset}" = "unset"
+`
+	}
+
+	return `on: [push]
 jobs:
   detect:
     runs-on: ubuntu-latest
@@ -59,25 +90,10 @@ jobs:
       - name: report the runtime this forge presents
         run: |
           echo "GITHUB_ACTIONS=${GITHUB_ACTIONS:-unset}"
-          echo "GITHUB_SERVER_URL=${GITHUB_SERVER_URL:-unset}"
           echo "FORGEJO_ACTIONS=${FORGEJO_ACTIONS:-unset}"
           echo "GITEA_ACTIONS=${GITEA_ACTIONS:-unset}"
 
-          # The premise of PAR-RUN-1: this forge looks like GitHub to anything
-          # that only reads GITHUB_*. If that ever stops being true the scenario
-          # is testing nothing, so it fails here rather than passing quietly.
           test "${GITHUB_ACTIONS:-unset}" != "unset"
-
-          # And it distinguishes itself. A runner that set no marker of its own
-          # would leave a detector no honest way to tell the two apart.
           test "${FORGEJO_ACTIONS:-unset}" != "unset" || test "${GITEA_ACTIONS:-unset}" != "unset"
 `
-
-			conclusion := livetest.RunWorkflow(t, target, repo, "detect-runtime", workflow)
-			if conclusion != "success" {
-				t.Errorf("%s: the in-runner runtime check concluded %q — this forge no longer presents the runtime the detector assumes",
-					kind, conclusion)
-			}
-		})
-	}
 }

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
@@ -38,7 +39,12 @@ func workflowPath(kind provider.Platform, name string) (string, error) {
 		return ".forgejo/workflows/" + name + ".yml", nil
 	case provider.PlatformGitHub:
 		return ".github/workflows/" + name + ".yml", nil
-	case provider.PlatformGitLab, provider.PlatformLocal:
+	case provider.PlatformGitLab:
+		// GitLab reads one file at the repository root, so the scenario name
+		// does not appear in the path; a second workflow would replace the
+		// first rather than sit beside it.
+		return ".gitlab-ci.yml", nil
+	case provider.PlatformLocal:
 	}
 
 	return "", fmt.Errorf("no workflow layout for platform %q: %w", kind, errUnsupportedInRunner)
@@ -50,7 +56,7 @@ var errUnsupportedInRunner = errors.New("in-runner scenarios are not implemented
 // GitLab's pipeline API is a different shape and is not wired up; saying so is
 // better than a scenario that silently covers one forge while claiming parity.
 func RunsInRunner(kind provider.Platform) bool {
-	return kind == provider.PlatformForgejo
+	return kind == provider.PlatformForgejo || kind == provider.PlatformGitLab
 }
 
 // RunWorkflow commits a workflow to the scratch repository, waits for the run it
@@ -71,51 +77,65 @@ func RunWorkflow(tb TB, target Target, repo, name, yaml string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	endpoint := target.BaseURL() + "/api/v1/repos/" + target.Owner + "/" + repo + "/contents/" + path
-	body := map[string]any{
-		"content": base64.StdEncoding.EncodeToString([]byte(yaml)),
-		"message": "livetest: " + name,
-		"branch":  defaultBranch,
+	commitWorkflow(ctx, tb, target, repo, path, name, yaml)
+
+	return waitForRun(ctx, tb, target, repo, name)
+}
+
+// commitWorkflow writes the workflow through each forge's own file API. The two
+// disagree on everything except the idea: Forgejo takes base64 under "content"
+// with the path in the URL, GitLab takes plain text and calls the message
+// "commit_message".
+func commitWorkflow(ctx context.Context, tb TB, target Target, repo, path, name, yaml string) {
+	tb.Helper()
+
+	var endpoint string
+
+	var body map[string]any
+
+	switch target.Kind {
+	case provider.PlatformGitLab:
+		endpoint = target.BaseURL() + "/api/v4/projects/" +
+			url.PathEscape(target.Owner+"/"+repo) + "/repository/files/" + url.PathEscape(path)
+		body = map[string]any{
+			"branch":         defaultBranch,
+			"content":        yaml,
+			"commit_message": "livetest: " + name,
+		}
+	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
+		endpoint = target.BaseURL() + "/api/v1/repos/" + target.Owner + "/" + repo + "/contents/" + path
+		body = map[string]any{
+			"content": base64.StdEncoding.EncodeToString([]byte(yaml)),
+			"message": "livetest: " + name,
+			"branch":  defaultBranch,
+		}
 	}
 
 	if _, err := decode(ctx, target, http.MethodPost, endpoint, body, nil, http.StatusCreated); err != nil {
 		tb.Fatalf("livetest: commit workflow %s: %v", path, err)
 	}
-
-	return waitForRun(ctx, tb, target, repo, name)
 }
 
 // waitForRun polls until the run reaches a terminal state.
 func waitForRun(ctx context.Context, tb TB, target Target, repo, name string) string {
 	tb.Helper()
 
-	endpoint := target.BaseURL() + "/api/v1/repos/" + target.Owner + "/" + repo + "/actions/tasks"
-
 	deadline := time.Now().Add(4 * time.Minute)
 	for time.Now().Before(deadline) {
 		time.Sleep(5 * time.Second)
 
-		var payload struct {
-			Runs []struct {
-				Status     string `json:"status"`
-				Conclusion string `json:"conclusion"`
-			} `json:"workflow_runs"`
-		}
+		status := latestRunStatus(ctx, target, repo)
 
-		if _, err := decode(ctx, target, http.MethodGet, endpoint, nil, &payload, http.StatusOK); err != nil {
-			continue
-		}
-
-		if len(payload.Runs) == 0 {
-			continue
-		}
-
-		// Forgejo reports the terminal state in status; conclusion is populated
-		// for some versions and empty for others, so status is the authority and
-		// conclusion is only extra detail.
-		switch payload.Runs[0].Status {
-		case "success", "failure", "cancelled", "skipped":
-			return payload.Runs[0].Status
+		// Normalised, because the two forges spell the same outcomes
+		// differently and a scenario should assert on the outcome rather than
+		// on a vocabulary.
+		switch status {
+		case "success":
+			return "success"
+		case "failure", "failed":
+			return "failure"
+		case "cancelled", "canceled", "skipped":
+			return status
 		}
 	}
 
@@ -123,4 +143,45 @@ func waitForRun(ctx context.Context, tb TB, target Target, repo, name string) st
 		name)
 
 	return ""
+}
+
+// latestRunStatus reads the most recent run's raw status, or "" while none is
+// readable yet. A transport error is treated as "not yet": a pipeline is often
+// not queryable in the moment between the push and its creation.
+func latestRunStatus(ctx context.Context, target Target, repo string) string {
+	switch target.Kind {
+	case provider.PlatformGitLab:
+		var pipelines []struct {
+			Status string `json:"status"`
+		}
+
+		endpoint := target.BaseURL() + "/api/v4/projects/" +
+			url.PathEscape(target.Owner+"/"+repo) + "/pipelines?per_page=1"
+		if _, err := decodeQuiet(ctx, target, endpoint, &pipelines); err != nil || len(pipelines) == 0 {
+			return ""
+		}
+
+		return pipelines[0].Status
+	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
+		var payload struct {
+			Runs []struct {
+				Status string `json:"status"`
+			} `json:"workflow_runs"`
+		}
+
+		endpoint := target.BaseURL() + "/api/v1/repos/" + target.Owner + "/" + repo + "/actions/tasks"
+		if _, err := decodeQuiet(ctx, target, endpoint, &payload); err != nil || len(payload.Runs) == 0 {
+			return ""
+		}
+
+		return payload.Runs[0].Status
+	}
+
+	return ""
+}
+
+// decodeQuiet is a GET whose failure is an ordinary "not yet" rather than a test
+// failure, for the polling loop.
+func decodeQuiet(ctx context.Context, target Target, endpoint string, into any) (int, error) {
+	return decode(ctx, target, http.MethodGet, endpoint, nil, into, http.StatusOK)
 }
