@@ -14,12 +14,12 @@ package conformance_test
 // public API for a job to push one. So there is nothing to implement, and what
 // parity means here is that the *refusal* is honest and identically shaped.
 //
-// The positive path is deliberately not here. Uploading needs the run context a
-// runner supplies, so a host-run scenario could only observe the runtime being
-// absent — that assertion belongs in the in-runner tier. What a host CAN prove is
-// the distinction that actually confuses adopters: "this forge will never do
-// this" versus "you are not in a run". Those must not look alike, and PAR-ART-2
-// is the only place that is checked.
+// The positive path is not host-run either, for the same reason: uploading needs
+// the run context a runner supplies, so a host-run scenario could only observe
+// the runtime being absent. What a host CAN prove is the distinction that
+// actually confuses adopters: "this forge will never do this" versus "you are not
+// in a run". Those must not look alike, and PAR-ART-2 is the only place that is
+// checked. The round-trip itself is PAR-ART-3, in a job.
 
 import (
 	"os"
@@ -130,4 +130,103 @@ func TestArtifact_WithAStore_FailsOnTheRuntimeNotTheCapability(t *testing.T) {
 			}
 		})
 	}
+}
+
+// PAR-ART-3: an artifact uploaded from a job can be read back, byte-identical.
+//
+// This is the claim the capability matrix makes and nothing was backing.
+// RunArtifacts is derived from Uploader AND Downloader both being satisfied, so
+// the matrix promises a store that round-trips — while every tier below this one
+// proves only that the methods exist and that the fake we wrote agrees with the
+// adapter we wrote.
+//
+// The scenario is deliberately hostile to a false pass, because "download
+// produced a file" is trivially satisfiable three different ways:
+//
+//   - the payload carries a per-run nonce, so an artifact left by an earlier run
+//     of this suite cannot satisfy the comparison;
+//   - the source directory is deleted between upload and download, so a download
+//     that silently does nothing leaves the file genuinely absent rather than
+//     rediscovering the copy the job just wrote;
+//   - the content is compared, not merely the file's existence, so a truncated or
+//     re-encoded transfer fails.
+//
+// What is asserted is the round-trip, not the destination layout: the probe finds
+// the payload anywhere under the download directory. Layout is a real contract,
+// but a different one, and pinning it here would make this scenario fail for a
+// reason unrelated to whether the store works.
+func TestInRunner_ArtifactRoundTripsThroughTheStore(t *testing.T) {
+	const tag = "v0.0.5-artifact"
+
+	for _, kind := range forgesClaiming(t, claimsRunArtifacts, "run artifacts") {
+		if !livetest.RunsInRunner(kind) {
+			t.Logf("SKIP %s: claims run artifacts, but the in-runner tier does not drive this forge yet", kind)
+
+			continue
+		}
+
+		t.Run(string(kind), func(t *testing.T) {
+			target := livetest.Accept(t, kind)
+			repo := livetest.NewScratchRepo(t, target, "artifact-roundtrip")
+
+			livetest.PrepareTag(t, target, repo, tag)
+			livetest.PublishBinaryAsset(t, target, repo, tag, t.TempDir())
+
+			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
+
+			conclusion := livetest.RunWorkflow(t, target, repo, "artifact-roundtrip",
+				artifactRoundTripProbe(assetURL))
+			if conclusion != "success" {
+				t.Errorf("%s: the artifact round-trip concluded %q inside a real job — this forge reports RunArtifacts, but a file uploaded from a job did not come back intact",
+					kind, conclusion)
+			}
+		})
+	}
+}
+
+// artifactRoundTripProbe uploads a nonce, destroys the source, downloads it back
+// and compares. Written in the Actions dialect only: GitLab has no artifact store
+// to round-trip through, and a forge that gains one would arrive with its own
+// dialect rather than reusing this text.
+func artifactRoundTripProbe(assetURL string) string {
+	return `on: [push]
+jobs:
+  roundtrip:
+    runs-on: ubuntu-latest
+    steps:
+      - name: upload an artifact and read it back
+        run: |
+          ` + indent(livetest.ProbePrelude(assetURL), 10) + `
+
+          # Unique to this run, so a leftover artifact cannot pass for a fresh one.
+          nonce="par-art-3-${GITHUB_RUN_ID:-norun}-${GITHUB_SHA:-nosha}"
+
+          mkdir -p artifact-src
+          printf '%s\n' "$nonce" > artifact-src/payload.txt
+
+          run_product artifact upload --name livetest-roundtrip --dir artifact-src
+
+          # The load-bearing line: with the source gone, only a real download can
+          # produce the payload, so a no-op download fails instead of passing.
+          rm -rf artifact-src
+
+          mkdir -p artifact-dst
+          run_product artifact download --name livetest-roundtrip --dir artifact-dst
+
+          found="$(find artifact-dst -name payload.txt -type f | head -n 1)"
+          if [ -z "$found" ]; then
+            echo "FAIL: the artifact did not come back; nothing named payload.txt under artifact-dst"
+            find artifact-dst -type f || true
+            exit 1
+          fi
+
+          if [ "$(cat "$found")" != "$nonce" ]; then
+            echo "FAIL: the artifact came back with different content"
+            echo "want: $nonce"
+            echo "got:  $(cat "$found")"
+            exit 1
+          fi
+
+          echo "artifact round-tripped intact: $found"
+`
 }
