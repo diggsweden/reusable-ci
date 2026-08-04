@@ -149,7 +149,7 @@ func expectedRunner(kind provider.Platform) string {
 func productProbe(kind provider.Platform, assetURL, want string) string {
 	if kind == provider.PlatformGitLab {
 		return `detect:
-  image: quay.io/podman/stable:v5.6.2
+  image: ` + livetest.ProbeImage + `
   script:
     - |
       ` + indent(livetest.ProbePrelude(assetURL), 6) + `
@@ -231,7 +231,7 @@ fi`
 
 	if kind == provider.PlatformGitLab {
 		return `detect:
-  image: quay.io/podman/stable:v5.6.2
+  image: ` + livetest.ProbeImage + `
   script:
     - |
       ` + indent(livetest.TrustLabCA(), 6) + `
@@ -311,7 +311,7 @@ func summaryProbe(kind provider.Platform, assetURL string) string {
 
 	if kind == provider.PlatformGitLab {
 		return `detect:
-  image: quay.io/podman/stable:v5.6.2
+  image: ` + livetest.ProbeImage + `
   variables:
     CI_SUMMARY_FILE: summary.md
   script:
@@ -411,7 +411,7 @@ func outputFileProbe(kind provider.Platform, assetURL string) string {
 		// GitLab does not provide an output file; the pipeline nominates one,
 		// which is the documented contract rather than a fixture convenience.
 		return `detect:
-  image: quay.io/podman/stable:v5.6.2
+  image: ` + livetest.ProbeImage + `
   variables:
     CI_OUTPUT: build.env
   script:

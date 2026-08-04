@@ -179,7 +179,7 @@ fi`
 
 	if kind == provider.PlatformGitLab {
 		return `detect:
-  image: quay.io/podman/stable:v5.6.2
+  image: ` + livetest.ProbeImage + `
   script:
     - |
       ` + indent(livetest.ProbePrelude(assetURL), 6) + `

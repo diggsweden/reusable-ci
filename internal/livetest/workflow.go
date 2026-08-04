@@ -581,6 +581,16 @@ const LabCAPath = "/tmp/lab-ca.crt"
 // labCAFileEnv names the contract field holding the environment's CA bundle.
 const labCAFileEnv = "LAB_CA_FILE"
 
+// ProbeImage is the job image every in-runner probe runs in: podman/stable
+// v5.6.2, by digest.
+//
+// One constant because five fixtures each spelled the image out, so changing it
+// meant finding all five. By digest because a tag can be repointed, and an image
+// that changes underneath a suite changes what the suite measures without any
+// scenario changing — this one already runs as a non-root user, which is a
+// property probes depend on and nothing would announce.
+const ProbeImage = "quay.io/podman/stable@sha256:b4bdf91d79ef0396ec1c070faa395b8e879fd4da5b161a7522882619026d5fa4"
+
 // ProbePrelude is the shell every in-runner probe starts with: it trusts the
 // environment's CA, fetches the binary and defines run_product, which refuses to
 // let a mistyped invocation look like a result.
