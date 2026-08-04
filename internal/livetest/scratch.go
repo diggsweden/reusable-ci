@@ -151,36 +151,127 @@ func DeleteScratchRepo(ctx context.Context, target Target, repo string) error {
 
 	switch target.Kind {
 	case provider.PlatformForgejo:
+		// Forgejo packages belong to the *owner*, not the repository, so
+		// deleting the repo leaves every container image it published behind as
+		// an orphan. Nothing later refers to them and nothing else collects
+		// them, so they accumulate silently on the lab.
+		if err := deleteForgejoPackages(ctx, target, repo); err != nil {
+			return err
+		}
+
 		endpoint := target.BaseURL() + "/api/v1/repos/" + url.PathEscape(target.Owner) + "/" + url.PathEscape(repo)
 
 		return discard(ctx, target, http.MethodDelete, endpoint, nil, http.StatusNoContent, http.StatusNotFound)
 
 	case provider.PlatformGitLab:
-		id, err := gitLabProjectID(ctx, target, repo)
-		if err != nil {
-			return err
-		}
-
-		if id == "" {
-			return nil
-		}
-
-		// GitLab's DELETE only *schedules* deletion: the project is renamed and
-		// a redirect route keeps answering on the old path, so the next create
-		// collides with a corpse. permanently_remove finishes the job, and it
-		// needs the renamed full path, which is why the id is resolved first.
-		endpoint := target.BaseURL() + "/api/v4/projects/" + id
-		if err := discard(ctx, target, http.MethodDelete, endpoint, nil,
-			http.StatusAccepted, http.StatusNoContent, http.StatusNotFound); err != nil {
-			return err
-		}
-
-		return gitLabPurge(ctx, target, id)
+		return deleteGitLabProject(ctx, target, repo)
 
 	case provider.PlatformGitHub, provider.PlatformLocal:
 	}
 
 	return fmt.Errorf("no scratch-repo cleanup for platform %q: %w", target.Kind, errs.ErrUnsupported)
+}
+
+// deleteForgejoPackages removes the container packages a scratch repository
+// published. They are addressed by owner and package name, and the scenarios
+// name their images after the repository, so the repository name is the handle.
+func deleteForgejoPackages(ctx context.Context, target Target, repo string) error {
+	var packages []struct {
+		Type    string `json:"type"`
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	}
+
+	list := target.BaseURL() + "/api/v1/packages/" + url.PathEscape(target.Owner) + "?limit=100"
+	if _, err := decode(ctx, target, http.MethodGet, list, nil, &packages, http.StatusOK, http.StatusNotFound); err != nil {
+		return err
+	}
+
+	for _, pkg := range packages {
+		// Only this repository's packages, and only inside the namespace this
+		// suite owns: another consumer's packages live on the same owner.
+		if pkg.Name != repo || !strings.HasPrefix(pkg.Name, ResourcePrefix) {
+			continue
+		}
+
+		endpoint := target.BaseURL() + "/api/v1/packages/" + url.PathEscape(target.Owner) + "/" +
+			url.PathEscape(pkg.Type) + "/" + url.PathEscape(pkg.Name) + "/" + url.PathEscape(pkg.Version)
+
+		if err := discard(ctx, target, http.MethodDelete, endpoint, nil,
+			http.StatusNoContent, http.StatusNotFound); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// emptyGitLabRegistry removes what accumulates in a project's registry.
+//
+// Two GitLab behaviours shape this. A project whose registry path is occupied
+// cannot be deleted at all — deletion renames the project, and the bundled
+// registry refuses to rename an occupied path ("Cannot rename project, the
+// container registry path rename validation failed"). And deleting a container
+// *repository* is asynchronous: the API answers 202 and a scheduled Sidekiq job
+// does the work, which on a stock instance is minutes away, not seconds.
+//
+// So tags are deleted directly, which is synchronous and is what actually
+// accumulates, and the repository delete is issued as a best effort without
+// waiting on it. Blocking on the drain would make the suite unusably slow for a
+// behaviour it cannot influence.
+func emptyGitLabRegistry(ctx context.Context, target Target, projectID string) error {
+	list := target.BaseURL() + "/api/v4/projects/" + projectID + "/registry/repositories?per_page=100"
+
+	repositories, err := gitLabRegistryRepositoryIDs(ctx, target, list)
+	if err != nil || len(repositories) == 0 {
+		return err
+	}
+
+	for _, id := range repositories {
+		base := target.BaseURL() + "/api/v4/projects/" + projectID +
+			"/registry/repositories/" + strconv.FormatInt(id, 10)
+
+		var tags []struct {
+			Name string `json:"name"`
+		}
+
+		if _, err := decode(ctx, target, http.MethodGet, base+"/tags?per_page=100", nil, &tags,
+			http.StatusOK, http.StatusNotFound); err != nil {
+			return err
+		}
+
+		for _, tag := range tags {
+			if err := discard(ctx, target, http.MethodDelete, base+"/tags/"+url.PathEscape(tag.Name), nil,
+				http.StatusOK, http.StatusNoContent, http.StatusAccepted, http.StatusNotFound); err != nil {
+				return err
+			}
+		}
+
+		if err := discard(ctx, target, http.MethodDelete, base, nil,
+			http.StatusAccepted, http.StatusNoContent, http.StatusNotFound); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func gitLabRegistryRepositoryIDs(ctx context.Context, target Target, list string) ([]int64, error) {
+	var repositories []struct {
+		ID int64 `json:"id"`
+	}
+
+	if _, err := decode(ctx, target, http.MethodGet, list, nil, &repositories,
+		http.StatusOK, http.StatusNotFound); err != nil {
+		return nil, err
+	}
+
+	ids := make([]int64, 0, len(repositories))
+	for _, repository := range repositories {
+		ids = append(ids, repository.ID)
+	}
+
+	return ids, nil
 }
 
 func createRepo(ctx context.Context, target Target, repo string) error {
@@ -205,24 +296,76 @@ func createRepo(ctx context.Context, target Target, repo string) error {
 	return fmt.Errorf("no scratch-repo creation for platform %q: %w", target.Kind, errs.ErrUnsupported)
 }
 
-func gitLabProjectID(ctx context.Context, target Target, repo string) (string, error) {
+// deleteGitLabProject removes a scratch project, in the order GitLab requires.
+func deleteGitLabProject(ctx context.Context, target Target, repo string) error {
+	id, marked, err := gitLabProject(ctx, target, repo)
+	if err != nil {
+		return err
+	}
+
+	if id == "" {
+		return nil
+	}
+
+	// An already-marked project refuses a second plain DELETE with 400
+	// "Project has already been marked for deletion" — it is renamed and
+	// waiting, so the only thing left to do is finish the job.
+	if marked {
+		return gitLabPurge(ctx, target, id)
+	}
+
+	// A project with images in its registry cannot be deleted at all:
+	// deletion renames the project, and GitLab refuses to rename a project
+	// whose container registry path is in use — "Cannot rename project, the
+	// container registry path rename validation failed". So the registry is
+	// emptied first, or teardown fails and the project is stuck.
+	if err := emptyGitLabRegistry(ctx, target, id); err != nil {
+		return err
+	}
+
+	// GitLab's DELETE only *schedules* deletion: the project is renamed and
+	// a redirect route keeps answering on the old path, so the next create
+	// collides with a corpse. permanently_remove finishes the job, and it
+	// needs the renamed full path, which is why the id is resolved first.
+	endpoint := target.BaseURL() + "/api/v4/projects/" + id
+	if err := discard(ctx, target, http.MethodDelete, endpoint, nil,
+		http.StatusAccepted, http.StatusNoContent, http.StatusNotFound); err != nil {
+		return err
+	}
+
+	return gitLabPurge(ctx, target, id)
+}
+
+// gitLabProject resolves a path to the numeric id and reports whether the
+// project is already marked for deletion. Addressing by id avoids GitLab's
+// redirect routes, which keep answering on the path of a project that was
+// deleted and recreated; the marked flag decides whether a plain DELETE is
+// still the right call or would 400.
+func gitLabProject(ctx context.Context, target Target, repo string) (string, bool, error) {
 	endpoint := target.BaseURL() + "/api/v4/projects/" + url.PathEscape(target.Owner+"/"+repo)
 
 	var project struct {
-		ID int64 `json:"id"`
+		ID                int64   `json:"id"`
+		MarkedForDeletion *string `json:"marked_for_deletion_on"`
 	}
 
 	status, err := decode(ctx, target, http.MethodGet, endpoint, nil, &project,
 		http.StatusOK, http.StatusNotFound)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
 	if status == http.StatusNotFound || project.ID == 0 {
-		return "", nil
+		return "", false, nil
 	}
 
-	return strconv.FormatInt(project.ID, 10), nil
+	return strconv.FormatInt(project.ID, 10), project.MarkedForDeletion != nil, nil
+}
+
+func gitLabProjectID(ctx context.Context, target Target, repo string) (string, error) {
+	id, _, err := gitLabProject(ctx, target, repo)
+
+	return id, err
 }
 
 func gitLabPurge(ctx context.Context, target Target, id string) error {
