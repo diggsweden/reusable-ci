@@ -52,6 +52,27 @@ Run it against a disposable lab only:
 just test-live      # preflights the contract, builds once, revokes tokens on exit
 ```
 
+Scenarios are repeatable by construction, and the suite is verified that way
+rather than assumed to be: `NewScratchRepo` deletes **before** it creates, so a
+run that died between create and cleanup cannot make "start from empty" a lie;
+anything a forge scopes to the *owner* rather than the repository (packages) is
+swept explicitly and versioned per run, because deleting the repository does not
+remove it; and fixtures pre-check that state is absent, so "it was published"
+cannot be mistaken for "it was already published".
+
+**Diagnosing a failing in-runner scenario.** Those report only a run
+conclusion, and the job log that would explain it lives in a scratch repository
+teardown is about to delete — Forgejo serves those logs through no stable API
+route. `RC_LIVE_KEEP_SCRATCH=1` keeps the repository so the log can be read:
+
+```text
+RC_LIVE_KEEP_SCRATCH=1 go test -tags=live -run TestInRunner_... ./internal/livetest/...
+```
+
+It is an environment variable rather than a flag on purpose — awkward enough
+that nobody leaves it on. Nothing accumulates either way: the next run deletes
+the repository before recreating it, so what is kept is one generation.
+
 It is **never in PR CI**: it is live, destructive, and human-invoked against
 git-provider-lab. The recipe refuses to run without a valid target contract and
 an explicit destroy confirmation naming the run.

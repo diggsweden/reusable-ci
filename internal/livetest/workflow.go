@@ -56,8 +56,15 @@ func workflowPath(kind provider.Platform, name string) (string, error) {
 var errUnsupportedInRunner = errors.New("in-runner scenarios are not implemented for this platform")
 
 // RunsInRunner reports whether the in-runner tier can drive this forge yet.
-// GitLab's pipeline API is a different shape and is not wired up; saying so is
-// better than a scenario that silently covers one forge while claiming parity.
+//
+// Forgejo and GitLab both are: their pipeline APIs are different shapes and
+// both are wired up, so every PAR-RUN-* scenario is genuinely two-forge rather
+// than one forge with a claim of parity attached. GitHub is not, and that is an
+// environment fact rather than a missing branch — this tier runs against a
+// disposable lab, and there is no disposable GitHub.
+//
+// Scenarios must consult this and skip loudly instead of assuming, so a forge
+// that cannot be driven is visible in the output rather than silently absent.
 func RunsInRunner(kind provider.Platform) bool {
 	return kind == provider.PlatformForgejo || kind == provider.PlatformGitLab
 }
