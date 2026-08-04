@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
@@ -342,4 +343,64 @@ run_product() {
   fi
   return $status
 }`
+}
+
+// ReleaseAssetNames returns the names of every asset the forge lists on a
+// release, sorted, or an empty slice when the release has none.
+//
+// The oracle for asset reconciliation: "what is attached now" is the only
+// question that distinguishes an update from a duplicate, and it cannot be
+// asked through the adapter under test without letting it grade its own work.
+// The two forges keep assets in different places — GitLab links them to the
+// release, the Gitea family attaches them — so the shape lives here rather than
+// in a scenario.
+func ReleaseAssetNames(tb TB, target Target, repo, tag string) []string {
+	tb.Helper()
+	requireAccepted(tb, target)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	var names []string
+
+	switch target.Kind {
+	case provider.PlatformGitLab:
+		var release struct {
+			Assets struct {
+				Links []struct {
+					Name string `json:"name"`
+				} `json:"links"`
+			} `json:"assets"`
+		}
+
+		endpoint := target.BaseURL() + "/api/v4/projects/" +
+			url.PathEscape(target.Owner+"/"+repo) + "/releases/" + url.PathEscape(tag)
+		if _, err := decodeQuiet(ctx, target, endpoint, &release); err != nil {
+			tb.Fatalf("livetest: read release %s: %v", tag, err)
+		}
+
+		for _, link := range release.Assets.Links {
+			names = append(names, link.Name)
+		}
+	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
+		var release struct {
+			Assets []struct {
+				Name string `json:"name"`
+			} `json:"assets"`
+		}
+
+		endpoint := target.BaseURL() + "/api/v1/repos/" + target.Owner + "/" + repo +
+			"/releases/tags/" + url.PathEscape(tag)
+		if _, err := decodeQuiet(ctx, target, endpoint, &release); err != nil {
+			tb.Fatalf("livetest: read release %s: %v", tag, err)
+		}
+
+		for _, asset := range release.Assets {
+			names = append(names, asset.Name)
+		}
+	}
+
+	slices.Sort(names)
+
+	return names
 }

@@ -417,3 +417,90 @@ func assertAssetsArrivedIntact(
 		}
 	}
 }
+
+// PAR-REL-4: `release publish --strategy reconcile` converges the release's
+// assets on exactly the set it was given.
+//
+// PAR-REL-3 covers the other strategy: recreate deletes and re-creates, so its
+// asset set is whatever the last call uploaded and nothing survives to be
+// reconciled. Reconcile is the default, and it is the harder promise — the
+// release keeps its identity while its assets are brought to match, which means
+// an asset that is no longer wanted has to be actively removed.
+//
+// Removal is the half nothing was testing and the half most likely to be wrong,
+// because the two forges keep assets in different places and delete them through
+// different calls: GitLab attaches links to the release (deleteStaleReleaseLinks),
+// the Gitea family uploads attachments. A reconcile that only ever adds looks
+// perfect on a first release and silently accumulates stale artifacts forever
+// after — which on a release page means shipping the previous version's binaries
+// beside the current ones.
+//
+// So the scenario publishes twice with an overlapping set and asserts all three
+// outcomes at once: kept, added, and gone.
+func TestRelease_PublishReconcile_ConvergesOnTheGivenAssets(t *testing.T) {
+	const tag = "v0.0.1-reconcile"
+
+	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
+		t.Run(string(kind), func(t *testing.T) {
+			target := livetest.Accept(t, kind)
+			repo := livetest.NewScratchRepo(t, target, "relreconcile")
+
+			livetest.PrepareTag(t, target, repo, tag)
+
+			// One directory holding every input, and the CLI runs inside it.
+			// The product requires relative paths for notes and assets — an
+			// absolute one is refused as unsafe — so the scenario supplies bare
+			// filenames rather than working around a rule that is deliberate.
+			dir := t.TempDir()
+			for name, body := range map[string]string{
+				"first.txt":  "first\n",
+				"shared.txt": "shared\n",
+				"second.txt": "second\n",
+				"notes.md":   "PAR-REL-4\n",
+			} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			publish := func(assets ...string) livetest.Run {
+				args := make([]string, 0, 11+2*len(assets))
+				args = append(args,
+					"release", "publish", "--strategy", "reconcile",
+					"--tag", tag,
+					"--repository", livetest.RepoSlug(target, repo),
+					"--release-notes-file", "notes.md",
+					"--draft=false",
+				)
+				for _, asset := range assets {
+					args = append(args, "--asset", asset)
+				}
+
+				return livetest.CLIIn(t, target, repo, livetest.RunOptions{Dir: dir}, args...)
+			}
+
+			if run := publish("first.txt", "shared.txt"); run.ExitCode != 0 {
+				t.Fatalf("%s: first publish failed (exit %d)\nstderr: %s", kind, run.ExitCode, run.Stderr)
+			}
+
+			// Non-vacuity: if the first publish attached nothing, the comparison
+			// below would pass by having nothing to remove.
+			got := livetest.ReleaseAssetNames(t, target, repo, tag)
+			if !slices.Equal(got, []string{"first.txt", "shared.txt"}) {
+				t.Fatalf("%s: after the first publish the release has %v, want [first.txt shared.txt]", kind, got)
+			}
+
+			if run := publish("shared.txt", "second.txt"); run.ExitCode != 0 {
+				t.Fatalf("%s: second publish failed (exit %d)\nstderr: %s", kind, run.ExitCode, run.Stderr)
+			}
+
+			// The claim. first.txt must be gone, second.txt must have arrived, and
+			// shared.txt must have survived without being duplicated.
+			got = livetest.ReleaseAssetNames(t, target, repo, tag)
+			if want := []string{"second.txt", "shared.txt"}; !slices.Equal(got, want) {
+				t.Errorf("%s: reconcile left the release with %v, want %v — a stale asset that is never removed means a release page keeps shipping the previous version's files",
+					kind, got, want)
+			}
+		})
+	}
+}
