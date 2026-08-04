@@ -80,6 +80,17 @@ func CLI(tb TB, target Target, repo string, args ...string) Run {
 	return CLIIn(tb, target, repo, RunOptions{}, args...)
 }
 
+// usageErrorMarkers are how the CLI framework reports that it could not parse
+// the invocation at all.
+//
+//nolint:gochecknoglobals // read-only table.
+var usageErrorMarkers = []string{
+	"flag provided but not defined",
+	"for available flags",
+	"unknown subcommand",
+	"unknown command",
+}
+
 // RunOptions adjusts one invocation. Both fields exist because the product is
 // right to care about them: several verbs record paths that a consumer resolves
 // later, so they insist those paths are relative, which only means something
@@ -91,6 +102,10 @@ type RunOptions struct {
 	// Env adds to the closed environment, merged last so a scenario can be
 	// explicit about what the product sees.
 	Env map[string]string
+
+	// AllowUsageError opts out of the parser-rejection guard, for a scenario
+	// whose subject IS how the CLI handles a bad invocation.
+	AllowUsageError bool
 }
 
 // CLIIn is CLI with options, for the verbs that need a working directory or
@@ -121,8 +136,10 @@ func CLIIn(tb TB, target Target, repo string, opts RunOptions, args ...string) R
 	err := cmd.Run()
 
 	run := Run{Args: args, Stdout: stdout.String(), Stderr: stderr.String()}
+	assertNotAUsageError(tb, run, opts.AllowUsageError)
 
 	var exitErr *exec.ExitError
+
 	switch {
 	case err == nil:
 	case errors.As(err, &exitErr):
@@ -202,4 +219,34 @@ func targetEnvKeys(target Target) []string {
 	}
 
 	return nil
+}
+
+// assertNotAUsageError fails the test when the CLI could not parse the
+// invocation, rather than letting a scenario assert against the parser's
+// complaint.
+//
+// That is a scenario bug, not a product result, and it hides well: a usage error
+// exits non-zero and its text names the command, so a check for "it failed and
+// said something about auth" passes on it. PAR-TOK-3 did exactly that from the
+// day it was written — it drove `validate auth tokens`, which does not exist,
+// and matched "auth" inside "Run 'reusable-ci validate auth --help'". It
+// reported a covered surface that was never exercised.
+//
+// Enforced in the kit rather than per scenario so it also covers the ones nobody
+// has written yet. A scenario whose subject IS how the CLI handles a bad
+// invocation opts out with RunOptions.AllowUsageError.
+func assertNotAUsageError(tb TB, run Run, allow bool) {
+	tb.Helper()
+
+	if allow {
+		return
+	}
+
+	lower := strings.ToLower(run.Stderr)
+	for _, marker := range usageErrorMarkers {
+		if strings.Contains(lower, marker) {
+			tb.Fatalf("livetest: %q was rejected by the argument parser, so this scenario exercised the CLI rather than the forge\nstderr: %s",
+				strings.Join(run.Args, " "), run.Stderr)
+		}
+	}
 }

@@ -106,16 +106,6 @@ func TestErrors_SameFailureClass_ExitsTheSameOnEveryForge(t *testing.T) {
 func assertReadableFailure(t *testing.T, kind provider.Platform, scenario string, run livetest.Run) {
 	t.Helper()
 
-	// A malformed invocation is the test's fault, not the product's, and two
-	// forges rejecting the same bad command line agree for reasons that prove
-	// nothing about either. Caught here so a broken scenario fails loudly rather
-	// than passing as parity.
-	if strings.Contains(run.Stderr, "for available flags") ||
-		strings.Contains(strings.ToLower(run.Stderr), "flag provided but not defined") {
-		t.Fatalf("%s: %s produced a usage error, so this scenario exercised the CLI parser rather than the forge\nstderr: %s",
-			kind, scenario, run.Stderr)
-	}
-
 	if strings.TrimSpace(run.Stderr) == "" {
 		t.Errorf("%s: %s failed silently on stderr, leaving nothing to act on", kind, scenario)
 
