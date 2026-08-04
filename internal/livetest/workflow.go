@@ -188,8 +188,22 @@ func waitForRun(ctx context.Context, tb TB, target Target, repo, name string) st
 			// Logged here rather than left to the caller: every caller would
 			// have to remember, and the log is only fetchable before the
 			// scratch repository is cleaned up.
-			if log := runLogTail(ctx, target, repo); log != "" {
+			log := runLogTail(ctx, target, repo)
+			if log != "" {
 				tb.Logf("livetest: %s job log for %q (tail):\n%s", target.Kind, name, log)
+			}
+
+			// A job the runner never started cannot support the claim the caller
+			// is about to make. Every caller reads "failure" as the product
+			// having produced the wrong answer, so nineteen scenarios once
+			// reported the detector, the annotations, and the step summary as
+			// broken when the runner had simply failed to reach the Kubernetes
+			// API. Same defect the log tail addresses: right verdict, wrong
+			// vocabulary.
+			if marker, ok := systemFailure(log); ok {
+				tb.Fatalf("livetest: %s never ran the job for %q (%q); the runner failed to prepare it, "+
+					"so this says nothing about the product -- the lab is what to look at",
+					target.Kind, name, marker)
 			}
 
 			return "failure"
@@ -243,6 +257,23 @@ func latestRunStatus(ctx context.Context, target Target, repo string) string {
 // failure, for the polling loop.
 func decodeQuiet(ctx context.Context, target Target, endpoint string, into any) (int, error) {
 	return decode(ctx, target, http.MethodGet, endpoint, nil, into, http.StatusOK)
+}
+
+// systemFailure reports whether a job log describes a job that never ran,
+// returning the marker that says so.
+//
+// Only GitLab's wording is listed, because it is the only one observed. Forgejo
+// surely has an equivalent, but inventing its phrasing would add a pattern
+// nothing has ever matched — a check that cannot fire, which is the shape this
+// file exists to avoid. Add it when a real log shows it.
+func systemFailure(log string) (string, bool) {
+	for _, marker := range []string{"Job failed (system failure)"} {
+		if strings.Contains(log, marker) {
+			return marker, true
+		}
+	}
+
+	return "", false
 }
 
 // runLogTail returns the end of the failing run's job log, or "" when it cannot
@@ -507,23 +538,44 @@ func TrustLabCA() string {
 		panic("livetest: " + labCAFileEnv + " is unreadable, so no probe can verify TLS: " + err.Error())
 	}
 
+	// Each client is told where the CA is, rather than the image's system bundle
+	// being edited to contain it.
+	//
+	// Appending to /etc/ssl/certs/ca-certificates.crt needs root, and a job image
+	// is under no obligation to give a probe root: quay.io/podman/stable started
+	// running as a non-root user, and five GitLab scenarios then failed on
+	// "Permission denied" writing that file — reported as the step summary, the
+	// annotations and the output file all being broken at once, which is what a
+	// prelude failure looks like from the outside.
+	//
+	// Pointing at the lab CA *alone* is deliberate, not a shortcut around
+	// concatenating the system bundle. Everything these probes talk to is issued
+	// by this CA, so a public root is never needed, and its absence turns
+	// "accidentally reached the internet" into a TLS failure instead of a quiet
+	// success. Nothing here depends on what the image happens to trust.
+	//
+	// Exported unconditionally: each costs nothing in an image without that
+	// client, and a prelude that had to remember which image it was running in is
+	// a prelude that will forget.
 	return `cat >` + LabCAPath + ` <<'LAB_CA_PEM'
 ` + strings.TrimRight(string(pem), "\n") + `
 LAB_CA_PEM
-cat ` + LabCAPath + ` >>/etc/ssl/certs/ca-certificates.crt
-# Node ships its own compiled-in root list and never reads the file above, so
-# npm would still refuse the lab's registry. Exported unconditionally: it costs
-# nothing in an image without node, and a probe that had to remember it is a
-# probe that will forget.
+export SSL_CERT_FILE=` + LabCAPath + `
+export CURL_CA_BUNDLE=` + LabCAPath + `
+export GIT_SSL_CAINFO=` + LabCAPath + `
+export REQUESTS_CA_BUNDLE=` + LabCAPath + `
+# Node ships its own compiled-in root list and reads none of the above, so npm
+# would still refuse the lab's registry.
 export NODE_EXTRA_CA_CERTS=` + LabCAPath
 }
 
-// LabCAPath is where TrustLabCA leaves the CA inside the job.
+// LabCAPath is where TrustLabCA leaves the CA inside the job, and the single
+// path every client is pointed at.
 //
-// Written as a file as well as appended to the bundle because not every client
-// reads that bundle: the JVM keeps its own truststore, so a Maven probe has to
-// import this path with keytool. Anything else needing the CA by path takes it
-// from here rather than embedding a second copy.
+// Some clients cannot be pointed at a file by environment variable at all: the
+// JVM keeps its own truststore, so a Maven probe imports this path with keytool.
+// Anything else needing the CA by path takes it from here rather than embedding
+// a second copy.
 const LabCAPath = "/tmp/lab-ca.crt"
 
 // labCAFileEnv names the contract field holding the environment's CA bundle.
