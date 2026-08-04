@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -264,6 +265,17 @@ func rollbackMovingTag(ctx context.Context, reg PromotionRollbackRegistry, recor
 
 	source := container.StripTag(record.MovingTag) + "@" + record.PreviousMovingDigest
 	if err := reg.CopyTag(ctx, source, record.MovingTag); err != nil {
+		// Restoring a moving tag assumes the registry still serves the manifest
+		// it used to point at. That assumption is not portable: some forges
+		// (Forgejo) drop a manifest the moment no tag references it, so the
+		// previous release survives only while its own immutable :<version> tag
+		// does. Name that, rather than passing up a bare registry error the
+		// reader cannot act on.
+		if errors.Is(err, errs.ErrMissingInput) {
+			return fmt.Errorf("restore moving tag %s: the registry no longer serves %s — a manifest is kept only while some tag references it, so the previous release's immutable version tag must still exist: %w",
+				record.MovingTag, source, err)
+		}
+
 		return fmt.Errorf("restore moving tag %s from %s: %w", record.MovingTag, source, err)
 	}
 
