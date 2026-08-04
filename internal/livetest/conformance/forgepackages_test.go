@@ -185,3 +185,134 @@ jobs:
           ` + indent(`run_product publish forge-packages deploy --project-type npm --working-dir pkg`, 10) + `
 `
 }
+
+// PAR-PKG-2: a Maven artifact published through the product appears in the
+// forge's own package registry.
+//
+// Not a repeat of PAR-PKG-1 in another ecosystem: the Maven half is where the
+// two forges' auth schemes actually diverge. The product renders a settings.xml
+// carrying an HTTP header, and which header differs — GitLab wants
+// `Job-Token: <token>`, Forgejo wants `Authorization: token <token>`. A wrong
+// scheme is indistinguishable from a right one until a real registry answers,
+// and no fake we write can disagree with the assumption it was written from.
+//
+// This scenario costs more than the others: `mvn deploy` resolves its plugins
+// from Maven Central the first time, so the job reaches the public internet for
+// its toolchain. That is the same category as pulling the job image — toolchain
+// provisioning, not a registry under test. Every registry this asserts against
+// is the lab's own.
+func TestInRunner_ForgePackages_MavenDeployReachesTheRegistry(t *testing.T) {
+	const (
+		tag        = "v0.0.9-pkgmvn"
+		groupID    = "com.example.livetest"
+		artifactID = "rc-parpkg-maven"
+	)
+
+	// Unique and non-prerelease, for the reasons PAR-PKG-1 documents.
+	version := fmt.Sprintf("0.0.%d", time.Now().UnixMilli()%1_000_000)
+
+	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "a package registry") {
+		if !livetest.RunsInRunner(kind) {
+			t.Logf("SKIP %s: the in-runner tier does not drive this forge yet", kind)
+
+			continue
+		}
+
+		t.Run(string(kind), func(t *testing.T) {
+			target := livetest.Accept(t, kind)
+			repo := livetest.NewScratchRepo(t, target, "pkgmvn")
+
+			livetest.PrepareTag(t, target, repo, tag)
+			livetest.PublishBinaryAsset(t, target, repo, tag, t.TempDir())
+
+			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
+			name := livetest.MavenPackageName(target, groupID, artifactID)
+
+			if kind == provider.PlatformForgejo {
+				livetest.SetRepoSecret(t, target, repo, packageTokenSecret, target.Token)
+			}
+
+			t.Cleanup(func() {
+				livetest.DeletePublishedPackage(t, target, repo, "maven", name, version)
+			})
+
+			if before := livetest.PublishedPackageVersions(t, target, repo, "maven", name); slices.Contains(before, version) {
+				t.Fatalf("%s: %s:%s exists before deploying, so finding it afterwards would prove nothing",
+					kind, name, version)
+			}
+
+			conclusion := livetest.RunWorkflow(t, target, repo, "forge-packages-maven",
+				mavenDeployProbe(kind, assetURL, groupID, artifactID, version))
+			if conclusion != "success" {
+				t.Fatalf("%s: the deploy job concluded %q — `publish forge-packages deploy --project-type maven` did not complete against this forge",
+					kind, conclusion)
+			}
+
+			after := livetest.PublishedPackageVersions(t, target, repo, "maven", name)
+			if !slices.Contains(after, version) {
+				t.Errorf("%s: the job succeeded but %s:%s is not in the forge's package registry (found %v) — the deploy reported success without the artifact arriving",
+					kind, name, version, after)
+			}
+		})
+	}
+}
+
+// mavenDeployProbe writes a minimal pom and deploys it with the product.
+//
+// The pom sits at the job root because `publish forge-packages deploy` runs mvn
+// in the current directory, which is also where the prelude puts the binary.
+func mavenDeployProbe(kind provider.Platform, assetURL, groupID, artifactID, version string) string {
+	pom := `cat > pom.xml <<'POM'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>` + groupID + `</groupId>
+  <artifactId>` + artifactID + `</artifactId>
+  <version>` + version + `</version>
+  <packaging>jar</packaging>
+</project>
+POM
+mkdir -p src/main/java
+cat > src/main/java/Demo.java <<'JAVA'
+public class Demo { public static int one() { return 1; } }
+JAVA`
+
+	// -B for non-interactive output, and Maven must not fail on the lab's own CA:
+	// the same accommodation curl -k and npm strict-ssl make elsewhere here.
+	//
+	// The transport switch is load-bearing. maven-deploy-plugin 3.x uploads
+	// through the Maven Resolver *native* transport, which ignores the
+	// maven.wagon.* properties entirely — so setting them alone looks like it
+	// relaxed TLS and does not, and the deploy fails with a PKIX path error that
+	// reads like a product problem. Selecting the wagon transport is what makes
+	// them apply.
+	const deploy = `run_product publish forge-packages deploy --project-type maven \
+  --cli-opts "-B -Dmaven.resolver.transport=wagon -Dmaven.wagon.http.ssl.insecure=true -Dmaven.wagon.http.ssl.allowall=true -Dmaven.wagon.http.ssl.ignore.validity.dates=true"`
+
+	if kind == provider.PlatformGitLab {
+		return `publish:
+  image: maven:3.9-eclipse-temurin-21
+  script:
+    - |
+      ` + indent(livetest.ProbePrelude(assetURL), 6) + `
+      ` + indent(pom, 6) + `
+      ` + indent(deploy, 6) + `
+`
+	}
+
+	return `on: [push]
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    container:
+      image: maven:3.9-eclipse-temurin-21
+    steps:
+      - name: deploy a Maven artifact to this forge's own registry
+        env:
+          FORGEJO_TOKEN: ${{ secrets.RC_PACKAGE_TOKEN }}
+        run: |
+          ` + indent(livetest.ProbePrelude(assetURL), 10) + `
+          ` + indent(pom, 10) + `
+          ` + indent(deploy, 10) + `
+`
+}

@@ -238,8 +238,16 @@ opt-in.
 | Pattern | artifact-first (platform-agnostic deliverable) |
 | project-type identifier | `maven` |
 | Canonical tool | Maven |
+| Supported versions | **3.9.x and newer** |
 | Status | Production |
 | Tracked since | v2.0.0 |
+
+Maven 3.9 is the floor, matching the JDK runtime image
+(`reusable-ci-runtime-java-25` ships Maven 3.9.x). Older Maven is not tested
+and not supported. The floor is not cosmetic: 3.9 is where the deploy plugin
+moved to the Maven Resolver native transport, so behaviour a pipeline depends
+on — transport selection, and therefore how TLS and proxy settings are
+honoured — differs from 3.8 and earlier.
 
 #### Capabilities
 

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
@@ -226,4 +227,18 @@ func SetRepoSecret(tb TB, target Target, repo, name, value string) {
 			tb.Fatalf("livetest: set secret %s on %s/%s: %v", name, target.Owner, repo, err)
 		}
 	}
+}
+
+// MavenPackageName is the name a forge lists a Maven artifact under.
+//
+// The two spell coordinates differently: GitLab's package registry names the
+// package "<groupId as path>/<artifactId>", while the Gitea family joins them
+// with a colon. Asserting one spelling on both would fail against whichever
+// forge was not the one it was written for.
+func MavenPackageName(target Target, groupID, artifactID string) string {
+	if target.Kind == provider.PlatformGitLab {
+		return strings.ReplaceAll(groupID, ".", "/") + "/" + artifactID
+	}
+
+	return groupID + ":" + artifactID
 }
