@@ -185,14 +185,21 @@ func keylessSignProbe(assetURL, fulcioURL, issuerURL string) string {
       echo "--- bundle: $bundle ---"
       head -c 300 "$bundle"; echo
 
-      # The certificate must come from the lab CA, not from public Sigstore. If
-      # the product ignored --fulcio-url this is where it shows: the run would
-      # either have failed reaching sigstore.dev, or succeeded against the wrong
-      # authority.
+      # Two claims, and the identity one is the point of keyless signing.
+      #
+      # The authority: the certificate must come from the lab CA, not public
+      # Sigstore. If the CA were ignored the run would either have failed
+      # reaching sigstore.dev or succeeded against the wrong authority.
+      #
+      # The identity: the certificate must name THIS pipeline. A regexp of .*
+      # would accept a certificate for any identity from any issuer, which is
+      # the assertion that makes a keyless test look green while proving
+      # nothing -- so the subject is pinned to this project's own CI
+      # configuration, which is what Fulcio put in the SAN.
       cosign verify-blob \
         --bundle "$bundle" \
         --certificate-oidc-issuer "` + issuerURL + `" \
-        --certificate-identity-regexp '.*' \
+        --certificate-identity-regexp "^https://.*/${CI_PROJECT_PATH}//?\.gitlab-ci\.yml@" \
         --trusted-root trusted-root.json \
         --insecure-ignore-tlog \
         --insecure-ignore-sct \

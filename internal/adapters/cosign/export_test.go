@@ -10,6 +10,6 @@ import "time"
 // in this directory hold it to cosign's own output without widening the API.
 type SigningConfigInputForTest = signingConfigInput
 
-func BuildSigningConfigForTest(in SigningConfigInputForTest, validFrom time.Time) ([]byte, error) {
-	return buildSigningConfig(in, validFrom)
+func BuildSigningConfigForTest(in SigningConfigInputForTest, publishes bool, validFrom time.Time) ([]byte, error) {
+	return buildSigningConfig(in, publishes, validFrom)
 }

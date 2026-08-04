@@ -72,20 +72,20 @@ type signingConfigDoc struct {
 	TSAConfig       map[string]string      `json:"tsaConfig"`
 }
 
-// signingConfigInput is what the caller knows: where the services are, and
-// whether the run publishes.
+// signingConfigInput is where the services are. Whether the run publishes is
+// not here: that is the adapter's own setting, and a field the caller fills in
+// only to have it overwritten is a field someone will eventually trust.
 type signingConfigInput struct {
-	FulcioURL   string
-	OIDCIssuer  string
-	RekorURL    string
-	PublishesTo bool
+	FulcioURL  string
+	OIDCIssuer string
+	RekorURL   string
 }
 
 // needed reports whether cosign has to be told anything at all. With every
 // service left at its default and the transparency log on, cosign's own
 // configuration is correct and passing a document could only diverge from it.
-func (in signingConfigInput) needed() bool {
-	return in.FulcioURL != "" || in.OIDCIssuer != "" || in.RekorURL != "" || !in.PublishesTo
+func (in signingConfigInput) needed(publishes bool) bool {
+	return in.FulcioURL != "" || in.OIDCIssuer != "" || in.RekorURL != "" || !publishes
 }
 
 // buildSigningConfig renders the document for these services.
@@ -94,7 +94,7 @@ func (in signingConfigInput) needed() bool {
 // reproducible and the tests can assert on it. Services carry a start time
 // because the format requires one; it is the moment the run began, which is the
 // only honest answer for a service this run was told about.
-func buildSigningConfig(in signingConfigInput, validFrom time.Time) ([]byte, error) {
+func buildSigningConfig(in signingConfigInput, publishes bool, validFrom time.Time) ([]byte, error) {
 	start := validFrom.UTC().Format(time.RFC3339)
 
 	service := func(url string) []signingConfigService {
@@ -124,7 +124,7 @@ func buildSigningConfig(in signingConfigInput, validFrom time.Time) ([]byte, err
 	// transparency is off would contradict the whole point of the document: the
 	// selector is what tells cosign a log must be used, so an entry with the log
 	// turned off is either ignored or obeyed, and neither is a good surprise.
-	if in.RekorURL != "" && in.PublishesTo {
+	if in.RekorURL != "" && publishes {
 		doc.RekorTlogUrls = service(in.RekorURL)
 		doc.RekorTlogConfig = map[string]string{"selector": "ANY"}
 	}

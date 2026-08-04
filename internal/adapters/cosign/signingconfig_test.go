@@ -418,7 +418,7 @@ func TestBuildSigningConfig_NoServicesMatchesCosignsOwnOutput(t *testing.T) {
 	const want = `{"mediaType":"application/vnd.dev.sigstore.signingconfig.v0.2+json",` +
 		`"rekorTlogConfig":{},"tsaConfig":{}}`
 
-	got, err := cosign.BuildSigningConfigForTest(cosign.SigningConfigInputForTest{}, time.Unix(0, 0))
+	got, err := cosign.BuildSigningConfigForTest(cosign.SigningConfigInputForTest{}, false, time.Unix(0, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +434,7 @@ func TestBuildSigningConfig_NamesSelfHostedServices(t *testing.T) {
 	got, err := cosign.BuildSigningConfigForTest(cosign.SigningConfigInputForTest{
 		FulcioURL:  "https://fulcio.example.internal",
 		OIDCIssuer: "https://gitlab.example.internal",
-	}, time.Unix(0, 0).UTC())
+	}, false, time.Unix(0, 0).UTC())
 	if err != nil {
 		t.Fatal(err)
 	}

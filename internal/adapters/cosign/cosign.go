@@ -452,12 +452,12 @@ func (a *Adapter) publishesToLog() bool { return a.Transparency.PublishesToLog()
 func (a *Adapter) withSigningConfig(args []string, services signingConfigInput, trustedRoot string) ([]string, func(), error) {
 	noop := func() {}
 
-	services.PublishesTo = a.publishesToLog()
-	if !services.needed() {
+	publishes := a.publishesToLog()
+	if !services.needed(publishes) {
 		return args, noop, nil
 	}
 
-	document, err := buildSigningConfig(services, time.Now())
+	document, err := buildSigningConfig(services, publishes, time.Now())
 	if err != nil {
 		return nil, noop, err
 	}
@@ -483,7 +483,7 @@ func (a *Adapter) withSigningConfig(args []string, services signingConfigInput, 
 	// wrote, and an empty root would deny it that; with no log there is no
 	// service whose material it could meaningfully check, and the empty root is
 	// what stops it reaching the public TUF CDN to look.
-	if services.PublishesTo {
+	if publishes {
 		return args, cleanConfig, nil
 	}
 
