@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -63,6 +64,20 @@ func NewScratchRepo(tb TB, target Target, scenario string) string {
 	}
 
 	tb.Cleanup(func() {
+		// A failing in-runner scenario reports only a conclusion, and the job log
+		// that would explain it lives in a repository this cleanup is about to
+		// delete. Forgejo's actions API does not serve those logs by any stable
+		// route, so the only way to read one is to still have the repository —
+		// hence an explicit opt-out, used while diagnosing and never in a normal
+		// run. Deliberately not a flag: it must be awkward enough that nobody
+		// leaves it on. The next run starts by deleting the repository anyway, so
+		// what is kept is one generation, not a growing pile.
+		if os.Getenv("RC_LIVE_KEEP_SCRATCH") == "1" {
+			tb.Logf("livetest: keeping %s/%s for inspection (RC_LIVE_KEEP_SCRATCH=1)", target.Owner, repo)
+
+			return
+		}
+
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cleanupCancel()
 
