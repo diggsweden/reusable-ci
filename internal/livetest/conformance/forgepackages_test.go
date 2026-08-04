@@ -66,9 +66,7 @@ func TestInRunner_ForgePackages_NPMPublishReachesTheRegistry(t *testing.T) {
 	version := fmt.Sprintf("0.0.%d", time.Now().UnixMilli()%1_000_000)
 
 	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "a package registry") {
-		if !livetest.RunsInRunner(kind) {
-			t.Logf("SKIP %s: the in-runner tier does not drive this forge yet", kind)
-
+		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
 			continue
 		}
 
@@ -207,9 +205,7 @@ func TestInRunner_ForgePackages_MavenDeployReachesTheRegistry(t *testing.T) {
 	version := fmt.Sprintf("0.0.%d", time.Now().UnixMilli()%1_000_000)
 
 	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "a package registry") {
-		if !livetest.RunsInRunner(kind) {
-			t.Logf("SKIP %s: the in-runner tier does not drive this forge yet", kind)
-
+		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
 			continue
 		}
 

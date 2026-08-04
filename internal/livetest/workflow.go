@@ -69,9 +69,41 @@ var errUnsupportedInRunner = errors.New("in-runner scenarios are not implemented
 //
 // Scenarios must consult this and skip loudly instead of assuming, so a forge
 // that cannot be driven is visible in the output rather than silently absent.
+//
+// This is a fact about the SUITE. Whether the environment in front of it has a
+// runner is RunnerAvailable's question, and both have to hold.
 func RunsInRunner(kind provider.Platform) bool {
 	return kind == provider.PlatformForgejo || kind == provider.PlatformGitLab
 }
+
+// RunnerAvailable reports whether this environment has a runner that will pick
+// up a job for kind, read from the contract.
+//
+// Separate from RunsInRunner because the two answer different questions, and
+// only one of them is about the code. A road can deploy forges without
+// deploying runners -- the lab's k3s road does exactly that until its
+// ci-disposable overlay is applied -- and an in-runner scenario that assumes
+// otherwise does not fail fast. It waits out a four-minute timeout and then
+// reports "never reached a terminal state; a job that stays queued usually
+// means no runner is registered for its labels", which sends the reader to look
+// at labels on a road that deployed no runner at all. Ten scenarios doing that
+// is forty minutes of wrong diagnosis.
+//
+// An absent field means no runner, for the same reason FulcioTrusts trusts
+// nothing when unset: assuming a runner turns a road that cannot run jobs into
+// a suite that reports failures about labels.
+func RunnerAvailable(kind provider.Platform) bool {
+	for _, forge := range strings.Split(os.Getenv(labRunnerForgesEnv), ",") {
+		if strings.EqualFold(strings.TrimSpace(forge), string(kind)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// labRunnerForgesEnv names the contract field listing forges with a live runner.
+const labRunnerForgesEnv = "LAB_RUNNER_FORGES"
 
 // RunWorkflow commits a workflow to the scratch repository, waits for the run it
 // triggers, and returns the run's conclusion.

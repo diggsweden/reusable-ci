@@ -42,28 +42,12 @@ func TestInRunner_KeylessSigningAgainstTheLabCA(t *testing.T) {
 	const tag = "v0.0.10-keyless"
 
 	for _, kind := range forgesClaiming(t, claimsMintsOIDCToken, "keyless signing against an own CA") {
-		if !livetest.RunsInRunner(kind) {
-			t.Logf("SKIP %s: mints OIDC tokens, but the in-runner tier does not drive this forge yet", kind)
-
+		if !livetest.Requires(t, kind, livetest.NeedsInRunner, livetest.NeedsFulcio) {
 			continue
 		}
 
-		fulcioURL, hasCA := livetest.FulcioURL()
-		if !hasCA {
-			t.Logf("SKIP %s: this environment provides no Fulcio (LAB_FULCIO_URL unset)", kind)
-
-			continue
-		}
-
-		if !livetest.FulcioTrusts(kind) {
-			// Which issuers the CA accepts is the environment's business, read
-			// from the contract rather than assumed here: a forge needs its own
-			// entry in the CA's issuer config before this scenario can mean
-			// anything for it.
-			t.Logf("SKIP %s: this environment's Fulcio is not configured to trust it (LAB_FULCIO_ISSUERS)", kind)
-
-			continue
-		}
+		// The URL itself, now that the environment is known to have one.
+		fulcioURL, _ := livetest.FulcioURL()
 
 		t.Run(string(kind), func(t *testing.T) {
 			target := livetest.Accept(t, kind)

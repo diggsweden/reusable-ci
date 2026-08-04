@@ -36,9 +36,7 @@ import (
 
 func TestInRunner_DetectsItsOwnRuntime(t *testing.T) {
 	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "an artifact store") {
-		if !livetest.RunsInRunner(kind) {
-			t.Logf("SKIP %s: the in-runner tier does not drive this forge yet", kind)
-
+		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
 			continue
 		}
 
@@ -117,9 +115,7 @@ func TestInRunner_ProductDetectsItsRunner(t *testing.T) {
 	const tag = "v0.0.1-inrunner"
 
 	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
-		if !livetest.RunsInRunner(kind) {
-			t.Logf("SKIP %s: the in-runner tier does not drive this forge yet", kind)
-
+		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
 			continue
 		}
 
@@ -200,9 +196,7 @@ func TestInRunner_NoGitHubAnnotationsOnOtherForges(t *testing.T) {
 	const tag = "v0.0.2-annotations"
 
 	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
-		if !livetest.RunsInRunner(kind) {
-			t.Logf("SKIP %s: the in-runner tier does not drive this forge yet", kind)
-
+		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
 			continue
 		}
 
@@ -292,9 +286,7 @@ func TestInRunner_StepSummaryReachesAReader(t *testing.T) {
 	const tag = "v0.0.3-summary"
 
 	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
-		if !livetest.RunsInRunner(kind) {
-			t.Logf("SKIP %s: the in-runner tier does not drive this forge yet", kind)
-
+		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
 			continue
 		}
 
@@ -394,9 +386,7 @@ func TestInRunner_StepOutputsReachTheRunnersOutputFile(t *testing.T) {
 	const tag = "v0.0.6-outputs"
 
 	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
-		if !livetest.RunsInRunner(kind) {
-			t.Logf("SKIP %s: the in-runner tier does not drive this forge yet", kind)
-
+		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
 			continue
 		}
 

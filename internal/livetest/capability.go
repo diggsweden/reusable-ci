@@ -5,6 +5,9 @@
 package livetest
 
 import (
+	"os"
+	"strings"
+
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/forgejo"
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/github"
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/gitlab"
@@ -29,11 +32,36 @@ func Platforms() []provider.Platform {
 	}
 }
 
-// LiveForges is the subset a local lab can actually host, and therefore the set
-// every live scenario iterates. GitHub is absent by design: this tier only
-// mutates disposable hosts.
+// LiveForges is the set every live scenario iterates: the forges this suite can
+// drive, intersected with the ones the contract actually selected.
+//
+// Two facts, and both belong here. Which forges the SUITE supports is a code
+// fact — GitHub is absent by design, because this tier only mutates disposable
+// hosts and there is no disposable GitHub. Which forges the ENVIRONMENT provides
+// is the contract's to say, and a contract minted for one forge should not have
+// every scenario iterate two.
+//
+// Before, only the first half was here and the second was discovered late:
+// Accept skips inside the subtest with "not selected by LAB_TARGETS", so the
+// loop body ran for a forge that was never coming. Deciding it here means a
+// scenario iterates exactly what it can drive.
 func LiveForges() []provider.Platform {
-	return []provider.Platform{provider.PlatformGitLab, provider.PlatformForgejo}
+	supported := []provider.Platform{provider.PlatformGitLab, provider.PlatformForgejo}
+
+	selected := map[string]bool{}
+	for _, name := range strings.Split(os.Getenv("LAB_TARGETS"), ",") {
+		selected[strings.ToLower(strings.TrimSpace(name))] = true
+	}
+
+	live := make([]provider.Platform, 0, len(supported))
+
+	for _, kind := range supported {
+		if selected[string(kind)] {
+			live = append(live, kind)
+		}
+	}
+
+	return live
 }
 
 // Capabilities reports what a forge claims, built from an adapter with an empty

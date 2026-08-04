@@ -95,9 +95,7 @@ func TestInRunner_ForgeInjectedRegistryCredentialAuthenticates(t *testing.T) {
 	const tag = "v0.0.7-regauth"
 
 	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "an OCI registry") {
-		if !livetest.RunsInRunner(kind) {
-			t.Logf("SKIP %s: the in-runner tier does not drive this forge yet", kind)
-
+		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
 			continue
 		}
 

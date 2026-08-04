@@ -159,9 +159,7 @@ func TestInRunner_ArtifactRoundTripsThroughTheStore(t *testing.T) {
 	const tag = "v0.0.5-artifact"
 
 	for _, kind := range forgesClaiming(t, claimsRunArtifacts, "run artifacts") {
-		if !livetest.RunsInRunner(kind) {
-			t.Logf("SKIP %s: claims run artifacts, but the in-runner tier does not drive this forge yet", kind)
-
+		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
 			continue
 		}
 
