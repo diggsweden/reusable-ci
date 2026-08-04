@@ -43,6 +43,10 @@ type SignImageInput struct {
 	// Empty uses cosign's defaults. Meaningful only when Method == sigstore.
 	FulcioURL string
 	RekorURL  string
+
+	// TrustedRootPath is cosign's trusted-root document, needed to verify
+	// against a self-hosted CA; sigstore-only.
+	TrustedRootPath string
 }
 
 // cosignImageSigner is the slice of *cosign.Adapter that container-
@@ -72,12 +76,13 @@ func SignImage(ctx context.Context, signer cosignImageSigner, out io.Writer, in 
 		_, _ = fmt.Fprintf(out, "Signing image %s (method=sigstore, keyless OIDC)\n", in.Image)
 
 		return signer.SignImage(ctx, container.ImageSignRequest{
-			ImageRef:   in.Image,
-			Recursive:  in.Recursive,
-			Keyless:    true,
-			OIDCIssuer: in.OIDCIssuer,
-			FulcioURL:  in.FulcioURL,
-			RekorURL:   in.RekorURL,
+			ImageRef:        in.Image,
+			Recursive:       in.Recursive,
+			Keyless:         true,
+			OIDCIssuer:      in.OIDCIssuer,
+			FulcioURL:       in.FulcioURL,
+			RekorURL:        in.RekorURL,
+			TrustedRootPath: in.TrustedRootPath,
 		}, out)
 	case domainrelease.SignMethodKMS:
 		_, _ = fmt.Fprintf(out, "Signing image %s (method=kms, key=%s)\n", in.Image, in.KeyRef)

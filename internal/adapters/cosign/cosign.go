@@ -161,7 +161,8 @@ func (a *Adapter) SignBlob(ctx context.Context, in SignBlobInput, errOut io.Writ
 	}
 
 	args, cleanup, err := a.withSigningConfig([]string{"sign-blob", flagYes, "--bundle", in.BundlePath},
-		signingConfigInput{FulcioURL: in.FulcioURL, OIDCIssuer: in.OIDCIssuer, RekorURL: in.RekorURL})
+		signingConfigInput{FulcioURL: in.FulcioURL, OIDCIssuer: in.OIDCIssuer, RekorURL: in.RekorURL},
+		in.TrustedRootPath)
 	if err != nil {
 		return err
 	}
@@ -240,7 +241,8 @@ func (a *Adapter) SignImage(ctx context.Context, in SignImageInput, errOut io.Wr
 	}
 
 	args, cleanup, err := a.withSigningConfig([]string{"sign", flagYes},
-		signingConfigInput{FulcioURL: in.FulcioURL, OIDCIssuer: in.OIDCIssuer, RekorURL: in.RekorURL})
+		signingConfigInput{FulcioURL: in.FulcioURL, OIDCIssuer: in.OIDCIssuer, RekorURL: in.RekorURL},
+		in.TrustedRootPath)
 	if err != nil {
 		return err
 	}
@@ -296,7 +298,8 @@ func (a *Adapter) AttestImage(ctx context.Context, in AttestImageInput, errOut i
 	}
 
 	args, cleanup, err := a.withSigningConfig([]string{"attest", flagYes, "--type", in.PredicateType, "--predicate", in.PredicatePath},
-		signingConfigInput{FulcioURL: in.FulcioURL, OIDCIssuer: in.OIDCIssuer, RekorURL: in.RekorURL})
+		signingConfigInput{FulcioURL: in.FulcioURL, OIDCIssuer: in.OIDCIssuer, RekorURL: in.RekorURL},
+		in.TrustedRootPath)
 	if err != nil {
 		return err
 	}
@@ -446,7 +449,7 @@ func (a *Adapter) publishesToLog() bool { return a.Transparency.PublishesToLog()
 // Files are written per call rather than cached on the Adapter: a signing run
 // is short, the documents are ~100 bytes each, and per-call scope means there
 // is no lifetime to manage and nothing to leak into the runner's temp dir.
-func (a *Adapter) withSigningConfig(args []string, services signingConfigInput) ([]string, func(), error) {
+func (a *Adapter) withSigningConfig(args []string, services signingConfigInput, trustedRoot string) ([]string, func(), error) {
 	noop := func() {}
 
 	services.PublishesTo = a.publishesToLog()
@@ -466,10 +469,19 @@ func (a *Adapter) withSigningConfig(args []string, services signingConfigInput) 
 
 	args = append(args, flagSigningConfig, config)
 
-	// The trust root is only supplied when nothing is published. With a log in
-	// play cosign needs the real trust material to verify what it just wrote,
-	// and an empty root would deny it that; with no log there is no service
-	// whose material it could meaningfully check, and supplying an empty root is
+	// A caller-supplied trust root wins, and is what makes a self-hosted CA
+	// usable: cosign verifies the certificate it was just issued, and cannot
+	// learn a private CA's root any other way. Without this the run signs
+	// successfully and then fails with "failed to verify leaf certificate",
+	// which reads as a signing fault rather than a missing trust anchor.
+	if trustedRoot != "" {
+		return append(args, flagTrustedRoot, trustedRoot), cleanConfig, nil
+	}
+
+	// Otherwise the empty root is supplied only when nothing is published. With
+	// a log in play cosign needs real trust material to verify what it just
+	// wrote, and an empty root would deny it that; with no log there is no
+	// service whose material it could meaningfully check, and the empty root is
 	// what stops it reaching the public TUF CDN to look.
 	if services.PublishesTo {
 		return args, cleanConfig, nil

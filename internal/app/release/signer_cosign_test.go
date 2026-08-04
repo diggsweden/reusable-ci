@@ -166,10 +166,11 @@ func TestCosignSigner_SigstoreCarriesSelfHostedEndpoints(t *testing.T) {
 	rec := &recordingBlobber{}
 
 	signer, err := apprelease.NewCosignSigner(rec, apprelease.CosignSignerInput{
-		Method:     domainrelease.SignMethodSigstore,
-		OIDCIssuer: "https://gitlab.example.internal",
-		FulcioURL:  "https://fulcio.example.internal",
-		RekorURL:   "https://rekor.example.internal",
+		Method:          domainrelease.SignMethodSigstore,
+		OIDCIssuer:      "https://gitlab.example.internal",
+		FulcioURL:       "https://fulcio.example.internal",
+		RekorURL:        "https://rekor.example.internal",
+		TrustedRootPath: "/tmp/trusted-root.json",
 	}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
@@ -180,12 +181,13 @@ func TestCosignSigner_SigstoreCarriesSelfHostedEndpoints(t *testing.T) {
 	}
 
 	want := cosign.SignBlobInput{
-		Artifact:   "/tmp/app.tgz",
-		BundlePath: "/tmp/app.tgz.bundle",
-		Keyless:    true,
-		OIDCIssuer: "https://gitlab.example.internal",
-		FulcioURL:  "https://fulcio.example.internal",
-		RekorURL:   "https://rekor.example.internal",
+		Artifact:        "/tmp/app.tgz",
+		BundlePath:      "/tmp/app.tgz.bundle",
+		Keyless:         true,
+		OIDCIssuer:      "https://gitlab.example.internal",
+		FulcioURL:       "https://fulcio.example.internal",
+		RekorURL:        "https://rekor.example.internal",
+		TrustedRootPath: "/tmp/trusted-root.json",
 	}
 	if rec.got != want {
 		t.Errorf("SignBlobInput:\n got=%+v\nwant=%+v", rec.got, want)

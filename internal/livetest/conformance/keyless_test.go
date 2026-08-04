@@ -105,7 +105,7 @@ func keylessSignProbe(assetURL, fulcioURL, issuerURL string) string {
       aud: sigstore
   script:
     - |
-      apk add --no-cache curl >/dev/null
+      apk add --no-cache curl jq >/dev/null
 
       # cosign 3.x, pinned, NOT the distribution package. Alpine ships 2.4.3,
       # a major version behind what this product is written against -- the
@@ -127,7 +127,11 @@ func keylessSignProbe(assetURL, fulcioURL, issuerURL string) string {
         echo "FAIL: no CI_SERVER_TLS_CA_FILE; the job cannot trust the lab CA"
         exit 1
       fi
-      export SSL_CERT_FILE="$CI_SERVER_TLS_CA_FILE"
+      # APPENDED to the system roots, not substituted for them. Pointing
+      # SSL_CERT_FILE at the lab CA alone makes every public TLS client in the
+      # job fail -- apk cannot reach its repositories, and the failure names a
+      # certificate rather than the substitution that caused it.
+      cat "$CI_SERVER_TLS_CA_FILE" >> /etc/ssl/certs/ca-certificates.crt
 
       # The token must exist before anything else is worth trying.
       if [ -z "${SIGSTORE_ID_TOKEN:-}" ]; then
@@ -137,6 +141,19 @@ func keylessSignProbe(assetURL, fulcioURL, issuerURL string) string {
 
       # A release-artifact extension: the sign verb filters by extension
       # (.jar .tgz .tar.gz .zip .war), so a .txt is skipped and nothing signs.
+      # cosign verifies the certificate it was just issued, and has no way to
+      # learn a private CA's root -- so the trust anchor is built from what the
+      # CA itself serves, rather than pinned. Reading it from the running
+      # instance is also what makes an ephemeral or rotated CA a non-event here.
+      curl -fsS "` + fulcioURL + `/api/v2/trustBundle" \
+        | jq -r '.chains[0].certificates[]' > fulcio-root.pem
+      test -s fulcio-root.pem
+
+      cosign trusted-root create \
+        --fulcio="url=` + fulcioURL + `,certificate-chain=fulcio-root.pem" \
+        --no-default-fulcio --no-default-rekor --no-default-ctfe --no-default-tsa \
+        --out trusted-root.json
+
       mkdir -p dist
       echo "par-sign-2 payload" > dist/artifact.tgz
 
@@ -145,22 +162,38 @@ func keylessSignProbe(assetURL, fulcioURL, issuerURL string) string {
         --release-artifacts-dir dist \
         --no-checksums-file \
         --oidc-issuer "` + issuerURL + `" \
-        --fulcio-url "` + fulcioURL + `"
+        --fulcio-url "` + fulcioURL + `" \
+        --trusted-root trusted-root.json
 
       # A bundle is not proof on its own: the interesting question is which
       # authority vouched for it, and for whom.
-      test -s dist/artifact.tgz.bundle
-      echo "--- bundle ---"
-      head -c 400 dist/artifact.tgz.bundle; echo
+      #
+      # The directory is listed before anything is asserted about it. Testing a
+      # guessed filename fails silently under set -e, which is how a renamed
+      # sidecar reads as "signing broke" instead of "look one line up".
+      # Looked for in the working directory as well as dist: the sign verb moves
+      # each sidecar next to the cwd rather than leaving it beside the artifact,
+      # because that is where the upload step collects them from.
+      echo "--- dist ---"
+      ls -la dist .
+
+      bundle="$(find . -maxdepth 2 -name '*.bundle' -type f | head -n 1)"
+      if [ -z "$bundle" ]; then
+        echo "FAIL: signing reported success but produced no bundle"
+        exit 1
+      fi
+      echo "--- bundle: $bundle ---"
+      head -c 300 "$bundle"; echo
 
       # The certificate must come from the lab CA, not from public Sigstore. If
       # the product ignored --fulcio-url this is where it shows: the run would
       # either have failed reaching sigstore.dev, or succeeded against the wrong
       # authority.
       cosign verify-blob \
-        --bundle dist/artifact.tgz.bundle \
+        --bundle "$bundle" \
         --certificate-oidc-issuer "` + issuerURL + `" \
         --certificate-identity-regexp '.*' \
+        --trusted-root trusted-root.json \
         --insecure-ignore-tlog \
         --insecure-ignore-sct \
         dist/artifact.tgz

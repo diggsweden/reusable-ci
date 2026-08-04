@@ -90,16 +90,17 @@ func attestCmd() *cli.Command {
 			endpoints := signflags.ReadEndpoints(cmd)
 
 			return appcontainer.AttestImage(ctx, cosign.New(), os.Stderr, appcontainer.AttestImageInput{
-				Image:         image,
-				Method:        method,
-				PredicateType: cmd.String("type"),
-				PredicatePath: cmd.String("predicate"),
-				Provenance:    prov,
-				Recursive:     cmd.Bool(flagRecursive),
-				KeyRef:        cmd.String("key"),
-				OIDCIssuer:    cmd.String("oidc-issuer"),
-				FulcioURL:     endpoints.FulcioURL,
-				RekorURL:      endpoints.RekorURL,
+				Image:           image,
+				Method:          method,
+				PredicateType:   cmd.String("type"),
+				PredicatePath:   cmd.String("predicate"),
+				Provenance:      prov,
+				Recursive:       cmd.Bool(flagRecursive),
+				KeyRef:          cmd.String("key"),
+				OIDCIssuer:      cmd.String("oidc-issuer"),
+				FulcioURL:       endpoints.FulcioURL,
+				RekorURL:        endpoints.RekorURL,
+				TrustedRootPath: endpoints.TrustedRootPath,
 			})
 		},
 	}

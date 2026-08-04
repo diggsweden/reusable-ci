@@ -20,6 +20,7 @@ const (
 	flagOIDCIssuer               = "oidc-issuer"
 	flagFulcioURL                = "fulcio-url"
 	flagRekorURL                 = "rekor-url"
+	flagTrustedRoot              = "trusted-root"
 	flagPrivateKeyFile           = "private-key-file"
 	flagPassphraseFile           = "passphrase-file"
 	flagManifest                 = "manifest"

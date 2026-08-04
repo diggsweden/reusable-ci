@@ -165,10 +165,11 @@ func buildSBOMSigner(cmd *cli.Command) (appsbom.FileSigner, error) {
 	endpoints := signflags.ReadEndpoints(cmd)
 
 	return apprelease.NewCosignSigner(cosign.New(), apprelease.CosignSignerInput{
-		Method:     method,
-		KeyRef:     cmd.String("sign-key"),
-		OIDCIssuer: oidcIssuer,
-		FulcioURL:  endpoints.FulcioURL,
-		RekorURL:   endpoints.RekorURL,
+		Method:          method,
+		KeyRef:          cmd.String("sign-key"),
+		OIDCIssuer:      oidcIssuer,
+		FulcioURL:       endpoints.FulcioURL,
+		RekorURL:        endpoints.RekorURL,
+		TrustedRootPath: endpoints.TrustedRootPath,
 	}, os.Stderr)
 }

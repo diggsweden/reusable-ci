@@ -638,6 +638,7 @@ EXAMPLES:
 | `--key` | cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
 | `--fulcio-url` | certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=kms. | `$SIGN_FULCIO_URL` |
+| `--trusted-root` | trust material cosign verifies the new signature against, as produced by `cosign trusted-root create` (default: cosign's own). Required for a self-hosted CA: cosign verifies the certificate it was just issued and cannot learn a private root any other way. Forbidden for --method=kms. | `$SIGN_TRUSTED_ROOT` |
 | `--rekor-url` | transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=kms. | `$SIGN_REKOR_URL` |
 | `--builder-id` | override the SLSA provenance builder.id (e.g. an operator's documented KMS builder identity for an isolated L3 attestor); defaults to the CI-derived workflow identity | `$BUILDER_ID` |
 | `--flavor` | build variant recorded as externalParameters.flavor (e.g. a ci-builder flavor like "rust") | `$BUILD_FLAVOR` |
@@ -1119,6 +1120,7 @@ step; promotion remains a separate ledger promote operation.
 | `--key` | cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
 | `--fulcio-url` | certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=kms. | `$SIGN_FULCIO_URL` |
+| `--trusted-root` | trust material cosign verifies the new signature against, as produced by `cosign trusted-root create` (default: cosign's own). Required for a self-hosted CA: cosign verifies the certificate it was just issued and cannot learn a private root any other way. Forbidden for --method=kms. | `$SIGN_TRUSTED_ROOT` |
 | `--rekor-url` | transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=kms. | `$SIGN_REKOR_URL` |
 
 #### `reusable-ci container ledger validate`
@@ -1564,6 +1566,7 @@ sign and attest release images from the confined release-image ledger
 | `--key` | cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
 | `--fulcio-url` | certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=kms. | `$SIGN_FULCIO_URL` |
+| `--trusted-root` | trust material cosign verifies the new signature against, as produced by `cosign trusted-root create` (default: cosign's own). Required for a self-hosted CA: cosign verifies the certificate it was just issued and cannot learn a private root any other way. Forbidden for --method=kms. | `$SIGN_TRUSTED_ROOT` |
 | `--rekor-url` | transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=kms. | `$SIGN_REKOR_URL` |
 
 #### `reusable-ci container release-images validate`
@@ -1669,6 +1672,7 @@ EXAMPLES:
 | `--key` | cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
 | `--fulcio-url` | certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=kms. | `$SIGN_FULCIO_URL` |
+| `--trusted-root` | trust material cosign verifies the new signature against, as produced by `cosign trusted-root create` (default: cosign's own). Required for a self-hosted CA: cosign verifies the certificate it was just issued and cannot learn a private root any other way. Forbidden for --method=kms. | `$SIGN_TRUSTED_ROOT` |
 | `--rekor-url` | transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=kms. | `$SIGN_REKOR_URL` |
 | `--recursive` | walk manifest-list children, signing each per-arch digest in addition to the list itself. Default true (production releases use multi-arch manifest lists). | `$SIGN_RECURSIVE` |
 
@@ -2562,6 +2566,7 @@ EXAMPLE:
 | `--key` | cosign --key for --method=kms: KMS/PKCS#11 URI (awskms://, gcpkms://, hashivault://, azurekms://, pkcs11:), env://VAR, or file path. Forbidden for --method=sigstore. Empty = generate only. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms. | `$SIGN_OIDC_ISSUER` |
 | `--fulcio-url` | certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=kms. | `$SIGN_FULCIO_URL` |
+| `--trusted-root` | trust material cosign verifies the new signature against, as produced by `cosign trusted-root create` (default: cosign's own). Required for a self-hosted CA: cosign verifies the certificate it was just issued and cannot learn a private root any other way. Forbidden for --method=kms. | `$SIGN_TRUSTED_ROOT` |
 | `--rekor-url` | transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=kms. | `$SIGN_REKOR_URL` |
 
 ### `reusable-ci release publish`
@@ -2661,6 +2666,7 @@ EXAMPLE:
 | `--key` | cosign --key reference for --method=kms: KMS URI (awskms:///alias/X, hashivault://transit/keys/X, gcpkms://..., azurekms://...), PKCS#11 URI, or local key-file path. Forbidden for --method=gpg/sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: auto-detected — GitHub Actions / GitLab CI / $CI_SERVER_URL). Forbidden for --method=gpg/kms. | `$SIGN_OIDC_ISSUER` |
 | `--fulcio-url` | certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=gpg/kms. | `$SIGN_FULCIO_URL` |
+| `--trusted-root` | trust material cosign verifies the new signature against, as produced by `cosign trusted-root create` (default: cosign's own). Required for a self-hosted CA: cosign verifies the certificate it was just issued and cannot learn a private root any other way. Forbidden for --method=gpg/kms. | `$SIGN_TRUSTED_ROOT` |
 | `--rekor-url` | transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=gpg/kms. | `$SIGN_REKOR_URL` |
 | `--private-key-file` | path to the armored GPG private key for --method=gpg ("-" for stdin; defaults to $GPG_PRIVATE_KEY). Lets the key be passed via file/stdin instead of the environment. Forbidden for --method=sigstore/kms. | n/a |
 | `--passphrase-file` | path to the GPG passphrase for --method=gpg ("-" for stdin; defaults to $GPG_PASSPHRASE). Forbidden for --method=sigstore/kms. | n/a |
@@ -2703,6 +2709,7 @@ EXAMPLES:
 | `--key` | cosign --key reference for --method=kms: KMS URI (awskms:///alias/X, hashivault://transit/keys/X, gcpkms://..., azurekms://...), PKCS#11 URI, or local key-file path. Forbidden for --method=gpg/sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: auto-detected — GitHub Actions / GitLab CI / $CI_SERVER_URL). Forbidden for --method=gpg/kms. | `$SIGN_OIDC_ISSUER` |
 | `--fulcio-url` | certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=gpg/kms. | `$SIGN_FULCIO_URL` |
+| `--trusted-root` | trust material cosign verifies the new signature against, as produced by `cosign trusted-root create` (default: cosign's own). Required for a self-hosted CA: cosign verifies the certificate it was just issued and cannot learn a private root any other way. Forbidden for --method=gpg/kms. | `$SIGN_TRUSTED_ROOT` |
 | `--rekor-url` | transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=gpg/kms. | `$SIGN_REKOR_URL` |
 | `--private-key-file` | path to the armored GPG private key for --method=gpg ("-" for stdin; defaults to $GPG_PRIVATE_KEY). Lets the key be passed via file/stdin instead of the environment. Forbidden for --method=sigstore/kms. | n/a |
 | `--passphrase-file` | path to the GPG passphrase for --method=gpg ("-" for stdin; defaults to $GPG_PASSPHRASE). Forbidden for --method=sigstore/kms. | n/a |

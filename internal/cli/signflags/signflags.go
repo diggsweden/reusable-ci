@@ -56,6 +56,11 @@ func Cosign(opts CosignOpts) []cli.Flag {
 			Usage:   "certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=kms.",
 		},
 		&cli.StringFlag{
+			Name:    "trusted-root",
+			Sources: sources(opts.PlanScope, "trusted-root", "SIGN_TRUSTED_ROOT"),
+			Usage:   "trust material cosign verifies the new signature against, as produced by `cosign trusted-root create` (default: cosign's own). Required for a self-hosted CA: cosign verifies the certificate it was just issued and cannot learn a private root any other way. Forbidden for --method=kms.",
+		},
+		&cli.StringFlag{
 			Name:    "rekor-url",
 			Sources: sources(opts.PlanScope, "rekor-url", "SIGN_REKOR_URL"),
 			Usage:   "transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=kms.",
@@ -72,15 +77,17 @@ func Cosign(opts CosignOpts) []cli.Flag {
 // leaving the operator to discover from a signature that their private CA was
 // never contacted.
 type Endpoints struct {
-	FulcioURL string
-	RekorURL  string
+	FulcioURL       string
+	RekorURL        string
+	TrustedRootPath string
 }
 
 // ReadEndpoints pulls the endpoint overrides from a parsed command.
 func ReadEndpoints(cmd *cli.Command) Endpoints {
 	return Endpoints{
-		FulcioURL: cmd.String("fulcio-url"),
-		RekorURL:  cmd.String("rekor-url"),
+		FulcioURL:       cmd.String("fulcio-url"),
+		RekorURL:        cmd.String("rekor-url"),
+		TrustedRootPath: cmd.String("trusted-root"),
 	}
 }
 

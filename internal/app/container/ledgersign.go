@@ -49,8 +49,12 @@ type SignLedgerImagesInput struct {
 
 	// FulcioURL and RekorURL point keyless signing and attestation at a
 	// self-hosted Sigstore. Empty uses cosign's defaults; sigstore-only.
-	FulcioURL               string
-	RekorURL                string
+	FulcioURL string
+	RekorURL  string
+
+	// TrustedRootPath is cosign's trusted-root document, needed to verify
+	// against a self-hosted CA; sigstore-only.
+	TrustedRootPath         string
 	ExpectedImageRepository string
 	ExpectedBaseRepository  string
 	SBOMPathPattern         string
@@ -167,13 +171,14 @@ func (run ledgerSignRun) signEntry(ctx context.Context, idx int, entry imageledg
 	}
 
 	if err = SignImage(ctx, run.signer, run.out, SignImageInput{
-		Image:      imageRef,
-		Method:     run.in.Method,
-		Recursive:  run.in.Recursive,
-		KeyRef:     run.in.KeyRef,
-		OIDCIssuer: run.in.OIDCIssuer,
-		FulcioURL:  run.in.FulcioURL,
-		RekorURL:   run.in.RekorURL,
+		Image:           imageRef,
+		Method:          run.in.Method,
+		Recursive:       run.in.Recursive,
+		KeyRef:          run.in.KeyRef,
+		OIDCIssuer:      run.in.OIDCIssuer,
+		FulcioURL:       run.in.FulcioURL,
+		RekorURL:        run.in.RekorURL,
+		TrustedRootPath: run.in.TrustedRootPath,
 	}); err != nil {
 		return err
 	}
@@ -183,15 +188,16 @@ func (run ledgerSignRun) signEntry(ctx context.Context, idx int, entry imageledg
 	}
 
 	if err = AttestImage(ctx, run.signer, run.out, AttestImageInput{
-		Image:         imageRef,
-		Method:        run.in.Method,
-		PredicateType: domaincontainer.PredicateTypeCycloneDX,
-		PredicatePath: entry.SBOM,
-		Recursive:     run.in.Recursive,
-		KeyRef:        run.in.KeyRef,
-		OIDCIssuer:    run.in.OIDCIssuer,
-		FulcioURL:     run.in.FulcioURL,
-		RekorURL:      run.in.RekorURL,
+		Image:           imageRef,
+		Method:          run.in.Method,
+		PredicateType:   domaincontainer.PredicateTypeCycloneDX,
+		PredicatePath:   entry.SBOM,
+		Recursive:       run.in.Recursive,
+		KeyRef:          run.in.KeyRef,
+		OIDCIssuer:      run.in.OIDCIssuer,
+		FulcioURL:       run.in.FulcioURL,
+		RekorURL:        run.in.RekorURL,
+		TrustedRootPath: run.in.TrustedRootPath,
 	}); err != nil {
 		return err
 	}
@@ -202,15 +208,16 @@ func (run ledgerSignRun) signEntry(ctx context.Context, idx int, entry imageledg
 	}
 
 	if err = AttestImage(ctx, run.signer, run.out, AttestImageInput{
-		Image:         imageRef,
-		Method:        run.in.Method,
-		PredicateType: domaincontainer.PredicateTypeSLSAProvenance1,
-		PredicatePath: predicatePath,
-		Recursive:     run.in.Recursive,
-		KeyRef:        run.in.KeyRef,
-		OIDCIssuer:    run.in.OIDCIssuer,
-		FulcioURL:     run.in.FulcioURL,
-		RekorURL:      run.in.RekorURL,
+		Image:           imageRef,
+		Method:          run.in.Method,
+		PredicateType:   domaincontainer.PredicateTypeSLSAProvenance1,
+		PredicatePath:   predicatePath,
+		Recursive:       run.in.Recursive,
+		KeyRef:          run.in.KeyRef,
+		OIDCIssuer:      run.in.OIDCIssuer,
+		FulcioURL:       run.in.FulcioURL,
+		RekorURL:        run.in.RekorURL,
+		TrustedRootPath: run.in.TrustedRootPath,
 	}); err != nil {
 		return err
 	}

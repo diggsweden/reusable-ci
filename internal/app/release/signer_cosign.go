@@ -25,13 +25,14 @@ import (
 // swap-refusal policy does NOT apply to the cosign signing path:
 // there is no decrypted key in our heap to leak.
 type CosignSigner struct {
-	adapter    cosignSignBlobber
-	method     domainrelease.SignMethod
-	keyRef     string
-	oidcIssuer string
-	fulcioURL  string
-	rekorURL   string
-	errOut     io.Writer
+	adapter         cosignSignBlobber
+	method          domainrelease.SignMethod
+	keyRef          string
+	oidcIssuer      string
+	fulcioURL       string
+	rekorURL        string
+	trustedRootPath string
+	errOut          io.Writer
 }
 
 // cosignSignBlobber is the slice of *cosign.Adapter that CosignSigner
@@ -63,6 +64,10 @@ type CosignSignerInput struct {
 	// Method == SignMethodKMS, which contacts no Sigstore service at all.
 	FulcioURL string
 	RekorURL  string
+
+	// TrustedRootPath is cosign's trusted-root document, needed to verify
+	// against a self-hosted CA; sigstore-only.
+	TrustedRootPath string
 }
 
 // NewCosignSigner constructs a CosignSigner. errOut receives a
@@ -101,13 +106,14 @@ func NewCosignSigner(adapter cosignSignBlobber, in CosignSignerInput, errOut io.
 	}
 
 	return &CosignSigner{
-		adapter:    adapter,
-		method:     in.Method,
-		keyRef:     in.KeyRef,
-		oidcIssuer: in.OIDCIssuer,
-		fulcioURL:  in.FulcioURL,
-		rekorURL:   in.RekorURL,
-		errOut:     errOut,
+		adapter:         adapter,
+		method:          in.Method,
+		keyRef:          in.KeyRef,
+		oidcIssuer:      in.OIDCIssuer,
+		fulcioURL:       in.FulcioURL,
+		rekorURL:        in.RekorURL,
+		trustedRootPath: in.TrustedRootPath,
+		errOut:          errOut,
 	}, nil
 }
 
@@ -131,6 +137,7 @@ func (s *CosignSigner) SignFile(ctx context.Context, file string) error {
 		in.OIDCIssuer = s.oidcIssuer
 		in.FulcioURL = s.fulcioURL
 		in.RekorURL = s.rekorURL
+		in.TrustedRootPath = s.trustedRootPath
 	case domainrelease.SignMethodKMS:
 		in.KeyRef = s.keyRef
 	default:

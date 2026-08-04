@@ -53,6 +53,19 @@ type BlobSignRequest struct {
 	// private Fulcio and no log at all.
 	RekorURL string
 
+	// TrustedRootPath supplies the trust material cosign verifies against after
+	// signing. Empty uses cosign's own, which is correct for public Sigstore.
+	//
+	// Needed for a self-hosted CA: cosign verifies the certificate it has just
+	// been issued, and has no way to learn a private CA's root -- so signing
+	// succeeds and verification fails, with "failed to verify leaf certificate".
+	//
+	// A path to cosign's own trusted-root document rather than a certificate,
+	// because a private deployment has more than a CA to declare (log and CTFE
+	// keys), and `cosign trusted-root create` already builds it. Owning a second
+	// Sigstore document format here would buy nothing.
+	TrustedRootPath string
+
 	// KeyRef is the cosign --key argument: a KMS URI
 	// (awskms://, gcpkms://, hashivault://, …), a PKCS#11 URI, or
 	// a local key-file path. Must be empty when Keyless is true.

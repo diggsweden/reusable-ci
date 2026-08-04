@@ -107,6 +107,11 @@ func signMethodFlags(planScope string) []cli.Flag {
 			Usage:   "certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=gpg/kms.",
 		},
 		&cli.StringFlag{
+			Name:    flagTrustedRoot,
+			Sources: signSources(planScope, flagTrustedRoot, "SIGN_TRUSTED_ROOT"),
+			Usage:   "trust material cosign verifies the new signature against, as produced by `cosign trusted-root create` (default: cosign's own). Required for a self-hosted CA: cosign verifies the certificate it was just issued and cannot learn a private root any other way. Forbidden for --method=gpg/kms.",
+		},
+		&cli.StringFlag{
 			Name:    flagRekorURL,
 			Sources: signSources(planScope, flagRekorURL, "SIGN_REKOR_URL"),
 			Usage:   "transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=gpg/kms.",
@@ -207,10 +212,11 @@ func buildSigstoreSigner(method domainrelease.SignMethod, oidcIssuer string, end
 	}
 
 	signer, err := apprelease.NewCosignSigner(cosign.New(), apprelease.CosignSignerInput{
-		Method:     method,
-		OIDCIssuer: oidcIssuer,
-		FulcioURL:  endpoints.FulcioURL,
-		RekorURL:   endpoints.RekorURL,
+		Method:          method,
+		OIDCIssuer:      oidcIssuer,
+		FulcioURL:       endpoints.FulcioURL,
+		RekorURL:        endpoints.RekorURL,
+		TrustedRootPath: endpoints.TrustedRootPath,
 	}, errOut)
 	if err != nil {
 		return nil, "", err

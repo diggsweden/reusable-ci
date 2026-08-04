@@ -52,6 +52,10 @@ type AttestImageInput struct {
 	// Sigstore. Empty uses cosign's defaults; sigstore-only.
 	FulcioURL string
 	RekorURL  string
+
+	// TrustedRootPath is cosign's trusted-root document, needed to verify
+	// against a self-hosted CA; sigstore-only.
+	TrustedRootPath string
 }
 
 // cosignImageAttestor is the slice of *cosign.Adapter that attestation
@@ -91,6 +95,7 @@ func AttestImage(ctx context.Context, attestor cosignImageAttestor, out io.Write
 			ImageRef: in.Image, PredicateType: predicateType, PredicatePath: predicatePath,
 			Recursive: in.Recursive, Keyless: true, OIDCIssuer: in.OIDCIssuer,
 			FulcioURL: in.FulcioURL, RekorURL: in.RekorURL,
+			TrustedRootPath: in.TrustedRootPath,
 		}, out)
 	case domainrelease.SignMethodKMS:
 		_, _ = fmt.Fprintf(out, "Attesting %s to %s (type=%s, method=kms)\n", predicateType, in.Image, predicateType)
