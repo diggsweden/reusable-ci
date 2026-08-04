@@ -31,6 +31,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/livetest"
 )
 
@@ -149,6 +150,103 @@ func TestLedger_RecordVerifyPromote_PreservesTheDigest(t *testing.T) {
 							kind, imagePath, promotedTag, served, pushed.Digest)
 					}
 				})
+			}
+		})
+	}
+}
+
+// PAR-REG-3: cleanup deletes the staging tag without disturbing the release.
+//
+// This is the scenario the TagDeleter role exists for. Promotion is a
+// digest-preserving retag, so the candidate and the release tags are one
+// manifest with several names. Deleting the manifest — what a generic OCI
+// delete does — would take the release with it, and nothing below the registry
+// can tell you whether an adapter got that right.
+//
+// It is also the first parity comparison here that GitLab can take part in:
+// until the GitLab adapter implemented DeleteTag, cleanup was Forgejo-only and
+// this was a documented gap rather than a test.
+func TestLedger_Cleanup_RemovesTheCandidateAndKeepsTheRelease(t *testing.T) {
+	const (
+		releaseTag   = "v0.0.1"
+		candidateTag = "staging-" + releaseTag
+		promotedTag  = "release"
+	)
+
+	for _, kind := range forgesClaiming(t,
+		func(c provider.Capabilities) bool { return c.ContainerTagDeletion }, "container tag deletion") {
+		t.Run(string(kind), func(t *testing.T) {
+			target := livetest.Accept(t, kind)
+
+			registry, err := livetest.RegistryHost(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			repo := livetest.NewScratchRepo(t, target, "ledger-cleanup")
+			imagePath := registry + "/" + target.Owner + "/" + repo
+
+			work := t.TempDir()
+			authFile := livetest.RegistryAuthFile(t, target, work)
+			opts := livetest.RunOptions{Dir: work}
+
+			// One manifest under both names, which is what a build leaves
+			// behind: the immutable version tag is written at build time and
+			// the candidate is its staging alias.
+			pushed := livetest.PushImageTags(t, target, repo, candidateTag, releaseTag)
+
+			ledger := "release-images.json"
+
+			add := livetest.CLIIn(t, target, repo, opts,
+				"container", "ledger", "add",
+				"--ledger", ledger,
+				"--auth-file", authFile,
+				"--tag", releaseTag,
+				"--kind", "distroless",
+				"--candidate-tag", imagePath+":"+candidateTag,
+				"--final-tag", imagePath+":"+releaseTag,
+				"--sbom", writeSBOM(t, work, "cleanup"),
+				"--capture-digest",
+			)
+			if add.ExitCode != 0 {
+				t.Fatalf("%s ledger add exited %d\nstderr: %s", kind, add.ExitCode, add.Stderr)
+			}
+
+			promote := livetest.CLIIn(t, target, repo, opts,
+				"container", "ledger", "promote",
+				"--ledger", ledger, "--auth-file", authFile,
+				"--tag", releaseTag, "--stage", promotedTag)
+			if promote.ExitCode != 0 {
+				t.Fatalf("%s ledger promote exited %d\nstderr: %s", kind, promote.ExitCode, promote.Stderr)
+			}
+
+			cleanup := livetest.CLIIn(t, target, repo, opts,
+				"container", "ledger", "cleanup",
+				"--ledger", ledger, "--auth-file", authFile, "--tag", releaseTag)
+			if cleanup.ExitCode != 0 {
+				t.Fatalf("%s ledger cleanup exited %d\nstderr: %s", kind, cleanup.ExitCode, cleanup.Stderr)
+			}
+
+			if _, found := livetest.ImageDigest(t, target, repo, candidateTag); found {
+				t.Errorf("%s: %s:%s survived cleanup", kind, imagePath, candidateTag)
+			}
+
+			// The safety property. Both release names must still resolve to the
+			// same manifest: a manifest-level delete would have removed the
+			// digest and taken these with it.
+			for _, surviving := range []string{releaseTag, promotedTag} {
+				served, found := livetest.ImageDigest(t, target, repo, surviving)
+				if !found {
+					t.Errorf("%s: cleanup destroyed %s:%s — the shared manifest went with the candidate",
+						kind, imagePath, surviving)
+
+					continue
+				}
+
+				if served != pushed.Digest {
+					t.Errorf("%s: %s:%s serves %s after cleanup, want %s",
+						kind, imagePath, surviving, served, pushed.Digest)
+				}
 			}
 		})
 	}

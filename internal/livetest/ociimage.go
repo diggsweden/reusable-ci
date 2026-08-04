@@ -78,6 +78,15 @@ func RegistryHost(target Target) (string, error) {
 // PushImage puts a synthetic single-arch image at owner/repo:tag and returns
 // what the registry then serves for it.
 func PushImage(tb TB, target Target, repo, tag string) Image {
+	return PushImageTags(tb, target, repo, tag)
+}
+
+// PushImageTags puts ONE synthetic image at several tags, which is how a build
+// really leaves the registry: the immutable :<version> tag and its staging
+// candidate are the same manifest, and that shared digest is the whole reason
+// cleanup must delete tags rather than manifests. Pushing twice would mint two
+// digests and quietly turn that property into something the test cannot see.
+func PushImageTags(tb TB, target Target, repo string, tags ...string) Image {
 	tb.Helper()
 
 	image, err := random.Image(1024, 1)
@@ -85,13 +94,18 @@ func PushImage(tb TB, target Target, repo, tag string) Image {
 		tb.Fatalf("livetest: build synthetic image: %v", err)
 	}
 
-	return pushArtifact(tb, target, repo, tag, image, false)
+	return pushArtifact(tb, target, repo, tags, image, false)
 }
 
 // PushIndex puts a synthetic multi-arch index at owner/repo:tag. Real releases
 // publish indexes, and digest-preserving promotion is where a naive copy breaks
 // them, so the ledger scenarios run against both shapes.
 func PushIndex(tb TB, target Target, repo, tag string) Image {
+	return PushIndexTags(tb, target, repo, tag)
+}
+
+// PushIndexTags is PushImageTags for a multi-arch index.
+func PushIndexTags(tb TB, target Target, repo string, tags ...string) Image {
 	tb.Helper()
 
 	index, err := random.Index(1024, 1, 2)
@@ -99,7 +113,7 @@ func PushIndex(tb TB, target Target, repo, tag string) Image {
 		tb.Fatalf("livetest: build synthetic index: %v", err)
 	}
 
-	return pushArtifact(tb, target, repo, tag, index, true)
+	return pushArtifact(tb, target, repo, tags, index, true)
 }
 
 // pushable is the shared shape of an image and an index: both can be written to
@@ -108,9 +122,13 @@ type pushable interface {
 	Digest() (v1.Hash, error)
 }
 
-func pushArtifact(tb TB, target Target, repo, tag string, artifact pushable, isIndex bool) Image {
+func pushArtifact(tb TB, target Target, repo string, tags []string, artifact pushable, isIndex bool) Image {
 	tb.Helper()
 	requireAccepted(tb, target)
+
+	if len(tags) == 0 {
+		tb.Fatalf("livetest: push needs at least one tag")
+	}
 
 	host, err := RegistryHost(target)
 	if err != nil {
@@ -124,12 +142,35 @@ func pushArtifact(tb TB, target Target, repo, tag string, artifact pushable, isI
 		tb.Fatalf("livetest: refusing to push to %q, outside the %q namespace", repo, ResourcePrefix)
 	}
 
-	reference, err := name.NewTag(fmt.Sprintf("%s/%s/%s:%s", host, target.Owner, repo, tag))
+	auth := remote.WithAuth(&authn.Basic{Username: target.Owner, Password: target.Token})
+
+	var reference name.Tag
+
+	for _, tag := range tags {
+		reference = writeArtifact(tb, fmt.Sprintf("%s/%s/%s:%s", host, target.Owner, repo, tag), artifact, auth)
+	}
+
+	// Read the digest back from the registry rather than trusting the local
+	// computation: what every later verification compares against is what the
+	// registry serves, and those are only the same thing if the push landed.
+	descriptor, err := remote.Head(reference, auth)
+	if err != nil {
+		tb.Fatalf("livetest: read back %s: %v", reference, err)
+	}
+
+	return Image{Ref: reference.String(), Digest: descriptor.Digest.String(), Index: isIndex}
+}
+
+// writeArtifact pushes one image or index to a single tag and returns the
+// parsed reference, so pushArtifact's loop stays about the tag set rather than
+// about the two artifact shapes.
+func writeArtifact(tb TB, ref string, artifact pushable, auth remote.Option) name.Tag {
+	tb.Helper()
+
+	reference, err := name.NewTag(ref)
 	if err != nil {
 		tb.Fatalf("livetest: parse registry reference: %v", err)
 	}
-
-	auth := remote.WithAuth(&authn.Basic{Username: target.Owner, Password: target.Token})
 
 	switch typed := artifact.(type) {
 	case v1.Image:
@@ -144,15 +185,7 @@ func pushArtifact(tb TB, target Target, repo, tag string, artifact pushable, isI
 		tb.Fatalf("livetest: push %s: %v", reference, err)
 	}
 
-	// Read the digest back from the registry rather than trusting the local
-	// computation: what every later verification compares against is what the
-	// registry serves, and those are only the same thing if the push landed.
-	descriptor, err := remote.Head(reference, auth)
-	if err != nil {
-		tb.Fatalf("livetest: read back %s: %v", reference, err)
-	}
-
-	return Image{Ref: reference.String(), Digest: descriptor.Digest.String(), Index: isIndex}
+	return reference
 }
 
 // RegistryAuthFile writes a Docker auth config for the target's registry and
