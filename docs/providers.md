@@ -88,6 +88,7 @@ than fail when a capability is missing.
 | Keyless OIDC signing | ✅ | ✅ | ❌ | ❌ |
 | Release asset upload | ✅ | ✅ | ✅ | ❌ |
 | Run artifact upload/download | ✅ | ❌ | ✅ | ❌ |
+| Container tag deletion (package/registry API) | ❌ | ✅ | ✅ | ❌ |
 
 How commands degrade when a capability is absent:
 
@@ -163,11 +164,14 @@ Cross-forge verbs status:
   fake-tested for logic. verify/promote talk to the registry in-process via
   go-containerregistry (daemonless — no docker); cross-registry promotion and
   `release provenance --key` additionally shell out to `cosign`.
-  `container ledger cleanup` deletes staging tags through the
-  **forge's package API** (a `TagDeleter` provider role — Forgejo via the Gitea
-  SDK), *not* skopeo: staging and final tags share one manifest, so an OCI
-  manifest-delete would destroy the promoted image. Cleanup is therefore
-  forge-gated (Forgejo today; other forges add their own package-API deleter).
+  `container ledger {cleanup,rollback}` delete staging and pointer tags through
+  the **forge's own package/registry API** (a `TagDeleter` provider role —
+  Forgejo via the Gitea SDK, GitLab via the project registry API), *not* skopeo:
+  staging and final tags share one manifest, so an OCI manifest-delete would
+  destroy the promoted image. Both forge APIs are tag-scoped and keep the
+  manifest. Cleanup is therefore forge-gated; github and local have no deleter
+  yet and refuse with a typed `unsupported` error rather than reaching for an
+  unsafe generic delete.
 
 ## Forge-agnostic commands worth knowing
 

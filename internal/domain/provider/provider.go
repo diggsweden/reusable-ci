@@ -136,6 +136,13 @@ type Capabilities struct {
 	KeylessOIDC   bool `json:"keyless_oidc"`   // keyless signing via a runner OIDC issuer
 	ReleaseAssets bool `json:"release_assets"` // upload binary assets onto a release
 	RunArtifacts  bool `json:"run_artifacts"`  // programmatic intra-run artifact store (RunArtifactUploader/Downloader)
+
+	// ContainerTagDeletion is a tag-scoped registry delete through the forge's
+	// own package/registry API (the TagDeleter role). It gates `container
+	// ledger cleanup` and `rollback`. Modelled here rather than left to prose
+	// because a capability the matrix cannot see is one no test can hold the
+	// adapters to.
+	ContainerTagDeletion bool `json:"container_tag_deletion"`
 }
 
 // CapabilityReporter is implemented by providers that report their
@@ -156,6 +163,7 @@ func DeriveCapabilities(p any, keylessOIDC, attestation bool) Capabilities {
 	_, assets := p.(ReleaseAssetUploader)
 	_, upload := p.(RunArtifactUploader)
 	_, download := p.(RunArtifactDownloader)
+	_, tagDelete := p.(TagDeleter)
 
 	return Capabilities{
 		SARIFUpload:   sarif,
@@ -163,6 +171,8 @@ func DeriveCapabilities(p any, keylessOIDC, attestation bool) Capabilities {
 		KeylessOIDC:   keylessOIDC,
 		ReleaseAssets: assets,
 		RunArtifacts:  upload && download,
+
+		ContainerTagDeletion: tagDelete,
 	}
 }
 

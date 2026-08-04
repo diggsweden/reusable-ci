@@ -8,11 +8,11 @@ package conformance_test
 //
 // `Capabilities()` is derived from role membership, so a matrix that claims a
 // feature the gates refuse is already impossible. What is still possible — and
-// what happened — is the published table falling *behind* the model: today
-// `Capabilities` carries five fields and docs/providers.md lists four, so a
-// reader cannot discover from the docs that run artifacts work on Forgejo and
-// not GitLab. This test closes that gap and keeps it closed, and it needs no
-// forge to do it, so it runs on every commit.
+// what happened — is the published table falling *behind* the model: the model
+// carried a field the table did not list, so a reader could not discover from
+// the docs that run artifacts work on Forgejo and not GitLab. This test closes
+// that gap and keeps it closed, and it needs no forge to do it, so it runs on
+// every commit.
 
 import (
 	"os"
@@ -36,6 +36,10 @@ func capabilityRows() map[string]func(provider.Capabilities) bool {
 		"Keyless OIDC signing":                  func(c provider.Capabilities) bool { return c.KeylessOIDC },
 		"Release asset upload":                  func(c provider.Capabilities) bool { return c.ReleaseAssets },
 		"Run artifact upload/download":          func(c provider.Capabilities) bool { return c.RunArtifacts },
+
+		"Container tag deletion (package/registry API)": func(c provider.Capabilities) bool {
+			return c.ContainerTagDeletion
+		},
 	}
 }
 

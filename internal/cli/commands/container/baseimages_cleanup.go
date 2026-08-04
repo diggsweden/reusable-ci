@@ -56,7 +56,8 @@ their version names pass the base-image staging policy.`,
 			}
 
 			// Base-image cleanup is forge-gated (it drives the package API's
-			// TagDeleter + ContainerPackageLister roles — Forgejo today) and
+			// TagDeleter + ContainerPackageLister roles, and Forgejo is the
+			// only forge implementing both) and
 			// needs the normalized --server-url injected as the Forgejo server,
 			// so it constructs the provider directly rather than resolving the
 			// env-detected one through deps.
