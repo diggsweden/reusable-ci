@@ -19,6 +19,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/planfile"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/secret"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/signflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 	"github.com/diggsweden/reusable-ci/v3/internal/safeexec"
@@ -148,7 +149,7 @@ func buildSigner(cmd *cli.Command, errOut io.Writer) (apprelease.Signer, domainr
 				deps.DescriberForDetected().Describe().DisplayName)
 		}
 
-		return buildSigstoreSigner(method, oidcIssuer, errOut)
+		return buildSigstoreSigner(method, oidcIssuer, signflags.ReadEndpoints(cmd), errOut)
 	case domainrelease.SignMethodKMS:
 		return buildKMSSigner(method, keyRef, errOut)
 	default:
@@ -190,7 +191,7 @@ func buildGPGSigner(cmd *cli.Command, method domainrelease.SignMethod) (apprelea
 // oidcIssuer auto-detects from the runner platform; empty + unknown
 // platform falls back to cosign's own auto-detection (works on GHA;
 // otherwise the operator must supply --oidc-issuer).
-func buildSigstoreSigner(method domainrelease.SignMethod, oidcIssuer string, errOut io.Writer) (apprelease.Signer, domainrelease.SignMethod, error) {
+func buildSigstoreSigner(method domainrelease.SignMethod, oidcIssuer string, endpoints signflags.Endpoints, errOut io.Writer) (apprelease.Signer, domainrelease.SignMethod, error) {
 	if oidcIssuer == "" {
 		oidcIssuer = apprelease.DefaultOIDCIssuer(deps.DescriberForDetected())
 	}
@@ -198,6 +199,8 @@ func buildSigstoreSigner(method domainrelease.SignMethod, oidcIssuer string, err
 	signer, err := apprelease.NewCosignSigner(cosign.New(), apprelease.CosignSignerInput{
 		Method:     method,
 		OIDCIssuer: oidcIssuer,
+		FulcioURL:  endpoints.FulcioURL,
+		RekorURL:   endpoints.RekorURL,
 	}, errOut)
 	if err != nil {
 		return nil, "", err

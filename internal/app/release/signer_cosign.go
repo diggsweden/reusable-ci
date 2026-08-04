@@ -29,6 +29,8 @@ type CosignSigner struct {
 	method     domainrelease.SignMethod
 	keyRef     string
 	oidcIssuer string
+	fulcioURL  string
+	rekorURL   string
 	errOut     io.Writer
 }
 
@@ -55,6 +57,12 @@ type CosignSignerInput struct {
 	// Empty lets cosign auto-detect from the runner. Forbidden when
 	// Method == SignMethodKMS.
 	OIDCIssuer string
+
+	// FulcioURL and RekorURL point keyless signing at a self-hosted
+	// Sigstore. Empty uses cosign's defaults. Both are forbidden when
+	// Method == SignMethodKMS, which contacts no Sigstore service at all.
+	FulcioURL string
+	RekorURL  string
 }
 
 // NewCosignSigner constructs a CosignSigner. errOut receives a
@@ -77,6 +85,14 @@ func NewCosignSigner(adapter cosignSignBlobber, in CosignSignerInput, errOut io.
 		if in.OIDCIssuer != "" {
 			return nil, fmt.Errorf("cosign signer (kms): OIDCIssuer forbidden (got %q): %w", in.OIDCIssuer, errs.ErrUsage)
 		}
+
+		if in.FulcioURL != "" {
+			return nil, fmt.Errorf("cosign signer (kms): FulcioURL forbidden (got %q): %w", in.FulcioURL, errs.ErrUsage)
+		}
+
+		if in.RekorURL != "" {
+			return nil, fmt.Errorf("cosign signer (kms): RekorURL forbidden (got %q): %w", in.RekorURL, errs.ErrUsage)
+		}
 	default:
 		return nil, fmt.Errorf(
 			"cosign signer: method %q not supported (use sigstore or kms): %w",
@@ -89,6 +105,8 @@ func NewCosignSigner(adapter cosignSignBlobber, in CosignSignerInput, errOut io.
 		method:     in.Method,
 		keyRef:     in.KeyRef,
 		oidcIssuer: in.OIDCIssuer,
+		fulcioURL:  in.FulcioURL,
+		rekorURL:   in.RekorURL,
 		errOut:     errOut,
 	}, nil
 }
@@ -111,6 +129,8 @@ func (s *CosignSigner) SignFile(ctx context.Context, file string) error {
 	case domainrelease.SignMethodSigstore:
 		in.Keyless = true
 		in.OIDCIssuer = s.oidcIssuer
+		in.FulcioURL = s.fulcioURL
+		in.RekorURL = s.rekorURL
 	case domainrelease.SignMethodKMS:
 		in.KeyRef = s.keyRef
 	default:

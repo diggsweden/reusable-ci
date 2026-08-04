@@ -130,6 +130,8 @@ func releaseImagesSignCmd() *cli.Command {
 						Recursive:               cmd.Bool(flagRecursive),
 						KeyRef:                  cmd.String("key"),
 						OIDCIssuer:              cmd.String("oidc-issuer"),
+						FulcioURL:               signflags.ReadEndpoints(cmd).FulcioURL,
+						RekorURL:                signflags.ReadEndpoints(cmd).RekorURL,
 						ExpectedImageRepository: common.ExpectedImageRepository,
 						ExpectedBaseRepository:  expectedBaseRepository,
 						SBOMPathPattern:         sbomPathPattern,

@@ -63,6 +63,27 @@ func Cosign(opts CosignOpts) []cli.Flag {
 	}
 }
 
+// Endpoints carries the self-hosted Sigstore service overrides.
+//
+// Read through one helper for the same reason the flags are declared through
+// one: a value read at six call sites is a value that will eventually be read
+// at five. They were briefly declared and never read at all, which is the worse
+// version of the same problem -- a flag the CLI accepts, documents, and ignores,
+// leaving the operator to discover from a signature that their private CA was
+// never contacted.
+type Endpoints struct {
+	FulcioURL string
+	RekorURL  string
+}
+
+// ReadEndpoints pulls the endpoint overrides from a parsed command.
+func ReadEndpoints(cmd *cli.Command) Endpoints {
+	return Endpoints{
+		FulcioURL: cmd.String("fulcio-url"),
+		RekorURL:  cmd.String("rekor-url"),
+	}
+}
+
 // sources resolves a flag from the plan-file scope first when the calling
 // verb is plan-scoped; an empty scope keeps the plain env chain.
 func sources(planScope, key string, envNames ...string) cli.ValueSourceChain {

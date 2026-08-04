@@ -47,6 +47,11 @@ type AttestImageInput struct {
 	// KeyRef is required for kms; OIDCIssuer is optional for sigstore.
 	KeyRef     string
 	OIDCIssuer string
+
+	// FulcioURL and RekorURL point keyless attestation at a self-hosted
+	// Sigstore. Empty uses cosign's defaults; sigstore-only.
+	FulcioURL string
+	RekorURL  string
 }
 
 // cosignImageAttestor is the slice of *cosign.Adapter that attestation
@@ -85,6 +90,7 @@ func AttestImage(ctx context.Context, attestor cosignImageAttestor, out io.Write
 		return attestor.AttestImage(ctx, container.ImageAttestRequest{
 			ImageRef: in.Image, PredicateType: predicateType, PredicatePath: predicatePath,
 			Recursive: in.Recursive, Keyless: true, OIDCIssuer: in.OIDCIssuer,
+			FulcioURL: in.FulcioURL, RekorURL: in.RekorURL,
 		}, out)
 	case domainrelease.SignMethodKMS:
 		_, _ = fmt.Fprintf(out, "Attesting %s to %s (type=%s, method=kms)\n", predicateType, in.Image, predicateType)

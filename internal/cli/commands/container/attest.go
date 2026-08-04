@@ -87,6 +87,8 @@ func attestCmd() *cli.Command {
 				prov.ResolvedDeps = append(prov.ResolvedDeps, provenance.BaseImageDependency(baseRef, baseDigest))
 			}
 
+			endpoints := signflags.ReadEndpoints(cmd)
+
 			return appcontainer.AttestImage(ctx, cosign.New(), os.Stderr, appcontainer.AttestImageInput{
 				Image:         image,
 				Method:        method,
@@ -96,6 +98,8 @@ func attestCmd() *cli.Command {
 				Recursive:     cmd.Bool(flagRecursive),
 				KeyRef:        cmd.String("key"),
 				OIDCIssuer:    cmd.String("oidc-issuer"),
+				FulcioURL:     endpoints.FulcioURL,
+				RekorURL:      endpoints.RekorURL,
 			})
 		},
 	}

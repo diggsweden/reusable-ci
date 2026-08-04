@@ -152,3 +152,57 @@ func TestCosignSigner_ExtensionsMatchMethod(t *testing.T) {
 		}
 	}
 }
+
+// The endpoints must survive the whole way to the request, not merely be
+// accepted by the constructor.
+//
+// This is the guard for a specific failure that happened: the flags were added
+// to the CLI and the fields to the domain request, and nothing in between read
+// them. The binary accepted --fulcio-url, documented it, and signed against
+// public Sigstore anyway -- which an operator discovers from a certificate
+// issued by the wrong authority, or not at all in the case that matters most,
+// an air-gapped run that was supposed to contact nothing.
+func TestCosignSigner_SigstoreCarriesSelfHostedEndpoints(t *testing.T) {
+	rec := &recordingBlobber{}
+
+	signer, err := apprelease.NewCosignSigner(rec, apprelease.CosignSignerInput{
+		Method:     domainrelease.SignMethodSigstore,
+		OIDCIssuer: "https://gitlab.example.internal",
+		FulcioURL:  "https://fulcio.example.internal",
+		RekorURL:   "https://rekor.example.internal",
+	}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := signer.SignFile(context.Background(), "/tmp/app.tgz"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := cosign.SignBlobInput{
+		Artifact:   "/tmp/app.tgz",
+		BundlePath: "/tmp/app.tgz.bundle",
+		Keyless:    true,
+		OIDCIssuer: "https://gitlab.example.internal",
+		FulcioURL:  "https://fulcio.example.internal",
+		RekorURL:   "https://rekor.example.internal",
+	}
+	if rec.got != want {
+		t.Errorf("SignBlobInput:\n got=%+v\nwant=%+v", rec.got, want)
+	}
+}
+
+// KMS contacts no Sigstore service, so naming one is a configuration mistake
+// rather than a harmless extra -- the same rule --oidc-issuer already follows.
+func TestNewCosignSigner_KMSRejectsSigstoreEndpoints(t *testing.T) {
+	for name, in := range map[string]apprelease.CosignSignerInput{
+		"fulcio": {Method: domainrelease.SignMethodKMS, KeyRef: "awskms://k", FulcioURL: "https://fulcio.example.internal"},
+		"rekor":  {Method: domainrelease.SignMethodKMS, KeyRef: "awskms://k", RekorURL: "https://rekor.example.internal"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := apprelease.NewCosignSigner(&recordingBlobber{}, in, io.Discard); err == nil {
+				t.Errorf("kms with a %s URL was accepted; it contacts no Sigstore service", name)
+			}
+		})
+	}
+}

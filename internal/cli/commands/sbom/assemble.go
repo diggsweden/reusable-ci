@@ -18,6 +18,7 @@ import (
 	appsbom "github.com/diggsweden/reusable-ci/v3/internal/app/sbom"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/signflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
@@ -161,9 +162,13 @@ func buildSBOMSigner(cmd *cli.Command) (appsbom.FileSigner, error) {
 		oidcIssuer = apprelease.DefaultOIDCIssuer(deps.DescriberForDetected())
 	}
 
+	endpoints := signflags.ReadEndpoints(cmd)
+
 	return apprelease.NewCosignSigner(cosign.New(), apprelease.CosignSignerInput{
 		Method:     method,
 		KeyRef:     cmd.String("sign-key"),
 		OIDCIssuer: oidcIssuer,
+		FulcioURL:  endpoints.FulcioURL,
+		RekorURL:   endpoints.RekorURL,
 	}, os.Stderr)
 }

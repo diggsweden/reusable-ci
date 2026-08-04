@@ -38,6 +38,11 @@ type SignImageInput struct {
 	// OIDCIssuer is optional when Method == sigstore. Forbidden
 	// when Method == kms.
 	OIDCIssuer string
+
+	// FulcioURL and RekorURL point keyless signing at a self-hosted Sigstore.
+	// Empty uses cosign's defaults. Meaningful only when Method == sigstore.
+	FulcioURL string
+	RekorURL  string
 }
 
 // cosignImageSigner is the slice of *cosign.Adapter that container-
@@ -71,6 +76,8 @@ func SignImage(ctx context.Context, signer cosignImageSigner, out io.Writer, in 
 			Recursive:  in.Recursive,
 			Keyless:    true,
 			OIDCIssuer: in.OIDCIssuer,
+			FulcioURL:  in.FulcioURL,
+			RekorURL:   in.RekorURL,
 		}, out)
 	case domainrelease.SignMethodKMS:
 		_, _ = fmt.Fprintf(out, "Signing image %s (method=kms, key=%s)\n", in.Image, in.KeyRef)

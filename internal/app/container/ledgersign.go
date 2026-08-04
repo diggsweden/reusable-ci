@@ -38,14 +38,19 @@ type ledgerImageSigner interface {
 // CycloneDX SBOM, enrich the release SLSA predicate with per-image fields, and
 // attest that predicate.
 type SignLedgerImagesInput struct {
-	Entries                 []imageledger.Entry
-	ReleaseTag              string
-	PredicatePath           string
-	PredicateEnvelopePath   string
-	Method                  domainrelease.SignMethod
-	Recursive               bool
-	KeyRef                  string
-	OIDCIssuer              string
+	Entries               []imageledger.Entry
+	ReleaseTag            string
+	PredicatePath         string
+	PredicateEnvelopePath string
+	Method                domainrelease.SignMethod
+	Recursive             bool
+	KeyRef                string
+	OIDCIssuer            string
+
+	// FulcioURL and RekorURL point keyless signing and attestation at a
+	// self-hosted Sigstore. Empty uses cosign's defaults; sigstore-only.
+	FulcioURL               string
+	RekorURL                string
 	ExpectedImageRepository string
 	ExpectedBaseRepository  string
 	SBOMPathPattern         string
@@ -167,6 +172,8 @@ func (run ledgerSignRun) signEntry(ctx context.Context, idx int, entry imageledg
 		Recursive:  run.in.Recursive,
 		KeyRef:     run.in.KeyRef,
 		OIDCIssuer: run.in.OIDCIssuer,
+		FulcioURL:  run.in.FulcioURL,
+		RekorURL:   run.in.RekorURL,
 	}); err != nil {
 		return err
 	}
@@ -183,6 +190,8 @@ func (run ledgerSignRun) signEntry(ctx context.Context, idx int, entry imageledg
 		Recursive:     run.in.Recursive,
 		KeyRef:        run.in.KeyRef,
 		OIDCIssuer:    run.in.OIDCIssuer,
+		FulcioURL:     run.in.FulcioURL,
+		RekorURL:      run.in.RekorURL,
 	}); err != nil {
 		return err
 	}
@@ -200,6 +209,8 @@ func (run ledgerSignRun) signEntry(ctx context.Context, idx int, entry imageledg
 		Recursive:     run.in.Recursive,
 		KeyRef:        run.in.KeyRef,
 		OIDCIssuer:    run.in.OIDCIssuer,
+		FulcioURL:     run.in.FulcioURL,
+		RekorURL:      run.in.RekorURL,
 	}); err != nil {
 		return err
 	}

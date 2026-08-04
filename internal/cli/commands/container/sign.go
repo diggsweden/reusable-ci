@@ -63,12 +63,16 @@ func signCmd() *cli.Command {
 				return err
 			}
 
+			endpoints := signflags.ReadEndpoints(cmd)
+
 			return appcontainer.SignImage(ctx, cosign.New(), os.Stderr, appcontainer.SignImageInput{
 				Image:      image,
 				Method:     method,
 				Recursive:  cmd.Bool(flagRecursive),
 				KeyRef:     cmd.String("key"),
 				OIDCIssuer: cmd.String("oidc-issuer"),
+				FulcioURL:  endpoints.FulcioURL,
+				RekorURL:   endpoints.RekorURL,
 			})
 		},
 	}
