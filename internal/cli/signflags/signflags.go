@@ -34,7 +34,7 @@ type CosignOpts struct {
 // (validate *-signature) are deliberately NOT users: they constrain a
 // signer identity (--cert-identity-regexp), not an OIDC issuer to sign with.
 func Cosign(opts CosignOpts) []cli.Flag {
-	return []cli.Flag{
+	return append([]cli.Flag{
 		&cli.StringFlag{
 			Name:    "method",
 			Sources: sources(opts.PlanScope, "method", "SIGN_METHOD"),
@@ -50,20 +50,52 @@ func Cosign(opts CosignOpts) []cli.Flag {
 			Sources: sources(opts.PlanScope, "oidc-issuer", "SIGN_OIDC_ISSUER"),
 			Usage:   "OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms.",
 		},
+		// The endpoint flags come from the shared builder rather than being
+		// spelled again here: `release sign` offers the same three, and three
+		// paragraphs of usage text duplicated across two files is the drift
+		// this package exists to prevent.
+	}, SigstoreEndpoints(EndpointOpts{
+		PlanScope:    opts.PlanScope,
+		ForbiddenFor: "--method=kms",
+	})...)
+}
+
+// EndpointOpts carries the per-command nuance for the self-hosted Sigstore
+// service flags.
+type EndpointOpts struct {
+	// PlanScope behaves as CosignOpts.PlanScope.
+	PlanScope string
+	// ForbiddenFor names the methods that reject these flags -- "--method=kms"
+	// for the cosign-only verbs, "--method=gpg/kms" where gpg is also a choice.
+	// It is a parameter because it is the one thing that legitimately differs
+	// between callers; everything else being identical is the point.
+	ForbiddenFor string
+}
+
+// SigstoreEndpoints returns the flags that point signing at a Sigstore other
+// than the public one: the CA that issues the certificate, the trust material
+// used to verify it, and the log it is published to.
+//
+// Shared by the cosign-only verbs (via Cosign) and by `release sign`, which
+// cannot use Cosign wholesale because it also offers gpg.
+func SigstoreEndpoints(opts EndpointOpts) []cli.Flag {
+	forbidden := " Forbidden for " + opts.ForbiddenFor + "."
+
+	return []cli.Flag{
 		&cli.StringFlag{
 			Name:    "fulcio-url",
 			Sources: sources(opts.PlanScope, "fulcio-url", "SIGN_FULCIO_URL"),
-			Usage:   "certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=kms.",
+			Usage:   "certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA." + forbidden,
 		},
 		&cli.StringFlag{
 			Name:    "trusted-root",
 			Sources: sources(opts.PlanScope, "trusted-root", "SIGN_TRUSTED_ROOT"),
-			Usage:   "trust material cosign verifies the new signature against, as produced by `cosign trusted-root create` (default: cosign's own). Required for a self-hosted CA: cosign verifies the certificate it was just issued and cannot learn a private root any other way. Forbidden for --method=kms.",
+			Usage:   "trust material cosign verifies the new signature against, as produced by `cosign trusted-root create` (default: cosign's own). Required for a self-hosted CA: cosign verifies the certificate it was just issued and cannot learn a private root any other way." + forbidden,
 		},
 		&cli.StringFlag{
 			Name:    "rekor-url",
 			Sources: sources(opts.PlanScope, "rekor-url", "SIGN_REKOR_URL"),
-			Usage:   "transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=kms.",
+			Usage:   "transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that." + forbidden,
 		},
 	}
 }

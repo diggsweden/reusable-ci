@@ -84,7 +84,7 @@ func signSources(planScope, key string, envNames ...string) cli.ValueSourceChain
 // A non-empty planScope additionally resolves every flag from that
 // $REUSABLE_CI_PLAN scope (flag > plan > env > default).
 func signMethodFlags(planScope string) []cli.Flag {
-	return []cli.Flag{
+	flags := []cli.Flag{
 		&cli.StringFlag{
 			Name:    "method",
 			Sources: signSources(planScope, "method", "SIGN_METHOD"),
@@ -101,21 +101,17 @@ func signMethodFlags(planScope string) []cli.Flag {
 			Sources: signSources(planScope, flagOIDCIssuer, "SIGN_OIDC_ISSUER"),
 			Usage:   "OIDC issuer URL for --method=sigstore (default: auto-detected — GitHub Actions / GitLab CI / $CI_SERVER_URL). Forbidden for --method=gpg/kms.",
 		},
-		&cli.StringFlag{
-			Name:    flagFulcioURL,
-			Sources: signSources(planScope, flagFulcioURL, "SIGN_FULCIO_URL"),
-			Usage:   "certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=gpg/kms.",
-		},
-		&cli.StringFlag{
-			Name:    flagTrustedRoot,
-			Sources: signSources(planScope, flagTrustedRoot, "SIGN_TRUSTED_ROOT"),
-			Usage:   "trust material cosign verifies the new signature against, as produced by `cosign trusted-root create` (default: cosign's own). Required for a self-hosted CA: cosign verifies the certificate it was just issued and cannot learn a private root any other way. Forbidden for --method=gpg/kms.",
-		},
-		&cli.StringFlag{
-			Name:    flagRekorURL,
-			Sources: signSources(planScope, flagRekorURL, "SIGN_REKOR_URL"),
-			Usage:   "transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=gpg/kms.",
-		},
+	}
+
+	// Declared once, in signflags, and read back through signflags.ReadEndpoints:
+	// this verb offers gpg as well, so it cannot take signflags.Cosign whole, but
+	// the three endpoint flags are the same flags and must stay the same flags.
+	flags = append(flags, signflags.SigstoreEndpoints(signflags.EndpointOpts{
+		PlanScope:    planScope,
+		ForbiddenFor: "--method=gpg/kms",
+	})...)
+
+	return append(flags,
 		&cli.StringFlag{
 			Name:    flagPrivateKeyFile,
 			Sources: signSources(planScope, flagPrivateKeyFile),
@@ -126,7 +122,7 @@ func signMethodFlags(planScope string) []cli.Flag {
 			Sources: signSources(planScope, flagPassphraseFile),
 			Usage:   "path to the GPG passphrase for --method=gpg (\"-\" for stdin; defaults to $GPG_PASSPHRASE). Forbidden for --method=sigstore/kms.",
 		},
-	}
+	)
 }
 
 // buildSigner constructs a release.Signer for the chosen method.
