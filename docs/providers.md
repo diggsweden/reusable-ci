@@ -163,6 +163,27 @@ resolve:
 `PAR-RUN-5` asserts this against a real runner on both forges.
 
 ### forgejo
+
+**Publishing packages needs a token you supply — the automatic one is not
+enough.** A Forgejo Actions job gets an automatic token as `$FORGEJO_TOKEN` /
+`$GITHUB_TOKEN`, but on `push` events it carries
+[read permission to the repository](https://forgejo.org/docs/latest/user/actions/reference/),
+and the package registry refuses it: a write answers 401/403. So
+`publish forge-packages deploy` fails with the automatic token, and the job must
+supply one with `write:package`:
+
+```yaml
+- name: publish to the forge package registry
+  env:
+    FORGEJO_TOKEN: ${{ secrets.PACKAGE_TOKEN }}   # needs write:package
+  run: reusable-ci publish forge-packages deploy --project-type npm
+```
+
+The container registry is different: the automatic token *does* authenticate
+there for reads, so `container login` needs no extra secret. GitLab needs
+nothing in either case — `$CI_JOB_TOKEN` carries package-write for the project
+that issued it. `PAR-PKG-1` and `PAR-REG-5` check both against real runners.
+
 Releases + asset upload via the Gitea `/api/v1` surface (official Gitea Go
 SDK). Auth precedence `$CI_TOKEN` → `$FORGEJO_TOKEN` → `$GITEA_TOKEN` →
 `$GITHUB_TOKEN`; server from `$FORGEJO_SERVER_URL` → `$GITHUB_SERVER_URL` →
