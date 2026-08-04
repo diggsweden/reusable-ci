@@ -107,9 +107,9 @@ func TestFromHTTPStatus_MapsKnownClasses(t *testing.T) {
 		{"200_ok_no_sentinel", 200, nil},
 		{"301_redirect_no_sentinel", 301, nil},
 		// A 4xx is the request being refused by a server that answered.
-		// These previously returned nil, and every adapter's fallback then
-		// called them ErrDependencyUnavailable — exit 69, "retry me" — for
-		// what is really "you asked for something invalid".
+		// Left unclassified, an adapter's fallback calls them
+		// ErrDependencyUnavailable — exit 69, "retry me" — for what is
+		// really "you asked for something invalid".
 		{"400_bad_request_is_validation", 400, errs.ErrValidation},
 		{"405_method_not_allowed_is_validation", 405, errs.ErrValidation},
 		{"409_conflict_is_validation", 409, errs.ErrValidation},

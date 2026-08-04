@@ -43,7 +43,7 @@ type CheckFreshnessInput struct {
 // CheckFreshness resolves each check's source tag in the registry and
 // compares it with the pinned digest, reporting per-check status and a
 // stale-count output. It is the forge-neutral core of the consumer-side
-// base-image freshness gates (previously per-repo skopeo shell).
+// base-image freshness gates.
 func CheckFreshness(ctx context.Context, resolver imageDigestResolver, sink ci.OutputSink, out, stderr io.Writer, in CheckFreshnessInput) error {
 	checks, err := parseFreshnessChecks(in.ChecksJSON)
 	if err != nil {

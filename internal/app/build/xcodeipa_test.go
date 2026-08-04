@@ -52,8 +52,7 @@ func TestXcodeExportIPA_EmptyOptionsErrors(t *testing.T) {
 
 // The missing-options error names the originating env var so the operator
 // knows which one to set — using the caller-supplied ExportOptionsVar, not a
-// hard-coded default. (Previously asserted via the now-pruned `build xcode-ios
-// export-ipa` CLI command; pinned here at the app layer.)
+// hard-coded default. Pinned at the app layer.
 func TestXcodeExportIPA_EmptyOptions_ReportsCustomVarName(t *testing.T) {
 	err := appbuild.XcodeExportIPA(context.Background(), &fakeXcodeBuild{}, io.Discard, io.Discard, appbuild.XcodeExportIPAInput{
 		ExportOptionsVar: "IOS_EXPORT_OPTIONS",

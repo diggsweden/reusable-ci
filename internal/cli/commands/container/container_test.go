@@ -75,10 +75,10 @@ func TestCommands_RequireFlagsWhenMissing(t *testing.T) {
 //
 // GitHub and Forgejo runners always provide an output file, so the unconditional
 // write there is invisible. GitLab provides none unless the pipeline nominates
-// one in $CI_OUTPUT, and `container login` used to return that sink's error --
-// so on GitLab the credential was written, the login had genuinely succeeded,
-// and the command still exited non-zero. Found by PAR-REG-5 against a real
-// runner; guarded here so it cannot come back without the live tier being run.
+// one in $CI_OUTPUT. Returning that sink's error means the credential is
+// written, the login has genuinely succeeded, and the command still exits
+// non-zero. Found by PAR-REG-5 against a real runner; guarded here so it cannot
+// come back without the live tier being run.
 func TestLoginCmd_OnGitLabWithoutAnOutputFile_StillSucceeds(t *testing.T) {
 	env := glabenv.Setup(t)
 

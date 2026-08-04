@@ -16,9 +16,8 @@ import (
 )
 
 // NPMReleaseBuildInput drives NPMReleaseBuild. It embeds the shared
-// ReleaseBuildOptions and adds the npm-specific knobs — including the variations
-// that used to be separate workflow steps (the SBOM tool version, the build
-// script name) now folded in as configuration.
+// ReleaseBuildOptions and adds the npm-specific knobs as configuration: the
+// SBOM tool version and the build script name.
 type NPMReleaseBuildInput struct {
 	ReleaseBuildOptions
 

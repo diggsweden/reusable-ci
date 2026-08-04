@@ -164,8 +164,8 @@ func (a *Adapter) Manifest(ctx context.Context, ref string) ([]byte, error) {
 }
 
 // Labels returns the config labels for the image selected by ref. If ref points
-// at a multi-platform index, the host platform is selected, matching the
-// inspection behavior the shell migration previously relied on.
+// at a multi-platform index, the host platform is selected, matching skopeo
+// inspect.
 func (a *Adapter) Labels(ctx context.Context, ref string) (map[string]string, error) {
 	parsed, err := a.parse(ref)
 	if err != nil {

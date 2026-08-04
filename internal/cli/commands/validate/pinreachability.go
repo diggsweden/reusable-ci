@@ -19,9 +19,9 @@ import (
 // layer as Input.TempDir; the app never reads the environment for it.
 const flagTempDir = "temp-dir"
 
-// pinGit wires the git adapter to appvalidate.PinGit. Open has to hand back
-// the interface the use case declares rather than *git.Repo, because Go has
-// no covariant returns. That indirection is the whole point of the port.
+// pinGit wires the git adapter to appvalidate.PinGit. Open hands back the
+// interface the use case declares rather than *git.Repo, because Go has no
+// covariant returns.
 type pinGit struct{}
 
 func (pinGit) Open(dir string) appvalidate.PinGitOps {

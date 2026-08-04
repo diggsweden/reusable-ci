@@ -21,9 +21,8 @@ const (
 )
 
 // MavenReleaseBuildInput drives MavenReleaseBuild. It embeds the shared
-// ReleaseBuildOptions and adds the Maven-specific knobs — the variations that
-// used to be separate workflow steps/branches (build type, CLI opts, profile,
-// the pinned cyclonedx plugin version) folded in as configuration.
+// ReleaseBuildOptions and adds the Maven-specific knobs as configuration: build
+// type, CLI opts, profile, and the pinned cyclonedx plugin version.
 type MavenReleaseBuildInput struct {
 	ReleaseBuildOptions
 
@@ -72,8 +71,8 @@ func MavenBuildSBOM(ctx context.Context, ops MavenOps, cliOpts []string, toolVer
 // leaves, so passing them positionally added four parameters to every
 // signature and forced a varnamelen waiver (w, stderr) onto each.
 //
-// summary rides along although mavenBuildArtifact does not report status; one
-// unused field beats threading a second struct through one call.
+// summary rides along although mavenBuildArtifact does not report status,
+// rather than threading a second struct through one call.
 type mavenDeps struct {
 	summary ci.SummarySink
 	ops     MavenOps

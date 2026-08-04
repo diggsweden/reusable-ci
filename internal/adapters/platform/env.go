@@ -116,13 +116,12 @@ func isForgejoTarget() bool {
 
 // isForgejoRunner reports whether we are EXECUTING on a Forgejo/Gitea runner.
 //
-// Split from isForgejoTarget because the two questions have different
-// answers, and one predicate used to answer both. $FORGEJO_SERVER_URL was
-// the culprit: a Forgejo runner sets it, but so does a workflow on ANY
-// runner that publishes to Forgejo. Reading it as identity made a GitHub
-// runner claim to be Forgejo, which suppressed the GitHub annotations the
-// run should have emitted (RunnerKind picks the output dialect) and made
-// $GITHUB_TOKEN look like a Forgejo credential.
+// Split from isForgejoTarget because the two questions have different answers.
+// $FORGEJO_SERVER_URL is why: a Forgejo runner sets it, but so does a workflow
+// on ANY runner that publishes to Forgejo. Read as identity it makes a GitHub
+// runner claim to be Forgejo, suppressing the GitHub annotations the run should
+// emit (RunnerKind picks the output dialect) and making $GITHUB_TOKEN look like
+// a Forgejo credential.
 //
 // runcontext owns the marker names and the rule; this just binds it to the
 // process environment.

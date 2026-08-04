@@ -83,11 +83,11 @@ func TestDetect_Forgejo_WinsOverGitHubMasquerade(t *testing.T) {
 // different question: not "which forge do I call" but "whose runner am I
 // executing on". Only markers a runner injects about ITSELF may answer it.
 //
-// This split used to not exist — one predicate answered both — so naming a
-// Forgejo TARGET made a GitHub runner claim to be a Forgejo one. That had
-// two heads: RunnerKind picks the output dialect, so the run silently lost
-// its GitHub annotations, log groups and job summaries; and it made
-// $GITHUB_TOKEN look like a Forgejo credential to the token chain.
+// Answering both with one predicate makes a GitHub runner claim to be a Forgejo
+// one as soon as a Forgejo TARGET is named. That has two heads: RunnerKind picks
+// the output dialect, so the run silently loses its GitHub annotations, log
+// groups and job summaries; and $GITHUB_TOKEN looks like a Forgejo credential to
+// the token chain.
 func TestDetectRunner_IdentityIsNotTarget(t *testing.T) {
 	runnerMarkers := map[string]string{
 		"FORGEJO_ACTIONS": "true",

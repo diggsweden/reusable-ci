@@ -50,10 +50,6 @@ func Cosign(opts CosignOpts) []cli.Flag {
 			Sources: sources(opts.PlanScope, "oidc-issuer", "SIGN_OIDC_ISSUER"),
 			Usage:   "OIDC issuer URL for --method=sigstore (default: cosign auto-detect). Forbidden for --method=kms.",
 		},
-		// The endpoint flags come from the shared builder rather than being
-		// spelled again here: `release sign` offers the same three, and three
-		// paragraphs of usage text duplicated across two files is the drift
-		// this package exists to prevent.
 	}, SigstoreEndpoints(EndpointOpts{
 		PlanScope:    opts.PlanScope,
 		ForbiddenFor: "--method=kms",
@@ -65,19 +61,16 @@ func Cosign(opts CosignOpts) []cli.Flag {
 type EndpointOpts struct {
 	// PlanScope behaves as CosignOpts.PlanScope.
 	PlanScope string
-	// ForbiddenFor names the methods that reject these flags -- "--method=kms"
+	// ForbiddenFor names the methods that reject these flags: "--method=kms"
 	// for the cosign-only verbs, "--method=gpg/kms" where gpg is also a choice.
-	// It is a parameter because it is the one thing that legitimately differs
-	// between callers; everything else being identical is the point.
 	ForbiddenFor string
 }
 
 // SigstoreEndpoints returns the flags that point signing at a Sigstore other
-// than the public one: the CA that issues the certificate, the trust material
-// used to verify it, and the log it is published to.
-//
-// Shared by the cosign-only verbs (via Cosign) and by `release sign`, which
-// cannot use Cosign wholesale because it also offers gpg.
+// than the public one: the issuing CA, the trust material used to verify the
+// certificate, and the log it is published to. Shared by the cosign-only verbs
+// (via Cosign) and by `release sign`, which also offers gpg and so cannot use
+// Cosign wholesale.
 func SigstoreEndpoints(opts EndpointOpts) []cli.Flag {
 	forbidden := " Forbidden for " + opts.ForbiddenFor + "."
 
@@ -100,14 +93,8 @@ func SigstoreEndpoints(opts EndpointOpts) []cli.Flag {
 	}
 }
 
-// Endpoints carries the self-hosted Sigstore service overrides.
-//
-// Read through one helper for the same reason the flags are declared through
-// one: a value read at six call sites is a value that will eventually be read
-// at five. They were briefly declared and never read at all, which is the worse
-// version of the same problem -- a flag the CLI accepts, documents, and ignores,
-// leaving the operator to discover from a signature that their private CA was
-// never contacted.
+// Endpoints carries the self-hosted Sigstore service overrides, read through
+// one helper so no call site can miss one.
 type Endpoints struct {
 	FulcioURL       string
 	RekorURL        string

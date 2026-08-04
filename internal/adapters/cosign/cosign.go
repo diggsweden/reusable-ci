@@ -88,18 +88,15 @@ func TransparencyFromEnv() release.Transparency {
 // `cosign trusted-root create` emits with no service flags.
 //
 // It exists because a signing config alone does not make a run offline. cosign
-// verifies each signature it has just written, and to do that it needs a trust
-// root; absent one it fetches it from the public Sigstore TUF CDN. So a run
-// configured to publish nothing would still announce itself to
-// tuf-repo-cdn.sigstore.dev on every signature — measured, once per sign, not
-// cached away.
+// verifies each signature it has just written and needs a trust root to do so;
+// absent one it fetches it from the public Sigstore TUF CDN, so a run configured
+// to publish nothing still reaches tuf-repo-cdn.sigstore.dev once per signature.
 //
-// Empty is the honest value rather than a stub: the matching signing config
-// names no Fulcio, no Rekor and no TSA, so there is no service whose material
-// the self-check could meaningfully verify against. The signature itself is
-// still checked — against the key, which is where a kms signature's trust
-// actually comes from. Passed only when the transparency log is off; the public
-// path keeps cosign's own trust root, which it must.
+// Empty rather than a stub: the matching signing config names no Fulcio, no
+// Rekor and no TSA, so there is no service whose material the self-check could
+// verify against. The signature itself is still checked, against the key, which
+// is where a kms signature's trust comes from. Passed only when the transparency
+// log is off; the public path keeps cosign's own trust root.
 const emptyTrustedRoot = `{"mediaType":"application/vnd.dev.sigstore.trustedroot+json;version=0.1"}`
 
 // Adapter wraps the cosign binary. Bin is overridable for tests.

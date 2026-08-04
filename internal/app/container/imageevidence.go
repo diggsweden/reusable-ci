@@ -67,8 +67,8 @@ type ImageEvidenceInput struct {
 //
 // The set narrows with depth: once a layout exists the source exporters fall
 // away, so the inner leaves leave buildah/skopeo unused. Per the layerDeps
-// precedent in internal/app/sbom, an unused field beats splitting the set into
-// per-depth structs. The one exception is the innermost trivy primitive
+// precedent in internal/app/sbom, an unused field is preferred to splitting the
+// set into per-depth structs. The one exception is the innermost trivy primitive
 // (runImageEvidenceTrivy): it would leave three fields unused, which obscures
 // what it touches, so it keeps explicit parameters.
 type imageEvidenceDeps struct {

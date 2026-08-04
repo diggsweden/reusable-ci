@@ -247,11 +247,9 @@ func TestAndroidDecodeKeystore_RejectsEmptySecret(t *testing.T) {
 // run context's scratch dir rather than cwd. That removes the keystore from
 // any `path: .` upload-artifact glob a caller might add later.
 //
-// The scratch dir arrives as Input.TempDir — the CLI's --temp-dir binds it
-// to $CI_TEMP_DIR/$RUNNER_TEMP. This test used to t.Setenv("RUNNER_TEMP")
-// because the app read the variable itself; passing it in exercises the same
-// hardening without the app reaching for the environment, so the test no
-// longer mutates process state and can run in parallel.
+// The scratch dir arrives as Input.TempDir — the CLI's --temp-dir binds it to
+// $CI_TEMP_DIR/$RUNNER_TEMP. It is passed in rather than set in the environment,
+// so this test mutates no process state and can run in parallel.
 func TestAndroidDecodeKeystore_DefaultDirHonoursTempDir(t *testing.T) {
 	t.Parallel()
 

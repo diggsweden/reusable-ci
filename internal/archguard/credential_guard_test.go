@@ -16,14 +16,13 @@ import (
 // TestOnlyCompositionRootMintsOperatorCredentials fails when a package
 // outside the CLI turns a bare string into an unrestricted credential.
 //
-// # Why this guard changed shape
+// # What the compiler already covers
 //
-// It used to forbid ADAPTERS from calling runcontext.Token()/ReleaseToken(),
-// whose name lists span forges. That rule is now obsolete in the best way:
-// those chains resolve to a runcontext.Credential, which has no method that
-// yields the secret without being told where it is going. An adapter can call
-// them freely -- the type will not let it send GitHub's token to Forgejo. The
-// compiler enforces what this test used to police.
+// runcontext.Token()/ReleaseToken() have name lists spanning forges, but they
+// resolve to a runcontext.Credential, which has no method that yields the
+// secret without being told where it is going. An adapter may call them freely
+// -- the type will not let it send GitHub's token to Forgejo -- so this guard
+// does not police that.
 //
 // What the compiler cannot see is runcontext.OperatorCredential, the single
 // constructor that mints a Credential from an arbitrary string with NO

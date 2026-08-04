@@ -405,15 +405,11 @@ func TestTransparencyEnvFallsBackToPublish(t *testing.T) {
 	}
 }
 
-// The generated document must still be exactly what cosign's own generator
-// emits for a run that publishes nothing.
-//
-// This literal used to be the production value, written by hand with a comment
-// claiming byte-identity with `cosign signing-config create
-// --no-default-{rekor,fulcio,oidc,tsa}`. The claim was worth keeping and the
-// literal was not: it now sits here as the expectation, so the builder that
-// replaced it is held to the same standard rather than merely inheriting the
-// comment.
+// The generated document must be exactly what cosign's own generator emits for
+// a run that publishes nothing: byte-identical to `cosign signing-config create
+// --no-default-{rekor,fulcio,oidc,tsa}`. The literal lives here as the
+// expectation, so the builder is held to that standard rather than inheriting a
+// claim made in a comment.
 func TestBuildSigningConfig_NoServicesMatchesCosignsOwnOutput(t *testing.T) {
 	const want = `{"mediaType":"application/vnd.dev.sigstore.signingconfig.v0.2+json",` +
 		`"rekorTlogConfig":{},"tsaConfig":{}}`

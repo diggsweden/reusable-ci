@@ -342,9 +342,9 @@ func serverURLEnvKey(forge provider.Platform) string {
 // ProviderWithServerURL builds the adapter for the detected forge with an
 // explicit server URL overlaid on the environment.
 //
-// It exists so a verb that takes --server-url stays forge-agnostic: previously
-// the one such verb constructed a Forgejo provider directly, which is why it
-// worked on exactly one forge regardless of what the roles supported. An empty
+// It exists so a verb that takes --server-url stays forge-agnostic: the forge
+// is detected from the environment rather than constructed for one adapter,
+// which would pin the verb to that forge whatever the roles support. An empty
 // serverURL is the ordinary env-detected provider.
 func ProviderWithServerURL(serverURL string) (provider.Provider, error) {
 	forge := platform.Detect()

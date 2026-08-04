@@ -123,7 +123,7 @@ func TestStageValidate_RejectsEntryReleaseTagsOnNamedStage(t *testing.T) {
 	t.Parallel()
 
 	// UseEntryReleaseTags only has meaning on the release stage; on a named
-	// stage it used to be silently ignored — now it is a caller error.
+	// stage it is a caller error rather than a silently ignored field.
 	if err := (Stage{Name: "dev", UseEntryReleaseTags: true}).Validate(); err == nil {
 		t.Error("named stage with UseEntryReleaseTags should be rejected")
 	}

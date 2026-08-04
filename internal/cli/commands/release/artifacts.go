@@ -32,10 +32,9 @@ import (
 //nolint:gosec // G101 false positive: the substring "key material" is operator-facing warning text, not a credential literal.
 const debugSwapWarning = "swap policy bypassed via --debug-allow-swap — decrypted key material may be paged to disk. DO NOT USE FOR PRODUCTION RELEASES; see docs/verification.md#swap-policy."
 
-// debugAllowSwapFlag is the operator's explicit opt-out from the
-// swap-refusal policy. Flag-only by design so the override must
-// reappear in argv each invocation — reviewable in workflow YAML
-// during PR, discoverable via --help.
+// debugAllowSwapFlag is the operator's opt-out from the swap-refusal
+// policy. Flag-only, so the override must reappear in argv each
+// invocation rather than being set once in the environment.
 func debugAllowSwapFlag() cli.Flag {
 	return &cli.BoolFlag{
 		Name:  "debug-allow-swap",
@@ -44,8 +43,8 @@ func debugAllowSwapFlag() cli.Flag {
 }
 
 // requireNoSwapWithWarning wraps the policy gate and, when the
-// --debug-allow-swap override is active, emits a loud Warning
-// annotation so the override decision lands in the CI log.
+// --debug-allow-swap override is active, emits a Warning annotation so
+// the override lands in the CI log.
 func requireNoSwapWithWarning(cmd *cli.Command) error {
 	allow := cmd.Bool("debug-allow-swap")
 	if err := safeexec.RequireNoSwap(allow); err != nil {
@@ -60,10 +59,9 @@ func requireNoSwapWithWarning(cmd *cli.Command) error {
 }
 
 // signSources builds a flag source chain that resolves from the
-// $REUSABLE_CI_PLAN scope first when the calling verb is plan-scoped;
-// an empty planScope keeps the plain env chain (`release sbom-zip` is
-// not plan-wired). With no env names and no scope it yields an empty
-// chain, identical to leaving Sources unset.
+// $REUSABLE_CI_PLAN scope first when the calling verb is plan-scoped.
+// An empty planScope keeps the plain env chain (`release sbom-zip` is
+// not plan-wired); with no env names either, the chain is empty.
 func signSources(planScope, key string, envNames ...string) cli.ValueSourceChain {
 	if planScope == "" {
 		return cli.EnvVars(envNames...)
@@ -103,9 +101,8 @@ func signMethodFlags(planScope string) []cli.Flag {
 		},
 	}
 
-	// Declared once, in signflags, and read back through signflags.ReadEndpoints:
-	// this verb offers gpg as well, so it cannot take signflags.Cosign whole, but
-	// the three endpoint flags are the same flags and must stay the same flags.
+	// Declared in signflags, read back through signflags.ReadEndpoints. This
+	// verb also offers gpg, so it cannot take signflags.Cosign whole.
 	flags = append(flags, signflags.SigstoreEndpoints(signflags.EndpointOpts{
 		PlanScope:    planScope,
 		ForbiddenFor: "--method=gpg/kms",
@@ -130,10 +127,8 @@ func signMethodFlags(planScope string) []cli.Flag {
 // lands on disk; passphrase never reaches argv). Sigstore/KMS: cosign
 // subprocess wrapper with method-specific argv.
 //
-// The closure returned by NewCosignSigner reads no extra env at
-// SignFile time — the constructor captures everything (method,
-// keyref, issuer) once, so a multi-artifact loop is configuration-
-// stable.
+// NewCosignSigner captures method, keyref and issuer once, so a
+// multi-artifact loop signs with the same configuration throughout.
 func buildSigner(cmd *cli.Command, errOut io.Writer) (apprelease.Signer, domainrelease.SignMethod, error) {
 	method, err := domainrelease.ParseSignMethod(cmd.String("method"))
 	if err != nil {
@@ -172,9 +167,9 @@ func buildSigner(cmd *cli.Command, errOut io.Writer) (apprelease.Signer, domainr
 // buildGPGSigner resolves the GPG private key and passphrase and builds
 // the in-process openpgp signer. Each is read from its --*-file flag
 // ("-" for stdin) when given, otherwise from $GPG_PRIVATE_KEY /
-// $GPG_PASSPHRASE — so the key can be kept out of the environment
-// (clig.dev §Environment variables: prefer credential files/stdin for
-// secrets), matching the input contract `release gpg import` already uses.
+// $GPG_PASSPHRASE, keeping the key out of the environment (clig.dev
+// §Environment variables: prefer credential files/stdin for secrets).
+// Same input contract as `release gpg import`.
 func buildGPGSigner(cmd *cli.Command, method domainrelease.SignMethod) (apprelease.Signer, domainrelease.SignMethod, error) {
 	privateKey, err := secret.Resolve(cmd.String(flagPrivateKeyFile), "GPG_PRIVATE_KEY")
 	if err != nil {
@@ -251,14 +246,9 @@ type signFlagRule struct {
 // inputs have no meaning for the cosign-backed methods.
 const whyGPGOnly = "GPG only"
 
-// signFlagRules is the per-method flag contract, as data rather than as
+// signFlagRules is the per-method flag contract as data rather than as
 // branches: each method names the flags it requires and the flags it
-// refuses. Written out, the matrix is the documentation — you can see that
-// only kms takes a --key, and that --private-key-file/--passphrase-file are
-// GPG's alone, without reading any control flow.
-//
-// A method absent from the map constrains nothing. A new sign method is a
-// row here, not a new branch plus a new test.
+// refuses. A method absent from the map constrains nothing.
 func signFlagRules() map[domainrelease.SignMethod]struct {
 	require []signFlagRule
 	forbid  []signFlagRule
@@ -304,9 +294,8 @@ func parenthesise(why string) string {
 
 // validateSignFlags checks the per-method invariants on --key,
 // --oidc-issuer, and the GPG --private-key-file/--passphrase-file inputs
-// against signFlagRules(). The CLI rejects illegal combinations before any
-// signing starts so the operator gets a clear "you mixed flags wrong"
-// message instead of a downstream cosign-argv error.
+// against signFlagRules(). Illegal combinations are rejected before signing
+// starts, rather than surfacing later as a cosign-argv error.
 func validateSignFlags(method domainrelease.SignMethod, keyRef, oidcIssuer, keyFile, passFile string) error {
 	given := map[string]string{
 		flagKey:            keyRef,
@@ -377,10 +366,9 @@ EXAMPLES:
 				return err
 			}
 
-			// Swap policy applies only to the GPG branch — that's
-			// the only path with decrypted key material in our
-			// heap. Sigstore (ephemeral key, never on disk) and
-			// KMS (key stays in the provider) are unaffected.
+			// GPG is the only branch with decrypted key material
+			// in our heap: sigstore uses an ephemeral key and KMS
+			// leaves the key with the provider.
 			if method == domainrelease.SignMethodGPG {
 				if err := requireNoSwapWithWarning(cmd); err != nil {
 					return err
@@ -513,9 +501,7 @@ func sbomZipCmd() *cli.Command {
 					return err
 				}
 
-				// GPG branch only: the decrypted key lives in our
-				// heap during signing. Cosign methods keep the
-				// key out of our address space entirely.
+				// GPG branch only; see signCmd.
 				if method == domainrelease.SignMethodGPG {
 					if err := requireNoSwapWithWarning(cmd); err != nil {
 						return err

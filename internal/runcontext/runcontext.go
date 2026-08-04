@@ -37,8 +37,8 @@
 // a workflow's `${{ env.X || ” }}` expression must fall through to a
 // populated fallback rather than shadow it.
 //
-// Each chain is the UNION of every variant its consumers previously used,
-// so adopting it preserves existing workflows while removing the drift.
+// Each chain is the UNION of every variant its consumers accept, so existing
+// workflows keep working without a per-consumer list of names to drift.
 package runcontext
 
 import (
@@ -179,7 +179,7 @@ func JoinAttested(sep string, parts ...Attested) Attested {
 // RUNNER injects, skipping the ones the orchestration layer computes.
 //
 // It is a different traversal, not a filter on Resolve's answer, and the
-// difference is the whole point. The chains are ordered for describing a run,
+// difference matters. The chains are ordered for describing a run,
 // so a computed name comes FIRST: on a Forgejo runner with $REPOSITORY set,
 // Resolve returns that, and asking afterwards "was the winner injected?"
 // would answer no while $FORGEJO_REPOSITORY sat right behind it, unused. One

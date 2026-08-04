@@ -36,8 +36,8 @@ type GradleReleaseBuildInput struct {
 // signature and forced a varnamelen waiver (w, stderr) onto each.
 //
 // summary rides along although the innermost leaf that only runs the SBOM tool
-// does not report status; one unused field beats threading a second struct
-// through one call. androidSBOMStep reuses this set — Android is a gradle
+// does not report status, rather than threading a second struct through one
+// call. androidSBOMStep reuses this set — Android is a gradle
 // variant and already shares this file's helpers (makeGradlewExecutable,
 // GradleSBOM, defaultDir).
 type gradleDeps struct {

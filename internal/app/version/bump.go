@@ -168,8 +168,7 @@ func bumpNPM(ctx context.Context, ops NPMOps, dir, ver string, w, stderr io.Writ
 // readGradleVersionFile reads path, emitting a format-aware error
 // annotation to stderr when missing (::error:: on GitHub, a plain Error:
 // line elsewhere incl. Forgejo) and returning a wrapped error either way.
-// Shared by bumpGradleJVM and bumpGradleAndroid, which used to duplicate
-// the entire missing-file arm verbatim.
+// Shared by bumpGradleJVM and bumpGradleAndroid.
 func readGradleVersionFile(path string, annot output.Annotator) ([]byte, error) {
 	body, err := os.ReadFile(path) //nolint:gosec // path is a CLI-flag value.
 	if err != nil {

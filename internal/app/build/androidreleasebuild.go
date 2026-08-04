@@ -17,10 +17,9 @@ import (
 )
 
 // AndroidReleaseBuildInput drives AndroidReleaseBuild. It embeds the shared
-// ReleaseBuildOptions and adds the Android-specific knobs — every variation
-// that used to be a separate workflow step (artifact-name composition, keystore
-// signing, secrets.properties, task resolution, the pinned SBOM plugin) folded
-// in as configuration.
+// ReleaseBuildOptions and adds the Android-specific knobs as configuration:
+// artifact-name composition, keystore signing, secrets.properties, task
+// resolution, and the pinned SBOM plugin.
 type AndroidReleaseBuildInput struct {
 	ReleaseBuildOptions
 

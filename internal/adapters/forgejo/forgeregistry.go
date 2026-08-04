@@ -25,11 +25,10 @@ type packageRegistry struct {
 // resolveRegistry resolves the run context a package registry URL is built
 // from. kind names the ecosystem for the error message ("packages", "npm").
 //
-// Names and precedence come from runcontext, the same source the CLI flags
-// bind to, so a workflow that exports the forge-neutral $REPOSITORY or
-// $CI_SERVER_URL is understood here exactly as it is everywhere else. This
-// adapter previously resolved from its own inline list, which is how it
-// came to ignore the neutral names that `release publish` honoured.
+// Names and precedence come from runcontext, the same source the CLI flags bind
+// to, so a workflow that exports the forge-neutral $REPOSITORY or $CI_SERVER_URL
+// is understood here exactly as it is everywhere else. An inline list in this
+// adapter would drift from the names `release publish` honours.
 func (p *Provider) resolveRegistry(kind string) (packageRegistry, error) {
 	env := p.envFunc()
 

@@ -96,10 +96,10 @@ func generateDualSBOMs(
 // -----------------------------------------------------------------------
 
 // buildBOMSpec says where a stack's build BOM is found and what to tell the
-// user when it is not. Gathered so the per-stack cases below read as data:
-// previously each was five positional arguments (two slices then three
-// strings) wrapped across lines, and which string was `stack` and which was
-// `hint` could only be recovered by counting commas against the signature.
+// user when it is not. Named fields so the per-stack cases below read as data:
+// as five positional arguments (two slices then three strings) they wrap across
+// lines, and `stack` and `hint` can only be told apart by counting commas
+// against the signature.
 type buildBOMSpec struct {
 	includes []string
 	excludes []string

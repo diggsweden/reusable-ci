@@ -62,12 +62,10 @@ Requires a forge implementing both container tag listing and tag deletion
 			}
 
 			// Base-image cleanup drives two package-API roles, TagDeleter and
-			// ContainerPackageLister. It used to construct a Forgejo provider
-			// outright, which meant it ran on one forge no matter which roles
-			// the others implemented; it now resolves the active forge and
-			// refuses by role, so any forge implementing both is supported and
-			// the rest get the same typed "unsupported" refusal as every other
-			// capability gap.
+			// ContainerPackageLister. Resolving the active forge and refusing by
+			// role means any forge implementing both is supported, and the rest
+			// get the same typed "unsupported" refusal as every other capability
+			// gap.
 			forge, err := deps.ProviderWithServerURL(common.ServerURL)
 			if err != nil {
 				return err

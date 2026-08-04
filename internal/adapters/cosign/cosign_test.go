@@ -479,11 +479,10 @@ func TestVerifyBlob_RejectsKeylessWithoutIdentity(t *testing.T) {
 // A self-hosted Sigstore is reached through the signing config, which is the
 // only channel cosign 3.x still listens on.
 //
-// This test previously asserted --fulcio-url and --oidc-issuer on the argv. Both
-// are deprecated in cosign 3.x and, worse, refused alongside a signing config --
-// which this adapter already passes whenever the transparency log is off. So the
-// combination a self-hosted deployment actually runs failed outright, and the
-// test was pinning the broken shape.
+// --fulcio-url and --oidc-issuer are deprecated in cosign 3.x and refused
+// alongside a signing config, which this adapter passes whenever the
+// transparency log is off. The combination a self-hosted deployment runs cannot
+// go through those flags at all, so the argv must not carry them.
 func TestSignBlob_KeylessSelfHostedSigstoreArgvShape(t *testing.T) {
 	captured := filepath.Join(t.TempDir(), "signing-config.json")
 
