@@ -16,6 +16,8 @@ package conformance_test
 
 import (
 	"context"
+	"encoding/binary"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"slices"
@@ -502,5 +504,138 @@ func TestRelease_PublishReconcile_ConvergesOnTheGivenAssets(t *testing.T) {
 					kind, got, want)
 			}
 		})
+	}
+}
+
+// PAR-REL-5: a large asset survives the upload path intact.
+//
+// §1.1 of the plan names this as the reason role presence is not proof: that
+// `p.(ReleaseAssetUploader)` is satisfied says the method exists, not that
+// GitLab accepts the multipart upload we send, that Forgejo returns the asset
+// where we look for it, "or that either survives a 40 MB file". Every other
+// release scenario uploads a few dozen bytes, which exercises none of the
+// machinery that a real artifact does.
+//
+// Size is where upload paths actually differ. A few bytes fit in one buffer and
+// one request on any forge; tens of megabytes is where streaming versus
+// buffering, timeouts, and multipart boundaries start to matter, and where a
+// forge's own limits live. The failure mode this guards is silent truncation —
+// a release whose binary is the right name and the wrong length, which nobody
+// notices until someone downloads it.
+//
+// The payload is pseudo-random rather than repeated bytes on purpose: a
+// compressible payload can hide a truncation anywhere in the stack that
+// re-encodes it, and random bytes make the digest sensitive to every byte.
+// Deterministic seed, so a failure is reproducible.
+func TestRelease_LargeAsset_ArrivesIntact(t *testing.T) {
+	const (
+		tag  = "v0.0.1-largeasset"
+		name = "large-asset.bin"
+		size = 40 << 20 // the 40 MB §1.1 asks about
+	)
+
+	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
+		t.Run(string(kind), func(t *testing.T) {
+			target := livetest.Accept(t, kind)
+			repo := livetest.NewScratchRepo(t, target, "largeasset")
+
+			livetest.PrepareTag(t, target, repo, tag)
+
+			dir := t.TempDir()
+			writeLargeAsset(t, filepath.Join(dir, name), size)
+
+			if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("PAR-REL-5\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			wantDigest, wantSize, err := rawref.SHA256(filepath.Join(dir, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if wantSize != size {
+				t.Fatalf("fixture wrote %d bytes, want %d", wantSize, size)
+			}
+
+			run := livetest.CLIIn(t, target, repo, livetest.RunOptions{Dir: dir},
+				"release", "publish", "--strategy", "reconcile",
+				"--tag", tag,
+				"--repository", livetest.RepoSlug(target, repo),
+				"--release-notes-file", "notes.md",
+				"--draft=false",
+				"--asset", name,
+			)
+			if run.ExitCode != 0 {
+				t.Fatalf("%s: publishing a %d-byte asset failed (exit %d)\nstderr: %s",
+					kind, size, run.ExitCode, run.Stderr)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+			defer cancel()
+
+			release := mustReadRelease(ctx, t, target, repo, tag)
+
+			asset, found := release.Asset(name)
+			if !found {
+				t.Fatalf("%s: the release has no asset %q (has %v)", kind, name, release.AssetNames())
+			}
+
+			// Length first: it names the failure. A truncation shows up in the
+			// digest too, but "got 8 MiB of 40 MiB" is the sentence a maintainer
+			// can act on, where a digest mismatch alone is not.
+			if asset.Size != wantSize {
+				t.Errorf("%s: asset is %d bytes, want %d — the upload was truncated",
+					kind, asset.Size, wantSize)
+			}
+
+			// And the bytes themselves, since the right length carrying the wrong
+			// content is the failure a length check cannot see.
+			if asset.Digest != wantDigest {
+				t.Errorf("%s: asset digest = %s, want %s — the forge served different bytes than were uploaded",
+					kind, asset.Digest, wantDigest)
+			}
+		})
+	}
+}
+
+// writeLargeAsset streams size bytes of pseudo-random data to path, without
+// holding it in memory.
+func writeLargeAsset(t *testing.T, path string, size int64) {
+	t.Helper()
+
+	file, err := os.Create(path) //nolint:gosec // path is this scenario's own t.TempDir().
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			t.Fatal(closeErr)
+		}
+	}()
+
+	// Fixed seed: a failing run must be reproducible. Not a credential and not a
+	// security decision, so a deterministic generator is the right one.
+	source := rand.New(rand.NewPCG(0x5EED, 0x11FE)) //nolint:gosec // test payload, deliberately reproducible.
+
+	// Filled a word at a time rather than a byte at a time: no narrowing
+	// conversion to justify to a linter, and eight times fewer calls.
+	buf := make([]byte, 1<<20)
+	for written := int64(0); written < size; {
+		chunk := int64(len(buf))
+		if remaining := size - written; remaining < chunk {
+			chunk = remaining
+		}
+
+		for i := 0; i+8 <= len(buf); i += 8 {
+			binary.LittleEndian.PutUint64(buf[i:], source.Uint64())
+		}
+
+		n, writeErr := file.Write(buf[:chunk])
+		if writeErr != nil {
+			t.Fatal(writeErr)
+		}
+
+		written += int64(n)
 	}
 }
