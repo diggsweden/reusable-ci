@@ -94,10 +94,7 @@ func TestRegistry_SyntheticArtifacts_RoundTripByDigest(t *testing.T) {
 func TestInRunner_ForgeInjectedRegistryCredentialAuthenticates(t *testing.T) {
 	const tag = "v0.0.7-regauth"
 
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "an OCI registry") {
-		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
-			continue
-		}
+	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "an OCI registry"), livetest.NeedsInRunner) {
 
 		t.Run(string(kind), func(t *testing.T) {
 			target := livetest.Accept(t, kind)

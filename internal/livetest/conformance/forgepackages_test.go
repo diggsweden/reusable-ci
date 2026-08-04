@@ -65,10 +65,7 @@ func TestInRunner_ForgePackages_NPMPublishReachesTheRegistry(t *testing.T) {
 	// anything the forge did.
 	version := fmt.Sprintf("0.0.%d", time.Now().UnixMilli()%1_000_000)
 
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "a package registry") {
-		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
-			continue
-		}
+	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "a package registry"), livetest.NeedsInRunner) {
 
 		t.Run(string(kind), func(t *testing.T) {
 			target := livetest.Accept(t, kind)
@@ -204,10 +201,7 @@ func TestInRunner_ForgePackages_MavenDeployReachesTheRegistry(t *testing.T) {
 	// Unique and non-prerelease, for the reasons PAR-PKG-1 documents.
 	version := fmt.Sprintf("0.0.%d", time.Now().UnixMilli()%1_000_000)
 
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "a package registry") {
-		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
-			continue
-		}
+	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "a package registry"), livetest.NeedsInRunner) {
 
 		t.Run(string(kind), func(t *testing.T) {
 			target := livetest.Accept(t, kind)

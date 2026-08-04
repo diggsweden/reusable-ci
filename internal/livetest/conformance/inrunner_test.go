@@ -35,10 +35,7 @@ import (
 )
 
 func TestInRunner_DetectsItsOwnRuntime(t *testing.T) {
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "an artifact store") {
-		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
-			continue
-		}
+	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "an artifact store"), livetest.NeedsInRunner) {
 
 		t.Run(string(kind), func(t *testing.T) {
 			target := livetest.Accept(t, kind)
@@ -114,10 +111,7 @@ jobs:
 func TestInRunner_ProductDetectsItsRunner(t *testing.T) {
 	const tag = "v0.0.1-inrunner"
 
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
-		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
-			continue
-		}
+	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "releases"), livetest.NeedsInRunner) {
 
 		t.Run(string(kind), func(t *testing.T) {
 			target := livetest.Accept(t, kind)
@@ -195,10 +189,7 @@ jobs:
 func TestInRunner_NoGitHubAnnotationsOnOtherForges(t *testing.T) {
 	const tag = "v0.0.2-annotations"
 
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
-		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
-			continue
-		}
+	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "releases"), livetest.NeedsInRunner) {
 
 		t.Run(string(kind), func(t *testing.T) {
 			target := livetest.Accept(t, kind)
@@ -285,10 +276,7 @@ func indent(block string, spaces int) string {
 func TestInRunner_StepSummaryReachesAReader(t *testing.T) {
 	const tag = "v0.0.3-summary"
 
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
-		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
-			continue
-		}
+	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "releases"), livetest.NeedsInRunner) {
 
 		t.Run(string(kind), func(t *testing.T) {
 			target := livetest.Accept(t, kind)
@@ -385,10 +373,7 @@ jobs:
 func TestInRunner_StepOutputsReachTheRunnersOutputFile(t *testing.T) {
 	const tag = "v0.0.6-outputs"
 
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
-		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
-			continue
-		}
+	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "releases"), livetest.NeedsInRunner) {
 
 		t.Run(string(kind), func(t *testing.T) {
 			target := livetest.Accept(t, kind)

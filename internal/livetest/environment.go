@@ -84,6 +84,38 @@ func Requires(tb TB, kind provider.Platform, needs ...Need) bool {
 	return true
 }
 
+// ForgesMeeting narrows kinds to the ones this environment can satisfy, and
+// skips the scenario when that leaves nothing.
+//
+// The gate is the LOOP SOURCE rather than a check inside the body, which is what
+// makes two failure modes unreachable instead of merely handled. A scenario
+// cannot iterate a forge it has no way to drive, and it cannot report PASS
+// having covered nothing — the shape that costs the most, because a failure gets
+// investigated and a skip gets read, while a green that exercised nothing is
+// simply trusted. Keyless did exactly that on the k3s road: both forges gated
+// out, zero subtests, PASS in 0.00s.
+//
+// Skipf rather than Errorf: covering nothing is a fact about the ENVIRONMENT,
+// not a defect. The k3s road genuinely runs no Fulcio, and demanding one there
+// would make the road unusable rather than honest.
+func ForgesMeeting(tb TB, kinds []provider.Platform, needs ...Need) []provider.Platform {
+	tb.Helper()
+
+	meeting := make([]provider.Platform, 0, len(kinds))
+
+	for _, kind := range kinds {
+		if Requires(tb, kind, needs...) {
+			meeting = append(meeting, kind)
+		}
+	}
+
+	if len(meeting) == 0 {
+		tb.Skipf("no forge in this environment meets %v, so this scenario would cover nothing", needs)
+	}
+
+	return meeting
+}
+
 // String names the need, so an unwired one reports what it is rather than which
 // integer it happens to be. The diagnostic is the whole reason this file exists;
 // it would be poor to make the file's own failure illegible.

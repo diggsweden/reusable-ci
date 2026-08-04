@@ -158,10 +158,7 @@ func TestArtifact_WithAStore_FailsOnTheRuntimeNotTheCapability(t *testing.T) {
 func TestInRunner_ArtifactRoundTripsThroughTheStore(t *testing.T) {
 	const tag = "v0.0.5-artifact"
 
-	for _, kind := range forgesClaiming(t, claimsRunArtifacts, "run artifacts") {
-		if !livetest.Requires(t, kind, livetest.NeedsInRunner) {
-			continue
-		}
+	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, claimsRunArtifacts, "run artifacts"), livetest.NeedsInRunner) {
 
 		t.Run(string(kind), func(t *testing.T) {
 			target := livetest.Accept(t, kind)

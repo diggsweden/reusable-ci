@@ -41,10 +41,7 @@ func claimsMintsOIDCToken(c provider.Capabilities) bool { return c.MintsOIDCToke
 func TestInRunner_KeylessSigningAgainstTheLabCA(t *testing.T) {
 	const tag = "v0.0.10-keyless"
 
-	for _, kind := range forgesClaiming(t, claimsMintsOIDCToken, "keyless signing against an own CA") {
-		if !livetest.Requires(t, kind, livetest.NeedsInRunner, livetest.NeedsFulcio) {
-			continue
-		}
+	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, claimsMintsOIDCToken, "keyless signing against an own CA"), livetest.NeedsInRunner, livetest.NeedsFulcio) {
 
 		// The URL itself, now that the environment is known to have one.
 		fulcioURL, _ := livetest.FulcioURL()
