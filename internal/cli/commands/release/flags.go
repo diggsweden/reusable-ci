@@ -18,6 +18,8 @@ const (
 	flagTag                      = "tag"
 	flagKey                      = "key"
 	flagOIDCIssuer               = "oidc-issuer"
+	flagFulcioURL                = "fulcio-url"
+	flagRekorURL                 = "rekor-url"
 	flagPrivateKeyFile           = "private-key-file"
 	flagPassphraseFile           = "passphrase-file"
 	flagManifest                 = "manifest"

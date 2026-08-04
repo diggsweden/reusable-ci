@@ -102,6 +102,16 @@ func signMethodFlags(planScope string) []cli.Flag {
 			Usage:   "OIDC issuer URL for --method=sigstore (default: auto-detected — GitHub Actions / GitLab CI / $CI_SERVER_URL). Forbidden for --method=gpg/kms.",
 		},
 		&cli.StringFlag{
+			Name:    flagFulcioURL,
+			Sources: signSources(planScope, flagFulcioURL, "SIGN_FULCIO_URL"),
+			Usage:   "certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=gpg/kms.",
+		},
+		&cli.StringFlag{
+			Name:    flagRekorURL,
+			Sources: signSources(planScope, flagRekorURL, "SIGN_REKOR_URL"),
+			Usage:   "transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=gpg/kms.",
+		},
+		&cli.StringFlag{
 			Name:    flagPrivateKeyFile,
 			Sources: signSources(planScope, flagPrivateKeyFile),
 			Usage:   "path to the armored GPG private key for --method=gpg (\"-\" for stdin; defaults to $GPG_PRIVATE_KEY). Lets the key be passed via file/stdin instead of the environment. Forbidden for --method=sigstore/kms.",

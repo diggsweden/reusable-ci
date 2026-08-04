@@ -478,3 +478,18 @@ func Identity(runID string, refs []targetRef, resourcePrefix string) (string, er
 func identityEntry(kind, host, owner, resourcePrefix string) string {
 	return kind + "@https://" + host + "/" + owner + "#resources=" + resourcePrefix
 }
+
+// FulcioURL returns the certificate authority the target environment provides
+// for keyless signing, and whether it has one.
+//
+// Read from the contract rather than derived from the forge's hostname. The
+// derivation would be one line and would put the environment's topology back
+// inside this kit -- the same mistake as requiring a deployment road, which was
+// removed for the same reason. An environment that runs no Sigstore simply does
+// not set it, and scenarios skip rather than fail: keyless signing needs a CA
+// that trusts the forge, and not every disposable environment will have one.
+func FulcioURL() (string, bool) {
+	url := strings.TrimSpace(os.Getenv("LAB_FULCIO_URL"))
+
+	return url, url != ""
+}

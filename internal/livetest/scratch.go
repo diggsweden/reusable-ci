@@ -549,3 +549,37 @@ func TagCommitSHA(tb TB, target Target, repo, tag string) string {
 
 	return ""
 }
+
+// NewScratchRepoUnique is NewScratchRepo for scenarios whose identity is bound
+// to the repository path.
+//
+// The ordinary scratch repository is reused by name: deleted and recreated at a
+// fixed path, so a scenario always starts from a known state. For OIDC that is
+// exactly wrong, and GitLab enforces it. Deleting a project records its path in
+// `burned_project_routes`, and any project later created at a burned path is
+// refused an ID token -- `id_token_burned_project_path`, which fails the job
+// before the script runs, so it reads as a workflow fault rather than a naming
+// one. The rule exists for a good reason: without it, recreating a project at a
+// deleted project's path would inherit its identity with any relying party that
+// trusts the path claim.
+//
+// So the path must be new every time, not merely unlikely to collide. It is
+// derived from the clock rather than from the run id, which sounds equivalent
+// and is not: the run id belongs to the CONTRACT, so every scenario run against
+// one contract would share a path, and the second run would find what the first
+// one burned. That is precisely how this was discovered.
+//
+// The cost is accepted deliberately: there is no delete-first step to lean on,
+// so a run that dies between create and cleanup leaves a repository behind, and
+// every run adds a burned route on the forge. Both stay inside the namespace
+// this suite owns, and a lab is disposable -- which is the trade being made.
+func NewScratchRepoUnique(tb TB, target Target, scenario string) string {
+	tb.Helper()
+
+	// Lowercase alphanumerics only. This name reaches the URLs these helpers
+	// build and the prefix check deciding what the suite may delete, so it
+	// should not depend on validation happening somewhere else.
+	unique := strconv.FormatInt(time.Now().UnixNano(), 36)
+
+	return NewScratchRepo(tb, target, scenario+"-"+unique)
+}

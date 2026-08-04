@@ -2660,6 +2660,8 @@ EXAMPLE:
 | `--method` | signing backend: gpg (default; key from --private-key-file or $GPG_PRIVATE_KEY), sigstore (keyless cosign + OIDC), or kms (cosign + --key) | `$SIGN_METHOD` |
 | `--key` | cosign --key reference for --method=kms: KMS URI (awskms:///alias/X, hashivault://transit/keys/X, gcpkms://..., azurekms://...), PKCS#11 URI, or local key-file path. Forbidden for --method=gpg/sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: auto-detected — GitHub Actions / GitLab CI / $CI_SERVER_URL). Forbidden for --method=gpg/kms. | `$SIGN_OIDC_ISSUER` |
+| `--fulcio-url` | certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=gpg/kms. | `$SIGN_FULCIO_URL` |
+| `--rekor-url` | transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=gpg/kms. | `$SIGN_REKOR_URL` |
 | `--private-key-file` | path to the armored GPG private key for --method=gpg ("-" for stdin; defaults to $GPG_PRIVATE_KEY). Lets the key be passed via file/stdin instead of the environment. Forbidden for --method=sigstore/kms. | n/a |
 | `--passphrase-file` | path to the GPG passphrase for --method=gpg ("-" for stdin; defaults to $GPG_PASSPHRASE). Forbidden for --method=sigstore/kms. | n/a |
 
@@ -2700,6 +2702,8 @@ EXAMPLES:
 | `--method` | signing backend: gpg (default; key from --private-key-file or $GPG_PRIVATE_KEY), sigstore (keyless cosign + OIDC), or kms (cosign + --key) | `$SIGN_METHOD` |
 | `--key` | cosign --key reference for --method=kms: KMS URI (awskms:///alias/X, hashivault://transit/keys/X, gcpkms://..., azurekms://...), PKCS#11 URI, or local key-file path. Forbidden for --method=gpg/sigstore. | `$SIGN_KEY` |
 | `--oidc-issuer` | OIDC issuer URL for --method=sigstore (default: auto-detected — GitHub Actions / GitLab CI / $CI_SERVER_URL). Forbidden for --method=gpg/kms. | `$SIGN_OIDC_ISSUER` |
+| `--fulcio-url` | certificate authority for --method=sigstore (default: public Sigstore). Set this for a self-hosted Sigstore: --oidc-issuer alone does not redirect it, so the token is minted by your issuer and then presented to the public CA. Forbidden for --method=gpg/kms. | `$SIGN_FULCIO_URL` |
+| `--rekor-url` | transparency log for --method=sigstore (default: public Sigstore). Where to publish, not whether: see REUSABLE_CI_COSIGN_TRANSPARENCY for that. Forbidden for --method=gpg/kms. | `$SIGN_REKOR_URL` |
 | `--private-key-file` | path to the armored GPG private key for --method=gpg ("-" for stdin; defaults to $GPG_PRIVATE_KEY). Lets the key be passed via file/stdin instead of the environment. Forbidden for --method=sigstore/kms. | n/a |
 | `--passphrase-file` | path to the GPG passphrase for --method=gpg ("-" for stdin; defaults to $GPG_PASSPHRASE). Forbidden for --method=sigstore/kms. | n/a |
 
