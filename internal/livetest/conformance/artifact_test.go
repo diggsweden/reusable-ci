@@ -77,6 +77,19 @@ func TestArtifact_WithoutAStore_RefusesAndNamesTheGap(t *testing.T) {
 				t.Errorf("%s: refusal does not name the platform, so a reader cannot tell why\nstderr: %s",
 					kind, run.Stderr)
 			}
+
+			// The gap is permanent, so it must not exit with the code that
+			// means "the external system is unavailable" — CI retries that, and
+			// no number of retries gives GitLab an artifact store.
+			if run.ExitCode == int(errs.ExitCodeUnavailable) {
+				t.Errorf("%s: exits %d (unavailable) for a capability it will never have, so a retry loop keeps trying\nstderr: %s",
+					kind, run.ExitCode, run.Stderr)
+			}
+
+			if run.ExitCode != int(errs.ExitCodeConfiguration) {
+				t.Errorf("%s: exits %d for an unsupported capability, want %d (EX_CONFIG)\nstderr: %s",
+					kind, run.ExitCode, errs.ExitCodeConfiguration, run.Stderr)
+			}
 		})
 	}
 }

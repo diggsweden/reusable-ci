@@ -25,6 +25,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/livetest"
 )
@@ -101,6 +102,13 @@ func TestDegradation_Provenance_RefusesClearly(t *testing.T) {
 
 			if run.ExitCode == 0 {
 				t.Fatalf("%s: emitted provenance it has no profile for\nstdout: %s", target.Kind, run.Stdout)
+			}
+
+			// A refusal for a capability the forge does not have is permanent;
+			// exiting "unavailable" would have CI retry it forever.
+			if run.ExitCode == int(errs.ExitCodeUnavailable) {
+				t.Errorf("%s: refuses provenance with %d (unavailable), which reads as retry-me\nstderr: %s",
+					target.Kind, run.ExitCode, run.Stderr)
 			}
 
 			// "Refuses" must mean a stated reason, not a stack trace or a bare

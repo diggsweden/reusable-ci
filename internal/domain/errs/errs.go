@@ -73,7 +73,13 @@ var (
 	// implement (multi-line outputs on GitLab, SLSA off-GitHub).
 	// Provider/adapter implementations return this so callers can
 	// branch on errors.Is(err, errs.ErrUnsupported) without depending
-	// on the concrete adapter type. Maps to ExitCodeUnavailable (69).
+	// on the concrete adapter type. Maps to ExitCodeConfiguration (78).
+	//
+	// Deliberately NOT ExitCodeUnavailable (69): 69 is "external system
+	// unavailable", which a caller is right to retry, and a capability the
+	// platform does not have never becomes available by trying again. A
+	// pipeline asking its forge for something that forge cannot do is
+	// misconfigured for that forge, which is what 78 says.
 	ErrUnsupported = errors.New("unsupported on this platform")
 
 	// ErrReleaseNotFound is returned by release-provider adapters when
@@ -171,8 +177,12 @@ func ExitCodeFromError(err error) ExitCodeType {
 		return ExitCodeDataErr
 	case errors.Is(err, ErrMissingInput), errors.Is(err, ErrReleaseNotFound):
 		return ExitCodeNoInput
-	case errors.Is(err, ErrUnsupported), errors.Is(err, ErrDependencyUnavailable), errors.Is(err, ErrRateLimited):
+	case errors.Is(err, ErrDependencyUnavailable), errors.Is(err, ErrRateLimited):
 		return ExitCodeUnavailable
+	case errors.Is(err, ErrUnsupported):
+		// Permanent, so it must not share a code with the transient two above:
+		// the whole value of the distinction is that a caller can stop retrying.
+		return ExitCodeConfiguration
 	case errors.Is(err, ErrPermissionDenied):
 		return ExitCodeNoPerm
 	case errors.Is(err, ErrInvalidConfig):

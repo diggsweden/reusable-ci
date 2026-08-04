@@ -93,6 +93,13 @@ than fail when a capability is missing.
 
 How commands degrade when a capability is absent:
 
+A refusal for a missing capability exits **78** (`EX_CONFIG`), never 69
+(`EX_UNAVAILABLE`). 69 means an external system is unavailable and is worth
+retrying; a capability the forge does not have never arrives, so a pipeline
+that retries on 69 would loop forever. Treat 78 here as "this pipeline is
+configured for a forge that cannot do this" and change the configuration or the
+forge.
+
 - **SARIF upload** (`security report upload-sarif`) — only github implements
   the code-scanning role. On gitlab/forgejo/local the command emits a
   `Notice` and exits 0; route findings to the step-summary or an uploaded

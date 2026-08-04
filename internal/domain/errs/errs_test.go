@@ -28,7 +28,7 @@ func TestExitCodeFromError(t *testing.T) {
 		{name: "nil", want: errs.ExitCodeOK},
 		{name: "context_canceled", err: context.Canceled, want: errs.ExitCodeUsage, wraps: true},
 		{name: "context_deadline_exceeded", err: context.DeadlineExceeded, want: errs.ExitCodeUnavailable, wraps: true},
-		{name: "unsupported", err: errs.ErrUnsupported, want: errs.ExitCodeUnavailable, wraps: true},
+		{name: "unsupported", err: errs.ErrUnsupported, want: errs.ExitCodeConfiguration, wraps: true},
 		{name: "usage", err: errs.ErrUsage, want: errs.ExitCodeUsage, wraps: true},
 		{name: "ci_runtime_required", err: errs.ErrCIRuntimeRequired, want: errs.ExitCodeUsage, wraps: true},
 		{name: "ci_runtime_built", err: errs.RuntimeRequired("transfer run artifacts", "github", []errs.EnvVar{{Name: "ACTIONS_RUNTIME_TOKEN", What: "x"}}), want: errs.ExitCodeUsage},
@@ -165,5 +165,38 @@ func TestExitCodeConstants_AlignToBSDSysexits(t *testing.T) {
 			t.Parallel()
 			require.Equal(t, tc.want, int(tc.got))
 		})
+	}
+}
+
+// A permanent condition must not share an exit code with the transient ones.
+//
+// This is the property, stated separately from the table above because the
+// table pins values while this pins the *reason* they differ: 69 tells a caller
+// to try again, and a capability the platform does not implement never becomes
+// available by trying again. The same confusion has now been found three times
+// — a refused token classified as an outage (PAR-TOK-2), a missing manifest
+// reported as one by the registry adapter, and this — so it is worth a test that
+// fails on intent rather than on a number.
+func TestExitCode_UnsupportedIsNotRetryable(t *testing.T) {
+	t.Parallel()
+
+	unsupported := errs.ExitCodeFromError(errs.ErrUnsupported)
+
+	for _, transient := range []struct {
+		name string
+		err  error
+	}{
+		{"dependency unavailable", errs.ErrDependencyUnavailable},
+		{"rate limited", errs.ErrRateLimited},
+	} {
+		if got := errs.ExitCodeFromError(transient.err); got == unsupported {
+			t.Errorf("unsupported exits %d, the same as %s — a caller cannot tell a permanent gap from one worth retrying",
+				unsupported, transient.name)
+		}
+	}
+
+	if unsupported != errs.ExitCodeConfiguration {
+		t.Errorf("unsupported exits %d, want %d (EX_CONFIG): asking a forge for a capability it lacks is a configuration mismatch",
+			unsupported, errs.ExitCodeConfiguration)
 	}
 }
