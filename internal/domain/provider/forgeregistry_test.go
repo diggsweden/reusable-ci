@@ -66,8 +66,19 @@ func TestForgeNPMRegistry_RenderNPMRC_StripsNewlinesFromToken(t *testing.T) {
 	reg := provider.ForgeNPMRegistry{Registry: "https://r/", Token: "good\n//evil/:_authToken=x"} //nolint:gosec // G101 false positive: synthetic newline-injection test fixture, not a real credential.
 
 	rc := reg.RenderNPMRC()
-	if lines := strings.Split(strings.TrimRight(rc, "\n"), "\n"); len(lines) != 3 {
-		t.Errorf("token newline must be stripped (want 3 lines, got %d):\n%s", len(lines), rc)
+
+	// Assert the injection is absent rather than counting lines. A total-line
+	// count is a proxy for this and a brittle one: it failed when an unrelated
+	// (and deprecated) line was removed from the template, which says nothing
+	// about whether a token can smuggle in a second registry.
+	for _, line := range strings.Split(strings.TrimRight(rc, "\n"), "\n") {
+		if strings.HasPrefix(line, "//evil/") {
+			t.Errorf("a newline in the token injected a second registry line:\n%s", rc)
+		}
+	}
+
+	if !strings.Contains(rc, "//r/:_authToken=good//evil/:_authToken=x") {
+		t.Errorf("the token should survive flattened onto one line:\n%s", rc)
 	}
 }
 
@@ -78,7 +89,7 @@ func TestForgeNPMRegistry_RenderNPMRC(t *testing.T) {
 	gl := provider.ForgeNPMRegistry{Registry: "https://gl/api/v4/projects/1/packages/npm/", Token: "jt"}
 	rc := gl.RenderNPMRC()
 
-	for _, want := range []string{"//gl/api/v4/projects/1/packages/npm/:_authToken=jt", "registry=https://gl/api/v4/projects/1/packages/npm/", "always-auth=true"} {
+	for _, want := range []string{"//gl/api/v4/projects/1/packages/npm/:_authToken=jt", "registry=https://gl/api/v4/projects/1/packages/npm/"} {
 		if !strings.Contains(rc, want) {
 			t.Errorf("gitlab .npmrc missing %q:\n%s", want, rc)
 		}

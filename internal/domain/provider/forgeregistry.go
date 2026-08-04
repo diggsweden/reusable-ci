@@ -94,7 +94,11 @@ func (r ForgeNPMRegistry) RenderNPMRC() string {
 		fmt.Fprintf(&b, "registry=%s\n", r.Registry)
 	}
 
-	b.WriteString("always-auth=true\n")
+	// No always-auth. npm removed it from the CLI in 2021 (7.11.1); npm 6 was
+	// the last release that honoured it, and current npm reports it as an
+	// unknown config and warns it will stop working outright in the next major.
+	// A path-scoped _authToken is sent on every request to that path anyway, so
+	// the line bought nothing and cost a warning on every publish.
 
 	return b.String()
 }

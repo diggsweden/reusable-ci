@@ -241,8 +241,7 @@ func TestWriteNPMRC(t *testing.T) {
 				Scope:    "@diggsweden",
 			},
 			wantBody: "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n" +
-				"@diggsweden:registry=https://npm.pkg.github.com\n" +
-				"always-auth=true\n",
+				"@diggsweden:registry=https://npm.pkg.github.com\n",
 		},
 		{
 			name: "unscoped public registry",
@@ -250,8 +249,7 @@ func TestWriteNPMRC(t *testing.T) {
 				Registry: "https://registry.npmjs.org/",
 			},
 			wantBody: "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n" +
-				"registry=https://registry.npmjs.org\n" +
-				"always-auth=true\n",
+				"registry=https://registry.npmjs.org\n",
 		},
 		{
 			name: "registry with port + path is preserved",
@@ -260,8 +258,7 @@ func TestWriteNPMRC(t *testing.T) {
 				Scope:    "@example",
 			},
 			wantBody: "//npm.example.com:8443/path/:_authToken=${NODE_AUTH_TOKEN}\n" +
-				"@example:registry=https://npm.example.com:8443/path\n" +
-				"always-auth=true\n",
+				"@example:registry=https://npm.example.com:8443/path\n",
 		},
 		{
 			// http is permitted for a loopback registry (e.g. verdaccio in
@@ -271,8 +268,7 @@ func TestWriteNPMRC(t *testing.T) {
 				Registry: "http://localhost:4873",
 			},
 			wantBody: "//localhost:4873/:_authToken=${NODE_AUTH_TOKEN}\n" +
-				"registry=http://localhost:4873\n" +
-				"always-auth=true\n",
+				"registry=http://localhost:4873\n",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

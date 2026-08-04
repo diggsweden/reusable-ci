@@ -45,7 +45,6 @@ type NPMRCInput struct {
 //	//<host>/:_authToken=${NODE_AUTH_TOKEN}
 //	@scope:registry=<registry>     (when Scope is set)
 //	registry=<registry>            (when Scope is empty)
-//	always-auth=true
 func WriteNPMRC(in NPMRCInput) error {
 	if in.Output == nil {
 		return fmt.Errorf("output writer is required: %w", errs.ErrUsage)
@@ -120,17 +119,16 @@ func emitNPMRCLines(w io.Writer, s npmrcSettings) error { //nolint:varnamelen //
 		return fmt.Errorf("write .npmrc: %w", err)
 	}
 
-	if _, err := fmt.Fprintln(w, "always-auth=true"); err != nil {
-		return fmt.Errorf("write .npmrc: %w", err)
-	}
+	// No always-auth: removed from the npm CLI in 2021 (7.11.1) and reported as
+	// an unknown config by current npm, which warns it will stop working in the
+	// next major. The path-scoped _authToken above is what authenticates.
 
 	return nil
 }
 
 // validateRegistryScheme enforces the secure-by-default transport rule:
-// https is required because the emitted .npmrc carries an auth token
-// (always-auth=true), so npm sends NODE_AUTH_TOKEN to this host on every
-// request. Plaintext http is permitted only for loopback hosts (local dev
+// https is required because the emitted .npmrc carries an auth token that npm
+// sends to this host on every request to the registry path. Plaintext http is permitted only for loopback hosts (local dev
 // registries such as verdaccio), where the token never leaves the machine.
 func validateRegistryScheme(parsed *url.URL, registry string) error {
 	switch parsed.Scheme {
