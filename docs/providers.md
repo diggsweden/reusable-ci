@@ -91,6 +91,10 @@ than fail when a capability is missing.
 | Container tag deletion (package/registry API) | ❌ | ✅ | ✅ | ❌ |
 | Container tag listing (package/registry API) | ❌ | ✅ | ✅ | ❌ |
 
+This matrix is not maintained by hand: `PAR-CAP-1` renders it from what the
+adapters actually implement and fails when the two drift, and the live
+conformance tier exercises each claim against a real forge.
+
 How commands degrade when a capability is absent:
 
 A refusal for a missing capability exits **78** (`EX_CONFIG`), never 69

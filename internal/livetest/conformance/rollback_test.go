@@ -38,83 +38,6 @@ import (
 // deletesTags selects the forges that claim the capability rollback needs.
 func deletesTags(c provider.Capabilities) bool { return c.ContainerTagDeletion }
 
-// rollbackFixture is the shared setup: a scratch repository, a working
-// directory the CLI runs in, and registry credentials. Each scenario pushes its
-// own images, because what is in the registry beforehand is the variable under
-// test.
-type rollbackFixture struct {
-	target    livetest.Target
-	repo      string
-	imagePath string
-	work      string
-	authFile  string
-	opts      livetest.RunOptions
-}
-
-func newRollbackFixture(t *testing.T, kind provider.Platform, name string) rollbackFixture {
-	t.Helper()
-
-	target := livetest.Accept(t, kind)
-
-	registry, err := livetest.RegistryHost(target)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	repo := livetest.NewScratchRepo(t, target, name)
-	work := t.TempDir()
-
-	return rollbackFixture{
-		target:    target,
-		repo:      repo,
-		imagePath: registry + "/" + target.Owner + "/" + repo,
-		work:      work,
-		authFile:  livetest.RegistryAuthFile(t, target, work),
-		opts:      livetest.RunOptions{Dir: work},
-	}
-}
-
-func (f rollbackFixture) run(t *testing.T, args ...string) livetest.Run {
-	t.Helper()
-
-	return livetest.CLIIn(t, f.target, f.repo, f.opts, args...)
-}
-
-// mustRun fails the test when the command did not succeed, naming the verb so a
-// failure says which step of the flow broke.
-func (f rollbackFixture) mustRun(t *testing.T, verb string, args ...string) {
-	t.Helper()
-
-	run := f.run(t, args...)
-	if run.ExitCode != 0 {
-		t.Fatalf("%s %s exited %d\nstderr: %s", f.target.Kind, verb, run.ExitCode, run.Stderr)
-	}
-}
-
-// digest asserts what the registry serves for a tag, or that it serves nothing.
-func (f rollbackFixture) assertServes(t *testing.T, tag, want, why string) {
-	t.Helper()
-
-	got, found := livetest.ImageDigest(t, f.target, f.repo, tag)
-	if !found {
-		t.Errorf("%s: %s:%s serves nothing — %s", f.target.Kind, f.imagePath, tag, why)
-
-		return
-	}
-
-	if got != want {
-		t.Errorf("%s: %s:%s serves %s, want %s — %s", f.target.Kind, f.imagePath, tag, got, want, why)
-	}
-}
-
-func (f rollbackFixture) assertAbsent(t *testing.T, tag, why string) {
-	t.Helper()
-
-	if _, found := livetest.ImageDigest(t, f.target, f.repo, tag); found {
-		t.Errorf("%s: %s:%s still serves an image — %s", f.target.Kind, f.imagePath, tag, why)
-	}
-}
-
 // PAR-REG-4a: rolling back a stage removes that stage's pointer and nothing
 // else. The immutable release tag is not a stage destination, so a rollback that
 // took it would be destroying the release it was asked to un-promote.
@@ -127,7 +50,7 @@ func TestRollback_FromLedger_RemovesTheStagePointerOnly(t *testing.T) {
 
 	for _, kind := range forgesClaiming(t, deletesTags, "container tag deletion") {
 		t.Run(string(kind), func(t *testing.T) {
-			f := newRollbackFixture(t, kind, "rollback-stage")
+			f := newLedgerFixture(t, kind, "rollback-stage")
 
 			// One manifest under the candidate and the immutable release tag,
 			// as a build leaves it.
@@ -176,7 +99,7 @@ func TestRollback_FromJournal_RemovesAReleaseTagThePromotionCreated(t *testing.T
 
 	for _, kind := range forgesClaiming(t, deletesTags, "container tag deletion") {
 		t.Run(string(kind), func(t *testing.T) {
-			f := newRollbackFixture(t, kind, "rollback-journal")
+			f := newLedgerFixture(t, kind, "rollback-journal")
 
 			// Only the candidate is pushed: the release tag is what the
 			// promotion will create, and therefore what rollback may remove.
@@ -232,7 +155,7 @@ func TestRollback_FromJournal_RestoresAMovingTagToItsPreviousImage(t *testing.T)
 
 	for _, kind := range forgesClaiming(t, deletesTags, "container tag deletion") {
 		t.Run(string(kind), func(t *testing.T) {
-			f := newRollbackFixture(t, kind, "rollback-moving")
+			f := newLedgerFixture(t, kind, "rollback-moving")
 
 			// The release already in production, and the candidate that is
 			// about to replace it. Distinct images, so a restore is provable.

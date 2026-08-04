@@ -36,12 +36,6 @@ import (
 )
 
 func TestLedger_RecordVerifyPromote_PreservesTheDigest(t *testing.T) {
-	const (
-		releaseTag   = "v0.0.1"
-		candidateTag = "staging-" + releaseTag
-		promotedTag  = "release"
-	)
-
 	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "an OCI registry") {
 		t.Run(string(kind), func(t *testing.T) {
 			target := livetest.Accept(t, kind)
@@ -59,99 +53,123 @@ func TestLedger_RecordVerifyPromote_PreservesTheDigest(t *testing.T) {
 				{name: "index", push: livetest.PushIndex},
 			} {
 				t.Run(shape.name, func(t *testing.T) {
-					// A scratch repository per shape: promotion targets one
-					// moving pointer per repository, so sharing a repository
-					// would have the second shape overwrite the first's
-					// :release and make the assertion depend on ordering.
-					repo := livetest.NewScratchRepo(t, target, "ledger-"+shape.name)
-					imagePath := registry + "/" + target.Owner + "/" + repo
-
-					work := t.TempDir()
-					authFile := livetest.RegistryAuthFile(t, target, work)
-
-					// The ledger records paths a consumer resolves later, so it
-					// requires them relative — which only means something
-					// against a working directory. Running from the release
-					// tree is what a release job does too.
-					//
-					// Credentials go in as an explicit --auth-file rather than
-					// an ambient keychain: the closed environment the CLI runs
-					// in has no keychain by design, and a test that leaned on
-					// the operator's ~/.docker/config.json would pass or fail
-					// based on who ran it.
-					opts := livetest.RunOptions{Dir: work}
-					pushed := shape.push(t, target, repo, candidateTag)
-
-					ledger := "release-images.json"
-					sbom := writeSBOM(t, work, shape.name)
-
-					// add --capture-digest reads the digest from the registry
-					// rather than trusting a value passed in, which is the
-					// property that removes the transcription gap between push
-					// and record.
-					add := livetest.CLIIn(t, target, repo, opts,
-						"container", "ledger", "add",
-						"--ledger", ledger,
-						"--auth-file", authFile,
-						"--tag", releaseTag,
-						"--kind", "distroless",
-						"--candidate-tag", imagePath+":"+candidateTag,
-						"--final-tag", imagePath+":"+releaseTag,
-						"--sbom", sbom,
-						"--capture-digest",
-					)
-					if add.ExitCode != 0 {
-						t.Fatalf("%s ledger add exited %d\nstderr: %s", kind, add.ExitCode, add.Stderr)
-					}
-
-					recorded := ledgerDigest(t, filepath.Join(work, ledger))
-					if recorded != pushed.Digest {
-						t.Fatalf("%s recorded %s but the registry serves %s — the capture is not reading the registry",
-							kind, recorded, pushed.Digest)
-					}
-
-					// validate is the offline trust-boundary check: every tag
-					// scoped to the release tag.
-					validate := livetest.CLIIn(t, target, repo, opts,
-						"container", "ledger", "validate",
-						"--ledger", ledger, "--tag", releaseTag, "--non-empty")
-					if validate.ExitCode != 0 {
-						t.Fatalf("%s ledger validate exited %d\nstderr: %s", kind, validate.ExitCode, validate.Stderr)
-					}
-
-					// validate-digests is the registry-facing half: what the
-					// forge serves must still be the recorded digest.
-					verify := livetest.CLIIn(t, target, repo, opts,
-						"container", "ledger", "validate-digests",
-						"--ledger", ledger, "--auth-file", authFile, "--tag", releaseTag)
-					if verify.ExitCode != 0 {
-						t.Fatalf("%s ledger validate-digests exited %d against the registry it just recorded\nstderr: %s",
-							kind, verify.ExitCode, verify.Stderr)
-					}
-
-					promote := livetest.CLIIn(t, target, repo, opts,
-						"container", "ledger", "promote",
-						"--ledger", ledger, "--auth-file", authFile,
-						"--tag", releaseTag, "--stage", promotedTag)
-					if promote.ExitCode != 0 {
-						t.Fatalf("%s ledger promote exited %d\nstderr: %s", kind, promote.ExitCode, promote.Stderr)
-					}
-
-					// The claim, checked against the registry rather than the
-					// tool's own report: the moving pointer now serves exactly
-					// the manifest the candidate did.
-					served, found := livetest.ImageDigest(t, target, repo, promotedTag)
-					if !found {
-						t.Fatalf("%s: promotion reported success but %s:%s serves nothing", kind, imagePath, promotedTag)
-					}
-
-					if served != pushed.Digest {
-						t.Errorf("%s: %s:%s serves %s, want the promoted %s — the copy did not preserve the manifest",
-							kind, imagePath, promotedTag, served, pushed.Digest)
-					}
+					recordVerifyPromote(t, kind, target, registry, shape.name, shape.push)
 				})
 			}
 		})
+	}
+}
+
+// recordVerifyPromote is one shape's whole journey: record it, re-check it
+// offline and then against the registry, promote it, and require the promoted
+// pointer to serve the manifest the candidate did.
+//
+// A named function rather than a closure, so the test above reads as what it
+// selects — both shapes, on every forge with a registry — and this reads as the
+// claim being made about each.
+func recordVerifyPromote(
+	t *testing.T,
+	kind provider.Platform,
+	target livetest.Target,
+	registry, shapeName string,
+	push func(livetest.TB, livetest.Target, string, string) livetest.Image,
+) {
+	t.Helper()
+
+	const (
+		releaseTag   = "v0.0.1"
+		candidateTag = "staging-" + releaseTag
+		promotedTag  = "release"
+	)
+
+	// A scratch repository per shape: promotion targets one moving pointer per
+	// repository, so sharing a repository would have the second shape overwrite
+	// the first's :release and make the assertion depend on ordering.
+	repo := livetest.NewScratchRepo(t, target, "ledger-"+shapeName)
+	imagePath := registry + "/" + target.Owner + "/" + repo
+
+	work := t.TempDir()
+	authFile := livetest.RegistryAuthFile(t, target, work)
+
+	// The ledger records paths a consumer resolves later, so it
+	// requires them relative — which only means something
+	// against a working directory. Running from the release
+	// tree is what a release job does too.
+	//
+	// Credentials go in as an explicit --auth-file rather than
+	// an ambient keychain: the closed environment the CLI runs
+	// in has no keychain by design, and a test that leaned on
+	// the operator's ~/.docker/config.json would pass or fail
+	// based on who ran it.
+	opts := livetest.RunOptions{Dir: work}
+	pushed := push(t, target, repo, candidateTag)
+
+	ledger := "release-images.json"
+	sbom := writeSBOM(t, work, shapeName)
+
+	// add --capture-digest reads the digest from the registry
+	// rather than trusting a value passed in, which is the
+	// property that removes the transcription gap between push
+	// and record.
+	add := livetest.CLIIn(t, target, repo, opts,
+		"container", "ledger", "add",
+		"--ledger", ledger,
+		"--auth-file", authFile,
+		"--tag", releaseTag,
+		"--kind", "distroless",
+		"--candidate-tag", imagePath+":"+candidateTag,
+		"--final-tag", imagePath+":"+releaseTag,
+		"--sbom", sbom,
+		"--capture-digest",
+	)
+	if add.ExitCode != 0 {
+		t.Fatalf("%s ledger add exited %d\nstderr: %s", kind, add.ExitCode, add.Stderr)
+	}
+
+	recorded := ledgerDigest(t, filepath.Join(work, ledger))
+	if recorded != pushed.Digest {
+		t.Fatalf("%s recorded %s but the registry serves %s — the capture is not reading the registry",
+			kind, recorded, pushed.Digest)
+	}
+
+	// validate is the offline trust-boundary check: every tag
+	// scoped to the release tag.
+	validate := livetest.CLIIn(t, target, repo, opts,
+		"container", "ledger", "validate",
+		"--ledger", ledger, "--tag", releaseTag, "--non-empty")
+	if validate.ExitCode != 0 {
+		t.Fatalf("%s ledger validate exited %d\nstderr: %s", kind, validate.ExitCode, validate.Stderr)
+	}
+
+	// validate-digests is the registry-facing half: what the
+	// forge serves must still be the recorded digest.
+	verify := livetest.CLIIn(t, target, repo, opts,
+		"container", "ledger", "validate-digests",
+		"--ledger", ledger, "--auth-file", authFile, "--tag", releaseTag)
+	if verify.ExitCode != 0 {
+		t.Fatalf("%s ledger validate-digests exited %d against the registry it just recorded\nstderr: %s",
+			kind, verify.ExitCode, verify.Stderr)
+	}
+
+	promote := livetest.CLIIn(t, target, repo, opts,
+		"container", "ledger", "promote",
+		"--ledger", ledger, "--auth-file", authFile,
+		"--tag", releaseTag, "--stage", promotedTag)
+	if promote.ExitCode != 0 {
+		t.Fatalf("%s ledger promote exited %d\nstderr: %s", kind, promote.ExitCode, promote.Stderr)
+	}
+
+	// The claim, checked against the registry rather than the
+	// tool's own report: the moving pointer now serves exactly
+	// the manifest the candidate did.
+	served, found := livetest.ImageDigest(t, target, repo, promotedTag)
+	if !found {
+		t.Fatalf("%s: promotion reported success but %s:%s serves nothing", kind, imagePath, promotedTag)
+	}
+
+	if served != pushed.Digest {
+		t.Errorf("%s: %s:%s serves %s, want the promoted %s — the copy did not preserve the manifest",
+			kind, imagePath, promotedTag, served, pushed.Digest)
 	}
 }
 
@@ -250,24 +268,6 @@ func TestLedger_Cleanup_RemovesTheCandidateAndKeepsTheRelease(t *testing.T) {
 			}
 		})
 	}
-}
-
-// writeSBOM produces a minimal CycloneDX document at a path the ledger's schema
-// accepts (it requires a *.cyclonedx.json name). Content is not inspected by the
-// ledger — the entry records the path so a later step can find it.
-func writeSBOM(t *testing.T, dir, flavour string) string {
-	t.Helper()
-
-	name := "image-sbom-" + flavour + ".cyclonedx.json"
-	body := `{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"components":[]}`
-
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	// Relative on purpose: the ledger refuses an absolute path, because the
-	// entry is read later from wherever the release artifacts are.
-	return name
 }
 
 // ledgerDigest reads back the digest the ledger recorded, so the assertion is

@@ -14,7 +14,7 @@ used.
 
 ## Layers
 
-Tests sit in one of three buckets. Each has a different shape, build tag,
+Tests sit in one of four buckets. Each has a different shape, build tag,
 and CI gate.
 
 | Layer | What it tests | Build tag | Speed | Parallel | Network / CLI |
@@ -22,6 +22,7 @@ and CI gate.
 | **domain** | pure logic — parsers, transforms, decisions | (default) | <50ms | yes | no |
 | **adapter** | I/O — real CLIs (`gpg`, `git`, `trivy`), real HTTP | `!short` for slow ones; `integration` for full-stack | <2s | yes (per package) | yes |
 | **CLI / e2e** | the binary as a black box | `e2e` | <5s | no | builds binary |
+| **live / conformance** | the same scenario against every real forge | `live` | minutes | no (`-p 1`) | a real lab |
 
 Run them as:
 
@@ -30,6 +31,30 @@ go test ./...                          # domain + fast adapter
 go test -tags=integration ./...        # + full-stack adapter
 go test -tags=e2e ./cmd/...            # + e2e binary smoke
 ```
+
+### The live tier
+
+`internal/livetest/` holds a kit and `internal/livetest/conformance/` the
+scenarios (`PAR-*`). One scenario body runs against every forge that *claims*
+the capability it needs, so parity is enforced by shape rather than by
+discipline — the alternative, a suite per forge, is how parity rots.
+
+It exists because every other layer verifies an adapter against a fake written
+from the same assumptions as the adapter, so an assumption that is wrong is
+wrong in both places and both agree. Only a real forge breaks that tie. It is
+what found GitLab's missing delete-then-create on re-release, the registry
+adapter reporting permanent failures as retryable, and that Forgejo drops
+untagged manifests while GitLab keeps them.
+
+Run it against a disposable lab only:
+
+```text
+just test-live      # preflights the contract, builds once, revokes tokens on exit
+```
+
+It is **never in PR CI**: it is live, destructive, and human-invoked against
+git-provider-lab. The recipe refuses to run without a valid target contract and
+an explicit destroy confirmation naming the run.
 
 In this repository's own CI, the self-validation workflow runs:
 

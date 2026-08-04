@@ -6,6 +6,14 @@ version: "2"
 
 run:
   timeout: 5m
+  # Without this the entire //go:build live tier — every live conformance
+  # scenario — is invisible to the linter, because golangci-lint only analyses
+  # files matching the default build constraints. That tier is the one driving
+  # real forges and real registries, so it is the last place that should be
+  # unchecked; it went unlinted until a manual `--build-tags live` run turned up
+  # findings the gate had never seen.
+  build-tags:
+    - live
 
 output:
   formats:

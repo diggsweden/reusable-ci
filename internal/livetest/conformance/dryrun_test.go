@@ -72,7 +72,7 @@ func TestDryRun_DestructiveLedgerVerbs_MutateNothing(t *testing.T) {
 			for _, testCase := range cases {
 				t.Run(testCase.verb, func(t *testing.T) {
 					target := livetest.Accept(t, kind)
-					f := newRollbackFixture(t, kind, "dryrun-"+testCase.verb)
+					f := newLedgerFixture(t, kind, "dryrun-"+testCase.verb)
 
 					livetest.PushImageTags(t, f.target, f.repo, candidateTag, releaseTag)
 

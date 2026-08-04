@@ -131,7 +131,9 @@ func verifyCosignSignature(t *testing.T, kind, digestRef, publicKey, authDir str
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "cosign", "verify",
+	// G204: every argument is scenario-authored — a generated key path and a
+	// digest read back from the registry — never external input.
+	cmd := exec.CommandContext(ctx, "cosign", "verify", //nolint:gosec
 		"--key", publicKey,
 		"--insecure-ignore-tlog=true",
 		digestRef,
