@@ -581,5 +581,71 @@ func NewScratchRepoUnique(tb TB, target Target, scenario string) string {
 	// should not depend on validation happening somewhere else.
 	unique := strconv.FormatInt(time.Now().UnixNano(), 36)
 
+	// Reclaim earlier generations first. A fixed-name scratch repository is
+	// reclaimed by the delete-before-create in NewScratchRepo; a unique one has
+	// nothing to reclaim it, so without this every run of an OIDC scenario would
+	// leave its repository behind forever. Same discipline, adapted: what cannot
+	// be reused can at least be swept.
+	sweepScratchRepos(tb, target, ScratchRepo(scenario)+"-")
+
 	return NewScratchRepo(tb, target, scenario+"-"+unique)
+}
+
+// sweepScratchRepos deletes repositories whose name starts with prefix.
+//
+// Failures are reported and not fatal: a leftover repository is untidy, and
+// failing the run that noticed it would be worse than the untidiness. The prefix
+// always starts with the namespace this suite owns, and DeleteScratchRepo
+// refuses anything outside it regardless.
+func sweepScratchRepos(tb TB, target Target, prefix string) {
+	tb.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	for _, name := range scratchRepoNames(ctx, target, prefix) {
+		if err := DeleteScratchRepo(ctx, target, name); err != nil {
+			tb.Logf("livetest: could not sweep %s/%s: %v", target.Owner, name, err)
+		}
+	}
+}
+
+// scratchRepoNames lists this owner's repositories matching prefix.
+func scratchRepoNames(ctx context.Context, target Target, prefix string) []string {
+	var names []string
+
+	switch target.Kind {
+	case provider.PlatformGitLab:
+		var projects []struct {
+			Path string `json:"path"`
+		}
+
+		endpoint := target.BaseURL() + "/api/v4/projects?owned=true&per_page=100"
+		if _, err := decode(ctx, target, http.MethodGet, endpoint, nil, &projects, http.StatusOK); err != nil {
+			return nil
+		}
+
+		for _, project := range projects {
+			if strings.HasPrefix(project.Path, prefix) {
+				names = append(names, project.Path)
+			}
+		}
+	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
+		var repos []struct {
+			Name string `json:"name"`
+		}
+
+		endpoint := target.BaseURL() + "/api/v1/user/repos?limit=100"
+		if _, err := decode(ctx, target, http.MethodGet, endpoint, nil, &repos, http.StatusOK); err != nil {
+			return nil
+		}
+
+		for _, repo := range repos {
+			if strings.HasPrefix(repo.Name, prefix) {
+				names = append(names, repo.Name)
+			}
+		}
+	}
+
+	return names
 }
