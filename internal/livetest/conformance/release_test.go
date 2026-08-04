@@ -27,23 +27,18 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/livetest/rawref"
 )
 
-// forEachForgeClaiming runs one scenario against every live forge whose
-// Capabilities() claims what it needs, and says out loud which forges were
-// skipped and why.
+// forgesClaiming returns the live forges whose Capabilities() claim what a
+// scenario needs, saying out loud which were skipped and why.
 //
 // This is the shape that keeps the tier a parity suite rather than N suites
-// that drift: a scenario is a single body, and the capability decides where it
-// runs. A silent skip would be worse than no test, so an unclaimed capability
-// is reported, not swallowed.
-func forEachForgeClaiming(
-	t *testing.T,
-	needs func(provider.Capabilities) bool,
-	capability string,
-	run func(t *testing.T, target livetest.Target),
-) {
+// that drift: a scenario is one body iterating this list, and the capability
+// decides where it runs. A silent skip would be worse than no test, so an
+// unclaimed capability is reported, and a scenario no forge can run is a
+// failure rather than a quiet pass.
+func forgesClaiming(t *testing.T, needs func(provider.Capabilities) bool, capability string) []provider.Platform {
 	t.Helper()
 
-	ran := 0
+	var kinds []provider.Platform
 
 	for _, kind := range livetest.LiveForges() {
 		capabilities, known := livetest.Capabilities(kind)
@@ -57,18 +52,14 @@ func forEachForgeClaiming(
 			continue
 		}
 
-		ran++
-
-		t.Run(string(kind), func(t *testing.T) {
-			// No t.Parallel: one lab is a single mutable fixture, and two
-			// forges sharing it is not the property under test.
-			run(t, livetest.Accept(t, kind))
-		})
+		kinds = append(kinds, kind)
 	}
 
-	if ran == 0 {
+	if len(kinds) == 0 {
 		t.Fatalf("no live forge claims %s, so this scenario proved nothing", capability)
 	}
+
+	return kinds
 }
 
 func claimsReleaseAssets(c provider.Capabilities) bool { return c.ReleaseAssets }
@@ -88,9 +79,11 @@ func TestRelease_CreateWithAssets_IsEquivalentAcrossForges(t *testing.T) {
 		body = "livetest PAR-REL-1\n\nbody text with a second line.\n"
 	)
 
-	forEachForgeClaiming(t, claimsReleaseAssets, "release assets",
-		func(t *testing.T, target livetest.Target) {
-			kind := target.Kind
+	for _, kind := range forgesClaiming(t, claimsReleaseAssets, "release assets") {
+		t.Run(string(kind), func(t *testing.T) {
+			// No t.Parallel: one lab is a single mutable fixture, and two
+			// forges sharing it is not the property under test.
+			target := livetest.Accept(t, kind)
 			repo := livetest.NewScratchRepo(t, target, "release-assets")
 
 			// Both adapters release an existing tag rather than creating one,
@@ -151,31 +144,9 @@ func TestRelease_CreateWithAssets_IsEquivalentAcrossForges(t *testing.T) {
 				t.Errorf("%s release body = %q, want %q", kind, release.Body, body)
 			}
 
-			wantNames := make([]string, 0, len(assets))
-			for _, path := range assets {
-				wantNames = append(wantNames, filepath.Base(path))
-			}
-
-			slices.Sort(wantNames)
-
-			if got := release.AssetNames(); !slices.Equal(got, wantNames) {
-				t.Fatalf("%s attached %v, want %v", kind, got, wantNames)
-			}
-
-			for name, wantDigest := range digests {
-				asset, ok := release.Asset(name)
-				if !ok {
-					t.Errorf("%s is missing asset %q", kind, name)
-
-					continue
-				}
-
-				if asset.Digest != wantDigest {
-					t.Errorf("%s asset %q digest = %s, want %s — the forge served different bytes than were uploaded",
-						kind, name, asset.Digest, wantDigest)
-				}
-			}
+			assertAssetsArrivedIntact(t, kind, release, assets, digests)
 		})
+	}
 }
 
 // writeAssets creates two assets whose content differs, so a forge that mixed
@@ -229,9 +200,11 @@ func writeNotes(t *testing.T, body string) string {
 func TestRelease_UploadAssetToExistingRelease_ServesTheSameBytes(t *testing.T) {
 	const tag = "v0.0.2-rc-live"
 
-	forEachForgeClaiming(t, claimsReleaseAssets, "release assets",
-		func(t *testing.T, target livetest.Target) {
-			kind := target.Kind
+	for _, kind := range forgesClaiming(t, claimsReleaseAssets, "release assets") {
+		t.Run(string(kind), func(t *testing.T) {
+			// No t.Parallel: one lab is a single mutable fixture, and two
+			// forges sharing it is not the property under test.
+			target := livetest.Accept(t, kind)
 			repo := livetest.NewScratchRepo(t, target, "release-upload")
 			livetest.PrepareTag(t, target, repo, tag)
 
@@ -289,6 +262,7 @@ func TestRelease_UploadAssetToExistingRelease_ServesTheSameBytes(t *testing.T) {
 					rawref.FormatSize(asset.Size), rawref.FormatSize(wantSize))
 			}
 		})
+	}
 }
 
 // PAR-REL-3: releasing a tag that already has a release.
@@ -314,9 +288,11 @@ func TestRelease_ReReleasingATag_ReplacesRatherThanAccumulates(t *testing.T) {
 		assetSuffix = "par-rel-3.txt"
 	)
 
-	forEachForgeClaiming(t, claimsReleaseAssets, "release assets",
-		func(t *testing.T, target livetest.Target) {
-			kind := target.Kind
+	for _, kind := range forgesClaiming(t, claimsReleaseAssets, "release assets") {
+		t.Run(string(kind), func(t *testing.T) {
+			// No t.Parallel: one lab is a single mutable fixture, and two
+			// forges sharing it is not the property under test.
+			target := livetest.Accept(t, kind)
 			repo := livetest.NewScratchRepo(t, target, "release-rerelease")
 			livetest.PrepareTag(t, target, repo, tag)
 
@@ -368,6 +344,7 @@ func TestRelease_ReReleasingATag_ReplacesRatherThanAccumulates(t *testing.T) {
 					kind, names, filepath.Base(asset))
 			}
 		})
+	}
 }
 
 func mustReadRelease(ctx context.Context, t *testing.T, target livetest.Target, repo, tag string) rawref.Release {
@@ -401,4 +378,42 @@ func writeAsset(t *testing.T, name, content string) string {
 	}
 
 	return path
+}
+
+// assertAssetsArrivedIntact checks the attached set by name and then by the
+// SHA-256 of the bytes the forge serves back. Names alone would pass for a
+// forge that stored the right filenames over the wrong content.
+func assertAssetsArrivedIntact(
+	t *testing.T,
+	kind provider.Platform,
+	release rawref.Release,
+	assets []string,
+	digests map[string]string,
+) {
+	t.Helper()
+
+	wantNames := make([]string, 0, len(assets))
+	for _, path := range assets {
+		wantNames = append(wantNames, filepath.Base(path))
+	}
+
+	slices.Sort(wantNames)
+
+	if got := release.AssetNames(); !slices.Equal(got, wantNames) {
+		t.Fatalf("%s attached %v, want %v", kind, got, wantNames)
+	}
+
+	for name, wantDigest := range digests {
+		asset, ok := release.Asset(name)
+		if !ok {
+			t.Errorf("%s is missing asset %q", kind, name)
+
+			continue
+		}
+
+		if asset.Digest != wantDigest {
+			t.Errorf("%s asset %q digest = %s, want %s — the forge served different bytes than were uploaded",
+				kind, name, asset.Digest, wantDigest)
+		}
+	}
 }

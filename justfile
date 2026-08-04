@@ -245,6 +245,68 @@ test-integration:
 test-e2e:
     @go test -shuffle=on -tags=e2e -count=1 -buildvcs=false ./cmd/...
 
+# Run the live-forge conformance tier against real Forgejo and GitLab instances.
+#
+# Gated by the `live` build tag, so `just test` never reaches it. It needs a
+# sourced git-provider-lab schema-2 contract minted for this suite's namespace:
+#
+#   scripts/emit-targets.sh --resource-prefix rc- gitlab forgejo   # in the lab
+#   source "${XDG_STATE_HOME:-$HOME/.local/state}/git-provider-lab/lab-targets.env"
+#   export RC_LIVE_CONFIRM_DESTROY="destroy-live-forge-fixtures|$LAB_LIVE_EXPECTED_IDENTITY"
+#   just test-live
+#
+# -p 1 is load-bearing: one lab is a single shared mutable fixture, and packages
+# running concurrently would seed and tear down each other's scratch repos.
+#
+# The product is built and checksummed here, outside the tests, and handed over
+# by path. A suite that compiles its own binary proves something about the
+# source it happened to see, not about the artifact the release flow produces.
+#
+# An EXIT trap revokes the run's credential on every outcome. Cleanup failure
+# changes the recipe result: a token left live on a lab is a real defect, and
+# the whole point of a per-run credential is that it does not outlive the run.
+[doc('Run the live-forge conformance tier (needs a sourced lab contract + confirmation)')]
+[group('test')]
+test-live:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Validate the whole sourced contract before anything is built, and before
+    # any contract-supplied command is installed as a trap.
+    bash scripts/ci/validate-live-inputs.sh
+
+    state=
+    cleanup_live_run() {
+        local status=$? cleanup_status=0
+        trap - EXIT INT TERM
+
+        if [[ -x "${LAB_TOKEN_CLEANUP_CMD:-}" ]]; then
+            "${LAB_TOKEN_CLEANUP_CMD}" || cleanup_status=1
+        else
+            cleanup_status=1
+            printf 'x live token cleanup interface is missing or not executable\n' >&2
+        fi
+
+        [[ -z "$state" || ! -d "$state" ]] || rm -rf -- "$state"
+
+        if ((cleanup_status != 0)); then
+            printf 'x live token cleanup failed; revoke it by hand before walking away\n' >&2
+            status=1
+        fi
+
+        exit "$status"
+    }
+    trap cleanup_live_run EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+
+    state=$(mktemp -d "${TMPDIR:-/tmp}/reusable-ci-live.XXXXXXXX")
+    CGO_ENABLED=0 go build -trimpath -buildvcs=false -o "$state/{{executable}}" ./cmd/{{executable}}
+    ( cd "$state" && sha256sum "{{executable}}" >"{{executable}}.sha256" && sha256sum --check --quiet "{{executable}}.sha256" )
+
+    export RC_LIVE_BIN="$state/{{executable}}"
+    go test -tags=live -p 1 -count=1 -buildvcs=false -timeout=30m -v ./internal/livetest/...
+
 # Run unit tests with verbose output
 [group('test')]
 test-unit-verbose:
