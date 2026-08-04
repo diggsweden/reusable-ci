@@ -68,7 +68,7 @@ func WithAuthFile(path string) *Adapter { return &Adapter{AuthFile: path} }
 func (a *Adapter) ResolveDigest(ctx context.Context, ref string) (string, error) {
 	digest, err := crane.Digest(ref, a.craneOpts(ctx, ref)...)
 	if err != nil {
-		return "", fmt.Errorf("resolve digest for %s: %w: %w", ref, err, classifyRegistryResolveError(err))
+		return "", fmt.Errorf("resolve digest for %s: %w: %w", ref, err, classifyRegistryError(err))
 	}
 
 	if digest = strings.TrimSpace(digest); digest == "" {
@@ -78,7 +78,18 @@ func (a *Adapter) ResolveDigest(ctx context.Context, ref string) (string, error)
 	return digest, nil
 }
 
-func classifyRegistryResolveError(err error) error {
+// classifyRegistryError maps a registry library error onto a domain sentinel by
+// its HTTP status, falling back to "the dependency is unavailable" only when the
+// error carries no status at all.
+//
+// Every registry call routes through here rather than asserting unavailability,
+// because the two are not interchangeable to a caller: unavailable means "try
+// again", and CI does. A permanent condition reported that way — a manifest that
+// does not exist, a credential that is refused — becomes a retry loop that can
+// never succeed. This is the same defect the token path had (PAR-TOK-2); it was
+// found again here when a rollback on a forge that drops untagged manifests
+// exited 69 instead of saying the image was gone.
+func classifyRegistryError(err error) error {
 	var transportErr *transport.Error
 	if errors.As(err, &transportErr) {
 		if transportErr.StatusCode == http.StatusNotFound {
@@ -100,7 +111,7 @@ func classifyRegistryResolveError(err error) error {
 // `docker buildx imagetools create --tag dest source`, without a daemon.
 func (a *Adapter) CopyTag(ctx context.Context, source, dest string) error {
 	if err := crane.Copy(source, dest, a.craneOpts(ctx, source, dest)...); err != nil {
-		return fmt.Errorf("retag %s -> %s: %w: %w", source, dest, err, errs.ErrDependencyUnavailable)
+		return fmt.Errorf("retag %s -> %s: %w: %w", source, dest, err, classifyRegistryError(err))
 	}
 
 	return nil
@@ -122,7 +133,7 @@ func (a *Adapter) PushLayoutByDigest(ctx context.Context, layoutDir, imageRef st
 
 	dig, err := img.Digest()
 	if err != nil {
-		return "", fmt.Errorf("compute image digest: %w: %w", err, errs.ErrDependencyUnavailable)
+		return "", fmt.Errorf("compute image digest: %w: %w", err, classifyRegistryError(err))
 	}
 
 	base, err := a.parse(imageRef)
@@ -134,7 +145,7 @@ func (a *Adapter) PushLayoutByDigest(ctx context.Context, layoutDir, imageRef st
 	// the write targets <repo>@<digest> over the same (HTTP-for-loopback) transport.
 	ref := base.Context().Digest(dig.String())
 	if err := remote.Write(ref, img, a.remoteOpts(ctx)...); err != nil {
-		return "", fmt.Errorf("push image by digest to %s: %w: %w", base.Context().Name(), err, errs.ErrDependencyUnavailable)
+		return "", fmt.Errorf("push image by digest to %s: %w: %w", base.Context().Name(), err, classifyRegistryError(err))
 	}
 
 	return dig.String(), nil
@@ -146,7 +157,7 @@ func (a *Adapter) PushLayoutByDigest(ctx context.Context, layoutDir, imageRef st
 func (a *Adapter) Manifest(ctx context.Context, ref string) ([]byte, error) {
 	raw, err := crane.Manifest(ref, a.craneOpts(ctx, ref)...)
 	if err != nil {
-		return nil, fmt.Errorf("fetch manifest for %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+		return nil, fmt.Errorf("fetch manifest for %s: %w: %w", ref, err, classifyRegistryError(err))
 	}
 
 	return raw, nil
@@ -165,17 +176,17 @@ func (a *Adapter) Labels(ctx context.Context, ref string) (map[string]string, er
 
 	desc, err := remote.Get(parsed, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("fetch image %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+		return nil, fmt.Errorf("fetch image %s: %w: %w", ref, err, classifyRegistryError(err))
 	}
 
 	img, err := desc.Image()
 	if err != nil {
-		return nil, fmt.Errorf("read image %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+		return nil, fmt.Errorf("read image %s: %w: %w", ref, err, classifyRegistryError(err))
 	}
 
 	config, err := img.ConfigFile()
 	if err != nil {
-		return nil, fmt.Errorf("read image config %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+		return nil, fmt.Errorf("read image config %s: %w: %w", ref, err, classifyRegistryError(err))
 	}
 
 	labels := make(map[string]string, len(config.Config.Labels))
@@ -196,7 +207,7 @@ func (a *Adapter) InspectImage(ctx context.Context, ref, arch string) (string, s
 
 	desc, err := remote.Get(parsed, a.remoteOpts(ctx)...)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("fetch image %s: %w: %w", ref, err, classifyRegistryResolveError(err))
+		return "", "", nil, fmt.Errorf("fetch image %s: %w: %w", ref, err, classifyRegistryError(err))
 	}
 
 	if desc.MediaType.IsIndex() {
@@ -205,14 +216,14 @@ func (a *Adapter) InspectImage(ctx context.Context, ref, arch string) (string, s
 
 	img, err := desc.Image()
 	if err != nil {
-		return "", "", nil, fmt.Errorf("read image %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+		return "", "", nil, fmt.Errorf("read image %s: %w: %w", ref, err, classifyRegistryError(err))
 	}
 
 	digest := desc.Digest.String()
 	if digest == "" {
 		computed, digestErr := img.Digest()
 		if digestErr != nil {
-			return "", "", nil, fmt.Errorf("compute image digest %s: %w: %w", ref, digestErr, errs.ErrDependencyUnavailable)
+			return "", "", nil, fmt.Errorf("compute image digest %s: %w: %w", ref, digestErr, classifyRegistryError(digestErr))
 		}
 
 		digest = computed.String()
@@ -258,7 +269,7 @@ func findLinuxArchDescriptor(manifest *v1.IndexManifest, ref, arch string) (*v1.
 func imageConfigMetadata(img v1.Image, ref string) (string, map[string]string, error) {
 	config, err := img.ConfigFile()
 	if err != nil {
-		return "", nil, fmt.Errorf("read image config %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+		return "", nil, fmt.Errorf("read image config %s: %w: %w", ref, err, classifyRegistryError(err))
 	}
 
 	labels := make(map[string]string, len(config.Config.Labels))
@@ -308,7 +319,7 @@ func (a *Adapter) MergeManifest(ctx context.Context, image string, digests, tags
 		}
 
 		if err := remote.WriteIndex(ref, index, a.remoteOpts(ctx)...); err != nil {
-			return fmt.Errorf("merge manifest: write index to %s: %w: %w", tag, err, errs.ErrDependencyUnavailable)
+			return fmt.Errorf("merge manifest: write index to %s: %w: %w", tag, err, classifyRegistryError(err))
 		}
 	}
 
@@ -318,12 +329,12 @@ func (a *Adapter) MergeManifest(ctx context.Context, image string, digests, tags
 func (a *Adapter) inspectImageIndex(ref string, desc *remote.Descriptor, arch string) (string, string, map[string]string, error) {
 	idx, err := desc.ImageIndex()
 	if err != nil {
-		return "", "", nil, fmt.Errorf("read image index %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+		return "", "", nil, fmt.Errorf("read image index %s: %w: %w", ref, err, classifyRegistryError(err))
 	}
 
 	manifest, err := idx.IndexManifest()
 	if err != nil {
-		return "", "", nil, fmt.Errorf("read image index manifest %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+		return "", "", nil, fmt.Errorf("read image index manifest %s: %w: %w", ref, err, classifyRegistryError(err))
 	}
 
 	match, err := findLinuxArchDescriptor(manifest, ref, arch)
@@ -333,7 +344,7 @@ func (a *Adapter) inspectImageIndex(ref string, desc *remote.Descriptor, arch st
 
 	img, err := idx.Image(match.Digest)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("read image %s child %s: %w: %w", ref, match.Digest, err, errs.ErrDependencyUnavailable)
+		return "", "", nil, fmt.Errorf("read image %s child %s: %w: %w", ref, match.Digest, err, classifyRegistryError(err))
 	}
 
 	architecture, labels, err := imageConfigMetadata(img, ref)
@@ -356,7 +367,7 @@ func (a *Adapter) inspectImageIndex(ref string, desc *remote.Descriptor, arch st
 func (a *Adapter) addendaFor(ctx context.Context, ref name.Reference) ([]mutate.IndexAddendum, error) {
 	desc, err := remote.Get(ref, a.remoteOpts(ctx)...)
 	if err != nil {
-		return nil, fmt.Errorf("merge manifest: fetch %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+		return nil, fmt.Errorf("merge manifest: fetch %s: %w: %w", ref, err, classifyRegistryError(err))
 	}
 
 	if !desc.MediaType.IsIndex() {
@@ -365,12 +376,12 @@ func (a *Adapter) addendaFor(ctx context.Context, ref name.Reference) ([]mutate.
 
 	idx, err := desc.ImageIndex()
 	if err != nil {
-		return nil, fmt.Errorf("merge manifest: read index %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+		return nil, fmt.Errorf("merge manifest: read index %s: %w: %w", ref, err, classifyRegistryError(err))
 	}
 
 	manifest, err := idx.IndexManifest()
 	if err != nil {
-		return nil, fmt.Errorf("merge manifest: read index manifest %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+		return nil, fmt.Errorf("merge manifest: read index manifest %s: %w: %w", ref, err, classifyRegistryError(err))
 	}
 
 	addenda := make([]mutate.IndexAddendum, 0, len(manifest.Manifests))
@@ -378,7 +389,7 @@ func (a *Adapter) addendaFor(ctx context.Context, ref name.Reference) ([]mutate.
 	for _, child := range manifest.Manifests {
 		img, err := idx.Image(child.Digest)
 		if err != nil {
-			return nil, fmt.Errorf("merge manifest: read child %s of %s: %w: %w", child.Digest, ref, err, errs.ErrDependencyUnavailable)
+			return nil, fmt.Errorf("merge manifest: read child %s of %s: %w: %w", child.Digest, ref, err, classifyRegistryError(err))
 		}
 
 		addenda = append(addenda, mutate.IndexAddendum{
@@ -400,12 +411,12 @@ func (a *Adapter) addendaFor(ctx context.Context, ref name.Reference) ([]mutate.
 func singleImageAddendum(ref name.Reference, desc *remote.Descriptor) ([]mutate.IndexAddendum, error) {
 	img, err := desc.Image()
 	if err != nil {
-		return nil, fmt.Errorf("merge manifest: read image %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+		return nil, fmt.Errorf("merge manifest: read image %s: %w: %w", ref, err, classifyRegistryError(err))
 	}
 
 	config, err := img.ConfigFile()
 	if err != nil {
-		return nil, fmt.Errorf("merge manifest: read config of %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+		return nil, fmt.Errorf("merge manifest: read config of %s: %w: %w", ref, err, classifyRegistryError(err))
 	}
 
 	return []mutate.IndexAddendum{{Add: img, Descriptor: v1.Descriptor{Platform: config.Platform()}}}, nil

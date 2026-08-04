@@ -510,3 +510,30 @@ func TestLabelsFetchesImageConfigLabels(t *testing.T) {
 		t.Fatalf("labels = %v", labels)
 	}
 }
+
+// A source that does not exist is a permanent condition, and the exit ladder
+// must say so. Reported as "the dependency is unavailable" it becomes exit 69,
+// which tells CI to retry something that can never succeed — the failure mode
+// that hid a real defect: on a forge that drops untagged manifests, rolling back
+// a moving tag retried forever instead of reporting the image was gone.
+func TestCopyTag_MissingSourceIsMissingInputNotUnavailable(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(registry.New())
+	t.Cleanup(srv.Close)
+
+	repo := strings.TrimPrefix(srv.URL, "http://") + "/o/r"
+
+	err := New().CopyTag(t.Context(), repo+":absent", repo+":dest")
+	if err == nil {
+		t.Fatal("CopyTag from a missing source returned no error")
+	}
+
+	if errors.Is(err, errs.ErrDependencyUnavailable) {
+		t.Errorf("CopyTag classified a missing source as the dependency being unavailable, which tells CI to retry: %v", err)
+	}
+
+	if !errors.Is(err, errs.ErrMissingInput) {
+		t.Errorf("CopyTag missing-source error = %v, want ErrMissingInput", err)
+	}
+}
