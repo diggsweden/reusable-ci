@@ -34,7 +34,7 @@
 //  3. the GitHub-native GITHUB_* name (runner-provided).
 //
 // Set-but-EMPTY counts as ABSENT throughout: a forge-neutral var blanked by
-// a workflow's `${{ env.X || '' }}` expression must fall through to a
+// a workflow's `${{ env.X || ” }}` expression must fall through to a
 // populated fallback rather than shadow it.
 //
 // Each chain is the UNION of every variant its consumers previously used,
@@ -264,19 +264,19 @@ func RefName() Var {
 // Ref resolves the full git ref (refs/heads/…, refs/tags/…).
 func Ref() Var {
 	return Var{Concept: "ref", Names: []Name{
-			orchestrated("REF"),
-			forgejoInjected("FORGEJO_REF"),
-			githubInjected("GITHUB_REF"),
-		}}
+		orchestrated("REF"),
+		forgejoInjected("FORGEJO_REF"),
+		githubInjected("GITHUB_REF"),
+	}}
 }
 
 // RefType resolves the ref kind ("branch" or "tag").
 func RefType() Var {
 	return Var{Concept: "ref type", Names: []Name{
-			orchestrated("REF_TYPE"),
-			forgejoInjected("FORGEJO_REF_TYPE"),
-			githubInjected("GITHUB_REF_TYPE"),
-		}}
+		orchestrated("REF_TYPE"),
+		forgejoInjected("FORGEJO_REF_TYPE"),
+		githubInjected("GITHUB_REF_TYPE"),
+	}}
 }
 
 // EventName resolves the workflow trigger event in the canonical vocabulary
@@ -334,17 +334,17 @@ func CheckoutRef() Var {
 // RunID resolves the CI run identifier.
 func RunID() Var {
 	return Var{Concept: "run id", Names: []Name{
-			orchestrated("CI_RUN_ID"),
-			forgejoInjected("FORGEJO_RUN_ID"),
-			githubInjected("GITHUB_RUN_ID"),
-		}}
+		orchestrated("CI_RUN_ID"),
+		forgejoInjected("FORGEJO_RUN_ID"),
+		githubInjected("GITHUB_RUN_ID"),
+	}}
 }
 
 // RunURL resolves the human-facing CI run URL.
 func RunURL() Var {
 	return Var{Concept: "run url", Names: []Name{
-			orchestrated("CI_RUN_URL"),
-		}}
+		orchestrated("CI_RUN_URL"),
+	}}
 }
 
 // Actor resolves the triggering user.
@@ -355,10 +355,10 @@ func RunURL() Var {
 // runner-provided actor was invisible to the flag. This is their union.
 func Actor() Var {
 	return Var{Concept: "actor", Names: []Name{
-			orchestrated("CI_ACTOR"),
-			forgejoInjected("FORGEJO_ACTOR"),
-			githubInjected("GITHUB_ACTOR"),
-		}}
+		orchestrated("CI_ACTOR"),
+		forgejoInjected("FORGEJO_ACTOR"),
+		githubInjected("GITHUB_ACTOR"),
+	}}
 }
 
 // ServerURL resolves the forge base URL (e.g. https://codeberg.org). It
@@ -383,9 +383,9 @@ func ServerURL() Var {
 // TempDir resolves the runner scratch directory.
 func TempDir() Var {
 	return Var{Concept: "temp dir", Names: []Name{
-			orchestrated("CI_TEMP_DIR"),
-			orchestrated("RUNNER_TEMP"),
-		}}
+		orchestrated("CI_TEMP_DIR"),
+		orchestrated("RUNNER_TEMP"),
+	}}
 }
 
 // Workspace resolves the checkout target directory.
@@ -712,8 +712,6 @@ func truthy(v string) bool {
 // an explicit --expected-image-repository and re-validates against it rather
 // than inferring one. An Attested chain is the same idea for the FALLBACK
 // used when no expectation was supplied.
-
-
 
 // ProjectURL resolves GitLab's project web URL. GitLab injects it and there
 // is no neutral alias, so it exists as a concept mainly to give the gitlab

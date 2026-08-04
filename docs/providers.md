@@ -87,6 +87,7 @@ than fail when a capability is missing.
 | SLSA build-provenance attestation API | ✅ | ❌ | ❌ | ❌ |
 | Keyless OIDC signing | ✅ | ✅ | ❌ | ❌ |
 | Release asset upload | ✅ | ✅ | ✅ | ❌ |
+| Run artifact upload/download | ✅ | ❌ | ✅ | ❌ |
 
 How commands degrade when a capability is absent:
 
@@ -101,6 +102,12 @@ How commands degrade when a capability is absent:
 - **Provenance** (`release provenance`) — github and forgejo supply a build
   profile; gitlab and local refuse with a clear "unsupported on <forge>"
   rather than emitting a dishonest predicate.
+- **Run artifacts** — github and forgejo expose an intra-run artifact store
+  through their runner's own service; gitlab does not, so a step that would
+  hand a file to a later job must use GitLab's native `artifacts:` keyword in
+  the pipeline definition instead. The capability is reported only when both
+  upload and download are implemented, so a half-supported forge reports false
+  rather than promising a store that cannot round-trip.
 
 ## Per-forge notes
 

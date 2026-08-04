@@ -14,11 +14,11 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/platform"
 	appdoctor "github.com/diggsweden/reusable-ci/v3/internal/app/doctor"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
-	"github.com/diggsweden/reusable-ci/v3/internal/adapters/platform"
 )
 
 // New returns the `doctor` top-level subcommand.

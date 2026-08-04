@@ -126,6 +126,15 @@ func FromHTTPStatus(status int) error {
 		return ErrRateLimited
 	case status >= 500:
 		return ErrDependencyUnavailable
+	case status >= 400:
+		// Every remaining 4xx — 409 Conflict, 400, 405, 422 — is the request
+		// being refused, not the dependency being unavailable. Without this
+		// case they returned nil and each adapter substituted
+		// ErrDependencyUnavailable, so "GitLab says this release already
+		// exists" exited 69 (unavailable) and read to a caller, and to a
+		// retry loop, as "the forge is down". ExitCodeValidation is the
+		// honest answer: the server was reachable and said no.
+		return ErrValidation
 	}
 
 	return nil

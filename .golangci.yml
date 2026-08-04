@@ -142,11 +142,27 @@ linters:
     - unused
     - usestdlibvars
     - usetesting
+    - depguard
     - varnamelen
     - wastedassign
     - zerologlint
 
   settings:
+    depguard:
+      rules:
+        # The live tier's oracle only means anything if it shares no code with
+        # what it observes. An adapter that mis-parsed its own writes would
+        # otherwise agree with itself and the scenario would pass while the
+        # forge held something else. Keeping the import out makes that
+        # independence a build failure rather than a habit.
+        rawref-stays-independent:
+          files:
+            - "**/internal/livetest/rawref/**"
+          deny:
+            - pkg: github.com/diggsweden/reusable-ci/v3/internal/adapters
+              desc: the raw oracle must not use the adapters it is the oracle for
+            - pkg: github.com/diggsweden/reusable-ci/v3/internal/domain
+              desc: keep the oracle on wire types, so a domain change cannot reshape what the forge is said to hold
     exhaustive:
       default-signifies-exhaustive: true
     govet:

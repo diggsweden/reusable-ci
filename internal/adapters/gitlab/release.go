@@ -47,7 +47,16 @@ func releasePayload(spec provider.ReleaseSpec, desc string, includeTag bool) map
 //  2. For each asset path: POST /projects/{enc}/uploads, then link the returned
 //     project upload URL via POST /releases/{tag}/assets/links.
 //
-//nolint:cyclop // REST flow: list → delete-if-exists → create → upload links.
+// An existing release for the tag is deleted first, so a re-run publishes
+// cleanly (the tag itself is kept) — the same cleanup the github and forgejo
+// adapters perform, and what `release publish --strategy recreate` promises:
+// "recreate deletes and recreates it". Without it a second call to the same tag
+// got HTTP 409 "Release already exists" here and nowhere else, which is a
+// difference a caller is not supposed to be able to see. Found by the live
+// conformance tier (PAR-REL-3); `--strategy reconcile` remains the in-place
+// upsert for callers who want the release object preserved.
+//
+//nolint:cyclop // REST flow: delete-if-exists → create release → upload + link each asset.
 func (p *Provider) CreateRelease(ctx context.Context, repo string, spec provider.ReleaseSpec) error {
 	if spec.Tag == "" {
 		return fmt.Errorf("CreateRelease: tag is empty: %w", errs.ErrUsage)
@@ -91,6 +100,20 @@ func (p *Provider) CreateRelease(ctx context.Context, repo string, spec provider
 	payload, err := json.Marshal(releasePayload(spec, desc, true))
 	if err != nil {
 		return fmt.Errorf("marshal release payload: %w", err)
+	}
+
+	// Delete before create, not create-and-tolerate-409: GitLab's POST is not
+	// an upsert, so a 409 would leave the previous release's notes and asset
+	// links in place while reporting success.
+	exists, err := p.releaseExists(ctx, endpoint, spec.Tag, headers)
+	if err != nil {
+		return err
+	}
+
+	if exists {
+		if err := deleteJSON(ctx, p.HTTPClient, endpoint+"/"+url.PathEscape(spec.Tag), headers); err != nil {
+			return fmt.Errorf("gitlab delete existing release %s: %w", spec.Tag, err)
+		}
 	}
 
 	if err := postJSON(ctx, p.HTTPClient, endpoint, headers, payload); err != nil {

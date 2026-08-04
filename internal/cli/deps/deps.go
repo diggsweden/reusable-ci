@@ -27,12 +27,12 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/jsonsink"
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/local"
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/manifest"
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/platform"
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/stepsummary"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
-	"github.com/diggsweden/reusable-ci/v3/internal/adapters/platform"
 )
 
 // Deps is what use cases receive. Provider is the always-available
