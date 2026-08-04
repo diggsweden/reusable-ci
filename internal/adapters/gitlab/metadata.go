@@ -7,8 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
-	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
@@ -27,28 +25,9 @@ func (p *Provider) FetchRepoMetadata(ctx context.Context, repo string) (*provide
 		return &provider.RepoMetadata{}, nil
 	}
 
-	get := p.envFunc()
+	apiBase, headers := p.apiContext()
 
-	apiBase := p.APIBaseOverride
-	if apiBase == "" {
-		apiBase = get("CI_SERVER_URL")
-	}
-
-	if apiBase == "" {
-		apiBase = defaultAPIBase
-	}
-
-	encoded := url.PathEscape(repo)
-	endpoint := strings.TrimRight(apiBase, "/") + "/api/v4/projects/" + encoded
-
-	token := get("GITLAB_TOKEN")
-	if token == "" {
-		token = get("CI_JOB_TOKEN")
-	}
-
-	body, err := getJSON(ctx, p.HTTPClient, endpoint, map[string]string{
-		"PRIVATE-TOKEN": token, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-	})
+	body, err := getJSON(ctx, p.HTTPClient, projectEndpoint(apiBase, repo), headers)
 	if err != nil {
 		return nil, fmt.Errorf("gitlab fetch project metadata: %w", err)
 	}

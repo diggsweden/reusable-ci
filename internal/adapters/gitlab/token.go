@@ -26,16 +26,8 @@ func (p *Provider) ValidateToken(ctx context.Context, token, repo string) error 
 		return fmt.Errorf("repo is empty: %w", errs.ErrUsage)
 	}
 
-	apiBase := p.APIBaseOverride
-	if apiBase == "" {
-		apiBase = p.envFunc()("CI_SERVER_URL")
-	}
-
-	if apiBase == "" {
-		apiBase = defaultAPIBase
-	}
-
-	endpoint := strings.TrimRight(apiBase, "/") + "/api/v4/projects/" + url.PathEscape(repo)
+	apiBase, _ := p.apiContext()
+	endpoint := projectEndpoint(apiBase, repo)
 
 	_, err := getJSON(ctx, p.HTTPClient, endpoint, map[string]string{
 		"PRIVATE-TOKEN": token, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
@@ -66,23 +58,7 @@ func (p *Provider) ValidateBotPermissions(ctx context.Context, repo string) (*pr
 		return nil, fmt.Errorf("repo is empty: %w", errs.ErrUsage)
 	}
 
-	get := p.envFunc()
-
-	token := get("GITLAB_TOKEN")
-	if token == "" {
-		token = get("CI_JOB_TOKEN")
-	}
-
-	apiBase := p.APIBaseOverride
-	if apiBase == "" {
-		apiBase = get("CI_SERVER_URL")
-	}
-
-	if apiBase == "" {
-		apiBase = defaultAPIBase
-	}
-
-	headers := map[string]string{"PRIVATE-TOKEN": token}
+	apiBase, headers := p.apiContext()
 	encoded := url.PathEscape(repo)
 	probe := func(path string) bool {
 		_, err := getJSON(ctx, p.HTTPClient, strings.TrimRight(apiBase, "/")+path, headers)

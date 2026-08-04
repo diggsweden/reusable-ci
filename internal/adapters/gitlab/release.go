@@ -66,28 +66,10 @@ func (p *Provider) CreateRelease(ctx context.Context, repo string, spec provider
 		return fmt.Errorf("CreateRelease: repo is empty: %w", errs.ErrUsage)
 	}
 
-	get := p.envFunc()
-
-	apiBase := p.APIBaseOverride
-	if apiBase == "" {
-		apiBase = get("CI_SERVER_URL")
-	}
-
-	if apiBase == "" {
-		apiBase = defaultAPIBase
-	}
-
-	token := get("GITLAB_TOKEN")
-	if token == "" {
-		token = get("CI_JOB_TOKEN")
-	}
-
-	headers := map[string]string{
-		"PRIVATE-TOKEN": token, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		"Content-Type":  contentTypeJSON,
-	}
+	apiBase, headers := p.apiContext()
+	headers["Content-Type"] = contentTypeJSON
 	encoded := url.PathEscape(repo)
-	endpoint := strings.TrimRight(apiBase, "/") + "/api/v4/projects/" + encoded + "/releases"
+	endpoint := projectEndpoint(apiBase, repo) + "/releases"
 
 	desc := spec.Name
 	if spec.NotesFile != "" {
@@ -144,7 +126,7 @@ func (p *Provider) PublishRelease(ctx context.Context, repo string, spec provide
 		return fmt.Errorf("PublishRelease: repo is empty: %w", errs.ErrUsage)
 	}
 
-	apiBase, headers := p.releaseAPIContext()
+	apiBase, headers := p.apiContext()
 	encoded := url.PathEscape(repo)
 
 	desc := spec.Name
@@ -278,30 +260,10 @@ func (p *Provider) UploadReleaseAsset(ctx context.Context, tag, file string) err
 		return fmt.Errorf("UploadReleaseAsset: CI_PROJECT_PATH is required: %w", errs.ErrUsage)
 	}
 
-	apiBase, headers := p.releaseAPIContext()
+	apiBase, headers := p.apiContext()
 	encoded := url.PathEscape(repo)
 
 	return p.uploadAndLinkReleaseAsset(ctx, apiBase, encoded, repo, tag, file, headers)
-}
-
-func (p *Provider) releaseAPIContext() (string, map[string]string) {
-	get := p.envFunc()
-
-	apiBase := p.APIBaseOverride
-	if apiBase == "" {
-		apiBase = get("CI_SERVER_URL")
-	}
-
-	if apiBase == "" {
-		apiBase = defaultAPIBase
-	}
-
-	token := get("GITLAB_TOKEN")
-	if token == "" {
-		token = get("CI_JOB_TOKEN")
-	}
-
-	return apiBase, map[string]string{"PRIVATE-TOKEN": token}
 }
 
 func (p *Provider) uploadAndLinkReleaseAsset(ctx context.Context, apiBase, encodedProject, repo, tag, file string, headers map[string]string) error {

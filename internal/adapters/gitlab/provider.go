@@ -19,7 +19,9 @@ package gitlab
 
 import (
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
@@ -74,4 +76,37 @@ var (
 	_ provider.CapabilityReporter      = (*Provider)(nil)
 	_ provider.SigningIdentityResolver = (*Provider)(nil)
 	_ provider.RegistryAuthResolver    = (*Provider)(nil)
+	_ provider.TagDeleter              = (*Provider)(nil)
 )
+
+// apiContext resolves the API root and auth headers every GitLab call needs:
+// an explicit override (tests, and the live tier's lab instance) wins, then
+// $CI_SERVER_URL, then gitlab.com; the token is $GITLAB_TOKEN falling back to
+// the pipeline-scoped $CI_JOB_TOKEN. Single-sourced because six call sites had
+// grown their own identical copy, and a divergence here is an adapter that
+// authenticates against the wrong instance.
+func (p *Provider) apiContext() (string, map[string]string) {
+	get := p.envFunc()
+
+	apiBase := p.APIBaseOverride
+	if apiBase == "" {
+		apiBase = get("CI_SERVER_URL")
+	}
+
+	if apiBase == "" {
+		apiBase = defaultAPIBase
+	}
+
+	token := get("GITLAB_TOKEN")
+	if token == "" {
+		token = get("CI_JOB_TOKEN")
+	}
+
+	return apiBase, map[string]string{"PRIVATE-TOKEN": token}
+}
+
+// projectEndpoint builds the /api/v4/projects/<url-encoded path> root that
+// every project-scoped GitLab endpoint hangs off.
+func projectEndpoint(apiBase, repo string) string {
+	return strings.TrimRight(apiBase, "/") + "/api/v4/projects/" + url.PathEscape(repo)
+}
