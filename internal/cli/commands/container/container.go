@@ -26,6 +26,7 @@ package container
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -139,7 +140,7 @@ EXAMPLES:
 					return err
 				}
 
-				if err := dep.OutputSink.Set(ctx, flagAuthFile, authFile); err != nil {
+				if err := publishAuthFilePath(ctx, cmd, dep, authFile); err != nil {
 					return err
 				}
 
@@ -147,6 +148,36 @@ EXAMPLES:
 			})
 		},
 	}
+}
+
+// publishAuthFilePath reports where the auth file landed, as a step output for
+// later steps to pick up.
+//
+// It is a convenience, not the point of logging in, and that distinction decides
+// how a failure is handled. GitHub and Forgejo runners always provide an output
+// file, so the write never fails there. GitLab provides none unless the pipeline
+// nominates one in $CI_OUTPUT — and returning that error made a *successful*
+// login exit non-zero on GitLab for every pipeline that never asked for an
+// output: the credential was written, the login had worked, and the job failed
+// anyway.
+//
+// So a missing sink degrades to a notice, the way an unmet capability does
+// elsewhere, and --export-env remains the explicit way to hand the path onward.
+// Any other error still fails the command, because that is a real write problem
+// rather than a platform difference.
+func publishAuthFilePath(ctx context.Context, cmd *cli.Command, dep *deps.Deps, authFile string) error {
+	err := dep.OutputSink.Set(ctx, flagAuthFile, authFile)
+	if err == nil {
+		return nil
+	}
+
+	if !errors.Is(err, errs.ErrUsage) {
+		return err
+	}
+
+	deps.Annotator(cmd).Noticef("logged in; the %s path was not published as a step output — %v", flagAuthFile, err)
+
+	return nil
 }
 
 func registryForLogin(registry, serverURL string, registrySet bool) (string, error) {
