@@ -228,7 +228,25 @@ tidy:
 
 # ▪ Run all Go tests (unit + integration)
 [group('test')]
-test: test-unit test-integration
+test: test-tags-compile test-unit test-integration
+
+# Assert every build-tagged tier still compiles
+#
+# go build and go vet skip tagged files, so a tier behind //go:build can stop
+# compiling while every default check stays green. Both did: the integration tier
+# had not built for weeks after the credential type changed under it, and the e2e
+# tier named a subcommand that had been removed. Nothing said so, because nothing
+# compiled them.
+#
+# Vet rather than test: this answers "does it still build", in seconds, without a
+# forge or a gpg keyring. The tiers themselves stay separate because they need
+# those things.
+[group('test')]
+test-tags-compile:
+    @for tag in integration e2e live; do \
+        printf 'vet -tags %s\n' "$tag"; \
+        go vet -tags "$tag" ./... || exit 1; \
+    done
 
 # Run only Go unit tests (no //go:build integration tag — no real gpg / git / etc. required)
 [group('test')]

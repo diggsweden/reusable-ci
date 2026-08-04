@@ -275,20 +275,19 @@ func TestBinary_ValidateAuthRegistry_MissingPasswordExitsNoPerm(t *testing.T) {
 	}
 }
 
-func TestBinary_ValidateRefType_NonTagExitsValidation(t *testing.T) {
-	_ = testenv.New(t)
-	bin := buildBinary(t)
-	_, stderr, code := runBinary(t, bin, "validate", "ref-type",
-		"--ref-type", "branch",
-		"--ref-name", "main",
-		"--ref", "refs/heads/main")
-	if code != 1 {
-		t.Fatalf("exit code = %d, want 1; stderr=%q", code, stderr)
-	}
-	if !strings.Contains(stderr, "release workflow must be triggered by pushing a tag") {
-		t.Errorf("stderr = %q", stderr)
-	}
-}
+// The `validate ref-type` subcommand this once exercised no longer exists: the
+// check moved into `validate prerequisites`, which on a local platform refuses at
+// token validation before reaching it, so there is no single-command surface to
+// drive from a black box any more.
+//
+// Deleted rather than rewritten. Driving prerequisites far enough to reach the
+// ref-type check needs a forge, which makes it a live-tier concern, not an e2e
+// one -- and the claim itself is asserted where it belongs:
+// internal/domain/validate/reftype_test.go on the error, and
+// internal/app/validate/refs_test.go on the use case.
+//
+// It had been failing for weeks on "flag provided but not defined: -ref-type",
+// because nothing ran this tier.
 
 func TestBinary_Doctor_OKWhenMinimalRepoIsClean(t *testing.T) {
 	_ = testenv.New(t)
