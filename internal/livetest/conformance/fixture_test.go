@@ -117,3 +117,16 @@ func writeSBOM(t *testing.T, dir, flavour string) string {
 	// entry is read later from wherever the release artifacts are.
 	return name
 }
+
+// writeToken puts a credential in a file, because that is how the product takes
+// one: a token on a command line would be visible in every process listing.
+func writeToken(t *testing.T, token string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(path, []byte(token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	return path
+}

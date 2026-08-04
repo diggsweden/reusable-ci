@@ -126,7 +126,7 @@ func TestToken_RejectedCredential_FailsTheCommandWithAReason(t *testing.T) {
 			}
 
 			run := livetest.CLI(t, target, repo,
-				"validate", "auth", "tokens",
+				"validate", "auth", "token",
 				"--token-file", tokenFile,
 				"--repository", livetest.RepoSlug(target, repo),
 			)
