@@ -172,6 +172,15 @@ Cross-forge verbs status:
   manifest. Cleanup is therefore forge-gated; github and local have no deleter
   yet and refuse with a typed `unsupported` error rather than reaching for an
   unsafe generic delete.
+- **Untagged manifests are not retained everywhere.** GitLab keeps a manifest
+  reachable by digest after its last tag moves away; Forgejo drops it
+  immediately. This decides whether a release is recoverable: `container ledger
+  rollback --journal` restores a moving tag (`:stable`) to the digest it held
+  before, and on Forgejo that previous image survives only while some tag still
+  references it — in practice its own immutable `:<version>` tag. Keep version
+  tags for as long as you may want to roll back to them. When the previous image
+  is genuinely gone, rollback says so and fails permanently; it does not report a
+  transient error that would have CI retry.
 
 ## Forge-agnostic commands worth knowing
 
