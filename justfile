@@ -265,9 +265,9 @@ test-e2e:
 # An EXIT trap revokes the run's credential on every outcome. Cleanup failure
 # changes the recipe result: a token left live on a lab is a real defect, and
 # the whole point of a per-run credential is that it does not outlive the run.
-[doc('Run the live-forge conformance tier (needs a sourced lab contract + confirmation)')]
+[doc('Run the live-forge conformance tier (needs a sourced lab contract + confirmation). Optional arg is a -run filter.')]
 [group('test')]
-test-live:
+test-live scenario='':
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -305,7 +305,15 @@ test-live:
     ( cd "$state" && sha256sum "{{executable}}" >"{{executable}}.sha256" && sha256sum --check --quiet "{{executable}}.sha256" )
 
     export RC_LIVE_BIN="$state/{{executable}}"
-    go test -tags=live -p 1 -count=1 -buildvcs=false -timeout=30m -v ./internal/livetest/...
+
+    # An optional -run filter, so iterating on one scenario does not cost the
+    # whole tier. Every guard above still applies: the contract is validated,
+    # the product is built and checksummed, and the credential is revoked on
+    # exit — a filtered run is narrower, not laxer.
+    filter=()
+    [[ -z "{{ scenario }}" ]] || filter=(-run "{{ scenario }}")
+
+    go test -tags=live -p 1 -count=1 -buildvcs=false -timeout=30m -v "${filter[@]}" ./internal/livetest/...
 
 # Run unit tests with verbose output
 [group('test')]

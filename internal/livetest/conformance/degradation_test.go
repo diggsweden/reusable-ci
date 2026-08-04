@@ -8,12 +8,16 @@ package conformance_test
 
 // PAR-CAP-2/3: what a forge that *lacks* a capability actually does.
 //
-// docs/providers.md promises specific behaviour for each gap — SARIF upload
-// emits a notice and exits 0, provenance refuses rather than emitting a
-// dishonest predicate — and until now nothing drove an unmet capability on a
-// real forge to check. A gap that errors cryptically and a gap that silently
-// succeeds are both failures, and both look identical to a suite that only
-// asserts "the command did not blow up".
+// docs/providers.md promises specific behaviour for each gap, and nothing drove
+// an unmet capability on a real forge to check. A gap that errors cryptically
+// and a gap that silently succeeds are both failures, and both look identical to
+// a suite that only asserts "the command did not blow up".
+//
+// The two scenarios here are deliberately opposite. SARIF upload degrades: a
+// notice and exit 0. Provenance does not degrade at all, because it uses no
+// forge attestation API — so the honest assertion is equivalence, not refusal.
+// The docs claimed a refusal that the command never implemented, and the test
+// that "covered" it passed on an unrelated usage error.
 //
 // These drive the shipped binary rather than a role, because the degradation
 // decision is taken above the adapter: the capability gate lives in the CLI's
@@ -86,6 +90,14 @@ func TestProvenance_GeneratesEquivalentlyOnEveryForge(t *testing.T) {
 	// rather than a degradation.
 	const startedOn = "2026-01-01T00:00:00Z"
 
+	// A syntactically valid commit, not a real one: the statement's subject
+	// comes from the checksums file, and nothing here dereferences it.
+	const provenanceCommit = "0123456789abcdef0123456789abcdef01234567"
+
+	// Pinned for the same reason as the commit: the builder identity is derived
+	// from it, and the scenario compares statements across forges.
+	const provenanceRunID = "1"
+
 	subjects := map[provider.Platform]string{}
 
 	for _, kind := range livetest.LiveForges() {
@@ -100,7 +112,14 @@ func TestProvenance_GeneratesEquivalentlyOnEveryForge(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			run := livetest.CLI(t, target, repo,
+			// A provenance statement describes a build, so the command needs the
+			// run context a pipeline would have supplied; this tier drives the
+			// binary from the host, where there is none. Pinned rather than taken
+			// from the scratch repo's HEAD, so the only thing that can differ
+			// between forges is the forge.
+			run := livetest.CLIIn(t, target, repo, livetest.RunOptions{
+				Env: livetest.RunContextEnv(provenanceCommit, "main", provenanceRunID),
+			},
 				"release", "provenance",
 				"--checksum-file", checksums,
 				"--go-sum", "",

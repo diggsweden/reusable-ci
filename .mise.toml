@@ -10,6 +10,12 @@
 experimental = true  # Enable experimental features
 pipx.uvx = true      # Install pipx: backend tools via uv (uvx), never pipx
 
+# Supply-chain quarantine: refuse to install a tool release published within
+# the last 7 days, so a freshly-poisoned release has time to be noticed before
+# it lands here. git-provider-lab sets the same, and calls it "as in the sibling
+# repos" -- this repo was the sibling that did not.
+minimum_release_age = "7d"
+
 [env]
 # Proxy configuration - available during tool installation AND runtime
 HTTP_PROXY = "{{ get_env(name='HTTP_PROXY', default='') }}"
@@ -44,6 +50,18 @@ PIP_INDEX_URL = "{{ get_env(name='PIP_INDEX_URL', default='') }}"
 "aqua:tamasfe/taplo" = "0.10.0"               # toml
 "aqua:aquasecurity/trivy" = "0.72.0"
 "aqua:crate-ci/typos" = "1.48.0"
+
+# Not a lint tool: syft is a RUNTIME dependency of the product. `sbom
+# generate` and `container ledger sign` shell out to it, so the live tier
+# needs it on PATH the same way it needs cosign. It was undeclared until a
+# live run died five minutes in with `exec: "syft": executable file not
+# found`, which reads as a broken product rather than a missing tool.
+#
+# 1.49.0 rather than the current 1.50.0: the latter was published a day before
+# this pin, and git-provider-lab quarantines releases younger than 7d so a
+# freshly-poisoned one has time to be noticed. That setting is absent here (see
+# [settings]), so the age is honoured by choosing the version.
+"aqua:anchore/syft" = "1.49.0"
 
 # uv provides the Python tool runner (uvx) that backs the pipx: tools
 # above — with pipx.uvx=true mise routes those installs through uv, so

@@ -97,4 +97,22 @@ done
 	exit 2
 }
 
+# The binaries the product shells out to during this tier.
+#
+# Checked here rather than left to the scenario that needs one: a missing tool
+# surfaces as `exec: "syft": executable file not found` several minutes into a
+# destructive run, which reads as a broken product rather than an unprepared
+# host -- and by then the run has already seeded fixtures it must tear down.
+# Every one of these is pinned in .mise.toml, so the fix is always the same.
+missing=()
+for tool in cosign syft buildah skopeo; do
+	command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+done
+
+((${#missing[@]} == 0)) || {
+	printf 'live preflight: the product shells out to these, and they are not on PATH: %s\n' "${missing[*]}" >&2
+	printf 'They are pinned in .mise.toml; install them with: mise install\n' >&2
+	exit 2
+}
+
 printf 'live preflight: %s provider(s), run %s, namespace %s\n' "$selected" "$run_id" "$prefix"

@@ -151,6 +151,50 @@ func CLIIn(tb TB, target Target, repo string, opts RunOptions, args ...string) R
 	return run
 }
 
+// RunContextEnv is the commit and ref a pipeline would have supplied, for the
+// scenarios that drive the product from the host rather than inside a job.
+//
+// cliEnv deliberately builds a closed environment, so a verb that describes a
+// build — `release provenance` most of all — finds no commit and refuses. That
+// refusal is correct: the alternative is a statement about a build nobody can
+// identify.
+//
+// Spelled once here rather than per scenario because the names are ADAPTER
+// knowledge, and each adapter resolves from its own runner's dialect: GitLab
+// reads $CI_COMMIT_SHA, Forgejo reads $FORGEJO_SHA with $GITHUB_SHA as its
+// act_runner alias. A scenario that sets one dialect works on one forge and
+// resolves empty on the other, which surfaces as a validation error naming the
+// commit rather than the missing variable. Both are set for that reason.
+//
+// It covers the whole context rather than the commit alone. `release provenance`
+// needs a builder identity too, derived from the workflow ref or from
+// server+repo+run id, and discovering that one field at a time — each surfacing
+// as its own "X is required" — is how a fixture ends up with a hand-grown pile
+// of variables nobody can explain. A pipeline supplies all of these together, so
+// so does this.
+func RunContextEnv(commit, refName, runID string) map[string]string {
+	// The canonical builder identity is <server>/<workflow ref>, so the ref is
+	// spelled the way a runner spells it: <owner>/<repo>/<file>@<git ref>.
+	workflowRef := "livetest/probe/.forgejo/workflows/livetest.yml@refs/heads/" + refName
+
+	return map[string]string{
+		"CI_COMMIT_SHA":      commit,
+		"FORGEJO_SHA":        commit,
+		"GITHUB_SHA":         commit,
+		"CI_COMMIT_REF_NAME": refName,
+		"FORGEJO_REF_NAME":   refName,
+		"GITHUB_REF_NAME":    refName,
+
+		"CI_RUN_ID":      runID,
+		"FORGEJO_RUN_ID": runID,
+		"GITHUB_RUN_ID":  runID,
+		"CI_PIPELINE_ID": runID,
+
+		"FORGEJO_WORKFLOW_REF": workflowRef,
+		"GITHUB_WORKFLOW_REF":  workflowRef,
+	}
+}
+
 // cliEnv is the whole environment the product sees: the target, plus the few
 // runtime variables any process needs.
 //

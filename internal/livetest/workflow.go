@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
@@ -305,9 +306,67 @@ func copyFile(from, to string) error {
 	return os.WriteFile(to, data, 0o755) //nolint:gosec // must be executable inside the job.
 }
 
-// ProbePrelude is the shell every in-runner probe starts with: it fetches the
-// binary and defines run_product, which refuses to let a mistyped invocation
-// look like a result.
+// TrustLabCA is the shell that installs the environment's CA into the job's
+// trust store, so everything after it does ORDINARY TLS verification.
+//
+// The alternative was `curl -k` and npm's strict-ssl=false, on the reasoning
+// that TLS trust is the environment's business and relaxing it belonged in the
+// fixture rather than the product. True about where it belongs, wrong about
+// what to do there: a fixture that steps around TLS can never catch a CA-trust
+// regression, which is the failure this lab exists to surface — the same class
+// lab_require_k3s_ca_current guards on the deployment side. The keyless probe
+// has always had to do it properly, because cosign offers no such flag, so the
+// honest pattern was already in the suite; only the other probes opted out.
+//
+// The CA comes from LAB_CA_FILE, a required contract field, rather than from
+// the connection being tested — trusting whatever the endpoint serves would
+// verify nothing. It is appended to the bundle rather than replacing it: both
+// alpine- and debian-based job images read that path, and pointing
+// SSL_CERT_FILE at the lab CA alone would break every public TLS client in the
+// job, package managers included.
+//
+// The system bundle is not enough on its own, because a runtime that ships its
+// own roots never reads it. Node is handled below; the JVM cannot be, since it
+// needs a keytool import, so the Maven probe does that with LabCAPath. Any
+// runtime added later needs the same question asked of it — "does this read
+// /etc/ssl/certs?" — and the answer is often no.
+//
+// The PEM is embedded in the workflow, which is public certificate material and
+// not a secret; no token or key is ever inlined this way.
+func TrustLabCA() string {
+	pem, err := os.ReadFile(os.Getenv(labCAFileEnv)) //nolint:gosec // a path from the validated contract.
+	if err != nil {
+		// Unreachable through the recipe: validate-live-inputs.sh requires the
+		// field, and RequireContract re-checks it. A probe that quietly skipped
+		// trust here would put `-k` back by another name.
+		panic("livetest: " + labCAFileEnv + " is unreadable, so no probe can verify TLS: " + err.Error())
+	}
+
+	return `cat >` + LabCAPath + ` <<'LAB_CA_PEM'
+` + strings.TrimRight(string(pem), "\n") + `
+LAB_CA_PEM
+cat ` + LabCAPath + ` >>/etc/ssl/certs/ca-certificates.crt
+# Node ships its own compiled-in root list and never reads the file above, so
+# npm would still refuse the lab's registry. Exported unconditionally: it costs
+# nothing in an image without node, and a probe that had to remember it is a
+# probe that will forget.
+export NODE_EXTRA_CA_CERTS=` + LabCAPath
+}
+
+// LabCAPath is where TrustLabCA leaves the CA inside the job.
+//
+// Written as a file as well as appended to the bundle because not every client
+// reads that bundle: the JVM keeps its own truststore, so a Maven probe has to
+// import this path with keytool. Anything else needing the CA by path takes it
+// from here rather than embedding a second copy.
+const LabCAPath = "/tmp/lab-ca.crt"
+
+// labCAFileEnv names the contract field holding the environment's CA bundle.
+const labCAFileEnv = "LAB_CA_FILE"
+
+// ProbePrelude is the shell every in-runner probe starts with: it trusts the
+// environment's CA, fetches the binary and defines run_product, which refuses to
+// let a mistyped invocation look like a result.
 //
 // The kit already fails any host-run scenario the argument parser rejects, but
 // that guard sees the process's stderr and an in-runner probe runs the binary
@@ -327,7 +386,8 @@ func copyFile(from, to string) error {
 // suspends `set -e` for it, so the diagnostics are always printed and the status
 // is still returned to the caller.
 func ProbePrelude(assetURL string) string {
-	return `curl -fsSLk -o reusable-ci "` + assetURL + `"
+	return TrustLabCA() + `
+curl -fsSL -o reusable-ci "` + assetURL + `"
 chmod +x reusable-ci
 
 # Fails the job when the CLI could not parse the invocation, so a mistyped probe

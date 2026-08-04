@@ -126,7 +126,7 @@ func TestInRunner_ForgeInjectedRegistryCredentialAuthenticates(t *testing.T) {
 // forges is a property of registries, not of forges.
 const registryAuthVerify = `
 # Refuse to prove anything against an anonymously-readable registry.
-anon="$(curl -sk -o /dev/null -w '%{http_code}' "https://$registry/v2/")"
+anon="$(curl -s -o /dev/null -w '%{http_code}' "https://$registry/v2/")"
 echo "anonymous /v2/ -> $anon"
 if [ "$anon" = 200 ]; then
   echo "FAIL: this registry serves /v2/ without credentials, so an authenticated check proves nothing"
@@ -134,13 +134,13 @@ if [ "$anon" = 200 ]; then
 fi
 
 # Flow 1: HTTP Basic, which the Gitea family accepts directly.
-code="$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Basic $stored" "https://$registry/v2/")"
+code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Basic $stored" "https://$registry/v2/")"
 echo "basic /v2/ -> $code"
 
 if [ "$code" != 200 ]; then
   # Flow 2: the Bearer challenge — exchange the credential at the realm the
   # registry names, then retry. This is what a docker client does.
-  challenge="$(curl -sk -D - -o /dev/null "https://$registry/v2/" | tr -d '\r' | grep -i '^www-authenticate:' || true)"
+  challenge="$(curl -s -D - -o /dev/null "https://$registry/v2/" | tr -d '\r' | grep -i '^www-authenticate:' || true)"
   echo "challenge: $challenge"
 
   realm="$(printf '%s' "$challenge" | sed -n 's/.*realm="\([^"]*\)".*/\1/p')"
@@ -150,14 +150,14 @@ if [ "$code" != 200 ]; then
     exit 1
   fi
 
-  token="$(curl -sk -H "Authorization: Basic $stored" "$realm?service=$service" \
+  token="$(curl -s -H "Authorization: Basic $stored" "$realm?service=$service" \
     | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
   if [ -z "$token" ]; then
     echo "FAIL: the stored credential was rejected by the token service at $realm"
     exit 1
   fi
 
-  code="$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "https://$registry/v2/")"
+  code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "https://$registry/v2/")"
   echo "bearer /v2/ -> $code"
 fi
 

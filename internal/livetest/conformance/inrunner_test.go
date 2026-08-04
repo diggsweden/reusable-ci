@@ -248,7 +248,9 @@ fi`
 		return `detect:
   image: quay.io/podman/stable:v5.6.2
   script:
-    - curl -fsSLk -o reusable-ci "` + assetURL + `"
+    - |
+      ` + indent(livetest.TrustLabCA(), 6) + `
+    - curl -fsSL -o reusable-ci "` + assetURL + `"
     - chmod +x reusable-ci
     - |
       ` + strings.ReplaceAll(check, "\n", "\n      ") + `

@@ -109,16 +109,10 @@ func keylessSignProbe(assetURL, fulcioURL, issuerURL string) string {
 
       ` + indent(livetest.ProbePrelude(assetURL), 6) + `
 
-      # Trust the lab CA: every service here speaks TLS signed by it and cosign
-      # has no --insecure equivalent. GitLab hands the runner's CA to the job in
-      # this variable.
-      if [ ! -s "${CI_SERVER_TLS_CA_FILE:-}" ]; then
-        echo "FAIL: no CI_SERVER_TLS_CA_FILE; the job cannot trust the lab CA"
-        exit 1
-      fi
-      # Appended to the system roots, not substituted for them: SSL_CERT_FILE
-      # pointed at the lab CA alone breaks every public TLS client in the job.
-      cat "$CI_SERVER_TLS_CA_FILE" >> /etc/ssl/certs/ca-certificates.crt
+      # The CA is already trusted: ProbePrelude installs it for every probe, from
+      # the contract rather than from $CI_SERVER_TLS_CA_FILE, so this scenario no
+      # longer depends on a GitLab-specific variable to reach a CA that cosign
+      # cannot be told to ignore.
 
       if [ -z "${SIGSTORE_ID_TOKEN:-}" ]; then
         echo "FAIL: the runner minted no id_token, so there is no identity to sign with"

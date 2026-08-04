@@ -133,15 +133,10 @@ func npmPublishProbe(kind provider.Platform, assetURL, name, version string) str
 	// Single-quoted heredoc: the package manifest must reach disk verbatim,
 	// without the shell touching anything inside it.
 	//
-	// strict-ssl is relaxed for the same reason the prelude fetches with curl -k:
-	// a disposable lab serves a locally-trusted CA that the job image's trust
-	// store has never heard of. TLS trust is the environment's business, and
-	// relaxing it here keeps that accommodation in the fixture rather than
-	// tempting a workaround into the product. It is set through the environment
-	// because npm ranks env above the --userconfig file the product writes.
-	manifest := `export npm_config_strict_ssl=false
-
-mkdir -p pkg
+	// No strict-ssl relaxation: the prelude has already installed the
+	// environment's CA, so npm verifies the registry the ordinary way and this
+	// scenario now covers the trust path instead of stepping around it.
+	manifest := `mkdir -p pkg
 cat > pkg/package.json <<'MANIFEST'
 {
   "name": "` + name + `",
@@ -277,17 +272,21 @@ cat > src/main/java/Demo.java <<'JAVA'
 public class Demo { public static int one() { return 1; } }
 JAVA`
 
-	// -B for non-interactive output, and Maven must not fail on the lab's own CA:
-	// the same accommodation curl -k and npm strict-ssl make elsewhere here.
+	// The JVM does not read /etc/ssl/certs, so the prelude's work does not reach
+	// Maven: it keeps its own truststore and has to be told separately. Importing
+	// the same CA is what lets the deploy verify the registry properly, and it
+	// replaces a set of maven.wagon.* insecure flags that also forced the
+	// resolver onto the wagon transport — the native transport ignores those
+	// properties, so they looked like they relaxed TLS without doing it, and the
+	// deploy failed with a PKIX error that read like a product problem.
 	//
-	// The transport switch is load-bearing. maven-deploy-plugin 3.x uploads
-	// through the Maven Resolver *native* transport, which ignores the
-	// maven.wagon.* properties entirely — so setting them alone looks like it
-	// relaxed TLS and does not, and the deploy fails with a PKIX path error that
-	// reads like a product problem. Selecting the wagon transport is what makes
-	// them apply.
-	const deploy = `run_product publish forge-packages deploy --project-type maven \
-  --cli-opts "-B -Dmaven.resolver.transport=wagon -Dmaven.wagon.http.ssl.insecure=true -Dmaven.wagon.http.ssl.allowall=true -Dmaven.wagon.http.ssl.ignore.validity.dates=true"`
+	// -cacerts targets the JDK's own store (JDK 9+); changeit is its default
+	// password, unchanged in these images.
+	const trustInJVM = `keytool -importcert -noprompt -alias git-provider-lab \
+  -cacerts -storepass changeit -file ` + livetest.LabCAPath
+
+	// -B for non-interactive output.
+	const deploy = `run_product publish forge-packages deploy --project-type maven --cli-opts "-B"`
 
 	if kind == provider.PlatformGitLab {
 		return `publish:
@@ -296,6 +295,7 @@ JAVA`
     - |
       ` + indent(livetest.ProbePrelude(assetURL), 6) + `
       ` + indent(pom, 6) + `
+      ` + indent(trustInJVM, 6) + `
       ` + indent(deploy, 6) + `
 `
 	}
@@ -313,6 +313,7 @@ jobs:
         run: |
           ` + indent(livetest.ProbePrelude(assetURL), 10) + `
           ` + indent(pom, 10) + `
+          ` + indent(trustInJVM, 10) + `
           ` + indent(deploy, 10) + `
 `
 }
