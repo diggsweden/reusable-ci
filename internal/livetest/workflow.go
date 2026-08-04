@@ -5,10 +5,13 @@
 package livetest
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -150,6 +153,13 @@ func waitForRun(ctx context.Context, tb TB, target Target, repo, name string) st
 		case "success":
 			return "success"
 		case "failure", "failed":
+			// Logged here rather than left to the caller: every caller would
+			// have to remember, and the log is only fetchable before the
+			// scratch repository is cleaned up.
+			if log := runLogTail(ctx, target, repo); log != "" {
+				tb.Logf("livetest: %s job log for %q (tail):\n%s", target.Kind, name, log)
+			}
+
 			return "failure"
 		case "cancelled", "canceled", "skipped":
 			return status
@@ -201,6 +211,129 @@ func latestRunStatus(ctx context.Context, target Target, repo string) string {
 // failure, for the polling loop.
 func decodeQuiet(ctx context.Context, target Target, endpoint string, into any) (int, error) {
 	return decode(ctx, target, http.MethodGet, endpoint, nil, into, http.StatusOK)
+}
+
+// runLogTail returns the end of the failing run's job log, or "" when it cannot
+// be read.
+//
+// An in-runner scenario that fails reports a conclusion and nothing else: the
+// product ran inside a job, so the assertion sees "failure" and the reason stays
+// on the forge. That is the same defect as a missing tool discovered mid-run —
+// right answer, useless vocabulary — and it made every in-runner failure a
+// re-run-by-hand exercise.
+//
+// Best effort by design. This runs on a path that is already failing, so a log
+// that cannot be fetched must not replace the real verdict with an error about
+// fetching logs.
+func runLogTail(ctx context.Context, target Target, repo string) string {
+	const keep = 4000
+
+	endpoint, ok := runLogEndpoint(ctx, target, repo)
+	if !ok {
+		return ""
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return ""
+	}
+
+	authorize(req, target)
+
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return ""
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+
+	// Bounded: a job log can be megabytes, and the tail is where the failure is.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil || len(body) == 0 {
+		return ""
+	}
+
+	// Forgejo answers with a zip of one log per job; GitLab's job trace is plain
+	// text. Decided by what the response says it is rather than by forge, so a
+	// forge that changes its mind does not silently produce a screen of binary.
+	if strings.Contains(resp.Header.Get("Content-Type"), "zip") {
+		body = []byte(unzipFirst(body))
+	}
+
+	if len(body) > keep {
+		body = body[len(body)-keep:]
+	}
+
+	return string(body)
+}
+
+// unzipFirst returns the contents of the first file in a zip, or "" when it
+// cannot be read. Best effort, for the same reason as its caller.
+func unzipFirst(archive []byte) string {
+	reader, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
+	if err != nil || len(reader.File) == 0 {
+		return ""
+	}
+
+	file, err := reader.File[0].Open()
+	if err != nil {
+		return ""
+	}
+
+	defer func() { _ = file.Close() }()
+
+	// Bounded again: the compressed bound above says nothing about the
+	// decompressed size.
+	content, err := io.ReadAll(io.LimitReader(file, 1<<20))
+	if err != nil {
+		return ""
+	}
+
+	return string(content)
+}
+
+// runLogEndpoint resolves where the latest run's log lives on this forge.
+//
+// Both forges need an id first, and neither spells it the same way: GitLab's log
+// is a job trace under the project, Forgejo's is a run log under the repository
+// (paths taken from the instance's own swagger rather than assumed).
+func runLogEndpoint(ctx context.Context, target Target, repo string) (string, bool) {
+	switch target.Kind {
+	case provider.PlatformGitLab:
+		var jobs []struct {
+			ID int `json:"id"`
+		}
+
+		project := url.PathEscape(target.Owner + "/" + repo)
+		if _, err := decodeQuiet(ctx, target, target.BaseURL()+"/api/v4/projects/"+project+"/jobs?per_page=1", &jobs); err != nil || len(jobs) == 0 {
+			return "", false
+		}
+
+		return fmt.Sprintf("%s/api/v4/projects/%s/jobs/%d/trace", target.BaseURL(), project, jobs[0].ID), true
+	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
+		var payload struct {
+			Runs []struct {
+				ID int `json:"id"`
+			} `json:"workflow_runs"`
+		}
+
+		// /actions/runs, NOT the /actions/tasks the status poller uses: the two
+		// endpoints return DIFFERENT id spaces for the same execution — measured,
+		// task 352 against run 535 — so a task id here answers 404 "run with id
+		// 352: resource does not exist", which reads as "no log yet".
+		base := target.BaseURL() + "/api/v1/repos/" + target.Owner + "/" + repo
+		if _, err := decodeQuiet(ctx, target, base+"/actions/runs", &payload); err != nil || len(payload.Runs) == 0 {
+			return "", false
+		}
+
+		return fmt.Sprintf("%s/actions/runs/%d/logs", base, payload.Runs[0].ID), true
+	}
+
+	return "", false
 }
 
 // ReleaseAssetURL asks the forge where a release asset can be downloaded.
