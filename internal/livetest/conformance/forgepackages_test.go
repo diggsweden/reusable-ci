@@ -159,7 +159,7 @@ ls -l pkg`
 
 	if kind == provider.PlatformGitLab {
 		return `publish:
-  image: node:22
+  image: node:24
   script:
     - |
       ` + indent(livetest.ProbePrelude(assetURL), 6) + `
@@ -173,7 +173,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     container:
-      image: node:22
+      image: node:24
     steps:
       - name: publish an npm package to this forge's own registry
         env:
