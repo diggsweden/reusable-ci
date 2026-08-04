@@ -24,8 +24,18 @@ func (p *Provider) Describe() provider.Info {
 // (SARIF ingestion, release assets, run-artifact store) are derived from
 // the roles this adapter implements; keyless OIDC and the SLSA
 // build-provenance attestation API are both available on GitHub.
+//
+// PublicFulcioTrusted is asked of the issuer rather than declared, the same way
+// every adapter asks it. Describe() returns the fixed github.com Actions
+// issuer, which public Fulcio trusts, so it answers true today — and a GitHub
+// Enterprise Server instance, which publishes its own issuer, would answer
+// false the moment Describe() learns to report one.
 func (p *Provider) Capabilities() provider.Capabilities {
-	return provider.DeriveCapabilities(p, true, true)
+	return provider.DeriveCapabilities(p, provider.Declared{
+		MintsOIDCToken:      true,
+		PublicFulcioTrusted: provider.PublicFulcioTrusts(p.Describe().OIDCIssuer),
+		Attestation:         true,
+	})
 }
 
 // AdviseToken classifies a release-bot token by prefix and advises on

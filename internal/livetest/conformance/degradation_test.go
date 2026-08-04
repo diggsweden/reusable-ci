@@ -20,12 +20,13 @@ package conformance_test
 // dependency wiring, and what the user sees is an exit code and a message.
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provenance"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/livetest"
 )
@@ -67,25 +68,30 @@ func TestDegradation_SARIFUpload_NoticesAndSucceeds(t *testing.T) {
 	}
 }
 
-// PAR-CAP-3: provenance on a forge with no build profile.
+// PAR-CAP-3: provenance is the capability that does NOT degrade.
 //
-// Here the documented behaviour is the opposite of SARIF's: refuse, clearly,
-// rather than emit a predicate that claims a build it cannot describe. Getting
-// these two the same way round would be the defect — the difference is the
-// whole point of degradation being designed rather than incidental.
-func TestDegradation_Provenance_RefusesClearly(t *testing.T) {
-	for _, kind := range forgesLacking(t, func(c provider.Capabilities) bool { return c.Attestation }, "provenance profile") {
+// `release provenance` uses no forge attestation API: it builds the statement
+// from the checksums file plus the run context every provider resolves, and
+// cosign signs it. So the scenario is equivalence, not refusal — the same
+// subject and the same predicate type on every forge, with only the forge's own
+// context differing.
+//
+// Written this way round deliberately. Asserting a refusal here passes for the
+// wrong reason: every error this command emits is prefixed "provenance:", so a
+// missing --started-on satisfies "non-zero, and the message names the reason"
+// while proving nothing about capabilities.
+func TestProvenance_GeneratesEquivalentlyOnEveryForge(t *testing.T) {
+	// A fixed timestamp: the statement must differ between forges only in the
+	// context the forge supplies, and an unset --started-on is a usage error
+	// rather than a degradation.
+	const startedOn = "2026-01-01T00:00:00Z"
+
+	subjects := map[provider.Platform]string{}
+
+	for _, kind := range livetest.LiveForges() {
 		t.Run(string(kind), func(t *testing.T) {
 			target := livetest.Accept(t, kind)
-
-			// Only GitLab lacks a provenance profile among the live forges;
-			// Forgejo has one, so it is filtered out by the capability gate
-			// above and never reaches here.
-			if kind != provider.PlatformGitLab {
-				t.Skipf("%s supplies a provenance profile; nothing to refuse", kind)
-			}
-
-			repo := livetest.NewScratchRepo(t, target, "degrade-provenance")
+			repo := livetest.NewScratchRepo(t, target, "provenance-parity")
 
 			checksums := filepath.Join(t.TempDir(), "checksums.txt")
 			body := "0000000000000000000000000000000000000000000000000000000000000000  artifact.tar.gz\n"
@@ -98,26 +104,50 @@ func TestDegradation_Provenance_RefusesClearly(t *testing.T) {
 				"release", "provenance",
 				"--checksum-file", checksums,
 				"--go-sum", "",
+				"--started-on", startedOn,
 			)
 
-			if run.ExitCode == 0 {
-				t.Fatalf("%s: emitted provenance it has no profile for\nstdout: %s", target.Kind, run.Stdout)
-			}
-
-			// A refusal for a capability the forge does not have is permanent;
-			// exiting "unavailable" would have CI retry it forever.
-			if run.ExitCode == int(errs.ExitCodeUnavailable) {
-				t.Errorf("%s: refuses provenance with %d (unavailable), which reads as retry-me\nstderr: %s",
+			if run.ExitCode != 0 {
+				t.Fatalf("%s: provenance exited %d, want 0 — it depends on no forge capability\nstderr: %s",
 					target.Kind, run.ExitCode, run.Stderr)
 			}
 
-			// "Refuses" must mean a stated reason, not a stack trace or a bare
-			// non-zero exit.
-			if !strings.Contains(strings.ToLower(run.Stderr), "unsupported") &&
-				!strings.Contains(strings.ToLower(run.Stderr), "provenance") {
-				t.Errorf("%s: refusal does not name the reason\nstderr: %s", target.Kind, run.Stderr)
+			var statement struct {
+				Type          string `json:"_type"`
+				PredicateType string `json:"predicateType"`
+				Subject       []struct {
+					Name   string            `json:"name"`
+					Digest map[string]string `json:"digest"`
+				} `json:"subject"`
 			}
+
+			if err := json.Unmarshal([]byte(run.Stdout), &statement); err != nil {
+				t.Fatalf("%s: provenance is not a JSON statement: %v\nstdout: %s", target.Kind, err, run.Stdout)
+			}
+
+			if statement.PredicateType != provenance.PredicateTypeV1 {
+				t.Errorf("%s: predicateType = %q, want %q — the predicate is forge-neutral",
+					target.Kind, statement.PredicateType, provenance.PredicateTypeV1)
+			}
+
+			if len(statement.Subject) != 1 {
+				t.Fatalf("%s: %d subjects, want the one artifact in the checksums file",
+					target.Kind, len(statement.Subject))
+			}
+
+			subjects[kind] = statement.Subject[0].Name + "@" + statement.Subject[0].Digest["sha256"]
 		})
+	}
+
+	// The subject comes from the checksums file, not from the forge, so every
+	// forge must have named the same artifact and digest.
+	for kind, got := range subjects {
+		for other, want := range subjects {
+			if got != want {
+				t.Errorf("subject differs by forge: %s says %q, %s says %q — the subject is read from the checksums file",
+					kind, got, other, want)
+			}
+		}
 	}
 }
 

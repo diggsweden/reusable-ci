@@ -11,9 +11,10 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-// Forgejo reports SupportsKeyless()==false (public Fulcio does not trust a
-// Forgejo issuer), but still resolves an anchored identity so a deployment
-// with a trusting Fulcio + explicit --oidc-issuer can verify.
+// Forgejo splits the two keyless claims: it can mint an id-token, so it signs
+// against a Fulcio that trusts the instance, but no public Fulcio does, so it
+// is not keyless out of the box and a run must supply --oidc-issuer. The
+// resolved identity stays anchored either way.
 func TestResolveKeylessIdentity_Forgejo(t *testing.T) {
 	t.Parallel()
 
@@ -26,8 +27,12 @@ func TestResolveKeylessIdentity_Forgejo(t *testing.T) {
 		}[k]
 	}}
 
-	if p.SupportsKeyless() {
-		t.Error("Forgejo keyless should be false out of the box")
+	if !p.SupportsKeyless() {
+		t.Error("Forgejo mints OIDC id-tokens, so the signing-identity role must support keyless")
+	}
+
+	if p.Capabilities().PublicFulcioTrusted {
+		t.Error("no public Fulcio trusts a Forgejo issuer, so keyless must not be the default")
 	}
 
 	id, err := p.ResolveKeylessIdentity()

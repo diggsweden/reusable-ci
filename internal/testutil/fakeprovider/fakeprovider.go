@@ -418,9 +418,9 @@ func (f *Fake) Describe() provider.Info {
 func (f *Fake) Capabilities() provider.Capabilities {
 	switch f.platform {
 	case provider.PlatformGitHub:
-		return provider.Capabilities{SARIFUpload: true, Attestation: true, KeylessOIDC: true, ReleaseAssets: true}
+		return provider.Capabilities{SARIFUpload: true, Attestation: true, PublicFulcioTrusted: true, ReleaseAssets: true}
 	case provider.PlatformGitLab:
-		return provider.Capabilities{KeylessOIDC: true, ReleaseAssets: true}
+		return provider.Capabilities{PublicFulcioTrusted: true, ReleaseAssets: true}
 	case provider.PlatformForgejo:
 		return provider.Capabilities{ReleaseAssets: true}
 	default:

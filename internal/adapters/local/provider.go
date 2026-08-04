@@ -23,6 +23,7 @@ import (
 	"os"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // Provider satisfies the always-available provider port for ad-hoc
@@ -37,16 +38,22 @@ func New() *Provider { return &Provider{Env: os.Getenv} }
 // Name reports the platform identifier.
 func (p *Provider) Name() provider.Platform { return provider.PlatformLocal }
 
-// ResolveContext returns an EventContext populated from the equivalent
-// CI_* / git env vars when present. Empty otherwise. Tests inject fixed
-// values via the Env field.
+// ResolveContext returns an EventContext populated from the run-context env
+// vars when present, and empty otherwise. Tests inject fixed values via the
+// Env field.
+//
+// The names come from the runcontext chains, not from a list kept here. Reading
+// one hand-picked name per concept drifts: the chains lead with the
+// forge-neutral $REPOSITORY / $REF_NAME that `release publish` honours, so a
+// developer exporting those would have been met with an empty context in local
+// mode alone.
 func (p *Provider) ResolveContext(_ context.Context) (*provider.EventContext, error) {
 	get := p.Env
 	if get == nil {
 		get = os.Getenv
 	}
 
-	sha := get("CI_COMMIT")
+	sha := runcontext.Commit().Resolve(get)
 
 	short := sha
 	if len(short) > 7 {
@@ -55,11 +62,14 @@ func (p *Provider) ResolveContext(_ context.Context) (*provider.EventContext, er
 
 	return &provider.EventContext{
 		Platform: provider.PlatformLocal,
-		RefName:  get("CI_REF_NAME"),
+		RefName:  runcontext.RefName().Resolve(get),
 		SHA:      sha,
 		ShortSHA: short,
-		Branch:   get("CI_BRANCH"),
-		Repo:     get("CI_REPO"),
+		// No branch chain exists: $CI_BRANCH is the name `report lifecycle`
+		// already documents for the same concept, so it is read directly rather
+		// than inventing a chain for one consumer.
+		Branch: get("CI_BRANCH"),
+		Repo:   runcontext.Repository().Resolve(get),
 	}, nil
 }
 
@@ -82,9 +92,11 @@ func (p *Provider) Describe() provider.Info {
 }
 
 // Capabilities reports no forge features: local mode implements none of the
-// capability roles (there is no API to call), so derivation yields all-false.
+// capability roles (there is no API to call) and declares nothing, so
+// derivation yields all-false. There is no runner here to mint an id-token, so
+// both keyless capabilities are false — signing on a laptop uses a key.
 func (p *Provider) Capabilities() provider.Capabilities {
-	return provider.DeriveCapabilities(p, false, false)
+	return provider.DeriveCapabilities(p, provider.Declared{})
 }
 
 // Compile-time conformance checks. local.Provider satisfies the

@@ -13,9 +13,10 @@ import (
 )
 
 // SupportsKeyless reports whether GitHub Actions can supply an OIDC token for
-// Sigstore keyless signing. It delegates to Capabilities so KeylessOIDC has a
-// single source of truth.
-func (p *Provider) SupportsKeyless() bool { return p.Capabilities().KeylessOIDC }
+// Sigstore keyless signing. It delegates to Capabilities so the claim has a
+// single source of truth, and reads MintsOIDCToken because that is the
+// question the role asks: can this forge mint a token at all.
+func (p *Provider) SupportsKeyless() bool { return p.Capabilities().MintsOIDCToken }
 
 // ResolveKeylessIdentity returns the issuer, audience, and verification
 // identity for the running GitHub Actions job. The issuer reuses Describe()

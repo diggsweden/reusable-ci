@@ -11,14 +11,16 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
-// SupportsKeyless reports whether this Forgejo instance can drive Sigstore
-// keyless signing out of the box. It delegates to Capabilities, which today
-// reports false: Forgejo v15.0+ issues OIDC id-tokens, but public Fulcio does
-// not trust a Forgejo issuer, so keyless needs an explicit --oidc-issuer and a
-// trusting Fulcio. Implementing the role (rather than omitting it) lets a
-// caller still resolve the anchored verification identity, and lets a future
-// instance-trusting deployment flip the capability without new wiring.
-func (p *Provider) SupportsKeyless() bool { return p.Capabilities().KeylessOIDC }
+// SupportsKeyless reports whether this Forgejo instance can supply an OIDC
+// token for keyless signing, which it can: Forgejo v15.0+ issues id-tokens
+// (enable-openid-connect). That is the question the role asks — it gates
+// resolving the anchored verification identity, which is worth having whichever
+// Fulcio issued the certificate.
+//
+// Whether keyless happens without being pointed at a trusting Fulcio is the
+// separate PublicFulcioTrusted capability, false here, and the one the signing fallback
+// and the up-front warning read.
+func (p *Provider) SupportsKeyless() bool { return p.Capabilities().MintsOIDCToken }
 
 // ResolveKeylessIdentity returns the audience and anchored verification
 // identity for the running Forgejo Actions job. OIDCIssuer reuses Describe(),

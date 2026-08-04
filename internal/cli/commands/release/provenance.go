@@ -28,14 +28,6 @@ import (
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
 
-// provenanceCmd generates an in-toto/SLSA-v1.0 provenance statement from
-// a checksums file, emitting the JSON only; signing (cosign sign-blob) is
-// a separate step.
-//
-// The predicate is FORGE-NEUTRAL — the same shape the container path emits
-// via `container attest` — so it works on any forge whose provider can
-// resolve the event context (repository, ref, commit). No per-forge
-// provenance profile.
 // planScopeProvenance is the plan-file scope of `release provenance` in
 // $REUSABLE_CI_PLAN (flag > plan > env > default).
 const planScopeProvenance = "release provenance"
@@ -45,6 +37,15 @@ const planScopeProvenance = "release provenance"
 // with every engine-computed key reserved.
 const flagExternalParametersJSON = "external-parameters-json"
 
+// provenanceCmd generates an in-toto/SLSA-v1.0 provenance statement from a
+// checksums file, emitting the JSON only; signing (cosign sign-blob) is a
+// separate step.
+//
+// The predicate is forge-neutral — the same shape the container path emits via
+// `container attest` — and uses no forge attestation API, so it works on any
+// forge whose provider can resolve the event context (repository, ref, commit)
+// and degrades on none. --profile selects the statement's builder identity:
+// generic by default, forgejo-actions to reproduce forgejo-ci's shipped shape.
 func provenanceCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "provenance",

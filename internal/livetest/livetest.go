@@ -493,3 +493,24 @@ func FulcioURL() (string, bool) {
 
 	return url, url != ""
 }
+
+// FulcioTrusts reports whether the environment's Fulcio is configured to issue
+// certificates for jobs running on kind.
+//
+// Read from the contract for the same reason as FulcioURL: which issuers a CA
+// accepts is a fact about the deployment, and deriving it from a forge name
+// here would put that topology back inside this kit. A forge the CA does not
+// trust is an environment limit rather than a product one, so scenarios skip on
+// it.
+//
+// An unset variable trusts nothing. The alternative — assuming a forge — would
+// let a keyless scenario report success for a certificate no CA ever issued.
+func FulcioTrusts(kind provider.Platform) bool {
+	for _, issuer := range strings.Split(os.Getenv("LAB_FULCIO_ISSUERS"), ",") {
+		if strings.EqualFold(strings.TrimSpace(issuer), string(kind)) {
+			return true
+		}
+	}
+
+	return false
+}

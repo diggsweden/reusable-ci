@@ -8,7 +8,10 @@
 // chosen adapter into use cases.
 package provider
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // Platform identifies the *forge API* the binary talks to — the server
 // REST surface used for releases, asset upload, token/permission checks,
@@ -133,9 +136,33 @@ type Describer interface{ Describe() Info }
 type Capabilities struct {
 	SARIFUpload   bool `json:"sarif_upload"`   // ingest SARIF into a code-scanning surface
 	Attestation   bool `json:"attestation"`    // SLSA build-provenance attestation API
-	KeylessOIDC   bool `json:"keyless_oidc"`   // keyless signing via a runner OIDC issuer
 	ReleaseAssets bool `json:"release_assets"` // upload binary assets onto a release
 	RunArtifacts  bool `json:"run_artifacts"`  // programmatic intra-run artifact store (RunArtifactUploader/Downloader)
+
+	// MintsOIDCToken is whether this forge's runner can mint an OIDC id-token
+	// for Sigstore at all, and so can sign keylessly against a Fulcio told to
+	// trust its issuer. It gates whether keyless is POSSIBLE: the
+	// signing-identity role, verification-identity resolution, and the
+	// conformance scenario.
+	MintsOIDCToken bool `json:"mints_oidc_token"`
+
+	// PublicFulcioTrusted is whether the issuer this instance publishes is one
+	// the PUBLIC Fulcio already trusts, so a run needs neither --oidc-issuer nor
+	// --fulcio-url. It gates whether keyless happens BY DEFAULT: false means
+	// "prefer gpg/kms unless the operator supplies their own CA".
+	//
+	// Public Fulcio matches issuers by exact URL, and among the forges modelled
+	// here exactly two qualify: github.com's fixed Actions issuer and
+	// https://gitlab.com. Every self-hosted deployment of the same software —
+	// GitHub Enterprise Server, self-hosted GitLab, every Forgejo instance —
+	// publishes its own issuer and is not on that list. So this is a property of
+	// an INSTANCE, not of a forge, which is why it is separate from
+	// MintsOIDCToken: one bool for both makes a self-hosted deployment
+	// indistinguishable from a forge that cannot sign at all.
+	//
+	// The JSON key is the older `keyless_oidc`: this field is published in the
+	// doctor report, which is machine output somebody's script already reads.
+	PublicFulcioTrusted bool `json:"keyless_oidc"`
 
 	// ContainerTagDeletion is a tag-scoped registry delete through the forge's
 	// own package/registry API (the TagDeleter role). It gates `container
@@ -155,16 +182,50 @@ type Capabilities struct {
 // feature set. Every adapter implements it.
 type CapabilityReporter interface{ Capabilities() Capabilities }
 
+// PublicFulcioTrusts reports whether the public Sigstore Fulcio will issue a
+// certificate for tokens from issuer, so a run needs no --fulcio-url.
+//
+// The issuers below are INSTANCES, not forges, because Fulcio matches an issuer
+// by exact URL. Exactly two qualify among the forges modelled here: github.com's
+// fixed Actions issuer, and gitlab.com. Self-hosted deployments of the same
+// software publish their own issuer and are absent by nature rather than by
+// omission — adding one would be wrong unless Sigstore had onboarded it.
+//
+// Adapters pass their own Describe().OIDCIssuer rather than declaring a bool,
+// which is what keeps the answer honest per instance: the same GitLab adapter
+// answers true on gitlab.com and false behind $CI_SERVER_URL.
+func PublicFulcioTrusts(issuer string) bool {
+	switch strings.TrimRight(strings.TrimSpace(issuer), "/") {
+	case "https://token.actions.githubusercontent.com", "https://gitlab.com":
+		return true
+	default:
+		return false
+	}
+}
+
+// Declared carries the capabilities role membership cannot answer, so each
+// adapter states them by name rather than as a row of positional bools.
+type Declared struct {
+	// MintsOIDCToken and PublicFulcioTrusted are as documented on Capabilities.
+	// Declaring PublicFulcioTrusted without MintsOIDCToken is a contradiction —
+	// a forge whose issuer public Fulcio trusts necessarily mints id-tokens — so
+	// DeriveCapabilities implies the wider claim rather than trusting the caller
+	// to keep the pair in step.
+	MintsOIDCToken      bool
+	PublicFulcioTrusted bool
+
+	// Attestation is the forge's own SLSA build-provenance API. Explicit
+	// because no role interface exists for it yet.
+	Attestation bool
+}
+
 // DeriveCapabilities computes the role-backed capability bools from what impl
 // actually implements, so the reported feature set can never drift from what
-// the requireRole gates enforce. Two capabilities are not pure role
-// membership and stay explicit: keylessOIDC (a provider may implement
-// SigningIdentityResolver yet report false because no public Fulcio trusts
-// its issuer — Forgejo) and attestation (no role interface exists yet).
+// the requireRole gates enforce. What roles cannot answer arrives in declared.
 //
 // RunArtifacts requires the full Uploader+Downloader pair; a half-implemented
 // pair reports false rather than promising a store that cannot round-trip.
-func DeriveCapabilities(impl any, keylessOIDC, attestation bool) Capabilities {
+func DeriveCapabilities(impl any, declared Declared) Capabilities {
 	_, sarif := impl.(SARIFUploader)
 	_, assets := impl.(ReleaseAssetUploader)
 	_, upload := impl.(RunArtifactUploader)
@@ -174,10 +235,12 @@ func DeriveCapabilities(impl any, keylessOIDC, attestation bool) Capabilities {
 
 	return Capabilities{
 		SARIFUpload:   sarif,
-		Attestation:   attestation,
-		KeylessOIDC:   keylessOIDC,
+		Attestation:   declared.Attestation,
 		ReleaseAssets: assets,
 		RunArtifacts:  upload && download,
+
+		PublicFulcioTrusted: declared.PublicFulcioTrusted,
+		MintsOIDCToken:      declared.MintsOIDCToken || declared.PublicFulcioTrusted,
 
 		ContainerTagDeletion:    tagDelete,
 		ContainerPackageListing: packageList,

@@ -30,8 +30,17 @@ func (p *Provider) Describe() provider.Info {
 // design: GitLab passes intra-pipeline artifacts declaratively via the job
 // YAML (`artifacts:` + `needs:`), not a programmatic in-job store, so the
 // run-artifact roles are unimplemented and that hand-off lives in the
-// GitLab template rather than this binary. Keyless OIDC is available;
-// Attestation=false (no build-provenance attestation API today).
+// GitLab template rather than this binary. Attestation=false (no
+// build-provenance attestation API today).
+//
+// GitLab CI mints id-tokens on every instance, so MintsOIDCToken is
+// unconditional. Whether public Fulcio trusts the issuer is asked of the
+// issuer itself: true on gitlab.com, false behind a $CI_SERVER_URL, which is
+// the difference between keyless working out of the box and needing a Fulcio
+// of your own.
 func (p *Provider) Capabilities() provider.Capabilities {
-	return provider.DeriveCapabilities(p, true, false)
+	return provider.DeriveCapabilities(p, provider.Declared{
+		MintsOIDCToken:      true,
+		PublicFulcioTrusted: provider.PublicFulcioTrusts(p.Describe().OIDCIssuer),
+	})
 }

@@ -148,7 +148,7 @@ func buildSigner(cmd *cli.Command, errOut io.Writer) (apprelease.Signer, domainr
 	case domainrelease.SignMethodGPG:
 		return buildGPGSigner(cmd, method)
 	case domainrelease.SignMethodSigstore:
-		if apprelease.KeylessNeedsIssuer(oidcIssuer, deps.CapabilitiesForDetected().KeylessOIDC) {
+		if apprelease.KeylessNeedsIssuer(oidcIssuer, deps.CapabilitiesForDetected().PublicFulcioTrusted) {
 			deps.Annotator(cmd).Warningf(
 				"keyless (sigstore) signing has no OIDC issuer on %s — cosign may fail; "+
 					"use --method=gpg or --method=kms, or pass --oidc-issuer explicitly",

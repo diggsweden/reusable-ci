@@ -36,12 +36,22 @@ func (p *Provider) Describe() provider.Info {
 // derived from the roles this adapter implements — SARIFUpload comes out
 // false because the SARIFUploader role is deliberately unimplemented
 // (codeberg.org/forgejo/forgejo#3669), which is what makes security
-// commands degrade to a step-summary / artifact sink. KeylessOIDC=false is
-// the deliberate role-present-but-capability-false case: Forgejo v15.0+
-// issues OIDC id-tokens (enable-openid-connect) and this adapter implements
-// SigningIdentityResolver, but public Fulcio does not trust a Forgejo
-// issuer, so keyless needs an explicit --oidc-issuer + a trusting Fulcio.
+// commands degrade to a step-summary / artifact sink.
+//
+// The two keyless capabilities split here, which is the case they exist to
+// tell apart: Forgejo v15.0+ issues OIDC id-tokens (enable-openid-connect) and
+// this adapter implements SigningIdentityResolver, so keyless works against a
+// Fulcio told to trust the instance — MintsOIDCToken.
+//
+// PublicFulcioTrusted is asked of the issuer, as everywhere else, and answers
+// false for every Forgejo: the issuer is <instance>/api/actions, so each
+// instance publishes its own and public Fulcio has onboarded none of them. A
+// run therefore passes --oidc-issuer and --fulcio-url, or signs with a key.
+//
 // Attestation=false: no build-provenance attestation API today.
 func (p *Provider) Capabilities() provider.Capabilities {
-	return provider.DeriveCapabilities(p, false, false)
+	return provider.DeriveCapabilities(p, provider.Declared{
+		MintsOIDCToken:      true,
+		PublicFulcioTrusted: provider.PublicFulcioTrusts(p.Describe().OIDCIssuer),
+	})
 }

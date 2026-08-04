@@ -85,7 +85,8 @@ than fail when a capability is missing.
 |---|:---:|:---:|:---:|:---:|
 | SARIF / Code Scanning upload | ✅ | ❌ | ❌ | ❌ |
 | SLSA build-provenance attestation API | ✅ | ❌ | ❌ | ❌ |
-| Keyless OIDC signing | ✅ | ✅ | ❌ | ❌ |
+| Keyless OIDC signing (public Fulcio, no extra flags) | ✅ | ✅ | ❌ | ❌ |
+| Keyless OIDC signing against your own Fulcio | ✅ | ✅ | ✅ | ❌ |
 | Release asset upload | ✅ | ✅ | ✅ | ❌ |
 | Run artifact upload/download | ✅ | ❌ | ✅ | ❌ |
 | Container tag deletion (package/registry API) | ❌ | ✅ | ✅ | ❌ |
@@ -112,9 +113,12 @@ forge.
   keyless OIDC and no explicit `--oidc-issuer`, the CLI emits a `Warning`
   naming the forge and suggesting `--method=gpg`/`--method=kms` or an explicit
   issuer (it does not hard-fail).
-- **Provenance** (`release provenance`) — github and forgejo supply a build
-  profile; gitlab and local refuse with a clear "unsupported on <forge>"
-  rather than emitting a dishonest predicate.
+- **Provenance** (`release provenance`) — does not degrade, because it does not
+  use a forge attestation API. The statement is built from the checksums file
+  plus the run context every provider resolves, and signed with cosign, so it
+  is emitted identically on every forge. `--profile forgejo-actions` reproduces
+  forgejo-ci's shipped builder id; every other forge uses the default `generic`
+  profile.
 - **Run artifacts** — github and forgejo expose an intra-run artifact store
   through their runner's own service; gitlab does not, so a step that would
   hand a file to a later job must use GitLab's native `artifacts:` keyword in
@@ -132,7 +136,8 @@ assets, and SARIF go through the GitHub REST API (`go-github`).
 ### gitlab
 Releases via `/api/v4`. OIDC issuer `$CI_SERVER_URL` (self-hosted) or
 `https://gitlab.com`. No SARIF (GitLab consumes the JSON SAST report
-directly) and no provenance profile.
+directly). Provenance uses the `generic` profile — there is no GitLab-specific
+one, and none is needed.
 
 **Step outputs are renamed on GitLab, and this is the one difference a
 pipeline has to know about.** GitLab has no per-step output file: values reach
@@ -197,9 +202,11 @@ was set deliberately and is used as asked.
 No SARIF ([forgejo#3669](https://codeberg.org/forgejo/forgejo/issues/3669)).
 Forgejo **v15.0+** issues OIDC id-tokens (job-level
 [`enable-openid-connect`](https://forgejo.org/docs/v15.0/user/actions/security-openid-connect/)),
-but public Fulcio does not trust a Forgejo issuer, so keyless signing still
-needs an explicit `--oidc-issuer` (and a Fulcio that trusts it) — otherwise
-use key-based signing. Has a provenance profile (`.forgejo/workflows/`).
+but public Fulcio does not trust a Forgejo issuer. So keyless signing works —
+against a Fulcio configured to trust the instance, with an explicit
+`--oidc-issuer` and `--fulcio-url` — but is not the default; without those,
+use key-based signing. That is the distinction the two keyless rows in the
+matrix above draw. Has a provenance profile (`.forgejo/workflows/`).
 
 ### local
 The dev/test fallback. No forge API — release/token/SARIF commands gate with
@@ -213,7 +220,7 @@ Honest maturity per forge, so you know what to rely on:
 | Forge | Status |
 |---|---|
 | **github** | ✅ Established production path (the original target). |
-| **gitlab** | 🟡 Partial — release creation, asset upload/linking (project uploads + release links), token validation, and repo metadata; **no** SARIF ingestion (GitLab consumes the JSON SAST report instead) or provenance profile. |
+| **gitlab** | 🟡 Partial — release creation, asset upload/linking (project uploads + release links), token validation, and repo metadata; **no** SARIF ingestion (GitLab consumes the JSON SAST report instead) and no GitLab-specific provenance profile (the generic one applies). |
 | **forgejo** | 🟢 Adapter fully implemented (release create + asset upload, token + bot-permission probes, repo metadata, capabilities), unit-tested against an httptest Gitea server, and **live in production via the forgejo-ci middle layer** — its vendored binary drives real Codeberg releases (nanolinter). Consumers adopt via forgejo-ci's reusable workflows + consumer kit (requires Forgejo v15+ for workflow_call job expansion), not via engine-shipped orchestrators. |
 | **local** | ✅ Dev/test fallback; forge-API commands gate with a typed "unsupported" error. |
 

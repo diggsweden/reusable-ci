@@ -8,11 +8,16 @@ package conformance_test
 
 // PAR-SIGN-2: keyless signing against a Sigstore the lab owns.
 //
-// The lab runs its own Fulcio, trusting one issuer (the lab's GitLab). A job
-// asks GitLab for an ID token, the product hands it to that CA, and the
-// certificate that comes back names the pipeline. That covers the KeylessOIDC
-// capability: the forge issues tokens a Fulcio accepts, and the product can be
-// pointed at one. It says nothing about public Sigstore's policies.
+// The lab runs its own Fulcio and trusts the issuers its contract names. A job
+// asks its forge for an ID token, the product hands it to that CA, and the
+// certificate that comes back names the pipeline. That covers the
+// MintsOIDCToken capability: the forge issues tokens a Fulcio accepts, and the
+// product can be pointed at one. It says nothing about public Sigstore's
+// policies, which is the separate PublicFulcioTrusted claim.
+//
+// The probe below is GitLab-shaped (`id_tokens:`, $CI_SERVER_TLS_CA_FILE). A
+// second forge needs both an issuer entry in the CA and an Actions-flavoured
+// probe before it can run here.
 //
 // No transparency log takes part: the suite runs with
 // REUSABLE_CI_COSIGN_TRANSPARENCY=none and the lab deploys no Rekor, so a lab
@@ -25,13 +30,17 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/livetest"
 )
 
-// claimsKeylessOIDC selects forges whose capability matrix declares keyless OIDC.
-func claimsKeylessOIDC(c provider.Capabilities) bool { return c.KeylessOIDC }
+// claimsMintsOIDCToken selects forges whose capability matrix says they can
+// mint an OIDC token for a Fulcio that trusts them. That is the claim this
+// scenario tests: the lab runs its own CA, so "public Fulcio trusts the issuer"
+// (PublicFulcioTrusted) is the wrong question here and would exclude Forgejo, which can
+// sign perfectly well against a CA told to accept it.
+func claimsMintsOIDCToken(c provider.Capabilities) bool { return c.MintsOIDCToken }
 
 func TestInRunner_KeylessSigningAgainstTheLabCA(t *testing.T) {
 	const tag = "v0.0.10-keyless"
 
-	for _, kind := range forgesClaiming(t, claimsKeylessOIDC, "keyless OIDC signing") {
+	for _, kind := range forgesClaiming(t, claimsMintsOIDCToken, "keyless signing against an own CA") {
 		if !livetest.RunsInRunner(kind) {
 			t.Logf("SKIP %s: claims keyless OIDC, but the in-runner tier does not drive this forge yet", kind)
 
@@ -45,10 +54,12 @@ func TestInRunner_KeylessSigningAgainstTheLabCA(t *testing.T) {
 			continue
 		}
 
-		if kind != provider.PlatformGitLab {
-			// The lab's Fulcio trusts one issuer; another forge needs its own
-			// entry there before this scenario means anything for it.
-			t.Logf("SKIP %s: the lab CA is configured to trust GitLab only", kind)
+		if !livetest.FulcioTrusts(kind) {
+			// Which issuers the CA accepts is the environment's business, read
+			// from the contract rather than assumed here: a forge needs its own
+			// entry in the CA's issuer config before this scenario can mean
+			// anything for it.
+			t.Logf("SKIP %s: this environment's Fulcio is not configured to trust it (LAB_FULCIO_ISSUERS)", kind)
 
 			continue
 		}
@@ -67,7 +78,7 @@ func TestInRunner_KeylessSigningAgainstTheLabCA(t *testing.T) {
 			conclusion := livetest.RunWorkflow(t, target, repo, "keyless-sign",
 				keylessSignProbe(assetURL, fulcioURL, target.BaseURL()))
 			if conclusion != "success" {
-				t.Errorf("%s: keyless signing concluded %q — this forge reports KeylessOIDC, but a job's token did not produce a signing certificate",
+				t.Errorf("%s: keyless signing concluded %q — this forge reports PublicFulcioTrusted, but a job's token did not produce a signing certificate",
 					kind, conclusion)
 			}
 		})

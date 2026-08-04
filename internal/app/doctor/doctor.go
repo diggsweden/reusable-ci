@@ -76,7 +76,7 @@ type Input struct {
 	RepoSlug string
 
 	// KeylessAvailable reports whether the detected forge can drive Sigstore
-	// keyless signing (provider.Capabilities.KeylessOIDC). The CLI resolves it
+	// keyless signing (provider.Capabilities.PublicFulcioTrusted). The CLI resolves it
 	// from the active provider; it drives the (non-failing) signing-method
 	// recommendation. False off a keyless-capable forge (or when undetectable
 	// locally) simply suppresses the recommendation.
@@ -298,8 +298,9 @@ func FormatEnvironment(w io.Writer, env Environment) { //nolint:varnamelen // id
 		hint string
 	}{
 		{"SARIF / Code Scanning upload", env.Capabilities.SARIFUpload, "findings degrade to the step-summary + uploaded artifact"},
-		{"SLSA build provenance", env.Capabilities.Attestation, "no attestation API; provenance is not published on this forge"},
-		{"keyless OIDC signing", env.Capabilities.KeylessOIDC, "use key-based signing and pass --oidc-issuer explicitly"},
+		{"SLSA build provenance API", env.Capabilities.Attestation, "no forge attestation API; `release provenance` still emits a cosign-signed statement"},
+		{"keyless OIDC signing (public Fulcio)", env.Capabilities.PublicFulcioTrusted, "use key-based signing, or pass --oidc-issuer and --fulcio-url for your own CA"},
+		{"keyless OIDC signing (own Fulcio)", env.Capabilities.MintsOIDCToken, "this forge mints no OIDC id-token; use key-based signing"},
 		{"release asset upload", env.Capabilities.ReleaseAssets, "release assets cannot be attached on this forge"},
 		{"run-artifact store (intra-run hand-off)", env.Capabilities.RunArtifacts, "pass run artifacts via the job template's artifacts:/needs:, not the binary"},
 	}

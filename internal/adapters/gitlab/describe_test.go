@@ -54,13 +54,39 @@ func TestCapabilities_GitLab(t *testing.T) {
 		t.Error("GitLab should advertise ReleaseAssets")
 	}
 
-	if !caps.KeylessOIDC {
-		t.Errorf("Capabilities = %+v, want KeylessOIDC", caps)
+	if !caps.PublicFulcioTrusted {
+		t.Errorf("Capabilities = %+v, want PublicFulcioTrusted", caps)
 	}
 
 	// Run artifacts are omitted by design: GitLab passes them declaratively
 	// via artifacts:/needs: in the job template, not this binary.
 	if caps.RunArtifacts {
 		t.Error("GitLab must not advertise RunArtifacts (declarative artifacts:/needs:)")
+	}
+}
+
+// The keyless claim is per-instance, not per-forge. Public Fulcio trusts
+// gitlab.com and no other GitLab, so the same adapter must answer differently
+// behind a $CI_SERVER_URL — otherwise a self-hosted run is told keyless works
+// out of the box, gets no warning, and fails inside cosign instead.
+func TestCapabilities_GitLab_SelfHostedIsNotPublicFulcioTrusted(t *testing.T) {
+	t.Parallel()
+
+	p := &gitlab.Provider{Env: func(k string) string {
+		if k == "CI_SERVER_URL" {
+			return "https://gitlab.diggsweden.internal"
+		}
+
+		return ""
+	}}
+
+	caps := p.Capabilities()
+	if caps.PublicFulcioTrusted {
+		t.Error("a self-hosted GitLab issuer is not one public Fulcio trusts")
+	}
+
+	// It can still sign keylessly — against a Fulcio told to trust it.
+	if !caps.MintsOIDCToken {
+		t.Error("GitLab CI mints id-tokens on every instance, self-hosted included")
 	}
 }

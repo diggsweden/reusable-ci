@@ -66,7 +66,7 @@ Exit codes:
 				Root:             cmd.String("root"),
 				ArtifactsPath:    cmd.String("artifacts-file"),
 				RepoSlug:         cmd.String("reusable-ci-repo"),
-				KeylessAvailable: env.Capabilities.KeylessOIDC,
+				KeylessAvailable: env.Capabilities.PublicFulcioTrusted,
 			})
 			if err != nil {
 				return err

@@ -34,9 +34,15 @@ func capabilityRows() map[string]func(provider.Capabilities) bool {
 	return map[string]func(provider.Capabilities) bool{
 		"SARIF / Code Scanning upload":          func(c provider.Capabilities) bool { return c.SARIFUpload },
 		"SLSA build-provenance attestation API": func(c provider.Capabilities) bool { return c.Attestation },
-		"Keyless OIDC signing":                  func(c provider.Capabilities) bool { return c.KeylessOIDC },
 		"Release asset upload":                  func(c provider.Capabilities) bool { return c.ReleaseAssets },
 		"Run artifact upload/download":          func(c provider.Capabilities) bool { return c.RunArtifacts },
+
+		"Keyless OIDC signing (public Fulcio, no extra flags)": func(c provider.Capabilities) bool {
+			return c.PublicFulcioTrusted
+		},
+		"Keyless OIDC signing against your own Fulcio": func(c provider.Capabilities) bool {
+			return c.MintsOIDCToken
+		},
 
 		"Container tag deletion (package/registry API)": func(c provider.Capabilities) bool {
 			return c.ContainerTagDeletion
