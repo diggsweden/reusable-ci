@@ -292,12 +292,33 @@ func (a *Adapter) SignImage(ctx context.Context, in SignImageInput, errOut io.Wr
 // not enough on its own and looks like it should be, which is the trap: the
 // token is minted by the right issuer and then presented to the wrong CA.
 //
-// Not folded into the --signing-config document this adapter already writes.
-// That document names services as structured entries carrying API versions and
-// validity windows, and the version written here is deliberately minimal
-// because it names nothing at all. Hand-assembling a service entry would mean
-// encoding a schema this package does not otherwise depend on, to reach the
-// same place two documented flags reach.
+// KNOWN WRONG ON COSIGN 3.x, and left in place only until the signing-config
+// rework lands, because removing it would take self-hosted Sigstore support
+// from broken-in-one-case to absent.
+//
+// The reasoning that produced it was: do not hand-assemble a signing-config
+// service entry -- with its api-version, validity window and operator -- when
+// two documented flags reach the same place. cosign 3.1.2 refutes that:
+//
+//	Flag --oidc-issuer has been deprecated, please use a signing config
+//	Flag --fulcio-url has been deprecated, please use a signing config
+//	Error: cannot specify service URLs and use signing config
+//
+// So the flags are deprecated AND they conflict with the --signing-config this
+// adapter already passes whenever the transparency log is off. A private Fulcio
+// plus transparency=none -- the combination a self-hosted deployment actually
+// uses -- fails outright.
+//
+// The fix is to put the endpoints in the signing config, and to have cosign
+// generate it rather than hand-writing the schema:
+//
+//	cosign signing-config create \
+//	  --fulcio="url=<fulcio>,api-version=1,start-time=<rfc3339>" \
+//	  --oidc-provider="url=<issuer>,api-version=1,start-time=<rfc3339>" \
+//	  --no-default-rekor --no-default-tsa --out <file>
+//
+// That replaces the literal document above as well, so there is one mechanism
+// instead of two, and the format stays cosign's to define.
 func keylessEndpoints(args []string, fulcioURL, rekorURL string) []string {
 	if fulcioURL != "" {
 		args = append(args, "--fulcio-url", fulcioURL)

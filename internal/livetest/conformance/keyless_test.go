@@ -105,7 +105,17 @@ func keylessSignProbe(assetURL, fulcioURL, issuerURL string) string {
       aud: sigstore
   script:
     - |
-      apk add --no-cache curl cosign >/dev/null
+      apk add --no-cache curl >/dev/null
+
+      # cosign 3.x, pinned, NOT the distribution package. Alpine ships 2.4.3,
+      # a major version behind what this product is written against -- the
+      # adapter's bundle handling and signing-config documents target 3.x, so
+      # testing against 2.x would exercise different semantics and call the
+      # result parity.
+      curl -fsSL -o /usr/local/bin/cosign \
+        https://github.com/sigstore/cosign/releases/download/v3.1.2/cosign-linux-amd64
+      chmod +x /usr/local/bin/cosign
+      cosign version 2>&1 | grep -i gitversion
 
       ` + indent(livetest.ProbePrelude(assetURL), 6) + `
 
