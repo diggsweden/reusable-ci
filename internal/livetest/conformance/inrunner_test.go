@@ -357,3 +357,140 @@ jobs:
           grep -q 'Go Build Summary' summary-log.txt
 `
 }
+
+// PAR-RUN-5: step outputs land where the runner will actually read them.
+//
+// This is the third convention the runner dialect decides, after annotations and
+// summaries, and the only one whose failure is completely silent. A summary that
+// goes nowhere is invisible; an annotation in the wrong dialect is at least
+// visible as noise. But an output written to a file the runner does not consume
+// produces no error anywhere — the job succeeds, and the next step reads an empty
+// variable and carries on with a default. That is a wrong release, not a failed
+// one.
+//
+// The two forges disagree about where outputs go, which is the whole point:
+//
+//   - Forgejo's native variable is $FORGEJO_OUTPUT, with $GITHUB_OUTPUT kept as a
+//     compatibility alias since Forgejo Runner 7.0.0, so the product prefers the
+//     native name and falls back to the alias;
+//   - GitLab has no per-step output file at all. Values reach later jobs through
+//     a dotenv report, so the product writes to the path the pipeline nominates
+//     in $CI_OUTPUT and the pipeline declares it as artifacts:reports:dotenv.
+//
+// They also disagree about the *key*, which is the part a consumer trips over.
+// GitLab dotenv names must be upper snake case, so the product translates its
+// lower-hyphenated keys on the way out: `version-no-v` is written `VERSION_NO_V`
+// on GitLab and stays `version-no-v` on Forgejo. Parity here is therefore not
+// "the same bytes in both files" — it is the same value, under the name each
+// runner can actually resolve. A scenario asserting one spelling on both forges
+// would be asserting a bug.
+//
+// `release resolve metadata` is the verb because it is pure computation — no
+// forge call, no network — so a failure is about the sink and nothing else. The
+// version is distinctive so a match cannot come from anything already in the file.
+func TestInRunner_StepOutputsReachTheRunnersOutputFile(t *testing.T) {
+	const tag = "v0.0.6-outputs"
+
+	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
+		if !livetest.RunsInRunner(kind) {
+			t.Logf("SKIP %s: the in-runner tier does not drive this forge yet", kind)
+
+			continue
+		}
+
+		t.Run(string(kind), func(t *testing.T) {
+			target := livetest.Accept(t, kind)
+			repo := livetest.NewScratchRepo(t, target, "inrunner-output")
+
+			livetest.PrepareTag(t, target, repo, tag)
+			livetest.PublishBinaryAsset(t, target, repo, tag, t.TempDir())
+
+			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
+
+			conclusion := livetest.RunWorkflow(t, target, repo, "step-outputs",
+				outputFileProbe(kind, assetURL))
+			if conclusion != "success" {
+				t.Errorf("%s: run concluded %q — step outputs did not reach the file this runner reads, so a later step sees an empty value and silently uses its default",
+					kind, conclusion)
+			}
+		})
+	}
+}
+
+// outputFileProbe runs an output-writing verb and reads the runner's own output
+// file back.
+//
+// The Forgejo half also settles which variable wins. The runner sets both names,
+// so the probe compares the two paths rather than assuming: when they resolve to
+// the same file the question is moot and it says so, and when they differ the
+// native $FORGEJO_OUTPUT is required to be the one written. Asserting a
+// preference that the runner's own configuration makes unobservable would be
+// testing the fixture.
+func outputFileProbe(kind provider.Platform, assetURL string) string {
+	const resolve = `run_product release resolve metadata \
+  --version v9.9.9-parrun5 --repository livetest/outputs`
+
+	if kind == provider.PlatformGitLab {
+		// GitLab does not provide an output file; the pipeline nominates one,
+		// which is the documented contract rather than a fixture convenience.
+		return `detect:
+  image: quay.io/podman/stable:v5.6.2
+  variables:
+    CI_OUTPUT: build.env
+  script:
+    - |
+      ` + indent(livetest.ProbePrelude(assetURL), 6) + `
+      ` + indent(resolve, 6) + `
+
+      echo "--- $CI_OUTPUT ---"
+      cat "$CI_OUTPUT"
+
+      # Upper snake case, because that is what GitLab dotenv accepts and what a
+      # later job will reference as $VERSION_NO_V.
+      grep -q '^VERSION=v9.9.9-parrun5$' "$CI_OUTPUT"
+      grep -q '^VERSION_NO_V=9.9.9-parrun5$' "$CI_OUTPUT"
+      grep -q '^PROJECT_NAME=outputs$' "$CI_OUTPUT"
+`
+	}
+
+	return `on: [push]
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: outputs must land in the file this runner reads
+        run: |
+          ` + indent(livetest.ProbePrelude(assetURL), 10) + `
+
+          echo "FORGEJO_OUTPUT=${FORGEJO_OUTPUT:-unset}"
+          echo "GITHUB_OUTPUT=${GITHUB_OUTPUT:-unset}"
+
+          if [ -z "${FORGEJO_OUTPUT:-}" ] && [ -z "${GITHUB_OUTPUT:-}" ]; then
+            echo "FAIL: this runner provided no step-output file under either name"
+            exit 1
+          fi
+
+          ` + indent(resolve, 10) + `
+
+          # The native name is preferred; the alias is the fallback. Which file to
+          # read back is therefore the same decision the product just made.
+          target="${FORGEJO_OUTPUT:-$GITHUB_OUTPUT}"
+          echo "--- $target ---"
+          cat "$target"
+
+          grep -q '^version=v9.9.9-parrun5$' "$target"
+          grep -q '^version-no-v=9.9.9-parrun5$' "$target"
+          grep -q '^project-name=outputs$' "$target"
+
+          # When the runner points both names at one file the preference is
+          # unobservable, and claiming to have proven it would be a lie.
+          if [ -n "${FORGEJO_OUTPUT:-}" ] && [ -n "${GITHUB_OUTPUT:-}" ]; then
+            if [ "$FORGEJO_OUTPUT" = "$GITHUB_OUTPUT" ]; then
+              echo "NOTE: both names point at one file; native-vs-alias preference is not observable here"
+            elif grep -q '^version=v9.9.9-parrun5$' "$GITHUB_OUTPUT"; then
+              echo "FAIL: the value went to the \$GITHUB_OUTPUT alias while \$FORGEJO_OUTPUT is set"
+              exit 1
+            fi
+          fi
+`
+}

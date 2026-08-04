@@ -134,6 +134,34 @@ Releases via `/api/v4`. OIDC issuer `$CI_SERVER_URL` (self-hosted) or
 `https://gitlab.com`. No SARIF (GitLab consumes the JSON SAST report
 directly) and no provenance profile.
 
+**Step outputs are renamed on GitLab, and this is the one difference a
+pipeline has to know about.** GitLab has no per-step output file: values reach
+later jobs through a dotenv report, whose variable names must be upper snake
+case. So the CLI's lower-hyphenated output keys are translated on the way out:
+
+| Output | Forgejo / GitHub | GitLab |
+|---|---|---|
+| `version` | `version` | `VERSION` |
+| `version-no-v` | `version-no-v` | `VERSION_NO_V` |
+| `project-name` | `project-name` | `PROJECT_NAME` |
+
+The value is identical; only the name a later job resolves differs. The job
+must nominate the dotenv path in `$CI_OUTPUT` and declare it — the CLI writes
+where the pipeline says, because GitLab provides no default:
+
+```yaml
+resolve:
+  variables:
+    CI_OUTPUT: build.env
+  script:
+    - reusable-ci release resolve metadata --version "$CI_COMMIT_TAG" --repository "$CI_PROJECT_PATH"
+  artifacts:
+    reports:
+      dotenv: build.env
+```
+
+`PAR-RUN-5` asserts this against a real runner on both forges.
+
 ### forgejo
 Releases + asset upload via the Gitea `/api/v1` surface (official Gitea Go
 SDK). Auth precedence `$CI_TOKEN` → `$FORGEJO_TOKEN` → `$GITEA_TOKEN` →
