@@ -482,3 +482,70 @@ func redact(endpoint string) string {
 
 	return parsed.String()
 }
+
+// CommitFile adds or replaces one file on the default branch, so a scenario can
+// move the branch on from where a tag points.
+//
+// Exported because "the tag and the branch head are the same commit" makes a
+// whole class of ref assertions vacuous: a checkout that ignored the requested
+// ref and took the default branch would land on the same commit and look
+// correct. Advancing the branch is what gives those assertions something to be
+// wrong about.
+func CommitFile(tb TB, target Target, repo, path, message, content string) {
+	tb.Helper()
+	requireAccepted(tb, target)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	if err := commitFile(ctx, target, repo, path, message, content); err != nil {
+		tb.Fatalf("livetest: commit %s to %s/%s: %v", path, target.Owner, repo, err)
+	}
+}
+
+// TagCommitSHA asks the forge which commit a tag points at.
+//
+// The oracle for "did the checkout land on the right ref". Asking the resulting
+// clone instead would be asking git about what git just did, and it is fragile
+// besides: a clone made at a branch does not necessarily carry the tag object,
+// so the comparison fails to run rather than failing to match.
+func TagCommitSHA(tb TB, target Target, repo, tag string) string {
+	tb.Helper()
+	requireAccepted(tb, target)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	switch target.Kind {
+	case provider.PlatformGitLab:
+		var payload struct {
+			Commit struct {
+				ID string `json:"id"`
+			} `json:"commit"`
+		}
+
+		endpoint := target.BaseURL() + "/api/v4/projects/" +
+			url.PathEscape(target.Owner+"/"+repo) + "/repository/tags/" + url.PathEscape(tag)
+		if _, err := decode(ctx, target, http.MethodGet, endpoint, nil, &payload, http.StatusOK); err != nil {
+			tb.Fatalf("livetest: read tag %s: %v", tag, err)
+		}
+
+		return payload.Commit.ID
+	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
+		var payload struct {
+			Commit struct {
+				SHA string `json:"sha"`
+			} `json:"commit"`
+		}
+
+		endpoint := target.BaseURL() + "/api/v1/repos/" + url.PathEscape(target.Owner) + "/" +
+			url.PathEscape(repo) + "/tags/" + url.PathEscape(tag)
+		if _, err := decode(ctx, target, http.MethodGet, endpoint, nil, &payload, http.StatusOK); err != nil {
+			tb.Fatalf("livetest: read tag %s: %v", tag, err)
+		}
+
+		return payload.Commit.SHA
+	}
+
+	return ""
+}
