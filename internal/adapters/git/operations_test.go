@@ -14,6 +14,7 @@ import (
 
 	adaptergit "github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
 	domaingit "github.com/diggsweden/reusable-ci/v3/internal/domain/git"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/isolatedgit"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testenv"
 )
@@ -153,10 +154,10 @@ func TestRefTagAndPushHelpers(t *testing.T) {
 	}
 
 	ig.AddBareRemote()
-	if err := r.Push(ctx, "HEAD", "main", true, ""); err != nil {
+	if err := r.Push(ctx, "HEAD", "main", true, runcontext.Credential{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.PushTagNoForce(ctx, "v1.1.0", ""); err != nil {
+	if err := r.PushTagNoForce(ctx, "v1.1.0", runcontext.Credential{}); err != nil {
 		t.Fatal(err)
 	}
 	remoteTag := ig.Git("ls-remote", "--tags", "origin", "v1.1.0")
@@ -196,11 +197,11 @@ func TestPush_TokenAuthNotPersisted(t *testing.T) {
 	ig.AddCommit("second")
 	ig.AddTag("v2.0.0", "two")
 
-	if err := r.Push(ctx, "HEAD", "main", true, "secret-token"); err != nil {
+	if err := r.Push(ctx, "HEAD", "main", true, runcontext.OperatorCredential("secret-token")); err != nil {
 		t.Fatalf("branch push with token: %v", err)
 	}
 
-	if err := r.PushTagNoForce(ctx, "v2.0.0", "secret-token"); err != nil {
+	if err := r.PushTagNoForce(ctx, "v2.0.0", runcontext.OperatorCredential("secret-token")); err != nil {
 		t.Fatalf("tag push with token: %v", err)
 	}
 

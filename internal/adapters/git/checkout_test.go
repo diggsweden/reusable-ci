@@ -15,6 +15,7 @@ import (
 
 	adaptergit "github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/isolatedgit"
 )
 
@@ -94,7 +95,7 @@ func TestFetchAndCheckoutDetach_Local(t *testing.T) {
 	}
 
 	// Tag path.
-	if err := r.Fetch(ctx, src.Dir, []string{"+refs/tags/v1.0.0:refs/tags/v1.0.0"}, "", 0); err != nil {
+	if err := r.Fetch(ctx, src.Dir, []string{"+refs/tags/v1.0.0:refs/tags/v1.0.0"}, runcontext.Credential{}, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.CheckoutDetach(ctx, "refs/tags/v1.0.0"); err != nil {
@@ -105,7 +106,7 @@ func TestFetchAndCheckoutDetach_Local(t *testing.T) {
 	}
 
 	// Branch path.
-	if err := r.Fetch(ctx, src.Dir, []string{"+refs/heads/feature:refs/remotes/origin/feature"}, "", 0); err != nil {
+	if err := r.Fetch(ctx, src.Dir, []string{"+refs/heads/feature:refs/remotes/origin/feature"}, runcontext.Credential{}, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.CheckoutDetach(ctx, "refs/remotes/origin/feature"); err != nil {
@@ -135,7 +136,9 @@ func TestSparseCheckout_Local(t *testing.T) {
 		func() error { return r.EnablePartialClone(ctx) },
 		func() error { return r.SparseInit(ctx, true) },
 		func() error { return r.SparseSet(ctx, []string{"keep"}) },
-		func() error { return r.Fetch(ctx, src.Dir, []string{"+refs/tags/snap:refs/tags/snap"}, "", 0) },
+		func() error {
+			return r.Fetch(ctx, src.Dir, []string{"+refs/tags/snap:refs/tags/snap"}, runcontext.Credential{}, 0)
+		},
 		func() error { return r.CheckoutDetach(ctx, "refs/tags/snap") },
 	} {
 		if err := step(); err != nil {
@@ -181,7 +184,7 @@ func TestFetchTags_Local(t *testing.T) {
 
 	// Default fetch is --no-tags: the branch's commits arrive, the tag ref
 	// does not.
-	if err := r.Fetch(ctx, src.Dir, []string{"+refs/heads/work:refs/remotes/origin/work"}, "", 0); err != nil {
+	if err := r.Fetch(ctx, src.Dir, []string{"+refs/heads/work:refs/remotes/origin/work"}, runcontext.Credential{}, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -189,7 +192,7 @@ func TestFetchTags_Local(t *testing.T) {
 		t.Fatalf("tag present after --no-tags fetch: %q", tags)
 	}
 
-	if err := r.FetchTags(ctx, src.Dir, ""); err != nil {
+	if err := r.FetchTags(ctx, src.Dir, runcontext.Credential{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -222,7 +225,7 @@ func TestFetchAllRefs_Local(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := r.FetchAllRefs(ctx, src.Dir, ""); err != nil {
+	if err := r.FetchAllRefs(ctx, src.Dir, runcontext.Credential{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -257,7 +260,7 @@ func TestFetch_AuthHeaderNotPersisted(t *testing.T) {
 	if err := r.RemoteAdd(ctx, "origin", src.Dir); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Fetch(ctx, "https://codeberg.org/owner/repo.git", []string{"+refs/tags/v1.0.0:refs/tags/v1.0.0"}, "secret-token", 0); err != nil {
+	if err := r.Fetch(ctx, "https://codeberg.org/owner/repo.git", []string{"+refs/tags/v1.0.0:refs/tags/v1.0.0"}, runcontext.OperatorCredential("secret-token"), 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -295,7 +298,7 @@ func TestFetchDepth_Local(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := r.Fetch(ctx, remote, []string{"+refs/heads/main:refs/remotes/origin/main"}, "", 1); err != nil {
+	if err := r.Fetch(ctx, remote, []string{"+refs/heads/main:refs/remotes/origin/main"}, runcontext.OperatorCredential(""), 1); err != nil {
 		t.Fatal(err)
 	}
 
