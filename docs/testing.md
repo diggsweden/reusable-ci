@@ -60,10 +60,13 @@ swept explicitly and versioned per run, because deleting the repository does not
 remove it; and fixtures pre-check that state is absent, so "it was published"
 cannot be mistaken for "it was already published".
 
-**Diagnosing a failing in-runner scenario.** Those report only a run
-conclusion, and the job log that would explain it lives in a scratch repository
-teardown is about to delete — Forgejo serves those logs through no stable API
-route. `RC_LIVE_KEEP_SCRATCH=1` keeps the repository so the log can be read:
+**Diagnosing a failing in-runner scenario.** A failing scenario prints the tail
+of the job log itself, on both forges, because a bare conclusion is the same
+defect as a missing tool discovered mid-run: right answer, useless vocabulary.
+
+When the log is not enough — the job passed but produced the wrong artifact, or
+the failure is in state teardown is about to delete — `RC_LIVE_KEEP_SCRATCH=1`
+keeps the scratch repository so it can be inspected on the forge:
 
 ```text
 RC_LIVE_KEEP_SCRATCH=1 go test -tags=live -run TestInRunner_... ./internal/livetest/...
