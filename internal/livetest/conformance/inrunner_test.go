@@ -26,6 +26,7 @@ package conformance_test
 // from a scrape.
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
@@ -180,5 +181,88 @@ jobs:
           ./reusable-ci doctor --json > report.json || true
           cat report.json
           grep -qE '"runner":[[:space:]]*"` + want + `"' report.json
+`
+}
+
+// PAR-RUN-3: the annotation dialect follows the runner, not the workflow syntax.
+//
+// GitHub workflow commands (::error::, ::warning::, ::group::) are rendered by
+// GitHub and by nothing else. Forgejo implements the same workflow *syntax* while
+// rendering none of them, so a runner mis-detected as GitHub emits `::error::`
+// into a log that shows it verbatim — the diagnostic becomes noise, and the
+// Annotations pane a maintainer looks at stays empty.
+//
+// That is the concrete damage PAR-RUN-2's detection prevents, so this asserts it
+// where it actually happens: in a job, in the log, on a forge that is not GitHub.
+// The claim is deliberately negative — no GitHub dialect here — because each
+// non-GitHub forge renders its own way and prescribing the positive form would
+// pin the wrong thing.
+func TestInRunner_NoGitHubAnnotationsOnOtherForges(t *testing.T) {
+	const tag = "v0.0.2-annotations"
+
+	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
+		if !livetest.RunsInRunner(kind) {
+			t.Logf("SKIP %s: the in-runner tier does not drive this forge yet", kind)
+
+			continue
+		}
+
+		t.Run(string(kind), func(t *testing.T) {
+			target := livetest.Accept(t, kind)
+			repo := livetest.NewScratchRepo(t, target, "inrunner-annot")
+
+			livetest.PrepareTag(t, target, repo, tag)
+			livetest.PublishBinaryAsset(t, target, repo, tag, t.TempDir())
+
+			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
+
+			conclusion := livetest.RunWorkflow(t, target, repo, "annotation-dialect",
+				annotationProbe(kind, assetURL))
+			if conclusion != "success" {
+				t.Errorf("%s: run concluded %q — the product emitted GitHub workflow commands on a runner that does not render them, so its diagnostics reach the log as literal text",
+					kind, conclusion)
+			}
+		})
+	}
+}
+
+// annotationProbe drives a verb that reports through the annotator and fails the
+// job if GitHub's dialect appears.
+//
+// `doctor` is the vehicle because it always has something to say and never
+// mutates anything, so the probe stays about the dialect. Its exit status is
+// ignored: whether this lab passes a health check is not the claim.
+func annotationProbe(kind provider.Platform, assetURL string) string {
+	check := `./reusable-ci doctor > out.txt 2>&1 || true
+cat out.txt
+
+# A negative assertion over an empty file proves nothing, and a verb that
+# printed nothing would pass it. Require output before judging its dialect.
+test -s out.txt
+
+if grep -qE '::(error|warning|notice|group|endgroup)::' out.txt; then
+  echo "FAIL: GitHub workflow commands emitted on a runner that does not render them"
+  exit 1
+fi`
+
+	if kind == provider.PlatformGitLab {
+		return `detect:
+  image: quay.io/podman/stable:v5.6.2
+  script:
+    - curl -fsSLk -o reusable-ci "` + assetURL + `"
+    - chmod +x reusable-ci
+    - |
+      ` + strings.ReplaceAll(check, "\n", "\n      ") + `
+`
+	}
+
+	return `on: [push]
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: the annotation dialect must match the runner
+        run: |
+          ` + strings.ReplaceAll(check, "\n", "\n          ") + `
 `
 }
