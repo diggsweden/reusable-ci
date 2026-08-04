@@ -5,7 +5,11 @@
 package livetest
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -149,6 +153,44 @@ func pushArtifact(tb TB, target Target, repo, tag string, artifact pushable, isI
 	}
 
 	return Image{Ref: reference.String(), Digest: descriptor.Digest.String(), Index: isIndex}
+}
+
+// RegistryAuthFile writes a Docker auth config for the target's registry and
+// returns its path, for the verbs that reach a registry in-process.
+//
+// The product resolves registry credentials from
+// $REUSABLE_CI_REGISTRY_AUTH_FILE, falling back to the ambient Docker keychain.
+// A scenario must supply the file rather than lean on that fallback: the
+// closed environment CLI runs in has no ambient keychain by design, and a test
+// that quietly depended on the operator's ~/.docker/config.json would pass or
+// fail based on who ran it.
+func RegistryAuthFile(tb TB, target Target, dir string) string {
+	tb.Helper()
+
+	host, err := RegistryHost(target)
+	if err != nil {
+		tb.Fatalf("livetest: %v", err)
+	}
+
+	credential := base64.StdEncoding.EncodeToString([]byte(target.Owner + ":" + target.Token))
+
+	config := map[string]any{
+		"auths": map[string]any{
+			host: map[string]string{"auth": credential},
+		},
+	}
+
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		tb.Fatalf("livetest: encode registry auth: %v", err)
+	}
+
+	path := filepath.Join(dir, "registry-auth.json")
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		tb.Fatalf("livetest: write registry auth: %v", err)
+	}
+
+	return path
 }
 
 // ImageDigest asks the registry what it currently serves for a tag. Absent is

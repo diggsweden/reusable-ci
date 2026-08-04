@@ -114,7 +114,7 @@ func TestRelease_CreateWithAssets_IsEquivalentAcrossForges(t *testing.T) {
 			}
 
 			// Every assertion below reads the forge directly. Going through the
-			// adapter would let an adapter that mis-parses its own writes agree
+			// adapter would let an adapter that misreads its own writes agree
 			// with itself and pass.
 			reader := rawref.Reader{
 				Forge: string(kind),

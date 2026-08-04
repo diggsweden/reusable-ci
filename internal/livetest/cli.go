@@ -76,6 +76,27 @@ func Binary(tb TB) string {
 // asserts about degradation is an exit code plus a message.
 func CLI(tb TB, target Target, repo string, args ...string) Run {
 	tb.Helper()
+
+	return CLIIn(tb, target, repo, RunOptions{}, args...)
+}
+
+// RunOptions adjusts one invocation. Both fields exist because the product is
+// right to care about them: several verbs record paths that a consumer resolves
+// later, so they insist those paths are relative, which only means something
+// against a known working directory.
+type RunOptions struct {
+	// Dir is the working directory. Empty means the test's own.
+	Dir string
+
+	// Env adds to the closed environment, merged last so a scenario can be
+	// explicit about what the product sees.
+	Env map[string]string
+}
+
+// CLIIn is CLI with options, for the verbs that need a working directory or
+// extra variables — registry credentials, most of all.
+func CLIIn(tb TB, target Target, repo string, opts RunOptions, args ...string) Run {
+	tb.Helper()
 	requireAccepted(tb, target)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -83,7 +104,14 @@ func CLI(tb TB, target Target, repo string, args ...string) Run {
 
 	// G204: args are scenario-authored verbs and flags, never external input.
 	cmd := exec.CommandContext(ctx, Binary(tb), args...) //nolint:gosec
-	cmd.Env = cliEnv(target, repo)
+
+	env := cliEnv(target, repo)
+	for key, value := range opts.Env {
+		env = append(env, key+"="+value)
+	}
+
+	cmd.Env = env
+	cmd.Dir = opts.Dir
 
 	var stdout, stderr bytes.Buffer
 

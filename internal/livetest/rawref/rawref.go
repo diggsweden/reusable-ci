@@ -9,7 +9,7 @@
 // # Why it is its own package
 //
 // The entire value here is sharing nothing with the thing under test. If the
-// oracle called the adapter, an adapter that mis-parsed a response would agree
+// oracle called the adapter, an adapter that misread a response would agree
 // with itself and the scenario would pass while the forge held something else
 // entirely. Living in a separate package lets .golangci.yml forbid importing
 // internal/adapters/... here, so the independence is a build failure rather
@@ -200,6 +200,7 @@ func (r Reader) get(ctx context.Context, endpoint string, into any) (bool, error
 	if err != nil {
 		return false, err
 	}
+
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
@@ -231,6 +232,7 @@ func (r Reader) digestAndSize(ctx context.Context, rawURL string) (string, int64
 	if err != nil {
 		return "", 0, err
 	}
+
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
@@ -276,6 +278,7 @@ func SHA256(path string) (string, int64, error) {
 	if err != nil {
 		return "", 0, fmt.Errorf("rawref: open %s: %w", path, err)
 	}
+
 	defer func() { _ = file.Close() }()
 
 	hash := sha256.New()
@@ -294,7 +297,7 @@ func FormatSize(n int64) string { return strconv.FormatInt(n, 10) + "B" }
 func redact(endpoint string) string {
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
-		return "<unparseable endpoint>"
+		return "<unparsable endpoint>"
 	}
 
 	parsed.RawQuery = ""

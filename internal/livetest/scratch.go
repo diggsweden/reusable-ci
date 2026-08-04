@@ -423,6 +423,7 @@ func decode(ctx context.Context, target Target, method, endpoint string, body, i
 	if err != nil {
 		return 0, fmt.Errorf("%s %s: %w", method, redact(endpoint), err)
 	}
+
 	defer func() { _ = resp.Body.Close() }()
 
 	if !accepted(resp.StatusCode, accept) {
@@ -465,7 +466,7 @@ func authorize(req *http.Request, target Target) {
 func redact(endpoint string) string {
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
-		return "<unparseable endpoint>"
+		return "<unparsable endpoint>"
 	}
 
 	parsed.RawQuery = ""
