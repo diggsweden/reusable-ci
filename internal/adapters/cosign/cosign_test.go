@@ -7,12 +7,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/cosign"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/mockbinary"
 )
 
@@ -37,10 +40,12 @@ func TestSignBlob_KeylessArgvShape(t *testing.T) {
 		t.Fatalf("expected 1 cosign invocation, got %d", len(invs))
 	}
 
+	// The issuer is named in the signing config, not on argv: cosign 3.x
+	// deprecated --oidc-issuer and refuses it alongside a config.
 	want := []string{
 		"sign-blob", "--yes",
 		"--bundle", "app.tgz.bundle",
-		"--oidc-issuer", "https://token.actions.githubusercontent.com",
+		"--signing-config", invs[0].Args[slices.Index(invs[0].Args, "--signing-config")+1],
 		"app.tgz",
 	}
 	if !slices.Equal(invs[0].Args, want) {
@@ -295,13 +300,15 @@ func TestSignImage_KeylessArgvShape(t *testing.T) {
 		t.Fatalf("SignImage: %v", err)
 	}
 
+	got := bins.Invocations("cosign")[0].Args
+
 	want := []string{
-		"sign", "--yes", "--recursive",
-		"--oidc-issuer", "https://token.actions.githubusercontent.com",
+		"sign", "--yes",
+		"--signing-config", got[slices.Index(got, "--signing-config")+1],
+		"--recursive",
 		testImageDigest,
 	}
 
-	got := bins.Invocations("cosign")[0].Args
 	if !slices.Equal(got, want) {
 		t.Errorf("argv:\n got=%v\nwant=%v", got, want)
 	}
@@ -469,16 +476,25 @@ func TestVerifyBlob_RejectsKeylessWithoutIdentity(t *testing.T) {
 	}
 }
 
-// A self-hosted Sigstore is reached by naming its CA, not only its issuer.
+// A self-hosted Sigstore is reached through the signing config, which is the
+// only channel cosign 3.x still listens on.
 //
-// The failure this pins is quiet and expensive: with only --oidc-issuer set,
-// cosign mints a token from the operator's own identity provider and then
-// presents it to the PUBLIC Fulcio, which either refuses it or -- worse for an
-// air-gapped deployment -- is contacted at all. The URLs are cosign flags with
-// no environment equivalent, so nothing outside the argv can correct it.
+// This test previously asserted --fulcio-url and --oidc-issuer on the argv. Both
+// are deprecated in cosign 3.x and, worse, refused alongside a signing config --
+// which this adapter already passes whenever the transparency log is off. So the
+// combination a self-hosted deployment actually runs failed outright, and the
+// test was pinning the broken shape.
 func TestSignBlob_KeylessSelfHostedSigstoreArgvShape(t *testing.T) {
+	captured := filepath.Join(t.TempDir(), "signing-config.json")
+
 	bins := mockbinary.New(t)
-	bins.Add("cosign", ":")
+	// The adapter removes the document when the call returns, which is correct
+	// and makes it unreadable afterwards -- so the fake cosign keeps a copy
+	// while it exists, the same way a real one would read it.
+	bins.Add("cosign", `while [ $# -gt 0 ]; do
+  if [ "$1" = "--signing-config" ]; then cp "$2" `+captured+`; fi
+  shift
+done`)
 
 	a := &cosign.Adapter{Bin: bins.Path("cosign")}
 
@@ -488,38 +504,47 @@ func TestSignBlob_KeylessSelfHostedSigstoreArgvShape(t *testing.T) {
 		Keyless:    true,
 		OIDCIssuer: "https://gitlab.example.internal",
 		FulcioURL:  "https://fulcio.example.internal",
-		RekorURL:   "https://rekor.example.internal",
 	}, nil)
 	if err != nil {
 		t.Fatalf("SignBlob: %v", err)
 	}
 
-	want := []string{
-		"sign-blob", "--yes",
-		"--bundle", "app.tgz.bundle",
-		"--oidc-issuer", "https://gitlab.example.internal",
-		"--fulcio-url", "https://fulcio.example.internal",
-		"--rekor-url", "https://rekor.example.internal",
-		"app.tgz",
+	got := bins.Invocations("cosign")[0].Args
+
+	// The deprecated flags must not appear at all: cosign rejects the run
+	// outright when they accompany a config.
+	for _, deprecated := range []string{"--fulcio-url", "--rekor-url", "--oidc-issuer"} {
+		if slices.Contains(got, deprecated) {
+			t.Errorf("argv carries %s, which cosign 3.x refuses alongside --signing-config: %v", deprecated, got)
+		}
 	}
 
-	invs := bins.Invocations("cosign")
-	if len(invs) != 1 {
-		t.Fatalf("expected 1 cosign invocation, got %d", len(invs))
+	if !slices.Contains(got, "--signing-config") {
+		t.Fatalf("no --signing-config in argv: %v", got)
 	}
 
-	if !slices.Equal(invs[0].Args, want) {
-		t.Errorf("argv:\n got=%v\nwant=%v", invs[0].Args, want)
+	// The document is the assertion, not the flag: a config naming none of the
+	// services would satisfy the flag and send the run to public Sigstore.
+	document, readErr := os.ReadFile(captured)
+	if readErr != nil {
+		t.Fatalf("read signing config: %v", readErr)
+	}
+
+	for _, want := range []string{"https://fulcio.example.internal", "https://gitlab.example.internal"} {
+		if !strings.Contains(string(document), want) {
+			t.Errorf("signing config does not name %s:\n%s", want, document)
+		}
 	}
 }
 
-// Unset endpoints must not appear at all, so the default stays cosign's own
-// rather than an empty flag value cosign would reject.
+// With every service at its default and the log on, cosign's own configuration
+// is correct, so the run must carry no config at all -- passing one could only
+// diverge from what cosign would have done.
 func TestSignBlob_KeylessWithoutEndpointsOmitsThem(t *testing.T) {
 	bins := mockbinary.New(t)
 	bins.Add("cosign", ":")
 
-	a := &cosign.Adapter{Bin: bins.Path("cosign")}
+	a := &cosign.Adapter{Bin: bins.Path("cosign"), Transparency: domainrelease.TransparencyPublic}
 
 	if err := a.SignBlob(context.Background(), cosign.SignBlobInput{
 		Artifact:   "app.tgz",
@@ -530,9 +555,9 @@ func TestSignBlob_KeylessWithoutEndpointsOmitsThem(t *testing.T) {
 	}
 
 	got := bins.Invocations("cosign")[0].Args
-	for _, flag := range []string{"--fulcio-url", "--rekor-url"} {
+	for _, flag := range []string{"--fulcio-url", "--rekor-url", "--oidc-issuer", "--signing-config"} {
 		if slices.Contains(got, flag) {
-			t.Errorf("argv carries %s with nothing set: %v", flag, got)
+			t.Errorf("argv carries %s with nothing configured: %v", flag, got)
 		}
 	}
 }

@@ -5,11 +5,13 @@ package cosign_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/cosign"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
@@ -400,5 +402,74 @@ func TestTransparencyEnvFallsBackToPublish(t *testing.T) {
 			t.Errorf("%q resolved to %q, which suppresses the transparency log; only the exact "+
 				"value %q may", v, got, domainrelease.TransparencyNone)
 		}
+	}
+}
+
+// The generated document must still be exactly what cosign's own generator
+// emits for a run that publishes nothing.
+//
+// This literal used to be the production value, written by hand with a comment
+// claiming byte-identity with `cosign signing-config create
+// --no-default-{rekor,fulcio,oidc,tsa}`. The claim was worth keeping and the
+// literal was not: it now sits here as the expectation, so the builder that
+// replaced it is held to the same standard rather than merely inheriting the
+// comment.
+func TestBuildSigningConfig_NoServicesMatchesCosignsOwnOutput(t *testing.T) {
+	const want = `{"mediaType":"application/vnd.dev.sigstore.signingconfig.v0.2+json",` +
+		`"rekorTlogConfig":{},"tsaConfig":{}}`
+
+	got, err := cosign.BuildSigningConfigForTest(cosign.SigningConfigInputForTest{}, time.Unix(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(got) != want {
+		t.Errorf("signing config:\n got=%s\nwant=%s", got, want)
+	}
+}
+
+// A self-hosted CA and issuer must appear as service entries, because that is
+// the only channel cosign 3.x still listens on.
+func TestBuildSigningConfig_NamesSelfHostedServices(t *testing.T) {
+	got, err := cosign.BuildSigningConfigForTest(cosign.SigningConfigInputForTest{
+		FulcioURL:  "https://fulcio.example.internal",
+		OIDCIssuer: "https://gitlab.example.internal",
+	}, time.Unix(0, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var doc struct {
+		CAUrls []struct {
+			URL             string `json:"url"`
+			MajorAPIVersion int    `json:"majorApiVersion"`
+			Operator        string `json:"operator"`
+		} `json:"caUrls"`
+		OIDCUrls []struct {
+			URL string `json:"url"`
+		} `json:"oidcUrls"`
+		RekorTlogUrls []struct{} `json:"rekorTlogUrls"`
+	}
+
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("generated config is not valid JSON: %v\n%s", err, got)
+	}
+
+	if len(doc.CAUrls) != 1 || doc.CAUrls[0].URL != "https://fulcio.example.internal" {
+		t.Errorf("caUrls = %+v, want the self-hosted CA", doc.CAUrls)
+	}
+
+	if doc.CAUrls[0].MajorAPIVersion != 1 || doc.CAUrls[0].Operator == "" {
+		t.Errorf("service entry is missing fields cosign requires: %+v", doc.CAUrls[0])
+	}
+
+	if len(doc.OIDCUrls) != 1 || doc.OIDCUrls[0].URL != "https://gitlab.example.internal" {
+		t.Errorf("oidcUrls = %+v, want the self-hosted issuer", doc.OIDCUrls)
+	}
+
+	// No log was asked for and none is running, so naming one would be a lie
+	// cosign would then try to honour.
+	if len(doc.RekorTlogUrls) != 0 {
+		t.Errorf("a transparency log was named when none was configured")
 	}
 }

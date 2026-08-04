@@ -17,6 +17,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -82,24 +83,8 @@ func TransparencyFromEnv() release.Transparency {
 	return parsed
 }
 
-// noLogSigningConfig is a Sigstore signing config naming no transparency-log
-// service and no TSA — the document cosign needs to sign without publishing.
-//
-// It is written literally rather than shelled out to `cosign signing-config
-// create` for two reasons: that would double the cosign invocations per signing
-// call, and the adapter's whole job is to keep cosign's file format from
-// leaking into anyone else's world. It is byte-identical to what cosign 3.1.1's
-// own generator emits for --no-default-{rekor,fulcio,oidc,tsa}.
-//
-// The media type pins a format version, which is the one thing that could rot
-// under a cosign upgrade. The black-box suite drives real cosign through this
-// path (TestReleaseSignPublishesNoTlogEntry), so a format bump surfaces there
-// as a failed signature rather than as a silent fallback to publishing.
-const noLogSigningConfig = `{"mediaType":"application/vnd.dev.sigstore.signingconfig.v0.2+json",` +
-	`"rekorTlogConfig":{},"tsaConfig":{}}`
-
 // emptyTrustedRoot is a Sigstore trusted root naming no services — the
-// counterpart to noLogSigningConfig, and byte-identical to what
+// counterpart to the signing config, and byte-identical to what
 // `cosign trusted-root create` emits with no service flags.
 //
 // It exists because a signing config alone does not make a run offline. cosign
@@ -175,7 +160,8 @@ func (a *Adapter) SignBlob(ctx context.Context, in SignBlobInput, errOut io.Writ
 		return err
 	}
 
-	args, cleanup, err := a.withSigningConfig([]string{"sign-blob", flagYes, "--bundle", in.BundlePath})
+	args, cleanup, err := a.withSigningConfig([]string{"sign-blob", flagYes, "--bundle", in.BundlePath},
+		signingConfigInput{FulcioURL: in.FulcioURL, OIDCIssuer: in.OIDCIssuer, RekorURL: in.RekorURL})
 	if err != nil {
 		return err
 	}
@@ -184,14 +170,10 @@ func (a *Adapter) SignBlob(ctx context.Context, in SignBlobInput, errOut io.Writ
 
 	switch {
 	case in.Keyless:
-		// cosign infers the OIDC token from the runner; --oidc-issuer is only
-		// set when the caller overrides it (GitLab, Forgejo, or a self-hosted
-		// identity provider).
-		if in.OIDCIssuer != "" {
-			args = append(args, "--oidc-issuer", in.OIDCIssuer)
-		}
+		// The issuer, CA and log are named in the signing config rather than on
+		// argv: cosign 3.x deprecated the service flags and refuses them
+		// alongside a config. cosign still infers the TOKEN from the runner.
 
-		args = keylessEndpoints(args, in.FulcioURL, in.RekorURL)
 	default:
 		args = append(args, "--key", in.KeyRef)
 	}
@@ -257,7 +239,8 @@ func (a *Adapter) SignImage(ctx context.Context, in SignImageInput, errOut io.Wr
 		return err
 	}
 
-	args, cleanup, err := a.withSigningConfig([]string{"sign", flagYes})
+	args, cleanup, err := a.withSigningConfig([]string{"sign", flagYes},
+		signingConfigInput{FulcioURL: in.FulcioURL, OIDCIssuer: in.OIDCIssuer, RekorURL: in.RekorURL})
 	if err != nil {
 		return err
 	}
@@ -270,11 +253,7 @@ func (a *Adapter) SignImage(ctx context.Context, in SignImageInput, errOut io.Wr
 
 	switch {
 	case in.Keyless:
-		if in.OIDCIssuer != "" {
-			args = append(args, "--oidc-issuer", in.OIDCIssuer)
-		}
 
-		args = keylessEndpoints(args, in.FulcioURL, in.RekorURL)
 	default:
 		args = append(args, "--key", in.KeyRef)
 	}
@@ -282,53 +261,6 @@ func (a *Adapter) SignImage(ctx context.Context, in SignImageInput, errOut io.Wr
 	args = append(args, in.ImageRef)
 
 	return a.run(ctx, errOut, args...)
-}
-
-// keylessEndpoints appends the service overrides a self-hosted Sigstore needs.
-//
-// cosign takes these as flags with no environment equivalent, so an operator
-// running their own Fulcio cannot configure it out of band -- the URL has to be
-// on the argv or the request goes to public Sigstore. Naming the OIDC issuer is
-// not enough on its own and looks like it should be, which is the trap: the
-// token is minted by the right issuer and then presented to the wrong CA.
-//
-// KNOWN WRONG ON COSIGN 3.x, and left in place only until the signing-config
-// rework lands, because removing it would take self-hosted Sigstore support
-// from broken-in-one-case to absent.
-//
-// The reasoning that produced it was: do not hand-assemble a signing-config
-// service entry -- with its api-version, validity window and operator -- when
-// two documented flags reach the same place. cosign 3.1.2 refutes that:
-//
-//	Flag --oidc-issuer has been deprecated, please use a signing config
-//	Flag --fulcio-url has been deprecated, please use a signing config
-//	Error: cannot specify service URLs and use signing config
-//
-// So the flags are deprecated AND they conflict with the --signing-config this
-// adapter already passes whenever the transparency log is off. A private Fulcio
-// plus transparency=none -- the combination a self-hosted deployment actually
-// uses -- fails outright.
-//
-// The fix is to put the endpoints in the signing config, and to have cosign
-// generate it rather than hand-writing the schema:
-//
-//	cosign signing-config create \
-//	  --fulcio="url=<fulcio>,api-version=1,start-time=<rfc3339>" \
-//	  --oidc-provider="url=<issuer>,api-version=1,start-time=<rfc3339>" \
-//	  --no-default-rekor --no-default-tsa --out <file>
-//
-// That replaces the literal document above as well, so there is one mechanism
-// instead of two, and the format stays cosign's to define.
-func keylessEndpoints(args []string, fulcioURL, rekorURL string) []string {
-	if fulcioURL != "" {
-		args = append(args, "--fulcio-url", fulcioURL)
-	}
-
-	if rekorURL != "" {
-		args = append(args, "--rekor-url", rekorURL)
-	}
-
-	return args
 }
 
 // AttestImageInput drives a single `cosign attest <image-ref>`
@@ -363,7 +295,8 @@ func (a *Adapter) AttestImage(ctx context.Context, in AttestImageInput, errOut i
 		return err
 	}
 
-	args, cleanup, err := a.withSigningConfig([]string{"attest", flagYes, "--type", in.PredicateType, "--predicate", in.PredicatePath})
+	args, cleanup, err := a.withSigningConfig([]string{"attest", flagYes, "--type", in.PredicateType, "--predicate", in.PredicatePath},
+		signingConfigInput{FulcioURL: in.FulcioURL, OIDCIssuer: in.OIDCIssuer, RekorURL: in.RekorURL})
 	if err != nil {
 		return err
 	}
@@ -376,11 +309,7 @@ func (a *Adapter) AttestImage(ctx context.Context, in AttestImageInput, errOut i
 
 	switch {
 	case in.Keyless:
-		if in.OIDCIssuer != "" {
-			args = append(args, "--oidc-issuer", in.OIDCIssuer)
-		}
 
-		args = keylessEndpoints(args, in.FulcioURL, in.RekorURL)
 	default:
 		args = append(args, "--key", in.KeyRef)
 	}
@@ -517,15 +446,33 @@ func (a *Adapter) publishesToLog() bool { return a.Transparency.PublishesToLog()
 // Files are written per call rather than cached on the Adapter: a signing run
 // is short, the documents are ~100 bytes each, and per-call scope means there
 // is no lifetime to manage and nothing to leak into the runner's temp dir.
-func (a *Adapter) withSigningConfig(args []string) ([]string, func(), error) {
+func (a *Adapter) withSigningConfig(args []string, services signingConfigInput) ([]string, func(), error) {
 	noop := func() {}
-	if a.publishesToLog() {
+
+	services.PublishesTo = a.publishesToLog()
+	if !services.needed() {
 		return args, noop, nil
 	}
 
-	config, cleanConfig, err := writeTempJSON("signing-config", noLogSigningConfig)
+	document, err := buildSigningConfig(services, time.Now())
 	if err != nil {
 		return nil, noop, err
+	}
+
+	config, cleanConfig, err := writeTempJSON("signing-config", string(document))
+	if err != nil {
+		return nil, noop, err
+	}
+
+	args = append(args, flagSigningConfig, config)
+
+	// The trust root is only supplied when nothing is published. With a log in
+	// play cosign needs the real trust material to verify what it just wrote,
+	// and an empty root would deny it that; with no log there is no service
+	// whose material it could meaningfully check, and supplying an empty root is
+	// what stops it reaching the public TUF CDN to look.
+	if services.PublishesTo {
+		return args, cleanConfig, nil
 	}
 
 	root, cleanRoot, err := writeTempJSON("trusted-root", emptyTrustedRoot)
@@ -537,7 +484,7 @@ func (a *Adapter) withSigningConfig(args []string) ([]string, func(), error) {
 
 	cleanup := func() { cleanConfig(); cleanRoot() }
 
-	return append(args, flagSigningConfig, config, flagTrustedRoot, root), cleanup, nil
+	return append(args, flagTrustedRoot, root), cleanup, nil
 }
 
 // writeTempJSON materialises one of the Sigstore documents above into a
