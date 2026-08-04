@@ -52,15 +52,25 @@ type Stage struct {
 
 	// UseEntryReleaseTags switches release promotion from the generic
 	// <base>:release pointer to the exact release destinations carried by the
-	// ledger entry: final_tag and optional moving_tag. This is the build-once,
-	// sign-before-publish model used by Forgejo releases where the immutable
-	// final tag is not applied until after signing.
+	// ledger entry: final_tag and optional moving_tag.
+	//
+	// Use it whenever the immutable final tag is not applied until after
+	// signing — the build-once, sign-before-publish model. That condition, not
+	// a particular forge, is what selects this mode; it is named here because
+	// Forgejo's release flow is where it first appeared, and it applies
+	// unchanged on any registry.
 	UseEntryReleaseTags bool
 
 	// AllowDigestRefFallback lets promotion recover when candidate_tag no longer
 	// resolves to the recorded digest by copying from the entry's digest-pinned
-	// ref instead. Off by default so existing users keep strict candidate-tag
-	// validation unless they explicitly opt into Forgejo-style rerun recovery.
+	// ref instead. Off by default, so strict candidate-tag validation stays the
+	// rule unless a caller opts out of it.
+	//
+	// The condition it recovers from is a rerun whose candidate tag has since
+	// been cleaned up or moved — forge-independent, and worth enabling on any
+	// registry where release jobs are re-run. Note it cannot help on a registry
+	// that drops untagged manifests, where the digest ref stops resolving once
+	// no tag references it (see docs/providers.md).
 	AllowDigestRefFallback bool
 }
 

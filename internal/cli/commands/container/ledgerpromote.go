@@ -22,7 +22,7 @@ func digestRefFallbackFlag() cli.Flag {
 	return &cli.BoolFlag{
 		Name:    "allow-digest-ref-fallback",
 		Sources: cli.EnvVars("PROMOTE_ALLOW_DIGEST_REF_FALLBACK"),
-		Usage:   "when candidate_tag is absent or no longer serves the recorded digest, copy from the ledger ref digest instead (Forgejo release rerun recovery)",
+		Usage:   "when candidate_tag is absent or no longer serves the recorded digest, copy from the ledger ref digest instead; recovers a re-run release whose candidate tag has since been cleaned up",
 	}
 }
 
