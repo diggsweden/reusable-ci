@@ -151,6 +151,15 @@ func cliEnv(target Target, repo string) []string {
 		// shell it was.
 		"REUSABLE_CI_PROVIDER": string(target.Kind),
 		"REUSABLE_CI_RUNNER":   "local",
+
+		// Containment, for every invocation rather than for the scenarios that
+		// remember. cosign publishes to the PUBLIC Rekor log by default, and a
+		// Rekor entry is permanent and append-only — a run cannot take one
+		// back. Setting it here means no test can publish, including tests
+		// nobody has written yet, which is the property a per-scenario setting
+		// cannot buy. The engine derives both halves from this one value, so
+		// signing writes no entry and verifying stops demanding one.
+		"REUSABLE_CI_COSIGN_TRANSPARENCY": "none",
 	}
 
 	// The same target mapping the adapters get, so the binary and a role call

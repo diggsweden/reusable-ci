@@ -226,6 +226,79 @@ func RegistryAuthFile(tb TB, target Target, dir string) string {
 	return path
 }
 
+// RegistryAuthConfigDir writes the same credentials as RegistryAuthFile, but as
+// config.json inside a directory, which is the shape $DOCKER_CONFIG names and
+// therefore what the cosign subprocess can read. Returns the directory.
+func RegistryAuthConfigDir(tb TB, target Target, dir string) string {
+	tb.Helper()
+
+	configDir := filepath.Join(dir, "docker")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		tb.Fatalf("livetest: create docker config dir: %v", err)
+	}
+
+	written := RegistryAuthFile(tb, target, configDir)
+	if err := os.Rename(written, filepath.Join(configDir, "config.json")); err != nil {
+		tb.Fatalf("livetest: place docker config: %v", err)
+	}
+
+	return configDir
+}
+
+// SignaturePublishedToTransparencyLog reports whether the cosign signature
+// attached to an image digest carries a transparency-log entry.
+//
+// It reads the signature manifest straight from the registry rather than asking
+// cosign, for a reason that is not about speed: `cosign verify` without
+// --insecure-ignore-tlog fetches Sigstore's trust root from
+// tuf-repo-cdn.sigstore.dev, so using verification to prove "we published
+// nothing" makes an outbound connection to Sigstore on every run — the exact
+// contact the containment exists to avoid. This asks the registry a question it
+// can answer locally.
+//
+// cosign stores a Rekor entry as the dev.sigstore.cosign/bundle annotation on
+// the signature layer. Absent annotation, nothing was published.
+func SignaturePublishedToTransparencyLog(tb TB, target Target, repo, digest string) bool {
+	tb.Helper()
+
+	host, err := RegistryHost(target)
+	if err != nil {
+		tb.Fatalf("livetest: %v", err)
+	}
+
+	// cosign 3.x attaches the signature at the digest-derived tag sha256-<hex>
+	// (the OCI 1.1 referrers fallback scheme). cosign 2.x used a ".sig" suffix;
+	// this was confirmed against the registry rather than assumed, because the
+	// two schemes fail in opposite ways — guessing the old one made this look
+	// like "no signature" when there was one.
+	signatureTag := strings.Replace(digest, ":", "-", 1)
+
+	reference, err := name.NewTag(fmt.Sprintf("%s/%s/%s:%s", host, target.Owner, repo, signatureTag))
+	if err != nil {
+		tb.Fatalf("livetest: parse signature reference: %v", err)
+	}
+
+	image, err := remote.Image(reference, remote.WithAuth(&authn.Basic{
+		Username: target.Owner, Password: target.Token,
+	}))
+	if err != nil {
+		tb.Fatalf("livetest: read signature manifest %s: %v", reference, err)
+	}
+
+	manifest, err := image.Manifest()
+	if err != nil {
+		tb.Fatalf("livetest: decode signature manifest %s: %v", reference, err)
+	}
+
+	for _, layer := range manifest.Layers {
+		if _, published := layer.Annotations["dev.sigstore.cosign/bundle"]; published {
+			return true
+		}
+	}
+
+	return false
+}
+
 // ImageDigest asks the registry what it currently serves for a tag. Absent is
 // ("", false, nil): a tag that is gone is an answer scenarios assert on.
 func ImageDigest(tb TB, target Target, repo, tag string) (string, bool) {
