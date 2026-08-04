@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/github"
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/gitlab"
 	appsummary "github.com/diggsweden/reusable-ci/v3/internal/app/summary"
-	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
 func TestReleaseSummary_HappyPath(t *testing.T) {
@@ -39,7 +40,7 @@ func TestReleaseSummary_HappyPath(t *testing.T) {
 			"cargo_container_first": "success",
 			"go_container_first":    "failure",
 		}),
-		Platform:   provider.PlatformGitHub,
+		URLs:       github.New(),
 		ServerURL:  "https://github.com", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Repository: "owner/repo",
 		Now:        fixedNow(),
@@ -96,7 +97,7 @@ func TestReleaseSummary_GitLabURLs(t *testing.T) {
 
 	err := appsummary.ReleaseSummary(context.Background(), sink, appsummary.ReleaseSummaryInput{
 		ReleaseVersion: "v1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		Platform:       provider.PlatformGitLab,
+		URLs:           gitlab.New(),
 		ServerURL:      "https://gitlab.com",
 		Repository:     "group/proj",
 		Now:            fixedNow(),
@@ -123,7 +124,7 @@ func TestReleaseSummary_MissingStageJSONsDefaultToSkipped(t *testing.T) {
 	err := appsummary.ReleaseSummary(context.Background(), sink, appsummary.ReleaseSummaryInput{
 		ReleaseVersion:      "v1.0.0",
 		CreateReleaseResult: "skipped",
-		Platform:            provider.PlatformGitHub,
+		URLs:                github.New(),
 		ServerURL:           "https://github.com",
 		Repository:          "o/r",
 		Now:                 fixedNow(),

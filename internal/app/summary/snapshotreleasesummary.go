@@ -32,7 +32,7 @@ type SnapshotReleaseSummaryInput struct {
 	BuildStageJSON        string
 	PublishStageJSON      string
 	SnapshotArtifactsJSON string
-	Platform              provider.Platform
+	URLs                  provider.WebURLBuilder // nil when the platform has no web UI
 	ServerURL             string
 	Now                   time.Time
 }
@@ -155,7 +155,7 @@ func SnapshotReleaseSummary(ctx context.Context, sink ci.SummarySink, w io.Write
 
 	_, _ = fmt.Fprintf(&b, "\n## Resources\n")
 	_, _ = fmt.Fprintf(&b, "- [Packages](%s)\n",
-		domainsummary.PackagesURL(in.Platform, in.ServerURL, in.ReleaseRepository))
+		domainsummary.PackagesURL(in.URLs, in.ServerURL, in.ReleaseRepository))
 	_, _ = fmt.Fprintf(&b, "- [Workflow Run](%s)\n\n", in.RunURL)
 	_, _ = fmt.Fprintf(&b, "These are development artifacts tagged with `dev` and are not intended for production use.\n")
 

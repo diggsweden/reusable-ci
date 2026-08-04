@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/github"
 	appsummary "github.com/diggsweden/reusable-ci/v3/internal/app/summary"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
-	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
 func TestSnapshotReleaseSummary_NPMHappyPath(t *testing.T) {
@@ -31,7 +31,7 @@ func TestSnapshotReleaseSummary_NPMHappyPath(t *testing.T) {
 		BuildStageJSON:        stageResultJSON(t, "dev-build", map[string]string{"npm": "success"}),                            //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		PublishStageJSON:      stageResultJSON(t, "dev-publish", map[string]string{"containers": "success", "npm": "success"}), //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		SnapshotArtifactsJSON: `{"npm_package_name":"my-pkg","npm_package_version":"0.0.0-dev.abc"}`,
-		Platform:              provider.PlatformGitHub,
+		URLs:                  github.New(),
 		ServerURL:             "https://github.com", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Now:                   fixedNow(),
 	})
@@ -77,7 +77,7 @@ func TestSnapshotReleaseSummary_ShowsBuildAndSBOMRows(t *testing.T) {
 			"go_container_first": "success",
 			"sbom":               "success",
 		}),
-		Platform:  provider.PlatformGitHub,
+		URLs:      github.New(),
 		ServerURL: "https://github.com",
 		Now:       fixedNow(),
 	})
@@ -106,7 +106,7 @@ func TestSnapshotReleaseSummary_NPMAlreadyExistsNote(t *testing.T) {
 		ProjectType:           projecttype.NPM,
 		PublishStageJSON:      stageResultJSON(t, "dev-publish", map[string]string{"containers": "success", "npm": "success"}),
 		SnapshotArtifactsJSON: `{"npm_package_name":"x","npm_package_version":"0.0.0-dev","npm_publish_status":"already-exists"}`,
-		Platform:              provider.PlatformGitHub,
+		URLs:                  github.New(),
 		ServerURL:             "https://github.com",
 		Now:                   fixedNow(),
 	})
@@ -132,7 +132,7 @@ func TestSnapshotReleaseSummary_NonNPMProjectHidesNPMSections(t *testing.T) {
 	err := appsummary.SnapshotReleaseSummary(context.Background(), sink, &bytes.Buffer{}, appsummary.SnapshotReleaseSummaryInput{
 		ProjectType:      projecttype.Go,
 		PublishStageJSON: stageResultJSON(t, "dev-publish", map[string]string{"containers": "success"}),
-		Platform:         provider.PlatformGitHub,
+		URLs:             github.New(),
 		ServerURL:        "https://github.com",
 		Now:              fixedNow(),
 	})
@@ -164,7 +164,7 @@ func TestSnapshotReleaseSummary_ShowsContainerRowAndResources(t *testing.T) {
 		RunURL:                "https://example.com/run/1",
 		PublishStageJSON:      stageResultJSON(t, "dev-publish", map[string]string{"containers": "success", "npm": "success"}),
 		SnapshotArtifactsJSON: `{"npm_package_name":"@org/pkg","npm_package_version":"1.0.0-dev","npm_publish_status":"published"}`,
-		Platform:              provider.PlatformGitHub,
+		URLs:                  github.New(),
 		ServerURL:             "https://github.com",
 		Now:                   fixedNow(),
 	})
@@ -188,7 +188,7 @@ func TestSnapshotReleaseSummary_NPMNotPublishedFallback(t *testing.T) {
 	err := appsummary.SnapshotReleaseSummary(context.Background(), sink, &bytes.Buffer{}, appsummary.SnapshotReleaseSummaryInput{
 		ProjectType:      projecttype.NPM,
 		PublishStageJSON: stageResultJSON(t, "dev-publish", map[string]string{"npm": "failure"}),
-		Platform:         provider.PlatformGitHub,
+		URLs:             github.New(),
 		ServerURL:        "https://github.com",
 		Now:              fixedNow(),
 	})

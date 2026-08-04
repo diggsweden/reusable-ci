@@ -6,60 +6,51 @@ package summary_test
 import (
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
-func TestReleaseURL(t *testing.T) {
+// What the domain still owns is the fallback: the per-forge routing moved to the
+// adapters behind provider.WebURLBuilder, and is asserted there against each
+// forge's real shape.
+
+type fakeURLs struct{}
+
+func (fakeURLs) ReleaseWebURL(server, repo, version string) string {
+	return server + "/" + repo + "/rel/" + version
+}
+
+func (fakeURLs) PackagesWebURL(server, repo string) string {
+	return server + "/" + repo + "/pkg"
+}
+
+func TestReleaseURL_DelegatesToTheBuilder(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		plat provider.Platform
-		want string
-	}{
-		{provider.PlatformGitHub, "https://github.com/owner/repo/releases/tag/v1.0.0"},
-		{provider.PlatformGitLab, "https://gitlab.com/owner/repo/-/releases/v1.0.0"},
-		{provider.PlatformForgejo, "https://codeberg.org/owner/repo/releases/tag/v1.0.0"},
-		{provider.PlatformLocal, "(release: v1.0.0)"},
-	}
-	for _, c := range cases { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		var server string
-
-		switch c.plat {
-		case provider.PlatformGitHub:
-			server = "https://github.com"
-		case provider.PlatformGitLab:
-			server = "https://gitlab.com"
-		case provider.PlatformForgejo:
-			server = "https://codeberg.org"
-		case provider.PlatformLocal:
-			// No server URL needed — the local placeholder ignores it.
-		}
-
-		got := summary.ReleaseURL(c.plat, server, "owner/repo", "v1.0.0")
-		if got != c.want {
-			t.Errorf("plat=%s got %q, want %q", c.plat, got, c.want)
-		}
+	got := summary.ReleaseURL(fakeURLs{}, "https://forge.example", "owner/repo", "v1.0.0")
+	if want := "https://forge.example/owner/repo/rel/v1.0.0"; got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
-func TestPackagesURL(t *testing.T) {
+func TestPackagesURL_DelegatesToTheBuilder(t *testing.T) {
 	t.Parallel()
 
-	if got := summary.PackagesURL(provider.PlatformGitHub, "https://github.com", "owner/repo"); got != "https://github.com/owner/repo/packages" {
-		t.Errorf("github = %q", got)
+	got := summary.PackagesURL(fakeURLs{}, "https://forge.example", "owner/repo")
+	if want := "https://forge.example/owner/repo/pkg"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// A platform with no hosted web UI does not implement the role, and the summary
+// must still render something a reader can parse rather than an empty cell.
+func TestURLs_PlaceholderWhenThePlatformHasNoWebUI(t *testing.T) {
+	t.Parallel()
+
+	if got := summary.ReleaseURL(nil, "", "owner/repo", "v1.0.0"); got != "(release: v1.0.0)" {
+		t.Errorf("release placeholder = %q", got)
 	}
 
-	if got := summary.PackagesURL(provider.PlatformGitLab, "https://gitlab.com", "owner/repo"); got != "https://gitlab.com/owner/repo/-/packages" {
-		t.Errorf("gitlab = %q", got)
-	}
-
-	// Forgejo packages hang off the owner, not the repository.
-	if got := summary.PackagesURL(provider.PlatformForgejo, "https://codeberg.org", "owner/repo"); got != "https://codeberg.org/owner/-/packages" {
-		t.Errorf("forgejo = %q", got)
-	}
-
-	if got := summary.PackagesURL(provider.PlatformLocal, "", ""); got != "(packages)" {
-		t.Errorf("local = %q", got)
+	if got := summary.PackagesURL(nil, "", "owner/repo"); got != "(packages)" {
+		t.Errorf("packages placeholder = %q", got)
 	}
 }

@@ -229,6 +229,7 @@ var (
 	_ provider.ReleasePublisher        = (*Provider)(nil)
 	_ provider.ReleaseAssetUploader    = (*Provider)(nil)
 	_ provider.Describer               = (*Provider)(nil)
+	_ provider.WebURLBuilder           = (*Provider)(nil)
 	_ provider.CapabilityReporter      = (*Provider)(nil)
 	_ provider.TagDeleter              = (*Provider)(nil)
 	_ provider.RunArtifactDownloader   = (*Provider)(nil)

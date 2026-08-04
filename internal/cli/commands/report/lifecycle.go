@@ -107,7 +107,7 @@ func releaseCmd() *cli.Command {
 					PrepareStageJSON:     cmd.String("prepare-stage-result-json"),
 					BuildStageJSON:       cmd.String("build-stage-result-json"),
 					PublishStageJSON:     cmd.String("publish-stage-result-json"),
-					Platform:             d.Platform,
+					URLs:                 d.WebURLBuilder(),
 					ServerURL:            cmd.String("server-url"),
 					Repository:           cmd.String("repository"),
 				})
@@ -146,7 +146,7 @@ func snapshotReleaseCmd() *cli.Command {
 					BuildStageJSON:        cmd.String("build-stage-result-json"),
 					PublishStageJSON:      cmd.String("publish-stage-result-json"),
 					SnapshotArtifactsJSON: cmd.String("snapshot-artifacts-json"),
-					Platform:              d.Platform,
+					URLs:                  d.WebURLBuilder(),
 					ServerURL:             cmd.String("server-url"),
 				})
 			})

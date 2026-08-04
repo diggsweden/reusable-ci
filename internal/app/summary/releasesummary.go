@@ -33,9 +33,9 @@ type ReleaseSummaryInput struct {
 	PrepareStageJSON     string
 	BuildStageJSON       string
 	PublishStageJSON     string
-	Platform             provider.Platform
-	ServerURL            string // CI_SERVER_URL
-	Repository           string // CI_REPO
+	URLs                 provider.WebURLBuilder // nil when the platform has no web UI
+	ServerURL            string                 // CI_SERVER_URL
+	Repository           string                 // CI_REPO
 	Now                  time.Time
 }
 
@@ -124,9 +124,9 @@ func ReleaseSummary(ctx context.Context, sink ci.SummarySink, in ReleaseSummaryI
 
 	_, _ = fmt.Fprintf(&b, "\n## Resources\n")
 	_, _ = fmt.Fprintf(&b, "- [Release](%s)\n",
-		domainsummary.ReleaseURL(in.Platform, in.ServerURL, in.Repository, in.ReleaseVersion))
+		domainsummary.ReleaseURL(in.URLs, in.ServerURL, in.Repository, in.ReleaseVersion))
 	_, _ = fmt.Fprintf(&b, "- [Packages](%s)\n",
-		domainsummary.PackagesURL(in.Platform, in.ServerURL, in.Repository))
+		domainsummary.PackagesURL(in.URLs, in.ServerURL, in.Repository))
 	_, _ = fmt.Fprintf(&b, "- [Workflow Run](%s)\n\n", in.RunURL)
 
 	return sink.Append(ctx, b.String())
