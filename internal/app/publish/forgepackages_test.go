@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -96,6 +97,21 @@ func TestForgePackagesNPMPublish_PublishesTheTarball(t *testing.T) {
 	got := strings.Join(npmOps.args, " ")
 	if !strings.Contains(got, "publish") || !strings.Contains(got, "pkg-1.0.0.tgz") || !strings.Contains(got, "--userconfig") {
 		t.Errorf("npm args = %v", npmOps.args)
+	}
+
+	// The tarball must be handed over as "./<name>" — npm runs with dir as its
+	// working directory, so a dir-joined path resolves to dir/dir/<name>, does
+	// not exist, and npm silently reparses the argument as a package spec where
+	// "<dir>/<name>.tgz" is GitHub shorthand. A Contains check passes for both
+	// spellings, which is why this was not caught until a real npm saw it.
+	if !slices.Contains(npmOps.args, "./pkg-1.0.0.tgz") {
+		t.Errorf("tarball must be passed as ./pkg-1.0.0.tgz relative to the working dir, got %v", npmOps.args)
+	}
+
+	for _, arg := range npmOps.args {
+		if strings.HasSuffix(arg, ".tgz") && strings.Contains(strings.TrimPrefix(arg, "./"), "/") {
+			t.Errorf("tarball argument %q carries a directory component; npm reads that as a package spec, not a file", arg)
+		}
 	}
 }
 

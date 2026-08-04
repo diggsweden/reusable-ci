@@ -56,7 +56,19 @@ func ForgePackagesNPMPublish(ctx context.Context, ops NPMPublishOps, resolver pr
 
 	_, _ = fmt.Fprintf(stdout, "Publishing %s to the forge npm registry: %s\n", filepath.Base(tarball), reg.Registry)
 
-	return ops.RunInherit(ctx, dir, stdout, stderr, "publish", tarball, "--userconfig", npmrcPath)
+	// "./<name>", not the dir-joined path findSingleTarball returned, and not a
+	// bare name either. npm runs with dir as its working directory, so the joined
+	// path resolved to dir/dir/<name> and did not exist — at which point npm stops
+	// treating the argument as a file and parses it as a package *spec*, where
+	// "pkg/thing.tgz" is GitHub shorthand for <user>/<repo>. So `publish
+	// forge-packages deploy --project-type npm` ended up running
+	//
+	//	git ls-remote ssh://git@github.com/pkg/<name>.tgz.git
+	//
+	// which fails for everyone, and reaches out to github.com from a job that
+	// asked to publish to its own forge. The leading "./" is what makes npm treat
+	// it as a path unconditionally, so no filename can ever be read as a spec.
+	return ops.RunInherit(ctx, dir, stdout, stderr, "publish", "./"+filepath.Base(tarball), "--userconfig", npmrcPath)
 }
 
 // findSingleTarball returns the single *.tgz in dir (the npm-pack output),
