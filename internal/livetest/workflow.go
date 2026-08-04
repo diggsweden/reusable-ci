@@ -296,3 +296,33 @@ func copyFile(from, to string) error {
 
 	return os.WriteFile(to, data, 0o755) //nolint:gosec // must be executable inside the job.
 }
+
+// ProbePrelude is the shell every in-runner probe starts with: it fetches the
+// binary and defines run_product, which refuses to let a mistyped invocation
+// look like a result.
+//
+// The kit already fails any host-run scenario the argument parser rejects, but
+// that guard sees the process's stderr and an in-runner probe runs the binary
+// inside a job, where the suite sees nothing but a conclusion. So the same rule
+// has to be enforced on the far side of that boundary — and it is not
+// theoretical: a step-summary probe was written against `report build`, which
+// requires a subcommand, and its usage error was scored as summary output on one
+// forge while the other correctly produced nothing. One red, one green, both
+// meaningless.
+func ProbePrelude(assetURL string) string {
+	return `curl -fsSLk -o reusable-ci "` + assetURL + `"
+chmod +x reusable-ci
+
+# Fails the job when the CLI could not parse the invocation, so a mistyped probe
+# cannot be mistaken for the product's answer.
+run_product() {
+  ./reusable-ci "$@" > product-out.txt 2>&1
+  status=$?
+  cat product-out.txt
+  if grep -qE 'usage error|flag provided but not defined|requires a subcommand|is required' product-out.txt; then
+    echo "FAIL: the probe invoked the product incorrectly; this is a fixture bug, not a result"
+    return 1
+  fi
+  return $status
+}`
+}

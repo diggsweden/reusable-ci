@@ -161,11 +161,11 @@ func productProbe(kind provider.Platform, assetURL, want string) string {
 		return `detect:
   image: quay.io/podman/stable:v5.6.2
   script:
-    - curl -fsSLk -o reusable-ci "` + assetURL + `"
-    - chmod +x reusable-ci
-    - ./reusable-ci doctor --json > report.json || true
-    - cat report.json
-    - grep -qE '"runner":[[:space:]]*"` + want + `"' report.json
+    - |
+      ` + indent(livetest.ProbePrelude(assetURL), 6) + `
+      run_product doctor --json > report.json || true
+      cat report.json
+      grep -qE '"runner":[[:space:]]*"` + want + `"' report.json
 `
 	}
 
@@ -176,9 +176,8 @@ jobs:
     steps:
       - name: the product reports its own runner
         run: |
-          curl -fsSLk -o reusable-ci "` + assetURL + `"
-          chmod +x reusable-ci
-          ./reusable-ci doctor --json > report.json || true
+          ` + indent(livetest.ProbePrelude(assetURL), 10) + `
+          run_product doctor --json > report.json || true
           cat report.json
           grep -qE '"runner":[[:space:]]*"` + want + `"' report.json
 `
@@ -264,5 +263,97 @@ jobs:
       - name: the annotation dialect must match the runner
         run: |
           ` + strings.ReplaceAll(check, "\n", "\n          ") + `
+`
+}
+
+// indent re-indents a multi-line shell block so it survives being spliced into
+// YAML, where a stray column changes meaning.
+func indent(block string, spaces int) string {
+	pad := strings.Repeat(" ", spaces)
+
+	return strings.ReplaceAll(block, "\n", "\n"+pad)
+}
+
+// PAR-RUN-4: a step summary reaches a reader on every runner.
+//
+// Only GitHub has a summary pane. Forgejo documents no job-summary variable and
+// renders none (go-gitea/gitea#27898), so the product routes its summary to the
+// job log; GitLab has no native equivalent and takes the file the pipeline
+// nominates. Three destinations for one intent — and the intent is what matters,
+// because a summary that goes nowhere is indistinguishable from one never
+// written, and both look like success.
+//
+// The verb is chosen for having something to say: `report build go` renders a
+// table from its flags alone, so the probe cannot pass on an empty document. The
+// assertion is on that content, not on byte count, for the same reason.
+func TestInRunner_StepSummaryReachesAReader(t *testing.T) {
+	const tag = "v0.0.3-summary"
+
+	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
+		if !livetest.RunsInRunner(kind) {
+			t.Logf("SKIP %s: the in-runner tier does not drive this forge yet", kind)
+
+			continue
+		}
+
+		t.Run(string(kind), func(t *testing.T) {
+			target := livetest.Accept(t, kind)
+			repo := livetest.NewScratchRepo(t, target, "inrunner-summary")
+
+			livetest.PrepareTag(t, target, repo, tag)
+			livetest.PublishBinaryAsset(t, target, repo, tag, t.TempDir())
+
+			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
+
+			conclusion := livetest.RunWorkflow(t, target, repo, "step-summary",
+				summaryProbe(kind, assetURL))
+			if conclusion != "success" {
+				t.Errorf("%s: run concluded %q — the step summary reached no reader, so a job that reported one produced nothing anybody sees",
+					kind, conclusion)
+			}
+		})
+	}
+}
+
+// summaryProbe writes a summary and checks the destination that runner is
+// designed to use.
+//
+// GitLab is handed a CI_SUMMARY_FILE because GitLab has no native summary and
+// the product writes to the file the pipeline nominates; asserting on a file the
+// pipeline never named would be testing the fixture. Forgejo is deliberately
+// given none — the claim there is exactly that the summary falls back to the job
+// log rather than vanishing.
+func summaryProbe(kind provider.Platform, assetURL string) string {
+	const report = `run_product report build go --binary-name demo \
+  --module example.com/demo --platforms linux/amd64 --version v1.0.0`
+
+	if kind == provider.PlatformGitLab {
+		return `detect:
+  image: quay.io/podman/stable:v5.6.2
+  variables:
+    CI_SUMMARY_FILE: summary.md
+  script:
+    - |
+      ` + indent(livetest.ProbePrelude(assetURL), 6) + `
+      ` + indent(report, 6) + `
+      cat summary.md
+      grep -q 'Go Build Summary' summary.md
+`
+	}
+
+	return `on: [push]
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: the summary must reach the job log when the runner renders none
+        run: |
+          ` + indent(livetest.ProbePrelude(assetURL), 10) + `
+
+          # No GITHUB_STEP_SUMMARY is exported: the claim is the fallback.
+          unset GITHUB_STEP_SUMMARY
+          ` + indent(report, 10) + ` > summary-log.txt
+          cat summary-log.txt
+          grep -q 'Go Build Summary' summary-log.txt
 `
 }
