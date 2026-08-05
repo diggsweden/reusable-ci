@@ -6,7 +6,7 @@ name: Release Workflow
 on:
   push:
     tags:
-      - "v*.*.*"
+      - "release-request/v*"
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false

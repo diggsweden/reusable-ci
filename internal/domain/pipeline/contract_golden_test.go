@@ -10,6 +10,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
+	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/golden"
 )
 
@@ -82,6 +83,7 @@ func contractConfig(t *testing.T) *config.Config {
 	t.Helper()
 
 	cfg := &config.Config{
+		Sign: config.SignConfig{Method: domainrelease.SignMethodSigstore},
 		Artifacts: []config.Artifact{
 			{
 				Name:                 "lib", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.

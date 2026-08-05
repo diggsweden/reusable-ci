@@ -10,6 +10,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
+	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
 
 //nolint:cyclop // exercises many invariants on one ReleasePlan.
@@ -17,6 +18,7 @@ func TestNewReleasePlan_ComputesPolicyAndStagePlans(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{
+		Sign: config.SignConfig{Method: domainrelease.SignMethodSigstore},
 		Artifacts: []config.Artifact{
 			{
 				Name:                 "lib", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
@@ -93,6 +95,7 @@ func TestNewReleasePlan_ComputesExplicitContainerTransfers(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{
+		Sign:      config.SignConfig{Method: domainrelease.SignMethodSigstore},
 		Artifacts: []config.Artifact{{Name: "go-service", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeContainerFirst}}},
 		Containers: []config.Container{{
 			Name:                        "api", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
@@ -107,9 +110,10 @@ func TestNewReleasePlan_ComputesExplicitContainerTransfers(t *testing.T) {
 	}
 
 	plan, err := pipeline.NewReleasePlan(pipeline.ReleasePlanInput{
-		ConfigPlan:   pipeline.NewConfigPlan(cfg),
-		RefName:      "v1.2.3",
-		ReleaseSBOMs: "analyzed-container",
+		ConfigPlan:           pipeline.NewConfigPlan(cfg),
+		RefName:              "v1.2.3",
+		ReleaseSBOMs:         "analyzed-container",
+		ReleaseSignArtifacts: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -214,6 +218,60 @@ func TestNewReleasePlan_RejectsUnsupportedConfigPlanVersion(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "unsupported config-plan version") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestNewReleasePlan_RejectsPushedSLSAWithoutCosignSigner(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name          string
+		method        domainrelease.SignMethod
+		signArtifacts bool
+	}{
+		{name: "gpg backend", method: domainrelease.SignMethodGPG, signArtifacts: true},
+		{name: "signing policy disabled", method: domainrelease.SignMethodSigstore, signArtifacts: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &config.Config{
+				Sign:       config.SignConfig{Method: tc.method},
+				Artifacts:  []config.Artifact{{Name: "app", ProjectType: projecttype.NPM}},
+				Containers: []config.Container{{Name: "image"}},
+			}
+			if err := config.Derive(cfg); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := pipeline.NewReleasePlan(pipeline.ReleasePlanInput{
+				ConfigPlan:           pipeline.NewConfigPlan(cfg),
+				ReleaseSBOMs:         "none",
+				ReleaseSignArtifacts: tc.signArtifacts,
+			})
+			if err == nil || !strings.Contains(err.Error(), "enables pushed SLSA provenance") {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+func TestNewReleasePlan_AllowsNonSLSAOrNonContainerContextsWithoutCosignSigner(t *testing.T) {
+	t.Parallel()
+
+	disabled := false
+	for _, cfg := range []*config.Config{
+		{Artifacts: []config.Artifact{{Name: "app", ProjectType: projecttype.NPM}}},
+		{
+			Artifacts:  []config.Artifact{{Name: "app", ProjectType: projecttype.NPM}},
+			Containers: []config.Container{{Name: "image", EnableSLSA: &disabled}},
+		},
+	} {
+		if err := config.Derive(cfg); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pipeline.NewReleasePlan(pipeline.ReleasePlanInput{ConfigPlan: pipeline.NewConfigPlan(cfg), ReleaseSBOMs: "none"}); err != nil {
+			t.Fatalf("NewReleasePlan() error = %v", err)
+		}
 	}
 }
 

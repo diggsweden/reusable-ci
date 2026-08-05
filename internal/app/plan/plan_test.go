@@ -15,6 +15,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
+	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 )
 
@@ -33,6 +34,7 @@ func TestPlanRelease_EmitsTypedPlanOutputs(t *testing.T) {
 	sink := fakeoutputsink.New(t)
 
 	cfg := &config.Config{
+		Sign: config.SignConfig{Method: domainrelease.SignMethodSigstore},
 		Artifacts: []config.Artifact{
 			{
 				Name:                 "lib",

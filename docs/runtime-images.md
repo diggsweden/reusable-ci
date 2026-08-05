@@ -140,8 +140,9 @@ tarball, selected by `reusable-ci-binary-ref`:
 
 Both verify by SHA-256 + Sigstore. The pre-release channel is a separate, opt-in trust
 domain — it never relaxes the release pin — and mirrors the image `:v3-pre` tag.
-`install-reusable-ci.sh` falls back to `go install` if download or verification
-fails.
+For a release-semver ref, any asset download, checksum, or Sigstore failure terminates
+the install. Source installation is used only for non-release refs or when
+`REUSABLE_CI_USE_GO_INSTALL=1` is explicitly set.
 
 ## Advanced Pinning Recipe
 

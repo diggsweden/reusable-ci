@@ -46,6 +46,8 @@ var privilegedSecretNames = map[string]bool{
 	"KEYCHAIN_PASSWORD":                        true,
 	"XCCONFIG_BASE64":                          true,
 	"REUSABLE_CI_BUILD_SECRETS_JSON":           true,
+	"kms-auth-env":                             true,
+	"registry-password":                        true,
 }
 
 // forwarderWorkflows delegate every privileged-secret-using job to
@@ -209,4 +211,19 @@ func declaredCallSecrets(body []byte) map[string]bool {
 // other workflow content collides.
 func hasEventContextGuard(body []byte) bool {
 	return strings.Contains(string(body), "reusable-ci validate event-context")
+}
+
+func TestSLSAAttestorGuardsBeforeSecrets(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "slsa-attestor.yml")) //nolint:gosec // repository fixture.
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := string(body)
+	guard := strings.Index(text, "reusable-ci validate event-context")
+	credential := strings.Index(text, "KMS_AUTH_ENV: ${{ secrets.kms-auth-env }}")
+	login := strings.Index(text, "REGISTRY_PASSWORD: ${{ secrets.registry-password")
+	if guard < 0 || credential < 0 || login < 0 || guard > credential || guard > login {
+		t.Fatalf("slsa-attestor must validate event context after CLI install and before credentials/login")
+	}
 }

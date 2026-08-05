@@ -33,10 +33,11 @@ Use the bootstrap installer — the same one macOS jobs use:
       install_reusable_ci v3.0.0
 ```
 
-Verification is fail-closed by default: the release's `checksums.txt`
-must carry a valid Sigstore bundle from the pinned publisher identity
-(only an explicit `REUSABLE_CI_ALLOW_UNSIGNED=1` skips it), and `REUSABLE_CI_BINARY_SHA256` additionally pins the exact
-binary hash (the same variable the forgejo-ci signer toolchain asserts).
+Verification is fail-closed: the release's `checksums.txt` must carry a valid
+Sigstore bundle from the pinned publisher identity. A missing asset, checksum
+mismatch, or missing/invalid signature terminates installation;
+`REUSABLE_CI_BINARY_SHA256` additionally pins the exact binary hash (the same
+variable the forgejo-ci signer toolchain asserts).
 
 In practice most Forgejo consumers do not call the binary directly: the
 [forgejo-ci](https://codeberg.org/itiquette/forgejo-ci) actions library

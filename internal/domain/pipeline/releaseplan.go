@@ -217,6 +217,15 @@ func NewReleasePlan(in ReleasePlanInput) (ReleasePlan, error) {
 		return ReleasePlan{}, err
 	}
 
+	for _, container := range in.ConfigPlan.Containers.All {
+		if container.EnableSLSA && (!policy.SignArtifacts || !in.ConfigPlan.Sign.SignsContainers) {
+			return ReleasePlan{}, fmt.Errorf(
+				"container %q enables pushed SLSA provenance but signing is not enabled with a cosign-capable method; enable release artifact signing with sign.method sigstore or kms, or set enable-slsa: false: %w",
+				container.Name, errs.ErrInvalidConfig,
+			)
+		}
+	}
+
 	buildSBOM, err := hasSBOMLayer(policy.SBOMs, config.SBOMLayerBuild)
 	if err != nil {
 		return ReleasePlan{}, err

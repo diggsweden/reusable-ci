@@ -8,12 +8,11 @@
 # Resolution:
 #   "local" / "."        → go install ./cmd/reusable-ci (working copy)
 #   vX.Y.Z[(-suffix)]    → download release tarball + verify SHA-256
-#   anything else (SHAs, # branches)         → go install github.com/diggsweden/reusable-ci/v3/cmd/reusable-ci@<ref>
+#   anything else (SHAs, branches) → go install github.com/diggsweden/reusable-ci/v3/cmd/reusable-ci@<ref>
 #
-# Release-asset path requires `curl` + (`sha256sum` or `shasum`); both are
-# pre-installed on GitHub-hosted Linux and macOS runners. The go-install
-# fallback path is used automatically when the asset path cannot run (no
-# curl, no sha256 helper, asset 404, or REUSABLE_CI_USE_GO_INSTALL=1).
+# Release refs use only the authenticated release-asset path and fail closed on
+# any download or verification error. Set REUSABLE_CI_USE_GO_INSTALL=1 only
+# when explicitly choosing source installation instead.
 
 # shellcheck source=install-common.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-common.sh"
@@ -62,8 +61,8 @@ resolve_reusable_ci_dist() {
 # verify_reusable_ci_binary_pin enforces an exact SHA-256 pin on the
 # INSTALLED BINARY when REUSABLE_CI_BINARY_SHA256 is set (the same pin
 # variable forgejo-ci's signer toolchain asserts). This is defense in
-# depth on top of cosign + checksums.txt — and the only integrity check
-# that also covers the go-install fallback path. Fail-closed: on
+# depth on top of cosign + checksums.txt and also covers explicit source
+# installs. Fail-closed: on
 # mismatch the binary is removed and the install errors.
 verify_reusable_ci_binary_pin() {
 	local binary="$1"
@@ -121,9 +120,7 @@ verify_reusable_ci_sha256() {
 
 # verify_reusable_ci_cosign verifies the Sigstore v3 bundle alongside
 # the checksums file. FAIL-CLOSED: a missing cosign binary or a missing
-# signature bundle is an error. The only escape is an explicit
-# REUSABLE_CI_ALLOW_UNSIGNED=1, for environments that consciously accept
-# an unverified download (SHA-256 is still enforced either way).
+# signature bundle is an error.
 #
 # Identity is pinned to the diggsweden/reusable-ci workflow that produced the
 # signature. Two trust domains, selected by ref (see _reusable_ci_cosign_identity):
@@ -138,9 +135,7 @@ _reusable_ci_cosign_identity() {
 	elif [[ "$ref" == *-pre ]]; then
 		printf '%s' '^https://github.com/diggsweden/reusable-ci/\.github/workflows/build-cli\.yml@refs/heads/(main|feat/refactor-go)$'
 	else
-		# One release signer at a time. When build-once moves signing to
-		# build-cli.yml, flip this line in that same release.
-		printf '%s' '^https://github.com/diggsweden/reusable-ci/\.github/workflows/release-binary\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+.*$'
+		printf '%s' '^https://github.com/diggsweden/reusable-ci/\.github/workflows/release-binary\.yml@refs/heads/main$'
 	fi
 }
 
@@ -148,22 +143,12 @@ verify_reusable_ci_cosign() {
 	local checksums="$1" bundle="$2" ref="${3:-}"
 
 	if ! command -v cosign &>/dev/null; then
-		if [[ "${REUSABLE_CI_ALLOW_UNSIGNED:-0}" == "1" ]]; then
-			printf 'WARN: cosign not on PATH; proceeding UNSIGNED because REUSABLE_CI_ALLOW_UNSIGNED=1 (SHA-256 still enforced).\n' >&2
-			return 0
-		fi
-
-		printf 'ERROR: cosign not on PATH; install cosign (scripts/bootstrap/install-cosign.sh) or set REUSABLE_CI_ALLOW_UNSIGNED=1 to consciously skip signature verification\n' >&2
+		printf 'ERROR: cosign not on PATH; install cosign with scripts/bootstrap/install-cosign.sh\n' >&2
 		return 1
 	fi
 
 	if [[ ! -f "$bundle" ]]; then
-		if [[ "${REUSABLE_CI_ALLOW_UNSIGNED:-0}" == "1" ]]; then
-			printf 'WARN: %s missing; proceeding UNSIGNED because REUSABLE_CI_ALLOW_UNSIGNED=1.\n' "$(basename "$bundle")" >&2
-			return 0
-		fi
-
-		printf 'ERROR: %s missing; the release carries no signature bundle. Set REUSABLE_CI_ALLOW_UNSIGNED=1 to consciously accept an unsigned download\n' "$bundle" >&2
+		printf 'ERROR: %s missing; the release carries no signature bundle\n' "$bundle" >&2
 		return 1
 	fi
 
@@ -186,7 +171,7 @@ verify_reusable_ci_cosign() {
 
 # install_reusable_ci_release downloads the release asset for ref and extracts
 # the `reusable-ci` binary into install_dir. Returns non-zero on any failure;
-# callers fall back to go install.
+# callers must propagate the failure for release refs.
 install_reusable_ci_release() {
 	local ref="$1" install_dir="$2"
 	if ! command -v curl &>/dev/null; then
@@ -216,10 +201,10 @@ install_reusable_ci_release() {
 		printf 'WARN: failed to download %s\n' "$sums_url" >&2
 		return 1
 	fi
-	# The download itself is allowed to 404 so the verifier owns the
-	# decision: a missing bundle FAILS verify_reusable_ci_cosign unless
-	# REUSABLE_CI_ALLOW_UNSIGNED=1 consciously accepts it.
-	curl "${curl_retry[@]}" -sSfL -o "$tmp/checksums.txt.bundle" "$bundle_url" >/dev/null 2>&1 || true
+	if ! curl "${curl_retry[@]}" -sSfL -o "$tmp/checksums.txt.bundle" "$bundle_url"; then
+		printf 'ERROR: failed to download %s\n' "$bundle_url" >&2
+		return 1
+	fi
 	if ! verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/checksums.txt.bundle" "$ref"; then
 		return 1
 	fi
@@ -237,7 +222,7 @@ install_reusable_ci_release() {
 install_reusable_ci_go_install() {
 	local ref="$1" install_dir="$2"
 	if ! command -v go &>/dev/null; then
-		printf 'ERROR: go binary not found; release-asset download unavailable and no Go toolchain to fall back on\n' >&2
+		printf 'ERROR: go binary not found for requested source installation\n' >&2
 		return 1
 	fi
 	mkdir -p "$install_dir"
@@ -261,10 +246,7 @@ install_reusable_ci() {
 	if [[ "$ref" == "local" || "$ref" == "." ]]; then
 		install_reusable_ci_go_install "$ref" "$install_dir" || return 1
 	elif [[ "${REUSABLE_CI_USE_GO_INSTALL:-0}" != "1" ]] && is_reusable_ci_release_ref "$ref"; then
-		if ! install_reusable_ci_release "$ref" "$install_dir"; then
-			printf 'INFO: release-asset path failed; falling back to go install\n' >&2
-			install_reusable_ci_go_install "$ref" "$install_dir" || return 1
-		fi
+		install_reusable_ci_release "$ref" "$install_dir" || return 1
 	else
 		install_reusable_ci_go_install "$ref" "$install_dir" || return 1
 	fi

@@ -233,11 +233,12 @@
   "pipeline_sboms": "build,analyzed-artifact,analyzed-container",
   "fallback_project_type": "maven",
   "sign": {
-    "method": "gpg",
-    "requires_id_token": false,
-    "imports_gpg_key": true,
-    "signs_containers": false,
-    "requires_sigstore_egress": false
+    "method": "sigstore",
+    "requires_id_token": true,
+    "imports_gpg_key": false,
+    "signs_containers": true,
+    "transparency": "public",
+    "requires_sigstore_egress": true
   },
   "git_signing": {
     "method": "gpg"

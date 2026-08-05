@@ -27,7 +27,7 @@
 #
 # VERIFY (the KMS public key IS the builder identity):
 #   cosign verify-attestation --key kms-builder.pub \
-#     --type slsaprovenance <registry>/<image>@sha256:...
+#     --type slsaprovenance1 <registry>/<image>@sha256:...
 #
 # The build remains unchanged: it still signs the image + attests the SBOM with
 # the portable L2 flow in publish-container.yml. This workflow only upgrades the
@@ -51,10 +51,10 @@ on:
         type: string
         default: ""
       predicate-type:
-        description: "Predicate type to attest (slsaprovenance | <uri>)."
+        description: "Predicate type to attest (slsaprovenance1 | <uri>)."
         required: false
         type: string
-        default: "slsaprovenance"
+        default: "slsaprovenance1"
       registry:
         description: "Registry host for login (where the attestation is pushed)."
         required: false
@@ -109,6 +109,8 @@ jobs:
         env:
           REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
         run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
+      - name: Refuse PR-context trigger (signing and registry secrets in scope)
+        run: reusable-ci validate event-context
       - name: Configure KMS authentication
         env:
           KMS_AUTH_ENV: ${{ secrets.kms-auth-env }}

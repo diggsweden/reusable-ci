@@ -220,38 +220,34 @@ func TestInstallReusableCI_ReleaseAssetTamperingDetected(t *testing.T) {
 	binDir := t.TempDir()
 	writeFakeCurl(t, binDir, releaseRoot)
 	writeFakeCosign(t, binDir, filepath.Join(t.TempDir(), "cosign-args"))
-	// Provide a fake go too so the fall-back attempt is observable; we want
-	// the test to fail loudly, not silently fall back without verification.
+	// Provide a fake go so the test can prove verification failure never falls
+	// back to source installation.
 	logPath := filepath.Join(t.TempDir(), "go-args")
 	writeFakeGo(t, binDir, logPath)
 
 	installDir := filepath.Join(t.TempDir(), "install")
-	stdout, stderr, err := runSourcedScript(t, "install-reusable-ci.sh", `install_reusable_ci "$REUSABLE_CI_BINARY_REF"`, map[string]string{
+	_, stderr, err := runSourcedScript(t, "install-reusable-ci.sh", `install_reusable_ci "$REUSABLE_CI_BINARY_REF"`, map[string]string{
 		"PATH":                         binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"REUSABLE_CI_BINARY_REF":       "v3.4.5",
 		"REUSABLE_CI_INSTALL_DIR":      installDir,
 		"REUSABLE_CI_RELEASE_URL_BASE": "file://" + releaseRoot,
 	})
-	// We expect the verification to fail and the script to fall back to go install.
-	if err != nil {
-		t.Fatalf("install_reusable_ci: %v\nstderr=%s", err, stderr)
+	if err == nil {
+		t.Fatalf("tampered release unexpectedly installed; stderr=%s", stderr)
 	}
 
 	if !strings.Contains(stderr, "SHA-256 mismatch") {
 		t.Errorf("expected SHA-256 mismatch error, got stderr: %s", stderr)
 	}
 
-	if !strings.Contains(stderr, "falling back to go install") {
-		t.Errorf("expected fall-back to go install, got: %s\nstdout: %s", stderr, stdout)
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Errorf("go install was invoked after checksum failure")
 	}
 }
 
-// TestInstallReusableCI_UnsignedReleaseRefusedByDefault pins the
-// fail-closed contract: a release without a checksums.txt.bundle is
-// refused (even though its SHA-256 would verify) and the installer
-// falls back to `go install`, whose integrity comes from the module
-// checksum database instead.
-func TestInstallReusableCI_UnsignedReleaseRefusedByDefault(t *testing.T) {
+// TestInstallReusableCI_UnsignedReleaseRefused pins the fail-closed contract:
+// a release without a checksums.txt.bundle terminates installation.
+func TestInstallReusableCI_UnsignedReleaseRefused(t *testing.T) {
 	if _, err := exec.LookPath("tar"); err != nil {
 		t.Skip("tar not available")
 	}
@@ -288,91 +284,16 @@ func TestInstallReusableCI_UnsignedReleaseRefusedByDefault(t *testing.T) {
 		"REUSABLE_CI_INSTALL_DIR":      installDir,
 		"REUSABLE_CI_RELEASE_URL_BASE": "file://" + releaseRoot,
 	})
-	if err != nil {
-		t.Fatalf("install_reusable_ci: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
+	if err == nil {
+		t.Fatalf("unsigned release unexpectedly installed\nstdout=%s\nstderr=%s", stdout, stderr)
 	}
 
-	if !strings.Contains(stderr, "the release carries no signature bundle") {
+	if !strings.Contains(stderr, "failed to download") || !strings.Contains(stderr, "checksums.txt.bundle") {
 		t.Errorf("expected fail-closed unsigned refusal, got stderr: %s", stderr)
 	}
 
-	if !strings.Contains(stderr, "falling back to go install") {
-		t.Errorf("expected fall-back to go install, got: %s\nstdout: %s", stderr, stdout)
-	}
-
-	goArgs, err := os.ReadFile(goLog) //nolint:gosec // test fixture
-	if err != nil {
-		t.Fatalf("go fallback was not invoked: %v", err)
-	}
-
-	if got := strings.TrimSpace(string(goArgs)); got != "install github.com/diggsweden/reusable-ci/v3/cmd/reusable-ci@v3.4.5" {
-		t.Fatalf("go args = %q", got)
-	}
-}
-
-// TestInstallReusableCI_UnsignedAcceptedWithExplicitOptIn pins the
-// documented escape hatch: REUSABLE_CI_ALLOW_UNSIGNED=1 accepts a
-// bundle-less release with a loud warning, and SHA-256 verification
-// still gates the install.
-func TestInstallReusableCI_UnsignedAcceptedWithExplicitOptIn(t *testing.T) {
-	if _, err := exec.LookPath("tar"); err != nil {
-		t.Skip("tar not available")
-	}
-
-	if _, err := exec.LookPath("sha256sum"); err != nil {
-		if _, err := exec.LookPath("shasum"); err != nil {
-			t.Skip("neither sha256sum nor shasum available")
-		}
-	}
-
-	releaseRoot := t.TempDir()
-
-	releaseDir := filepath.Join(releaseRoot, "v3.4.5")
-	if err := os.MkdirAll(releaseDir, 0o755); err != nil { //nolint:gosec // test fixture
-		t.Fatal(err)
-	}
-
-	tarballName := osArchTarballName(t)
-	binaryBody := []byte("#!/usr/bin/env bash\nprintf 'reusable-ci test-version\\n'\n")
-	tarballPath := filepath.Join(releaseDir, tarballName)
-	writeReusableCITarball(t, tarballPath, binaryBody)
-
-	checksums := sha256sumFile(t, tarballPath) + "  " + tarballName + "\n"
-	if err := os.WriteFile(filepath.Join(releaseDir, "checksums.txt"), []byte(checksums), 0o644); err != nil { //nolint:gosec // test fixture
-		t.Fatal(err)
-	}
-	// Deliberately NO checksums.txt.bundle.
-
-	binDir := t.TempDir()
-	writeFakeCurl(t, binDir, releaseRoot)
-	writeFakeCosign(t, binDir, filepath.Join(t.TempDir(), "cosign-args"))
-
-	installDir := filepath.Join(t.TempDir(), "install")
-	githubPath := filepath.Join(t.TempDir(), "github-path")
-
-	stdout, stderr, err := runSourcedScript(t, "install-reusable-ci.sh", `install_reusable_ci "$REUSABLE_CI_BINARY_REF"`, map[string]string{
-		"PATH":                         binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-		"REUSABLE_CI_BINARY_REF":       "v3.4.5",
-		"REUSABLE_CI_INSTALL_DIR":      installDir,
-		"REUSABLE_CI_RELEASE_URL_BASE": "file://" + releaseRoot,
-		"REUSABLE_CI_ALLOW_UNSIGNED":   "1",
-		"GITHUB_PATH":                  githubPath,
-	})
-	if err != nil {
-		t.Fatalf("install_reusable_ci: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
-	}
-
-	if !strings.Contains(stderr, "proceeding UNSIGNED") {
-		t.Errorf("expected UNSIGNED warning, got stderr: %s", stderr)
-	}
-
-	got, err := os.ReadFile(filepath.Join(installDir, "reusable-ci")) //nolint:gosec // test fixture
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !bytes.Equal(got, binaryBody) {
-		t.Errorf("extracted binary mismatch")
+	if _, err := os.Stat(goLog); !os.IsNotExist(err) {
+		t.Errorf("go install was invoked after signature download failure")
 	}
 }
 

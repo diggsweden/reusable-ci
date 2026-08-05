@@ -145,24 +145,25 @@ The workflows shown underneath are mostly helper workflows used by the orchestra
 
 The current production release flow is intentionally stage-based:
 
-1. `parse-config`
-2. `validate-prerequisites`
-3. `execute-prepare-stage`
-4. `execute-build-stage`
-5. `execute-publish-stage`
-6. `create-release`
-7. `release-summary`
+1. Validate and derive the signed `release-request/vX.Y.Z` ref
+2. `parse-config`
+3. `validate-prerequisites`
+4. `execute-prepare-stage` creates the final `vX.Y.Z` tag
+5. `execute-build-stage` checks out that final tag
+6. `execute-publish-stage` checks out that final tag
+7. `create-release`
+8. `release-summary`
 
 The public orchestrator now acts as the release control plane. Build and publish fanout live one layer lower in stage-level reusable workflows.
 Release preparation now follows the same pattern through `release-prepare-stage.yml`.
 
 ```mermaid
 graph TD
-    A[Tag Push: v*.*.* ] --> B[release-orchestrator.yml]
+    A[Signed Tag Push: release-request/vX.Y.Z] --> B[release-orchestrator.yml]
     B --> C[parse-config]
     C --> D[validate-release-prerequisites.yml]
-    D --> E[release-prepare-stage.yml]
-    E --> F[release-build-stage.yml]
+    D --> E[release-prepare-stage.yml: create vX.Y.Z]
+    E --> F[release-build-stage.yml: checkout vX.Y.Z]
     F --> G[release-publish-stage.yml]
     G --> H[release-create-github.yml]
     H --> I[release-summary]

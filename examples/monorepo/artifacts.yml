@@ -4,6 +4,9 @@
 # Example artifacts.yml for monorepo support
 # Place this file in your repository (e.g., .reusable-ci/artifacts.yml)
 # and reference it in your release workflow with: artifacts-config: .reusable-ci/artifacts.yml
+sign:
+  method: sigstore
+
 artifacts:
   # Maven backend application
   - name: backend-api

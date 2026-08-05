@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
 # Self-contained tests for install-reusable-ci.sh's cosign-verification
-# helper. Exercises the soft-skip / fail-closed contract documented on
+# helper. Exercises the fail-closed contract documented on
 # verify_reusable_ci_cosign without needing a real GitHub Release or
 # the actions/attest-* machinery.
 #
@@ -94,29 +94,12 @@ t_cosign_absent_fails_by_default() (
 		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
 )
 
-t_cosign_absent_allow_unsigned_optout() (
-	local tmp
-	tmp="$(mktemp -d)"
-	printf 'fake\n' >"$tmp/checksums.txt"
-	PATH="$(path_without_cosign)" REUSABLE_CI_ALLOW_UNSIGNED=1 \
-		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
-)
-
 t_bundle_absent_fails_by_default() (
 	local tmp
 	tmp="$(mktemp -d)"
 	printf 'fake\n' >"$tmp/checksums.txt"
 	stub_cosign "$tmp" 0
 	PATH="$tmp/bin:$(path_without_cosign)" \
-		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
-)
-
-t_bundle_absent_allow_unsigned_optout() (
-	local tmp
-	tmp="$(mktemp -d)"
-	printf 'fake\n' >"$tmp/checksums.txt"
-	stub_cosign "$tmp" 0
-	PATH="$tmp/bin:$(path_without_cosign)" REUSABLE_CI_ALLOW_UNSIGNED=1 \
 		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
 )
 
@@ -192,12 +175,40 @@ t_binary_pin_rejects_and_removes() (
 	[[ ! -f "$tmp/reusable-ci" ]]
 )
 
+t_release_ref_does_not_fallback() (
+	local tmp
+	tmp="$(mktemp -d)"
+	# shellcheck disable=SC2329 # invoked indirectly by install_reusable_ci.
+	install_reusable_ci_release() { return 1; }
+	# shellcheck disable=SC2329 # must remain uncalled; this test detects fallback.
+	install_reusable_ci_go_install() {
+		: >"$tmp/go-install-called"
+		return 0
+	}
+	if REUSABLE_CI_INSTALL_DIR="$tmp/install" install_reusable_ci v3.1.0; then
+		return 1
+	fi
+	[[ ! -e "$tmp/go-install-called" ]]
+)
+
+t_explicit_release_go_install_is_honored() (
+	local tmp
+	tmp="$(mktemp -d)"
+	# shellcheck disable=SC2329 # invoked indirectly by install_reusable_ci.
+	install_reusable_ci_go_install() {
+		mkdir -p "$2"
+		printf '#!/bin/sh\nprintf "reusable-ci test\\n"\n' >"$2/reusable-ci"
+		chmod +x "$2/reusable-ci"
+	}
+	REUSABLE_CI_USE_GO_INSTALL=1 REUSABLE_CI_INSTALL_DIR="$tmp/install" install_reusable_ci v3.1.0
+)
+
 # _reusable_ci_cosign_identity: the two trust domains must each accept their own
 # signer's SAN and reject the other's. These grep the SANs against the actual
 # returned regex, so they validate the regex, not just a substring.
 PRE_SAN_FEAT='https://github.com/diggsweden/reusable-ci/.github/workflows/build-cli.yml@refs/heads/feat/refactor-go'
 PRE_SAN_MAIN='https://github.com/diggsweden/reusable-ci/.github/workflows/build-cli.yml@refs/heads/main'
-REL_SAN='https://github.com/diggsweden/reusable-ci/.github/workflows/release-binary.yml@refs/tags/v3.1.0'
+REL_SAN='https://github.com/diggsweden/reusable-ci/.github/workflows/release-binary.yml@refs/heads/main'
 # A tag-signed build-cli SAN: NOT accepted until the build-once cutover
 # flips the single release identity to build-cli.yml.
 REL_SAN_BUILD_CLI='https://github.com/diggsweden/reusable-ci/.github/workflows/build-cli.yml@refs/tags/v3.1.0'
@@ -239,9 +250,7 @@ printf 'install-reusable-ci.sh test suite\n'
 printf '=================================\n'
 
 assert_exit "cosign absent → fail closed by default" 1 t_cosign_absent_fails_by_default
-assert_exit "cosign absent + ALLOW_UNSIGNED=1 → conscious opt-out" 0 t_cosign_absent_allow_unsigned_optout
 assert_exit "bundle absent → fail closed by default" 1 t_bundle_absent_fails_by_default
-assert_exit "bundle absent + ALLOW_UNSIGNED=1 → conscious opt-out" 0 t_bundle_absent_allow_unsigned_optout
 assert_exit "cosign verify-blob exit 0 → accept" 0 t_cosign_verify_passes
 assert_exit "cosign verify-blob exit non-0 → reject (tampered)" 1 t_cosign_verify_rejects
 assert_exit "sha256 verify rejects tampered tarball" 1 t_sha256_rejects_tampered
@@ -249,9 +258,11 @@ assert_exit "sha256 verify accepts genuine tarball" 0 t_sha256_accepts_genuine
 assert_exit "binary pin unset → no-op" 0 t_binary_pin_unset_is_noop
 assert_exit "binary pin match → accept" 0 t_binary_pin_accepts_match
 assert_exit "binary pin mismatch → fail closed and remove" 0 t_binary_pin_rejects_and_removes
+assert_exit "release ref failure does not fall back to go install" 0 t_release_ref_does_not_fallback
+assert_exit "explicit release go install is honored" 0 t_explicit_release_go_install_is_honored
 assert_exit "pre-release identity accepts build-cli dev-branch SAN" 0 t_identity_pre_accepts_dev_branches
 assert_exit "pre-release identity rejects release-binary SAN" 0 t_identity_pre_rejects_release_signer
-assert_exit "release identity accepts release-binary tag SAN" 0 t_identity_release_accepts_tag_signer
+assert_exit "release identity accepts release-binary main-branch SAN" 0 t_identity_release_accepts_tag_signer
 assert_exit "release identity rejects build-cli tag SAN (single signer)" 0 t_identity_release_rejects_build_cli_tag_signer
 assert_exit "release identity rejects pre-release build-cli SAN" 0 t_identity_release_rejects_pre_signer
 assert_exit "REUSABLE_CI_COSIGN_IDENTITY override wins" 0 t_identity_override_wins

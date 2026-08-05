@@ -7,6 +7,9 @@
 # container-first: sbom-go.yml emits the Build SBOM from go.mod/go.sum in the
 # publish stage, while the Containerfile compiles the service for each target
 # platform through buildx's TARGETOS/TARGETARCH values.
+sign:
+  method: sigstore
+
 artifacts:
   - name: my-service
     project-type: go

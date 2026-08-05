@@ -657,12 +657,12 @@ Containers reference artifacts via the `from:` field and are built after all art
 - **Type:** `boolean`
 - **Description:** Generate SLSA build-provenance attestation for this container. The per-container value propagates through the typed plan to `publish-container.yml`; set to `false` to opt this specific image out of provenance.
 - **Default:** `true`
-- **Requires:** `id-token: write`, `actions: read` permissions (set by `release-orchestrator.yml`)
+- **Requires:** release artifact signing enabled and `sign.method: sigstore` or `sign.method: kms`; production planning rejects enabled pushed provenance when signing is disabled or uses GPG. Keyless Sigstore also requires `id-token: write`; the orchestrator supplies workflow permissions.
 - **Example:** `enable-slsa: true`
 
 #### Container `enable-sbom` (removed in v3)
 
-The v2.x `enable-sbom: bool` field on the container block is removed in v3. Container scanning is now derived from each source artifact's `sboms` field — the container is scanned if any source artifact has `analyzed-container` in its effective sboms (the default for buildable types). To skip the scan, exclude `analyzed-container` from the source artifact's `sboms` (e.g. `sboms: build,analyzed-artifact`). Hard cutover — the old field is silently ignored.
+The v2.x `enable-sbom: bool` field on the container block is removed in v3 and strict parsing rejects it. Container scanning is now derived from each source artifact's `sboms` field — the container is scanned if any source artifact has `analyzed-container` in its effective sboms (the default for buildable types). To skip the scan, exclude `analyzed-container` from the source artifact's `sboms` (e.g. `sboms: build,analyzed-artifact`).
 
 #### `enable-scan`
 
@@ -1171,7 +1171,7 @@ name: Release Workflow
 on:
   push:
     tags:
-      - "v*.*.*"
+      - "release-request/v*"
 
 permissions:
   contents: read

@@ -50,6 +50,6 @@ Understand the design and tradeoffs.
 
 - [Development](DEVELOPMENT.md) - Local development, testing, and branch verification for this repository.
 - [Testing](testing.md) - Go test helpers and testing conventions.
-- [Scripts](scripts.md) - Remaining bootstrap scripts and why the workflow surface moved to the Go binary.
+- [Scripts](scripts.md) - Remaining bootstrap scripts and the workflow surface moved to the Go binary.
 - [Workflow Design Policy](workflow-design-policy.md) - Design rules for maintainers extending the workflow graph.
 - [GitLab Support Plan](gitlabsupportplan.md) - The single GitLab planning doc: architecture, capability/orchestration model, and the work still ahead.

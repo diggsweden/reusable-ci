@@ -166,7 +166,7 @@ Container SBOM scanning (`analyzed-container` layer) is **derived** from source-
 
 To skip the container scan: set the source artifact's `sboms` to exclude `analyzed-container` (e.g. `sboms: build,analyzed-artifact`).
 
-This replaces the v2.x `containers[].enable-sbom: bool` field, which is no longer recognized in v3 (silently ignored — hard cutover, no alias). See CHANGELOG for migration.
+This replaces the v2.x `containers[].enable-sbom: bool` field. In v3 strict config parsing rejects that removed field; use artifact `sboms` instead.
 
 > **Note — the snapshot flow builds no containers.** `release-snapshot-publish-stage.yml` produces only artifact-level SBOMs (`build`, `analyzed-artifact`) for npm/cargo/go; there is no container build or `analyzed-container` SBOM on the snapshot path. Container images (and their `analyzed-container` SBOMs) are built once on the release path by `publish-container.yml`.
 

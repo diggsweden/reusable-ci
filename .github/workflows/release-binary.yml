@@ -4,8 +4,8 @@
 #
 # release-binary
 #
-# Runs after Self Release completes (workflow_run trigger) on every
-# v* tag, OR manually via workflow_dispatch. The two-workflow split
+# Runs after a release-request-triggered Self Release completes, or manually
+# for an explicit final tag. The two-workflow split
 # is intentional: Self Release drives the orchestrator (changelog,
 # release notes, GitHub Release creation) while this workflow
 # produces the multi-arch binary tarballs and uploads them to the
@@ -31,13 +31,14 @@ on:
     workflows: ["Self Release"]
     types: [completed]
     # No `branches:` filter on purpose. Self Release is itself gated
-    # to tag pushes (push: tags: [v*.*.*]), so a successful Self
-    # Release run implies a tag context. A branches filter here would
-    # match against workflow_run.head_branch, which is empty for
-    # tag-triggered upstream workflows — silently blocking the
-    # production tag-push path. The conclusion check in the goreleaser
+    # to release-request tag pushes. The conclusion check in the goreleaser
     # job's `if:` is the actual gate.
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      release-tag:
+        description: "Existing final release tag to build (vX.Y.Z)"
+        required: true
+        type: string
 permissions:
   contents: read
 jobs:
@@ -67,16 +68,14 @@ jobs:
             api.github.com:443 github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 uploads.github.com:443 proxy.golang.org:443 sum.golang.org:443 storage.googleapis.com:443 fulcio.sigstore.dev:443 rekor.sigstore.dev:443 tuf-repo-cdn.sigstore.dev:443 ghcr.io:443
       # workflow_run context is safe here: the goreleaser job's `if:` only
       # proceeds when the upstream Self Release succeeded, which itself
-      # only triggers on signed tag pushes (`push: tags: [v*.*.*]`). The
-      # head_sha is from that tag-push commit, not contributor input.
+      # only triggers on signed release-request tag pushes. This first checkout
+      # is used only to run the trusted ref parser; the build checkout below is
+      # the final tag created by Self Release.
       # nosemgrep: yaml.github-actions.security.workflow-run-target-code-checkout.workflow-run-target-code-checkout
       - name: Checkout repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          # workflow_run does not set ref to the tag; pin to the
-          # commit SHA the upstream workflow ran on so we tag the
-          # right tree.
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          ref: ${{ github.event.workflow_run.head_sha || inputs.release-tag }}
           fetch-depth: 0
           fetch-tags: true
       - name: Set up Go
@@ -84,6 +83,29 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
+      - name: Resolve final release tag
+        id: release-context
+        env:
+          DISPATCH_RELEASE_TAG: ${{ inputs.release-tag }}
+          REQUIRE_RELEASE_REQUEST: ${{ github.event_name == 'workflow_run' && 'true' || 'false' }}
+        run: |
+          ref_name="$DISPATCH_RELEASE_TAG"
+          if [[ "$REQUIRE_RELEASE_REQUEST" == true ]]; then
+            mapfile -t request_refs < <(git tag --points-at HEAD --list 'release-request/v*')
+            if [[ "${#request_refs[@]}" != 1 ]]; then
+              printf 'Expected exactly one release-request tag at upstream HEAD, found %s\n' "${#request_refs[@]}" >&2
+              exit 1
+            fi
+            ref_name="${request_refs[0]}"
+          fi
+          REF_NAME="$ref_name" RELEASE_CONTEXT_REQUIRE_REQUEST="$REQUIRE_RELEASE_REQUEST" \
+            go run ./cmd/reusable-ci version derive-release
+      - name: Checkout created final release tag
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ steps.release-context.outputs.release-tag }}
+          fetch-depth: 0
+          fetch-tags: true
       - name: Install cosign
         # goreleaser's signs: block shells out to cosign; install it
         # explicitly with version pinning rather than relying on a
@@ -124,7 +146,7 @@ jobs:
         # with cosign sign-blob → a Sigstore bundle. No GitHub attestation API; the
         # provenance verifies on any forge:
         #   cosign verify-blob --bundle reusable-ci.intoto.jsonl \
-        #     --certificate-identity-regexp '^https://github.com/diggsweden/reusable-ci/\.github/workflows/release-binary\.yml@.*' \
+        #     --certificate-identity-regexp '^https://github.com/diggsweden/reusable-ci/\.github/workflows/release-binary\.yml@refs/heads/main$' \
         #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
         #     reusable-ci.intoto.json
         # Uses the binary goreleaser just built (self-consistent), then attaches

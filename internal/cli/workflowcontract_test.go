@@ -6,11 +6,14 @@ package cli_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 )
 
 // TestWorkflowInputContract proves that every `with:` key passed from
@@ -90,6 +93,95 @@ func TestWorkflowInputContract(t *testing.T) {
 		t.Logf("\nfailures: %d", failures)
 		t.Logf("declared inputs are in each reusable workflow's `on.workflow_call.inputs:` block")
 		t.Logf("fix either by declaring the new input on the callee or removing the `with: key` on the caller")
+	}
+}
+
+func TestWorkflowAttestationTypesUseAcceptedCLIVocabulary(t *testing.T) {
+	workflowsDir := filepath.Join(repoRoot(t), ".github", "workflows")
+	entries, err := os.ReadDir(workflowsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tokenPattern := regexp.MustCompile(`\bslsaprovenance[0-9]*\b`)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yml") {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(workflowsDir, entry.Name())) //nolint:gosec // repository fixture.
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, token := range tokenPattern.FindAllString(string(body), -1) {
+			if token != domaincontainer.PredicateTypeSLSAProvenance1 {
+				t.Errorf("%s uses unsupported attestation type %q; CLI accepts %q", entry.Name(), token, domaincontainer.PredicateTypeSLSAProvenance1)
+			}
+		}
+	}
+}
+
+func TestPromoteWorkflowResolvesDryRunAsBoolean(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "promote-stage.yml")) //nolint:gosec // repository fixture.
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := string(body)
+	if strings.Contains(text, `${DRY_RUN:+--dry-run}`) {
+		t.Fatal("non-empty string expansion would add --dry-run when DRY_RUN=false")
+	}
+	if !strings.Contains(text, `[[ "$DRY_RUN" == true ]] && args+=(--dry-run)`) {
+		t.Fatal("promote must add --dry-run only for the resolved true boolean")
+	}
+	if got := strings.Count(text, `[[ "$DRY_RUN" == true ]] && exit 0`); got != 2 {
+		t.Fatalf("cleanup and rollback dry-run guards = %d, want 2", got)
+	}
+}
+
+func TestProductionReleaseCeremonyUsesRequestThenFinalTag(t *testing.T) {
+	root := repoRoot(t)
+	paths := []string{filepath.Join(root, ".github", "workflows", "self-release.yml")}
+	examples, err := filepath.Glob(filepath.Join(root, "examples", "*", "release-workflow.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths = append(paths, examples...)
+	if len(paths) != 11 {
+		t.Fatalf("production release trigger files = %d, want self-release plus 10 examples", len(paths))
+	}
+	for _, path := range paths {
+		body, err := os.ReadFile(path) //nolint:gosec // repository fixture.
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), `"release-request/v*"`) {
+			t.Errorf("%s does not trigger on release-request/v*", path)
+		}
+	}
+
+	orchestrator, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release-orchestrator.yml")) //nolint:gosec // repository fixture.
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(orchestrator)
+	derive := strings.Index(text, "run: reusable-ci version derive-release")
+	requireRequest := strings.Index(text, `RELEASE_CONTEXT_REQUIRE_REQUEST: "true"`)
+	if derive < 0 || requireRequest < 0 || requireRequest > derive {
+		t.Fatal("orchestrator must require a request ref at its first derive-release boundary")
+	}
+	if got := strings.Count(text, `branch: ${{ needs.parse-config.outputs.release-tag }}`); got != 2 {
+		t.Fatalf("post-tag build/publish final-tag checkouts = %d, want 2", got)
+	}
+	if !strings.Contains(text, `checkout-ref: ${{ needs.parse-config.outputs.release-tag }}`) {
+		t.Fatal("release creation must check out the created final tag")
+	}
+
+	runtimeWorkflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "self-runtime-container.yml")) //nolint:gosec // repository fixture.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(runtimeWorkflow), `- "v*.*.*"`) {
+		t.Fatal("self-runtime-container must remain triggered by final release tags")
 	}
 }
 

@@ -1148,6 +1148,11 @@ Manifest-list SLSA provenance is generated for tag builds with
 (default) attests each per-arch child too, so a per-platform digest verifies as
 well.
 
+Because this provenance is signed, production planning requires release artifact
+signing plus a cosign-capable `sign.method` (`sigstore` or `kms`) whenever a
+pushed container has `enable-slsa: true`. Disabled or GPG-only signing is
+rejected before build or registry work.
+
 This is the single, portable provenance path — reusable-ci deliberately does not
 also push to GitHub's attestation store (`actions/attest-build-provenance`),
 which is GitHub-only and would be a redundant second copy. GitHub consumers run
@@ -1258,7 +1263,7 @@ gh release download ${VERSION} -p "*.intoto.json" -p "*.intoto.jsonl"
 
 cosign verify-blob \
   --bundle reusable-ci.intoto.jsonl \
-  --certificate-identity-regexp '^https://github.com/diggsweden/reusable-ci/\.github/workflows/release-binary\.yml@.*' \
+  --certificate-identity-regexp '^https://github.com/diggsweden/reusable-ci/\.github/workflows/release-binary\.yml@refs/heads/main$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   reusable-ci.intoto.json
 ```

@@ -13,6 +13,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
+	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/ghaenv"
 )
 
@@ -20,6 +21,7 @@ func TestReleaseCmd_UsesConfigPlanAndEmitsTypedPlans(t *testing.T) {
 	env := ghaenv.Setup(t)
 
 	cfg := &config.Config{
+		Sign: config.SignConfig{Method: domainrelease.SignMethodSigstore},
 		Artifacts: []config.Artifact{
 			{Name: "web", ProjectType: projecttype.NPM, PublishTo: []config.PublishTarget{config.PublishForgePackages}},
 			{Name: "go-cli", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeArtifactFirst}},

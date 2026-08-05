@@ -8,10 +8,7 @@ name: Self Release
 on:
   push:
     tags:
-      - "v*.*.*"
-      # Exclude the rolling CLI pre-release tag (v3.0.0-pre) — it is an artifact
-      # anchor created by self-runtime-container, not a real release.
-      - "!v*-pre"
+      - "release-request/v*"
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -32,7 +29,7 @@ jobs:
     secrets: inherit
     with:
       artifacts-config: .reusable-ci/artifacts.yml
-      reusable-ci-binary-ref: ${{ github.ref_name }}
+      reusable-ci-binary-ref: ${{ github.sha }}
       changelog-creator: git-cliff
       changelog.config: templates/gitcliff/default.toml
       release-publisher: github-cli

@@ -19,6 +19,9 @@
 # context: . means each Containerfile sees the entire workspace root,
 # which is required because `COPY Cargo.toml Cargo.lock` and the per-crate
 # COPYs in the builder stage need workspace-level paths to resolve.
+sign:
+  method: sigstore
+
 artifacts:
   - name: hsm-worker
     project-type: cargo

@@ -219,11 +219,11 @@ jobs:
           PROMOTE_TAG: ${{ inputs['release-tag'] }}
           DRY_RUN: ${{ inputs['dry-run'] }}
         run: |
-          reusable-ci container ledger promote \
-            --stage "$PROMOTE_STAGE" \
-            ${PROMOTE_STAGE_REPO:+--stage-repo "$PROMOTE_STAGE_REPO"} \
-            ${PROMOTE_TAG:+--tag "$PROMOTE_TAG"} \
-            ${DRY_RUN:+--dry-run}
+          args=(--stage "$PROMOTE_STAGE")
+          [[ -n "$PROMOTE_STAGE_REPO" ]] && args+=(--stage-repo "$PROMOTE_STAGE_REPO")
+          [[ -n "$PROMOTE_TAG" ]] && args+=(--tag "$PROMOTE_TAG")
+          [[ "$DRY_RUN" == true ]] && args+=(--dry-run)
+          reusable-ci container ledger promote "${args[@]}"
       # Release stage only: after a successful promotion, drop the staging
       # candidate tag (its job — being the promotion source — is done). The
       # pre-check inside `cleanup` refuses to delete unless the digest is still
@@ -235,11 +235,16 @@ jobs:
       # staging tag in place where it can't (a harmless immutable record),
       # never failing the release.
       - name: Clean up staging candidate (release)
-        if: ${{ inputs.stage == 'release' && !inputs['dry-run'] }}
+        if: ${{ inputs.stage == 'release' }}
         continue-on-error: true
         env:
           PROMOTE_TAG: ${{ inputs['release-tag'] }}
-        run: reusable-ci container ledger cleanup ${PROMOTE_TAG:+--tag "$PROMOTE_TAG"}
+          DRY_RUN: ${{ inputs['dry-run'] }}
+        run: |
+          [[ "$DRY_RUN" == true ]] && exit 0
+          args=()
+          [[ -n "$PROMOTE_TAG" ]] && args+=(--tag "$PROMOTE_TAG")
+          reusable-ci container ledger cleanup "${args[@]}"
       # Undo this stage's partial promotion: delete the stage's pointer tag(s)
       # (:dev/:staging/:release) that still serve the entry's digest — never the
       # immutable :<version>. Stage-aware so it targets exactly what promote
@@ -247,14 +252,16 @@ jobs:
       # can't delete); the promote verb's pre/post digest checks are the primary
       # safety. Skipped on dry-run (nothing was moved).
       - name: Roll back on failure
-        if: ${{ failure() && !inputs['dry-run'] }}
+        if: ${{ failure() }}
         continue-on-error: true
         env:
           PROMOTE_STAGE: ${{ inputs.stage }}
           PROMOTE_STAGE_REPO: ${{ inputs['stage-repo'] }}
           PROMOTE_TAG: ${{ inputs['release-tag'] }}
+          DRY_RUN: ${{ inputs['dry-run'] }}
         run: |
-          reusable-ci container ledger rollback \
-            --stage "$PROMOTE_STAGE" \
-            ${PROMOTE_STAGE_REPO:+--stage-repo "$PROMOTE_STAGE_REPO"} \
-            ${PROMOTE_TAG:+--tag "$PROMOTE_TAG"}
+          [[ "$DRY_RUN" == true ]] && exit 0
+          args=(--stage "$PROMOTE_STAGE")
+          [[ -n "$PROMOTE_STAGE_REPO" ]] && args+=(--stage-repo "$PROMOTE_STAGE_REPO")
+          [[ -n "$PROMOTE_TAG" ]] && args+=(--tag "$PROMOTE_TAG")
+          reusable-ci container ledger rollback "${args[@]}"

@@ -371,6 +371,8 @@ jobs:
         id: relctx
         # release-request/vX.Y.Z → vX.Y.Z (the final release tag). The CLI
         # owns the parsing; bash never strips refs.
+        env:
+          RELEASE_CONTEXT_REQUIRE_REQUEST: "true"
         run: reusable-ci version derive-release
       - name: Parse artifacts.yml
         id: parse
@@ -476,7 +478,7 @@ jobs:
       XCCONFIG_BASE64: ${{ secrets.XCCONFIG_BASE64 }}
     uses: ./.github/workflows/release-build-stage.yml
     with:
-      branch: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
+      branch: ${{ needs.parse-config.outputs.release-tag }}
       build-stage-plan-json: ${{ needs.parse-config.outputs.build-stage-plan-json }}
       reusable-ci-binary-ref: ${{ needs.parse-config.outputs.reusable-ci-binary-ref }}
       runtime-image: ${{ inputs['runtime-image'] }}
@@ -514,7 +516,7 @@ jobs:
       REUSABLE_CI_BUILD_SECRETS_JSON: ${{ secrets.REUSABLE_CI_BUILD_SECRETS_JSON }}
     uses: ./.github/workflows/release-publish-stage.yml
     with:
-      branch: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
+      branch: ${{ needs.parse-config.outputs.release-tag }}
       publish-stage-plan-json: ${{ needs.parse-config.outputs.publish-stage-plan-json }}
       reusable-ci-binary-ref: ${{ needs.parse-config.outputs.reusable-ci-binary-ref }}
       runtime-image: ${{ inputs['runtime-image'] }}
@@ -604,7 +606,7 @@ jobs:
     uses: ./.github/workflows/release-create-github.yml
     with:
       release-name: "${{ needs.parse-config.outputs.release-tag }}"
-      checkout-ref: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
+      checkout-ref: ${{ needs.parse-config.outputs.release-tag }}
       attach-artifacts: ${{ inputs['release.attachartifacts'] }}
       sboms: ${{ fromJson(needs.parse-config.outputs['release-plan-json']).policy.sboms }}
       sign-artifacts: ${{ fromJson(needs.parse-config.outputs['release-plan-json']).policy.sign_artifacts }}

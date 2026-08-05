@@ -91,9 +91,9 @@ containers, publish targets). Verify a setup any time with
 ### How it works
 
 - Push code → PR workflow runs checks.
-- Sign and push a tag → release workflow validates, builds, publishes.
+- Sign and push a `release-request/vX.Y.Z` tag → release workflow validates, builds, publishes.
 - A failed step prints an actionable message; the orchestrator's
-  step-summary block names which leaf failed and why.
+  step-summary block names which leaf failed.
 
 ### Two ways to call it
 
@@ -183,13 +183,13 @@ jobs:
          # linters.swiftlint: false        # Swift linting for iOS/macOS (standalone macOS job)
    ```
 
-3. **Create release workflow** - Trigger builds on tags:
+3. **Create release workflow** - Trigger builds on release-request tags:
    ```yaml
    # .github/workflows/release-workflow.yml
    name: Release
    on:
      push:
-       tags: ["v*.*.*"]
+       tags: ["release-request/v*"]
    permissions:
      contents: read
    jobs:
@@ -293,7 +293,7 @@ per-image.
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────┐
-│                       Signed tag push (v*.*.*)                      │
+│              Signed tag push (release-request/vX.Y.Z)              │
 └────────────────────────────────┬────────────────────────────────────┘
                                  │
                     ┌────────────▼────────────┐
@@ -306,8 +306,8 @@ per-image.
                                  │
                     ┌────────────▼────────────┐
                     │      Prepare stage      │
-                    │   version-bump commit   │
-                    │   (signed by GPG key)   │
+                    │ signed bump + final tag │
+                    │       vX.Y.Z            │
                     └────────────┬────────────┘
                                  │
          ┌───────────────────────┴────────────────────────┐
