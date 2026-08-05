@@ -83,8 +83,8 @@ jobs:
     name: Prepare Release - ${{ matrix.artifact.name }}
     if: ${{ fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
     strategy:
-      # Each matrix leg commits, pushes, and moves the same release tag.
-      # Serialize them so multi-artifact releases cannot race on refs.
+      # Each matrix leg commits and pushes to the same release branch. Serialize
+      # them so every leg starts after the preceding bump has landed.
       max-parallel: 1
       matrix:
         artifact: ${{ fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.items }}

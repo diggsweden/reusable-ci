@@ -25,7 +25,7 @@ reflected here.
 | `reusable-ci` Go binary | reusable-ci | Argv-pinned tools (tests assert exact argv); env-only secret reads; reproducible builds |
 | Runtime images | reusable-ci | Tag-pinned (`@vN.N.N`) by default — **see Known trust boundaries below** |
 | Third-party GitHub Actions | upstream | SHA-pinned by reusable-ci's Renovate base config |
-| Toolchain base images (`debian:13-slim` etc.) | upstream | Digest-pinned (`@sha256:…`) by reusable-ci's Renovate `dockerfile` manager |
+| Toolchain base images (`debian:13-slim` etc.) | upstream | Digest-pinned (`@sha256:…`); a local Go contract test enforces the pin and Renovate updates it |
 | Forge run-artifact store (GitHub Actions artifacts / Forgejo Actions artifacts) | upstream (forge) | Carries build output between jobs. Every downloaded entry is gated for path traversal, symlinks, and size (`domainartifact.SafeJoin`). Where a hand-off crosses the build → sign boundary it is bound out of band, not left to the store: the producer emits `release dist-digest` as a job output and the signer re-checks with `release validate-dist --expected-digest`, so the expected value travels the forge control plane (forgejo-ci's `check-l3-isolation` asserts that channel; reusable-ci's own GitHub release signs in the build job, so it has no hand-off to bind). The store is trusted for availability and for any flow that does not bind. See [Artifact and image flows](flows.md#how-each-flow-binds-build-to-signature). |
 
 ## What reusable-ci defends against

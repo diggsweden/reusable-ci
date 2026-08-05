@@ -19,7 +19,7 @@
       "minimumReleaseAge": "7 days"
     },
     {
-      "description": "Pin base image digests for runtime Containerfile FROM lines (debian, golang); the dockerfile manager updates both the tag and the digest each release.",
+      "description": "Pin external runtime Containerfile base images; the dockerfile manager updates both the tag and digest.",
       "matchManagers": [
         "dockerfile"
       ],

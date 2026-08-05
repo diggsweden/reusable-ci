@@ -140,19 +140,20 @@ func TestPromoteWorkflowResolvesDryRunAsBoolean(t *testing.T) {
 
 func TestProductionReleaseCeremonyUsesRequestThenFinalTag(t *testing.T) {
 	root := repoRoot(t)
-	paths := []string{filepath.Join(root, ".github", "workflows", "self-release.yml")}
 	examples, err := filepath.Glob(filepath.Join(root, "examples", "*", "release-workflow.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	paths := make([]string, 1, 1+len(examples))
+	paths[0] = filepath.Join(root, ".github", "workflows", "self-release.yml")
 	paths = append(paths, examples...)
 	if len(paths) != 11 {
 		t.Fatalf("production release trigger files = %d, want self-release plus 10 examples", len(paths))
 	}
 	for _, path := range paths {
-		body, err := os.ReadFile(path) //nolint:gosec // repository fixture.
-		if err != nil {
-			t.Fatal(err)
+		body, readErr := os.ReadFile(path) //nolint:gosec // repository fixture.
+		if readErr != nil {
+			t.Fatal(readErr)
 		}
 		if !strings.Contains(string(body), `"release-request/v*"`) {
 			t.Errorf("%s does not trigger on release-request/v*", path)
@@ -182,6 +183,74 @@ func TestProductionReleaseCeremonyUsesRequestThenFinalTag(t *testing.T) {
 	}
 	if !strings.Contains(string(runtimeWorkflow), `- "v*.*.*"`) {
 		t.Fatal("self-runtime-container must remain triggered by final release tags")
+	}
+}
+
+func TestReleasePreparationSerializesBumpsAndTagsOnce(t *testing.T) {
+	root := repoRoot(t)
+	body, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release-prepare-stage.yml")) //nolint:gosec // repository fixture.
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	if !strings.Contains(text, "max-parallel: 1") {
+		t.Fatal("version-bump matrix must remain serialized")
+	}
+	if got := strings.Count(text, "run: reusable-ci version tag-release"); got != 1 {
+		t.Fatalf("final tag creation steps = %d, want exactly 1", got)
+	}
+	if !strings.Contains(text, "needs: [version-bump]") {
+		t.Fatal("final tag job must wait for every version bump")
+	}
+
+	for _, relative := range []string{"docs/artifacts-reference.md", "examples/monorepo/README.md"} {
+		doc, readErr := os.ReadFile(filepath.Join(root, relative)) //nolint:gosec // repository fixture.
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if strings.Contains(string(doc), "can race on pushes/tag moves") {
+			t.Errorf("%s still claims multi-artifact release refs race", relative)
+		}
+	}
+}
+
+func TestRuntimeContainerfileExternalFromImagesAreDigestPinned(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(repoRoot(t), "containers", "runtime", "Containerfile")) //nolint:gosec // repository fixture.
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	args := make(map[string]string)
+	stages := make(map[string]bool)
+	argPattern := regexp.MustCompile(`^ARG ([A-Za-z_][A-Za-z0-9_]*)=(\S+)$`)
+	variablePattern := regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?`)
+	digestPattern := regexp.MustCompile(`@sha256:[a-f0-9]{64}$`)
+	for lineNumber, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if match := argPattern.FindStringSubmatch(line); match != nil {
+			args[match[1]] = match[2]
+
+			continue
+		}
+		if !strings.HasPrefix(line, "FROM ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		imageIndex := 1
+		if strings.HasPrefix(fields[imageIndex], "--platform=") {
+			imageIndex++
+		}
+		image := variablePattern.ReplaceAllStringFunc(fields[imageIndex], func(variable string) string {
+			name := strings.Trim(variable, "${}")
+
+			return args[name]
+		})
+		if image != "scratch" && !stages[image] && !digestPattern.MatchString(image) {
+			t.Errorf("Containerfile:%d external FROM %q is not SHA-256 digest-pinned", lineNumber+1, image)
+		}
+		if len(fields) > imageIndex+2 && strings.EqualFold(fields[imageIndex+1], "AS") {
+			stages[fields[imageIndex+2]] = true
+		}
 	}
 }
 

@@ -51,6 +51,45 @@ func runSourcedScript(t *testing.T, script, body string, env map[string]string) 
 	return stdout.String(), stderr.String(), err
 }
 
+func TestVerifiedDownloadRejectsIntegrityFailure(t *testing.T) {
+	fixture := filepath.Join(t.TempDir(), "upstream")
+	if err := os.WriteFile(fixture, []byte("tampered archive\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "download")
+	body := `curl() { cp "$FIXTURE" "${*: -1}"; }; ci_download_verified https://example.invalid/tool.tar.gz "$DESTINATION" ` + strings.Repeat("0", 64)
+	_, stderr, err := runSourcedScript(t, "install-common.sh", body, map[string]string{
+		"FIXTURE":     fixture,
+		"DESTINATION": destination,
+	})
+	if err == nil {
+		t.Fatal("download with a mismatching pinned checksum succeeded")
+	}
+	if !strings.Contains(stderr, "SHA-256 mismatch") {
+		t.Fatalf("stderr = %q, want SHA-256 mismatch", stderr)
+	}
+	if _, statErr := os.Stat(destination); !os.IsNotExist(statErr) {
+		t.Fatalf("rejected download was not removed: %v", statErr)
+	}
+}
+
+func TestSecurityToolInstallersUsePinnedReleaseAssets(t *testing.T) {
+	mutableURL := regexp.MustCompile(`(?:raw\.)?github(?:usercontent)?\.com/.+/(?:main|master)/`)
+	for _, script := range []string{"install-trivy.sh", "install-syft.sh"} {
+		body, err := os.ReadFile(script) //nolint:gosec // repository fixture.
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(body)
+		if mutableURL.MatchString(text) {
+			t.Errorf("%s contains a mutable upstream branch URL", script)
+		}
+		if !strings.Contains(text, "/releases/download/${") || !strings.Contains(text, "SHA256_") {
+			t.Errorf("%s must download a versioned release asset with an in-repo SHA-256 pin", script)
+		}
+	}
+}
+
 func TestInstallReusableCI_RemoteRef_GoInstallPath(t *testing.T) {
 	binDir := t.TempDir()
 	logPath := filepath.Join(t.TempDir(), "go-args")

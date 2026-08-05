@@ -696,9 +696,10 @@ this is operative, not aspirational:
   `# vX.Y.Z` comments. Enforced by `pinDigests: true` on the
   `github-actions` manager in `local>diggsweden/.github:renovate-base`.
 - **Containerfile FROM lines** (the runtime image build) are
-  digest-pinned. Enforced by `pinDigests: true` on the `dockerfile`
-  manager in this repo's `renovate.json`. `FROM debian:13-slim@sha256:…`
-  is the actual shape, not `FROM debian:13-slim`.
+  digest-pinned. `TestRuntimeContainerfileExternalFromImagesAreDigestPinned`
+  rejects external bases without `@sha256:…`; Renovate's `dockerfile` manager
+  updates the tag and digest under `pinDigests: true`. The Debian pin is held in
+  the global `DEBIAN_VERSION` ARG consumed by `FROM`.
 - **Pinned tool versions** in Containerfiles, workflow env defaults, and
   mise tool refs are updated via `# renovate: datasource=…` markers and
   customManagers — a Rust toolchain or `cyclonedx-gomod` bump goes

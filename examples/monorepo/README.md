@@ -236,7 +236,9 @@ containers:
 - **Maven upload names are fixed today** - Model multiple Maven modules as one
   Maven reactor/root artifact instead of separate Maven artifacts until
   reusable-ci threads per-artifact Maven upload names.
-- **Version bump concurrency** - Multi-artifact version bumps currently run in a matrix and can race on pushes/tag moves
+- **Serialized release preparation** - Artifact version bumps run one at a time;
+  after all bumps succeed, the final release tag is created once at branch HEAD
+  without force.
 
 See [Artifacts Reference](../../docs/artifacts-reference.md#monorepo-configuration) for details.
 

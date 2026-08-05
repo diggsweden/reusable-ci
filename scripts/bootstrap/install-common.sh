@@ -7,6 +7,40 @@ ci_install_dir() {
 	printf '%s/%s-bin' "${CI_TEMP_DIR:-/tmp}" "$tool"
 }
 
+ci_verify_sha256() {
+	local file="$1"
+	local expected="$2"
+	local actual
+
+	if command -v sha256sum &>/dev/null; then
+		actual="$(sha256sum "$file" | cut -d' ' -f1)"
+	elif command -v shasum &>/dev/null; then
+		actual="$(shasum -a 256 "$file" | cut -d' ' -f1)"
+	else
+		printf 'ERROR: neither sha256sum nor shasum is available\n' >&2
+		rm -f "$file"
+		return 1
+	fi
+
+	if [[ "$actual" != "$expected" ]]; then
+		printf 'ERROR: SHA-256 mismatch for %s (expected %s, got %s)\n' "$file" "$expected" "$actual" >&2
+		rm -f "$file"
+		return 1
+	fi
+}
+
+ci_download_verified() {
+	local url="$1"
+	local destination="$2"
+	local sha256="$3"
+
+	if ! curl --retry 5 --retry-delay 3 --retry-connrefused --proto '=https' --tlsv1.2 -sSfL "$url" -o "$destination"; then
+		rm -f "$destination"
+		return 1
+	fi
+	ci_verify_sha256 "$destination" "$sha256"
+}
+
 ci_prepend_path() {
 	local dir="$1"
 	export PATH="${dir}:$PATH"

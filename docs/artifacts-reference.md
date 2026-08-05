@@ -1198,7 +1198,9 @@ jobs:
 - **Unified versioning**: All artifacts share the same version (from git tag)
 - **Single changelog**: One changelog for the entire repository
 - **No change detection**: All artifacts build on every release
-- **Version bump concurrency**: Multi-artifact version bump currently uses a matrix and can race on pushes/tag moves; single-artifact projects are unaffected. See [`TODO.md`](../TODO.md).
+- **Serialized release preparation**: Multi-artifact version bumps run one at a
+  time against the release branch. After every bump succeeds, one separate job
+  creates the final release tag once at the resulting branch HEAD without force.
 
 ## Complete Working Examples
 
