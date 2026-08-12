@@ -11,7 +11,6 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/ociregistry"
 	appbaseimages "github.com/diggsweden/reusable-ci/v3/internal/app/baseimages"
-	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
@@ -33,6 +32,7 @@ Requires a forge implementing both container tag listing and tag deletion
 			&cli.StringFlag{Name: "shared-core-images-json", Value: "[]", Sources: cli.EnvVars("SHARED_CORE_IMAGES_JSON"), Usage: "JSON array of shared-core base image metadata"},
 			&cli.StringFlag{Name: "base-images-json", Value: "[]", Sources: cli.EnvVars("BASE_IMAGES_JSON"), Usage: "JSON array of base image metadata"},
 			&cli.StringFlag{Name: flagBaseInputsJSON, Value: "[]", Sources: cli.EnvVars("BASE_INPUTS_JSON"), Usage: "JSON array mapping flavors to content/base input IDs"},
+			localRegistryFlag(),
 			regflags.AuthFile(regflags.AuthFileOpts{Usage: "registry auth file for final/staging digest checks"}),
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -61,22 +61,16 @@ Requires a forge implementing both container tag listing and tag deletion
 				registry = ociregistry.WithAuthFile(authFile)
 			}
 
-			// Base-image cleanup drives two package-API roles, TagDeleter and
-			// ContainerPackageLister. Resolving the active forge and refusing by
-			// role means any forge implementing both is supported, and the rest
-			// get the same typed "unsupported" refusal as every other capability
-			// gap.
-			forge, err := deps.ProviderWithServerURL(common.ServerURL)
+			// TagDeleter + ContainerPackageLister, from whichever surface holds
+			// the bases. Refusing by role means any forge implementing both is
+			// supported and the rest get a typed "unsupported" refusal; the
+			// local-registry path gets the same two methods from crane.
+			cleaner, err := baseImagePackageRegistry(cmd, common, "base-image staging cleanup")
 			if err != nil {
 				return err
 			}
 
-			forgeProvider, err := deps.RoleFrom[baseImagePackageAPI](forge, "base-image staging cleanup")
-			if err != nil {
-				return err
-			}
-
-			return appbaseimages.CleanupStagingBaseImages(ctx, registry, forgeProvider, os.Stderr, appbaseimages.BaseImageCleanupStagingInput{
+			return appbaseimages.CleanupStagingBaseImages(ctx, registry, cleaner, os.Stderr, appbaseimages.BaseImageCleanupStagingInput{
 				Images:             append(sharedImages, baseImages...),
 				BaseInputs:         baseInputs,
 				ExpectedRepository: common.ExpectedRepository,

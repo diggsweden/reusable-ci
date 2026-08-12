@@ -15,14 +15,29 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/ociregistry"
 	appbaseimages "github.com/diggsweden/reusable-ci/v3/internal/app/baseimages"
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
+
+// flagLocalRegistry selects the plain-OCI surface over the forge package API.
+const flagLocalRegistry = "local-registry"
+
+// localRegistryFlag is shared by every base-image verb that lists or deletes
+// tags, so a consumer sets the same flag whichever verb it runs.
+func localRegistryFlag() cli.Flag {
+	return &cli.BoolFlag{
+		Name:    flagLocalRegistry,
+		Sources: cli.EnvVars("BASE_IMAGES_LOCAL_REGISTRY"),
+		Usage:   "list and delete through a plain OCI registry (bases kept beside the runner) instead of the forge package API",
+	}
+}
 
 var baseImagesRepositorySuffixRE = regexp.MustCompile(`^(-[A-Za-z0-9][A-Za-z0-9._-]*)?$`)
 
@@ -304,4 +319,76 @@ func parseBaseImages(raw string) ([]appbaseimages.BaseImageMetadata, error) {
 
 func unsafeWorkflowPath(path string) bool {
 	return path == "" || filepath.IsAbs(path) || strings.HasPrefix(path, "../") || strings.Contains(path, "/../") || strings.ContainsAny(path, "\n\r")
+}
+
+// baseImagePackageRegistry resolves the surface that lists and deletes base-image
+// tags: a plain OCI registry when --local-registry is set, otherwise the active
+// forge's package API.
+//
+// Both exist because both are real deployments. A consumer may keep its bases
+// beside the runner, or in the forge's package registry, and that choice is the
+// consumer's -- so it is a flag rather than something the engine decides.
+//
+// The two are not interchangeable underneath. A forge package API deletes one
+// version and leaves its siblings; the OCI distribution spec has no tag-scoped
+// delete at all, which is why the crane adapter refuses a tag whose manifest
+// another tag shares. Pointing one at the other's registry does not fail
+// cleanly, so the mismatch is refused here instead.
+func baseImagePackageRegistry(cmd *cli.Command, common baseImagesCommon, capability string) (baseImagePackageAPI, error) {
+	local := cmd.Bool(flagLocalRegistry)
+
+	if err := requireRegistrySurfaceMatches(local, common); err != nil {
+		return nil, err
+	}
+
+	if local {
+		if authFile := cmd.String(flagAuthFile); authFile != "" {
+			return ociregistry.WithAuthFile(authFile), nil
+		}
+
+		return ociregistry.New(), nil
+	}
+
+	forge, err := deps.ProviderWithServerURL(common.ServerURL)
+	if err != nil {
+		return nil, err
+	}
+
+	return deps.RoleFrom[baseImagePackageAPI](forge, capability)
+}
+
+// requireRegistrySurfaceMatches refuses a --local-registry setting that
+// contradicts where the base images actually live.
+//
+// Caught here because neither mismatch fails in a way that reads as a
+// configuration error: asking a forge package API to delete a version of a
+// repository on loopback returns a confusing 404, and driving a forge's own
+// registry through the OCI adapter would refuse every shared manifest instead
+// of deleting the one version it was asked to.
+func requireRegistrySurfaceMatches(local bool, common baseImagesCommon) error {
+	repoHost, err := optionalRegistryHost(common.ExpectedRepository)
+	if err != nil || repoHost == "" {
+		return err
+	}
+
+	if ociregistry.LoopbackHost(repoHost) && !local {
+		return fmt.Errorf(
+			"base images: %s is on loopback but --local-registry is not set.\n"+
+				"    A forge package API cannot manage a registry running beside the job: %w",
+			common.ExpectedRepository, errs.ErrUsage)
+	}
+
+	forgeHost, err := optionalRegistryHost(common.ServerURL)
+	if err != nil {
+		return err
+	}
+
+	if local && forgeHost != "" && repoHost == forgeHost {
+		return fmt.Errorf(
+			"base images: --local-registry is set but %s is the forge's own registry.\n"+
+				"    Drop the flag so deletion goes through the package API, which is tag-scoped: %w",
+			common.ExpectedRepository, errs.ErrUsage)
+	}
+
+	return nil
 }

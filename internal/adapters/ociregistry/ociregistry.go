@@ -572,6 +572,15 @@ func loopbackRef(ref string) bool {
 	return isLoopbackHost(parsed.Context().RegistryStr())
 }
 
+// LoopbackHost reports whether a registry host is loopback, and therefore a
+// registry running beside the job rather than a forge's.
+//
+// Exported because the CLI has to decide which registry surface to drive
+// before constructing one: a loopback repository cannot be managed through a
+// forge package API, and that mismatch is worth refusing rather than
+// discovering in a failed delete.
+func LoopbackHost(registry string) bool { return isLoopbackHost(registry) }
+
 func isLoopbackHost(registry string) bool {
 	host := registry
 	if i := strings.LastIndex(host, ":"); i >= 0 {

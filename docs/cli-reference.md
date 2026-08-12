@@ -687,6 +687,7 @@ Requires a forge implementing both container tag listing and tag deletion
 | `--shared-core-images-json` | JSON array of shared-core base image metadata | `$SHARED_CORE_IMAGES_JSON` |
 | `--base-images-json` | JSON array of base image metadata | `$BASE_IMAGES_JSON` |
 | `--base-inputs-json` | JSON array mapping flavors to content/base input IDs | `$BASE_INPUTS_JSON` |
+| `--local-registry` | list and delete through a plain OCI registry (bases kept beside the runner) instead of the forge package API | `$BASE_IMAGES_LOCAL_REGISTRY` |
 | `--auth-file` | registry auth file for final/staging digest checks | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
 
 #### `reusable-ci container base-images freshness`
