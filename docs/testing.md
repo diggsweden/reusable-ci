@@ -14,8 +14,8 @@ used.
 
 ## Layers
 
-Tests sit in one of six buckets. Each has a different shape, build tag,
-and CI gate. Two of them live outside this repository's `go test ./...`:
+Tests sit in one of the buckets below. Each has a different shape, build
+tag, and CI gate. Two of them live outside this repository's `go test ./...`:
 the black-box suite is its own repository, and the live tier needs a lab.
 
 | Layer | What it tests | Build tag | Speed | Parallel | Network / CLI |
@@ -123,7 +123,12 @@ cmd/reusable-ci/e2e_test.go                   ← //go:build e2e
 ### Except the repo-wide guards
 
 A guard that walks the whole tree is not a test of the package it happens to
-sit in. Four packages hold them, named for what each is answerable for:
+sit in. It lives in one of the packages below, named for what it is
+answerable for. This table is the list; the package docs do not repeat it.
+
+`TestGuardPackagesAreDocumented` in `internal/syncguard` fails when a
+`internal/*guard` package is missing a row here, so adding a package without
+saying what it guards does not compile past CI.
 
 | Package | Guards | Reads |
 |---|---|---|
@@ -132,10 +137,8 @@ sit in. Four packages hold them, named for what each is answerable for:
 | `internal/syncguard` | a generated file still matches the Go it is generated from | `docs/`, `.reusable-ci/` |
 | `internal/workflowguard` | the workflow contract adopters code against | `.github/workflows/`, `examples/` |
 
-They were all originally in `internal/cli`, which made that package look like
-the home of repo policy rather than the CLI. The rule now: if a guard reads
-files outside its own package, it goes in one of the four above; if it tests
-`internal/cli`, it stays in `internal/cli`.
+The rule: a guard that reads files outside its own package goes in one of
+these; a test of `internal/cli` stays in `internal/cli`.
 
 `internal/testutil/reporoot` resolves the repository root for all of them, so
 none of them carries its own copy of that logic.

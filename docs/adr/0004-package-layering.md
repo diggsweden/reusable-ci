@@ -169,14 +169,11 @@ all of which resolve the repository root and read `docs/`, `.github/`, or the
 whole tree. `internal/cli` had four production files and thirty test files,
 most of which had nothing to say about the CLI.
 
-They now sit in packages named for what each is answerable for:
-
-| Package | Answerable for |
-|---|---|
-| `internal/archguard` | where code may live — import direction, plus the env/credential/platform-branching rules |
-| `internal/lexiconguard` | a spelling, regex, or pattern literal is declared once |
-| `internal/syncguard` | a generated file still matches the Go it is generated from |
-| `internal/workflowguard` | the `.github/workflows` contract adopters code against |
+They now sit in packages named for what each is answerable for. The current
+set, and the rule for choosing between them, is the guard table in
+[`docs/testing.md`](../testing.md) — deliberately not repeated here, so that
+adding a guard package means editing one document rather than remembering
+this one. `TestGuardPackagesAreDocumented` holds that table to the tree.
 
 Nothing about the layering changed; the decision above stands as written.
 Three consequences worth recording:

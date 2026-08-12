@@ -15,17 +15,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// benignSecrets are the `workflow_call.secrets:` names that do NOT oblige a
-// workflow to carry the event-context guard, each with the reason it doesn't.
+// benignSecrets are the `workflow_call.secrets:` names that do not oblige a
+// workflow to carry the event-context guard.
 //
-// The guard treats every other declared secret as privileged. That default is
-// the point: the previous shape listed the privileged names instead, so a
-// secret nobody had added to the list made the workflow invisible to this test
-// — a new credential defaulted to unwatched, and the omission looked exactly
-// like a deliberate exclusion. Four names had already drifted out that way.
-//
-// Adding an entry here is a reviewable act: you are asserting this secret
-// cannot be exfiltrated by a pull_request-triggered run, and saying why.
+// Adding an entry is a reviewable act: you are asserting that this secret
+// cannot be exfiltrated by a pull_request-triggered run, and recording why.
+// Every declared secret not named here is treated as privileged, so a name
+// nobody has classified fails the guard rather than slipping past it.
 //
 //nolint:gochecknoglobals // policy constant — read-only set.
 var benignSecrets = map[string]string{

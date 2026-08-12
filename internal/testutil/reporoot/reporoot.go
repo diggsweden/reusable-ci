@@ -4,11 +4,8 @@
 // Package reporoot resolves the repository root for tests that assert on
 // files rather than on behaviour.
 //
-// The repo-wide guards (internal/archguard, internal/lexiconguard,
-// internal/syncguard, internal/workflowguard) all walk the tree from its
-// root, and every one of them needs the same answer. Deriving it once here
-// keeps them from each carrying a copy -- which would be a poor look in a
-// codebase that guards against duplicated constants for a living.
+// The repo-wide guards all walk the tree from its root and need the same
+// answer, so it is derived once here rather than copied into each of them.
 package reporoot
 
 import (

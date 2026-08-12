@@ -1,23 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-// Package workflowguard holds the guards over .github/workflows -- the
-// surface this repository ships to the repositories that consume it.
+// Package workflowguard holds the guards over .github/workflows, the surface
+// this repository ships to the repositories that consume it.
 //
 // The workflows are the product. Their `on.workflow_call` inputs are a public
-// API that every adopter's caller workflow codes against, their `uses:` edges
-// have to line up with the callee's declared inputs, and the privileged ones
-// must reach the event-context check before they touch a secret. None of that
-// is expressible in Go's type system, and all of it breaks in the adopter's
-// repository rather than in this one -- on their next tag bump, with no
-// signal here. These guards are what turns that silent break into a failing
-// test.
+// API every adopter's caller workflow codes against, their `uses:` edges have
+// to line up with the callee's declared inputs, and one that handles a secret
+// must reach the event-context check before it touches it. None of that is
+// expressible in Go's type system, and all of it breaks in the adopter's
+// repository rather than this one: on their next tag bump, with no signal
+// here. These guards turn that silent break into a failing test.
 //
-// They live here rather than in internal/cli, where they were originally
-// written, because they read YAML under .github/workflows and only reach for
-// the command tree to check a workflow against it. See also
-// internal/archguard (import direction), internal/lexiconguard
-// (single-sourced literals), and internal/syncguard (generated files).
+// One of the repo-wide guard packages; docs/testing.md says which is which and
+// where a new guard belongs.
 package workflowguard
 
 import (

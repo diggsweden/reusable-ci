@@ -2,18 +2,15 @@
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
 // Package platform holds the use cases behind `reusable-ci platform`: getting
-// a repository onto the runner and telling you what the runner has.
+// a repository onto the runner, and reporting what the runner has.
 //
-// One file per subcommand -- checkout.go, resolve_ref.go, workspace.go for
-// `checkout`, `resolve-ref`, and `debug-workspace`.
+// One file per subcommand: checkout.go, resolve_ref.go and workspace.go for
+// `checkout`, `resolve-ref` and `debug-workspace`. A new `platform` subcommand
+// gets a new file here.
 //
-// It was called `ci` and described itself as hosting "misc CI-platform helpers
-// that aren't part of any single domain". That was true before the verbs were
-// grouped under one command; afterwards the package had a single
-// responsibility and a name that named nothing, in a tool where everything is
-// CI. The name now matches the verb a reader would search for, and does not
-// collide with domain/ci (the sink ports) or adapters/platform (which reads
-// the environment to decide which forge is running).
+// Not to be confused with two neighbours it sits close to in a listing:
+// domain/ci holds the sink ports, and adapters/platform reads the environment
+// to decide which forge is running.
 package platform
 
 import (

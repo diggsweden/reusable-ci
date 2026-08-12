@@ -1,25 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-// Package syncguard holds the guards that keep a generated file in step with
-// the Go declarations it is generated from.
+// Package syncguard keeps a committed file in step with the Go declarations it
+// describes, whether it is generated wholesale or maintained by hand.
 //
-// docs/cli-reference.md, docs/artifacts-reference.md,
-// .reusable-ci/artifacts.schema.json, and
-// docs/schemas/release-images.schema.json are all committed copies of
-// something the code already knows. A committed copy is a claim about the
-// code, and an unchecked claim goes stale on the first change that forgets
-// it -- which for a published JSON Schema means an adopter validating against
-// a contract the binary no longer implements.
+// docs/cli-reference.md, .reusable-ci/artifacts.schema.json and
+// docs/schemas/release-images.schema.json are generated: the guard regenerates
+// each in memory and compares, so a failure names the refresh command rather
+// than printing a diff. docs/artifacts-reference.md is written by hand, so the
+// guard asserts only that every schema enum value appears in it.
 //
-// Each guard regenerates the artifact in memory and compares, so the failure
-// names the refresh command rather than the diff.
+// Either way the committed file is a claim about the code, and an unchecked
+// claim goes stale on the first change that forgets it. For a published JSON
+// Schema that means an adopter validating against a contract the binary no
+// longer implements.
 //
-// They live here rather than in internal/cli, where they were originally
-// written, because they read docs/ and .reusable-ci/ and have nothing to say
-// about the CLI command surface. See also internal/archguard (import
-// direction), internal/lexiconguard (single-sourced literals), and
-// internal/workflowguard (the workflow contract).
+// One of the repo-wide guard packages; docs/testing.md says which is which and
+// where a new guard belongs.
 package syncguard
 
 import (

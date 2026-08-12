@@ -1,21 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-// Package lexiconguard holds the guards that keep a spelling, a regex, or a
-// pattern literal declared exactly once in the tree.
+// Package lexiconguard keeps a spelling, a regex, or a pattern literal
+// declared exactly once in the tree.
 //
 // Each guard names one canonical definition, then walks the repository for
-// anything that re-states it. They clear the bar ADR 0003 §3 sets for a
-// guard: each pins a fact with one correct value rather than a judgement, and
-// a second copy is expensive to reverse because the two drift apart silently
-// -- a digest regex that accepts one more character in one place than another
-// is a validation hole, not a style problem.
+// anything that re-states it. They clear the bar ADR 0003 §3 sets: each pins a
+// fact with one correct value rather than a judgement, and a second copy is
+// expensive to reverse because the two drift apart silently. A digest regex
+// that accepts one more character in one place than another is a validation
+// hole, not a style problem.
 //
-// They live here rather than in internal/cli, where they were originally
-// written, because they read the whole repository and have nothing to say
-// about the CLI command surface. See also internal/archguard (import
-// direction), internal/syncguard (generated files), and
-// internal/workflowguard (the workflow contract).
+// One of the repo-wide guard packages; docs/testing.md says which is which and
+// where a new guard belongs.
 package lexiconguard
 
 import (

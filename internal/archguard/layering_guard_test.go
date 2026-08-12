@@ -1,19 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-// Package archguard holds the executable form of ADR 0004: it walks the
-// import graph under internal/ and fails when a package imports outward
-// across a layer boundary. Alongside it sit the other rules about where code
-// may live -- which layer may read which environment variable, which layer
-// may mint a credential, which layer may branch on the platform.
+// Package archguard enforces where code may live. It holds the executable
+// form of ADR 0004 -- walking the import graph under internal/ and failing on
+// any outward edge across a layer boundary -- alongside the other placement
+// rules: which layer may read the environment, which may mint a credential,
+// which may branch on the platform.
 //
-// This package was carved out of internal/cli first, on the grounds that a
-// guard inspecting the whole tree does not belong beside the CLI command
-// surface. That reasoning applied to eighteen further guards that stayed
-// behind; they are now internal/lexiconguard (single-sourced literals),
-// internal/syncguard (generated files vs their Go source), and
-// internal/workflowguard (the .github/workflows contract). What remains in
-// internal/cli tests internal/cli.
+// One of the repo-wide guard packages; docs/testing.md says which is which and
+// where a new guard belongs.
 package archguard
 
 import (
