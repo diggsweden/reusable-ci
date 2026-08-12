@@ -15,41 +15,24 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// privilegedSecretNames is the union of every signing/package/API
-// secret reusable-ci's reusable workflows accept. Any workflow whose
-// `workflow_call.secrets:` block declares one of these names MUST
-// guard its first secret-touching job with `reusable-ci validate
-// event-context`, or be on the forwarderWorkflows allowlist (delegates
-// every privileged-secret-using job to a guarded leaf).
+// benignSecrets are the `workflow_call.secrets:` names that do NOT oblige a
+// workflow to carry the event-context guard, each with the reason it doesn't.
 //
-// Update this list when a new privileged secret is added. The test
-// catches the missing guard at CI time, not after a leak.
+// The guard treats every other declared secret as privileged. That default is
+// the point: the previous shape listed the privileged names instead, so a
+// secret nobody had added to the list made the workflow invisible to this test
+// — a new credential defaulted to unwatched, and the omission looked exactly
+// like a deliberate exclusion. Four names had already drifted out that way.
+//
+// Adding an entry here is a reviewable act: you are asserting this secret
+// cannot be exfiltrated by a pull_request-triggered run, and saying why.
 //
 //nolint:gochecknoglobals // policy constant — read-only set.
-var privilegedSecretNames = map[string]bool{
-	"RELEASE_GPG_PRIVATE_KEY":                  true,
-	"RELEASE_GPG_PASSPHRASE":                   true,
-	"RELEASE_TOKEN":                            true,
-	"MAVEN_CENTRAL_USERNAME":                   true,
-	"MAVEN_CENTRAL_PASSWORD":                   true,
-	"NPM_TOKEN":                                true,
-	"GOOGLE_PLAY_SERVICE_ACCOUNT_JSON":         true,
-	"APP_STORE_CONNECT_API_KEY_ID":             true,
-	"APP_STORE_CONNECT_ISSUER_ID":              true,
-	"APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64": true,
-	"ANDROID_KEYSTORE":                         true,
-	"ANDROID_KEYSTORE_PASSWORD":                true,
-	"ANDROID_KEY_ALIAS":                        true,
-	"ANDROID_KEY_PASSWORD":                     true,
-	"SECRETS_PROPERTIES_BASE64":                true,
-	"IOS_SIGNING_CERTIFICATE_BASE64":           true,
-	"IOS_SIGNING_CERTIFICATE_PASSPHRASE":       true,
-	"PROVISIONING_PROFILE_BASE64":              true,
-	"KEYCHAIN_PASSWORD":                        true,
-	"XCCONFIG_BASE64":                          true,
-	"REUSABLE_CI_BUILD_SECRETS_JSON":           true,
-	"kms-auth-env":                             true,
-	"registry-password":                        true,
+var benignSecrets = map[string]string{
+	"CODE_SCANNING_TOKEN": "SARIF upload from PR quality runs; those workflows are " +
+		"triggered by pull_request by design, which is exactly what the guard refuses. " +
+		"The token's scope is security-events:write, not contents or packages.",
+	"RELEASE_GPG_PUBLIC_KEY": "public key material — published, verifiable, and useless to an attacker.",
 }
 
 // forwarderWorkflows delegate every privileged-secret-using job to
@@ -120,10 +103,13 @@ func TestPrivilegedWorkflowsHaveEventContextGuard(t *testing.T) {
 
 		declared := declaredCallSecrets(body)
 
+		// Iterate what the workflow declares, not a list of what we thought was
+		// privileged: an unrecognised secret must make the workflow MORE
+		// interesting to this test, not invisible to it.
 		var found []string
 
-		for name := range privilegedSecretNames {
-			if declared[name] {
+		for name := range declared {
+			if _, benign := benignSecrets[name]; !benign {
 				found = append(found, name)
 			}
 		}
