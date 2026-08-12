@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-package cli_test
+package syncguard
 
 import (
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
 
 	"github.com/stretchr/testify/require"
 
@@ -31,7 +33,7 @@ func TestArtifactsSchemaInSync(t *testing.T) {
 		"rendered schema still contains a {{placeholder}}; template and renderer drifted apart")
 	require.Truef(t, json.Valid([]byte(want)), "rendered schema is not valid JSON")
 
-	path := filepath.Join(repoRoot(t), ".reusable-ci", "artifacts.schema.json")
+	path := filepath.Join(reporoot.Path(t), ".reusable-ci", "artifacts.schema.json")
 	got, err := os.ReadFile(path) //nolint:gosec // test reads repo-local schema file.
 	require.NoErrorf(t, err, "read %s", path)
 

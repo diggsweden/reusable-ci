@@ -1,7 +1,24 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-package cli_test
+// Package workflowguard holds the guards over .github/workflows -- the
+// surface this repository ships to the repositories that consume it.
+//
+// The workflows are the product. Their `on.workflow_call` inputs are a public
+// API that every adopter's caller workflow codes against, their `uses:` edges
+// have to line up with the callee's declared inputs, and the privileged ones
+// must reach the event-context check before they touch a secret. None of that
+// is expressible in Go's type system, and all of it breaks in the adopter's
+// repository rather than in this one -- on their next tag bump, with no
+// signal here. These guards are what turns that silent break into a failing
+// test.
+//
+// They live here rather than in internal/cli, where they were originally
+// written, because they read YAML under .github/workflows and only reach for
+// the command tree to check a workflow against it. See also
+// internal/archguard (import direction), internal/lexiconguard
+// (single-sourced literals), and internal/syncguard (generated files).
+package workflowguard
 
 import (
 	"encoding/json"
@@ -9,6 +26,8 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
 
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -45,11 +64,11 @@ type consumerContract struct {
 // To change the contract deliberately, regenerate the snapshot and
 // commit both sides:
 //
-//	REGENERATE_CONTRACTS=1 go test ./internal/cli -run TestConsumerContractSnapshot
+//	REGENERATE_CONTRACTS=1 go test ./internal/workflowguard -run TestConsumerContractSnapshot
 func TestConsumerContractSnapshot(t *testing.T) {
 	t.Parallel()
 
-	root := repoRoot(t)
+	root := reporoot.Path(t)
 
 	pattern := filepath.Join(root, ".github", "workflows", "*-orchestrator.yml")
 	files, err := filepath.Glob(pattern)
@@ -66,7 +85,9 @@ func TestConsumerContractSnapshot(t *testing.T) {
 
 	got := string(blob) + "\n"
 
-	snapshot := filepath.Join(root, "internal", "cli", "testdata", "consumer-contracts.json")
+	// Relative to the package directory, which is where `go test` runs, so the
+	// snapshot travels with the guard rather than being addressed from the root.
+	snapshot := filepath.Join("testdata", "consumer-contracts.json")
 
 	if os.Getenv(regenerateContractsEnv) == "1" {
 		require.NoError(t, os.MkdirAll(filepath.Dir(snapshot), 0o750))
@@ -79,13 +100,13 @@ func TestConsumerContractSnapshot(t *testing.T) {
 	want, err := os.ReadFile(snapshot) //nolint:gosec // test reads repo-local snapshot.
 	require.NoErrorf(t, err,
 		"consumer-contract snapshot missing; generate it deliberately with "+
-			regenerateContractsEnv+"=1 go test ./internal/cli -run TestConsumerContractSnapshot")
+			regenerateContractsEnv+"=1 go test ./internal/workflowguard -run TestConsumerContractSnapshot")
 
 	require.Equalf(t, string(want), got,
 		"the consumer contract changed: the orchestrators' on.workflow_call inputs/secrets "+
 			"are the public API every consuming repository's caller workflow codes against. "+
 			"If the change is deliberate, regenerate the snapshot and commit it: "+
-			regenerateContractsEnv+"=1 go test ./internal/cli -run TestConsumerContractSnapshot")
+			regenerateContractsEnv+"=1 go test ./internal/workflowguard -run TestConsumerContractSnapshot")
 }
 
 // parseConsumerContract extracts the workflow_call inputs and secret

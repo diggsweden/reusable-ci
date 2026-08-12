@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -16,6 +15,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/cli"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/planfile"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/cliflags"
 )
 
 // TestPlanScopedVerbsResolveFromPlan proves, for every plan-wired verb, that
@@ -107,30 +107,11 @@ func findFlag(t *testing.T, root *urfavecli.Command, scope, name string) urfavec
 func lookupThroughSources(t *testing.T, flag urfavecli.Flag) (string, bool) {
 	t.Helper()
 
-	for _, src := range flagSources(t, flag).Chain {
+	for _, src := range cliflags.Sources(t, flag).Chain {
 		if value, ok := src.Lookup(); ok {
 			return value, true
 		}
 	}
 
 	return "", false
-}
-
-// flagSources extracts the Sources chain from any urfave/cli flag type via
-// reflection (all concrete flag types embed a FlagBase with a Sources field).
-func flagSources(t *testing.T, flag urfavecli.Flag) urfavecli.ValueSourceChain {
-	t.Helper()
-
-	val := reflect.ValueOf(flag)
-	if val.Kind() == reflect.Pointer {
-		val = val.Elem()
-	}
-
-	field := val.FieldByName("Sources")
-	require.True(t, field.IsValid(), "flag %v has no Sources field", flag.Names())
-
-	chain, ok := field.Interface().(urfavecli.ValueSourceChain)
-	require.True(t, ok, "flag %v Sources is not a ValueSourceChain", flag.Names())
-
-	return chain
 }

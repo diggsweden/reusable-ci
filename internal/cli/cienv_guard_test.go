@@ -5,13 +5,13 @@ package cli_test
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
 	"testing"
 
 	urfavecli "github.com/urfave/cli/v3"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/cli"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/cliflags"
 )
 
 // TestRunContextEnvVarsGoThroughCienv walks every flag in the assembled
@@ -63,7 +63,7 @@ func TestRunContextEnvVarsGoThroughCienv(t *testing.T) {
 
 	walk = func(path string, cmd *urfavecli.Command) {
 		for _, flag := range cmd.Flags {
-			for _, src := range flagSources(flag).Chain {
+			for _, src := range cliflags.Sources(t, flag).Chain {
 				env, ok := src.(interface{ Key() string })
 				if !ok || !guarded[env.Key()] {
 					continue
@@ -86,27 +86,6 @@ func TestRunContextEnvVarsGoThroughCienv(t *testing.T) {
 		t.Errorf("run-context env vars wired outside cienv (use the matching cienv chain, "+
 			"extending it if a name is missing):\n  %s", strings.Join(offenders, "\n  "))
 	}
-}
-
-// flagSources extracts the Sources chain from any urfave/cli flag type via
-// reflection (all concrete flag types embed a FlagBase with a Sources field).
-func flagSources(flag urfavecli.Flag) urfavecli.ValueSourceChain {
-	val := reflect.ValueOf(flag)
-	if val.Kind() == reflect.Pointer {
-		val = val.Elem()
-	}
-
-	field := val.FieldByName("Sources")
-	if !field.IsValid() {
-		return urfavecli.ValueSourceChain{}
-	}
-
-	chain, ok := field.Interface().(urfavecli.ValueSourceChain)
-	if !ok {
-		return urfavecli.ValueSourceChain{}
-	}
-
-	return chain
 }
 
 func flagName(flag urfavecli.Flag) string {

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-package cli_test
+package lexiconguard
 
 import (
 	"io/fs"
@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
 
 	"github.com/stretchr/testify/require"
 )
@@ -27,11 +29,11 @@ func TestCommitSHARegexIsSingleSourced(t *testing.T) {
 	t.Parallel()
 
 	allowed := map[string]bool{
-		"internal/cli/commitsha_guard_test.go": true,
+		"internal/lexiconguard/commitsha_guard_test.go": true,
 		"internal/domain/git/sha.go":           true,
 	}
 
-	root := repoRoot(t)
+	root := reporoot.Path(t)
 
 	var offenders []string
 

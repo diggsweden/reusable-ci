@@ -101,7 +101,7 @@ SPDX-License-Identifier = "CC0-1.0"
 # inert data, not source — REUSE compliance applies to source.
 [[annotations]]
 path = [
-  "internal/cli/testdata/**",
+  "internal/workflowguard/testdata/**",
   "internal/domain/build/testdata/**",
   "internal/domain/pipeline/testdata/**",
   "internal/domain/provenance/testdata/**",

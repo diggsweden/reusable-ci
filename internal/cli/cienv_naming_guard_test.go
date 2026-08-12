@@ -12,6 +12,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/cli"
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/cliflags"
 )
 
 // TestOneFlagNamePerRunContextConcept walks the assembled command tree and
@@ -42,7 +43,7 @@ func TestOneFlagNamePerRunContextConcept(t *testing.T) {
 
 	walk = func(path string, cmd *urfavecli.Command) {
 		for _, flag := range cmd.Flags {
-			concept, ok := conceptOf(flag)
+			concept, ok := conceptOf(t, flag)
 			if !ok {
 				continue
 			}
@@ -87,10 +88,12 @@ func TestOneFlagNamePerRunContextConcept(t *testing.T) {
 // conceptOf reports which run-context concept a flag binds, matching on its
 // env-source keys. Sources that carry no env key (a plan-file source) are
 // ignored, so a plan-backed flag still matches the concept it falls back to.
-func conceptOf(flag urfavecli.Flag) (string, bool) {
+func conceptOf(t *testing.T, flag urfavecli.Flag) (string, bool) {
+	t.Helper()
+
 	var keys []string
 
-	for _, src := range flagSources(flag).Chain {
+	for _, src := range cliflags.Sources(t, flag).Chain {
 		if env, ok := src.(interface{ Key() string }); ok {
 			keys = append(keys, env.Key())
 		}

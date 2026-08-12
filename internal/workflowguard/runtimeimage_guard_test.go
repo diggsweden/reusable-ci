@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-package cli_test
+package workflowguard
 
 import (
 	"os"
@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
 
 	"github.com/stretchr/testify/require"
 
@@ -37,7 +39,7 @@ func TestRuntimeImageTagsShareOneVersion(t *testing.T) {
 		".github/workflows/self-runtime-container.yml": true,
 	}
 
-	root := repoRoot(t)
+	root := reporoot.Path(t)
 	workflowsDir := filepath.Join(root, ".github", "workflows")
 
 	entries, err := os.ReadDir(workflowsDir)

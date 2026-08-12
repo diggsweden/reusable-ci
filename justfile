@@ -410,7 +410,7 @@ gen-cli-reference:
 # already gates PR merges via the standard test infrastructure.
 [group('docs')]
 check-cli-reference:
-    @go test ./internal/cli -run '^TestDocsCLIReferenceInSync$' -count=1
+    @go test ./internal/syncguard -run '^TestDocsCLIReferenceInSync$' -count=1
 
 # ▪ Regenerate .reusable-ci/artifacts.schema.json from the Go schema declarations
 [group('docs')]
@@ -421,13 +421,13 @@ gen-artifacts-schema:
 [group('generate')]
 gen-release-images-schema:
     @go run ./cmd/gen-release-images-schema > docs/schemas/release-images.schema.json
-    @printf "Regenerated .reusable-ci/artifacts.schema.json\n"
+    @printf "Regenerated docs/schemas/release-images.schema.json\n"
 
 # Verify .reusable-ci/artifacts.schema.json is in sync with the Go schema.
 # Thin wrapper around the TestArtifactsSchemaInSync go-test.
 [group('docs')]
 check-artifacts-schema:
-    @go test ./internal/cli -run '^TestArtifactsSchemaInSync$' -count=1
+    @go test ./internal/syncguard -run '^TestArtifactsSchemaInSync$' -count=1
 
 # ▪ Rewrite every pinned reusable-ci-runtime-*:vX.Y.Z workflow default to a new
 # version (release-cut step; the TestRuntimeImageTagsShareOneVersion guard
@@ -435,7 +435,7 @@ check-artifacts-schema:
 [group('docs')]
 bump-runtime-tags version:
     @go run ./cmd/bump-runtime-tags {{version}}
-    @go test ./internal/cli -run '^TestRuntimeImageTagsShareOneVersion$' -count=1
+    @go test ./internal/workflowguard -run '^TestRuntimeImageTagsShareOneVersion$' -count=1
 
 # ==================================================================================== #
 # BUILD - Local compilation

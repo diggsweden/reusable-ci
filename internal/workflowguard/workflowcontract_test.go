@@ -1,15 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-package cli_test
+package workflowguard
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
 
 	"gopkg.in/yaml.v3"
 
@@ -29,7 +32,7 @@ import (
 // scope because the test can't reach their input declarations
 // without network — and `actionlint` already handles many of them.
 func TestWorkflowInputContract(t *testing.T) {
-	root := repoRoot(t)
+	root := reporoot.Path(t)
 	workflowsDir := filepath.Join(root, ".github", "workflows")
 
 	entries, err := os.ReadDir(workflowsDir)
@@ -97,7 +100,7 @@ func TestWorkflowInputContract(t *testing.T) {
 }
 
 func TestWorkflowAttestationTypesUseAcceptedCLIVocabulary(t *testing.T) {
-	workflowsDir := filepath.Join(repoRoot(t), ".github", "workflows")
+	workflowsDir := filepath.Join(reporoot.Path(t), ".github", "workflows")
 	entries, err := os.ReadDir(workflowsDir)
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +124,7 @@ func TestWorkflowAttestationTypesUseAcceptedCLIVocabulary(t *testing.T) {
 }
 
 func TestPromoteWorkflowResolvesDryRunAsBoolean(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "promote-stage.yml")) //nolint:gosec // repository fixture.
+	body, err := os.ReadFile(filepath.Join(reporoot.Path(t), ".github", "workflows", "promote-stage.yml")) //nolint:gosec // repository fixture.
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,17 +142,37 @@ func TestPromoteWorkflowResolvesDryRunAsBoolean(t *testing.T) {
 }
 
 func TestProductionReleaseCeremonyUsesRequestThenFinalTag(t *testing.T) {
-	root := repoRoot(t)
-	examples, err := filepath.Glob(filepath.Join(root, "examples", "*", "release-workflow.yml"))
+	root := reporoot.Path(t)
+
+	// Walked rather than globbed at a fixed depth: examples/ is grouped
+	// (examples/signing/…, examples/gitlab/…), and an example that quietly
+	// dropped out of this check by moving one level down would be the exact
+	// failure this guard exists to prevent. A new example is picked up with no
+	// counter to bump.
+	var examples []string
+
+	err := filepath.WalkDir(filepath.Join(root, "examples"), func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		if !d.IsDir() && d.Name() == "release-workflow.yml" {
+			examples = append(examples, path)
+		}
+
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	if len(examples) == 0 {
+		t.Fatal("no examples/**/release-workflow.yml found; the ceremony check would pass vacuously")
+	}
+
 	paths := make([]string, 1, 1+len(examples))
 	paths[0] = filepath.Join(root, ".github", "workflows", "self-release.yml")
 	paths = append(paths, examples...)
-	if len(paths) != 11 {
-		t.Fatalf("production release trigger files = %d, want self-release plus 10 examples", len(paths))
-	}
 	for _, path := range paths {
 		body, readErr := os.ReadFile(path) //nolint:gosec // repository fixture.
 		if readErr != nil {
@@ -187,7 +210,7 @@ func TestProductionReleaseCeremonyUsesRequestThenFinalTag(t *testing.T) {
 }
 
 func TestReleasePreparationSerializesBumpsAndTagsOnce(t *testing.T) {
-	root := repoRoot(t)
+	root := reporoot.Path(t)
 	body, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release-prepare-stage.yml")) //nolint:gosec // repository fixture.
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +238,7 @@ func TestReleasePreparationSerializesBumpsAndTagsOnce(t *testing.T) {
 }
 
 func TestRuntimeContainerfileExternalFromImagesAreDigestPinned(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join(repoRoot(t), "containers", "runtime", "Containerfile")) //nolint:gosec // repository fixture.
+	body, err := os.ReadFile(filepath.Join(reporoot.Path(t), "containers", "runtime", "Containerfile")) //nolint:gosec // repository fixture.
 	if err != nil {
 		t.Fatal(err)
 	}

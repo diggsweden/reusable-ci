@@ -1,15 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-package cli_test
+package workflowguard
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/cliflags"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
 
 	"github.com/stretchr/testify/require"
 	urfavecli "github.com/urfave/cli/v3"
@@ -51,11 +55,11 @@ func TestJobLevelPlanAccountsForEveryBinaryCall(t *testing.T) {
 
 	tree := cli.New(cli.BuildInfo{Version: "dev"})
 
-	scoped := planScopedCommandPaths(tree)
+	scoped := planScopedCommandPaths(t, tree)
 	require.NotEmpty(t, scoped,
 		"no plan-scoped commands derived from the CLI tree; the plan-source reflection hook broke")
 
-	audit := auditPlanJobs(t, filepath.Join(repoRoot(t), ".github", "workflows"), tree, scoped)
+	audit := auditPlanJobs(t, filepath.Join(reporoot.Path(t), ".github", "workflows"), tree, scoped)
 
 	// The known plan job must have been walked — if the walker stops
 	// seeing it, the guard is dead weight, not green.
@@ -77,7 +81,7 @@ func TestJobLevelPlanGuardCatchesPoison(t *testing.T) {
 	t.Parallel()
 
 	tree := cli.New(cli.BuildInfo{Version: "dev"})
-	scoped := planScopedCommandPaths(tree)
+	scoped := planScopedCommandPaths(t, tree)
 
 	const header = "name: fixture\non: push\njobs:\n  build-arch:\n    runs-on: ubuntu-24.04\n" +
 		"    env:\n      " + planEnvKey + ": /tmp/plan.json\n    steps:\n" +
@@ -141,14 +145,16 @@ type planAudit struct {
 // every command path owning at least one flag with a plan-file source
 // (the sources expose Scope/PlanKey). Only these commands can read a
 // plan; everything else ignores $REUSABLE_CI_PLAN entirely.
-func planScopedCommandPaths(root *urfavecli.Command) map[string]bool {
+func planScopedCommandPaths(t *testing.T, root *urfavecli.Command) map[string]bool {
+	t.Helper()
+
 	paths := make(map[string]bool)
 
 	var walk func(path string, cmd *urfavecli.Command)
 
 	walk = func(path string, cmd *urfavecli.Command) {
 		for _, flag := range cmd.Flags {
-			for _, src := range flagSources(flag).Chain {
+			for _, src := range cliflags.Sources(t, flag).Chain {
 				if _, ok := src.(interface {
 					Scope() string
 					PlanKey() string
@@ -379,7 +385,7 @@ func resolveCommandPath(root *urfavecli.Command, tokens []string) (string, bool)
 // alias of it), or nil.
 func subcommandNamed(cmd *urfavecli.Command, name string) *urfavecli.Command {
 	for _, sub := range cmd.Commands {
-		if containsName(sub.Names(), name) {
+		if slices.Contains(sub.Names(), name) {
 			return sub
 		}
 	}

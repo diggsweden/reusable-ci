@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-package cli_test
+package syncguard
 
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
 
 	"github.com/stretchr/testify/require"
 
@@ -27,25 +28,11 @@ func TestDocsCLIReferenceInSync(t *testing.T) {
 
 	want := cli.Render(cli.New(cli.BuildInfo{Version: "dev"}))
 
-	path := filepath.Join(repoRoot(t), "docs", "cli-reference.md")
+	path := filepath.Join(reporoot.Path(t), "docs", "cli-reference.md")
 	got, err := os.ReadFile(path) //nolint:gosec // test reads repo-local docs file.
 	require.NoErrorf(t, err, "read %s", path)
 
 	require.Equalf(t, want, string(got),
 		"docs/cli-reference.md is out of sync with the CLI surface; "+
 			"run `just gen-cli-reference` to refresh")
-}
-
-// repoRoot resolves the repository root from this source file's own
-// path, so the test works regardless of the directory `go test` is
-// invoked from. The location of docs/cli-reference.md is fixed
-// relative to the module root.
-func repoRoot(t *testing.T) string {
-	t.Helper()
-
-	_, here, _, ok := runtime.Caller(0)
-	require.True(t, ok, "runtime.Caller(0) returned !ok")
-	// here = .../internal/cli/docs_sync_test.go
-	// repo root = two dirs up
-	return filepath.Clean(filepath.Join(filepath.Dir(here), "..", ".."))
 }

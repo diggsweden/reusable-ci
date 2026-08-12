@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-package cli_test
+package archguard
 
 import (
 	"io/fs"
@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
 
 	"github.com/stretchr/testify/require"
 )
@@ -23,10 +25,10 @@ func TestNoBPOEnvNamespaceOutsideShim(t *testing.T) {
 
 	// Only this guard itself may mention the dead namespace.
 	bpoAllowedFiles := map[string]bool{
-		"internal/cli/envnames_guard_test.go": true,
+		"internal/archguard/envnames_guard_test.go": true,
 	}
 
-	root := repoRoot(t)
+	root := reporoot.Path(t)
 
 	var offenders []string
 

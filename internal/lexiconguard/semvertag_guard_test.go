@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-package cli_test
+package lexiconguard
 
 import (
 	"io/fs"
@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
 
 	"github.com/stretchr/testify/require"
 )
@@ -38,11 +40,11 @@ func TestStrictSemverTagRegexIsSingleSourced(t *testing.T) {
 	}
 
 	allowed := map[string]bool{
-		"internal/cli/semvertag_guard_test.go":       true,
+		"internal/lexiconguard/semvertag_guard_test.go":       true,
 		"internal/domain/version/snapshotversion.go": true,
 	}
 
-	root := repoRoot(t)
+	root := reporoot.Path(t)
 
 	var offenders []string
 

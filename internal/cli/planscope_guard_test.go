@@ -5,12 +5,14 @@ package cli_test
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
 	urfavecli "github.com/urfave/cli/v3"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/cli"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/cliflags"
 )
 
 // TestPlanScopesMatchCommandPaths pins every plan-file source to reality:
@@ -32,7 +34,7 @@ func TestPlanScopesMatchCommandPaths(t *testing.T) {
 
 	walk = func(path string, cmd *urfavecli.Command) {
 		for _, flag := range cmd.Flags {
-			for _, src := range flagSources(flag).Chain {
+			for _, src := range cliflags.Sources(t, flag).Chain {
 				plan, ok := src.(interface {
 					Scope() string
 					PlanKey() string
@@ -48,7 +50,7 @@ func TestPlanScopesMatchCommandPaths(t *testing.T) {
 						"%s --%s: plan scope %q != command path %q", path, flagName(flag), plan.Scope(), path))
 				}
 
-				if !containsName(flag.Names(), plan.PlanKey()) {
+				if !slices.Contains(flag.Names(), plan.PlanKey()) {
 					offenders = append(offenders, fmt.Sprintf(
 						"%s --%s: plan key %q is not a name of this flag", path, flagName(flag), plan.PlanKey()))
 				}
@@ -71,14 +73,4 @@ func TestPlanScopesMatchCommandPaths(t *testing.T) {
 	if len(offenders) > 0 {
 		t.Errorf("plan wiring drifted from the command tree:\n  %s", strings.Join(offenders, "\n  "))
 	}
-}
-
-func containsName(names []string, want string) bool {
-	for _, name := range names {
-		if name == want {
-			return true
-		}
-	}
-
-	return false
 }

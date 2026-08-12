@@ -1,12 +1,33 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-package cli_test
+// Package syncguard holds the guards that keep a generated file in step with
+// the Go declarations it is generated from.
+//
+// docs/cli-reference.md, docs/artifacts-reference.md,
+// .reusable-ci/artifacts.schema.json, and
+// docs/schemas/release-images.schema.json are all committed copies of
+// something the code already knows. A committed copy is a claim about the
+// code, and an unchecked claim goes stale on the first change that forgets
+// it -- which for a published JSON Schema means an adopter validating against
+// a contract the binary no longer implements.
+//
+// Each guard regenerates the artifact in memory and compares, so the failure
+// names the refresh command rather than the diff.
+//
+// They live here rather than in internal/cli, where they were originally
+// written, because they read docs/ and .reusable-ci/ and have nothing to say
+// about the CLI command surface. See also internal/archguard (import
+// direction), internal/lexiconguard (single-sourced literals), and
+// internal/workflowguard (the workflow contract).
+package syncguard
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
 
 	"github.com/stretchr/testify/require"
 
@@ -30,7 +51,7 @@ import (
 func TestArtifactsReferenceDocumentsEverySchemaEnum(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(repoRoot(t), "docs", "artifacts-reference.md")
+	path := filepath.Join(reporoot.Path(t), "docs", "artifacts-reference.md")
 	body, err := os.ReadFile(path) //nolint:gosec // test reads repo-local docs file.
 	require.NoErrorf(t, err, "read %s", path)
 

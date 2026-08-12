@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-package cli_test
+package archguard
 
 import (
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
 
 	"github.com/stretchr/testify/require"
 )
@@ -27,7 +29,7 @@ import (
 func TestAppLayerDoesNotBranchOnPlatform(t *testing.T) {
 	t.Parallel()
 
-	appDir := filepath.Join(repoRoot(t), "internal", "app")
+	appDir := filepath.Join(reporoot.Path(t), "internal", "app")
 
 	// Forbidden substrings: a case arm or direct comparison against a
 	// concrete forge platform constant in non-test app code.
@@ -59,7 +61,7 @@ func TestAppLayerDoesNotBranchOnPlatform(t *testing.T) {
 		src := string(body)
 		for _, needle := range forbidden {
 			if strings.Contains(src, needle) {
-				rel, _ := filepath.Rel(repoRoot(t), path)
+				rel, _ := filepath.Rel(reporoot.Path(t), path)
 				offenders = append(offenders, rel+": "+needle)
 			}
 		}
@@ -104,7 +106,7 @@ func TestDomainPlatformBranchingIsConfinedToPresentation(t *testing.T) {
 		"== provider.PlatformForgejo",
 	}
 
-	domainDir := filepath.Join(repoRoot(t), "internal", "domain")
+	domainDir := filepath.Join(reporoot.Path(t), "internal", "domain")
 
 	var offenders []string
 
@@ -122,7 +124,7 @@ func TestDomainPlatformBranchingIsConfinedToPresentation(t *testing.T) {
 			return readErr
 		}
 
-		rel, _ := filepath.Rel(repoRoot(t), path)
+		rel, _ := filepath.Rel(reporoot.Path(t), path)
 		if _, ok := allowed[filepath.ToSlash(rel)]; ok {
 			return nil
 		}

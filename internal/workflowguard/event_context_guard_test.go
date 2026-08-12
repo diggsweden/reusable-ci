@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-package cli_test
+package workflowguard
 
 import (
 	"os"
@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
 
 	"gopkg.in/yaml.v3"
 )
@@ -91,7 +93,7 @@ var forwarderWorkflows = map[string]bool{
 //
 //nolint:cyclop // straight-line: each branch is a distinct guard for the workflow-sweep contract.
 func TestPrivilegedWorkflowsHaveEventContextGuard(t *testing.T) {
-	root := repoRoot(t)
+	root := reporoot.Path(t)
 	dir := filepath.Join(root, ".github", "workflows")
 
 	entries, err := os.ReadDir(dir)
@@ -214,7 +216,7 @@ func hasEventContextGuard(body []byte) bool {
 }
 
 func TestSLSAAttestorGuardsBeforeSecrets(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join(repoRoot(t), ".github", "workflows", "slsa-attestor.yml")) //nolint:gosec // repository fixture.
+	body, err := os.ReadFile(filepath.Join(reporoot.Path(t), ".github", "workflows", "slsa-attestor.yml")) //nolint:gosec // repository fixture.
 	if err != nil {
 		t.Fatal(err)
 	}
