@@ -101,20 +101,24 @@ func TestWorkflowInputContract(t *testing.T) {
 
 func TestWorkflowAttestationTypesUseAcceptedCLIVocabulary(t *testing.T) {
 	workflowsDir := filepath.Join(reporoot.Path(t), ".github", "workflows")
+
 	entries, err := os.ReadDir(workflowsDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	tokenPattern := regexp.MustCompile(`\bslsaprovenance[0-9]*\b`)
+
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yml") {
 			continue
 		}
+
 		body, err := os.ReadFile(filepath.Join(workflowsDir, entry.Name())) //nolint:gosec // repository fixture.
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		for _, token := range tokenPattern.FindAllString(string(body), -1) {
 			if token != domaincontainer.PredicateTypeSLSAProvenance1 {
 				t.Errorf("%s uses unsupported attestation type %q; CLI accepts %q", entry.Name(), token, domaincontainer.PredicateTypeSLSAProvenance1)
@@ -133,9 +137,11 @@ func TestPromoteWorkflowResolvesDryRunAsBoolean(t *testing.T) {
 	if strings.Contains(text, `${DRY_RUN:+--dry-run}`) {
 		t.Fatal("non-empty string expansion would add --dry-run when DRY_RUN=false")
 	}
+
 	if !strings.Contains(text, `[[ "$DRY_RUN" == true ]] && args+=(--dry-run)`) {
 		t.Fatal("promote must add --dry-run only for the resolved true boolean")
 	}
+
 	if got := strings.Count(text, `[[ "$DRY_RUN" == true ]] && exit 0`); got != 2 {
 		t.Fatalf("cleanup and rollback dry-run guards = %d, want 2", got)
 	}
@@ -172,12 +178,14 @@ func TestProductionReleaseCeremonyUsesRequestThenFinalTag(t *testing.T) {
 
 	paths := make([]string, 1, 1+len(examples))
 	paths[0] = filepath.Join(root, ".github", "workflows", "self-release.yml")
+
 	paths = append(paths, examples...)
 	for _, path := range paths {
 		body, readErr := os.ReadFile(path) //nolint:gosec // repository fixture.
 		if readErr != nil {
 			t.Fatal(readErr)
 		}
+
 		if !strings.Contains(string(body), `"release-request/v*"`) {
 			t.Errorf("%s does not trigger on release-request/v*", path)
 		}
@@ -187,15 +195,19 @@ func TestProductionReleaseCeremonyUsesRequestThenFinalTag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	text := string(orchestrator)
 	derive := strings.Index(text, "run: reusable-ci version derive-release")
+
 	requireRequest := strings.Index(text, `RELEASE_CONTEXT_REQUIRE_REQUEST: "true"`)
 	if derive < 0 || requireRequest < 0 || requireRequest > derive {
 		t.Fatal("orchestrator must require a request ref at its first derive-release boundary")
 	}
+
 	if got := strings.Count(text, `branch: ${{ needs.parse-config.outputs.release-tag }}`); got != 2 {
 		t.Fatalf("post-tag build/publish final-tag checkouts = %d, want 2", got)
 	}
+
 	if !strings.Contains(text, `checkout-ref: ${{ needs.parse-config.outputs.release-tag }}`) {
 		t.Fatal("release creation must check out the created final tag")
 	}
@@ -204,6 +216,7 @@ func TestProductionReleaseCeremonyUsesRequestThenFinalTag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !strings.Contains(string(runtimeWorkflow), `- "v*.*.*"`) {
 		t.Fatal("self-runtime-container must remain triggered by final release tags")
 	}
@@ -211,17 +224,21 @@ func TestProductionReleaseCeremonyUsesRequestThenFinalTag(t *testing.T) {
 
 func TestReleasePreparationSerializesBumpsAndTagsOnce(t *testing.T) {
 	root := reporoot.Path(t)
+
 	body, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release-prepare-stage.yml")) //nolint:gosec // repository fixture.
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	text := string(body)
 	if !strings.Contains(text, "max-parallel: 1") {
 		t.Fatal("version-bump matrix must remain serialized")
 	}
+
 	if got := strings.Count(text, "run: reusable-ci version tag-release"); got != 1 {
 		t.Fatalf("final tag creation steps = %d, want exactly 1", got)
 	}
+
 	if !strings.Contains(text, "needs: [version-bump]") {
 		t.Fatal("final tag job must wait for every version bump")
 	}
@@ -231,6 +248,7 @@ func TestReleasePreparationSerializesBumpsAndTagsOnce(t *testing.T) {
 		if readErr != nil {
 			t.Fatal(readErr)
 		}
+
 		if strings.Contains(string(doc), "can race on pushes/tag moves") {
 			t.Errorf("%s still claims multi-artifact release refs race", relative)
 		}
@@ -248,6 +266,7 @@ func TestRuntimeContainerfileExternalFromImagesAreDigestPinned(t *testing.T) {
 	argPattern := regexp.MustCompile(`^ARG ([A-Za-z_][A-Za-z0-9_]*)=(\S+)$`)
 	variablePattern := regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?`)
 	digestPattern := regexp.MustCompile(`@sha256:[a-f0-9]{64}$`)
+
 	for lineNumber, line := range strings.Split(string(body), "\n") {
 		line = strings.TrimSpace(line)
 		if match := argPattern.FindStringSubmatch(line); match != nil {
@@ -255,14 +274,18 @@ func TestRuntimeContainerfileExternalFromImagesAreDigestPinned(t *testing.T) {
 
 			continue
 		}
+
 		if !strings.HasPrefix(line, "FROM ") {
 			continue
 		}
+
 		fields := strings.Fields(line)
+
 		imageIndex := 1
 		if strings.HasPrefix(fields[imageIndex], "--platform=") {
 			imageIndex++
 		}
+
 		image := variablePattern.ReplaceAllStringFunc(fields[imageIndex], func(variable string) string {
 			name := strings.Trim(variable, "${}")
 
@@ -271,6 +294,7 @@ func TestRuntimeContainerfileExternalFromImagesAreDigestPinned(t *testing.T) {
 		if image != "scratch" && !stages[image] && !digestPattern.MatchString(image) {
 			t.Errorf("Containerfile:%d external FROM %q is not SHA-256 digest-pinned", lineNumber+1, image)
 		}
+
 		if len(fields) > imageIndex+2 && strings.EqualFold(fields[imageIndex+1], "AS") {
 			stages[fields[imageIndex+2]] = true
 		}

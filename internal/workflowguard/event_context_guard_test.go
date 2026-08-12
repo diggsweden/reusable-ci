@@ -224,6 +224,7 @@ func TestSLSAAttestorGuardsBeforeSecrets(t *testing.T) {
 	text := string(body)
 	guard := strings.Index(text, "reusable-ci validate event-context")
 	credential := strings.Index(text, "KMS_AUTH_ENV: ${{ secrets.kms-auth-env }}")
+
 	login := strings.Index(text, "REGISTRY_PASSWORD: ${{ secrets.registry-password")
 	if guard < 0 || credential < 0 || login < 0 || guard > credential || guard > login {
 		t.Fatalf("slsa-attestor must validate event context after CLI install and before credentials/login")

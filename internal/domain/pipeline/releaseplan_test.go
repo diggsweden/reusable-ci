@@ -234,6 +234,7 @@ func TestNewReleasePlan_RejectsPushedSLSAWithoutCosignSigner(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			cfg := &config.Config{
 				Sign:       config.SignConfig{Method: tc.method},
 				Artifacts:  []config.Artifact{{Name: "app", ProjectType: projecttype.NPM}},
@@ -269,6 +270,7 @@ func TestNewReleasePlan_AllowsNonSLSAOrNonContainerContextsWithoutCosignSigner(t
 		if err := config.Derive(cfg); err != nil {
 			t.Fatal(err)
 		}
+
 		if _, err := pipeline.NewReleasePlan(pipeline.ReleasePlanInput{ConfigPlan: pipeline.NewConfigPlan(cfg), ReleaseSBOMs: "none"}); err != nil {
 			t.Fatalf("NewReleasePlan() error = %v", err)
 		}

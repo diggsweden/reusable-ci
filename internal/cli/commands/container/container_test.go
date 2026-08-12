@@ -92,6 +92,7 @@ func TestLoginCmd_OnGitLabWithoutAnOutputFile_StillSucceeds(t *testing.T) {
 	authFile := filepath.Join(filepath.Dir(fsys.WriteFile("anchor", nil)), "auth.json")
 
 	cmd := containercmd.New()
+
 	err := cmd.Run(context.Background(), []string{
 		"container", "login",
 		"--registry", "registry.example.com",
