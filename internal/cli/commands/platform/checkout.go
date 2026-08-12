@@ -11,7 +11,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
-	appci "github.com/diggsweden/reusable-ci/v3/internal/app/ci"
+	appplatform "github.com/diggsweden/reusable-ci/v3/internal/app/platform"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/clitoken"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
@@ -60,7 +60,7 @@ func checkoutCmd() *cli.Command {
 
 				repo := &git.Repo{Dir: workspace}
 
-				_, err = appci.Checkout(ctx, repo, dep.OutputSink, os.Stderr, appci.CheckoutInput{
+				_, err = appplatform.Checkout(ctx, repo, dep.OutputSink, os.Stderr, appplatform.CheckoutInput{
 					Repository:   cmd.String("repository"),
 					ServerURL:    cmd.String("server-url"),
 					Ref:          cmd.String("ref"),

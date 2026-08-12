@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-package ci_test
+package platform_test
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	appci "github.com/diggsweden/reusable-ci/v3/internal/app/ci"
+	appplatform "github.com/diggsweden/reusable-ci/v3/internal/app/platform"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
@@ -101,10 +101,10 @@ func (f *fakeCheckoutGit) RevParse(_ context.Context, _ string) (string, error) 
 	return f.headSHA, nil
 }
 
-func baseInput(t *testing.T, ref string) appci.CheckoutInput {
+func baseInput(t *testing.T, ref string) appplatform.CheckoutInput {
 	t.Helper()
 
-	return appci.CheckoutInput{
+	return appplatform.CheckoutInput{
 		Repository: "owner/repo",
 		ServerURL:  "https://codeberg.org",
 		Ref:        ref,
@@ -119,7 +119,7 @@ func TestCheckout_FetchTags(t *testing.T) {
 		t.Parallel()
 
 		git := &fakeCheckoutGit{}
-		if _, err := appci.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, baseInput(t, "v1.0.0")); err != nil {
+		if _, err := appplatform.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, baseInput(t, "v1.0.0")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -135,7 +135,7 @@ func TestCheckout_FetchTags(t *testing.T) {
 		in.FetchTags = true
 		git := &fakeCheckoutGit{}
 
-		if _, err := appci.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, in); err != nil {
+		if _, err := appplatform.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, in); err != nil {
 			t.Fatal(err)
 		}
 
@@ -151,7 +151,7 @@ func TestCheckout_FetchTags(t *testing.T) {
 		in.FetchTags = true
 		git := &fakeCheckoutGit{failFetchTag: errFetchMiss}
 
-		if _, err := appci.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, in); err == nil {
+		if _, err := appplatform.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, in); err == nil {
 			t.Error("expected error when tag fetch fails")
 		}
 	})
@@ -164,7 +164,7 @@ func TestCheckout_FetchAllRefs(t *testing.T) {
 		t.Parallel()
 
 		git := &fakeCheckoutGit{}
-		if _, err := appci.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, baseInput(t, "main")); err != nil {
+		if _, err := appplatform.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, baseInput(t, "main")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -180,7 +180,7 @@ func TestCheckout_FetchAllRefs(t *testing.T) {
 		in.FetchAllRefs = true
 		git := &fakeCheckoutGit{}
 
-		if _, err := appci.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, in); err != nil {
+		if _, err := appplatform.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, in); err != nil {
 			t.Fatal(err)
 		}
 
@@ -202,7 +202,7 @@ func TestCheckout_Depth(t *testing.T) {
 		t.Parallel()
 
 		git := &fakeCheckoutGit{}
-		if _, err := appci.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, baseInput(t, "v1.0.0")); err != nil {
+		if _, err := appplatform.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, baseInput(t, "v1.0.0")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -220,7 +220,7 @@ func TestCheckout_Depth(t *testing.T) {
 		in.Depth = 1
 		git := &fakeCheckoutGit{}
 
-		if _, err := appci.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, in); err != nil {
+		if _, err := appplatform.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, in); err != nil {
 			t.Fatal(err)
 		}
 
@@ -240,7 +240,7 @@ func TestCheckout_Sparse(t *testing.T) {
 		in.Sparse = []string{"scripts/bootstrap"}
 		git := &fakeCheckoutGit{}
 
-		if _, err := appci.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, in); err != nil {
+		if _, err := appplatform.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, in); err != nil {
 			t.Fatal(err)
 		}
 
@@ -267,7 +267,7 @@ func TestCheckout_Sparse(t *testing.T) {
 		t.Parallel()
 
 		git := &fakeCheckoutGit{}
-		if _, err := appci.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, baseInput(t, "v1.0.0")); err != nil {
+		if _, err := appplatform.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, baseInput(t, "v1.0.0")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -295,7 +295,7 @@ func TestCheckout_ResolutionOrder(t *testing.T) {
 			git := &fakeCheckoutGit{headSHA: "resolved-sha"}
 			sink := fakeoutputsink.New(t)
 
-			got, err := appci.Checkout(context.Background(), git, sink, nil, baseInput(t, tc.ref))
+			got, err := appplatform.Checkout(context.Background(), git, sink, nil, baseInput(t, tc.ref))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -333,7 +333,7 @@ func TestCheckout_BareNameProbesTagThenBranch(t *testing.T) {
 	}
 	sink := fakeoutputsink.New(t)
 
-	if _, err := appci.Checkout(context.Background(), git, sink, nil, baseInput(t, "release")); err != nil {
+	if _, err := appplatform.Checkout(context.Background(), git, sink, nil, baseInput(t, "release")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -350,7 +350,7 @@ func TestCheckout_BareNameNotFound(t *testing.T) {
 	git := &fakeCheckoutGit{failFetch: func([]string) error { return errFetchMiss }}
 	sink := fakeoutputsink.New(t)
 
-	_, err := appci.Checkout(context.Background(), git, sink, nil, baseInput(t, "ghost"))
+	_, err := appplatform.Checkout(context.Background(), git, sink, nil, baseInput(t, "ghost"))
 	if !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("err = %v, want ErrValidation", err)
 	}
@@ -362,7 +362,7 @@ func TestCheckout_RejectsUnsafeRefs(t *testing.T) {
 			git := &fakeCheckoutGit{}
 			sink := fakeoutputsink.New(t)
 
-			_, err := appci.Checkout(context.Background(), git, sink, nil, baseInput(t, ref))
+			_, err := appplatform.Checkout(context.Background(), git, sink, nil, baseInput(t, ref))
 			if err == nil {
 				t.Fatal("expected rejection")
 			}
@@ -381,14 +381,14 @@ func TestCheckout_RequiresRepositoryAndServer(t *testing.T) {
 	noRepo := baseInput(t, "main")
 
 	noRepo.Repository = ""
-	if _, err := appci.Checkout(ctx, &fakeCheckoutGit{}, sink, nil, noRepo); !errors.Is(err, errs.ErrUsage) {
+	if _, err := appplatform.Checkout(ctx, &fakeCheckoutGit{}, sink, nil, noRepo); !errors.Is(err, errs.ErrUsage) {
 		t.Errorf("missing repository: err = %v, want ErrUsage", err)
 	}
 
 	noServer := baseInput(t, "main")
 
 	noServer.ServerURL = ""
-	if _, err := appci.Checkout(ctx, &fakeCheckoutGit{}, sink, nil, noServer); !errors.Is(err, errs.ErrUsage) {
+	if _, err := appplatform.Checkout(ctx, &fakeCheckoutGit{}, sink, nil, noServer); !errors.Is(err, errs.ErrUsage) {
 		t.Errorf("missing server-url: err = %v, want ErrUsage", err)
 	}
 }
@@ -399,7 +399,7 @@ func TestCheckout_RefusesExistingGitDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := appci.Checkout(context.Background(), &fakeCheckoutGit{}, fakeoutputsink.New(t), nil, in)
+	_, err := appplatform.Checkout(context.Background(), &fakeCheckoutGit{}, fakeoutputsink.New(t), nil, in)
 	if !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("err = %v, want ErrValidation (refuse checkout over existing .git)", err)
 	}
@@ -409,7 +409,7 @@ func TestCheckout_DefaultsObjectFormatToSHA1(t *testing.T) {
 	git := &fakeCheckoutGit{}
 	in := baseInput(t, "refs/tags/v1") // ObjectFormat left empty
 
-	if _, err := appci.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, in); err != nil {
+	if _, err := appplatform.Checkout(context.Background(), git, fakeoutputsink.New(t), nil, in); err != nil {
 		t.Fatal(err)
 	}
 

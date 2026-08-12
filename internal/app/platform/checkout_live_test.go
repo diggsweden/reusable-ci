@@ -3,7 +3,7 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-package ci_test
+package platform_test
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 	"testing"
 
 	adaptergit "github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
-	appci "github.com/diggsweden/reusable-ci/v3/internal/app/ci"
+	appplatform "github.com/diggsweden/reusable-ci/v3/internal/app/platform"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 )
 
@@ -55,7 +55,7 @@ func TestCheckout_LiveConformance(t *testing.T) {
 			repo := &adaptergit.Repo{Dir: workspace}
 			sink := fakeoutputsink.New(t)
 
-			got, err := appci.Checkout(context.Background(), repo, sink, io.Discard, appci.CheckoutInput{
+			got, err := appplatform.Checkout(context.Background(), repo, sink, io.Discard, appplatform.CheckoutInput{
 				Repository:   liveRepo,
 				ServerURL:    liveServer,
 				Ref:          tc.ref,

@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-package ci_test
+package platform_test
 
 import (
 	"bytes"
 	"strings"
 	"testing"
 
-	appci "github.com/diggsweden/reusable-ci/v3/internal/app/ci"
+	appplatform "github.com/diggsweden/reusable-ci/v3/internal/app/platform"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
@@ -19,7 +19,7 @@ func TestDebugWorkspace_PrintsAllSections(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := appci.DebugWorkspace(&out, appci.DebugWorkspaceInput{
+	err := appplatform.DebugWorkspace(&out, appplatform.DebugWorkspaceInput{
 		Root:             fsys.Root,
 		ActionRepository: "diggsweden/reusable-ci",
 		ActionRef:        "main",
@@ -46,7 +46,7 @@ func TestDebugWorkspace_PrintsAllSections(t *testing.T) {
 
 func TestDebugWorkspace_AnnouncesMissingShared(t *testing.T) {
 	var out bytes.Buffer
-	if err := appci.DebugWorkspace(&out, appci.DebugWorkspaceInput{Root: testfs.NewReal(t).Root}); err != nil {
+	if err := appplatform.DebugWorkspace(&out, appplatform.DebugWorkspaceInput{Root: testfs.NewReal(t).Root}); err != nil {
 		t.Fatal(err)
 	}
 

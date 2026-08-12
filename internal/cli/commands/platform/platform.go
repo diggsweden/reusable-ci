@@ -16,7 +16,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
-	appci "github.com/diggsweden/reusable-ci/v3/internal/app/ci"
+	appplatform "github.com/diggsweden/reusable-ci/v3/internal/app/platform"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -55,7 +55,7 @@ func resolveRefCmd() *cli.Command {
 			}
 
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
-				_, err := appci.ResolveRef(ctx, git.New(), d.OutputSink, os.Stderr, appci.ResolveRefInput{
+				_, err := appplatform.ResolveRef(ctx, git.New(), d.OutputSink, os.Stderr, appplatform.ResolveRefInput{
 					RemoteURL: remoteURL,
 					Ref:       cmd.String("ref"),
 					OutputKey: cmd.String("output-key"),
@@ -97,7 +97,7 @@ func debugWorkspaceCmd() *cli.Command {
 			&cli.StringFlag{Name: "action-ref", Sources: cli.EnvVars("ACTION_REF"), Usage: "the calling action's ref (printed in the debug block)"},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
-			return appci.DebugWorkspace(os.Stderr, appci.DebugWorkspaceInput{
+			return appplatform.DebugWorkspace(os.Stderr, appplatform.DebugWorkspaceInput{
 				ActionRepository: cmd.String("action-repository"),
 				ActionRef:        cmd.String("action-ref"),
 			})
