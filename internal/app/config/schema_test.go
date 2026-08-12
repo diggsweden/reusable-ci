@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,7 +107,23 @@ func TestSchema_ValidatesEveryExample(t *testing.T) {
 	schema := loadSchema(t)
 	root := repoRoot(t)
 
-	examples, err := filepath.Glob(filepath.Join(root, "examples", "*", "artifacts.yml"))
+	// Walked, not globbed at a fixed depth: examples/ is grouped
+	// (examples/signing/…, examples/gitlab/…), and a glob of examples/*/ drops
+	// the nested ones silently -- the sweep keeps passing while validating less
+	// than it claims. A new example is picked up with nothing to update here.
+	var examples []string
+
+	err := filepath.WalkDir(filepath.Join(root, "examples"), func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		if !d.IsDir() && d.Name() == "artifacts.yml" {
+			examples = append(examples, path)
+		}
+
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +133,14 @@ func TestSchema_ValidatesEveryExample(t *testing.T) {
 	}
 
 	for _, path := range examples {
-		t.Run(filepath.Base(filepath.Dir(path)), func(t *testing.T) {
+		// Named by path relative to examples/, so a grouped example reads as
+		// "signing/openbao-kms" rather than colliding on its bare directory name.
+		name, relErr := filepath.Rel(filepath.Join(root, "examples"), filepath.Dir(path))
+		if relErr != nil {
+			t.Fatal(relErr)
+		}
+
+		t.Run(filepath.ToSlash(name), func(t *testing.T) {
 			t.Parallel()
 
 			body, err := os.ReadFile(path)
