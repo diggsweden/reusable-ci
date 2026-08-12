@@ -33,7 +33,7 @@ const (
 	NeedsFulcio
 )
 
-// Requires reports whether kind satisfies every need, logging the first that
+// Requires reports whether forge satisfies every need, logging the first that
 // does not.
 //
 // Logf rather than Skipf: these run inside a loop over forges, where skipping
@@ -43,32 +43,32 @@ const (
 // the environment's own description of itself rather than to a symptom. That is
 // the whole reason this exists: an unmet need used to surface as a queued job or
 // an opaque cosign error, both of which read as product defects.
-func Requires(tb TB, kind provider.ForgeAPI, needs ...Need) bool {
+func Requires(tb TB, forge provider.ForgeAPI, needs ...Need) bool {
 	tb.Helper()
 
 	for _, need := range needs {
 		switch need {
 		case NeedsInRunner:
-			if !RunsInRunner(kind) {
-				tb.Logf("SKIP %s: the in-runner tier does not drive this forge yet", kind)
+			if !RunsInRunner(forge) {
+				tb.Logf("SKIP %s: the in-runner tier does not drive this forge yet", forge)
 
 				return false
 			}
 
-			if !RunnerAvailable(kind) {
-				tb.Logf("SKIP %s: this environment deployed no runner for it (LAB_RUNNER_FORGES)", kind)
+			if !RunnerAvailable(forge) {
+				tb.Logf("SKIP %s: this environment deployed no runner for it (LAB_RUNNER_FORGES)", forge)
 
 				return false
 			}
 		case NeedsFulcio:
 			if _, ok := FulcioURL(); !ok {
-				tb.Logf("SKIP %s: this environment provides no Fulcio (LAB_FULCIO_URL unset)", kind)
+				tb.Logf("SKIP %s: this environment provides no Fulcio (LAB_FULCIO_URL unset)", forge)
 
 				return false
 			}
 
-			if !FulcioTrusts(kind) {
-				tb.Logf("SKIP %s: this environment's Fulcio is not configured to trust it (LAB_FULCIO_ISSUERS)", kind)
+			if !FulcioTrusts(forge) {
+				tb.Logf("SKIP %s: this environment's Fulcio is not configured to trust it (LAB_FULCIO_ISSUERS)", forge)
 
 				return false
 			}
@@ -84,7 +84,7 @@ func Requires(tb TB, kind provider.ForgeAPI, needs ...Need) bool {
 	return true
 }
 
-// ForgesMeeting narrows kinds to the ones this environment can satisfy, and
+// ForgesMeeting narrows forges to the ones this environment can satisfy, and
 // skips the scenario when that leaves nothing.
 //
 // The gate is the LOOP SOURCE rather than a check inside the body, which is what
@@ -98,14 +98,14 @@ func Requires(tb TB, kind provider.ForgeAPI, needs ...Need) bool {
 // Skipf rather than Errorf: covering nothing is a fact about the ENVIRONMENT,
 // not a defect. The k3s road genuinely runs no Fulcio, and demanding one there
 // would make the road unusable rather than honest.
-func ForgesMeeting(tb TB, kinds []provider.ForgeAPI, needs ...Need) []provider.ForgeAPI {
+func ForgesMeeting(tb TB, forges []provider.ForgeAPI, needs ...Need) []provider.ForgeAPI {
 	tb.Helper()
 
-	meeting := make([]provider.ForgeAPI, 0, len(kinds))
+	meeting := make([]provider.ForgeAPI, 0, len(forges))
 
-	for _, kind := range kinds {
-		if Requires(tb, kind, needs...) {
-			meeting = append(meeting, kind)
+	for _, forge := range forges {
+		if Requires(tb, forge, needs...) {
+			meeting = append(meeting, forge)
 		}
 	}
 

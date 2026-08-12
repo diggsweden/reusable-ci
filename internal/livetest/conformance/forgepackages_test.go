@@ -65,10 +65,10 @@ func TestInRunner_ForgePackages_NPMPublishReachesTheRegistry(t *testing.T) {
 	// anything the forge did.
 	version := fmt.Sprintf("0.0.%d", time.Now().UnixMilli()%1_000_000)
 
-	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "a package registry"), livetest.NeedsInRunner) {
+	for _, forge := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "a package registry"), livetest.NeedsInRunner) {
 
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "pkgnpm")
 
 			livetest.PrepareTag(t, target, repo, tag)
@@ -82,7 +82,7 @@ func TestInRunner_ForgePackages_NPMPublishReachesTheRegistry(t *testing.T) {
 			// token that carries write:package — which is what a real Forgejo
 			// pipeline has to do too. GitLab needs none: its job token already
 			// carries package-write for the project that issued it.
-			if kind == provider.ForgeForgejo {
+			if forge == provider.ForgeForgejo {
 				livetest.SetRepoSecret(t, target, repo, packageTokenSecret, target.Token)
 			}
 
@@ -97,14 +97,14 @@ func TestInRunner_ForgePackages_NPMPublishReachesTheRegistry(t *testing.T) {
 			// was already published" are the same observation afterwards.
 			if before := livetest.PublishedPackageVersions(t, target, repo, "npm", name); slices.Contains(before, version) {
 				t.Fatalf("%s: %s@%s exists before publishing, so finding it afterwards would prove nothing",
-					kind, name, version)
+					forge, name, version)
 			}
 
 			conclusion := livetest.RunWorkflow(t, target, repo, "forge-packages-npm",
-				npmPublishProbe(kind, assetURL, name, version))
+				npmPublishProbe(forge, assetURL, name, version))
 			if conclusion != "success" {
 				t.Fatalf("%s: the publish job concluded %q — `publish forge-packages deploy --project-type npm` did not complete against this forge",
-					kind, conclusion)
+					forge, conclusion)
 			}
 
 			// The forge is the oracle, not npm: the tool that published is the
@@ -112,7 +112,7 @@ func TestInRunner_ForgePackages_NPMPublishReachesTheRegistry(t *testing.T) {
 			after := livetest.PublishedPackageVersions(t, target, repo, "npm", name)
 			if !slices.Contains(after, version) {
 				t.Errorf("%s: the job succeeded but %s@%s is not in the forge's package registry (found %v) — the deploy reported success without the package arriving",
-					kind, name, version, after)
+					forge, name, version, after)
 			}
 		})
 	}
@@ -124,7 +124,7 @@ func TestInRunner_ForgePackages_NPMPublishReachesTheRegistry(t *testing.T) {
 // ecosystem; that is the product's design, not the scenario's choice. Nothing
 // below asserts anything about npm — the assertion is made by the Go test
 // against the forge afterwards.
-func npmPublishProbe(kind provider.ForgeAPI, assetURL, name, version string) string {
+func npmPublishProbe(forge provider.ForgeAPI, assetURL, name, version string) string {
 	// Single-quoted heredoc: the package manifest must reach disk verbatim,
 	// without the shell touching anything inside it.
 	//
@@ -147,7 +147,7 @@ echo "module.exports = 1;" > pkg/index.js
 ( cd pkg && npm pack --silent )
 ls -l pkg`
 
-	if kind == provider.ForgeGitLab {
+	if forge == provider.ForgeGitLab {
 		return `publish:
   image: node:24
   script:
@@ -201,10 +201,10 @@ func TestInRunner_ForgePackages_MavenDeployReachesTheRegistry(t *testing.T) {
 	// Unique and non-prerelease, for the reasons PAR-PKG-1 documents.
 	version := fmt.Sprintf("0.0.%d", time.Now().UnixMilli()%1_000_000)
 
-	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "a package registry"), livetest.NeedsInRunner) {
+	for _, forge := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "a package registry"), livetest.NeedsInRunner) {
 
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "pkgmvn")
 
 			livetest.PrepareTag(t, target, repo, tag)
@@ -213,7 +213,7 @@ func TestInRunner_ForgePackages_MavenDeployReachesTheRegistry(t *testing.T) {
 			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
 			name := livetest.MavenPackageName(target, groupID, artifactID)
 
-			if kind == provider.ForgeForgejo {
+			if forge == provider.ForgeForgejo {
 				livetest.SetRepoSecret(t, target, repo, packageTokenSecret, target.Token)
 			}
 
@@ -223,20 +223,20 @@ func TestInRunner_ForgePackages_MavenDeployReachesTheRegistry(t *testing.T) {
 
 			if before := livetest.PublishedPackageVersions(t, target, repo, "maven", name); slices.Contains(before, version) {
 				t.Fatalf("%s: %s:%s exists before deploying, so finding it afterwards would prove nothing",
-					kind, name, version)
+					forge, name, version)
 			}
 
 			conclusion := livetest.RunWorkflow(t, target, repo, "forge-packages-maven",
-				mavenDeployProbe(kind, assetURL, groupID, artifactID, version))
+				mavenDeployProbe(forge, assetURL, groupID, artifactID, version))
 			if conclusion != "success" {
 				t.Fatalf("%s: the deploy job concluded %q — `publish forge-packages deploy --project-type maven` did not complete against this forge",
-					kind, conclusion)
+					forge, conclusion)
 			}
 
 			after := livetest.PublishedPackageVersions(t, target, repo, "maven", name)
 			if !slices.Contains(after, version) {
 				t.Errorf("%s: the job succeeded but %s:%s is not in the forge's package registry (found %v) — the deploy reported success without the artifact arriving",
-					kind, name, version, after)
+					forge, name, version, after)
 			}
 		})
 	}
@@ -246,7 +246,7 @@ func TestInRunner_ForgePackages_MavenDeployReachesTheRegistry(t *testing.T) {
 //
 // The pom sits at the job root because `publish forge-packages deploy` runs mvn
 // in the current directory, which is also where the prelude puts the binary.
-func mavenDeployProbe(kind provider.ForgeAPI, assetURL, groupID, artifactID, version string) string {
+func mavenDeployProbe(forge provider.ForgeAPI, assetURL, groupID, artifactID, version string) string {
 	pom := `cat > pom.xml <<'POM'
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0">
@@ -278,7 +278,7 @@ JAVA`
 	// -B for non-interactive output.
 	const deploy = `run_product publish forge-packages deploy --project-type maven --cli-opts "-B"`
 
-	if kind == provider.ForgeGitLab {
+	if forge == provider.ForgeGitLab {
 		return `publish:
   image: maven:3.9-eclipse-temurin-21
   script:

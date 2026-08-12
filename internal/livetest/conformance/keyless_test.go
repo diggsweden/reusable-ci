@@ -41,13 +41,13 @@ func claimsMintsOIDCToken(c provider.Capabilities) bool { return c.MintsOIDCToke
 func TestInRunner_KeylessSigningAgainstTheLabCA(t *testing.T) {
 	const tag = "v0.0.10-keyless"
 
-	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, claimsMintsOIDCToken, "keyless signing against an own CA"), livetest.NeedsInRunner, livetest.NeedsFulcio) {
+	for _, forge := range livetest.ForgesMeeting(t, forgesClaiming(t, claimsMintsOIDCToken, "keyless signing against an own CA"), livetest.NeedsInRunner, livetest.NeedsFulcio) {
 
 		// The URL itself, now that the environment is known to have one.
 		fulcioURL, _ := livetest.FulcioURL()
 
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			// A fresh path per run: GitLab will not issue an ID token for a
 			// repository path that has been used and deleted before.
 			repo := livetest.NewScratchRepoUnique(t, target, "keyless")
@@ -58,10 +58,10 @@ func TestInRunner_KeylessSigningAgainstTheLabCA(t *testing.T) {
 			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
 
 			conclusion := livetest.RunWorkflow(t, target, repo, "keyless-sign",
-				keylessSignProbe(kind, assetURL, fulcioURL, keylessIssuer(kind, target.BaseURL())))
+				keylessSignProbe(forge, assetURL, fulcioURL, keylessIssuer(forge, target.BaseURL())))
 			if conclusion != "success" {
 				t.Errorf("%s: keyless signing concluded %q — this forge mints OIDC tokens, but one did not produce a signing certificate from the lab CA",
-					kind, conclusion)
+					forge, conclusion)
 			}
 		})
 	}
@@ -78,8 +78,8 @@ func TestInRunner_KeylessSigningAgainstTheLabCA(t *testing.T) {
 // Spelled here rather than taken from the product because the product
 // deliberately auto-supplies neither: no public Fulcio trusts either instance,
 // so a keyless run passes --oidc-issuer, and this is the value it passes.
-func keylessIssuer(kind provider.ForgeAPI, baseURL string) string {
-	if kind == provider.ForgeForgejo {
+func keylessIssuer(forge provider.ForgeAPI, baseURL string) string {
+	if forge == provider.ForgeForgejo {
 		return strings.TrimRight(baseURL, "/") + "/api/actions"
 	}
 
@@ -88,7 +88,7 @@ func keylessIssuer(kind provider.ForgeAPI, baseURL string) string {
 
 // keylessSignProbe signs a file with a runner-minted token against the lab CA.
 // The assertions run inside the job; nothing is shipped back out.
-func keylessSignProbe(kind provider.ForgeAPI, assetURL, fulcioURL, issuerURL string) string {
+func keylessSignProbe(forge provider.ForgeAPI, assetURL, fulcioURL, issuerURL string) string {
 	// Obtaining the token is the only step that differs. GitLab's runner mints it
 	// into $SIGSTORE_ID_TOKEN through the id_tokens: block; Forgejo speaks the
 	// GitHub Actions protocol, handing the job a token ENDPOINT instead, so the
@@ -97,7 +97,7 @@ func keylessSignProbe(kind provider.ForgeAPI, assetURL, fulcioURL, issuerURL str
 	tokenSetup := ""
 	identity := `^https://.*/${CI_PROJECT_PATH}//?\.gitlab-ci\.yml@`
 
-	if kind == provider.ForgeForgejo {
+	if forge == provider.ForgeForgejo {
 		//nolint:gosec // G101 false positive: shell that READS a token endpoint from the job's environment. No credential is embedded here — the value exists only inside the runner.
 		tokenSetup = `if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
   echo "FAIL: enable-openid-connect injected no token endpoint"
@@ -187,7 +187,7 @@ cosign verify-blob \
 
 echo "keyless signature verified against the lab CA"`
 
-	if kind == provider.ForgeGitLab {
+	if forge == provider.ForgeGitLab {
 		return `sign:
   image: docker.io/library/alpine:3.22
   id_tokens:

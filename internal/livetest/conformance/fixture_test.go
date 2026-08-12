@@ -36,10 +36,10 @@ type ledgerFixture struct {
 	opts      livetest.RunOptions
 }
 
-func newLedgerFixture(t *testing.T, kind provider.ForgeAPI, name string) ledgerFixture {
+func newLedgerFixture(t *testing.T, forge provider.ForgeAPI, name string) ledgerFixture {
 	t.Helper()
 
-	target := livetest.Accept(t, kind)
+	target := livetest.Accept(t, forge)
 
 	registry, err := livetest.RegistryHost(target)
 	if err != nil {

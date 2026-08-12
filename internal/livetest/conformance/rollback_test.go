@@ -48,9 +48,9 @@ func TestRollback_FromLedger_RemovesTheStagePointerOnly(t *testing.T) {
 		stage        = "release"
 	)
 
-	for _, kind := range forgesClaiming(t, deletesTags, "container tag deletion") {
-		t.Run(string(kind), func(t *testing.T) {
-			f := newLedgerFixture(t, kind, "rollback-stage")
+	for _, forge := range forgesClaiming(t, deletesTags, "container tag deletion") {
+		t.Run(string(forge), func(t *testing.T) {
+			f := newLedgerFixture(t, forge, "rollback-stage")
 
 			// One manifest under the candidate and the immutable release tag,
 			// as a build leaves it.
@@ -97,9 +97,9 @@ func TestRollback_FromJournal_RemovesAReleaseTagThePromotionCreated(t *testing.T
 		candidateTag = "staging-" + releaseTag
 	)
 
-	for _, kind := range forgesClaiming(t, deletesTags, "container tag deletion") {
-		t.Run(string(kind), func(t *testing.T) {
-			f := newLedgerFixture(t, kind, "rollback-journal")
+	for _, forge := range forgesClaiming(t, deletesTags, "container tag deletion") {
+		t.Run(string(forge), func(t *testing.T) {
+			f := newLedgerFixture(t, forge, "rollback-journal")
 
 			// Only the candidate is pushed: the release tag is what the
 			// promotion will create, and therefore what rollback may remove.
@@ -153,9 +153,9 @@ func TestRollback_FromJournal_RestoresAMovingTagToItsPreviousImage(t *testing.T)
 		movingTag    = "stable"
 	)
 
-	for _, kind := range forgesClaiming(t, deletesTags, "container tag deletion") {
-		t.Run(string(kind), func(t *testing.T) {
-			f := newLedgerFixture(t, kind, "rollback-moving")
+	for _, forge := range forgesClaiming(t, deletesTags, "container tag deletion") {
+		t.Run(string(forge), func(t *testing.T) {
+			f := newLedgerFixture(t, forge, "rollback-moving")
 
 			// The release already in production, and the candidate that is
 			// about to replace it. Distinct images, so a restore is provable.

@@ -36,23 +36,23 @@ func alwaysValidatesTokens(provider.Capabilities) bool { return true }
 // PAR-TOK-1: the run's own credential validates against the repository it owns.
 // The control: if this fails, nothing else in the tier means anything.
 func TestToken_RunCredential_Validates(t *testing.T) {
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "token validation") {
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+	for _, forge := range forgesClaiming(t, alwaysValidatesTokens, "token validation") {
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "token-validate")
 
 			adapter := livetest.Provider(t, target, repo)
 
 			validator, ok := adapter.(provider.TokenValidator)
 			if !ok {
-				t.Fatalf("%s does not implement TokenValidator", kind)
+				t.Fatalf("%s does not implement TokenValidator", forge)
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 
 			if err := validator.ValidateToken(ctx, target.Token, livetest.RepoSlug(target, repo)); err != nil {
-				t.Fatalf("%s rejected its own run credential: %v", kind, err)
+				t.Fatalf("%s rejected its own run credential: %v", forge, err)
 			}
 		})
 	}
@@ -68,9 +68,9 @@ func TestToken_RunCredential_Validates(t *testing.T) {
 // distinction only exists against a real server: an httptest fake answers
 // whatever the fake's author expected.
 func TestToken_RejectedCredential_IsPermissionDeniedNotUnavailable(t *testing.T) {
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "token validation") {
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+	for _, forge := range forgesClaiming(t, alwaysValidatesTokens, "token validation") {
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "token-reject")
 
 			// A syntactically plausible credential the forge has never issued.
@@ -83,7 +83,7 @@ func TestToken_RejectedCredential_IsPermissionDeniedNotUnavailable(t *testing.T)
 
 			validator, ok := adapter.(provider.TokenValidator)
 			if !ok {
-				t.Fatalf("%s does not implement TokenValidator", kind)
+				t.Fatalf("%s does not implement TokenValidator", forge)
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -91,19 +91,19 @@ func TestToken_RejectedCredential_IsPermissionDeniedNotUnavailable(t *testing.T)
 
 			err := validator.ValidateToken(ctx, rejected.Token, livetest.RepoSlug(target, repo))
 			if err == nil {
-				t.Fatalf("%s accepted a credential it never issued", kind)
+				t.Fatalf("%s accepted a credential it never issued", forge)
 			}
 
 			if errors.Is(err, errs.ErrDependencyUnavailable) {
 				t.Errorf("%s classified a refused credential as the dependency being unavailable, which tells CI to retry: %v",
-					kind, err)
+					forge, err)
 			}
 
 			// Whatever the forge's status code, the class must be one the exit
 			// ladder maps to "your input was wrong", never to "try later".
 			if code := errs.ExitCodeFromError(err); code == errs.ExitCodeUnavailable {
 				t.Errorf("%s exits %v for a refused credential; a caller cannot tell it apart from an outage",
-					kind, code)
+					forge, code)
 			}
 		})
 	}
@@ -115,9 +115,9 @@ func TestToken_RejectedCredential_IsPermissionDeniedNotUnavailable(t *testing.T)
 // survives the whole way out to a process exit and a message. They are separate
 // because a correct sentinel that the CLI swallows is still a broken product.
 func TestToken_RejectedCredential_FailsTheCommandWithAReason(t *testing.T) {
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "token validation") {
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+	for _, forge := range forgesClaiming(t, alwaysValidatesTokens, "token validation") {
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "token-cli")
 
 			tokenFile := filepath.Join(t.TempDir(), "token")
@@ -132,12 +132,12 @@ func TestToken_RejectedCredential_FailsTheCommandWithAReason(t *testing.T) {
 			)
 
 			if run.ExitCode == 0 {
-				t.Fatalf("%s: validating a credential the forge never issued exited 0\nstdout: %s", kind, run.Stdout)
+				t.Fatalf("%s: validating a credential the forge never issued exited 0\nstdout: %s", forge, run.Stdout)
 			}
 
 			if run.ExitCode == int(errs.ExitCodeUnavailable) {
 				t.Errorf("%s: exits %d (unavailable) for a refused credential, so CI would retry a permanent failure\nstderr: %s",
-					kind, run.ExitCode, run.Stderr)
+					forge, run.ExitCode, run.Stderr)
 			}
 
 			// A refusal has to say something a reader can act on. Naming the
@@ -146,7 +146,7 @@ func TestToken_RejectedCredential_FailsTheCommandWithAReason(t *testing.T) {
 			lower := strings.ToLower(run.Stderr)
 			if !strings.Contains(lower, "token") && !strings.Contains(lower, "permission") &&
 				!strings.Contains(lower, "denied") && !strings.Contains(lower, "auth") {
-				t.Errorf("%s: refusal names neither the credential nor the permission\nstderr: %s", kind, run.Stderr)
+				t.Errorf("%s: refusal names neither the credential nor the permission\nstderr: %s", forge, run.Stderr)
 			}
 		})
 	}
@@ -159,16 +159,16 @@ func TestToken_RejectedCredential_FailsTheCommandWithAReason(t *testing.T) {
 // suite is demonstrably able to create and delete that repository is
 // contradicting itself.
 func TestToken_BotPermissions_ReflectRealAccess(t *testing.T) {
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "token validation") {
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+	for _, forge := range forgesClaiming(t, alwaysValidatesTokens, "token validation") {
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "token-perms")
 
 			adapter := livetest.Provider(t, target, repo)
 
 			validator, ok := adapter.(provider.TokenValidator)
 			if !ok {
-				t.Fatalf("%s does not implement TokenValidator", kind)
+				t.Fatalf("%s does not implement TokenValidator", forge)
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -176,11 +176,11 @@ func TestToken_BotPermissions_ReflectRealAccess(t *testing.T) {
 
 			permissions, err := validator.ValidateBotPermissions(ctx, livetest.RepoSlug(target, repo))
 			if err != nil {
-				t.Fatalf("%s bot-permission probe failed against a repository it owns: %v", kind, err)
+				t.Fatalf("%s bot-permission probe failed against a repository it owns: %v", forge, err)
 			}
 
 			if permissions == nil {
-				t.Fatalf("%s reported no permissions and no error", kind)
+				t.Fatalf("%s reported no permissions and no error", forge)
 			}
 
 			for name, reachable := range map[string]bool{
@@ -189,7 +189,7 @@ func TestToken_BotPermissions_ReflectRealAccess(t *testing.T) {
 				"branches": permissions.BranchesAccessible,
 			} {
 				if !reachable {
-					t.Errorf("%s reports %s unreachable for a repository this run just created", kind, name)
+					t.Errorf("%s reports %s unreachable for a repository this run just created", forge, name)
 				}
 			}
 		})

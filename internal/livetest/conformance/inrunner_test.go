@@ -35,10 +35,10 @@ import (
 )
 
 func TestInRunner_DetectsItsOwnRuntime(t *testing.T) {
-	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "an artifact store"), livetest.NeedsInRunner) {
+	for _, forge := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "an artifact store"), livetest.NeedsInRunner) {
 
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "inrunner")
 
 			// The workflow itself must differ: these are different runtimes, and
@@ -46,10 +46,10 @@ func TestInRunner_DetectsItsOwnRuntime(t *testing.T) {
 			// held constant is the claim — each forge presents a runtime a
 			// detector can identify unambiguously — so the scenario is one
 			// assertion expressed in each dialect rather than two tests.
-			conclusion := livetest.RunWorkflow(t, target, repo, "detect-runtime", runtimeProbe(kind))
+			conclusion := livetest.RunWorkflow(t, target, repo, "detect-runtime", runtimeProbe(forge))
 			if conclusion != "success" {
 				t.Errorf("%s: the in-runner runtime check concluded %q — this forge no longer presents the runtime the detector assumes",
-					kind, conclusion)
+					forge, conclusion)
 			}
 		})
 	}
@@ -67,8 +67,8 @@ func TestInRunner_DetectsItsOwnRuntime(t *testing.T) {
 // Each probe also pins its own premise. If Forgejo stopped presenting
 // GITHUB_ACTIONS, or GitLab started, the detection question would have changed
 // shape and the scenario would be worth rewriting rather than quietly passing.
-func runtimeProbe(kind provider.ForgeAPI) string {
-	if kind == provider.ForgeGitLab {
+func runtimeProbe(forge provider.ForgeAPI) string {
+	if forge == provider.ForgeGitLab {
 		return `detect:
   script:
     - echo "GITLAB_CI=${GITLAB_CI:-unset}"
@@ -111,10 +111,10 @@ jobs:
 func TestInRunner_ProductDetectsItsRunner(t *testing.T) {
 	const tag = "v0.0.1-inrunner"
 
-	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "releases"), livetest.NeedsInRunner) {
+	for _, forge := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "releases"), livetest.NeedsInRunner) {
 
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "inrunner-product")
 
 			livetest.PrepareTag(t, target, repo, tag)
@@ -127,10 +127,10 @@ func TestInRunner_ProductDetectsItsRunner(t *testing.T) {
 			// the job, because what is under test is the product's answer, not
 			// the fixture's cleverness.
 			conclusion := livetest.RunWorkflow(t, target, repo, "detect-runner",
-				productProbe(kind, assetURL, expectedRunner(kind)))
+				productProbe(forge, assetURL, expectedRunner(forge)))
 			if conclusion != "success" {
 				t.Errorf("%s: the product's runner detection concluded %q inside a real job — it is reporting the wrong runtime, so annotations and step summaries go to the wrong place",
-					kind, conclusion)
+					forge, conclusion)
 			}
 		})
 	}
@@ -138,16 +138,16 @@ func TestInRunner_ProductDetectsItsRunner(t *testing.T) {
 
 // expectedRunner is the dialect each forge's runner must be recognised as. The
 // interesting one is Forgejo: it is NOT github, despite presenting GITHUB_*.
-func expectedRunner(kind provider.ForgeAPI) string {
-	if kind == provider.ForgeGitLab {
+func expectedRunner(forge provider.ForgeAPI) string {
+	if forge == provider.ForgeGitLab {
 		return "gitlab"
 	}
 
 	return "forgejo"
 }
 
-func productProbe(kind provider.ForgeAPI, assetURL, want string) string {
-	if kind == provider.ForgeGitLab {
+func productProbe(forge provider.ForgeAPI, assetURL, want string) string {
+	if forge == provider.ForgeGitLab {
 		return `detect:
   image: ` + livetest.ProbeImage + `
   script:
@@ -189,10 +189,10 @@ jobs:
 func TestInRunner_NoGitHubAnnotationsOnOtherForges(t *testing.T) {
 	const tag = "v0.0.2-annotations"
 
-	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "releases"), livetest.NeedsInRunner) {
+	for _, forge := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "releases"), livetest.NeedsInRunner) {
 
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "inrunner-annot")
 
 			livetest.PrepareTag(t, target, repo, tag)
@@ -201,10 +201,10 @@ func TestInRunner_NoGitHubAnnotationsOnOtherForges(t *testing.T) {
 			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
 
 			conclusion := livetest.RunWorkflow(t, target, repo, "annotation-dialect",
-				annotationProbe(kind, assetURL))
+				annotationProbe(forge, assetURL))
 			if conclusion != "success" {
 				t.Errorf("%s: run concluded %q — the product emitted GitHub workflow commands on a runner that does not render them, so its diagnostics reach the log as literal text",
-					kind, conclusion)
+					forge, conclusion)
 			}
 		})
 	}
@@ -216,7 +216,7 @@ func TestInRunner_NoGitHubAnnotationsOnOtherForges(t *testing.T) {
 // `doctor` is the vehicle because it always has something to say and never
 // mutates anything, so the probe stays about the dialect. Its exit status is
 // ignored: whether this lab passes a health check is not the claim.
-func annotationProbe(kind provider.ForgeAPI, assetURL string) string {
+func annotationProbe(forge provider.ForgeAPI, assetURL string) string {
 	check := `./reusable-ci doctor > out.txt 2>&1 || true
 cat out.txt
 
@@ -229,7 +229,7 @@ if grep -qE '::(error|warning|notice|group|endgroup)::' out.txt; then
   exit 1
 fi`
 
-	if kind == provider.ForgeGitLab {
+	if forge == provider.ForgeGitLab {
 		return `detect:
   image: ` + livetest.ProbeImage + `
   script:
@@ -276,10 +276,10 @@ func indent(block string, spaces int) string {
 func TestInRunner_StepSummaryReachesAReader(t *testing.T) {
 	const tag = "v0.0.3-summary"
 
-	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "releases"), livetest.NeedsInRunner) {
+	for _, forge := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "releases"), livetest.NeedsInRunner) {
 
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "inrunner-summary")
 
 			livetest.PrepareTag(t, target, repo, tag)
@@ -288,10 +288,10 @@ func TestInRunner_StepSummaryReachesAReader(t *testing.T) {
 			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
 
 			conclusion := livetest.RunWorkflow(t, target, repo, "step-summary",
-				summaryProbe(kind, assetURL))
+				summaryProbe(forge, assetURL))
 			if conclusion != "success" {
 				t.Errorf("%s: run concluded %q — the step summary reached no reader, so a job that reported one produced nothing anybody sees",
-					kind, conclusion)
+					forge, conclusion)
 			}
 		})
 	}
@@ -305,11 +305,11 @@ func TestInRunner_StepSummaryReachesAReader(t *testing.T) {
 // pipeline never named would be testing the fixture. Forgejo is deliberately
 // given none — the claim there is exactly that the summary falls back to the job
 // log rather than vanishing.
-func summaryProbe(kind provider.ForgeAPI, assetURL string) string {
+func summaryProbe(forge provider.ForgeAPI, assetURL string) string {
 	const report = `run_product report build go --binary-name demo \
   --module example.com/demo --platforms linux/amd64 --version v1.0.0`
 
-	if kind == provider.ForgeGitLab {
+	if forge == provider.ForgeGitLab {
 		return `detect:
   image: ` + livetest.ProbeImage + `
   variables:
@@ -373,10 +373,10 @@ jobs:
 func TestInRunner_StepOutputsReachTheRunnersOutputFile(t *testing.T) {
 	const tag = "v0.0.6-outputs"
 
-	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "releases"), livetest.NeedsInRunner) {
+	for _, forge := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "releases"), livetest.NeedsInRunner) {
 
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "inrunner-output")
 
 			livetest.PrepareTag(t, target, repo, tag)
@@ -385,10 +385,10 @@ func TestInRunner_StepOutputsReachTheRunnersOutputFile(t *testing.T) {
 			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
 
 			conclusion := livetest.RunWorkflow(t, target, repo, "step-outputs",
-				outputFileProbe(kind, assetURL))
+				outputFileProbe(forge, assetURL))
 			if conclusion != "success" {
 				t.Errorf("%s: run concluded %q — step outputs did not reach the file this runner reads, so a later step sees an empty value and silently uses its default",
-					kind, conclusion)
+					forge, conclusion)
 			}
 		})
 	}
@@ -403,11 +403,11 @@ func TestInRunner_StepOutputsReachTheRunnersOutputFile(t *testing.T) {
 // native $FORGEJO_OUTPUT is required to be the one written. Asserting a
 // preference that the runner's own configuration makes unobservable would be
 // testing the fixture.
-func outputFileProbe(kind provider.ForgeAPI, assetURL string) string {
+func outputFileProbe(forge provider.ForgeAPI, assetURL string) string {
 	const resolve = `run_product release resolve metadata \
   --version v9.9.9-parrun5 --repository livetest/outputs`
 
-	if kind == provider.ForgeGitLab {
+	if forge == provider.ForgeGitLab {
 		// GitLab does not provide an output file; the pipeline nominates one,
 		// which is the documented contract rather than a fixture convenience.
 		return `detect:

@@ -250,7 +250,7 @@ func cliEnv(target Target, repo string) []string {
 	return env
 }
 
-// targetEnvKeys lists the variables targetEnv answers for a kind, so cliEnv can
+// targetEnvKeys lists the variables targetEnv answers for a forge, so cliEnv can
 // materialise them without the closure leaking its map.
 func targetEnvKeys(target Target) []string {
 	switch target.Forge {

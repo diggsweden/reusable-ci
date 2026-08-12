@@ -37,9 +37,9 @@ func TestSign_LedgerImages_ProducesAVerifiableSignature(t *testing.T) {
 		candidateTag = "staging-" + releaseTag
 	)
 
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "an OCI registry") {
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+	for _, forge := range forgesClaiming(t, alwaysValidatesTokens, "an OCI registry") {
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 
 			registry, err := livetest.RegistryHost(target)
 			if err != nil {
@@ -70,7 +70,7 @@ func TestSign_LedgerImages_ProducesAVerifiableSignature(t *testing.T) {
 				"--capture-digest",
 			)
 			if add.ExitCode != 0 {
-				t.Fatalf("%s ledger add exited %d\nstderr: %s", kind, add.ExitCode, add.Stderr)
+				t.Fatalf("%s ledger add exited %d\nstderr: %s", forge, add.ExitCode, add.Stderr)
 			}
 
 			sign := livetest.CLIIn(t, target, repo, opts,
@@ -80,20 +80,20 @@ func TestSign_LedgerImages_ProducesAVerifiableSignature(t *testing.T) {
 				"--provenance-predicate", writePredicate(t, work),
 			)
 			if sign.ExitCode != 0 {
-				t.Fatalf("%s ledger sign exited %d\nstderr: %s", kind, sign.ExitCode, sign.Stderr)
+				t.Fatalf("%s ledger sign exited %d\nstderr: %s", forge, sign.ExitCode, sign.Stderr)
 			}
 
 			// The claim, checked with cosign rather than with the tool's own
 			// report: a verifier holding only the public key accepts the image
 			// the ledger recorded.
-			verifyCosignSignature(t, string(kind), imagePath+"@"+pushed.Digest, publicKey, authDir)
+			verifyCosignSignature(t, string(forge), imagePath+"@"+pushed.Digest, publicKey, authDir)
 
 			// And that the containment held. Publishing to Rekor is
 			// irreversible, so this is asserted every run rather than trusted
 			// to the environment variable that implements it.
 			if livetest.SignaturePublishedToTransparencyLog(t, target, repo, pushed.Digest) {
 				t.Errorf("%s: the signature carries a transparency-log entry — it reached the public Rekor log, "+
-					"which is append-only and cannot be withdrawn", kind)
+					"which is append-only and cannot be withdrawn", forge)
 			}
 		})
 	}
@@ -125,7 +125,7 @@ func writePredicate(t *testing.T, dir string) string {
 // weakening of it: a signature that needed no such flag would be one that had
 // been published to the public log, which is the outcome the containment exists
 // to prevent.
-func verifyCosignSignature(t *testing.T, kind, digestRef, publicKey, authDir string) {
+func verifyCosignSignature(t *testing.T, forge, digestRef, publicKey, authDir string) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -143,7 +143,7 @@ func verifyCosignSignature(t *testing.T, kind, digestRef, publicKey, authDir str
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s: cosign could not verify the signature reusable-ci wrote for %s: %v\n%s",
-			kind, digestRef, err, out)
+			forge, digestRef, err, out)
 	}
 
 }

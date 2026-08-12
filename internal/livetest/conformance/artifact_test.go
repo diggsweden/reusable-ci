@@ -54,15 +54,15 @@ func artifactUploadArgs(t *testing.T) []string {
 // that exits 0 having uploaded nothing leaves a pipeline believing its reports
 // were published, and the next job looking for them is where anyone finds out.
 func TestArtifact_WithoutAStore_RefusesAndNamesTheGap(t *testing.T) {
-	for _, kind := range forgesLacking(t, claimsRunArtifacts, "run artifacts") {
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+	for _, forge := range forgesLacking(t, claimsRunArtifacts, "run artifacts") {
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "artifact-refuse")
 
 			run := livetest.CLI(t, target, repo, artifactUploadArgs(t)...)
 
 			if run.ExitCode == 0 {
-				t.Fatalf("%s: uploading to a forge with no artifact store exited 0\nstdout: %s", kind, run.Stdout)
+				t.Fatalf("%s: uploading to a forge with no artifact store exited 0\nstdout: %s", forge, run.Stdout)
 			}
 
 			// A refusal has to be readable as one. Naming the platform is what
@@ -70,12 +70,12 @@ func TestArtifact_WithoutAStore_RefusesAndNamesTheGap(t *testing.T) {
 			// would otherwise sit and retry.
 			lower := strings.ToLower(run.Stderr)
 			if !strings.Contains(lower, "unsupported") && !strings.Contains(lower, "not supported") {
-				t.Errorf("%s: refusal does not say the capability is unsupported\nstderr: %s", kind, run.Stderr)
+				t.Errorf("%s: refusal does not say the capability is unsupported\nstderr: %s", forge, run.Stderr)
 			}
 
-			if !strings.Contains(lower, string(kind)) {
+			if !strings.Contains(lower, string(forge)) {
 				t.Errorf("%s: refusal does not name the platform, so a reader cannot tell why\nstderr: %s",
-					kind, run.Stderr)
+					forge, run.Stderr)
 			}
 
 			// The gap is permanent, so it must not exit with the code that
@@ -83,12 +83,12 @@ func TestArtifact_WithoutAStore_RefusesAndNamesTheGap(t *testing.T) {
 			// no number of retries gives GitLab an artifact store.
 			if run.ExitCode == int(errs.ExitCodeUnavailable) {
 				t.Errorf("%s: exits %d (unavailable) for a capability it will never have, so a retry loop keeps trying\nstderr: %s",
-					kind, run.ExitCode, run.Stderr)
+					forge, run.ExitCode, run.Stderr)
 			}
 
 			if run.ExitCode != int(errs.ExitCodeConfiguration) {
 				t.Errorf("%s: exits %d for an unsupported capability, want %d (EX_CONFIG)\nstderr: %s",
-					kind, run.ExitCode, errs.ExitCodeConfiguration, run.Stderr)
+					forge, run.ExitCode, errs.ExitCodeConfiguration, run.Stderr)
 			}
 		})
 	}
@@ -103,9 +103,9 @@ func TestArtifact_WithoutAStore_RefusesAndNamesTheGap(t *testing.T) {
 // perfectly well concludes the feature is missing and works around a problem
 // that does not exist.
 func TestArtifact_WithAStore_FailsOnTheRuntimeNotTheCapability(t *testing.T) {
-	for _, kind := range forgesClaiming(t, claimsRunArtifacts, "run artifacts") {
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+	for _, forge := range forgesClaiming(t, claimsRunArtifacts, "run artifacts") {
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "artifact-runtime")
 
 			run := livetest.CLI(t, target, repo, artifactUploadArgs(t)...)
@@ -113,20 +113,20 @@ func TestArtifact_WithAStore_FailsOnTheRuntimeNotTheCapability(t *testing.T) {
 			// Succeeding would mean a run context leaked into the suite, which
 			// is worth knowing but is not this scenario's claim.
 			if run.ExitCode == 0 {
-				t.Skipf("%s: upload succeeded, so a run context was present", kind)
+				t.Skipf("%s: upload succeeded, so a run context was present", forge)
 			}
 
 			lower := strings.ToLower(run.Stderr)
 			if strings.Contains(lower, "unsupported on this platform") {
 				t.Errorf("%s claims run artifacts but the CLI refuses them as unsupported\nstderr: %s",
-					kind, run.Stderr)
+					forge, run.Stderr)
 			}
 
 			// The honest answer here is "you are not in a CI run", which the
 			// exit ladder classifies as a usage problem rather than an outage.
 			if run.ExitCode == int(errs.ExitCodeUnavailable) {
 				t.Errorf("%s: exits %d (unavailable) off a runner, which a caller cannot tell from an outage\nstderr: %s",
-					kind, run.ExitCode, run.Stderr)
+					forge, run.ExitCode, run.Stderr)
 			}
 		})
 	}
@@ -158,10 +158,10 @@ func TestArtifact_WithAStore_FailsOnTheRuntimeNotTheCapability(t *testing.T) {
 func TestInRunner_ArtifactRoundTripsThroughTheStore(t *testing.T) {
 	const tag = "v0.0.5-artifact"
 
-	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, claimsRunArtifacts, "run artifacts"), livetest.NeedsInRunner) {
+	for _, forge := range livetest.ForgesMeeting(t, forgesClaiming(t, claimsRunArtifacts, "run artifacts"), livetest.NeedsInRunner) {
 
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "artifact-roundtrip")
 
 			livetest.PrepareTag(t, target, repo, tag)
@@ -173,7 +173,7 @@ func TestInRunner_ArtifactRoundTripsThroughTheStore(t *testing.T) {
 				artifactRoundTripProbe(assetURL))
 			if conclusion != "success" {
 				t.Errorf("%s: the artifact round-trip concluded %q inside a real job — this forge reports RunArtifacts, but a file uploaded from a job did not come back intact",
-					kind, conclusion)
+					forge, conclusion)
 			}
 		})
 	}

@@ -55,9 +55,9 @@ func LiveForges() []provider.ForgeAPI {
 
 	live := make([]provider.ForgeAPI, 0, len(supported))
 
-	for _, kind := range supported {
-		if selected[string(kind)] {
-			live = append(live, kind)
+	for _, forge := range supported {
+		if selected[string(forge)] {
+			live = append(live, forge)
 		}
 	}
 
@@ -66,12 +66,12 @@ func LiveForges() []provider.ForgeAPI {
 
 // Capabilities reports what a forge claims, built from an adapter with an empty
 // environment so the answer reflects the code rather than the operator's shell.
-func Capabilities(kind provider.ForgeAPI) (provider.Capabilities, bool) {
+func Capabilities(forge provider.ForgeAPI) (provider.Capabilities, bool) {
 	empty := func(string) string { return "" }
 
 	var reporter provider.CapabilityReporter
 
-	switch kind {
+	switch forge {
 	case provider.ForgeGitHub:
 		reporter = &github.Provider{Env: empty}
 	case provider.ForgeGitLab:

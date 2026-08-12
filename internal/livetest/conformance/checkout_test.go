@@ -44,9 +44,9 @@ const afterTagFile = "after-tag.txt"
 func TestCheckout_ProducesAWorkingTreeAtTheRequestedRef(t *testing.T) {
 	const tag = "v0.0.1-checkout"
 
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "repository metadata") {
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+	for _, forge := range forgesClaiming(t, alwaysValidatesTokens, "repository metadata") {
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "checkout")
 
 			livetest.PrepareTag(t, target, repo, tag)
@@ -68,13 +68,13 @@ func TestCheckout_ProducesAWorkingTreeAtTheRequestedRef(t *testing.T) {
 			)
 			if run.ExitCode != 0 {
 				t.Fatalf("%s: checkout failed (exit %d)\nstdout: %s\nstderr: %s",
-					kind, run.ExitCode, run.Stdout, run.Stderr)
+					forge, run.ExitCode, run.Stdout, run.Stderr)
 			}
 
 			// A directory is not a checkout. This is the assertion the exit code
 			// cannot make.
 			if _, err := os.Stat(filepath.Join(workspace, ".git")); err != nil {
-				t.Fatalf("%s: checkout exited 0 but left no git repository at %s: %v", kind, workspace, err)
+				t.Fatalf("%s: checkout exited 0 but left no git repository at %s: %v", forge, workspace, err)
 			}
 
 			// Both forges' scratch repositories carry a README at this point —
@@ -82,12 +82,12 @@ func TestCheckout_ProducesAWorkingTreeAtTheRequestedRef(t *testing.T) {
 			// default branch — so a tracked file is expected, and an empty tree
 			// means the fetch produced nothing.
 			if _, err := os.Stat(filepath.Join(workspace, "README.md")); err != nil {
-				t.Errorf("%s: the working tree has no README.md, so the checkout produced an empty tree: %v", kind, err)
+				t.Errorf("%s: the working tree has no README.md, so the checkout produced an empty tree: %v", forge, err)
 			}
 
 			head := git(t, workspace, "rev-parse", "HEAD")
 			if head == "" {
-				t.Fatalf("%s: HEAD does not resolve in the checked-out tree", kind)
+				t.Fatalf("%s: HEAD does not resolve in the checked-out tree", forge)
 			}
 
 			// The ref is the claim, not merely that something was cloned, and the
@@ -96,7 +96,7 @@ func TestCheckout_ProducesAWorkingTreeAtTheRequestedRef(t *testing.T) {
 			// clone made at a branch need not carry the tag at all.
 			if want := livetest.TagCommitSHA(t, target, repo, tag); want != head {
 				t.Errorf("%s: HEAD is %s but the forge says %s is %s — the checkout did not land on the requested ref",
-					kind, head, tag, want)
+					forge, head, tag, want)
 			}
 
 			// The same claim from the other side, and the one that cannot be
@@ -104,7 +104,7 @@ func TestCheckout_ProducesAWorkingTreeAtTheRequestedRef(t *testing.T) {
 			// in a tree checked out at the tag.
 			if _, err := os.Stat(filepath.Join(workspace, afterTagFile)); err == nil {
 				t.Errorf("%s: %s is present, so the checkout took the branch head rather than %s",
-					kind, afterTagFile, tag)
+					forge, afterTagFile, tag)
 			}
 		})
 	}

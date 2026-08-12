@@ -40,28 +40,28 @@ import (
 func forgesClaiming(t *testing.T, needs func(provider.Capabilities) bool, capability string) []provider.ForgeAPI {
 	t.Helper()
 
-	var kinds []provider.ForgeAPI
+	var forges []provider.ForgeAPI
 
-	for _, kind := range livetest.LiveForges() {
-		capabilities, known := livetest.Capabilities(kind)
+	for _, forge := range livetest.LiveForges() {
+		capabilities, known := livetest.Capabilities(forge)
 		if !known {
-			t.Fatalf("no adapter for platform %q", kind)
+			t.Fatalf("no adapter for platform %q", forge)
 		}
 
 		if !needs(capabilities) {
-			t.Logf("SKIP %s: does not claim %s", kind, capability)
+			t.Logf("SKIP %s: does not claim %s", forge, capability)
 
 			continue
 		}
 
-		kinds = append(kinds, kind)
+		forges = append(forges, forge)
 	}
 
-	if len(kinds) == 0 {
+	if len(forges) == 0 {
 		t.Fatalf("no live forge claims %s, so this scenario proved nothing", capability)
 	}
 
-	return kinds
+	return forges
 }
 
 func claimsReleaseAssets(c provider.Capabilities) bool { return c.ReleaseAssets }
@@ -81,11 +81,11 @@ func TestRelease_CreateWithAssets_IsEquivalentAcrossForges(t *testing.T) {
 		body = "livetest PAR-REL-1\n\nbody text with a second line.\n"
 	)
 
-	for _, kind := range forgesClaiming(t, claimsReleaseAssets, "release assets") {
-		t.Run(string(kind), func(t *testing.T) {
+	for _, forge := range forgesClaiming(t, claimsReleaseAssets, "release assets") {
+		t.Run(string(forge), func(t *testing.T) {
 			// No t.Parallel: one lab is a single mutable fixture, and two
 			// forges sharing it is not the property under test.
-			target := livetest.Accept(t, kind)
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "release-assets")
 
 			// Both adapters release an existing tag rather than creating one,
@@ -98,7 +98,7 @@ func TestRelease_CreateWithAssets_IsEquivalentAcrossForges(t *testing.T) {
 
 			creator, ok := adapter.(provider.ReleaseCreator)
 			if !ok {
-				t.Fatalf("%s does not implement ReleaseCreator", kind)
+				t.Fatalf("%s does not implement ReleaseCreator", forge)
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -112,14 +112,14 @@ func TestRelease_CreateWithAssets_IsEquivalentAcrossForges(t *testing.T) {
 			}
 
 			if err := creator.CreateRelease(ctx, livetest.RepoSlug(target, repo), spec); err != nil {
-				t.Fatalf("%s CreateRelease: %v", kind, err)
+				t.Fatalf("%s CreateRelease: %v", forge, err)
 			}
 
 			// Every assertion below reads the forge directly. Going through the
 			// adapter would let an adapter that misreads its own writes agree
 			// with itself and pass.
 			reader := rawref.Reader{
-				Forge: string(kind),
+				Forge: string(forge),
 				Base:  target.BaseURL(),
 				Token: target.Token,
 				Owner: target.Owner,
@@ -127,26 +127,26 @@ func TestRelease_CreateWithAssets_IsEquivalentAcrossForges(t *testing.T) {
 
 			release, found, err := rawref.ReleaseByTag(ctx, reader, repo, tag)
 			if err != nil {
-				t.Fatalf("%s raw release read: %v", kind, err)
+				t.Fatalf("%s raw release read: %v", forge, err)
 			}
 
 			if !found {
-				t.Fatalf("%s reported success but has no release at %s", kind, tag)
+				t.Fatalf("%s reported success but has no release at %s", forge, tag)
 			}
 
 			if release.Tag != tag {
-				t.Errorf("%s release tag = %q, want %q", kind, release.Tag, tag)
+				t.Errorf("%s release tag = %q, want %q", forge, release.Tag, tag)
 			}
 
 			if release.Name != spec.Name {
-				t.Errorf("%s release name = %q, want %q", kind, release.Name, spec.Name)
+				t.Errorf("%s release name = %q, want %q", forge, release.Name, spec.Name)
 			}
 
 			if release.Body != body {
-				t.Errorf("%s release body = %q, want %q", kind, release.Body, body)
+				t.Errorf("%s release body = %q, want %q", forge, release.Body, body)
 			}
 
-			assertAssetsArrivedIntact(t, kind, release, assets, digests)
+			assertAssetsArrivedIntact(t, forge, release, assets, digests)
 		})
 	}
 }
@@ -202,11 +202,11 @@ func writeNotes(t *testing.T, body string) string {
 func TestRelease_UploadAssetToExistingRelease_ServesTheSameBytes(t *testing.T) {
 	const tag = "v0.0.2-rc-live"
 
-	for _, kind := range forgesClaiming(t, claimsReleaseAssets, "release assets") {
-		t.Run(string(kind), func(t *testing.T) {
+	for _, forge := range forgesClaiming(t, claimsReleaseAssets, "release assets") {
+		t.Run(string(forge), func(t *testing.T) {
 			// No t.Parallel: one lab is a single mutable fixture, and two
 			// forges sharing it is not the property under test.
-			target := livetest.Accept(t, kind)
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "release-upload")
 			livetest.PrepareTag(t, target, repo, tag)
 
@@ -214,12 +214,12 @@ func TestRelease_UploadAssetToExistingRelease_ServesTheSameBytes(t *testing.T) {
 
 			creator, ok := adapter.(provider.ReleaseCreator)
 			if !ok {
-				t.Fatalf("%s does not implement ReleaseCreator", kind)
+				t.Fatalf("%s does not implement ReleaseCreator", forge)
 			}
 
 			uploader, ok := adapter.(provider.ReleaseAssetUploader)
 			if !ok {
-				t.Fatalf("%s claims release assets but does not implement ReleaseAssetUploader", kind)
+				t.Fatalf("%s claims release assets but does not implement ReleaseAssetUploader", forge)
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -227,7 +227,7 @@ func TestRelease_UploadAssetToExistingRelease_ServesTheSameBytes(t *testing.T) {
 
 			if err := creator.CreateRelease(ctx, livetest.RepoSlug(target, repo),
 				provider.ReleaseSpec{Tag: tag, Name: "PAR-REL-2"}); err != nil {
-				t.Fatalf("%s CreateRelease: %v", kind, err)
+				t.Fatalf("%s CreateRelease: %v", forge, err)
 			}
 
 			// Content the forge cannot have produced by accident: if the digest
@@ -243,7 +243,7 @@ func TestRelease_UploadAssetToExistingRelease_ServesTheSameBytes(t *testing.T) {
 			}
 
 			if err := uploader.UploadReleaseAsset(ctx, tag, path); err != nil {
-				t.Fatalf("%s UploadReleaseAsset: %v", kind, err)
+				t.Fatalf("%s UploadReleaseAsset: %v", forge, err)
 			}
 
 			release := mustReadRelease(ctx, t, target, repo, tag)
@@ -251,16 +251,16 @@ func TestRelease_UploadAssetToExistingRelease_ServesTheSameBytes(t *testing.T) {
 			asset, found := release.Asset(filepath.Base(path))
 			if !found {
 				t.Fatalf("%s accepted the upload but serves no asset %q (has %v)",
-					kind, filepath.Base(path), release.AssetNames())
+					forge, filepath.Base(path), release.AssetNames())
 			}
 
 			if asset.Digest != wantDigest {
 				t.Errorf("%s asset digest = %s, want %s — the forge served different bytes than were uploaded",
-					kind, asset.Digest, wantDigest)
+					forge, asset.Digest, wantDigest)
 			}
 
 			if asset.Size != wantSize {
-				t.Errorf("%s asset size = %s, want %s", kind,
+				t.Errorf("%s asset size = %s, want %s", forge,
 					rawref.FormatSize(asset.Size), rawref.FormatSize(wantSize))
 			}
 		})
@@ -290,11 +290,11 @@ func TestRelease_ReReleasingATag_ReplacesRatherThanAccumulates(t *testing.T) {
 		assetSuffix = "par-rel-3.txt"
 	)
 
-	for _, kind := range forgesClaiming(t, claimsReleaseAssets, "release assets") {
-		t.Run(string(kind), func(t *testing.T) {
+	for _, forge := range forgesClaiming(t, claimsReleaseAssets, "release assets") {
+		t.Run(string(forge), func(t *testing.T) {
 			// No t.Parallel: one lab is a single mutable fixture, and two
 			// forges sharing it is not the property under test.
-			target := livetest.Accept(t, kind)
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "release-rerelease")
 			livetest.PrepareTag(t, target, repo, tag)
 
@@ -302,7 +302,7 @@ func TestRelease_ReReleasingATag_ReplacesRatherThanAccumulates(t *testing.T) {
 
 			creator, ok := adapter.(provider.ReleaseCreator)
 			if !ok {
-				t.Fatalf("%s does not implement ReleaseCreator", kind)
+				t.Fatalf("%s does not implement ReleaseCreator", forge)
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
@@ -326,7 +326,7 @@ func TestRelease_ReReleasingATag_ReplacesRatherThanAccumulates(t *testing.T) {
 				}
 
 				if err := creator.CreateRelease(ctx, slug, spec); err != nil {
-					t.Fatalf("%s CreateRelease (%s): %v", kind, round.name, err)
+					t.Fatalf("%s CreateRelease (%s): %v", forge, round.name, err)
 				}
 			}
 
@@ -334,7 +334,7 @@ func TestRelease_ReReleasingATag_ReplacesRatherThanAccumulates(t *testing.T) {
 
 			if release.Body != secondBody {
 				t.Errorf("%s body = %q, want the second release's %q — re-release did not replace",
-					kind, release.Body, secondBody)
+					forge, release.Body, secondBody)
 			}
 
 			// The asset was supplied twice with the same name. One copy is the
@@ -343,7 +343,7 @@ func TestRelease_ReReleasingATag_ReplacesRatherThanAccumulates(t *testing.T) {
 			names := release.AssetNames()
 			if len(names) != 1 || names[0] != filepath.Base(asset) {
 				t.Errorf("%s attached %v after two releases, want exactly [%s]",
-					kind, names, filepath.Base(asset))
+					forge, names, filepath.Base(asset))
 			}
 		})
 	}
@@ -387,7 +387,7 @@ func writeAsset(t *testing.T, name, content string) string {
 // forge that stored the right filenames over the wrong content.
 func assertAssetsArrivedIntact(
 	t *testing.T,
-	kind provider.ForgeAPI,
+	forge provider.ForgeAPI,
 	release rawref.Release,
 	assets []string,
 	digests map[string]string,
@@ -402,20 +402,20 @@ func assertAssetsArrivedIntact(
 	slices.Sort(wantNames)
 
 	if got := release.AssetNames(); !slices.Equal(got, wantNames) {
-		t.Fatalf("%s attached %v, want %v", kind, got, wantNames)
+		t.Fatalf("%s attached %v, want %v", forge, got, wantNames)
 	}
 
 	for name, wantDigest := range digests {
 		asset, ok := release.Asset(name)
 		if !ok {
-			t.Errorf("%s is missing asset %q", kind, name)
+			t.Errorf("%s is missing asset %q", forge, name)
 
 			continue
 		}
 
 		if asset.Digest != wantDigest {
 			t.Errorf("%s asset %q digest = %s, want %s — the forge served different bytes than were uploaded",
-				kind, name, asset.Digest, wantDigest)
+				forge, name, asset.Digest, wantDigest)
 		}
 	}
 }
@@ -442,9 +442,9 @@ func assertAssetsArrivedIntact(
 func TestRelease_PublishReconcile_ConvergesOnTheGivenAssets(t *testing.T) {
 	const tag = "v0.0.1-reconcile"
 
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+	for _, forge := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "relreconcile")
 
 			livetest.PrepareTag(t, target, repo, tag)
@@ -482,18 +482,18 @@ func TestRelease_PublishReconcile_ConvergesOnTheGivenAssets(t *testing.T) {
 			}
 
 			if run := publish("first.txt", "shared.txt"); run.ExitCode != 0 {
-				t.Fatalf("%s: first publish failed (exit %d)\nstderr: %s", kind, run.ExitCode, run.Stderr)
+				t.Fatalf("%s: first publish failed (exit %d)\nstderr: %s", forge, run.ExitCode, run.Stderr)
 			}
 
 			// Non-vacuity: if the first publish attached nothing, the comparison
 			// below would pass by having nothing to remove.
 			got := livetest.ReleaseAssetNames(t, target, repo, tag)
 			if !slices.Equal(got, []string{"first.txt", "shared.txt"}) {
-				t.Fatalf("%s: after the first publish the release has %v, want [first.txt shared.txt]", kind, got)
+				t.Fatalf("%s: after the first publish the release has %v, want [first.txt shared.txt]", forge, got)
 			}
 
 			if run := publish("shared.txt", "second.txt"); run.ExitCode != 0 {
-				t.Fatalf("%s: second publish failed (exit %d)\nstderr: %s", kind, run.ExitCode, run.Stderr)
+				t.Fatalf("%s: second publish failed (exit %d)\nstderr: %s", forge, run.ExitCode, run.Stderr)
 			}
 
 			// The claim. first.txt must be gone, second.txt must have arrived, and
@@ -501,7 +501,7 @@ func TestRelease_PublishReconcile_ConvergesOnTheGivenAssets(t *testing.T) {
 			got = livetest.ReleaseAssetNames(t, target, repo, tag)
 			if want := []string{"second.txt", "shared.txt"}; !slices.Equal(got, want) {
 				t.Errorf("%s: reconcile left the release with %v, want %v — a stale asset that is never removed means a release page keeps shipping the previous version's files",
-					kind, got, want)
+					forge, got, want)
 			}
 		})
 	}
@@ -534,9 +534,9 @@ func TestRelease_LargeAsset_ArrivesIntact(t *testing.T) {
 		size = 40 << 20 // the 40 MB §1.1 asks about
 	)
 
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+	for _, forge := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "largeasset")
 
 			livetest.PrepareTag(t, target, repo, tag)
@@ -567,7 +567,7 @@ func TestRelease_LargeAsset_ArrivesIntact(t *testing.T) {
 			)
 			if run.ExitCode != 0 {
 				t.Fatalf("%s: publishing a %d-byte asset failed (exit %d)\nstderr: %s",
-					kind, size, run.ExitCode, run.Stderr)
+					forge, size, run.ExitCode, run.Stderr)
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
@@ -577,7 +577,7 @@ func TestRelease_LargeAsset_ArrivesIntact(t *testing.T) {
 
 			asset, found := release.Asset(name)
 			if !found {
-				t.Fatalf("%s: the release has no asset %q (has %v)", kind, name, release.AssetNames())
+				t.Fatalf("%s: the release has no asset %q (has %v)", forge, name, release.AssetNames())
 			}
 
 			// Length first: it names the failure. A truncation shows up in the
@@ -585,14 +585,14 @@ func TestRelease_LargeAsset_ArrivesIntact(t *testing.T) {
 			// can act on, where a digest mismatch alone is not.
 			if asset.Size != wantSize {
 				t.Errorf("%s: asset is %d bytes, want %d — the upload was truncated",
-					kind, asset.Size, wantSize)
+					forge, asset.Size, wantSize)
 			}
 
 			// And the bytes themselves, since the right length carrying the wrong
 			// content is the failure a length check cannot see.
 			if asset.Digest != wantDigest {
 				t.Errorf("%s: asset digest = %s, want %s — the forge served different bytes than were uploaded",
-					kind, asset.Digest, wantDigest)
+					forge, asset.Digest, wantDigest)
 			}
 		})
 	}

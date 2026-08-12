@@ -36,9 +36,9 @@ import (
 )
 
 func TestLedger_RecordVerifyPromote_PreservesTheDigest(t *testing.T) {
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "an OCI registry") {
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+	for _, forge := range forgesClaiming(t, alwaysValidatesTokens, "an OCI registry") {
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 
 			registry, err := livetest.RegistryHost(target)
 			if err != nil {
@@ -53,7 +53,7 @@ func TestLedger_RecordVerifyPromote_PreservesTheDigest(t *testing.T) {
 				{name: "index", push: livetest.PushIndex},
 			} {
 				t.Run(shape.name, func(t *testing.T) {
-					recordVerifyPromote(t, kind, target, registry, shape.name, shape.push)
+					recordVerifyPromote(t, forge, target, registry, shape.name, shape.push)
 				})
 			}
 		})
@@ -69,7 +69,7 @@ func TestLedger_RecordVerifyPromote_PreservesTheDigest(t *testing.T) {
 // claim being made about each.
 func recordVerifyPromote(
 	t *testing.T,
-	kind provider.ForgeAPI,
+	forge provider.ForgeAPI,
 	target livetest.Target,
 	registry, shapeName string,
 	push func(livetest.TB, livetest.Target, string, string) livetest.Image,
@@ -123,13 +123,13 @@ func recordVerifyPromote(
 		"--capture-digest",
 	)
 	if add.ExitCode != 0 {
-		t.Fatalf("%s ledger add exited %d\nstderr: %s", kind, add.ExitCode, add.Stderr)
+		t.Fatalf("%s ledger add exited %d\nstderr: %s", forge, add.ExitCode, add.Stderr)
 	}
 
 	recorded := ledgerDigest(t, filepath.Join(work, ledger))
 	if recorded != pushed.Digest {
 		t.Fatalf("%s recorded %s but the registry serves %s — the capture is not reading the registry",
-			kind, recorded, pushed.Digest)
+			forge, recorded, pushed.Digest)
 	}
 
 	// validate is the offline trust-boundary check: every tag
@@ -138,7 +138,7 @@ func recordVerifyPromote(
 		"container", "ledger", "validate",
 		"--ledger", ledger, "--tag", releaseTag, "--non-empty")
 	if validate.ExitCode != 0 {
-		t.Fatalf("%s ledger validate exited %d\nstderr: %s", kind, validate.ExitCode, validate.Stderr)
+		t.Fatalf("%s ledger validate exited %d\nstderr: %s", forge, validate.ExitCode, validate.Stderr)
 	}
 
 	// validate-digests is the registry-facing half: what the
@@ -148,7 +148,7 @@ func recordVerifyPromote(
 		"--ledger", ledger, "--auth-file", authFile, "--tag", releaseTag)
 	if verify.ExitCode != 0 {
 		t.Fatalf("%s ledger validate-digests exited %d against the registry it just recorded\nstderr: %s",
-			kind, verify.ExitCode, verify.Stderr)
+			forge, verify.ExitCode, verify.Stderr)
 	}
 
 	promote := livetest.CLIIn(t, target, repo, opts,
@@ -156,7 +156,7 @@ func recordVerifyPromote(
 		"--ledger", ledger, "--auth-file", authFile,
 		"--tag", releaseTag, "--stage", promotedTag)
 	if promote.ExitCode != 0 {
-		t.Fatalf("%s ledger promote exited %d\nstderr: %s", kind, promote.ExitCode, promote.Stderr)
+		t.Fatalf("%s ledger promote exited %d\nstderr: %s", forge, promote.ExitCode, promote.Stderr)
 	}
 
 	// The claim, checked against the registry rather than the
@@ -164,12 +164,12 @@ func recordVerifyPromote(
 	// the manifest the candidate did.
 	served, found := livetest.ImageDigest(t, target, repo, promotedTag)
 	if !found {
-		t.Fatalf("%s: promotion reported success but %s:%s serves nothing", kind, imagePath, promotedTag)
+		t.Fatalf("%s: promotion reported success but %s:%s serves nothing", forge, imagePath, promotedTag)
 	}
 
 	if served != pushed.Digest {
 		t.Errorf("%s: %s:%s serves %s, want the promoted %s — the copy did not preserve the manifest",
-			kind, imagePath, promotedTag, served, pushed.Digest)
+			forge, imagePath, promotedTag, served, pushed.Digest)
 	}
 }
 
@@ -191,10 +191,10 @@ func TestLedger_Cleanup_RemovesTheCandidateAndKeepsTheRelease(t *testing.T) {
 		promotedTag  = "release"
 	)
 
-	for _, kind := range forgesClaiming(t,
+	for _, forge := range forgesClaiming(t,
 		func(c provider.Capabilities) bool { return c.ContainerTagDeletion }, "container tag deletion") {
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 
 			registry, err := livetest.RegistryHost(target)
 			if err != nil {
@@ -227,7 +227,7 @@ func TestLedger_Cleanup_RemovesTheCandidateAndKeepsTheRelease(t *testing.T) {
 				"--capture-digest",
 			)
 			if add.ExitCode != 0 {
-				t.Fatalf("%s ledger add exited %d\nstderr: %s", kind, add.ExitCode, add.Stderr)
+				t.Fatalf("%s ledger add exited %d\nstderr: %s", forge, add.ExitCode, add.Stderr)
 			}
 
 			promote := livetest.CLIIn(t, target, repo, opts,
@@ -235,18 +235,18 @@ func TestLedger_Cleanup_RemovesTheCandidateAndKeepsTheRelease(t *testing.T) {
 				"--ledger", ledger, "--auth-file", authFile,
 				"--tag", releaseTag, "--stage", promotedTag)
 			if promote.ExitCode != 0 {
-				t.Fatalf("%s ledger promote exited %d\nstderr: %s", kind, promote.ExitCode, promote.Stderr)
+				t.Fatalf("%s ledger promote exited %d\nstderr: %s", forge, promote.ExitCode, promote.Stderr)
 			}
 
 			cleanup := livetest.CLIIn(t, target, repo, opts,
 				"container", "ledger", "cleanup",
 				"--ledger", ledger, "--auth-file", authFile, "--tag", releaseTag)
 			if cleanup.ExitCode != 0 {
-				t.Fatalf("%s ledger cleanup exited %d\nstderr: %s", kind, cleanup.ExitCode, cleanup.Stderr)
+				t.Fatalf("%s ledger cleanup exited %d\nstderr: %s", forge, cleanup.ExitCode, cleanup.Stderr)
 			}
 
 			if _, found := livetest.ImageDigest(t, target, repo, candidateTag); found {
-				t.Errorf("%s: %s:%s survived cleanup", kind, imagePath, candidateTag)
+				t.Errorf("%s: %s:%s survived cleanup", forge, imagePath, candidateTag)
 			}
 
 			// The safety property. Both release names must still resolve to the
@@ -256,14 +256,14 @@ func TestLedger_Cleanup_RemovesTheCandidateAndKeepsTheRelease(t *testing.T) {
 				served, found := livetest.ImageDigest(t, target, repo, surviving)
 				if !found {
 					t.Errorf("%s: cleanup destroyed %s:%s — the shared manifest went with the candidate",
-						kind, imagePath, surviving)
+						forge, imagePath, surviving)
 
 					continue
 				}
 
 				if served != pushed.Digest {
 					t.Errorf("%s: %s:%s serves %s after cleanup, want %s",
-						kind, imagePath, surviving, served, pushed.Digest)
+						forge, imagePath, surviving, served, pushed.Digest)
 				}
 			}
 		})

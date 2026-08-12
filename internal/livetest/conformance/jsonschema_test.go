@@ -38,11 +38,11 @@ func TestJSON_DoctorReport_HasTheSameShapeOnEveryForge(t *testing.T) {
 	shapes := map[provider.ForgeAPI][]string{}
 	forgeAPI := map[provider.ForgeAPI]string{}
 
-	kinds := forgesClaiming(t, alwaysValidatesTokens, "a JSON report")
+	forges := forgesClaiming(t, alwaysValidatesTokens, "a JSON report")
 
-	for _, kind := range kinds {
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+	for _, forge := range forges {
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "json-shape")
 
 			run := livetest.CLI(t, target, repo, "doctor", "--json")
@@ -52,13 +52,13 @@ func TestJSON_DoctorReport_HasTheSameShapeOnEveryForge(t *testing.T) {
 			var report map[string]any
 			if err := json.Unmarshal([]byte(run.Stdout), &report); err != nil {
 				t.Fatalf("%s: doctor --json did not emit parsable JSON on stdout (exit %d): %v\nstdout: %s\nstderr: %s",
-					kind, run.ExitCode, err, run.Stdout, run.Stderr)
+					forge, run.ExitCode, err, run.Stdout, run.Stderr)
 			}
 
-			shapes[kind] = jsonShape(report, "")
+			shapes[forge] = jsonShape(report, "")
 
 			if env, ok := report["environment"].(map[string]any); ok {
-				forgeAPI[kind], _ = env["forge_api"].(string)
+				forgeAPI[forge], _ = env["forge_api"].(string)
 			}
 		})
 	}
@@ -70,10 +70,10 @@ func TestJSON_DoctorReport_HasTheSameShapeOnEveryForge(t *testing.T) {
 	// Non-vacuity: the reports must actually come from different forges. Without
 	// this, a doctor that hard-coded one platform would pass the shape check
 	// perfectly.
-	for _, kind := range kinds {
-		if got := forgeAPI[kind]; got != string(kind) {
+	for _, forge := range forges {
+		if got := forgeAPI[forge]; got != string(forge) {
 			t.Errorf("%s reported forge_api %q, so the reports are not from the forges they claim",
-				kind, got)
+				forge, got)
 		}
 	}
 
@@ -88,19 +88,19 @@ func TestJSON_DoctorReport_HasTheSameShapeOnEveryForge(t *testing.T) {
 		"checks[].name",
 		"checks[].severity",
 	} {
-		for _, kind := range kinds {
-			if !slices.Contains(shapes[kind], required) {
+		for _, forge := range forges {
+			if !slices.Contains(shapes[forge], required) {
 				t.Errorf("%s: doctor --json has no %s; the shape comparison would prove little",
-					kind, required)
+					forge, required)
 			}
 		}
 	}
 
-	reference := kinds[0]
-	for _, kind := range kinds[1:] {
-		if diff := shapeDiff(shapes[reference], shapes[kind]); diff != "" {
+	reference := forges[0]
+	for _, forge := range forges[1:] {
+		if diff := shapeDiff(shapes[reference], shapes[forge]); diff != "" {
 			t.Errorf("doctor --json has a different shape on %s than on %s, so a consumer must special-case per forge:\n%s",
-				kind, reference, diff)
+				forge, reference, diff)
 		}
 	}
 }

@@ -41,9 +41,9 @@ import (
 // step summary or an artifact instead — and crucially *no failed API call*. A
 // forge that 404s here would be the bug: it would mean the CLI tried anyway.
 func TestDegradation_SARIFUpload_NoticesAndSucceeds(t *testing.T) {
-	for _, kind := range forgesLacking(t, func(c provider.Capabilities) bool { return c.SARIFUpload }, "SARIF upload") {
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+	for _, forge := range forgesLacking(t, func(c provider.Capabilities) bool { return c.SARIFUpload }, "SARIF upload") {
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "degrade-sarif")
 
 			sarif := filepath.Join(t.TempDir(), "findings.sarif")
@@ -100,9 +100,9 @@ func TestProvenance_GeneratesEquivalentlyOnEveryForge(t *testing.T) {
 
 	subjects := map[provider.ForgeAPI]string{}
 
-	for _, kind := range livetest.LiveForges() {
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+	for _, forge := range livetest.LiveForges() {
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "provenance-parity")
 
 			checksums := filepath.Join(t.TempDir(), "checksums.txt")
@@ -154,17 +154,17 @@ func TestProvenance_GeneratesEquivalentlyOnEveryForge(t *testing.T) {
 					target.Forge, len(statement.Subject))
 			}
 
-			subjects[kind] = statement.Subject[0].Name + "@" + statement.Subject[0].Digest["sha256"]
+			subjects[forge] = statement.Subject[0].Name + "@" + statement.Subject[0].Digest["sha256"]
 		})
 	}
 
 	// The subject comes from the checksums file, not from the forge, so every
 	// forge must have named the same artifact and digest.
-	for kind, got := range subjects {
+	for forge, got := range subjects {
 		for other, want := range subjects {
 			if got != want {
 				t.Errorf("subject differs by forge: %s says %q, %s says %q — the subject is read from the checksums file",
-					kind, got, other, want)
+					forge, got, other, want)
 			}
 		}
 	}
@@ -177,26 +177,26 @@ func TestProvenance_GeneratesEquivalentlyOnEveryForge(t *testing.T) {
 func forgesLacking(t *testing.T, claims func(provider.Capabilities) bool, capability string) []provider.ForgeAPI {
 	t.Helper()
 
-	var kinds []provider.ForgeAPI
+	var forges []provider.ForgeAPI
 
-	for _, kind := range livetest.LiveForges() {
-		capabilities, known := livetest.Capabilities(kind)
+	for _, forge := range livetest.LiveForges() {
+		capabilities, known := livetest.Capabilities(forge)
 		if !known {
-			t.Fatalf("no adapter for platform %q", kind)
+			t.Fatalf("no adapter for platform %q", forge)
 		}
 
 		if claims(capabilities) {
-			t.Logf("SKIP %s: claims %s, so there is no degradation to observe", kind, capability)
+			t.Logf("SKIP %s: claims %s, so there is no degradation to observe", forge, capability)
 
 			continue
 		}
 
-		kinds = append(kinds, kind)
+		forges = append(forges, forge)
 	}
 
-	if len(kinds) == 0 {
+	if len(forges) == 0 {
 		t.Fatalf("every live forge claims %s, so this degradation scenario proved nothing", capability)
 	}
 
-	return kinds
+	return forges
 }

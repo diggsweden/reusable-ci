@@ -32,9 +32,9 @@ import (
 func TestWebURLs_ResolveOnEveryForge(t *testing.T) {
 	const tag = "v0.0.1"
 
-	for _, kind := range forgesClaiming(t, claimsReleaseAssets, "releases") {
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+	for _, forge := range forgesClaiming(t, claimsReleaseAssets, "releases") {
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "weburl")
 			slug := livetest.RepoSlug(target, repo)
 
@@ -42,7 +42,7 @@ func TestWebURLs_ResolveOnEveryForge(t *testing.T) {
 
 			urls, ok := adapter.(provider.WebURLBuilder)
 			if !ok {
-				t.Fatalf("%s does not implement WebURLBuilder, so its summary can only print placeholders", kind)
+				t.Fatalf("%s does not implement WebURLBuilder, so its summary can only print placeholders", forge)
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -54,18 +54,18 @@ func TestWebURLs_ResolveOnEveryForge(t *testing.T) {
 
 			creator, ok := adapter.(provider.ReleaseCreator)
 			if !ok {
-				t.Fatalf("%s does not implement ReleaseCreator", kind)
+				t.Fatalf("%s does not implement ReleaseCreator", forge)
 			}
 
 			if err := creator.CreateRelease(ctx, slug, provider.ReleaseSpec{Tag: tag, Name: "PAR-UX-1"}); err != nil {
-				t.Fatalf("%s create release: %v", kind, err)
+				t.Fatalf("%s create release: %v", forge, err)
 			}
 
 			for _, page := range []struct{ what, url string }{
 				{"release", urls.ReleaseWebURL(target.BaseURL(), slug, tag)},
 				{"packages", urls.PackagesWebURL(target.BaseURL(), slug)},
 			} {
-				assertPageResolves(t, ctx, kind, page.what, page.url)
+				assertPageResolves(t, ctx, forge, page.what, page.url)
 			}
 		})
 	}
@@ -74,7 +74,7 @@ func TestWebURLs_ResolveOnEveryForge(t *testing.T) {
 // assertPageResolves fails unless the URL serves a page. A redirect is not
 // accepted: on both forges an unauthenticated redirect is how a missing or
 // private page is served, so following it would turn a dead link into a pass.
-func assertPageResolves(t *testing.T, ctx context.Context, kind provider.ForgeAPI, what, url string) {
+func assertPageResolves(t *testing.T, ctx context.Context, forge provider.ForgeAPI, what, url string) {
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -91,13 +91,13 @@ func assertPageResolves(t *testing.T, ctx context.Context, kind provider.ForgeAP
 
 	resp, err := client.Do(req)
 	if err != nil {
-		t.Fatalf("%s %s page %s: %v", kind, what, url, err)
+		t.Fatalf("%s %s page %s: %v", forge, what, url, err)
 	}
 
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("%s %s page %s returned HTTP %d — the summary would print a dead link",
-			kind, what, url, resp.StatusCode)
+			forge, what, url, resp.StatusCode)
 	}
 }

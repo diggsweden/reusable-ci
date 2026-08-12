@@ -22,9 +22,9 @@ import (
 )
 
 func TestRegistry_SyntheticArtifacts_RoundTripByDigest(t *testing.T) {
-	for _, kind := range forgesClaiming(t, alwaysValidatesTokens, "an OCI registry") {
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+	for _, forge := range forgesClaiming(t, alwaysValidatesTokens, "an OCI registry") {
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "registry")
 
 			for _, shape := range []struct {
@@ -41,16 +41,16 @@ func TestRegistry_SyntheticArtifacts_RoundTripByDigest(t *testing.T) {
 
 					pushed := shape.push(t, target, repo, tag)
 					if pushed.Digest == "" {
-						t.Fatalf("%s: push reported no digest", kind)
+						t.Fatalf("%s: push reported no digest", forge)
 					}
 
 					served, found := livetest.ImageDigest(t, target, repo, tag)
 					if !found {
-						t.Fatalf("%s: registry serves nothing at %s", kind, pushed.Ref)
+						t.Fatalf("%s: registry serves nothing at %s", forge, pushed.Ref)
 					}
 
 					if served != pushed.Digest {
-						t.Errorf("%s: registry serves %s, push reported %s", kind, served, pushed.Digest)
+						t.Errorf("%s: registry serves %s, push reported %s", forge, served, pushed.Digest)
 					}
 				})
 			}
@@ -58,7 +58,7 @@ func TestRegistry_SyntheticArtifacts_RoundTripByDigest(t *testing.T) {
 			// A tag that was never pushed must read as absent rather than as an
 			// error: ledger verification depends on telling those apart.
 			if _, found := livetest.ImageDigest(t, target, repo, "no-such-tag"); found {
-				t.Errorf("%s: reports a digest for a tag that was never pushed", kind)
+				t.Errorf("%s: reports a digest for a tag that was never pushed", forge)
 			}
 		})
 	}
@@ -94,10 +94,10 @@ func TestRegistry_SyntheticArtifacts_RoundTripByDigest(t *testing.T) {
 func TestInRunner_ForgeInjectedRegistryCredentialAuthenticates(t *testing.T) {
 	const tag = "v0.0.7-regauth"
 
-	for _, kind := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "an OCI registry"), livetest.NeedsInRunner) {
+	for _, forge := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "an OCI registry"), livetest.NeedsInRunner) {
 
-		t.Run(string(kind), func(t *testing.T) {
-			target := livetest.Accept(t, kind)
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "regauth")
 
 			livetest.PrepareTag(t, target, repo, tag)
@@ -106,10 +106,10 @@ func TestInRunner_ForgeInjectedRegistryCredentialAuthenticates(t *testing.T) {
 			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
 
 			conclusion := livetest.RunWorkflow(t, target, repo, "registry-auth",
-				registryAuthProbe(kind, assetURL))
+				registryAuthProbe(forge, assetURL))
 			if conclusion != "success" {
 				t.Errorf("%s: run concluded %q — the forge-injected registry credential was not found or does not authenticate, so a pipeline relying on the fallback must carry a standing secret instead",
-					kind, conclusion)
+					forge, conclusion)
 			}
 		})
 	}
@@ -168,7 +168,7 @@ echo "the forge-injected credential authenticates to $registry"
 // was stored actually works. The registry is taken from the runner's own
 // environment on both forges, so the scenario cannot pass by agreeing with a
 // value the fixture invented.
-func registryAuthProbe(kind provider.ForgeAPI, assetURL string) string {
+func registryAuthProbe(forge provider.ForgeAPI, assetURL string) string {
 	const extractStored = `
 stored="$(sed -n 's/.*"auth"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' auth.json | head -n 1)"
 if [ -z "$stored" ]; then
@@ -177,7 +177,7 @@ if [ -z "$stored" ]; then
   exit 1
 fi`
 
-	if kind == provider.ForgeGitLab {
+	if forge == provider.ForgeGitLab {
 		return `detect:
   image: ` + livetest.ProbeImage + `
   script:

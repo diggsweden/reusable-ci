@@ -67,33 +67,33 @@ func TestErrors_SameFailureClass_ExitsTheSameOnEveryForge(t *testing.T) {
 		},
 	}
 
-	kinds := forgesClaiming(t, alwaysValidatesTokens, "token validation")
+	forges := forgesClaiming(t, alwaysValidatesTokens, "token validation")
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			exits := map[provider.ForgeAPI]int{}
 
-			for _, kind := range kinds {
-				target := livetest.Accept(t, kind)
+			for _, forge := range forges {
+				target := livetest.Accept(t, forge)
 				repo := livetest.NewScratchRepo(t, target, "errshape")
 
 				run := livetest.CLI(t, target, repo, testCase.args(t, target, repo)...)
 
 				if run.ExitCode == 0 {
-					t.Fatalf("%s: %s succeeded", kind, testCase.name)
+					t.Fatalf("%s: %s succeeded", forge, testCase.name)
 				}
 
-				exits[kind] = run.ExitCode
-				assertReadableFailure(t, kind, testCase.name, run)
+				exits[forge] = run.ExitCode
+				assertReadableFailure(t, forge, testCase.name, run)
 			}
 
 			// The parity claim. Reported separately from the per-forge checks
 			// because this is the one a consumer's pipeline actually depends on.
-			reference := kinds[0]
-			for _, kind := range kinds[1:] {
-				if exits[kind] != exits[reference] {
+			reference := forges[0]
+			for _, forge := range forges[1:] {
+				if exits[forge] != exits[reference] {
 					t.Errorf("%s: %s exits %d on %s but %d on %s — a caller cannot handle this failure the same way on both",
-						testCase.name, testCase.name, exits[kind], kind, exits[reference], reference)
+						testCase.name, testCase.name, exits[forge], forge, exits[reference], reference)
 				}
 			}
 		})
@@ -103,11 +103,11 @@ func TestErrors_SameFailureClass_ExitsTheSameOnEveryForge(t *testing.T) {
 // assertReadableFailure checks the properties a person needs from a failure,
 // without prescribing the sentence: something was said, on the right stream, it
 // names the thing that failed, and it is not an internal crash.
-func assertReadableFailure(t *testing.T, kind provider.ForgeAPI, scenario string, run livetest.Run) {
+func assertReadableFailure(t *testing.T, forge provider.ForgeAPI, scenario string, run livetest.Run) {
 	t.Helper()
 
 	if strings.TrimSpace(run.Stderr) == "" {
-		t.Errorf("%s: %s failed silently on stderr, leaving nothing to act on", kind, scenario)
+		t.Errorf("%s: %s failed silently on stderr, leaving nothing to act on", forge, scenario)
 
 		return
 	}
@@ -117,19 +117,19 @@ func assertReadableFailure(t *testing.T, kind provider.ForgeAPI, scenario string
 	lower := strings.ToLower(run.Stderr)
 	for _, leak := range []string{"panic:", "goroutine ", "runtime error"} {
 		if strings.Contains(lower, leak) {
-			t.Errorf("%s: %s surfaced an internal crash (%q)\nstderr: %s", kind, scenario, leak, run.Stderr)
+			t.Errorf("%s: %s surfaced an internal crash (%q)\nstderr: %s", forge, scenario, leak, run.Stderr)
 		}
 	}
 
 	if run.ExitCode == int(errs.ExitCodeSoftware) {
 		t.Errorf("%s: %s exits %d (internal error), so a caller is told to file a bug for their own input\nstderr: %s",
-			kind, scenario, run.ExitCode, run.Stderr)
+			forge, scenario, run.ExitCode, run.Stderr)
 	}
 
 	// Something identifying has to appear, or the reader cannot tell which of
 	// several inputs was wrong.
 	named := false
-	for _, subject := range []string{"token", "repository", "repo", "permission", "auth", "not found", string(kind)} {
+	for _, subject := range []string{"token", "repository", "repo", "permission", "auth", "not found", string(forge)} {
 		if strings.Contains(lower, subject) {
 			named = true
 
@@ -139,6 +139,6 @@ func assertReadableFailure(t *testing.T, kind provider.ForgeAPI, scenario string
 
 	if !named {
 		t.Errorf("%s: %s names neither the credential, the repository nor the forge\nstderr: %s",
-			kind, scenario, run.Stderr)
+			forge, scenario, run.Stderr)
 	}
 }

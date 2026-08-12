@@ -118,7 +118,7 @@ func (t Target) String() string { return string(t.Forge) + "@" + t.Host + "/" + 
 // derivation stay pure, and therefore testable without a lab or a mutated
 // process environment.
 type targetRef struct {
-	kind  string
+	forge string
 	host  string
 	owner string
 }
@@ -146,9 +146,9 @@ type tokenMetadata struct {
 // Selected reports whether the sourced contract selected a forge. Scenarios use
 // it to skip cleanly rather than fail when an operator minted a contract for a
 // subset of providers.
-func Selected(kind provider.ForgeAPI) bool {
+func Selected(forge provider.ForgeAPI) bool {
 	for _, name := range strings.Split(os.Getenv("LAB_TARGETS"), ",") {
-		if name == string(kind) {
+		if name == string(forge) {
 			return true
 		}
 	}
@@ -159,16 +159,16 @@ func Selected(kind provider.ForgeAPI) bool {
 // Accept reads the contract, validates every safety rule, and returns a Target
 // armed for mutation. It fails the test rather than returning an error: a
 // half-armed target is not a thing a scenario should be able to hold.
-func Accept(tb TB, kind provider.ForgeAPI) Target {
+func Accept(tb TB, forge provider.ForgeAPI) Target {
 	tb.Helper()
 
-	if !Selected(kind) {
-		tb.Skipf("livetest: %s not selected by LAB_TARGETS", kind)
+	if !Selected(forge) {
+		tb.Skipf("livetest: %s not selected by LAB_TARGETS", forge)
 	}
 
-	prefix := "LAB_" + strings.ToUpper(string(kind))
+	prefix := "LAB_" + strings.ToUpper(string(forge))
 	target := Target{
-		Forge: kind,
+		Forge: forge,
 		Host:  os.Getenv(prefix + "_HOST"),
 		Owner: os.Getenv(prefix + "_OWNER"),
 		Token: os.Getenv(prefix + "_TOKEN"),
@@ -330,45 +330,45 @@ func validateDisposableHost(host string) error {
 // validateTokenMetadata refuses a credential that outlives the run. GitLab can
 // attach a native expiry; Forgejo's API cannot, so it must instead be freshly
 // minted and carry run-bound revocation metadata.
-func validateTokenMetadata(kind provider.ForgeAPI, runID string, token tokenMetadata, now time.Time) error {
+func validateTokenMetadata(forge provider.ForgeAPI, runID string, token tokenMetadata, now time.Time) error {
 	if !regexp.MustCompile(`^[1-9][0-9]*$`).MatchString(token.id) {
-		return fmt.Errorf("%s token ID must be numeric: %w", kind, errs.ErrValidation)
+		return fmt.Errorf("%s token ID must be numeric: %w", forge, errs.ErrValidation)
 	}
 
 	if token.name != "lab-targets-"+runID {
-		return fmt.Errorf("%s token name is not bound to run %q: %w", kind, runID, errs.ErrValidation)
+		return fmt.Errorf("%s token name is not bound to run %q: %w", forge, runID, errs.ErrValidation)
 	}
 
 	if !rfc3339Pattern.MatchString(token.createdAt) {
-		return fmt.Errorf("%s token creation time must be RFC3339: %w", kind, errs.ErrValidation)
+		return fmt.Errorf("%s token creation time must be RFC3339: %w", forge, errs.ErrValidation)
 	}
 
 	createdAt, err := time.Parse(time.RFC3339, token.createdAt)
 	if err != nil {
-		return fmt.Errorf("%s token creation time: %w: %w", kind, err, errs.ErrValidation)
+		return fmt.Errorf("%s token creation time: %w: %w", forge, err, errs.ErrValidation)
 	}
 
 	if createdAt.After(now.Add(allowedClockSkew)) {
-		return fmt.Errorf("%s token creation time is in the future: %w", kind, errs.ErrValidation)
+		return fmt.Errorf("%s token creation time is in the future: %w", forge, errs.ErrValidation)
 	}
 
 	if token.expiresAt == "" {
-		return validateRevocableToken(kind, runID, token, createdAt, now)
+		return validateRevocableToken(forge, runID, token, createdAt, now)
 	}
 
-	return validateExpiringToken(kind, token, now)
+	return validateExpiringToken(forge, token, now)
 }
 
 // validateRevocableToken covers the forges whose API cannot attach an expiry:
 // the credential must instead be freshly minted and revocable with this run.
-func validateRevocableToken(kind provider.ForgeAPI, runID string, token tokenMetadata, createdAt, now time.Time) error {
+func validateRevocableToken(forge provider.ForgeAPI, runID string, token tokenMetadata, createdAt, now time.Time) error {
 	{
 		if createdAt.Before(now.Add(-maxUnexpiringTokenAge)) {
-			return fmt.Errorf("%s non-expiring token is older than 24 hours: %w", kind, errs.ErrValidation)
+			return fmt.Errorf("%s non-expiring token is older than 24 hours: %w", forge, errs.ErrValidation)
 		}
 
 		if token.revocationRequired != "true" || token.revocationRunID != runID {
-			return fmt.Errorf("%s non-expiring token requires run-bound revocation metadata: %w", kind, errs.ErrValidation)
+			return fmt.Errorf("%s non-expiring token requires run-bound revocation metadata: %w", forge, errs.ErrValidation)
 		}
 
 		return nil
@@ -377,22 +377,22 @@ func validateRevocableToken(kind provider.ForgeAPI, runID string, token tokenMet
 
 // validateExpiringToken covers a natively expiring credential: the expiry must
 // be real, soon, and not paired with revocation metadata that contradicts it.
-func validateExpiringToken(kind provider.ForgeAPI, token tokenMetadata, now time.Time) error {
-	if kind != provider.ForgeGitLab {
-		return fmt.Errorf("%s has no native token expiry; revocation metadata is required: %w", kind, errs.ErrValidation)
+func validateExpiringToken(forge provider.ForgeAPI, token tokenMetadata, now time.Time) error {
+	if forge != provider.ForgeGitLab {
+		return fmt.Errorf("%s has no native token expiry; revocation metadata is required: %w", forge, errs.ErrValidation)
 	}
 
 	expiry, err := parseExpiry(token.expiresAt)
 	if err != nil {
-		return fmt.Errorf("%s token expiry: %w: %w", kind, err, errs.ErrValidation)
+		return fmt.Errorf("%s token expiry: %w: %w", forge, err, errs.ErrValidation)
 	}
 
 	if !expiry.After(now.Add(allowedClockSkew)) || expiry.After(now.Add(maximumNativeTokenExpiry)) {
-		return fmt.Errorf("%s token expiry must be between 5 minutes and 31 days from now: %w", kind, errs.ErrValidation)
+		return fmt.Errorf("%s token expiry must be between 5 minutes and 31 days from now: %w", forge, errs.ErrValidation)
 	}
 
 	if token.revocationRequired != "false" || token.revocationRunID != "" {
-		return fmt.Errorf("%s native expiry conflicts with revocation fallback metadata: %w", kind, errs.ErrValidation)
+		return fmt.Errorf("%s native expiry conflicts with revocation fallback metadata: %w", forge, errs.ErrValidation)
 	}
 
 	return nil
@@ -416,10 +416,10 @@ func selectedRefs() []targetRef {
 	names := strings.Split(os.Getenv("LAB_TARGETS"), ",")
 	refs := make([]targetRef, 0, len(names))
 
-	for _, kind := range names {
-		envPrefix := "LAB_" + strings.ToUpper(kind)
+	for _, forge := range names {
+		envPrefix := "LAB_" + strings.ToUpper(forge)
 		refs = append(refs, targetRef{
-			kind:  kind,
+			forge: forge,
 			host:  os.Getenv(envPrefix + "_HOST"),
 			owner: os.Getenv(envPrefix + "_OWNER"),
 		})
@@ -445,16 +445,16 @@ func Identity(runID string, refs []targetRef, resourcePrefix string) (string, er
 	seen := make(map[string]bool, len(refs))
 
 	for _, ref := range refs {
-		if ref.kind == "" || seen[ref.kind] {
+		if ref.forge == "" || seen[ref.forge] {
 			return "", fmt.Errorf("selected providers are empty or repeated: %w", errs.ErrValidation)
 		}
 
-		seen[ref.kind] = true
+		seen[ref.forge] = true
 
-		switch ref.kind {
+		switch ref.forge {
 		case string(provider.ForgeGitLab), string(provider.ForgeForgejo), "gitea":
 		default:
-			return "", fmt.Errorf("unknown provider %q is selected: %w", ref.kind, errs.ErrValidation)
+			return "", fmt.Errorf("unknown provider %q is selected: %w", ref.forge, errs.ErrValidation)
 		}
 
 		if err := validateDisposableHost(ref.host); err != nil {
@@ -462,10 +462,10 @@ func Identity(runID string, refs []targetRef, resourcePrefix string) (string, er
 		}
 
 		if !ownerPattern.MatchString(ref.owner) {
-			return "", fmt.Errorf("%s owner %q is not a resource owner: %w", ref.kind, ref.owner, errs.ErrValidation)
+			return "", fmt.Errorf("%s owner %q is not a resource owner: %w", ref.forge, ref.owner, errs.ErrValidation)
 		}
 
-		entries = append(entries, identityEntry(ref.kind, ref.host, ref.owner, resourcePrefix))
+		entries = append(entries, identityEntry(ref.forge, ref.host, ref.owner, resourcePrefix))
 	}
 
 	if len(entries) == 0 {
@@ -475,8 +475,8 @@ func Identity(runID string, refs []targetRef, resourcePrefix string) (string, er
 	return "run=" + runID + "|targets=" + strings.Join(entries, ","), nil
 }
 
-func identityEntry(kind, host, owner, resourcePrefix string) string {
-	return kind + "@https://" + host + "/" + owner + "#resources=" + resourcePrefix
+func identityEntry(forge, host, owner, resourcePrefix string) string {
+	return forge + "@https://" + host + "/" + owner + "#resources=" + resourcePrefix
 }
 
 // FulcioURL returns the certificate authority the target environment provides
@@ -495,7 +495,7 @@ func FulcioURL() (string, bool) {
 }
 
 // FulcioTrusts reports whether the environment's Fulcio is configured to issue
-// certificates for jobs running on kind.
+// certificates for jobs running on forge.
 //
 // Read from the contract for the same reason as FulcioURL: which issuers a CA
 // accepts is a fact about the deployment, and deriving it from a forge name
@@ -505,9 +505,9 @@ func FulcioURL() (string, bool) {
 //
 // An unset variable trusts nothing. The alternative — assuming a forge — would
 // let a keyless scenario report success for a certificate no CA ever issued.
-func FulcioTrusts(kind provider.ForgeAPI) bool {
+func FulcioTrusts(forge provider.ForgeAPI) bool {
 	for _, issuer := range strings.Split(os.Getenv("LAB_FULCIO_ISSUERS"), ",") {
-		if strings.EqualFold(strings.TrimSpace(issuer), string(kind)) {
+		if strings.EqualFold(strings.TrimSpace(issuer), string(forge)) {
 			return true
 		}
 	}

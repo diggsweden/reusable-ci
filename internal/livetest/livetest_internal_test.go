@@ -36,7 +36,7 @@ func validContract(now time.Time) (Target, contract, tokenMetadata) {
 	c := contract{
 		schemaVersion:  contractSchemaVersion,
 		runID:          "run-live-1",
-		refs:           []targetRef{{kind: "forgejo", host: "forgejo.compose.gitproviderlab:8443", owner: "garga"}},
+		refs:           []targetRef{{forge: "forgejo", host: "forgejo.compose.gitproviderlab:8443", owner: "garga"}},
 		resourcePrefix: ResourcePrefix,
 		identity:       identity,
 		confirmation:   confirmDestroy + "|" + identity,

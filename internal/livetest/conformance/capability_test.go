@@ -74,24 +74,24 @@ func TestCapabilityMatrix_MatchesTheAdapters(t *testing.T) {
 			continue
 		}
 
-		for _, kind := range livetest.Platforms() {
-			capabilities, known := livetest.Capabilities(kind)
+		for _, forge := range livetest.Platforms() {
+			capabilities, known := livetest.Capabilities(forge)
 			if !known {
-				t.Fatalf("no adapter for platform %q", kind)
+				t.Fatalf("no adapter for platform %q", forge)
 			}
 
 			want := report(capabilities)
 
-			got, listed := published[string(kind)]
+			got, listed := published[string(forge)]
 			if !listed {
-				t.Errorf("capability %q does not list a value for %s", label, kind)
+				t.Errorf("capability %q does not list a value for %s", label, forge)
 
 				continue
 			}
 
 			if got != want {
 				t.Errorf("capability %q for %s: docs say %v, the adapter reports %v",
-					label, kind, got, want)
+					label, forge, got, want)
 			}
 		}
 	}
@@ -179,26 +179,26 @@ func splitRow(line string) []string {
 func TestOpengrepSummary_AgreesWithTheSARIFCapability(t *testing.T) {
 	t.Parallel()
 
-	for _, kind := range livetest.Platforms() {
-		capabilities, known := livetest.Capabilities(kind)
+	for _, forge := range livetest.Platforms() {
+		capabilities, known := livetest.Capabilities(forge)
 		if !known {
-			t.Fatalf("no adapter for platform %q", kind)
+			t.Fatalf("no adapter for platform %q", forge)
 		}
 
 		for _, withToken := range []bool{true, false} {
 			label := security.OpengrepCodeScanningLabel(security.OpengrepPlatformContext{
-				Platform:             kind,
+				Platform:             forge,
 				HasCodeScanningToken: withToken,
 			})
 
 			// "upload" is claimed only where the forge can actually ingest.
 			claimsUpload := strings.Contains(strings.ToLower(label), "upload")
 			if claimsUpload && !capabilities.SARIFUpload {
-				t.Errorf("%s: summary says %q but the adapter reports no SARIF ingestion", kind, label)
+				t.Errorf("%s: summary says %q but the adapter reports no SARIF ingestion", forge, label)
 			}
 
 			if !claimsUpload && capabilities.SARIFUpload {
-				t.Errorf("%s: adapter ingests SARIF but the summary never mentions upload: %q", kind, label)
+				t.Errorf("%s: adapter ingests SARIF but the summary never mentions upload: %q", forge, label)
 			}
 		}
 	}

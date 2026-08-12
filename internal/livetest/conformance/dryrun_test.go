@@ -67,12 +67,12 @@ func TestDryRun_DestructiveLedgerVerbs_MutateNothing(t *testing.T) {
 		},
 	}
 
-	for _, kind := range forgesClaiming(t, deletesTags, "container tag deletion") {
-		t.Run(string(kind), func(t *testing.T) {
+	for _, forge := range forgesClaiming(t, deletesTags, "container tag deletion") {
+		t.Run(string(forge), func(t *testing.T) {
 			for _, testCase := range cases {
 				t.Run(testCase.verb, func(t *testing.T) {
-					target := livetest.Accept(t, kind)
-					f := newLedgerFixture(t, kind, "dryrun-"+testCase.verb)
+					target := livetest.Accept(t, forge)
+					f := newLedgerFixture(t, forge, "dryrun-"+testCase.verb)
 
 					livetest.PushImageTags(t, f.target, f.repo, candidateTag, releaseTag)
 
@@ -103,7 +103,7 @@ func TestDryRun_DestructiveLedgerVerbs_MutateNothing(t *testing.T) {
 					preview := f.run(t, append(args, "--dry-run")...)
 					if preview.ExitCode != 0 {
 						t.Fatalf("%s ledger %s --dry-run exited %d\nstderr: %s",
-							kind, testCase.verb, preview.ExitCode, preview.Stderr)
+							forge, testCase.verb, preview.ExitCode, preview.Stderr)
 					}
 
 					// A dry-run that says nothing is a failure of its own: the
@@ -111,13 +111,13 @@ func TestDryRun_DestructiveLedgerVerbs_MutateNothing(t *testing.T) {
 					// would happen before it does.
 					if !strings.Contains(preview.Combined(), "[dry-run]") {
 						t.Errorf("%s ledger %s --dry-run printed no plan, so it previewed nothing a reader can check\nstdout: %s\nstderr: %s",
-							kind, testCase.verb, preview.Stdout, preview.Stderr)
+							forge, testCase.verb, preview.Stdout, preview.Stderr)
 					}
 
 					after := livetest.RegistrySnapshot(t, target, f.repo)
 					if !maps.Equal(before, after) {
 						t.Errorf("%s ledger %s --dry-run mutated the registry\nbefore: %v\nafter:  %v",
-							kind, testCase.verb, before, after)
+							forge, testCase.verb, before, after)
 					}
 
 					// The control. Without it, a verb that did nothing at all
@@ -127,7 +127,7 @@ func TestDryRun_DestructiveLedgerVerbs_MutateNothing(t *testing.T) {
 					wet := livetest.RegistrySnapshot(t, target, f.repo)
 					if maps.Equal(before, wet) {
 						t.Errorf("%s ledger %s changed nothing when run for real, so the dry-run assertion proved nothing\nstate: %v",
-							kind, testCase.verb, wet)
+							forge, testCase.verb, wet)
 					}
 				})
 			}
