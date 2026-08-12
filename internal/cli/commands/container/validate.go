@@ -132,7 +132,7 @@ func validateNamespaceCmd() *cli.Command {
 			},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
-			err := appcontainer.ValidateNamespace(domaincontainer.ValidateNamespaceInput{
+			err := domaincontainer.ValidateNamespace(domaincontainer.ValidateNamespaceInput{
 				ImageName:           cmd.String(flagImageName),
 				Repository:          cmd.String(flagRepository),
 				Registry:            cmd.String("registry"),
