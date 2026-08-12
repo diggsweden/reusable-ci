@@ -27,6 +27,13 @@ const (
 	pruneIDKept  = "1111111111111111111111111111111111111111111111111111111111111111"
 	pruneIDStale = "2222222222222222222222222222222222222222222222222222222222222222"
 	pruneIDOther = "3333333333333333333333333333333333333333333333333333333333333333"
+
+	// Release images must be digest-pinned: the keep-set is only as
+	// trustworthy as the refs it is derived from.
+	pruneReleaseA = "registry.example/owner/project@sha256:" +
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	pruneReleaseB = "registry.example/owner/project@sha256:" +
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 )
 
 // prunePayload builds a cosign verify-attestation body naming baseInputID.
@@ -113,10 +120,10 @@ func TestPruneBaseImagesDeletesOnlyUnreferenced(t *testing.T) {
 
 	pruner := &fakeBaseImagePackageAPI{versions: []string{pruneIDKept, pruneIDStale}}
 	verifier := &fakePruneVerifier{payloads: map[string][]byte{
-		"release@sha256:aa": prunePayload(t, pruneIDKept, false),
+		pruneReleaseA: prunePayload(t, pruneIDKept, false),
 	}}
 
-	result, err := PruneBaseImages(context.Background(), pruner, verifier, io.Discard, pruneInput("release@sha256:aa"))
+	result, err := PruneBaseImages(context.Background(), pruner, verifier, io.Discard, pruneInput(pruneReleaseA))
 	if err != nil {
 		t.Fatalf("PruneBaseImages() error = %v", err)
 	}
@@ -146,10 +153,10 @@ func TestPruneBaseImagesReadsBothCosignOutputShapes(t *testing.T) {
 
 			pruner := &fakeBaseImagePackageAPI{versions: []string{pruneIDKept, pruneIDStale}}
 			verifier := &fakePruneVerifier{payloads: map[string][]byte{
-				"release@sha256:aa": prunePayload(t, pruneIDKept, asArray),
+				pruneReleaseA: prunePayload(t, pruneIDKept, asArray),
 			}}
 
-			result, err := PruneBaseImages(context.Background(), pruner, verifier, io.Discard, pruneInput("release@sha256:aa"))
+			result, err := PruneBaseImages(context.Background(), pruner, verifier, io.Discard, pruneInput(pruneReleaseA))
 			if err != nil {
 				t.Fatalf("PruneBaseImages() error = %v", err)
 			}
@@ -168,10 +175,10 @@ func TestPruneBaseImagesDryRunDeletesNothing(t *testing.T) {
 
 	pruner := &fakeBaseImagePackageAPI{versions: []string{pruneIDKept, pruneIDStale}}
 	verifier := &fakePruneVerifier{payloads: map[string][]byte{
-		"release@sha256:aa": prunePayload(t, pruneIDKept, false),
+		pruneReleaseA: prunePayload(t, pruneIDKept, false),
 	}}
 
-	in := pruneInput("release@sha256:aa")
+	in := pruneInput(pruneReleaseA)
 	in.DryRun = true
 
 	var out bytes.Buffer
@@ -225,7 +232,7 @@ func TestPruneBaseImagesRefusesUnverifiableAttestation(t *testing.T) {
 	pruner := &fakeBaseImagePackageAPI{versions: []string{pruneIDKept, pruneIDStale}}
 	verifier := &fakePruneVerifier{err: errAttestationUnverified}
 
-	_, err := PruneBaseImages(context.Background(), pruner, verifier, io.Discard, pruneInput("release@sha256:aa"))
+	_, err := PruneBaseImages(context.Background(), pruner, verifier, io.Discard, pruneInput(pruneReleaseA))
 	if err == nil {
 		t.Fatal("PruneBaseImages() = nil error, want the unverifiable attestation to abort the pass")
 	}
@@ -242,10 +249,10 @@ func TestPruneBaseImagesRefusesAttestationWithoutBase(t *testing.T) {
 
 	pruner := &fakeBaseImagePackageAPI{versions: []string{pruneIDStale}}
 	verifier := &fakePruneVerifier{payloads: map[string][]byte{
-		"release@sha256:aa": []byte(`{"payload":"e30="}`), // {} — verified, but no lineage
+		pruneReleaseA: []byte(`{"payload":"e30="}`), // {} — verified, but no lineage
 	}}
 
-	_, err := PruneBaseImages(context.Background(), pruner, verifier, io.Discard, pruneInput("release@sha256:aa"))
+	_, err := PruneBaseImages(context.Background(), pruner, verifier, io.Discard, pruneInput(pruneReleaseA))
 	if err == nil {
 		t.Fatal("PruneBaseImages() = nil error, want an attestation without base lineage to abort")
 	}
@@ -265,10 +272,10 @@ func TestPruneBaseImagesHonoursMaxDelete(t *testing.T) {
 
 	pruner := &fakeBaseImagePackageAPI{versions: []string{pruneIDKept, pruneIDStale, pruneIDOther}}
 	verifier := &fakePruneVerifier{payloads: map[string][]byte{
-		"release@sha256:aa": prunePayload(t, pruneIDKept, false),
+		pruneReleaseA: prunePayload(t, pruneIDKept, false),
 	}}
 
-	in := pruneInput("release@sha256:aa")
+	in := pruneInput(pruneReleaseA)
 	in.MaxDelete = 1
 
 	_, err := PruneBaseImages(context.Background(), pruner, verifier, io.Discard, in)
@@ -298,10 +305,10 @@ func TestPruneBaseImagesIgnoresStagingAndForeignTags(t *testing.T) {
 		"latest",
 	}}
 	verifier := &fakePruneVerifier{payloads: map[string][]byte{
-		"release@sha256:aa": prunePayload(t, pruneIDKept, false),
+		pruneReleaseA: prunePayload(t, pruneIDKept, false),
 	}}
 
-	result, err := PruneBaseImages(context.Background(), pruner, verifier, io.Discard, pruneInput("release@sha256:aa"))
+	result, err := PruneBaseImages(context.Background(), pruner, verifier, io.Discard, pruneInput(pruneReleaseA))
 	if err != nil {
 		t.Fatalf("PruneBaseImages() error = %v", err)
 	}
@@ -323,12 +330,12 @@ func TestPruneBaseImagesKeepsEveryReferencedBase(t *testing.T) {
 
 	pruner := &fakeBaseImagePackageAPI{versions: []string{pruneIDKept, pruneIDOther, pruneIDStale}}
 	verifier := &fakePruneVerifier{payloads: map[string][]byte{
-		"release@sha256:aa": prunePayload(t, pruneIDKept, false),
-		"release@sha256:bb": prunePayload(t, pruneIDOther, true),
+		pruneReleaseA: prunePayload(t, pruneIDKept, false),
+		pruneReleaseB: prunePayload(t, pruneIDOther, true),
 	}}
 
 	result, err := PruneBaseImages(context.Background(), pruner, verifier, io.Discard,
-		pruneInput("release@sha256:aa", "release@sha256:bb"))
+		pruneInput(pruneReleaseA, pruneReleaseB))
 	if err != nil {
 		t.Fatalf("PruneBaseImages() error = %v", err)
 	}
@@ -339,5 +346,43 @@ func TestPruneBaseImagesKeepsEveryReferencedBase(t *testing.T) {
 
 	if len(pruner.deleted) != 1 || pruner.deleted[0] != pruneRepo+":"+pruneIDStale {
 		t.Errorf("deleted = %v, want only the base no release names", pruner.deleted)
+	}
+}
+
+// TestPruneBaseImagesRefusesUnpinnedReleaseImage is the guard against deriving
+// the keep-set from a mutable tag. A tag serves whatever it points at now; if a
+// release was retagged, cosign would verify a different image whose attestation
+// names a different base, and the pass would keep the wrong one and prune the
+// right one. A wrong-but-verifiable attestation is indistinguishable from a
+// correct one, so this has to be refused at the input.
+func TestPruneBaseImagesRefusesUnpinnedReleaseImage(t *testing.T) {
+	t.Parallel()
+
+	for _, ref := range []string{
+		"registry.example/owner/project:v1.2.3",                        // a plain tag
+		"registry.example/owner/project:v1.2.3@sha256:" + pruneIDKept,  // tag AND digest
+		"registry.example/owner/project",                               // neither
+		"@sha256:" + pruneIDKept,                                       // digest, no repository
+	} {
+		t.Run(ref, func(t *testing.T) {
+			t.Parallel()
+
+			pruner := &fakeBaseImagePackageAPI{versions: []string{pruneIDKept, pruneIDStale}}
+			verifier := &fakePruneVerifier{payloads: map[string][]byte{}}
+
+			_, err := PruneBaseImages(context.Background(), pruner, verifier, io.Discard, pruneInput(ref))
+			if err == nil {
+				t.Fatalf("PruneBaseImages() with %q = nil error, want the unpinned ref refused", ref)
+			}
+
+			if !errors.Is(err, errs.ErrUsage) {
+				t.Errorf("error = %v, want errs.ErrUsage", err)
+			}
+
+			// Refused before any registry call, so nothing was listed or deleted.
+			if pruner.listOwner != "" || len(pruner.deleted) != 0 {
+				t.Errorf("touched the registry before refusing: listed=%q deleted=%v", pruner.listOwner, pruner.deleted)
+			}
+		})
 	}
 }

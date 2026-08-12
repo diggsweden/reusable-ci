@@ -93,6 +93,10 @@ func PruneBaseImages(
 		return BaseImagePruneResult{}, fmt.Errorf("base images prune: expected repository is required: %w", errs.ErrUsage)
 	}
 
+	if err := requireDigestPinnedReleaseImages(in.ReleaseImages); err != nil {
+		return BaseImagePruneResult{}, err
+	}
+
 	inventory, err := baseImageInventory(ctx, pruner, in.ExpectedRepository)
 	if err != nil {
 		return BaseImagePruneResult{}, err
@@ -115,6 +119,8 @@ func PruneBaseImages(
 	if err := guardPruneScope(inventory, referenced, prunable, in); err != nil {
 		return result, err
 	}
+
+	reportPruneScope(out, result)
 
 	deleted, deleteErr := deletePrunableBaseImages(ctx, pruner, out, in, prunable)
 	result.Deleted = deleted
@@ -152,6 +158,40 @@ func baseImageInventory(ctx context.Context, pruner baseImagePackageAPI, expecte
 	slices.Sort(inventory)
 
 	return inventory, nil
+}
+
+// requireDigestPinnedReleaseImages refuses a release image that is not pinned
+// to a digest.
+//
+// The keep-set is only as trustworthy as the refs it is derived from. A tag
+// resolves to whatever it points at NOW: the engine refuses to move an
+// immutable final tag to a different digest, but a retag through the registry
+// itself is outside that boundary. A moved tag would send cosign to a
+// different image, whose attestation names a different base -- so the pass
+// would keep the wrong base and delete the one the release was actually built
+// on. Nothing downstream can detect that, because a wrong-but-verifiable
+// attestation looks exactly like a right one.
+//
+// Refused up front, before any registry call, so a mistyped input costs
+// nothing and cannot half-run.
+func requireDigestPinnedReleaseImages(refs []string) error {
+	for _, ref := range refs {
+		trimmed := strings.TrimSpace(ref)
+		if trimmed == "" {
+			continue
+		}
+
+		if !domaincontainer.ValidDigestPinnedRef(trimmed) {
+			return fmt.Errorf(
+				"base images prune: release image %q is not digest-pinned.\n"+
+					"    Pass <registry>/<path>@sha256:<64 hex>, with no tag: a tag resolves to whatever it\n"+
+					"    serves now, and a retagged release would keep the wrong base and prune the right one.\n"+
+					"    Record the digests when the release is made rather than resolving them here: %w",
+				trimmed, errs.ErrUsage)
+		}
+	}
+
+	return nil
 }
 
 // referencedBaseInputs reads each supported release image's verified
@@ -253,6 +293,29 @@ func guardPruneScope(inventory, referenced, prunable []string, in BaseImagePrune
 	}
 
 	return nil
+}
+
+// reportPruneScope states the arithmetic behind the decision before any tag is
+// touched.
+//
+// A dry run that lists only what it would delete asks to be trusted. Printing
+// the inventory size, how many releases were verified and what they keep lets
+// an operator check the subtraction instead -- and the number worth checking is
+// the keep-set, since that is the one an incomplete --release-images list
+// silently shrinks.
+func reportPruneScope(out io.Writer, result BaseImagePruneResult) {
+	verb := "pruning"
+	if result.DryRun {
+		verb = "dry run"
+	}
+
+	_, _ = fmt.Fprintf(out,
+		"Base image retention (%s): %d promoted in the registry, %d kept by verified release attestations, %d unreferenced.\n",
+		verb, len(result.Inventory), len(result.Referenced), len(result.Prunable))
+
+	for _, id := range result.Referenced {
+		_, _ = fmt.Fprintf(out, "  keep  %s (a supported release is built on it)\n", id)
+	}
 }
 
 // deletePrunableBaseImages deletes each unreferenced base tag, or reports them

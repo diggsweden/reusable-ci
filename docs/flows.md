@@ -85,6 +85,28 @@ separators, no symlinks, and a 5 GiB per-file cap. The gate is single on
 purpose. As `internal/domain/artifact/safe.go` puts it, the guarantees "live
 in one place rather than being re-implemented, and re-bugged, per forge".
 
+### Two kinds of image, two lifecycles
+
+`container` groups image commands under three names, and the split is a real
+one rather than a filing choice:
+
+| Group | Images | Addressed by | Lifecycle |
+|---|---|---|---|
+| `release-images` | what a release publishes | the release tag | staging → final + moving, with rollback |
+| `base-images` | what those are built **FROM** | a content hash, `base-input-id` | staging → immutable final, plus freshness and retention |
+| `ledger` | the record of the above | — | add, merge, validate |
+
+They share verb names (`promote`, `cleanup`) because the operations rhyme, but
+almost nothing else: a release image is named by a tag you chose, while a base
+image is named by a hash of its inputs, so "the same inputs" and "the same
+image" are the same statement. That is why a build never picks a stale base —
+it computes the hash and either finds that image or builds it — and why
+retention is safe to run at all.
+
+Note that "base image" here is the consumer's own layer, not the
+`reusable-ci-runtime-*` images CI jobs execute inside. The engine builds those
+for itself; it knows nothing about a consumer's, beyond the flags it is given.
+
 ### The image ledger
 
 The lifecycle is **add, merge, sign, promote, cleanup**, with **rollback**
