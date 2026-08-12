@@ -173,6 +173,38 @@ written before any tag moves.
 `SignatureCopier` being nil refuses cross-repository promotion outright rather
 than completing it without signatures.
 
+### Base-image retention
+
+`cleanup` removes staging tags. It deliberately refuses anything else — it
+matches `<repository>:staging-<base-input-id>-` and nothing more — so promoted
+base images accumulate: one per distinct base-input ID, minted whenever a tool
+pin or the base digest moves. They are the largest artefact a consumer
+publishes, and nothing referenced them after the release that used them.
+
+`container base-images prune` removes a promoted base when no supported
+release was built on it. The keep-set comes from each release image's **signed
+SLSA attestation**, not from a ledger: `release-images.json` is internal
+evidence and never published, while the predicate recording `base.input_id` is
+attested and pushed alongside the image. It is the only durable, tamper-evident
+record of what a release was built on.
+
+Retention cannot break a future build. Base images are content-addressed, so a
+build derives its own base-input ID and either finds that image or rebuilds it;
+a wrong deletion costs a rebuild, not a broken release. What it *can* break is
+reproducing or re-verifying an existing release, which is why the keep-set is
+derived rather than assumed:
+
+| Situation | Behaviour |
+|---|---|
+| Attestation does not verify, or names no base | **abort** — under-counting the keep-set deletes a live base |
+| No supported release references any base | **refuse** — an empty keep-set is a wrong input, not an instruction to delete everything |
+| More unreferenced than `--max-delete` | **refuse** — bound the blast radius of one pass |
+| Default invocation | **`--dry-run`** — read the list, then pass `--dry-run=false` |
+
+`--local-registry` runs the same pass against a plain OCI registry, for bases
+kept beside the runner rather than pushed to a remote package host. Run it on a
+schedule, never in the release path: retention failing must not fail a release.
+
 ### Ports
 
 The registry surface is decomposed to the minimum each operation needs:
@@ -181,6 +213,12 @@ The registry surface is decomposed to the minimum each operation needs:
 through the forge package API rather than a generic OCI delete, because
 staging and final tags share one manifest and a naive OCI delete would take
 the release tag with it.
+
+The `--local-registry` path cannot route around that: the OCI distribution
+spec has no delete-tag operation, only delete-manifest. So the crane adapter
+resolves the tag's digest, checks for another tag serving it, and refuses when
+one exists — the same invariant, enforced by a check instead of by the API
+shape.
 
 ## How each flow binds build to signature
 

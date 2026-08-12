@@ -249,6 +249,11 @@ Cross-forge verbs status:
   manifest. Cleanup is therefore forge-gated; github and local have no deleter
   yet and refuse with a typed `unsupported` error rather than reaching for an
   unsafe generic delete.
+  `container base-images prune --local-registry` is the one path that deletes
+  through a plain OCI registry, for bases kept beside the runner. It cannot use
+  a tag-scoped API — the distribution spec has none — so it resolves the tag's
+  digest and refuses when a second tag serves it, enforcing the same invariant
+  by a check rather than by the API shape.
 - **Untagged manifests are not retained everywhere.** GitLab keeps a manifest
   reachable by digest after its last tag moves away; Forgejo drops it
   immediately. This decides whether a release is recoverable: `container ledger
