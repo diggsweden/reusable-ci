@@ -735,6 +735,55 @@ verify base-image evidence and promote candidate refs to immutable final tags
 | `--registry-username` | registry username; the password is read from --registry-password-file or $REGISTRY_TOKEN / $REGISTRY_PASSWORD | `$REGISTRY_USER`, `$REGISTRY_USERNAME` |
 | `--registry-password-file` | file containing the registry password/token ("-" reads stdin); defaults to $REGISTRY_TOKEN then $REGISTRY_PASSWORD. The password never appears in argv. | n/a |
 
+#### `reusable-ci container base-images prune`
+
+delete promoted base images no supported release is built on
+
+```
+Retention for the base images a consumer's release images are built FROM.
+Every base image whose base-input ID appears in no supported release's verified
+SLSA attestation is deleted; everything else is left alone.
+
+The keep-set comes from attestations rather than from ledgers on purpose: the
+release-image ledger is internal evidence and never published, while the
+predicate recording base.input_id is signed and pushed alongside each release
+image. An attestation that does not verify, or that names no base, aborts the
+run — under-counting the keep-set would delete a base a supported release
+depends on.
+
+Base images are content-addressed, so pruning cannot break a future build: a
+build derives its own base-input ID and either finds that image or rebuilds it.
+A wrong deletion costs a rebuild, not a broken release.
+
+Deletion goes through the forge package/registry API by tag, never by manifest
+digest, because several tags can share one manifest.
+
+--dry-run is the default: run it, read the list, then pass --dry-run=false.
+
+EXAMPLE:
+   reusable-ci container base-images prune \
+     --repository-suffix -base \
+     --release-images "$(cat supported-release-images.txt)" \
+     --cosign-public-key-path keys/cosign.pub \
+     --dry-run=false
+```
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--server-url` | forge server URL used to derive the registry host and expected source | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
+| `--repository` | owner/repo used to derive the expected source and base-image repository | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
+| `--repository-suffix` | optional suffix appended to the repository package name, e.g. -base | `$REPOSITORY_SUFFIX` |
+| `--expected-repository` | exact base-image repository allowed for tags/refs (default: host/lower(owner/repo)<suffix>) | `$EXPECTED_REPOSITORY`, `$BASE_IMAGES_EXPECTED_REPOSITORY` |
+| `--expected-source` | source repository URL expected in SLSA lineage (default: <server-url>/<repository>) | `$EXPECTED_SOURCE`, `$BASE_IMAGES_EXPECTED_SOURCE` |
+| `--expected-workflow` | workflow filename expected in SLSA lineage | `$EXPECTED_WORKFLOW` |
+| `--registry` | registry host for promotion auth (default: host from --server-url) | `$CONTAINER_REGISTRY` |
+| `--cosign-public-key-path` | relative path to the trusted Cosign public key in the consumer checkout | `$COSIGN_PUBLIC_KEY_PATH` |
+| `--cosign-public-key-sha256` | expected sha256 digest of the trusted Cosign public key | `$COSIGN_PUBLIC_KEY_SHA256` |
+| `--release-images` | newline- or comma-separated digest-pinned release image refs whose bases must be kept | `$RELEASE_IMAGES` |
+| `--max-delete` | refuse the run when more than this many base images are unreferenced (0 disables the bound) | `$BASE_IMAGES_MAX_DELETE` |
+| `--dry-run` | report what would be deleted without deleting it | `$BASE_IMAGES_PRUNE_DRY_RUN` |
+| `--auth-file` | registry auth file for attestation verification | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
+
 #### `reusable-ci container base-images validate`
 
 validate existing immutable final base-image tags and report missing flavors

@@ -175,7 +175,7 @@ func TestCleanupStagingBaseImagesDeletesPromotedAndStaleTags(t *testing.T) {
 		repo + ":staging-" + contentID + "-rust-amd64":       "sha256:" + strings.Repeat("7", 64),
 		repo + ":staging-" + strings.Repeat("3", 64) + "-go": "sha256:" + strings.Repeat("8", 64),
 	}}
-	cleaner := &fakeBaseImageStagingCleaner{versions: []string{
+	cleaner := &fakeBaseImagePackageAPI{versions: []string{
 		"1.0.0",
 		"staging-" + contentID + "-rust-amd64",
 		"staging-" + strings.Repeat("3", 64) + "-go",
@@ -225,7 +225,7 @@ func TestCleanupStagingBaseImagesPreservesReusableArchUntilFinalExists(t *testin
 	repo := "codeberg.org/itiquette/nanolinter-base"
 	baseID := strings.Repeat("4", 64)
 	contentID := strings.Repeat("5", 64)
-	cleaner := &fakeBaseImageStagingCleaner{versions: []string{"staging-" + contentID + "-go-arm64"}}
+	cleaner := &fakeBaseImagePackageAPI{versions: []string{"staging-" + contentID + "-go-arm64"}}
 
 	var log bytes.Buffer
 
@@ -250,7 +250,7 @@ func TestCleanupStagingBaseImagesRejectsUnexpectedStagingVersion(t *testing.T) {
 	t.Parallel()
 
 	repo := "codeberg.org/itiquette/nanolinter-base"
-	cleaner := &fakeBaseImageStagingCleaner{versions: []string{"staging-not-a-content-id-rust"}}
+	cleaner := &fakeBaseImagePackageAPI{versions: []string{"staging-not-a-content-id-rust"}}
 
 	err := CleanupStagingBaseImages(context.Background(), &fakeBaseImageRegistry{digests: map[string]string{}}, cleaner, io.Discard, BaseImageCleanupStagingInput{
 		ExpectedRepository: repo,
@@ -267,7 +267,7 @@ func TestCleanupStagingBaseImagesFailsWhenFinalDigestDiffers(t *testing.T) {
 	baseID := strings.Repeat("9", 64)
 	digest := "sha256:" + strings.Repeat("a", 64)
 	registry := &fakeBaseImageRegistry{digests: map[string]string{repo + ":" + baseID + "-rust": "sha256:" + strings.Repeat("b", 64)}}
-	cleaner := &fakeBaseImageStagingCleaner{}
+	cleaner := &fakeBaseImagePackageAPI{}
 
 	err := CleanupStagingBaseImages(context.Background(), registry, cleaner, io.Discard, BaseImageCleanupStagingInput{
 		Images: []BaseImageMetadata{{
@@ -308,7 +308,7 @@ func (f *fakeBaseImageRegistry) CopyTag(_ context.Context, source, dest string) 
 	return nil
 }
 
-type fakeBaseImageStagingCleaner struct {
+type fakeBaseImagePackageAPI struct {
 	versions  []string
 	deleted   []string
 	listOwner string
@@ -316,7 +316,7 @@ type fakeBaseImageStagingCleaner struct {
 	deleteErr error
 }
 
-func (f *fakeBaseImageStagingCleaner) DeleteTag(_ context.Context, ref string) error {
+func (f *fakeBaseImagePackageAPI) DeleteTag(_ context.Context, ref string) error {
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}
@@ -326,7 +326,7 @@ func (f *fakeBaseImageStagingCleaner) DeleteTag(_ context.Context, ref string) e
 	return nil
 }
 
-func (f *fakeBaseImageStagingCleaner) ListContainerPackageVersions(_ context.Context, owner, name string) ([]string, error) {
+func (f *fakeBaseImagePackageAPI) ListContainerPackageVersions(_ context.Context, owner, name string) ([]string, error) {
 	f.listOwner = owner
 	f.listName = name
 

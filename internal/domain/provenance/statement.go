@@ -11,6 +11,28 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
+// Envelopes normalises `cosign verify-attestation` output into a list of DSSE
+// envelopes.
+//
+// cosign emits a bare envelope object when it verified one attestation and a
+// JSON array when it verified several, and callers cannot know in advance
+// which they will get. Handling only the object shape makes a multi-attestation
+// image look like it has no attestation at all, which for a caller deciding
+// whether something is still referenced is the dangerous direction to be wrong
+// in. Both shapes are normalised here so no caller has to remember.
+func Envelopes(body []byte) ([]any, error) {
+	var raw any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("parse attestation output: %w: %w", err, errs.ErrMalformedInput)
+	}
+
+	if envelopes, ok := raw.([]any); ok {
+		return envelopes, nil
+	}
+
+	return []any{raw}, nil
+}
+
 // EnvelopePayload extracts the base64 payload from one DSSE envelope as
 // decoded from `cosign verify-attestation` output. The bool is false when
 // the value is not an envelope object or carries no payload.

@@ -9,10 +9,16 @@
 // tags, cleaning up staging tags, and checking that release images still
 // sit on fresh bases.
 //
+// These are the CONSUMER's base images -- the layer a consumer's release
+// images are built FROM, published as <repository><suffix> and addressed by
+// base_input_id. They are unrelated to the reusable-ci runtime images that
+// jobs execute inside, which this package never touches.
+//
 // Base-graph content-ID computation is deliberately NOT here: the graph
-// schema and its deterministic hashing migrated to the consumer's policy
-// CLI (nanolinter-ci base-graph). This package consumes the resulting
-// base_input_id / content_id values as opaque, shape-validated pins.
+// schema and its deterministic hashing belong to the consumer's own policy
+// CLI, because what counts as a base input is the consumer's decision. This
+// package consumes the resulting base_input_id / content_id values as opaque,
+// shape-validated pins.
 package baseimages
 
 import (
@@ -106,11 +112,11 @@ type imageDigestResolver interface {
 	ResolveDigest(ctx context.Context, ref string) (string, error)
 }
 
-// baseImageStagingCleaner is the forge package-API surface base-image
-// staging cleanup needs: delete a staging tag and enumerate a package's
+// baseImagePackageAPI is the forge package-API surface base-image staging
+// cleanup and retention share: delete a tag and enumerate a package's
 // versions. Both are provider port roles, composed here so the app depends
 // on the port rather than re-declaring the method set.
-type baseImageStagingCleaner interface {
+type baseImagePackageAPI interface {
 	provider.TagDeleter
 	provider.ContainerPackageLister
 }

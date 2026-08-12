@@ -18,7 +18,7 @@ import (
 // CleanupStagingBaseImages deletes promoted staging base tags through the forge
 // package-version API, verifies final tags before and after deletion, and sweeps
 // stale staging versions that are still present in the package registry.
-func CleanupStagingBaseImages(ctx context.Context, registry imageDigestResolver, cleaner baseImageStagingCleaner, out io.Writer, in BaseImageCleanupStagingInput) error {
+func CleanupStagingBaseImages(ctx context.Context, registry imageDigestResolver, cleaner baseImagePackageAPI, out io.Writer, in BaseImageCleanupStagingInput) error {
 	if registry == nil {
 		return fmt.Errorf("base images cleanup: registry resolver is required: %w", errs.ErrUsage)
 	}
@@ -54,7 +54,7 @@ func CleanupStagingBaseImages(ctx context.Context, registry imageDigestResolver,
 
 // cleanupPromotedStagingImages deletes each promoted image's staging tag,
 // reporting (but not aborting on) failed final-tag safety checks.
-func cleanupPromotedStagingImages(ctx context.Context, registry imageDigestResolver, cleaner baseImageStagingCleaner, out io.Writer, in BaseImageCleanupStagingInput, archFinalTags map[string]string) (bool, error) {
+func cleanupPromotedStagingImages(ctx context.Context, registry imageDigestResolver, cleaner baseImagePackageAPI, out io.Writer, in BaseImageCleanupStagingInput, archFinalTags map[string]string) (bool, error) {
 	cleanupError := false
 
 	for idx, image := range in.Images {
@@ -116,7 +116,7 @@ func normalizeCleanupStagingImage(image BaseImageMetadata, expectedRepository st
 // cleanupOnePromotedStagingImage verifies the final tag before and after
 // deleting one staging tag. It returns true when a safety check failed and
 // the overall cleanup must be reported as failed.
-func cleanupOnePromotedStagingImage(ctx context.Context, registry imageDigestResolver, cleaner baseImageStagingCleaner, out io.Writer, expectedRepository string, archFinalTags map[string]string, item BaseImageMetadata, digest string) (bool, error) {
+func cleanupOnePromotedStagingImage(ctx context.Context, registry imageDigestResolver, cleaner baseImagePackageAPI, out io.Writer, expectedRepository string, archFinalTags map[string]string, item BaseImageMetadata, digest string) (bool, error) {
 	finalDigest, err := registry.ResolveDigest(ctx, item.Tag)
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "Final base tag is absent before staging cleanup; stale sweep will remove the candidate if it still exists: %s\n", item.Tag)
@@ -160,7 +160,7 @@ func cleanupOnePromotedStagingImage(ctx context.Context, registry imageDigestRes
 
 // sweepStaleStagingVersions deletes staging package versions that are still
 // present in the registry after promotion.
-func sweepStaleStagingVersions(ctx context.Context, registry imageDigestResolver, cleaner baseImageStagingCleaner, out io.Writer, expectedRepository string, archFinalTags map[string]string) error {
+func sweepStaleStagingVersions(ctx context.Context, registry imageDigestResolver, cleaner baseImagePackageAPI, out io.Writer, expectedRepository string, archFinalTags map[string]string) error {
 	owner, name, err := baseImagePackageOwnerName(expectedRepository)
 	if err != nil {
 		return err
@@ -208,7 +208,7 @@ func reusableBaseArchFinalTags(expectedRepository string, inputs []BaseInput) (m
 	return finalTags, nil
 }
 
-func deleteStagingBaseVersion(ctx context.Context, registry imageDigestResolver, cleaner baseImageStagingCleaner, out io.Writer, expectedRepository string, archFinalTags map[string]string, stagingVersion, stagingLabel string) error {
+func deleteStagingBaseVersion(ctx context.Context, registry imageDigestResolver, cleaner baseImagePackageAPI, out io.Writer, expectedRepository string, archFinalTags map[string]string, stagingVersion, stagingLabel string) error {
 	if isBaseArchStagingVersion(stagingVersion) && !shouldDeleteArchStagingVersion(ctx, registry, out, archFinalTags, stagingVersion, stagingLabel) {
 		return nil
 	}

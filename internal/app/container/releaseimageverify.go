@@ -329,14 +329,9 @@ func releaseImageDigestOnlyRef(ref string) string {
 }
 
 func releaseImageProvenanceAttestationMatches(body []byte, expected releaseImageProvenanceExpectation) error {
-	var raw any
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return fmt.Errorf("release image verify: parse SLSA provenance attestation output: %w: %w", err, errs.ErrMalformedInput)
-	}
-
-	envelopes, ok := raw.([]any)
-	if !ok {
-		envelopes = []any{raw}
+	envelopes, err := domainprovenance.Envelopes(body)
+	if err != nil {
+		return fmt.Errorf("release image verify: %w", err)
 	}
 
 	for _, envelope := range envelopes {
