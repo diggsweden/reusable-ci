@@ -29,7 +29,15 @@ type BaseImagePruneInput struct {
 	// it was built on, and that is what keeps a base alive.
 	//
 	// Which releases count as supported is the consumer's policy, so it is an
-	// input rather than something derived here.
+	// input rather than something derived here. It cannot be derived: the
+	// registry cannot tell a supported release from a merely published one,
+	// and bases are shared between releases whenever their inputs match, so
+	// no per-release rule reconstructs the set either.
+	//
+	// Completeness is therefore the caller's responsibility, and the one risk
+	// the refusals below do not cover: a short list looks exactly like a
+	// correct one. Nothing here can detect it, so the dry run prints the
+	// keep-set count for a human to check against what they expect.
 	ReleaseImages []string
 
 	// Attestation is the verification template applied to each release image;
@@ -135,6 +143,13 @@ func PruneBaseImages(
 // owns those, and a pass running while a build is mid-flight will legitimately
 // see them. Anything else unrecognised is left alone too: this pass deletes
 // only what it positively identifies as a promoted base.
+//
+// That matters most for cosign's own artifacts. A signed image grows a
+// companion tag holding its signature and attestation, named sha256-<hex> for
+// the digest it covers, and a busy repository has more of those than real
+// tags. They survive the filter because a base-input ID is bare hex with no
+// prefix, so the two shapes cannot be confused -- but only by that one
+// character of difference, which is why it is written down here.
 func baseImageInventory(ctx context.Context, pruner baseImagePackageAPI, expectedRepository string) ([]string, error) {
 	owner, name, err := baseImagePackageOwnerName(expectedRepository)
 	if err != nil {

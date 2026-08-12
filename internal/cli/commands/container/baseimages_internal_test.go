@@ -93,3 +93,24 @@ func TestRequireRegistrySurfaceMatches(t *testing.T) {
 		})
 	}
 }
+
+// TestReadBaseImagesFlavorsRequiresAPath pins the absence of a default.
+//
+// The flag used to default to one consumer's layout, which was wrong for every
+// other project and wrong silently: the failure named a path the reader had
+// never chosen. Requiring it makes the engine ask rather than guess, and the
+// consumer-facing shim keeps whatever convention it likes.
+func TestReadBaseImagesFlavorsRequiresAPath(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{"", "   "} {
+		got, err := readBaseImagesFlavors(path)
+		if err == nil {
+			t.Fatalf("readBaseImagesFlavors(%q) = %v, want a refusal rather than a guessed path", path, got)
+		}
+
+		if !errors.Is(err, errs.ErrUsage) {
+			t.Errorf("error = %v, want errs.ErrUsage so the exit code reads as misuse", err)
+		}
+	}
+}

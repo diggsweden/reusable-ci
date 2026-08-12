@@ -359,10 +359,10 @@ func TestPruneBaseImagesRefusesUnpinnedReleaseImage(t *testing.T) {
 	t.Parallel()
 
 	for _, ref := range []string{
-		"registry.example/owner/project:v1.2.3",                        // a plain tag
-		"registry.example/owner/project:v1.2.3@sha256:" + pruneIDKept,  // tag AND digest
-		"registry.example/owner/project",                               // neither
-		"@sha256:" + pruneIDKept,                                       // digest, no repository
+		"registry.example/owner/project:v1.2.3",                       // a plain tag
+		"registry.example/owner/project:v1.2.3@sha256:" + pruneIDKept, // tag AND digest
+		"registry.example/owner/project",                              // neither
+		"@sha256:" + pruneIDKept,                                      // digest, no repository
 	} {
 		t.Run(ref, func(t *testing.T) {
 			t.Parallel()

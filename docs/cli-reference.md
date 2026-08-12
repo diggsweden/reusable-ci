@@ -803,7 +803,7 @@ validate existing immutable final base-image tags and report missing flavors
 | `--cosign-public-key-sha256` | expected sha256 digest of the trusted Cosign public key | `$COSIGN_PUBLIC_KEY_SHA256` |
 | `--base-input-id` | optional single sha256 base input ID expected for every flavor | `$BASE_INPUT_ID` |
 | `--base-inputs-json` | JSON array mapping flavors to sha256 base input IDs | `$BASE_INPUTS_JSON` |
-| `--flavors-file` | newline-delimited flavor list in the consumer checkout | `$FLAVORS_FILE` |
+| `--flavors-file` | newline-delimited flavor list in the consumer checkout (required: the engine does not assume a repository layout) | `$FLAVORS_FILE` |
 
 ### `reusable-ci container build`
 

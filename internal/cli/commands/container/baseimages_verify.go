@@ -25,7 +25,7 @@ func baseImagesVerifyCmd() *cli.Command {
 		Flags: append(baseImagesCommonFlags(),
 			&cli.StringFlag{Name: flagBaseInputID, Sources: cli.EnvVars("BASE_INPUT_ID"), Usage: "optional single sha256 base input ID expected for every flavor"},
 			&cli.StringFlag{Name: flagBaseInputsJSON, Value: "[]", Sources: cli.EnvVars("BASE_INPUTS_JSON"), Usage: "JSON array mapping flavors to sha256 base input IDs"},
-			&cli.StringFlag{Name: "flavors-file", Value: "packaging/container/flavors.list", Sources: cli.EnvVars("FLAVORS_FILE"), Usage: "newline-delimited flavor list in the consumer checkout"},
+			&cli.StringFlag{Name: "flavors-file", Sources: cli.EnvVars("FLAVORS_FILE"), Usage: "newline-delimited flavor list in the consumer checkout (required: the engine does not assume a repository layout)"},
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			common, err := baseImagesCommonFromCmd(cmd, false, true)
@@ -74,6 +74,16 @@ func baseImagesVerifyCmd() *cli.Command {
 }
 
 func readBaseImagesFlavors(path string) ([]string, error) {
+	// No default. Which file lists a project's flavors is that project's
+	// business, and a default here would be the engine asserting a directory
+	// layout it cannot know -- wrong for every consumer that organises
+	// differently, and wrong silently, since the failure names a path the
+	// reader never chose. The consumer-facing shim is where such a convention
+	// belongs.
+	if strings.TrimSpace(path) == "" {
+		return nil, fmt.Errorf("base images: --flavors-file is required: %w", errs.ErrUsage)
+	}
+
 	if unsafeWorkflowPath(path) {
 		return nil, fmt.Errorf("base images: unsafe flavors-file path: %s: %w", path, errs.ErrUsage)
 	}
