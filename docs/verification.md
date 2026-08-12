@@ -376,9 +376,9 @@ moved into the isolated attestor.
 
 ### Choosing a method
 
-- **Sigstore-keyless — recommended default for new projects** on a keyless-capable forge (GitHub / GitLab). No secret management, no key on the runner; in-CI verification needs no flags (the identity is derived and anchored, see above). The `examples/sigstore-keyless` project is the copy-from reference.
+- **Sigstore-keyless — recommended default for new projects** on a keyless-capable forge (GitHub / GitLab). No secret management, no key on the runner; in-CI verification needs no flags (the identity is derived and anchored, see above). The `examples/signing/sigstore-keyless` project is the copy-from reference.
 - **GPG**: required for **PGP-native ecosystems** — Maven Central, apt/rpm repos — where consumers expect a `.asc`. Also the right pick for existing pipelines and operators who want to own the trust anchor entirely. This is the `examples/maven-app` shape.
-- **KMS (OpenBao recommended)**: regulated / sovereignty-conscious deployments where the trust anchor must stay inside your own infrastructure. Air-gap compatible. See `examples/openbao-kms`.
+- **KMS (OpenBao recommended)**: regulated / sovereignty-conscious deployments where the trust anchor must stay inside your own infrastructure. Air-gap compatible. See `examples/signing/openbao-kms`.
 
 A repo can switch backends by changing one line in `artifacts.yml`. No swap-policy implications on the cosign branches (the decrypted private key never enters our process).
 

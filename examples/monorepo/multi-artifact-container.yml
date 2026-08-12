@@ -25,7 +25,9 @@ artifacts:
     config:
       node-version: 24
 # ONE container containing all three artifacts
-# Multi-stage Containerfile at repo root uses all three build outputs
+# Multi-stage Containerfile at repo root uses all three build outputs.
+# Containerfile.multi-artifact in this directory is a working example of one:
+# copy it to your repo root as `Containerfile`.
 containers:
   - name: combined-app
     from: [api, worker, web]

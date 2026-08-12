@@ -60,6 +60,6 @@ summary job to surface the panel via `$CI_SUMMARY_FILE`.
 
 ## Relation to the PR example
 
-[`examples/gitlab-pullrequest/`](../gitlab-pullrequest/) wires the PR quality
+[`examples/gitlab/pullrequest/`](../pullrequest/) wires the PR quality
 gate (the pipeline status is the gate). This example adds the **aggregated
 summary** on top of that pattern; a real PR pipeline combines the two.

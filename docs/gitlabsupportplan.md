@@ -32,7 +32,7 @@ Readable from the code:
   runtime images.
 
 Catalog adapter YAMLs now exist (`templates/nanolinter.yml` + `templates/megalinter.yml` +
-`examples/gitlab-nanolinter/` (+ `examples/gitlab-megalinter/`) + a repo-root `.gitlab-ci.yml` self-test); the
+`examples/gitlab/nanolinter/` (+ `examples/gitlab/megalinter/`) + a repo-root `.gitlab-ci.yml` self-test); the
 remaining Catalog work and the narrow provider gaps are in "Phases Ahead" below.
 
 ## Architecture
@@ -132,7 +132,7 @@ GitLab-native `artifacts:reports:*`. Two composition shapes, by use case:
 - **Static graph → flat `include:` + `stages:`/`needs:`/`rules:`.** For a fixed
   job set (PR quality: lint ∥ scan ∥ test) the consumer pipeline `include:`s the
   components and wires the graph. No generation; fully idiomatic. **Shipped as
-  `examples/gitlab-pullrequest/`** — the GitLab PR orchestrator is the consumer
+  `examples/gitlab/pullrequest/`** — the GitLab PR orchestrator is the consumer
   composition (nanolinter or megalinter, scoped to MR context via `workflow:rules`), not
   a published mega-component. The gate is the pipeline status (GitLab fails the
   pipeline on any failed job natively — no GitHub-style `quality-status`
@@ -185,7 +185,7 @@ The first Catalog entrypoints exist:
 templates/                     # consumable CI/CD Catalog components (top-level, required)
   nanolinter.yml               # single-file component (or nanolinter/template.yml for the dir form)
 .gitlab-ci.yml                 # reusable-ci's own pipeline: self-test components + release: job to publish
-examples/gitlab-nanolinter/    # consumer example (include: component@<version>)
+examples/gitlab/nanolinter/    # consumer example (include: component@<version>)
 ```
 
 GitLab CI/CD Catalog requires components under a **top-level `templates/`**
@@ -287,7 +287,7 @@ GitLab** (each consolidation improves GitHub too).
   child pipeline — one `include:` of a `build-<eco>` component per running
   artifact (`internal/app/gitlabpipeline`). The "small, last piece" the thin jobs
   enabled: it synthesises no job bodies, just reuses the components. Consumed via
-  `trigger:{include:{artifact:…}}` — see `examples/gitlab-release-build/`. This
+  `trigger:{include:{artifact:…}}` — see `examples/gitlab/release-build/`. This
   is the GitLab rendering of the same plan GitHub expands with `strategy:matrix`
   (not a meta-DSL; What-Not-To-Do #2 holds).
 - **✅ container build-logic core consolidated (2026-06-21):** `reusable-ci
@@ -390,7 +390,7 @@ model behind these is the *Artifact & credential model* section above:
   behind two forge-native feeds. The earlier framing — *remove* `toJson(needs)` —
   was over-reach; the real fix was to stop it driving a *separate* path and route
   it through the shared aggregator. The GitLab feed is demonstrated end-to-end in
-  `examples/gitlab-stage-summary/`: each job records its outcome in
+  `examples/gitlab/stage-summary/`: each job records its outcome in
   `after_script` (`$CI_JOB_STATUS`), the summary job `needs:` them and
   aggregates; scalar outputs go to a `reports:dotenv` (`$CI_OUTPUT`). Verified
   locally including the fail-closed path (a job that left no record → failure).

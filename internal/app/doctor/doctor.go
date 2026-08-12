@@ -517,7 +517,7 @@ func missingIDTokenCheck(anyDir bool) Check {
 	remediation := "grant the OIDC id-token in the caller workflow — " +
 		"GitHub: `permissions: id-token: write` under .github/workflows/; " +
 		"Forgejo: `enable-openid-connect` under .forgejo/workflows/; " +
-		"see examples/sigstore-keyless/release-workflow.yml"
+		"see examples/signing/sigstore-keyless/release-workflow.yml"
 
 	if !anyDir {
 		return Check{

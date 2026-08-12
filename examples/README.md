@@ -16,6 +16,13 @@ Complete working examples for different project types.
 
 ## Available Examples
 
+Examples are grouped by the question they answer. Each top-level directory
+here answers "how do I release *this kind of project*"; the two
+subdirectories answer a different question, which is why they are not mixed
+in with the list.
+
+### By ecosystem — start here
+
 - **[Maven Application](maven-app/)** — Java service shipped as a
   multi-platform container to GHCR. Pattern A (build artefact +
   container COPY).
@@ -41,7 +48,34 @@ Complete working examples for different project types.
 - **[Monorepo](monorepo/)** — Multiple artefacts in one repo, mixed
   project types, one container per artefact. Includes a
   `multi-artifact-container.yml` variant that combines multiple
-  artefacts into a single image.
+  artefacts into a single image, with `Containerfile.multi-artifact`
+  as the matching multi-stage build.
+
+### By signing backend — [`signing/`](signing/)
+
+How the release is signed, independent of what is being released. Combine
+either with any ecosystem example above.
+
+- **[Sigstore keyless](signing/sigstore-keyless/)** — the recommended
+  default on a keyless-capable forge: no secret management and no key on
+  the runner. See [Verification](../docs/verification.md).
+- **[OpenBao KMS](signing/openbao-kms/)** — for deployments where the trust
+  anchor has to stay inside your own infrastructure. Air-gap compatible.
+
+### On GitLab — [`gitlab/`](gitlab/)
+
+The same pipeline expressed as GitLab CI/CD Catalog components rather than
+reusable workflows. These are consumer `include:` snippets, so they are
+README-only. Background: [GitLab Support Plan](../docs/gitlabsupportplan.md).
+
+- **[nanolinter](gitlab/nanolinter/)** / **[megalinter](gitlab/megalinter/)**
+  — the lint components.
+- **[pullrequest](gitlab/pullrequest/)** — the merge-request quality
+  pipeline.
+- **[release-build](gitlab/release-build/)** — plan-driven fan-out through a
+  child pipeline.
+- **[stage-summary](gitlab/stage-summary/)** — per-job outcome collection
+  into one summary.
 
 ---
 

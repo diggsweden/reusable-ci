@@ -11,7 +11,7 @@ reusable workflow fans the PR quality checks out with `strategy: matrix`; on
 GitLab the quality job set is *fixed* (lint ∥ scan ∥ test), so it is a **static
 graph** — the consumer pipeline `include:`s the Catalog components and wires the
 `stages:`/`rules:`. No generated child pipeline; this is the idiomatic shape
-(see [`gitlabsupportplan.md`](../../docs/gitlabsupportplan.md), "Orchestration
+(see [`gitlabsupportplan.md`](../../../docs/gitlabsupportplan.md), "Orchestration
 model").
 
 `.gitlab-ci.yml` here:
@@ -41,7 +41,7 @@ job's result via `toJson(needs)`. GitLab has no equivalent — a job cannot see 
 siblings' statuses — so each job records its own outcome with `report job-result`
 and the summary job collects the records, feeding the *same* shared
 `report stage-result` aggregator. See
-[`examples/gitlab-stage-summary/`](../gitlab-stage-summary/) for that flow
+[`examples/gitlab/stage-summary/`](../stage-summary/) for that flow
 end-to-end. This example keeps the gate minimal (pipeline status + Security tab);
 add a summary stage following that example to render the aggregated panel.
 

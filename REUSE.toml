@@ -52,7 +52,7 @@ SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
 SPDX-License-Identifier = "CC0-1.0"
 
 [[annotations]]
-path = "examples/Containerfile.multi-artifact"
+path = "examples/monorepo/Containerfile.multi-artifact"
 SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
 SPDX-License-Identifier = "CC0-1.0"
 
