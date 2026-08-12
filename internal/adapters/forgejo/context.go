@@ -60,7 +60,7 @@ func (p *Provider) ResolveContext(_ context.Context) (*provider.EventContext, er
 	}
 
 	return &provider.EventContext{
-		Platform:  provider.PlatformForgejo,
+		ForgeAPI:  provider.ForgeForgejo,
 		RefName:   refName,
 		RefType:   refType,
 		SHA:       sha,

@@ -43,7 +43,7 @@ const (
 // the environment's own description of itself rather than to a symptom. That is
 // the whole reason this exists: an unmet need used to surface as a queued job or
 // an opaque cosign error, both of which read as product defects.
-func Requires(tb TB, kind provider.Platform, needs ...Need) bool {
+func Requires(tb TB, kind provider.ForgeAPI, needs ...Need) bool {
 	tb.Helper()
 
 	for _, need := range needs {
@@ -98,10 +98,10 @@ func Requires(tb TB, kind provider.Platform, needs ...Need) bool {
 // Skipf rather than Errorf: covering nothing is a fact about the ENVIRONMENT,
 // not a defect. The k3s road genuinely runs no Fulcio, and demanding one there
 // would make the road unusable rather than honest.
-func ForgesMeeting(tb TB, kinds []provider.Platform, needs ...Need) []provider.Platform {
+func ForgesMeeting(tb TB, kinds []provider.ForgeAPI, needs ...Need) []provider.ForgeAPI {
 	tb.Helper()
 
-	meeting := make([]provider.Platform, 0, len(kinds))
+	meeting := make([]provider.ForgeAPI, 0, len(kinds))
 
 	for _, kind := range kinds {
 		if Requires(tb, kind, needs...) {

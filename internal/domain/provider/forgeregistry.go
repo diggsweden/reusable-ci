@@ -40,7 +40,7 @@ const (
 // ForgeMavenRegistry is the resolved forge-native Maven deploy target — the
 // coordinates and credentials to `mvn deploy` to the registry of whichever
 // forge the pipeline runs on. Each provider adapter builds it from its own
-// environment (no central platform switch — that's the point of the role).
+// environment (no central forge switch — that's the point of the role).
 type ForgeMavenRegistry struct {
 	ServerID   string // settings.xml <server><id> and altDeploymentRepository id
 	URL        string // deploy endpoint
@@ -119,7 +119,7 @@ func (r ForgeMavenRegistry) AltDeploymentRepository() string {
 
 // RenderSettingsXML renders a Maven settings.xml whose single <server>
 // authenticates per AuthScheme. The token lives only in this file (written
-// 0600 by the caller), never on argv. Switches on AuthScheme, not platform.
+// 0600 by the caller), never on argv. Switches on AuthScheme, not forge.
 func (r ForgeMavenRegistry) RenderSettingsXML() string {
 	var auth string
 

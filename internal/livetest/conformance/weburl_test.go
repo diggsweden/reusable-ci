@@ -74,7 +74,7 @@ func TestWebURLs_ResolveOnEveryForge(t *testing.T) {
 // assertPageResolves fails unless the URL serves a page. A redirect is not
 // accepted: on both forges an unauthenticated redirect is how a missing or
 // private page is served, so following it would turn a dead link into a pass.
-func assertPageResolves(t *testing.T, ctx context.Context, kind provider.Platform, what, url string) {
+func assertPageResolves(t *testing.T, ctx context.Context, kind provider.ForgeAPI, what, url string) {
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

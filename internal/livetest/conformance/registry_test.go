@@ -168,7 +168,7 @@ echo "the forge-injected credential authenticates to $registry"
 // was stored actually works. The registry is taken from the runner's own
 // environment on both forges, so the scenario cannot pass by agreeing with a
 // value the fixture invented.
-func registryAuthProbe(kind provider.Platform, assetURL string) string {
+func registryAuthProbe(kind provider.ForgeAPI, assetURL string) string {
 	const extractStored = `
 stored="$(sed -n 's/.*"auth"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' auth.json | head -n 1)"
 if [ -z "$stored" ]; then
@@ -177,7 +177,7 @@ if [ -z "$stored" ]; then
   exit 1
 fi`
 
-	if kind == provider.PlatformGitLab {
+	if kind == provider.ForgeGitLab {
 		return `detect:
   image: ` + livetest.ProbeImage + `
   script:

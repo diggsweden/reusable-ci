@@ -39,7 +39,7 @@ type TokenCall struct{ Token, Repo string }
 // Fake implements provider.Provider with configurable returns.
 type Fake struct {
 	t                       *testing.T
-	platform                provider.Platform
+	platform                provider.ForgeAPI
 	eventCtx                *provider.EventContext
 	resolveErr              error
 	repoMeta                *provider.RepoMetadata
@@ -68,21 +68,21 @@ type ReleaseCall struct {
 	Spec provider.ReleaseSpec
 }
 
-// New returns a Fake defaulting to PlatformLocal with no event context.
+// New returns a Fake defaulting to ForgeLocal with no event context.
 // Chainable setters configure the responses.
 func New(t *testing.T) *Fake {
 	t.Helper()
 
 	return &Fake{
 		t:        t,
-		platform: provider.PlatformLocal,
+		platform: provider.ForgeLocal,
 	}
 }
 
 // WithPlatform sets the platform Name() returns. It also drives the
 // default Describe() / Capabilities() / AdviseToken() behaviour so most
 // tests configure forge conventions just by choosing a platform.
-func (f *Fake) WithPlatform(p provider.Platform) *Fake {
+func (f *Fake) WithPlatform(p provider.ForgeAPI) *Fake {
 	f.platform = p
 
 	return f
@@ -182,7 +182,7 @@ func (f *Fake) Calls() Calls {
 }
 
 // Name implements provider.Provider.
-func (f *Fake) Name() provider.Platform {
+func (f *Fake) Name() provider.ForgeAPI {
 	f.mu.Lock()
 	f.calls.Name++
 	f.mu.Unlock()
@@ -201,12 +201,12 @@ func (f *Fake) ResolveContext(_ context.Context) (*provider.EventContext, error)
 	}
 
 	if f.eventCtx == nil {
-		return &provider.EventContext{Platform: f.platform}, nil
+		return &provider.EventContext{ForgeAPI: f.platform}, nil
 	}
 
 	cp := *f.eventCtx
-	if cp.Platform == "" {
-		cp.Platform = f.platform
+	if cp.ForgeAPI == "" {
+		cp.ForgeAPI = f.platform
 	}
 
 	return &cp, nil
@@ -391,14 +391,14 @@ func (f *Fake) UploadReleaseAsset(_ context.Context, tag, file string) error {
 // labels and guidance.
 func (f *Fake) Describe() provider.Info {
 	switch f.platform {
-	case provider.PlatformGitHub:
+	case provider.ForgeGitHub:
 		return provider.Info{
 			DisplayName: "GitHub",
 			SetupURL:    "https://github.com/settings/personal-access-tokens/new",
 			ScopesHint:  "A fine-grained PAT (github_pat_*) with 'contents: write' permission is required.",
 			OIDCIssuer:  "https://token.actions.githubusercontent.com",
 		}
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		return provider.Info{
 			DisplayName: "GitLab",
 			SetupURL:    "https://gitlab.com/-/user_settings/personal_access_tokens",
@@ -417,11 +417,11 @@ func (f *Fake) Describe() provider.Info {
 // platform-derived default mirroring the real adapters.
 func (f *Fake) Capabilities() provider.Capabilities {
 	switch f.platform {
-	case provider.PlatformGitHub:
+	case provider.ForgeGitHub:
 		return provider.Capabilities{SARIFUpload: true, Attestation: true, PublicFulcioTrusted: true, ReleaseAssets: true}
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		return provider.Capabilities{PublicFulcioTrusted: true, ReleaseAssets: true}
-	case provider.PlatformForgejo:
+	case provider.ForgeForgejo:
 		return provider.Capabilities{ReleaseAssets: true}
 	default:
 		return provider.Capabilities{}
@@ -433,7 +433,7 @@ func (f *Fake) Capabilities() provider.Capabilities {
 // platform is GitHub; other platforms advise nothing (matching adapters
 // that do not implement TokenAdviser at all).
 func (f *Fake) AdviseToken(token string) (string, bool) {
-	if f.platform != provider.PlatformGitHub {
+	if f.platform != provider.ForgeGitHub {
 		return "", false
 	}
 

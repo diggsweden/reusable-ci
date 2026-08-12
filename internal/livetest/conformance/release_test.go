@@ -37,10 +37,10 @@ import (
 // decides where it runs. A silent skip would be worse than no test, so an
 // unclaimed capability is reported, and a scenario no forge can run is a
 // failure rather than a quiet pass.
-func forgesClaiming(t *testing.T, needs func(provider.Capabilities) bool, capability string) []provider.Platform {
+func forgesClaiming(t *testing.T, needs func(provider.Capabilities) bool, capability string) []provider.ForgeAPI {
 	t.Helper()
 
-	var kinds []provider.Platform
+	var kinds []provider.ForgeAPI
 
 	for _, kind := range livetest.LiveForges() {
 		capabilities, known := livetest.Capabilities(kind)
@@ -387,7 +387,7 @@ func writeAsset(t *testing.T, name, content string) string {
 // forge that stored the right filenames over the wrong content.
 func assertAssetsArrivedIntact(
 	t *testing.T,
-	kind provider.Platform,
+	kind provider.ForgeAPI,
 	release rawref.Release,
 	assets []string,
 	digests map[string]string,

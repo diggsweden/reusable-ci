@@ -36,7 +36,7 @@ type RunOpengrepInput struct {
 	SARIFFile          string            // empty → "opengrep-results.sarif"
 	TextFile           string            // empty → "opengrep-results.txt"
 	GitLabSASTFile     string            // empty → "opengrep-results.gitlab-sast.json"
-	Platform           provider.Platform // passed to summary platform context
+	Platform           provider.ForgeAPI // passed to summary platform context
 	HasCodeScanningTok bool
 	RunURL             string
 }

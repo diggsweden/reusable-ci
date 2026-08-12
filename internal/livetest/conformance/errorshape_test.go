@@ -71,7 +71,7 @@ func TestErrors_SameFailureClass_ExitsTheSameOnEveryForge(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			exits := map[provider.Platform]int{}
+			exits := map[provider.ForgeAPI]int{}
 
 			for _, kind := range kinds {
 				target := livetest.Accept(t, kind)
@@ -103,7 +103,7 @@ func TestErrors_SameFailureClass_ExitsTheSameOnEveryForge(t *testing.T) {
 // assertReadableFailure checks the properties a person needs from a failure,
 // without prescribing the sentence: something was said, on the right stream, it
 // names the thing that failed, and it is not an internal crash.
-func assertReadableFailure(t *testing.T, kind provider.Platform, scenario string, run livetest.Run) {
+func assertReadableFailure(t *testing.T, kind provider.ForgeAPI, scenario string, run livetest.Run) {
 	t.Helper()
 
 	if strings.TrimSpace(run.Stderr) == "" {

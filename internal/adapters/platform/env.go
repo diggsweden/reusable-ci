@@ -7,7 +7,7 @@
 //
 // Detection has two orthogonal axes, mirroring internal/domain/provider:
 //
-//   - Detect()       → provider.Platform   (which forge API to call)
+//   - Detect()       → provider.ForgeAPI   (which forge API to call)
 //   - DetectRunner() → provider.RunnerKind (which runner conventions to emit)
 //
 // Forgejo Actions sets GITHUB_ACTIONS=true while exposing a Gitea/Forgejo
@@ -33,7 +33,7 @@ const (
 	envRunnerOverride   = "REUSABLE_CI_RUNNER"
 )
 
-// Detect returns the active forge API (provider.Platform).
+// Detect returns the active forge API (provider.ForgeAPI).
 //
 // Order matters: Forgejo masquerades as GitHub (it sets
 // GITHUB_ACTIONS=true), so the Forgejo/Gitea signal is probed BEFORE the
@@ -45,22 +45,22 @@ const (
 //	GITHUB_ACTIONS=true              → GitHub
 //	GITLAB_CI=true                   → GitLab
 //	else                             → Local
-func Detect() provider.Platform {
+func Detect() provider.ForgeAPI {
 	if v := strings.ToLower(strings.TrimSpace(os.Getenv(envProviderOverride))); v != "" && v != "auto" {
-		if p := provider.Platform(v); p.IsValid() {
+		if p := provider.ForgeAPI(v); p.IsValid() {
 			return p
 		}
 	}
 
 	switch {
 	case isForgejoTarget():
-		return provider.PlatformForgejo
+		return provider.ForgeForgejo
 	case ciFlag("GITHUB_ACTIONS"):
-		return provider.PlatformGitHub
+		return provider.ForgeGitHub
 	case ciFlag("GITLAB_CI"):
-		return provider.PlatformGitLab
+		return provider.ForgeGitLab
 	default:
-		return provider.PlatformLocal
+		return provider.ForgeLocal
 	}
 }
 

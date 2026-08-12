@@ -80,7 +80,7 @@ func defaultHTTPClient() *http.Client {
 }
 
 // Name reports the platform identifier.
-func (p *Provider) Name() provider.Platform { return provider.PlatformForgejo }
+func (p *Provider) Name() provider.ForgeAPI { return provider.ForgeForgejo }
 
 // envFunc returns the env-getter, defaulting to os.Getenv.
 func (p *Provider) envFunc() func(string) string {

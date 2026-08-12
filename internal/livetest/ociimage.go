@@ -65,11 +65,11 @@ type Image struct {
 // registry host; the Gitea family serves packages from the forge host itself.
 func RegistryHost(target Target) (string, error) {
 	switch target.Kind {
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		return "registry." + target.Host, nil
-	case provider.PlatformForgejo:
+	case provider.ForgeForgejo:
 		return target.Host, nil
-	case provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeGitHub, provider.ForgeLocal:
 	}
 
 	return "", fmt.Errorf("no lab registry host for platform %q: %w", target.Kind, errs.ErrUnsupported)

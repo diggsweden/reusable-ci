@@ -40,18 +40,18 @@ import (
 // workflowPath is where each forge looks for workflow definitions. Forgejo reads
 // .forgejo/workflows first and falls back to .github/workflows; using its own
 // directory keeps the fixture unambiguous about which runtime is meant.
-func workflowPath(kind provider.Platform, name string) (string, error) {
+func workflowPath(kind provider.ForgeAPI, name string) (string, error) {
 	switch kind {
-	case provider.PlatformForgejo:
+	case provider.ForgeForgejo:
 		return ".forgejo/workflows/" + name + ".yml", nil
-	case provider.PlatformGitHub:
+	case provider.ForgeGitHub:
 		return ".github/workflows/" + name + ".yml", nil
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		// GitLab reads one file at the repository root, so the scenario name
 		// does not appear in the path; a second workflow would replace the
 		// first rather than sit beside it.
 		return ".gitlab-ci.yml", nil
-	case provider.PlatformLocal:
+	case provider.ForgeLocal:
 	}
 
 	return "", fmt.Errorf("no workflow layout for platform %q: %w", kind, errUnsupportedInRunner)
@@ -72,8 +72,8 @@ var errUnsupportedInRunner = errors.New("in-runner scenarios are not implemented
 //
 // This is a fact about the SUITE. Whether the environment in front of it has a
 // runner is RunnerAvailable's question, and both have to hold.
-func RunsInRunner(kind provider.Platform) bool {
-	return kind == provider.PlatformForgejo || kind == provider.PlatformGitLab
+func RunsInRunner(kind provider.ForgeAPI) bool {
+	return kind == provider.ForgeForgejo || kind == provider.ForgeGitLab
 }
 
 // RunnerAvailable reports whether this environment has a runner that will pick
@@ -92,7 +92,7 @@ func RunsInRunner(kind provider.Platform) bool {
 // An absent field means no runner, for the same reason FulcioTrusts trusts
 // nothing when unset: assuming a runner turns a road that cannot run jobs into
 // a suite that reports failures about labels.
-func RunnerAvailable(kind provider.Platform) bool {
+func RunnerAvailable(kind provider.ForgeAPI) bool {
 	for _, forge := range strings.Split(os.Getenv(labRunnerForgesEnv), ",") {
 		if strings.EqualFold(strings.TrimSpace(forge), string(kind)) {
 			return true
@@ -148,7 +148,7 @@ func commitFile(ctx context.Context, target Target, repo, path, message, content
 	var body map[string]any
 
 	switch target.Kind {
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		endpoint = target.BaseURL() + "/api/v4/projects/" +
 			url.PathEscape(target.Owner+"/"+repo) + "/repository/files/" + url.PathEscape(path)
 		body = map[string]any{
@@ -156,7 +156,7 @@ func commitFile(ctx context.Context, target Target, repo, path, message, content
 			fieldContent:     content,
 			"commit_message": message,
 		}
-	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeForgejo, provider.ForgeGitHub, provider.ForgeLocal:
 		endpoint = target.BaseURL() + "/api/v1/repos/" + target.Owner + "/" + repo + "/contents/" + path
 		body = map[string]any{
 			fieldContent: base64.StdEncoding.EncodeToString([]byte(content)),
@@ -223,7 +223,7 @@ func waitForRun(ctx context.Context, tb TB, target Target, repo, name string) st
 // not queryable in the moment between the push and its creation.
 func latestRunStatus(ctx context.Context, target Target, repo string) string {
 	switch target.Kind {
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		var pipelines []struct {
 			Status string `json:"status"`
 		}
@@ -235,7 +235,7 @@ func latestRunStatus(ctx context.Context, target Target, repo string) string {
 		}
 
 		return pipelines[0].Status
-	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeForgejo, provider.ForgeGitHub, provider.ForgeLocal:
 		var payload struct {
 			Runs []struct {
 				Status string `json:"status"`
@@ -366,7 +366,7 @@ func unzipFirst(archive []byte) string {
 // (paths taken from the instance's own swagger rather than assumed).
 func runLogEndpoint(ctx context.Context, target Target, repo string) (string, bool) {
 	switch target.Kind {
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		var jobs []struct {
 			ID int `json:"id"`
 		}
@@ -377,7 +377,7 @@ func runLogEndpoint(ctx context.Context, target Target, repo string) (string, bo
 		}
 
 		return fmt.Sprintf("%s/api/v4/projects/%s/jobs/%d/trace", target.BaseURL(), project, jobs[0].ID), true
-	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeForgejo, provider.ForgeGitHub, provider.ForgeLocal:
 		var payload struct {
 			Runs []struct {
 				ID int `json:"id"`
@@ -418,7 +418,7 @@ func ReleaseAssetURL(tb TB, target Target, repo, tag, name string) string {
 	defer cancel()
 
 	switch target.Kind {
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		var release struct {
 			Assets struct {
 				Links []struct {
@@ -439,7 +439,7 @@ func ReleaseAssetURL(tb TB, target Target, repo, tag, name string) string {
 				return link.URL
 			}
 		}
-	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeForgejo, provider.ForgeGitHub, provider.ForgeLocal:
 		var release struct {
 			Assets []struct {
 				Name string `json:"name"`
@@ -658,7 +658,7 @@ func ReleaseAssetNames(tb TB, target Target, repo, tag string) []string {
 	var names []string
 
 	switch target.Kind {
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		var release struct {
 			Assets struct {
 				Links []struct {
@@ -676,7 +676,7 @@ func ReleaseAssetNames(tb TB, target Target, repo, tag string) []string {
 		for _, link := range release.Assets.Links {
 			names = append(names, link.Name)
 		}
-	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeForgejo, provider.ForgeGitHub, provider.ForgeLocal:
 		var release struct {
 			Assets []struct {
 				Name string `json:"name"`

@@ -40,7 +40,7 @@ func (r *recordingTB) Fatalf(format string, args ...any) { r.fatal = sprintf(for
 func TestRequires_HandlesEveryNeed(t *testing.T) {
 	for _, need := range allNeeds() {
 		tb := &recordingTB{}
-		Requires(tb, provider.PlatformGitLab, need)
+		Requires(tb, provider.ForgeGitLab, need)
 
 		if tb.fatal != "" {
 			t.Errorf("Need %d is not wired into Requires: %s", int(need), tb.fatal)
@@ -62,7 +62,7 @@ func TestRequires_NamesTheContractField(t *testing.T) {
 		{NeedsFulcio, "LAB_FULCIO_URL"},
 	} {
 		tb := &recordingTB{}
-		if Requires(tb, provider.PlatformGitLab, tc.need) {
+		if Requires(tb, provider.ForgeGitLab, tc.need) {
 			t.Errorf("Need %d was satisfied by an empty environment", int(tc.need))
 
 			continue

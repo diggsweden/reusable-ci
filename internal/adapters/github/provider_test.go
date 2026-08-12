@@ -21,8 +21,8 @@ func TestProvider_Name(t *testing.T) {
 	t.Parallel()
 
 	p := github.New()
-	if got := p.Name(); got != provider.PlatformGitHub {
-		t.Errorf("Name = %q, want %q", got, provider.PlatformGitHub)
+	if got := p.Name(); got != provider.ForgeGitHub {
+		t.Errorf("Name = %q, want %q", got, provider.ForgeGitHub)
 	}
 }
 
@@ -69,8 +69,8 @@ func TestResolveContext_BranchPush(t *testing.T) {
 		t.Errorf("Repo=%q URL=%q", evt.Repo, evt.RepoURL)
 	}
 
-	if evt.Platform != provider.PlatformGitHub {
-		t.Errorf("Platform = %q", evt.Platform)
+	if evt.ForgeAPI != provider.ForgeGitHub {
+		t.Errorf("Platform = %q", evt.ForgeAPI)
 	}
 }
 
@@ -180,8 +180,8 @@ func TestResolveContext_EmptyEnv(t *testing.T) {
 		t.Errorf("RefType = %q, want Other", evt.RefType)
 	}
 
-	if evt.Platform != provider.PlatformGitHub {
-		t.Errorf("Platform = %q", evt.Platform)
+	if evt.ForgeAPI != provider.ForgeGitHub {
+		t.Errorf("Platform = %q", evt.ForgeAPI)
 	}
 }
 

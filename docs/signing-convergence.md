@@ -217,8 +217,8 @@ seam this plan builds on. One new role does most of the work.
 
 ## Spine: decisions & invariants
 
-1. **Two orthogonal axes stay separate** — `Platform` (forge API) and
-   `RunnerKind` (runner conventions). Signing identity is a `Platform` concern.
+1. **Two orthogonal axes stay separate** — `ForgeAPI` (forge API) and
+   `RunnerKind` (runner conventions). Signing identity is a `ForgeAPI` concern.
 2. **No central `switch forge`.** All forge variation is a provider role; absence
    of a role degrades (sigstore → gpg), never crashes.
 3. **Dependency direction:** `domain/provider` must not import `domain/release`.

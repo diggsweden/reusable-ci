@@ -97,7 +97,7 @@ func TestRenderOpengrepSummary_BlockedByThreshold(t *testing.T) {
 		FailOnSeverity:   security.OpengrepSeverityHigh,
 		Counts:           security.OpengrepCounts{FindingsTotal: 3, ErrorTotal: 2, WarningTotal: 1},
 		ThresholdFailure: true,
-		Platform:         security.OpengrepPlatformContext{Platform: provider.PlatformGitHub, HasCodeScanningToken: true, RunURL: "https://example.com/run"},
+		Platform:         security.OpengrepPlatformContext{Platform: provider.ForgeGitHub, HasCodeScanningToken: true, RunURL: "https://example.com/run"},
 	})
 	if result != "failure" {
 		t.Errorf("result = %q", result)
@@ -160,7 +160,7 @@ func TestRenderOpengrepSummary_GitHubWithoutCodeScanningToken(t *testing.T) {
 		FailOnSeverity: security.OpengrepSeverityHigh,
 		Counts:         security.OpengrepCounts{},
 		Platform: security.OpengrepPlatformContext{
-			Platform:             provider.PlatformGitHub,
+			Platform:             provider.ForgeGitHub,
 			HasCodeScanningToken: false,
 			RunURL:               "https://example.com/run",
 		},
@@ -196,7 +196,7 @@ func TestRenderOpengrepFailureSummary(t *testing.T) {
 		Config:     "p/default",
 		TargetPath: ".",
 		ExitCode:   2,
-		Platform:   security.OpengrepPlatformContext{Platform: provider.PlatformGitLab},
+		Platform:   security.OpengrepPlatformContext{Platform: provider.ForgeGitLab},
 	})
 	for _, want := range []string{
 		"## OpenGrep SAST",
@@ -218,7 +218,7 @@ func TestRenderOpengrepSummary_Forgejo(t *testing.T) {
 		FailOnSeverity: security.OpengrepSeverityHigh,
 		Counts:         security.OpengrepCounts{},
 		Platform: security.OpengrepPlatformContext{
-			Platform: provider.PlatformForgejo,
+			Platform: provider.ForgeForgejo,
 			RunURL:   "https://codeberg.org/owner/repo/actions/runs/1",
 		},
 	})

@@ -36,7 +36,7 @@ type Provider struct {
 func New() *Provider { return &Provider{Env: os.Getenv} }
 
 // Name reports the platform identifier.
-func (p *Provider) Name() provider.Platform { return provider.PlatformLocal }
+func (p *Provider) Name() provider.ForgeAPI { return provider.ForgeLocal }
 
 // ResolveContext returns an EventContext populated from the run-context env
 // vars when present, and empty otherwise. Tests inject fixed values via the
@@ -61,7 +61,7 @@ func (p *Provider) ResolveContext(_ context.Context) (*provider.EventContext, er
 	}
 
 	return &provider.EventContext{
-		Platform: provider.PlatformLocal,
+		ForgeAPI: provider.ForgeLocal,
 		RefName:  runcontext.RefName().Resolve(get),
 		SHA:      sha,
 		ShortSHA: short,

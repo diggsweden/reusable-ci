@@ -14,7 +14,7 @@ import (
 func TestProvider_Name(t *testing.T) {
 	t.Parallel()
 
-	if got := local.New().Name(); got != provider.PlatformLocal {
+	if got := local.New().Name(); got != provider.ForgeLocal {
 		t.Errorf("Name = %q", got)
 	}
 }
@@ -33,8 +33,8 @@ func TestResolveContext_FromInjectedEnv(t *testing.T) {
 	})}
 
 	evt, _ := p.ResolveContext(context.Background())
-	if evt.Platform != provider.PlatformLocal {
-		t.Errorf("Platform = %q", evt.Platform)
+	if evt.ForgeAPI != provider.ForgeLocal {
+		t.Errorf("Platform = %q", evt.ForgeAPI)
 	}
 
 	if evt.RefName != "main" || evt.Branch != "main" || evt.Repo != "owner/repo" {
@@ -56,8 +56,8 @@ func TestResolveContext_EmptyEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if evt.Platform != provider.PlatformLocal {
-		t.Errorf("Platform = %q", evt.Platform)
+	if evt.ForgeAPI != provider.ForgeLocal {
+		t.Errorf("Platform = %q", evt.ForgeAPI)
 	}
 	// Other fields all empty / zero — that's the contract.
 }

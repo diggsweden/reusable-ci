@@ -70,7 +70,7 @@ func New() *Provider {
 }
 
 // Name reports the platform identifier.
-func (p *Provider) Name() provider.Platform { return provider.PlatformGitHub }
+func (p *Provider) Name() provider.ForgeAPI { return provider.ForgeGitHub }
 
 // envFunc returns the env-getter, defaulting to os.Getenv.
 func (p *Provider) envFunc() func(string) string {

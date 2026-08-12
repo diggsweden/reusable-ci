@@ -41,9 +41,9 @@ func PublishedPackageVersions(tb TB, target Target, repo, ecosystem, name string
 	defer cancel()
 
 	switch target.Kind {
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		return gitlabPackageVersions(ctx, tb, target, repo, ecosystem, name)
-	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeForgejo, provider.ForgeGitHub, provider.ForgeLocal:
 		return giteaPackageVersions(ctx, tb, target, ecosystem, name)
 	}
 
@@ -130,7 +130,7 @@ func DeletePublishedPackage(tb TB, target Target, repo, ecosystem, name, version
 	var endpoint string
 
 	switch target.Kind {
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		id := gitlabPackageID(ctx, tb, target, repo, ecosystem, name, version)
 		if id == 0 {
 			return
@@ -138,7 +138,7 @@ func DeletePublishedPackage(tb TB, target Target, repo, ecosystem, name, version
 
 		endpoint = target.BaseURL() + "/api/v4/projects/" +
 			url.PathEscape(target.Owner+"/"+repo) + "/packages/" + strconv.Itoa(id)
-	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeForgejo, provider.ForgeGitHub, provider.ForgeLocal:
 		endpoint = target.BaseURL() + "/api/v1/packages/" + url.PathEscape(target.Owner) +
 			"/" + url.PathEscape(ecosystem) + "/" + url.PathEscape(name) + "/" + url.PathEscape(version)
 	}
@@ -189,7 +189,7 @@ func gitlabPackageID(ctx context.Context, tb TB, target Target, repo, ecosystem,
 // registry accepts any name. A fixture that hard-coded one shape would be
 // testing a forge it was not running against.
 func NPMPackageName(target Target, base string) string {
-	if target.Kind == provider.PlatformGitLab {
+	if target.Kind == provider.ForgeGitLab {
 		return base
 	}
 
@@ -214,11 +214,11 @@ func SetRepoSecret(tb TB, target Target, repo, name, value string) {
 	defer cancel()
 
 	switch target.Kind {
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		// GitLab CI variables are project variables; not needed by any scenario
 		// yet, and adding an unused branch would be untested code.
 		tb.Fatalf("livetest: SetRepoSecret is not implemented for %s", target.Kind)
-	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeForgejo, provider.ForgeGitHub, provider.ForgeLocal:
 		endpoint := target.BaseURL() + "/api/v1/repos/" + url.PathEscape(target.Owner) + "/" +
 			url.PathEscape(repo) + "/actions/secrets/" + url.PathEscape(name)
 		if err := discard(ctx, target, http.MethodPut, endpoint,
@@ -236,7 +236,7 @@ func SetRepoSecret(tb TB, target Target, repo, name, value string) {
 // with a colon. Asserting one spelling on both would fail against whichever
 // forge was not the one it was written for.
 func MavenPackageName(target Target, groupID, artifactID string) string {
-	if target.Kind == provider.PlatformGitLab {
+	if target.Kind == provider.ForgeGitLab {
 		return strings.ReplaceAll(groupID, ".", "/") + "/" + artifactID
 	}
 

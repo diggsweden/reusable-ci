@@ -18,11 +18,11 @@ var _ provider.Provider = (*fakeprovider.Fake)(nil)
 func TestFake_Name(t *testing.T) {
 	tests := []struct {
 		name     string
-		platform provider.Platform
-		want     provider.Platform
+		platform provider.ForgeAPI
+		want     provider.ForgeAPI
 	}{
-		{name: "defaults_to_local", want: provider.PlatformLocal},
-		{name: "configured_platform", platform: provider.PlatformGitHub, want: provider.PlatformGitHub},
+		{name: "defaults_to_local", want: provider.ForgeLocal},
+		{name: "configured_platform", platform: provider.ForgeGitHub, want: provider.ForgeGitHub},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -46,7 +46,7 @@ func TestFake_ResolveContextReturnsConfigured(t *testing.T) {
 		Repo:    "owner/repo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}
 	f := fakeprovider.New(t).
-		WithPlatform(provider.PlatformGitHub).
+		WithPlatform(provider.ForgeGitHub).
 		WithEventContext(want)
 
 	got, err := f.ResolveContext(context.Background())
@@ -58,8 +58,8 @@ func TestFake_ResolveContextReturnsConfigured(t *testing.T) {
 		t.Errorf("got %+v, want %+v", got, want)
 	}
 
-	if got.Platform != provider.PlatformGitHub {
-		t.Errorf("Platform not propagated, got %q", got.Platform)
+	if got.ForgeAPI != provider.ForgeGitHub {
+		t.Errorf("Platform not propagated, got %q", got.ForgeAPI)
 	}
 }
 

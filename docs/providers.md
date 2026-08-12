@@ -18,7 +18,7 @@ that, and which features are available where.
 - **Runner conventions** (`RunnerKind`) — how the CLI emits output: the
   workflow-command dialect (`::error::`), the `$*_OUTPUT` key/value writes,
   and the step-summary file.
-- **Forge API** (`Platform`) — the server REST surface used for releases,
+- **Forge API** (`ForgeAPI`) — the server REST surface used for releases,
   asset upload, token/permission checks, repo metadata, SARIF, and run
   artifacts (upload/download via each forge's artifact service — GitHub v4
   results, Forgejo v3 runtime).
@@ -41,7 +41,7 @@ workflow commands, and routes step summaries to the job log. Keeping the
 axes separate is what lets one binary serve every forge without misrouting
 API calls *or* emitting output a runner silently drops.
 
-| Forge | RunnerKind | Forge API (`Platform`) |
+| Forge | RunnerKind | Forge API (`ForgeAPI`) |
 |---|---|---|
 | GitHub Actions | `github` | `github` |
 | Forgejo Actions | `forgejo` | `forgejo` |

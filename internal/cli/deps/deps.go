@@ -42,7 +42,7 @@ import (
 // surface a friendly "feature X requires platform Y" error when the
 // detected platform does not support the role.
 type Deps struct {
-	Platform       provider.Platform
+	Platform       provider.ForgeAPI
 	Provider       provider.Provider
 	OutputSink     ci.OutputSink
 	SummarySink    ci.SummarySink
@@ -186,7 +186,7 @@ func (d *Deps) WebURLBuilder() provider.WebURLBuilder {
 	return builder
 }
 
-func unsupportedRoleError(p provider.Platform, capability string) error {
+func unsupportedRoleError(p provider.ForgeAPI, capability string) error {
 	return fmt.Errorf("%s is not supported on platform %q: %w", capability, p, errs.ErrUnsupported)
 }
 
@@ -289,7 +289,7 @@ func buildInternal(_ context.Context) (*Deps, error) {
 }
 
 // wireProvider selects the forge-API adapter for the detected platform.
-func wireProvider(d *Deps, forge provider.Platform) error { //nolint:varnamelen // idiomatic short name (matches buildInternal's receiver-style d).
+func wireProvider(d *Deps, forge provider.ForgeAPI) error { //nolint:varnamelen // idiomatic short name (matches buildInternal's receiver-style d).
 	p, err := providerFor(forge)
 	if err != nil {
 		return err
@@ -304,15 +304,15 @@ func wireProvider(d *Deps, forge provider.Platform) error { //nolint:varnamelen 
 // single provider-construction switch in the codebase; app/domain code
 // asks the returned provider (via the Describer / Capabilities / role
 // interfaces) rather than branching on the platform enum itself.
-func providerFor(forge provider.Platform) (provider.Provider, error) {
+func providerFor(forge provider.ForgeAPI) (provider.Provider, error) {
 	switch forge {
-	case provider.PlatformGitHub:
+	case provider.ForgeGitHub:
 		return github.New(), nil
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		return gitlab.New(), nil
-	case provider.PlatformForgejo:
+	case provider.ForgeForgejo:
 		return forgejo.New(), nil
-	case provider.PlatformLocal:
+	case provider.ForgeLocal:
 		return local.New(), nil
 	default:
 		return nil, fmt.Errorf("unsupported platform: %q: %w", forge, errs.ErrValidation)
@@ -324,15 +324,15 @@ func providerFor(forge provider.Platform) (provider.Provider, error) {
 // without knowing which one that is, and every adapter already resolves its
 // server from the environment, so overlaying the right key is the whole
 // mechanism. Platforms with no such variable (local) return "".
-func serverURLEnvKey(forge provider.Platform) string {
+func serverURLEnvKey(forge provider.ForgeAPI) string {
 	switch forge {
-	case provider.PlatformGitHub:
+	case provider.ForgeGitHub:
 		return "GITHUB_SERVER_URL"
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		return "CI_SERVER_URL"
-	case provider.PlatformForgejo:
+	case provider.ForgeForgejo:
 		return "FORGEJO_SERVER_URL"
-	case provider.PlatformLocal:
+	case provider.ForgeLocal:
 		return ""
 	}
 
@@ -366,15 +366,15 @@ func ProviderWithServerURL(serverURL string) (provider.Provider, error) {
 // providerForWithEnv is providerFor with the adapter's environment source
 // replaced. Every adapter carries the same Env seam, so this stays a single
 // switch rather than per-forge construction at each call site.
-func providerForWithEnv(forge provider.Platform, env func(string) string) (provider.Provider, error) {
+func providerForWithEnv(forge provider.ForgeAPI, env func(string) string) (provider.Provider, error) {
 	switch forge {
-	case provider.PlatformGitHub:
+	case provider.ForgeGitHub:
 		return &github.Provider{Env: env}, nil
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		return &gitlab.Provider{Env: env}, nil
-	case provider.PlatformForgejo:
+	case provider.ForgeForgejo:
 		return &forgejo.Provider{Env: env}, nil
-	case provider.PlatformLocal:
+	case provider.ForgeLocal:
 		return &local.Provider{Env: env}, nil
 	default:
 		return nil, fmt.Errorf("unsupported platform: %q: %w", forge, errs.ErrValidation)

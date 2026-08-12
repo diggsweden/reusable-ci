@@ -35,8 +35,8 @@ import (
 )
 
 func TestJSON_DoctorReport_HasTheSameShapeOnEveryForge(t *testing.T) {
-	shapes := map[provider.Platform][]string{}
-	forgeAPI := map[provider.Platform]string{}
+	shapes := map[provider.ForgeAPI][]string{}
+	forgeAPI := map[provider.ForgeAPI]string{}
 
 	kinds := forgesClaiming(t, alwaysValidatesTokens, "a JSON report")
 

@@ -254,11 +254,11 @@ func cliEnv(target Target, repo string) []string {
 // materialise them without the closure leaking its map.
 func targetEnvKeys(target Target) []string {
 	switch target.Kind {
-	case provider.PlatformForgejo:
+	case provider.ForgeForgejo:
 		return []string{"FORGEJO_TOKEN", "GITEA_TOKEN", "FORGEJO_SERVER_URL", "FORGEJO_REPOSITORY"}
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		return []string{"GITLAB_TOKEN", "CI_SERVER_URL", "CI_PROJECT_PATH"}
-	case provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeGitHub, provider.ForgeLocal:
 		return nil
 	}
 

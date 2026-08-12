@@ -16,8 +16,8 @@ func TestDetect_GitHub(t *testing.T) {
 	env.Setenv("GITHUB_ACTIONS", "true")
 	env.Setenv("GITLAB_CI", "")
 
-	if got := platform.Detect(); got != provider.PlatformGitHub {
-		t.Errorf("Detect() = %q, want %q", got, provider.PlatformGitHub)
+	if got := platform.Detect(); got != provider.ForgeGitHub {
+		t.Errorf("Detect() = %q, want %q", got, provider.ForgeGitHub)
 	}
 }
 
@@ -26,8 +26,8 @@ func TestDetect_GitLab(t *testing.T) {
 	env.Setenv("GITHUB_ACTIONS", "")
 	env.Setenv("GITLAB_CI", "true")
 
-	if got := platform.Detect(); got != provider.PlatformGitLab {
-		t.Errorf("Detect() = %q, want %q", got, provider.PlatformGitLab)
+	if got := platform.Detect(); got != provider.ForgeGitLab {
+		t.Errorf("Detect() = %q, want %q", got, provider.ForgeGitLab)
 	}
 }
 
@@ -36,8 +36,8 @@ func TestDetect_Local(t *testing.T) {
 	env.Setenv("GITHUB_ACTIONS", "")
 	env.Setenv("GITLAB_CI", "")
 
-	if got := platform.Detect(); got != provider.PlatformLocal {
-		t.Errorf("Detect() = %q, want %q", got, provider.PlatformLocal)
+	if got := platform.Detect(); got != provider.ForgeLocal {
+		t.Errorf("Detect() = %q, want %q", got, provider.ForgeLocal)
 	}
 }
 
@@ -46,7 +46,7 @@ func TestDetect_GitHubWinsOverGitLab(t *testing.T) {
 	env.Setenv("GITHUB_ACTIONS", "true")
 	env.Setenv("GITLAB_CI", "true")
 
-	if got := platform.Detect(); got != provider.PlatformGitHub {
+	if got := platform.Detect(); got != provider.ForgeGitHub {
 		t.Errorf("Detect() = %q, want GitHub when both set", got)
 	}
 }
@@ -72,7 +72,7 @@ func TestDetect_Forgejo_WinsOverGitHubMasquerade(t *testing.T) {
 			env.Setenv("GITLAB_CI", "")
 			env.Setenv(signal, value)
 
-			if got := platform.Detect(); got != provider.PlatformForgejo {
+			if got := platform.Detect(); got != provider.ForgeForgejo {
 				t.Errorf("Detect() = %q, want Forgejo with %s set", got, signal)
 			}
 		})
@@ -128,7 +128,7 @@ func TestDetectRunner_IdentityIsNotTarget(t *testing.T) {
 			}
 
 			// ...while the forge axis still correctly targets Forgejo.
-			if got := platform.Detect(); got != provider.PlatformForgejo {
+			if got := platform.Detect(); got != provider.ForgeForgejo {
 				t.Errorf("Detect() = %q, want Forgejo with %s set", got, signal)
 			}
 		})
@@ -165,7 +165,7 @@ func TestDetect_ProviderOverride(t *testing.T) {
 	env.Setenv("GITLAB_CI", "")
 	env.Setenv("REUSABLE_CI_PROVIDER", "forgejo")
 
-	if got := platform.Detect(); got != provider.PlatformForgejo {
+	if got := platform.Detect(); got != provider.ForgeForgejo {
 		t.Errorf("Detect() = %q, want Forgejo from override", got)
 	}
 }
@@ -176,7 +176,7 @@ func TestDetect_ProviderOverride_InvalidFallsBackToAuto(t *testing.T) {
 	env.Setenv("GITLAB_CI", "")
 	env.Setenv("REUSABLE_CI_PROVIDER", "bananas")
 
-	if got := platform.Detect(); got != provider.PlatformGitHub {
+	if got := platform.Detect(); got != provider.ForgeGitHub {
 		t.Errorf("Detect() = %q, want GitHub when override invalid", got)
 	}
 }

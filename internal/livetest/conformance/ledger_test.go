@@ -69,7 +69,7 @@ func TestLedger_RecordVerifyPromote_PreservesTheDigest(t *testing.T) {
 // claim being made about each.
 func recordVerifyPromote(
 	t *testing.T,
-	kind provider.Platform,
+	kind provider.ForgeAPI,
 	target livetest.Target,
 	registry, shapeName string,
 	push func(livetest.TB, livetest.Target, string, string) livetest.Image,

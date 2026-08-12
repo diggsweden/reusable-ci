@@ -78,8 +78,8 @@ func TestInRunner_KeylessSigningAgainstTheLabCA(t *testing.T) {
 // Spelled here rather than taken from the product because the product
 // deliberately auto-supplies neither: no public Fulcio trusts either instance,
 // so a keyless run passes --oidc-issuer, and this is the value it passes.
-func keylessIssuer(kind provider.Platform, baseURL string) string {
-	if kind == provider.PlatformForgejo {
+func keylessIssuer(kind provider.ForgeAPI, baseURL string) string {
+	if kind == provider.ForgeForgejo {
 		return strings.TrimRight(baseURL, "/") + "/api/actions"
 	}
 
@@ -88,7 +88,7 @@ func keylessIssuer(kind provider.Platform, baseURL string) string {
 
 // keylessSignProbe signs a file with a runner-minted token against the lab CA.
 // The assertions run inside the job; nothing is shipped back out.
-func keylessSignProbe(kind provider.Platform, assetURL, fulcioURL, issuerURL string) string {
+func keylessSignProbe(kind provider.ForgeAPI, assetURL, fulcioURL, issuerURL string) string {
 	// Obtaining the token is the only step that differs. GitLab's runner mints it
 	// into $SIGSTORE_ID_TOKEN through the id_tokens: block; Forgejo speaks the
 	// GitHub Actions protocol, handing the job a token ENDPOINT instead, so the
@@ -97,7 +97,7 @@ func keylessSignProbe(kind provider.Platform, assetURL, fulcioURL, issuerURL str
 	tokenSetup := ""
 	identity := `^https://.*/${CI_PROJECT_PATH}//?\.gitlab-ci\.yml@`
 
-	if kind == provider.PlatformForgejo {
+	if kind == provider.ForgeForgejo {
 		//nolint:gosec // G101 false positive: shell that READS a token endpoint from the job's environment. No credential is embedded here — the value exists only inside the runner.
 		tokenSetup = `if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
   echo "FAIL: enable-openid-connect injected no token endpoint"
@@ -187,7 +187,7 @@ cosign verify-blob \
 
 echo "keyless signature verified against the lab CA"`
 
-	if kind == provider.PlatformGitLab {
+	if kind == provider.ForgeGitLab {
 		return `sign:
   image: docker.io/library/alpine:3.22
   id_tokens:

@@ -24,7 +24,7 @@ func envFunc(m map[string]string) func(string) string {
 func TestProvider_Name(t *testing.T) {
 	t.Parallel()
 
-	if got := gitlab.New().Name(); got != provider.PlatformGitLab {
+	if got := gitlab.New().Name(); got != provider.ForgeGitLab {
 		t.Errorf("Name = %q", got)
 	}
 }
@@ -51,8 +51,8 @@ func TestResolveContext_BranchPush(t *testing.T) {
 		t.Errorf("RefName=%q Branch=%q", evt.RefName, evt.Branch)
 	}
 
-	if evt.Platform != provider.PlatformGitLab {
-		t.Errorf("Platform = %q", evt.Platform)
+	if evt.ForgeAPI != provider.ForgeGitLab {
+		t.Errorf("Platform = %q", evt.ForgeAPI)
 	}
 }
 

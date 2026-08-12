@@ -454,7 +454,7 @@ Issues:  https://github.com/diggsweden/reusable-ci/issues`, common.String(), doc
 // and the flags' EnvVars sources above.
 func applyProviderOverrides(cmd *cli.Command) error {
 	if err := bridgeOverride(cmd, "provider", "REUSABLE_CI_PROVIDER",
-		func(v string) bool { return provider.Platform(v).IsValid() },
+		func(v string) bool { return provider.ForgeAPI(v).IsValid() },
 		providerFlagValues()); err != nil {
 		return err
 	}
@@ -466,7 +466,7 @@ func applyProviderOverrides(cmd *cli.Command) error {
 
 // flagValues renders an enum's values as a comma-separated help string.
 // flagValues / providerFlagValues / runnerFlagValues derive from the
-// domain's canonical sets (output.All, provider.AllPlatforms,
+// domain's canonical sets (output.All, provider.AllForges,
 // provider.AllRunnerKinds) so help text and validation never drift from
 // the enums they describe.
 func flagValues[T ~string](vals []T) string {
@@ -479,10 +479,10 @@ func flagValues[T ~string](vals []T) string {
 }
 
 // providerFlagValues / runnerFlagValues prepend the CLI-only "auto"
-// sentinel (which is not a domain Platform/RunnerKind value) to the
+// sentinel (which is not a domain ForgeAPI/RunnerKind value) to the
 // canonical set.
 func providerFlagValues() string {
-	return flagAuto + ", " + flagValues(provider.AllPlatforms())
+	return flagAuto + ", " + flagValues(provider.AllForges())
 }
 
 func runnerFlagValues() string {

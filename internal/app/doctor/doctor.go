@@ -277,7 +277,7 @@ func FormatText(w io.Writer, checks []Check) {
 // branches.
 type Environment struct {
 	Provider     string                `json:"provider"`  // forge display name, e.g. "Forgejo"
-	ForgeAPI     string                `json:"forge_api"` // provider.Platform string, e.g. "forgejo"
+	ForgeAPI     string                `json:"forge_api"` // e.g. "forgejo"
 	Runner       string                `json:"runner"`    // provider.RunnerKind string, e.g. "github" / "forgejo"
 	Capabilities provider.Capabilities `json:"capabilities"`
 }

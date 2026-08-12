@@ -22,11 +22,11 @@ func TestBuild_DetectsPlatformAndWiresDependencies(t *testing.T) {
 		name   string
 		github bool
 		gitlab bool
-		want   provider.Platform
+		want   provider.ForgeAPI
 	}{
-		{name: "github", github: true, want: provider.PlatformGitHub},
-		{name: "gitlab", gitlab: true, want: provider.PlatformGitLab},
-		{name: "local", want: provider.PlatformLocal},
+		{name: "github", github: true, want: provider.ForgeGitHub},
+		{name: "gitlab", gitlab: true, want: provider.ForgeGitLab},
+		{name: "local", want: provider.ForgeLocal},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -214,7 +214,7 @@ func TestRequireRoles_LocalReturnsTypedErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if d.Platform != provider.PlatformLocal {
+	if d.Platform != provider.ForgeLocal {
 		t.Fatalf("Platform = %q, want local", d.Platform)
 	}
 

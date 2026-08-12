@@ -11,7 +11,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
-func TestForgeAPI_IsValid(t *testing.T) {
+func TestPlatform_IsValid(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -19,9 +19,9 @@ func TestForgeAPI_IsValid(t *testing.T) {
 		given provider.ForgeAPI
 		want  bool
 	}{
-		{"github_is_valid", provider.ForgeGitHub, true},
-		{"gitlab_is_valid", provider.ForgeGitLab, true},
-		{"local_is_valid", provider.ForgeLocal, true},
+		{"github_is_valid", provider.PlatformGitHub, true},
+		{"gitlab_is_valid", provider.PlatformGitLab, true},
+		{"local_is_valid", provider.PlatformLocal, true},
 		{"empty_is_invalid", provider.ForgeAPI(""), false},
 		{"unknown_provider_is_invalid", provider.ForgeAPI("bitbucket"), false},
 	}
@@ -33,7 +33,7 @@ func TestForgeAPI_IsValid(t *testing.T) {
 	}
 }
 
-func TestForgeAPI_String_GitHubIsLowerCase(t *testing.T) {
+func TestPlatform_String_GitHubIsLowerCase(t *testing.T) {
 	t.Parallel()
-	require.Equal(t, "github", provider.ForgeGitHub.String())
+	require.Equal(t, "github", provider.PlatformGitHub.String())
 }

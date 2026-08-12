@@ -96,7 +96,7 @@ var (
 
 // Target names one selected forge instance and the identity to act as.
 type Target struct {
-	Kind  provider.Platform
+	Kind  provider.ForgeAPI
 	Host  string // host[:port], no scheme
 	Owner string
 	Token string
@@ -146,7 +146,7 @@ type tokenMetadata struct {
 // Selected reports whether the sourced contract selected a forge. Scenarios use
 // it to skip cleanly rather than fail when an operator minted a contract for a
 // subset of providers.
-func Selected(kind provider.Platform) bool {
+func Selected(kind provider.ForgeAPI) bool {
 	for _, name := range strings.Split(os.Getenv("LAB_TARGETS"), ",") {
 		if name == string(kind) {
 			return true
@@ -159,7 +159,7 @@ func Selected(kind provider.Platform) bool {
 // Accept reads the contract, validates every safety rule, and returns a Target
 // armed for mutation. It fails the test rather than returning an error: a
 // half-armed target is not a thing a scenario should be able to hold.
-func Accept(tb TB, kind provider.Platform) Target {
+func Accept(tb TB, kind provider.ForgeAPI) Target {
 	tb.Helper()
 
 	if !Selected(kind) {
@@ -277,8 +277,8 @@ func validateAuthorization(target Target, sourced contract) error {
 
 func validateTarget(target Target) error {
 	switch target.Kind {
-	case provider.PlatformGitLab, provider.PlatformForgejo:
-	case provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeGitLab, provider.ForgeForgejo:
+	case provider.ForgeGitHub, provider.ForgeLocal:
 		return fmt.Errorf("platform %q is not a live-forge target in this tier: %w", target.Kind, errs.ErrValidation)
 	default:
 		return fmt.Errorf("unknown platform %q: %w", target.Kind, errs.ErrValidation)
@@ -330,7 +330,7 @@ func validateDisposableHost(host string) error {
 // validateTokenMetadata refuses a credential that outlives the run. GitLab can
 // attach a native expiry; Forgejo's API cannot, so it must instead be freshly
 // minted and carry run-bound revocation metadata.
-func validateTokenMetadata(kind provider.Platform, runID string, token tokenMetadata, now time.Time) error {
+func validateTokenMetadata(kind provider.ForgeAPI, runID string, token tokenMetadata, now time.Time) error {
 	if !regexp.MustCompile(`^[1-9][0-9]*$`).MatchString(token.id) {
 		return fmt.Errorf("%s token ID must be numeric: %w", kind, errs.ErrValidation)
 	}
@@ -361,7 +361,7 @@ func validateTokenMetadata(kind provider.Platform, runID string, token tokenMeta
 
 // validateRevocableToken covers the forges whose API cannot attach an expiry:
 // the credential must instead be freshly minted and revocable with this run.
-func validateRevocableToken(kind provider.Platform, runID string, token tokenMetadata, createdAt, now time.Time) error {
+func validateRevocableToken(kind provider.ForgeAPI, runID string, token tokenMetadata, createdAt, now time.Time) error {
 	{
 		if createdAt.Before(now.Add(-maxUnexpiringTokenAge)) {
 			return fmt.Errorf("%s non-expiring token is older than 24 hours: %w", kind, errs.ErrValidation)
@@ -377,8 +377,8 @@ func validateRevocableToken(kind provider.Platform, runID string, token tokenMet
 
 // validateExpiringToken covers a natively expiring credential: the expiry must
 // be real, soon, and not paired with revocation metadata that contradicts it.
-func validateExpiringToken(kind provider.Platform, token tokenMetadata, now time.Time) error {
-	if kind != provider.PlatformGitLab {
+func validateExpiringToken(kind provider.ForgeAPI, token tokenMetadata, now time.Time) error {
+	if kind != provider.ForgeGitLab {
 		return fmt.Errorf("%s has no native token expiry; revocation metadata is required: %w", kind, errs.ErrValidation)
 	}
 
@@ -452,7 +452,7 @@ func Identity(runID string, refs []targetRef, resourcePrefix string) (string, er
 		seen[ref.kind] = true
 
 		switch ref.kind {
-		case string(provider.PlatformGitLab), string(provider.PlatformForgejo), "gitea":
+		case string(provider.ForgeGitLab), string(provider.ForgeForgejo), "gitea":
 		default:
 			return "", fmt.Errorf("unknown provider %q is selected: %w", ref.kind, errs.ErrValidation)
 		}
@@ -505,7 +505,7 @@ func FulcioURL() (string, bool) {
 //
 // An unset variable trusts nothing. The alternative — assuming a forge — would
 // let a keyless scenario report success for a certificate no CA ever issued.
-func FulcioTrusts(kind provider.Platform) bool {
+func FulcioTrusts(kind provider.ForgeAPI) bool {
 	for _, issuer := range strings.Split(os.Getenv("LAB_FULCIO_ISSUERS"), ",") {
 		if strings.EqualFold(strings.TrimSpace(issuer), string(kind)) {
 			return true

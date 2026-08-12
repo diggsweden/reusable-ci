@@ -113,7 +113,7 @@ func PrepareTag(tb TB, target Target, repo, tag string) {
 
 func prepareTag(ctx context.Context, target Target, repo, tag string) error {
 	switch target.Kind {
-	case provider.PlatformForgejo:
+	case provider.ForgeForgejo:
 		// auto_init already left a commit on main, so only the tag is missing.
 		body := map[string]any{"tag_name": tag, "target": defaultBranch}
 		endpoint := target.BaseURL() + "/api/v1/repos/" + url.PathEscape(target.Owner) + "/" +
@@ -121,7 +121,7 @@ func prepareTag(ctx context.Context, target Target, repo, tag string) error {
 
 		return discard(ctx, target, http.MethodPost, endpoint, body, http.StatusCreated)
 
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		id, err := gitLabProjectID(ctx, target, repo)
 		if err != nil {
 			return err
@@ -145,7 +145,7 @@ func prepareTag(ctx context.Context, target Target, repo, tag string) error {
 
 		return discard(ctx, target, http.MethodPost, tags, tagBody, http.StatusCreated)
 
-	case provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeGitHub, provider.ForgeLocal:
 	}
 
 	return fmt.Errorf("no tag preparation for platform %q: %w", target.Kind, errs.ErrUnsupported)
@@ -159,7 +159,7 @@ func DeleteScratchRepo(ctx context.Context, target Target, repo string) error {
 	}
 
 	switch target.Kind {
-	case provider.PlatformForgejo:
+	case provider.ForgeForgejo:
 		// Forgejo packages belong to the *owner*, not the repository, so
 		// deleting the repo leaves every container image it published behind as
 		// an orphan. Nothing later refers to them and nothing else collects
@@ -172,10 +172,10 @@ func DeleteScratchRepo(ctx context.Context, target Target, repo string) error {
 
 		return discard(ctx, target, http.MethodDelete, endpoint, nil, http.StatusNoContent, http.StatusNotFound)
 
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		return deleteGitLabProject(ctx, target, repo)
 
-	case provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeGitHub, provider.ForgeLocal:
 	}
 
 	return fmt.Errorf("no scratch-repo cleanup for platform %q: %w", target.Kind, errs.ErrUnsupported)
@@ -285,12 +285,12 @@ func gitLabRegistryRepositoryIDs(ctx context.Context, target Target, list string
 
 func createRepo(ctx context.Context, target Target, repo string) error {
 	switch target.Kind {
-	case provider.PlatformForgejo:
+	case provider.ForgeForgejo:
 		body := map[string]any{"name": repo, "auto_init": true, "default_branch": defaultBranch, "private": false}
 
 		return discard(ctx, target, http.MethodPost, target.BaseURL()+"/api/v1/user/repos", body, http.StatusCreated)
 
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		// Bare on purpose. initialize_with_readme is an async worker, so a
 		// commit issued straight after creation can 400 with "branch does not
 		// exist" whenever sidekiq is busy. PrepareTag makes the first commit
@@ -299,7 +299,7 @@ func createRepo(ctx context.Context, target Target, repo string) error {
 
 		return discard(ctx, target, http.MethodPost, target.BaseURL()+"/api/v4/projects", body, http.StatusCreated)
 
-	case provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeGitHub, provider.ForgeLocal:
 	}
 
 	return fmt.Errorf("no scratch-repo creation for platform %q: %w", target.Kind, errs.ErrUnsupported)
@@ -462,11 +462,11 @@ func accepted(status int, accept []int) bool {
 
 func authorize(req *http.Request, target Target) {
 	switch target.Kind {
-	case provider.PlatformForgejo:
+	case provider.ForgeForgejo:
 		req.Header.Set("Authorization", "token "+target.Token)
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		req.Header.Set("PRIVATE-TOKEN", target.Token)
-	case provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeGitHub, provider.ForgeLocal:
 	}
 }
 
@@ -517,7 +517,7 @@ func TagCommitSHA(tb TB, target Target, repo, tag string) string {
 	defer cancel()
 
 	switch target.Kind {
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		var payload struct {
 			Commit struct {
 				ID string `json:"id"`
@@ -531,7 +531,7 @@ func TagCommitSHA(tb TB, target Target, repo, tag string) string {
 		}
 
 		return payload.Commit.ID
-	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeForgejo, provider.ForgeGitHub, provider.ForgeLocal:
 		var payload struct {
 			Commit struct {
 				SHA string `json:"sha"`
@@ -615,7 +615,7 @@ func scratchRepoNames(ctx context.Context, target Target, prefix string) []strin
 	var names []string
 
 	switch target.Kind {
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		var projects []struct {
 			Path string `json:"path"`
 		}
@@ -630,7 +630,7 @@ func scratchRepoNames(ctx context.Context, target Target, prefix string) []strin
 				names = append(names, project.Path)
 			}
 		}
-	case provider.PlatformForgejo, provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeForgejo, provider.ForgeGitHub, provider.ForgeLocal:
 		var repos []struct {
 			Name string `json:"name"`
 		}

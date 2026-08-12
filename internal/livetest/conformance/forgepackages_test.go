@@ -82,7 +82,7 @@ func TestInRunner_ForgePackages_NPMPublishReachesTheRegistry(t *testing.T) {
 			// token that carries write:package — which is what a real Forgejo
 			// pipeline has to do too. GitLab needs none: its job token already
 			// carries package-write for the project that issued it.
-			if kind == provider.PlatformForgejo {
+			if kind == provider.ForgeForgejo {
 				livetest.SetRepoSecret(t, target, repo, packageTokenSecret, target.Token)
 			}
 
@@ -124,7 +124,7 @@ func TestInRunner_ForgePackages_NPMPublishReachesTheRegistry(t *testing.T) {
 // ecosystem; that is the product's design, not the scenario's choice. Nothing
 // below asserts anything about npm — the assertion is made by the Go test
 // against the forge afterwards.
-func npmPublishProbe(kind provider.Platform, assetURL, name, version string) string {
+func npmPublishProbe(kind provider.ForgeAPI, assetURL, name, version string) string {
 	// Single-quoted heredoc: the package manifest must reach disk verbatim,
 	// without the shell touching anything inside it.
 	//
@@ -147,7 +147,7 @@ echo "module.exports = 1;" > pkg/index.js
 ( cd pkg && npm pack --silent )
 ls -l pkg`
 
-	if kind == provider.PlatformGitLab {
+	if kind == provider.ForgeGitLab {
 		return `publish:
   image: node:24
   script:
@@ -213,7 +213,7 @@ func TestInRunner_ForgePackages_MavenDeployReachesTheRegistry(t *testing.T) {
 			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
 			name := livetest.MavenPackageName(target, groupID, artifactID)
 
-			if kind == provider.PlatformForgejo {
+			if kind == provider.ForgeForgejo {
 				livetest.SetRepoSecret(t, target, repo, packageTokenSecret, target.Token)
 			}
 
@@ -246,7 +246,7 @@ func TestInRunner_ForgePackages_MavenDeployReachesTheRegistry(t *testing.T) {
 //
 // The pom sits at the job root because `publish forge-packages deploy` runs mvn
 // in the current directory, which is also where the prelude puts the binary.
-func mavenDeployProbe(kind provider.Platform, assetURL, groupID, artifactID, version string) string {
+func mavenDeployProbe(kind provider.ForgeAPI, assetURL, groupID, artifactID, version string) string {
 	pom := `cat > pom.xml <<'POM'
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0">
@@ -278,7 +278,7 @@ JAVA`
 	// -B for non-interactive output.
 	const deploy = `run_product publish forge-packages deploy --project-type maven --cli-opts "-B"`
 
-	if kind == provider.PlatformGitLab {
+	if kind == provider.ForgeGitLab {
 		return `publish:
   image: maven:3.9-eclipse-temurin-21
   script:

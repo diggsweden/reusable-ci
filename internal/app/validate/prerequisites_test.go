@@ -60,7 +60,7 @@ func (s stubGit) TagMessage(_ context.Context, _ string) (string, error) { retur
 func (s stubGit) TagSHA(_ context.Context, _ string) (string, error)     { return s.tagSHA, nil }
 
 func TestPrerequisites_NonTagRefSkipsTagChecks(t *testing.T) {
-	fp := fakeprovider.New(t).WithPlatform(provider.PlatformGitHub)
+	fp := fakeprovider.New(t).WithPlatform(provider.ForgeGitHub)
 	result, err := appvalidate.Prerequisites(context.Background(), appvalidate.PrerequisitesDeps{
 		GitRepo:  stubGit{verifyOK: true, tagSHA: "abc"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Provider: fp,
@@ -94,7 +94,7 @@ func TestPrerequisites_NonTagRefSkipsTagChecks(t *testing.T) {
 }
 
 func TestPrerequisites_TagRefRunsAllTagChecks(t *testing.T) {
-	fp := fakeprovider.New(t).WithPlatform(provider.PlatformGitHub)
+	fp := fakeprovider.New(t).WithPlatform(provider.ForgeGitHub)
 	result, _ := appvalidate.Prerequisites(context.Background(), appvalidate.PrerequisitesDeps{
 		GitRepo:  stubGit{verifyOK: true, tagSHA: "abc"},
 		Provider: fp,
@@ -122,7 +122,7 @@ func TestPrerequisites_TagRefRunsAllTagChecks(t *testing.T) {
 }
 
 func TestPrerequisites_PolicyFlagsGateOptionalChecks(t *testing.T) {
-	fp := fakeprovider.New(t).WithPlatform(provider.PlatformGitHub)
+	fp := fakeprovider.New(t).WithPlatform(provider.ForgeGitHub)
 	result, _ := appvalidate.Prerequisites(context.Background(), appvalidate.PrerequisitesDeps{
 		GitRepo:  stubGit{verifyOK: true, tagSHA: "abc"},
 		Provider: fp,
@@ -156,7 +156,7 @@ func TestPrerequisites_PolicyFlagsGateOptionalChecks(t *testing.T) {
 }
 
 func TestPrerequisites_FailureProducesValidationError(t *testing.T) {
-	fp := fakeprovider.New(t).WithPlatform(provider.PlatformGitHub)
+	fp := fakeprovider.New(t).WithPlatform(provider.ForgeGitHub)
 
 	_, err := appvalidate.Prerequisites(context.Background(), appvalidate.PrerequisitesDeps{
 		GitRepo:  stubGit{uniqueTagsErr: errors.New("git boom")}, //nolint:err113 // test mock error
@@ -178,7 +178,7 @@ func TestPrerequisites_FailureProducesValidationError(t *testing.T) {
 }
 
 func TestPrerequisites_OutputIsOrdered(t *testing.T) {
-	fp := fakeprovider.New(t).WithPlatform(provider.PlatformGitHub)
+	fp := fakeprovider.New(t).WithPlatform(provider.ForgeGitHub)
 
 	var out bytes.Buffer
 

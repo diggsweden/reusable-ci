@@ -34,12 +34,12 @@ func TestAppLayerDoesNotBranchOnPlatform(t *testing.T) {
 	// Forbidden substrings: a case arm or direct comparison against a
 	// concrete forge platform constant in non-test app code.
 	forbidden := []string{
-		"case provider.PlatformGitHub",
-		"case provider.PlatformGitLab",
-		"case provider.PlatformForgejo",
-		"== provider.PlatformGitHub",
-		"== provider.PlatformGitLab",
-		"== provider.PlatformForgejo",
+		"case provider.ForgeGitHub",
+		"case provider.ForgeGitLab",
+		"case provider.ForgeForgejo",
+		"== provider.ForgeGitHub",
+		"== provider.ForgeGitLab",
+		"== provider.ForgeForgejo",
 	}
 
 	var offenders []string
@@ -98,12 +98,12 @@ func TestDomainPlatformBranchingIsConfinedToPresentation(t *testing.T) {
 	}
 
 	branches := []string{
-		"case provider.PlatformGitHub",
-		"case provider.PlatformGitLab",
-		"case provider.PlatformForgejo",
-		"== provider.PlatformGitHub",
-		"== provider.PlatformGitLab",
-		"== provider.PlatformForgejo",
+		"case provider.ForgeGitHub",
+		"case provider.ForgeGitLab",
+		"case provider.ForgeForgejo",
+		"== provider.ForgeGitHub",
+		"== provider.ForgeGitLab",
+		"== provider.ForgeForgejo",
 	}
 
 	domainDir := filepath.Join(reporoot.Path(t), "internal", "domain")

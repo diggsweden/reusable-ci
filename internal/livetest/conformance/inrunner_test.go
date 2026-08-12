@@ -67,8 +67,8 @@ func TestInRunner_DetectsItsOwnRuntime(t *testing.T) {
 // Each probe also pins its own premise. If Forgejo stopped presenting
 // GITHUB_ACTIONS, or GitLab started, the detection question would have changed
 // shape and the scenario would be worth rewriting rather than quietly passing.
-func runtimeProbe(kind provider.Platform) string {
-	if kind == provider.PlatformGitLab {
+func runtimeProbe(kind provider.ForgeAPI) string {
+	if kind == provider.ForgeGitLab {
 		return `detect:
   script:
     - echo "GITLAB_CI=${GITLAB_CI:-unset}"
@@ -138,16 +138,16 @@ func TestInRunner_ProductDetectsItsRunner(t *testing.T) {
 
 // expectedRunner is the dialect each forge's runner must be recognised as. The
 // interesting one is Forgejo: it is NOT github, despite presenting GITHUB_*.
-func expectedRunner(kind provider.Platform) string {
-	if kind == provider.PlatformGitLab {
+func expectedRunner(kind provider.ForgeAPI) string {
+	if kind == provider.ForgeGitLab {
 		return "gitlab"
 	}
 
 	return "forgejo"
 }
 
-func productProbe(kind provider.Platform, assetURL, want string) string {
-	if kind == provider.PlatformGitLab {
+func productProbe(kind provider.ForgeAPI, assetURL, want string) string {
+	if kind == provider.ForgeGitLab {
 		return `detect:
   image: ` + livetest.ProbeImage + `
   script:
@@ -216,7 +216,7 @@ func TestInRunner_NoGitHubAnnotationsOnOtherForges(t *testing.T) {
 // `doctor` is the vehicle because it always has something to say and never
 // mutates anything, so the probe stays about the dialect. Its exit status is
 // ignored: whether this lab passes a health check is not the claim.
-func annotationProbe(kind provider.Platform, assetURL string) string {
+func annotationProbe(kind provider.ForgeAPI, assetURL string) string {
 	check := `./reusable-ci doctor > out.txt 2>&1 || true
 cat out.txt
 
@@ -229,7 +229,7 @@ if grep -qE '::(error|warning|notice|group|endgroup)::' out.txt; then
   exit 1
 fi`
 
-	if kind == provider.PlatformGitLab {
+	if kind == provider.ForgeGitLab {
 		return `detect:
   image: ` + livetest.ProbeImage + `
   script:
@@ -305,11 +305,11 @@ func TestInRunner_StepSummaryReachesAReader(t *testing.T) {
 // pipeline never named would be testing the fixture. Forgejo is deliberately
 // given none — the claim there is exactly that the summary falls back to the job
 // log rather than vanishing.
-func summaryProbe(kind provider.Platform, assetURL string) string {
+func summaryProbe(kind provider.ForgeAPI, assetURL string) string {
 	const report = `run_product report build go --binary-name demo \
   --module example.com/demo --platforms linux/amd64 --version v1.0.0`
 
-	if kind == provider.PlatformGitLab {
+	if kind == provider.ForgeGitLab {
 		return `detect:
   image: ` + livetest.ProbeImage + `
   variables:
@@ -403,11 +403,11 @@ func TestInRunner_StepOutputsReachTheRunnersOutputFile(t *testing.T) {
 // native $FORGEJO_OUTPUT is required to be the one written. Asserting a
 // preference that the runner's own configuration makes unobservable would be
 // testing the fixture.
-func outputFileProbe(kind provider.Platform, assetURL string) string {
+func outputFileProbe(kind provider.ForgeAPI, assetURL string) string {
 	const resolve = `run_product release resolve metadata \
   --version v9.9.9-parrun5 --repository livetest/outputs`
 
-	if kind == provider.PlatformGitLab {
+	if kind == provider.ForgeGitLab {
 		// GitLab does not provide an output file; the pipeline nominates one,
 		// which is the documented contract rather than a fixture convenience.
 		return `detect:

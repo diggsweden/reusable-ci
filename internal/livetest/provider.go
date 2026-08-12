@@ -31,11 +31,11 @@ func Provider(tb TB, target Target, repo string) provider.Provider {
 	env := targetEnv(target, repo)
 
 	switch target.Kind {
-	case provider.PlatformForgejo:
+	case provider.ForgeForgejo:
 		return &forgejo.Provider{Env: env, APIBaseOverride: target.BaseURL()}
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		return &gitlab.Provider{Env: env, APIBaseOverride: target.BaseURL()}
-	case provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeGitHub, provider.ForgeLocal:
 		tb.Fatalf("livetest: platform %q is not a live-forge target in this tier", target.Kind)
 	default:
 		tb.Fatalf("livetest: unknown platform %q", target.Kind)
@@ -56,16 +56,16 @@ func targetEnv(target Target, repo string) func(string) string {
 	values := map[string]string{}
 
 	switch target.Kind {
-	case provider.PlatformForgejo:
+	case provider.ForgeForgejo:
 		values["FORGEJO_TOKEN"] = target.Token
 		values["GITEA_TOKEN"] = target.Token
 		values["FORGEJO_SERVER_URL"] = target.BaseURL()
 		values["FORGEJO_REPOSITORY"] = slug
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		values["GITLAB_TOKEN"] = target.Token
 		values["CI_SERVER_URL"] = target.BaseURL()
 		values["CI_PROJECT_PATH"] = slug
-	case provider.PlatformGitHub, provider.PlatformLocal:
+	case provider.ForgeGitHub, provider.ForgeLocal:
 	}
 
 	return func(key string) string { return values[key] }

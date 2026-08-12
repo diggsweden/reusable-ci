@@ -98,7 +98,7 @@ func TestProvenance_GeneratesEquivalentlyOnEveryForge(t *testing.T) {
 	// from it, and the scenario compares statements across forges.
 	const provenanceRunID = "1"
 
-	subjects := map[provider.Platform]string{}
+	subjects := map[provider.ForgeAPI]string{}
 
 	for _, kind := range livetest.LiveForges() {
 		t.Run(string(kind), func(t *testing.T) {
@@ -174,10 +174,10 @@ func TestProvenance_GeneratesEquivalentlyOnEveryForge(t *testing.T) {
 // capability, which is where degradation is observable. A capability every live
 // forge claims makes the scenario vacuous, and that is reported rather than
 // passing quietly.
-func forgesLacking(t *testing.T, claims func(provider.Capabilities) bool, capability string) []provider.Platform {
+func forgesLacking(t *testing.T, claims func(provider.Capabilities) bool, capability string) []provider.ForgeAPI {
 	t.Helper()
 
-	var kinds []provider.Platform
+	var kinds []provider.ForgeAPI
 
 	for _, kind := range livetest.LiveForges() {
 		capabilities, known := livetest.Capabilities(kind)

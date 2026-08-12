@@ -112,7 +112,7 @@ func CountOpengrepFindings(body string) OpengrepCounts {
 // summary block. The bash takes these from $CI_PLATFORM /
 // $HAS_CODE_SCANNING_TOKEN / $CODE_SCANNING_TOKEN.
 type OpengrepPlatformContext struct {
-	Platform             provider.Platform
+	Platform             provider.ForgeAPI
 	HasCodeScanningToken bool
 	RunURL               string
 }
@@ -121,15 +121,15 @@ type OpengrepPlatformContext struct {
 // "Security / Code Scanning" row.
 func OpengrepCodeScanningLabel(ctx OpengrepPlatformContext) string {
 	switch ctx.Platform {
-	case provider.PlatformGitHub:
+	case provider.ForgeGitHub:
 		if ctx.HasCodeScanningToken {
 			return "SARIF generated, upload configured"
 		}
 
 		return "SARIF generated, upload not configured"
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		return "GitLab SAST artifact generated"
-	case provider.PlatformForgejo:
+	case provider.ForgeForgejo:
 		return "SARIF artifact generated (no Code Scanning ingestion)"
 	default:
 		return "Portable artifacts only"
@@ -140,15 +140,15 @@ func OpengrepCodeScanningLabel(ctx OpengrepPlatformContext) string {
 // after the table.
 func OpengrepCodeScanningNote(ctx OpengrepPlatformContext) string {
 	switch ctx.Platform {
-	case provider.PlatformGitHub:
+	case provider.ForgeGitHub:
 		if ctx.HasCodeScanningToken {
 			return "SARIF will be uploaded to Security / Code Scanning after the scan step completes."
 		}
 
 		return "SARIF is still generated and saved as a workflow artifact. Configure CODE_SCANNING_TOKEN to publish results in Security / Code Scanning."
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		return "A GitLab SAST report is generated alongside the portable artifacts."
-	case provider.PlatformForgejo:
+	case provider.ForgeForgejo:
 		return "Forgejo has no Code Scanning ingestion; the SARIF report is saved as a workflow artifact for external tooling."
 	default:
 		return "Portable artifacts are generated without platform-native upload."

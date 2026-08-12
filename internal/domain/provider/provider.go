@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-// Package provider defines the cross-platform provider port.
+// Package provider defines the cross-forge provider port.
 //
 // Domain code depends only on this package. Adapters import it to
 // implement the interface; the composition root in cli/deps wires the
@@ -13,37 +13,37 @@ import (
 	"strings"
 )
 
-// Platform identifies the *forge API* the binary talks to — the server
+// ForgeAPI identifies the forge whose API the binary talks to: the server
 // REST surface used for releases, asset upload, token/permission checks,
 // repo metadata, and SARIF. It is one of two orthogonal axes; the other
 // is RunnerKind (the workflow-runner conventions). The axes are genuinely
 // independent: Forgejo, for instance, is its own value on both — a
-// distinct forge API (PlatformForgejo) and a distinct runner dialect
+// distinct forge API (ForgeForgejo) and a distinct runner dialect
 // (RunnerForgejo) — and keeping them separate is what lets one binary
 // serve every combination without misrouting API calls or output.
-type Platform string
+type ForgeAPI string
 
-// Recognised Platform (forge API) values.
+// Recognised ForgeAPI values.
 const (
-	PlatformGitHub  Platform = "github"
-	PlatformGitLab  Platform = "gitlab"
-	PlatformForgejo Platform = "forgejo"
-	PlatformLocal   Platform = "local"
+	ForgeGitHub  ForgeAPI = "github"
+	ForgeGitLab  ForgeAPI = "gitlab"
+	ForgeForgejo ForgeAPI = "forgejo"
+	ForgeLocal   ForgeAPI = "local"
 )
 
 // String satisfies fmt.Stringer for ergonomic logging.
-func (p Platform) String() string { return string(p) }
+func (p ForgeAPI) String() string { return string(p) }
 
-// AllPlatforms is the canonical, ordered set of forge-API platforms — the
+// AllForges is the canonical, ordered set of forges — the
 // single source consumers (IsValid, the --provider flag help/validation)
 // derive from, so adding a forge is one edit here.
-func AllPlatforms() []Platform {
-	return []Platform{PlatformGitHub, PlatformGitLab, PlatformForgejo, PlatformLocal}
+func AllForges() []ForgeAPI {
+	return []ForgeAPI{ForgeGitHub, ForgeGitLab, ForgeForgejo, ForgeLocal}
 }
 
-// IsValid reports whether the value is one of the known platforms.
-func (p Platform) IsValid() bool {
-	for _, v := range AllPlatforms() {
+// IsValid reports whether the value is one of the known forges.
+func (p ForgeAPI) IsValid() bool {
+	for _, v := range AllForges() {
 		if p == v {
 			return true
 		}
@@ -55,7 +55,7 @@ func (p Platform) IsValid() bool {
 // RunnerKind identifies the *workflow-runner conventions* the binary
 // emits for — output format, $*_OUTPUT key/value writes, annotation
 // vocabulary, and step-summary file. It is the second axis alongside
-// Platform (forge API).
+// ForgeAPI (forge API).
 //
 // GitHub Actions and Forgejo Actions are deliberately *separate* runner
 // kinds, not one shared "gha-compatible" value: Forgejo itself states it
@@ -117,7 +117,7 @@ func (r RunnerKind) IsValid() bool {
 // Info is a forge's self-description: the human labels and
 // conventions a generic command needs without branching on the forge's
 // identity. Each adapter returns its own values from Describe(), so app
-// code consults this instead of `switch`-ing on Platform.
+// code consults this instead of `switch`-ing on ForgeAPI.
 type Info struct {
 	DisplayName string // human name, e.g. "GitHub", "GitLab", "local"
 	SetupURL    string // where to create a release token ("" = none)
@@ -127,7 +127,7 @@ type Info struct {
 
 // Describer is implemented by providers that can describe their own
 // conventions. Every adapter implements it; app code depends on this
-// interface rather than the Platform enum.
+// interface rather than the ForgeAPI enum.
 type Describer interface{ Describe() Info }
 
 // Capabilities reports which optional forge features are available, so
@@ -267,7 +267,7 @@ type TokenAdviser interface {
 // that already owns every other fact about its forge, so adding a fourth forge
 // never means editing the domain.
 //
-// Optional: a platform with no hosted web UI (local) simply does not implement
+// Optional: a forge with no hosted web UI (local) simply does not implement
 // it, and the summary renders a textual placeholder.
 type WebURLBuilder interface {
 	// ReleaseWebURL links to the page for one release. server is the forge
@@ -323,12 +323,12 @@ const (
 	RefTypeOther  RefType = "other"
 )
 
-// EventContext is the platform-portable description of "what is the current
+// EventContext is the forge-portable description of "what is the current
 // build running against". Each adapter resolves this from its native env
 // variables (GITHUB_REF / GITHUB_SHA on GHA; CI_COMMIT_REF_NAME /
 // CI_COMMIT_TAG / CI_COMMIT_SHA on GitLab).
 type EventContext struct {
-	Platform Platform
+	ForgeAPI ForgeAPI
 	RefName  string // "main", "v1.2.3", etc.
 	RefType  RefType
 	SHA      string // full commit SHA
@@ -374,23 +374,23 @@ type BotPermissions struct {
 	BranchesAccessible bool
 }
 
-// MakeLatestMode is the platform value for release "latest" handling. GitHub
+// MakeLatestMode is the forge-side value for release "latest" handling. GitHub
 // accepts "true", "false", and "legacy"; other forges may ignore it.
 type MakeLatestMode string
 
 // MakeLatest modes select how a release marks itself "latest": force true,
-// force false, or defer to the platform's default (legacy).
+// force false, or defer to the forge's default (legacy).
 const (
 	MakeLatestTrue   MakeLatestMode = "true"
 	MakeLatestFalse  MakeLatestMode = "false"
 	MakeLatestLegacy MakeLatestMode = "legacy"
 )
 
-// ReleaseSpec describes a release to create on the platform. Domain
+// ReleaseSpec describes a release to create on the forge. Domain
 // code populates this from the use-case inputs + asset collection;
 // adapters consume it without further policy decisions.
 //
-// Asset paths are platform-local file paths the adapter uploads
+// Asset paths are local file paths the adapter uploads
 // (gh release create supports passing them directly; the GitLab
 // adapter uploads them via /assets/links).
 type ReleaseSpec struct {
@@ -404,12 +404,12 @@ type ReleaseSpec struct {
 }
 
 // SARIFUpload is the payload for UploadSARIF. The adapter handles
-// the platform-specific encoding (gzip+base64 + JSON wrapper on
+// the forge-specific encoding (gzip+base64 + JSON wrapper on
 // GitHub Code Scanning; not supported on GitLab/local). Raw SARIF
 // content is what use-case code reads off disk — adapters compress
 // and wrap as needed.
 type SARIFUpload struct {
-	// Repository is "owner/repo" on GitHub (the only platform that
+	// Repository is "owner/repo" on GitHub (the only forge that
 	// implements this today).
 	Repository string
 
@@ -422,7 +422,7 @@ type SARIFUpload struct {
 	// SARIF is the raw SARIF JSON body (uncompressed, undeflated). The
 	// analysis category is carried INSIDE this body as each run's
 	// automationDetails.id (set app-side by security.SetSARIFCategory) — the
-	// field Code Scanning keys analyses on. Adapters apply the platform's
+	// field Code Scanning keys analyses on. Adapters apply the forge's
 	// required encoding and do not handle category separately.
 	SARIF []byte
 
@@ -431,18 +431,18 @@ type SARIFUpload struct {
 	Token string
 }
 
-// Provider is the always-available base: every platform adapter
+// Provider is the always-available base: every forge adapter
 // implements it. Use cases that need richer capabilities depend on the
 // role-specific interfaces below — `local.Provider` only implements
 // this base + RepoMetadataFetcher, so use cases that need a missing
 // role surface a typed error at the CLI boundary rather than a runtime
 // "method returns ErrUnsupported" trap deep in the call stack.
 type Provider interface {
-	// Name returns which platform this provider talks to. Used by
-	// use cases that gate platform-only features (e.g. SLSA L3).
-	Name() Platform
+	// Name returns which forge this provider talks to. Used by
+	// use cases that gate forge-specific features (e.g. SLSA L3).
+	Name() ForgeAPI
 
-	// ResolveContext extracts the EventContext from the platform's
+	// ResolveContext extracts the EventContext from its
 	// native environment.
 	ResolveContext(ctx context.Context) (*EventContext, error)
 }
@@ -472,7 +472,7 @@ type TokenValidator interface {
 	ValidateBotPermissions(ctx context.Context, repo string) (*BotPermissions, error)
 }
 
-// ReleaseCreator creates a release on the platform. Implemented by
+// ReleaseCreator creates a release on the forge. Implemented by
 // github and gitlab; not by local.
 //
 //   - github: in-process via go-github (delete-and-recreate of existing
@@ -498,7 +498,7 @@ type ReleaseAssetUploader interface {
 	UploadReleaseAsset(ctx context.Context, tag, file string) error
 }
 
-// SARIFUploader posts a SARIF report to the platform's code-scanning
+// SARIFUploader posts a SARIF report to the forge's code-scanning
 // surface. Today only github implements this — GitLab has its own
 // security-report shape that Trivy/OpenGrep emit directly via the
 // GitLab SAST format, so no GitLab implementation is needed.

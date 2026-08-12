@@ -55,7 +55,7 @@ func (p *Provider) ResolveContext(_ context.Context) (*provider.EventContext, er
 	}
 
 	return &provider.EventContext{
-		Platform:  provider.PlatformGitHub,
+		ForgeAPI:  provider.ForgeGitHub,
 		RefName:   refName,
 		RefType:   refType,
 		SHA:       sha,

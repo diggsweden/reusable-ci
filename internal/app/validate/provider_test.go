@@ -18,7 +18,7 @@ import (
 
 func TestToken_GitHub_FineGrainedAPISucceeds(t *testing.T) {
 	t.Parallel()
-	prov := fakeprovider.New(t).WithPlatform(provider.PlatformGitHub)
+	prov := fakeprovider.New(t).WithPlatform(provider.ForgeGitHub)
 
 	var buf bytes.Buffer
 
@@ -43,7 +43,7 @@ func TestToken_GitHub_FineGrainedAPISucceeds(t *testing.T) {
 
 func TestToken_GitHub_ClassicPATRefused(t *testing.T) {
 	t.Parallel()
-	prov := fakeprovider.New(t).WithPlatform(provider.PlatformGitHub)
+	prov := fakeprovider.New(t).WithPlatform(provider.ForgeGitHub)
 
 	err := appvalidate.Token(context.Background(), prov, &bytes.Buffer{}, appvalidate.TokenInput{
 		Token: "ghp_classic", Repository: "owner/repo",
@@ -59,7 +59,7 @@ func TestToken_GitHub_ClassicPATRefused(t *testing.T) {
 
 func TestToken_GitHub_UnknownPrefixWarnsButProceeds(t *testing.T) {
 	t.Parallel()
-	prov := fakeprovider.New(t).WithPlatform(provider.PlatformGitHub)
+	prov := fakeprovider.New(t).WithPlatform(provider.ForgeGitHub)
 
 	var buf bytes.Buffer
 	if err := appvalidate.Token(context.Background(), prov, &buf, appvalidate.TokenInput{
@@ -75,7 +75,7 @@ func TestToken_GitHub_UnknownPrefixWarnsButProceeds(t *testing.T) {
 
 func TestToken_GitHub_AppToken(t *testing.T) {
 	t.Parallel()
-	prov := fakeprovider.New(t).WithPlatform(provider.PlatformGitHub)
+	prov := fakeprovider.New(t).WithPlatform(provider.ForgeGitHub)
 
 	var buf bytes.Buffer
 	if err := appvalidate.Token(context.Background(), prov, &buf, appvalidate.TokenInput{
@@ -91,7 +91,7 @@ func TestToken_GitHub_AppToken(t *testing.T) {
 
 func TestToken_EmptyToken(t *testing.T) {
 	t.Parallel()
-	prov := fakeprovider.New(t).WithPlatform(provider.PlatformGitHub)
+	prov := fakeprovider.New(t).WithPlatform(provider.ForgeGitHub)
 
 	err := appvalidate.Token(context.Background(), prov, &bytes.Buffer{}, appvalidate.TokenInput{
 		Repository: "owner/repo",
@@ -109,7 +109,7 @@ func TestToken_EmptyToken(t *testing.T) {
 
 func TestToken_EmptyRepositoryUsage(t *testing.T) {
 	t.Parallel()
-	prov := fakeprovider.New(t).WithPlatform(provider.PlatformGitHub)
+	prov := fakeprovider.New(t).WithPlatform(provider.ForgeGitHub)
 
 	//nolint:gosec // fake token literal — not a real credential.
 	err := appvalidate.Token(context.Background(), prov, &bytes.Buffer{}, appvalidate.TokenInput{
@@ -122,7 +122,7 @@ func TestToken_EmptyRepositoryUsage(t *testing.T) {
 
 func TestToken_GitLab_NoFormatChecks(t *testing.T) {
 	t.Parallel()
-	prov := fakeprovider.New(t).WithPlatform(provider.PlatformGitLab)
+	prov := fakeprovider.New(t).WithPlatform(provider.ForgeGitLab)
 
 	var buf bytes.Buffer
 	// "ghp_classic" would fail on GitHub; on GitLab we don't gate by prefix.
@@ -139,7 +139,7 @@ func TestToken_GitLab_NoFormatChecks(t *testing.T) {
 
 func TestToken_APIRejection(t *testing.T) {
 	t.Parallel()
-	prov := fakeprovider.New(t).WithPlatform(provider.PlatformGitHub).
+	prov := fakeprovider.New(t).WithPlatform(provider.ForgeGitHub).
 		WithValidateTokenError(fakeError("HTTP 401"))
 
 	//nolint:gosec // fake token literal — not a real credential.

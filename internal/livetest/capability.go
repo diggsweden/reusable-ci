@@ -23,12 +23,12 @@ import (
 
 // Platforms is every forge the product has an adapter for, in the order the
 // published capability matrix lists them.
-func Platforms() []provider.Platform {
-	return []provider.Platform{
-		provider.PlatformGitHub,
-		provider.PlatformGitLab,
-		provider.PlatformForgejo,
-		provider.PlatformLocal,
+func Platforms() []provider.ForgeAPI {
+	return []provider.ForgeAPI{
+		provider.ForgeGitHub,
+		provider.ForgeGitLab,
+		provider.ForgeForgejo,
+		provider.ForgeLocal,
 	}
 }
 
@@ -45,15 +45,15 @@ func Platforms() []provider.Platform {
 // Accept skips inside the subtest with "not selected by LAB_TARGETS", so the
 // loop body ran for a forge that was never coming. Deciding it here means a
 // scenario iterates exactly what it can drive.
-func LiveForges() []provider.Platform {
-	supported := []provider.Platform{provider.PlatformGitLab, provider.PlatformForgejo}
+func LiveForges() []provider.ForgeAPI {
+	supported := []provider.ForgeAPI{provider.ForgeGitLab, provider.ForgeForgejo}
 
 	selected := map[string]bool{}
 	for _, name := range strings.Split(os.Getenv("LAB_TARGETS"), ",") {
 		selected[strings.ToLower(strings.TrimSpace(name))] = true
 	}
 
-	live := make([]provider.Platform, 0, len(supported))
+	live := make([]provider.ForgeAPI, 0, len(supported))
 
 	for _, kind := range supported {
 		if selected[string(kind)] {
@@ -66,19 +66,19 @@ func LiveForges() []provider.Platform {
 
 // Capabilities reports what a forge claims, built from an adapter with an empty
 // environment so the answer reflects the code rather than the operator's shell.
-func Capabilities(kind provider.Platform) (provider.Capabilities, bool) {
+func Capabilities(kind provider.ForgeAPI) (provider.Capabilities, bool) {
 	empty := func(string) string { return "" }
 
 	var reporter provider.CapabilityReporter
 
 	switch kind {
-	case provider.PlatformGitHub:
+	case provider.ForgeGitHub:
 		reporter = &github.Provider{Env: empty}
-	case provider.PlatformGitLab:
+	case provider.ForgeGitLab:
 		reporter = &gitlab.Provider{Env: empty}
-	case provider.PlatformForgejo:
+	case provider.ForgeForgejo:
 		reporter = &forgejo.Provider{Env: empty}
-	case provider.PlatformLocal:
+	case provider.ForgeLocal:
 		reporter = local.New()
 	default:
 		return provider.Capabilities{}, false

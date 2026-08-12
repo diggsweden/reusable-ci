@@ -73,7 +73,7 @@ func TestCreateRelease_RequiresTagAndRepo(t *testing.T) {
 
 func TestCreateRelease_HappyPath(t *testing.T) {
 	t.Parallel()
-	prov := fakeprovider.New(t).WithPlatform(provider.PlatformGitHub)
+	prov := fakeprovider.New(t).WithPlatform(provider.ForgeGitHub)
 	fs := &fakeFS{
 		Files: map[string]bool{
 			"release-notes.md":           true,

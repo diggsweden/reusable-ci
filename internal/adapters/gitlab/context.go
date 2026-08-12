@@ -48,7 +48,7 @@ func (p *Provider) ResolveContext(_ context.Context) (*provider.EventContext, er
 	prNumber := get("CI_MERGE_REQUEST_IID")
 
 	return &provider.EventContext{
-		Platform:  provider.PlatformGitLab,
+		ForgeAPI:  provider.ForgeGitLab,
 		RefName:   get("CI_COMMIT_REF_NAME"),
 		RefType:   refType,
 		SHA:       sha,

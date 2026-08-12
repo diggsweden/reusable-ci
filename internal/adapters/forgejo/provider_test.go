@@ -27,7 +27,7 @@ func envMap(m map[string]string) func(string) string {
 func TestName(t *testing.T) {
 	t.Parallel()
 
-	if got := forgejo.New().Name(); got != provider.PlatformForgejo {
+	if got := forgejo.New().Name(); got != provider.ForgeForgejo {
 		t.Errorf("Name() = %q, want forgejo", got)
 	}
 }
@@ -51,8 +51,8 @@ func TestResolveContext_PrefersForgejoEnvWithGitHubFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if ctx.Platform != provider.PlatformForgejo {
-		t.Errorf("Platform = %q", ctx.Platform)
+	if ctx.ForgeAPI != provider.ForgeForgejo {
+		t.Errorf("Platform = %q", ctx.ForgeAPI)
 	}
 
 	if ctx.SHA != "0123456789abcdef" || ctx.ShortSHA != "0123456" {
