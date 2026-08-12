@@ -8,7 +8,7 @@ SPDX-License-Identifier: CC0-1.0
 
 [![Tag](https://img.shields.io/github/v/tag/diggsweden/reusable-ci?style=for-the-badge&color=green)](https://github.com/diggsweden/reusable-ci/tags)
 
-[![License: CC0-1.0](https://img.shields.io/badge/License-CC0--1.0-blue?style=for-the-badge)](LICENSES/CC0-1.0.txt)
+[![License: EUPL-1.2 OR GPL-3.0-or-later](https://img.shields.io/badge/License-EUPL--1.2%20OR%20GPL--3.0--or--later-blue?style=for-the-badge)](LICENSE)
 [![REUSE](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.reuse.software%2Fstatus%2Fgithub.com%2Fdiggsweden%2Freusable-ci&query=status&style=for-the-badge&label=REUSE&color=lightblue)](https://api.reuse.software/info/github.com/diggsweden/reusable-ci)
 
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/diggsweden/reusable-ci?label=openssf+scorecard&style=for-the-badge)](https://scorecard.dev/viewer/?uri=github.com/diggsweden/reusable-ci)
@@ -376,6 +376,16 @@ branch/dispatch-triggered, never a tag.
 
 ## License
 
-This project is licensed under the [CC0-1.0 License](LICENSES/CC0-1.0.txt).
+The `reusable-ci` program — the Go source — is dual-licensed
+[EUPL-1.2](LICENSES/EUPL-1.2.txt) **OR**
+[GPL-3.0-or-later](LICENSES/GPL-3.0-or-later.txt), at your option.
+
+Everything you copy into your own repository is
+[CC0-1.0](LICENSES/CC0-1.0.txt): the reusable workflows, the GitLab Catalog
+components in `templates/`, the shell scripts, and all configuration,
+documentation and examples. Lift them freely.
+
+See [LICENSE](LICENSE) for the full statement. Every file carries an SPDX
+identifier, which is authoritative for that file.
 
 ---

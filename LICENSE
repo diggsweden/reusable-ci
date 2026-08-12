@@ -12,9 +12,19 @@ The full license texts are in the LICENSES/ directory:
   - LICENSES/EUPL-1.2.txt
   - LICENSES/GPL-3.0-or-later.txt
 
+The dual license above covers the program source — the Go code, wherever it
+lives in the tree.
+
+Everything else is marked `CC0-1.0` (public domain) so it can be copied and
+adapted without obligation: the reusable workflows in .github/workflows/, the
+GitLab CI/CD Catalog components in templates/, the shell scripts, the
+Containerfiles, and all configuration, documentation, examples and test data.
+These are the parts adopters are expected to lift into their own repositories,
+and CC0 is what lets them do that freely.
+
+Third-party files keep the license their authors gave them; the vendored
+Gradle wrapper is Apache-2.0, for example.
+
 This project follows the REUSE specification (https://reuse.software): every
 file carries an SPDX license identifier, either in its header or in REUSE.toml.
-Most source files are marked `EUPL-1.2 OR GPL-3.0-or-later`; configuration,
-documentation, example templates, and test data are marked `CC0-1.0` (public
-domain) so they can be reused without obligation. Consult each file's SPDX
-identifier for its precise terms.
+That identifier, not this summary, is authoritative for any given file.
