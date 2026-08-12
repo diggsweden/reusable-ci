@@ -210,7 +210,7 @@ func cliEnv(target Target, repo string) []string {
 		// Detection is pinned rather than inferred: this runs on a laptop, and
 		// leaving the product to guess would make the result depend on whose
 		// shell it was.
-		"REUSABLE_CI_PROVIDER": string(target.Kind),
+		"REUSABLE_CI_PROVIDER": string(target.Forge),
 		"REUSABLE_CI_RUNNER":   "local",
 
 		// Containment, for every invocation rather than for the scenarios that
@@ -253,7 +253,7 @@ func cliEnv(target Target, repo string) []string {
 // targetEnvKeys lists the variables targetEnv answers for a kind, so cliEnv can
 // materialise them without the closure leaking its map.
 func targetEnvKeys(target Target) []string {
-	switch target.Kind {
+	switch target.Forge {
 	case provider.ForgeForgejo:
 		return []string{"FORGEJO_TOKEN", "GITEA_TOKEN", "FORGEJO_SERVER_URL", "FORGEJO_REPOSITORY"}
 	case provider.ForgeGitLab:

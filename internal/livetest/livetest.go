@@ -96,7 +96,7 @@ var (
 
 // Target names one selected forge instance and the identity to act as.
 type Target struct {
-	Kind  provider.ForgeAPI
+	Forge provider.ForgeAPI
 	Host  string // host[:port], no scheme
 	Owner string
 	Token string
@@ -111,7 +111,7 @@ type Target struct {
 func (t Target) BaseURL() string { return "https://" + t.Host }
 
 // String names a target for test output without exposing its token.
-func (t Target) String() string { return string(t.Kind) + "@" + t.Host + "/" + t.Owner }
+func (t Target) String() string { return string(t.Forge) + "@" + t.Host + "/" + t.Owner }
 
 // targetRef is one selected forge's identity-bearing fields. Keeping these on
 // the contract rather than re-reading the environment is what lets the identity
@@ -168,7 +168,7 @@ func Accept(tb TB, kind provider.ForgeAPI) Target {
 
 	prefix := "LAB_" + strings.ToUpper(string(kind))
 	target := Target{
-		Kind:  kind,
+		Forge: kind,
 		Host:  os.Getenv(prefix + "_HOST"),
 		Owner: os.Getenv(prefix + "_OWNER"),
 		Token: os.Getenv(prefix + "_TOKEN"),
@@ -213,7 +213,7 @@ func validate(target Target, sourced contract, token tokenMetadata, now time.Tim
 		return err
 	}
 
-	if err := validateTokenMetadata(target.Kind, sourced.runID, token, now); err != nil {
+	if err := validateTokenMetadata(target.Forge, sourced.runID, token, now); err != nil {
 		return err
 	}
 
@@ -263,7 +263,7 @@ func validateAuthorization(target Target, sourced contract) error {
 
 	// The target being acted on must appear in the identity by exact string,
 	// not merely be one of the selected names.
-	want := identityEntry(string(target.Kind), target.Host, target.Owner, sourced.resourcePrefix)
+	want := identityEntry(string(target.Forge), target.Host, target.Owner, sourced.resourcePrefix)
 	if !strings.Contains(sourced.identity, want) {
 		return fmt.Errorf("identity does not contain the exact target %q: %w", want, errs.ErrValidation)
 	}
@@ -276,16 +276,16 @@ func validateAuthorization(target Target, sourced contract) error {
 }
 
 func validateTarget(target Target) error {
-	switch target.Kind {
+	switch target.Forge {
 	case provider.ForgeGitLab, provider.ForgeForgejo:
 	case provider.ForgeGitHub, provider.ForgeLocal:
-		return fmt.Errorf("platform %q is not a live-forge target in this tier: %w", target.Kind, errs.ErrValidation)
+		return fmt.Errorf("platform %q is not a live-forge target in this tier: %w", target.Forge, errs.ErrValidation)
 	default:
-		return fmt.Errorf("unknown platform %q: %w", target.Kind, errs.ErrValidation)
+		return fmt.Errorf("unknown platform %q: %w", target.Forge, errs.ErrValidation)
 	}
 
 	if target.Token == "" {
-		return fmt.Errorf("%s token is empty: %w", target.Kind, errs.ErrValidation)
+		return fmt.Errorf("%s token is empty: %w", target.Forge, errs.ErrValidation)
 	}
 
 	if !ownerPattern.MatchString(target.Owner) || target.Owner == "." || target.Owner == ".." {

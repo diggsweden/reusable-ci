@@ -40,7 +40,7 @@ func PublishedPackageVersions(tb TB, target Target, repo, ecosystem, name string
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	switch target.Kind {
+	switch target.Forge {
 	case provider.ForgeGitLab:
 		return gitlabPackageVersions(ctx, tb, target, repo, ecosystem, name)
 	case provider.ForgeForgejo, provider.ForgeGitHub, provider.ForgeLocal:
@@ -129,7 +129,7 @@ func DeletePublishedPackage(tb TB, target Target, repo, ecosystem, name, version
 
 	var endpoint string
 
-	switch target.Kind {
+	switch target.Forge {
 	case provider.ForgeGitLab:
 		id := gitlabPackageID(ctx, tb, target, repo, ecosystem, name, version)
 		if id == 0 {
@@ -189,7 +189,7 @@ func gitlabPackageID(ctx context.Context, tb TB, target Target, repo, ecosystem,
 // registry accepts any name. A fixture that hard-coded one shape would be
 // testing a forge it was not running against.
 func NPMPackageName(target Target, base string) string {
-	if target.Kind == provider.ForgeGitLab {
+	if target.Forge == provider.ForgeGitLab {
 		return base
 	}
 
@@ -213,11 +213,11 @@ func SetRepoSecret(tb TB, target Target, repo, name, value string) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	switch target.Kind {
+	switch target.Forge {
 	case provider.ForgeGitLab:
 		// GitLab CI variables are project variables; not needed by any scenario
 		// yet, and adding an unused branch would be untested code.
-		tb.Fatalf("livetest: SetRepoSecret is not implemented for %s", target.Kind)
+		tb.Fatalf("livetest: SetRepoSecret is not implemented for %s", target.Forge)
 	case provider.ForgeForgejo, provider.ForgeGitHub, provider.ForgeLocal:
 		endpoint := target.BaseURL() + "/api/v1/repos/" + url.PathEscape(target.Owner) + "/" +
 			url.PathEscape(repo) + "/actions/secrets/" + url.PathEscape(name)
@@ -236,7 +236,7 @@ func SetRepoSecret(tb TB, target Target, repo, name, value string) {
 // with a colon. Asserting one spelling on both would fail against whichever
 // forge was not the one it was written for.
 func MavenPackageName(target Target, groupID, artifactID string) string {
-	if target.Kind == provider.ForgeGitLab {
+	if target.Forge == provider.ForgeGitLab {
 		return strings.ReplaceAll(groupID, ".", "/") + "/" + artifactID
 	}
 

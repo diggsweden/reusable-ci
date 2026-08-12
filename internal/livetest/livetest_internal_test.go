@@ -24,7 +24,7 @@ func validContract(now time.Time) (Target, contract, tokenMetadata) {
 	// G101: every value here is inert; the guard only checks the token is
 	// non-empty, and a fixture that looked less like a token would say less.
 	target := Target{ //nolint:gosec
-		Kind:  provider.ForgeForgejo,
+		Forge: provider.ForgeForgejo,
 		Host:  "forgejo.compose.gitproviderlab:8443",
 		Owner: "garga",
 		Token: "fake-forgejo-token",
@@ -202,7 +202,7 @@ func TestRequireAccepted_RefusesUnguardedTarget(t *testing.T) {
 	// through it however complete it looks.
 	recorder := &fatalRecorder{}
 	requireAccepted(recorder, Target{
-		Kind:  provider.ForgeForgejo,
+		Forge: provider.ForgeForgejo,
 		Host:  "forgejo.compose.gitproviderlab:8443",
 		Owner: "garga",
 		Token: "token",
@@ -216,7 +216,7 @@ func TestRequireAccepted_RefusesUnguardedTarget(t *testing.T) {
 func TestDeleteScratchRepo_RefusesForeignNamespace(t *testing.T) {
 	t.Parallel()
 
-	target := Target{Kind: provider.ForgeForgejo, Host: "forgejo.compose.gitproviderlab:8443", Owner: "garga"}
+	target := Target{Forge: provider.ForgeForgejo, Host: "forgejo.compose.gitproviderlab:8443", Owner: "garga"}
 
 	// cl- belongs to git-provider-clean. Even armed, this suite must not reach
 	// outside the namespace it declared.

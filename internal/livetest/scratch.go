@@ -112,7 +112,7 @@ func PrepareTag(tb TB, target Target, repo, tag string) {
 }
 
 func prepareTag(ctx context.Context, target Target, repo, tag string) error {
-	switch target.Kind {
+	switch target.Forge {
 	case provider.ForgeForgejo:
 		// auto_init already left a commit on main, so only the tag is missing.
 		body := map[string]any{"tag_name": tag, "target": defaultBranch}
@@ -148,7 +148,7 @@ func prepareTag(ctx context.Context, target Target, repo, tag string) error {
 	case provider.ForgeGitHub, provider.ForgeLocal:
 	}
 
-	return fmt.Errorf("no tag preparation for platform %q: %w", target.Kind, errs.ErrUnsupported)
+	return fmt.Errorf("no tag preparation for platform %q: %w", target.Forge, errs.ErrUnsupported)
 }
 
 // DeleteScratchRepo removes a scratch repository. Absent is success, so it is
@@ -158,7 +158,7 @@ func DeleteScratchRepo(ctx context.Context, target Target, repo string) error {
 		return fmt.Errorf("refusing to delete %q: outside the %q namespace this suite owns: %w", repo, ResourcePrefix, errs.ErrValidation)
 	}
 
-	switch target.Kind {
+	switch target.Forge {
 	case provider.ForgeForgejo:
 		// Forgejo packages belong to the *owner*, not the repository, so
 		// deleting the repo leaves every container image it published behind as
@@ -178,7 +178,7 @@ func DeleteScratchRepo(ctx context.Context, target Target, repo string) error {
 	case provider.ForgeGitHub, provider.ForgeLocal:
 	}
 
-	return fmt.Errorf("no scratch-repo cleanup for platform %q: %w", target.Kind, errs.ErrUnsupported)
+	return fmt.Errorf("no scratch-repo cleanup for platform %q: %w", target.Forge, errs.ErrUnsupported)
 }
 
 // deleteForgejoPackages removes the container packages a scratch repository
@@ -284,7 +284,7 @@ func gitLabRegistryRepositoryIDs(ctx context.Context, target Target, list string
 }
 
 func createRepo(ctx context.Context, target Target, repo string) error {
-	switch target.Kind {
+	switch target.Forge {
 	case provider.ForgeForgejo:
 		body := map[string]any{"name": repo, "auto_init": true, "default_branch": defaultBranch, "private": false}
 
@@ -302,7 +302,7 @@ func createRepo(ctx context.Context, target Target, repo string) error {
 	case provider.ForgeGitHub, provider.ForgeLocal:
 	}
 
-	return fmt.Errorf("no scratch-repo creation for platform %q: %w", target.Kind, errs.ErrUnsupported)
+	return fmt.Errorf("no scratch-repo creation for platform %q: %w", target.Forge, errs.ErrUnsupported)
 }
 
 // deleteGitLabProject removes a scratch project, in the order GitLab requires.
@@ -461,7 +461,7 @@ func accepted(status int, accept []int) bool {
 }
 
 func authorize(req *http.Request, target Target) {
-	switch target.Kind {
+	switch target.Forge {
 	case provider.ForgeForgejo:
 		req.Header.Set("Authorization", "token "+target.Token)
 	case provider.ForgeGitLab:
@@ -516,7 +516,7 @@ func TagCommitSHA(tb TB, target Target, repo, tag string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	switch target.Kind {
+	switch target.Forge {
 	case provider.ForgeGitLab:
 		var payload struct {
 			Commit struct {
@@ -614,7 +614,7 @@ func sweepScratchRepos(tb TB, target Target, prefix string) {
 func scratchRepoNames(ctx context.Context, target Target, prefix string) []string {
 	var names []string
 
-	switch target.Kind {
+	switch target.Forge {
 	case provider.ForgeGitLab:
 		var projects []struct {
 			Path string `json:"path"`

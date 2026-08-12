@@ -64,7 +64,7 @@ type Image struct {
 // RegistryHost is where a forge serves its OCI registry. GitLab runs a separate
 // registry host; the Gitea family serves packages from the forge host itself.
 func RegistryHost(target Target) (string, error) {
-	switch target.Kind {
+	switch target.Forge {
 	case provider.ForgeGitLab:
 		return "registry." + target.Host, nil
 	case provider.ForgeForgejo:
@@ -72,7 +72,7 @@ func RegistryHost(target Target) (string, error) {
 	case provider.ForgeGitHub, provider.ForgeLocal:
 	}
 
-	return "", fmt.Errorf("no lab registry host for platform %q: %w", target.Kind, errs.ErrUnsupported)
+	return "", fmt.Errorf("no lab registry host for platform %q: %w", target.Forge, errs.ErrUnsupported)
 }
 
 // PushImage puts a synthetic single-arch image at owner/repo:tag and returns

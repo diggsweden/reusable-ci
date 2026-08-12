@@ -38,9 +38,9 @@ func TestWebURLs_ResolveOnEveryForge(t *testing.T) {
 			repo := livetest.NewScratchRepo(t, target, "weburl")
 			slug := livetest.RepoSlug(target, repo)
 
-			forge := livetest.Provider(t, target, repo)
+			adapter := livetest.Provider(t, target, repo)
 
-			urls, ok := forge.(provider.WebURLBuilder)
+			urls, ok := adapter.(provider.WebURLBuilder)
 			if !ok {
 				t.Fatalf("%s does not implement WebURLBuilder, so its summary can only print placeholders", kind)
 			}
@@ -52,7 +52,7 @@ func TestWebURLs_ResolveOnEveryForge(t *testing.T) {
 			// release an existing tag rather than creating one.
 			livetest.PrepareTag(t, target, repo, tag)
 
-			creator, ok := forge.(provider.ReleaseCreator)
+			creator, ok := adapter.(provider.ReleaseCreator)
 			if !ok {
 				t.Fatalf("%s does not implement ReleaseCreator", kind)
 			}

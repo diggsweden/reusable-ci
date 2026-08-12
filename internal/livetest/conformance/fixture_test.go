@@ -72,7 +72,7 @@ func (f ledgerFixture) mustRun(t *testing.T, verb string, args ...string) {
 
 	run := f.run(t, args...)
 	if run.ExitCode != 0 {
-		t.Fatalf("%s %s exited %d\nstderr: %s", f.target.Kind, verb, run.ExitCode, run.Stderr)
+		t.Fatalf("%s %s exited %d\nstderr: %s", f.target.Forge, verb, run.ExitCode, run.Stderr)
 	}
 }
 
@@ -82,13 +82,13 @@ func (f ledgerFixture) assertServes(t *testing.T, tag, want, why string) {
 
 	got, found := livetest.ImageDigest(t, f.target, f.repo, tag)
 	if !found {
-		t.Errorf("%s: %s:%s serves nothing — %s", f.target.Kind, f.imagePath, tag, why)
+		t.Errorf("%s: %s:%s serves nothing — %s", f.target.Forge, f.imagePath, tag, why)
 
 		return
 	}
 
 	if got != want {
-		t.Errorf("%s: %s:%s serves %s, want %s — %s", f.target.Kind, f.imagePath, tag, got, want, why)
+		t.Errorf("%s: %s:%s serves %s, want %s — %s", f.target.Forge, f.imagePath, tag, got, want, why)
 	}
 }
 
@@ -96,7 +96,7 @@ func (f ledgerFixture) assertAbsent(t *testing.T, tag, why string) {
 	t.Helper()
 
 	if _, found := livetest.ImageDigest(t, f.target, f.repo, tag); found {
-		t.Errorf("%s: %s:%s still serves an image — %s", f.target.Kind, f.imagePath, tag, why)
+		t.Errorf("%s: %s:%s still serves an image — %s", f.target.Forge, f.imagePath, tag, why)
 	}
 }
 

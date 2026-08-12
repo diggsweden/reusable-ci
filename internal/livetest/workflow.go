@@ -40,8 +40,8 @@ import (
 // workflowPath is where each forge looks for workflow definitions. Forgejo reads
 // .forgejo/workflows first and falls back to .github/workflows; using its own
 // directory keeps the fixture unambiguous about which runtime is meant.
-func workflowPath(kind provider.ForgeAPI, name string) (string, error) {
-	switch kind {
+func workflowPath(forge provider.ForgeAPI, name string) (string, error) {
+	switch forge {
 	case provider.ForgeForgejo:
 		return ".forgejo/workflows/" + name + ".yml", nil
 	case provider.ForgeGitHub:
@@ -54,7 +54,7 @@ func workflowPath(kind provider.ForgeAPI, name string) (string, error) {
 	case provider.ForgeLocal:
 	}
 
-	return "", fmt.Errorf("no workflow layout for platform %q: %w", kind, errUnsupportedInRunner)
+	return "", fmt.Errorf("no workflow layout for platform %q: %w", forge, errUnsupportedInRunner)
 }
 
 var errUnsupportedInRunner = errors.New("in-runner scenarios are not implemented for this platform")
@@ -72,12 +72,12 @@ var errUnsupportedInRunner = errors.New("in-runner scenarios are not implemented
 //
 // This is a fact about the SUITE. Whether the environment in front of it has a
 // runner is RunnerAvailable's question, and both have to hold.
-func RunsInRunner(kind provider.ForgeAPI) bool {
-	return kind == provider.ForgeForgejo || kind == provider.ForgeGitLab
+func RunsInRunner(forge provider.ForgeAPI) bool {
+	return forge == provider.ForgeForgejo || forge == provider.ForgeGitLab
 }
 
 // RunnerAvailable reports whether this environment has a runner that will pick
-// up a job for kind, read from the contract.
+// up a job for the given forge, read from the contract.
 //
 // Separate from RunsInRunner because the two answer different questions, and
 // only one of them is about the code. A road can deploy forges without
@@ -92,9 +92,9 @@ func RunsInRunner(kind provider.ForgeAPI) bool {
 // An absent field means no runner, for the same reason FulcioTrusts trusts
 // nothing when unset: assuming a runner turns a road that cannot run jobs into
 // a suite that reports failures about labels.
-func RunnerAvailable(kind provider.ForgeAPI) bool {
-	for _, forge := range strings.Split(os.Getenv(labRunnerForgesEnv), ",") {
-		if strings.EqualFold(strings.TrimSpace(forge), string(kind)) {
+func RunnerAvailable(forge provider.ForgeAPI) bool {
+	for _, deployed := range strings.Split(os.Getenv(labRunnerForgesEnv), ",") {
+		if strings.EqualFold(strings.TrimSpace(deployed), string(forge)) {
 			return true
 		}
 	}
@@ -115,7 +115,7 @@ func RunWorkflow(tb TB, target Target, repo, name, yaml string) string {
 	tb.Helper()
 	requireAccepted(tb, target)
 
-	path, err := workflowPath(target.Kind, name)
+	path, err := workflowPath(target.Forge, name)
 	if err != nil {
 		tb.Fatalf("livetest: %v", err)
 	}
@@ -147,7 +147,7 @@ func commitFile(ctx context.Context, target Target, repo, path, message, content
 
 	var body map[string]any
 
-	switch target.Kind {
+	switch target.Forge {
 	case provider.ForgeGitLab:
 		endpoint = target.BaseURL() + "/api/v4/projects/" +
 			url.PathEscape(target.Owner+"/"+repo) + "/repository/files/" + url.PathEscape(path)
@@ -190,7 +190,7 @@ func waitForRun(ctx context.Context, tb TB, target Target, repo, name string) st
 			// scratch repository is cleaned up.
 			log := runLogTail(ctx, target, repo)
 			if log != "" {
-				tb.Logf("livetest: %s job log for %q (tail):\n%s", target.Kind, name, log)
+				tb.Logf("livetest: %s job log for %q (tail):\n%s", target.Forge, name, log)
 			}
 
 			// A job the runner never started cannot support the claim the caller
@@ -203,7 +203,7 @@ func waitForRun(ctx context.Context, tb TB, target Target, repo, name string) st
 			if marker, ok := systemFailure(log); ok {
 				tb.Fatalf("livetest: %s never ran the job for %q (%q); the runner failed to prepare it, "+
 					"so this says nothing about the product -- the lab is what to look at",
-					target.Kind, name, marker)
+					target.Forge, name, marker)
 			}
 
 			return "failure"
@@ -222,7 +222,7 @@ func waitForRun(ctx context.Context, tb TB, target Target, repo, name string) st
 // readable yet. A transport error is treated as "not yet": a pipeline is often
 // not queryable in the moment between the push and its creation.
 func latestRunStatus(ctx context.Context, target Target, repo string) string {
-	switch target.Kind {
+	switch target.Forge {
 	case provider.ForgeGitLab:
 		var pipelines []struct {
 			Status string `json:"status"`
@@ -365,7 +365,7 @@ func unzipFirst(archive []byte) string {
 // is a job trace under the project, Forgejo's is a run log under the repository
 // (paths taken from the instance's own swagger rather than assumed).
 func runLogEndpoint(ctx context.Context, target Target, repo string) (string, bool) {
-	switch target.Kind {
+	switch target.Forge {
 	case provider.ForgeGitLab:
 		var jobs []struct {
 			ID int `json:"id"`
@@ -417,7 +417,7 @@ func ReleaseAssetURL(tb TB, target Target, repo, tag, name string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	switch target.Kind {
+	switch target.Forge {
 	case provider.ForgeGitLab:
 		var release struct {
 			Assets struct {
@@ -471,11 +471,11 @@ func ReleaseAssetURL(tb TB, target Target, repo, tag, name string) string {
 func PublishBinaryAsset(tb TB, target Target, repo, tag, stageDir string) {
 	tb.Helper()
 
-	forge := Provider(tb, target, repo)
+	adapter := Provider(tb, target, repo)
 
-	creator, ok := forge.(provider.ReleaseCreator)
+	creator, ok := adapter.(provider.ReleaseCreator)
 	if !ok {
-		tb.Fatalf("livetest: %s cannot create releases", target.Kind)
+		tb.Fatalf("livetest: %s cannot create releases", target.Forge)
 	}
 
 	staged := filepath.Join(stageDir, "reusable-ci")
@@ -657,7 +657,7 @@ func ReleaseAssetNames(tb TB, target Target, repo, tag string) []string {
 
 	var names []string
 
-	switch target.Kind {
+	switch target.Forge {
 	case provider.ForgeGitLab:
 		var release struct {
 			Assets struct {

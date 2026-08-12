@@ -94,9 +94,9 @@ func TestRelease_CreateWithAssets_IsEquivalentAcrossForges(t *testing.T) {
 
 			assets, digests := writeAssets(t)
 
-			forge := livetest.Provider(t, target, repo)
+			adapter := livetest.Provider(t, target, repo)
 
-			creator, ok := forge.(provider.ReleaseCreator)
+			creator, ok := adapter.(provider.ReleaseCreator)
 			if !ok {
 				t.Fatalf("%s does not implement ReleaseCreator", kind)
 			}
@@ -210,14 +210,14 @@ func TestRelease_UploadAssetToExistingRelease_ServesTheSameBytes(t *testing.T) {
 			repo := livetest.NewScratchRepo(t, target, "release-upload")
 			livetest.PrepareTag(t, target, repo, tag)
 
-			forge := livetest.Provider(t, target, repo)
+			adapter := livetest.Provider(t, target, repo)
 
-			creator, ok := forge.(provider.ReleaseCreator)
+			creator, ok := adapter.(provider.ReleaseCreator)
 			if !ok {
 				t.Fatalf("%s does not implement ReleaseCreator", kind)
 			}
 
-			uploader, ok := forge.(provider.ReleaseAssetUploader)
+			uploader, ok := adapter.(provider.ReleaseAssetUploader)
 			if !ok {
 				t.Fatalf("%s claims release assets but does not implement ReleaseAssetUploader", kind)
 			}
@@ -298,9 +298,9 @@ func TestRelease_ReReleasingATag_ReplacesRatherThanAccumulates(t *testing.T) {
 			repo := livetest.NewScratchRepo(t, target, "release-rerelease")
 			livetest.PrepareTag(t, target, repo, tag)
 
-			forge := livetest.Provider(t, target, repo)
+			adapter := livetest.Provider(t, target, repo)
 
-			creator, ok := forge.(provider.ReleaseCreator)
+			creator, ok := adapter.(provider.ReleaseCreator)
 			if !ok {
 				t.Fatalf("%s does not implement ReleaseCreator", kind)
 			}
@@ -353,7 +353,7 @@ func mustReadRelease(ctx context.Context, t *testing.T, target livetest.Target, 
 	t.Helper()
 
 	reader := rawref.Reader{
-		Forge: string(target.Kind),
+		Forge: string(target.Forge),
 		Base:  target.BaseURL(),
 		Token: target.Token,
 		Owner: target.Owner,
@@ -361,11 +361,11 @@ func mustReadRelease(ctx context.Context, t *testing.T, target livetest.Target, 
 
 	release, found, err := rawref.ReleaseByTag(ctx, reader, repo, tag)
 	if err != nil {
-		t.Fatalf("%s raw release read: %v", target.Kind, err)
+		t.Fatalf("%s raw release read: %v", target.Forge, err)
 	}
 
 	if !found {
-		t.Fatalf("%s has no release at %s", target.Kind, tag)
+		t.Fatalf("%s has no release at %s", target.Forge, tag)
 	}
 
 	return release

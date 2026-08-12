@@ -41,9 +41,9 @@ func TestToken_RunCredential_Validates(t *testing.T) {
 			target := livetest.Accept(t, kind)
 			repo := livetest.NewScratchRepo(t, target, "token-validate")
 
-			forge := livetest.Provider(t, target, repo)
+			adapter := livetest.Provider(t, target, repo)
 
-			validator, ok := forge.(provider.TokenValidator)
+			validator, ok := adapter.(provider.TokenValidator)
 			if !ok {
 				t.Fatalf("%s does not implement TokenValidator", kind)
 			}
@@ -79,9 +79,9 @@ func TestToken_RejectedCredential_IsPermissionDeniedNotUnavailable(t *testing.T)
 			rejected := target
 			rejected.Token = "gpl-00000000000000000000000000000000000000000000000000000000deadbeef"
 
-			forge := livetest.Provider(t, rejected, repo)
+			adapter := livetest.Provider(t, rejected, repo)
 
-			validator, ok := forge.(provider.TokenValidator)
+			validator, ok := adapter.(provider.TokenValidator)
 			if !ok {
 				t.Fatalf("%s does not implement TokenValidator", kind)
 			}
@@ -164,9 +164,9 @@ func TestToken_BotPermissions_ReflectRealAccess(t *testing.T) {
 			target := livetest.Accept(t, kind)
 			repo := livetest.NewScratchRepo(t, target, "token-perms")
 
-			forge := livetest.Provider(t, target, repo)
+			adapter := livetest.Provider(t, target, repo)
 
-			validator, ok := forge.(provider.TokenValidator)
+			validator, ok := adapter.(provider.TokenValidator)
 			if !ok {
 				t.Fatalf("%s does not implement TokenValidator", kind)
 			}

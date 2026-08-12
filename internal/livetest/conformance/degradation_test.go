@@ -59,14 +59,14 @@ func TestDegradation_SARIFUpload_NoticesAndSucceeds(t *testing.T) {
 
 			if run.ExitCode != 0 {
 				t.Fatalf("%s: unmet SARIF capability exited %d, want 0 (degradation is not a failure)\nstderr: %s",
-					target.Kind, run.ExitCode, run.Stderr)
+					target.Forge, run.ExitCode, run.Stderr)
 			}
 
 			// Something must be said. A silent no-op is the failure mode this
 			// scenario exists to catch: the user would believe findings were
 			// uploaded.
 			if strings.TrimSpace(run.Combined()) == "" {
-				t.Errorf("%s: degraded silently; the user is told nothing about where findings went", target.Kind)
+				t.Errorf("%s: degraded silently; the user is told nothing about where findings went", target.Forge)
 			}
 		})
 	}
@@ -128,7 +128,7 @@ func TestProvenance_GeneratesEquivalentlyOnEveryForge(t *testing.T) {
 
 			if run.ExitCode != 0 {
 				t.Fatalf("%s: provenance exited %d, want 0 — it depends on no forge capability\nstderr: %s",
-					target.Kind, run.ExitCode, run.Stderr)
+					target.Forge, run.ExitCode, run.Stderr)
 			}
 
 			var statement struct {
@@ -141,17 +141,17 @@ func TestProvenance_GeneratesEquivalentlyOnEveryForge(t *testing.T) {
 			}
 
 			if err := json.Unmarshal([]byte(run.Stdout), &statement); err != nil {
-				t.Fatalf("%s: provenance is not a JSON statement: %v\nstdout: %s", target.Kind, err, run.Stdout)
+				t.Fatalf("%s: provenance is not a JSON statement: %v\nstdout: %s", target.Forge, err, run.Stdout)
 			}
 
 			if statement.PredicateType != provenance.PredicateTypeV1 {
 				t.Errorf("%s: predicateType = %q, want %q — the predicate is forge-neutral",
-					target.Kind, statement.PredicateType, provenance.PredicateTypeV1)
+					target.Forge, statement.PredicateType, provenance.PredicateTypeV1)
 			}
 
 			if len(statement.Subject) != 1 {
 				t.Fatalf("%s: %d subjects, want the one artifact in the checksums file",
-					target.Kind, len(statement.Subject))
+					target.Forge, len(statement.Subject))
 			}
 
 			subjects[kind] = statement.Subject[0].Name + "@" + statement.Subject[0].Digest["sha256"]
