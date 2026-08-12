@@ -974,13 +974,13 @@ validate one image entry and append it to the ledger
 ```
 EXAMPLES:
    # Record a pushed image, capturing its digest from the registry
-   reusable-ci container ledger add --kind distroless \
+   reusable-ci container ledger add --role distroless \
      --candidate-tag codeberg.org/owner/repo:staging-v1.2.3 \
      --final-tag codeberg.org/owner/repo:v1.2.3 \
      --sbom dist/image-sbom.cyclonedx.json --tag v1.2.3 --capture-digest
 
    # Direct-push consumer with an explicit digest
-   reusable-ci container ledger add --kind alpine \
+   reusable-ci container ledger add --role alpine \
      --ref codeberg.org/owner/repo@sha256:… --digest sha256:… \
      --final-tag codeberg.org/owner/repo:v1.2.3-alpine \
      --sbom dist/image-sbom-alpine.cyclonedx.json --tag v1.2.3
@@ -990,7 +990,7 @@ EXAMPLES:
 |------|-------------|----------|
 | `--ledger` | ledger JSON file (a bare array; created if absent on add) | `$RELEASE_IMAGES_LEDGER` |
 | `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
-| `--kind` | image role, e.g. distroless, alpine, base | n/a |
+| `--role` | image role, e.g. distroless, alpine, base | n/a |
 | `--image-kind` | entry validation scope recorded as image_kind: release (default) or base | n/a |
 | `--ref` | digest-pinned image ref (registry/path@sha256:<64 hex>) | n/a |
 | `--digest` | image digest (sha256:<64 hex>) | n/a |
@@ -1004,7 +1004,7 @@ EXAMPLES:
 | `--moving-tag` | optional moving tag ref, e.g. codeberg.org/owner/repo:rust | n/a |
 | `--flavor` | optional base-image flavour | n/a |
 | `--derive-candidate-tag` | derive --candidate-tag as <image>:staging-<final-tag-name>; mutually exclusive with explicit candidate tag flags | `$LEDGER_DERIVE_CANDIDATE_TAG` |
-| `--default-sbom` | when --sbom is empty, use dist/image-sbom-<flavor\|kind>.cyclonedx.json | n/a |
+| `--default-sbom` | when --sbom is empty, use dist/image-sbom-<flavor\|role>.cyclonedx.json | n/a |
 | `--candidate-tag-name` | optional staging tag name/portion combined with --image-name | n/a |
 | `--candidate-tag` | optional staging tag ref (scoped to staging-<tag>); derived from --image-name when omitted | n/a |
 | `--base-ref` | optional digest-pinned base image | n/a |

@@ -81,7 +81,7 @@ func TestDryRun_DestructiveLedgerVerbs_MutateNothing(t *testing.T) {
 					f.mustRun(t, "ledger add",
 						"container", "ledger", "add",
 						"--ledger", ledger, "--auth-file", f.authFile, "--tag", releaseTag,
-						"--kind", "distroless",
+						"--role", "distroless",
 						"--candidate-tag", f.imagePath+":"+candidateTag,
 						"--final-tag", f.imagePath+":"+releaseTag,
 						"--sbom", writeSBOM(t, f.work, "dryrun-"+testCase.verb),

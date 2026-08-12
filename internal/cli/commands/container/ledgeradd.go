@@ -25,20 +25,20 @@ func ledgerAddCmd() *cli.Command {
 		Usage: "validate one image entry and append it to the ledger",
 		Description: `EXAMPLES:
    # Record a pushed image, capturing its digest from the registry
-   reusable-ci container ledger add --kind distroless \
+   reusable-ci container ledger add --role distroless \
      --candidate-tag codeberg.org/owner/repo:staging-v1.2.3 \
      --final-tag codeberg.org/owner/repo:v1.2.3 \
      --sbom dist/image-sbom.cyclonedx.json --tag v1.2.3 --capture-digest
 
    # Direct-push consumer with an explicit digest
-   reusable-ci container ledger add --kind alpine \
+   reusable-ci container ledger add --role alpine \
      --ref codeberg.org/owner/repo@sha256:… --digest sha256:… \
      --final-tag codeberg.org/owner/repo:v1.2.3-alpine \
      --sbom dist/image-sbom-alpine.cyclonedx.json --tag v1.2.3`,
 		Flags: []cli.Flag{
 			ledgerPathFlag(),
 			releaseTagFlag(),
-			&cli.StringFlag{Name: "kind", Usage: "image role, e.g. distroless, alpine, base"},
+			&cli.StringFlag{Name: "role", Usage: "image role, e.g. distroless, alpine, base"},
 			&cli.StringFlag{Name: "image-kind", Value: string(imageledger.ImageKindRelease), Usage: "entry validation scope recorded as image_kind: release (default) or base"},
 			&cli.StringFlag{Name: flagRef, Usage: "digest-pinned image ref (registry/path@sha256:<64 hex>)"},
 			&cli.StringFlag{Name: flagDigest, Usage: "image digest (sha256:<64 hex>)"},
@@ -52,7 +52,7 @@ func ledgerAddCmd() *cli.Command {
 			&cli.StringFlag{Name: "moving-tag", Usage: "optional moving tag ref, e.g. codeberg.org/owner/repo:rust"},
 			&cli.StringFlag{Name: flagFlavor, Usage: "optional base-image flavour"},
 			&cli.BoolFlag{Name: "derive-candidate-tag", Sources: cli.EnvVars("LEDGER_DERIVE_CANDIDATE_TAG"), Usage: "derive --candidate-tag as <image>:staging-<final-tag-name>; mutually exclusive with explicit candidate tag flags"},
-			&cli.BoolFlag{Name: "default-sbom", Usage: "when --sbom is empty, use dist/image-sbom-<flavor|kind>.cyclonedx.json"},
+			&cli.BoolFlag{Name: "default-sbom", Usage: "when --sbom is empty, use dist/image-sbom-<flavor|role>.cyclonedx.json"},
 			&cli.StringFlag{Name: "candidate-tag-name", Usage: "optional staging tag name/portion combined with --image-name"},
 			&cli.StringFlag{Name: "candidate-tag", Usage: "optional staging tag ref (scoped to staging-<tag>); derived from --image-name when omitted"},
 			&cli.StringFlag{Name: "base-ref", Usage: "optional digest-pinned base image"},
@@ -65,7 +65,7 @@ func ledgerAddCmd() *cli.Command {
 
 			entry, releaseTag, err := ledgerAddEntryFromFlags(ledgerAddFlags{
 				ReleaseTag:          cmd.String(flagTag),
-				Kind:                cmd.String("kind"),
+				Role:                cmd.String("role"),
 				ImageKind:           cmd.String("image-kind"),
 				ImageName:           cmd.String(flagImageName),
 				Ref:                 cmd.String(flagRef),
@@ -132,27 +132,27 @@ func ledgerAddCmd() *cli.Command {
 				verb = "already recorded; no change to"
 			}
 
-			_, _ = fmt.Fprintf(os.Stderr, "ledger: %s %s (%s) → %s\n", verb, entryDescriptor(entry.Kind), entry.Digest, path)
+			_, _ = fmt.Fprintf(os.Stderr, "ledger: %s %s (%s) → %s\n", verb, entryDescriptor(entry.Role), entry.Digest, path)
 
 			return nil
 		},
 	}
 }
 
-// entryDescriptor renders the ledger entry's noun for the add message. --kind
-// is optional, so an empty kind collapses to a bare "entry" rather than
+// entryDescriptor renders the ledger entry's noun for the add message. --role
+// is optional, so an empty role collapses to a bare "entry" rather than
 // leaving a doubled space.
-func entryDescriptor(kind string) string {
-	if kind == "" {
+func entryDescriptor(role string) string {
+	if role == "" {
 		return "entry"
 	}
 
-	return kind + " entry"
+	return role + " entry"
 }
 
 type ledgerAddFlags struct {
 	ReleaseTag          string
-	Kind                string
+	Role                string
 	ImageKind           string
 	ImageName           string
 	Ref                 string
@@ -211,7 +211,7 @@ func ledgerAddEntryFromFlags(flags ledgerAddFlags) (imageledger.Entry, string, e
 	}
 
 	return imageledger.Entry{
-		Kind:         flags.Kind,
+		Role:         flags.Role,
 		ImageKind:    imageledger.ImageKind(flags.ImageKind),
 		Flavor:       flags.Flavor,
 		Ref:          ref,
@@ -358,13 +358,13 @@ func ledgerAddCandidateTag(flags ledgerAddFlags, imageName, finalTagName string)
 }
 
 // ledgerAddSBOM resolves the SBOM path: --sbom wins, else --default-sbom
-// derives the conventional dist path from the flavor or kind.
+// derives the conventional dist path from the flavor or role.
 func ledgerAddSBOM(flags ledgerAddFlags) (string, error) {
 	sbom := flags.SBOM
 	if sbom == "" && flags.DefaultSBOM {
-		suffix := firstNonEmpty(flags.Flavor, flags.Kind)
+		suffix := firstNonEmpty(flags.Flavor, flags.Role)
 		if suffix == "" {
-			return "", fmt.Errorf("ledger add: --default-sbom requires --flavor or --kind: %w", errs.ErrUsage)
+			return "", fmt.Errorf("ledger add: --default-sbom requires --flavor or --role: %w", errs.ErrUsage)
 		}
 
 		sbom = "dist/image-sbom-" + suffix + ".cyclonedx.json"

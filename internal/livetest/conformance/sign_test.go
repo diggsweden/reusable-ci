@@ -63,7 +63,7 @@ func TestSign_LedgerImages_ProducesAVerifiableSignature(t *testing.T) {
 			add := livetest.CLIIn(t, target, repo, opts,
 				"container", "ledger", "add",
 				"--ledger", ledger, "--auth-file", authFile, "--tag", releaseTag,
-				"--kind", "distroless",
+				"--role", "distroless",
 				"--candidate-tag", imagePath+":"+candidateTag,
 				"--final-tag", imagePath+":"+releaseTag,
 				"--sbom", writeSBOM(t, work, "sign"),

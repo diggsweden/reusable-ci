@@ -92,7 +92,7 @@ func ledgerSignEntry(t *testing.T) imageledger.Entry {
 	t.Helper()
 
 	return imageledger.Entry{
-		Kind:         "distroless",
+		Role:         "distroless",
 		Flavor:       "rust",
 		Ref:          "codeberg.org/itiquette/gommitlint@" + ledgerSignDigest,
 		Digest:       ledgerSignDigest,
@@ -216,7 +216,7 @@ func TestSignLedgerImages_SignsSBOMAndImagePredicate(t *testing.T) {
 	ext := asMap(t, build["externalParameters"], "externalParameters")
 
 	image := asMap(t, ext["image"], "image")
-	if image["ref"] != resolvedRef || image["final_tag"] != entry.FinalTag || image["moving_tag"] != entry.MovingTag || image["candidate_tag"] != entry.CandidateTag || image["kind"] != entry.Kind || image["flavor"] != entry.Flavor || image["sbom"] != entry.SBOM {
+	if image["ref"] != resolvedRef || image["final_tag"] != entry.FinalTag || image["moving_tag"] != entry.MovingTag || image["candidate_tag"] != entry.CandidateTag || image["role"] != entry.Role || image["flavor"] != entry.Flavor || image["sbom"] != entry.SBOM {
 		t.Errorf("image externalParameters mismatch: %#v", image)
 	}
 
@@ -510,7 +510,7 @@ func TestSignLedgerImages_BaseKindEntries(t *testing.T) {
 	sbomSum := sha256.Sum256(sbomContent)
 
 	ledgerJSON, err := json.Marshal([]imageledger.Entry{{
-		Kind:         "base",
+		Role:         "base",
 		ImageKind:    imageledger.ImageKindBase,
 		Flavor:       "go",
 		Ref:          repo + "@" + digest,
@@ -595,7 +595,7 @@ func TestSignLedgerImages_BaseKindRequiresBaseInputID(t *testing.T) {
 	repo := "codeberg.org/itiquette/nanolinter-base"
 	baseID := strings.Repeat("b", 64)
 	entry := imageledger.Entry{
-		Kind:       "base",
+		Role:       "base",
 		ImageKind:  imageledger.ImageKindBase,
 		Flavor:     "go",
 		Ref:        repo + "@" + ledgerSignDigest,

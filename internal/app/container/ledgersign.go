@@ -222,7 +222,7 @@ func (run ledgerSignRun) signEntry(ctx context.Context, idx int, entry imageledg
 		return err
 	}
 
-	label := entry.Kind
+	label := entry.Role
 	if entry.Flavor != "" {
 		label += " " + entry.Flavor
 	}
@@ -289,8 +289,8 @@ func validateLedgerSignEntry(entry imageledger.Entry, releaseTag string, constra
 		return err
 	}
 
-	if entry.Kind == "" {
-		return fmt.Errorf("imageledger: kind is required for signing: %w", errs.ErrValidation)
+	if entry.Role == "" {
+		return fmt.Errorf("imageledger: role is required for signing: %w", errs.ErrValidation)
 	}
 
 	if entry.SBOM == "" {
@@ -454,7 +454,7 @@ func enrichImagePredicate(base []byte, entry imageledger.Entry, imageRef, candid
 		"final_tag":     entry.FinalTag,
 		"moving_tag":    entry.MovingTag,
 		"candidate_tag": candidateTag,
-		"kind":          entry.Kind,
+		"role":          entry.Role,
 		"flavor":        entry.Flavor,
 		"sbom":          entry.SBOM,
 	}

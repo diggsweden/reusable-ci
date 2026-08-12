@@ -288,7 +288,7 @@ func TestLedgerAddEntryFromFlags_ShapesForgejoReleaseImageRecord(t *testing.T) {
 
 	entry, releaseTag, err := ledgerAddEntryFromFlags(ledgerAddFlags{
 		ReleaseTag:       "v1.2.3",
-		Kind:             "flavor",
+		Role:             "flavor",
 		ImageKind:        string(imageledger.ImageKindRelease),
 		Flavor:           "rust",
 		ImageName:        "docker://codeberg.org/itiquette/nanolinter:ignored",
@@ -309,7 +309,7 @@ func TestLedgerAddEntryFromFlags_ShapesForgejoReleaseImageRecord(t *testing.T) {
 	}
 
 	want := imageledger.Entry{
-		Kind:         "flavor",
+		Role:         "flavor",
 		ImageKind:    imageledger.ImageKindRelease,
 		Flavor:       "rust",
 		Ref:          "codeberg.org/itiquette/nanolinter@" + dig,
@@ -332,7 +332,7 @@ func TestLedgerAddEntryFromFlags_DirectPushDoesNotInventCandidate(t *testing.T) 
 	const dig = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 	entry, releaseTag, err := ledgerAddEntryFromFlags(ledgerAddFlags{
-		Kind:         "distroless",
+		Role:         "distroless",
 		ImageName:    "codeberg.org/itiquette/gommitlint",
 		Digest:       dig,
 		FinalTagName: "v1.2.3",
@@ -412,7 +412,7 @@ func TestLedgerAddEntryFromFlags_RecordsSBOMPinAndProvenanceExtras(t *testing.T)
 	pin := strings.Repeat("a", 64)
 
 	entry, _, err := ledgerAddEntryFromFlags(ledgerAddFlags{
-		Kind:           "distroless",
+		Role:           "distroless",
 		ImageName:      "codeberg.org/itiquette/gommitlint",
 		Digest:         dig,
 		FinalTagName:   "v1.2.3",
@@ -469,7 +469,7 @@ func TestLedgerAddEntryFromFlags_RejectsMalformedProvenanceJSON(t *testing.T) {
 		"truncated": `{"a":`,
 	} {
 		_, _, err := ledgerAddEntryFromFlags(ledgerAddFlags{
-			Kind:           "distroless",
+			Role:           "distroless",
 			ImageName:      "codeberg.org/itiquette/gommitlint",
 			Digest:         dig,
 			FinalTagName:   "v1.2.3",

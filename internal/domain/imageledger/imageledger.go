@@ -28,18 +28,18 @@ import (
 // Entry is one image in the ledger.
 //
 // The promotion mechanism needs only Ref, Digest, and FinalTag (plus the
-// optional candidate/moving tags) — those are required. Kind and SBOM are
+// optional candidate/moving tags) — those are required. Role and SBOM are
 // release-manifest metadata: optional, validated for format only when
 // present. This keeps a promotion entry minimal while still letting a full
 // release record carry the audit fields.
 type Entry struct {
-	// Kind, ImageKind, and Flavor are three distinct axes. The Go names
-	// mirror the wire keys (kind / image_kind / flavor) of the shared
-	// release-images JSON schema rather than being renamed:
+	// Role, ImageKind, and Flavor are three distinct axes. The Go names
+	// mirror the wire keys (role / image_kind / flavor) of the shared
+	// release-images JSON schema:
 	//
-	//   Kind      — the image's free-form variant label (e.g. "distroless",
+	//   Role      — the image's free-form variant label (e.g. "distroless",
 	//               "alpine"). Human descriptor and the SBOM path fallback
-	//               when Flavor is empty. Wire key: "kind".
+	//               when Flavor is empty. Wire key: "role".
 	//   ImageKind — the entry's validation SCOPE. Only ImageKindBase changes
 	//               engine behavior (content-addressed tags checked by
 	//               validateBaseTags); ImageKindRelease (the default) and a
@@ -48,8 +48,13 @@ type Entry struct {
 	//   Flavor    — the docker/metadata-action FLAVOR value for tag
 	//               composition. Wire key: "flavor".
 	//
-	// Kind is an optional image variant label (e.g. distroless, alpine).
-	Kind string `json:"kind,omitempty"`
+	// Role was called Kind, on both the wire and the flag, until it collided
+	// with ImageKind: both accepted the value "base", meaning a variant in
+	// one and a validation scope in the other, on the same command. The
+	// schema had always described it as the image role.
+	//
+	// Role is an optional image variant label (e.g. distroless, alpine).
+	Role string `json:"role,omitempty"`
 	// ImageKind is the entry's validation scope (see the ImageKind type).
 	// Empty is a legacy entry recorded before the field existed and
 	// validates as ImageKindRelease, so absence never fails.
@@ -315,7 +320,7 @@ func (e Entry) validateReleaseMovingTag(releaseTag string) error {
 
 // validateFormat enforces the stage-agnostic trust-boundary invariants:
 // the promotion-essential fields (ref, digest, final_tag) and their
-// formats. Kind and SBOM are optional release-manifest metadata — SBOM is
+// formats. Role and SBOM are optional release-manifest metadata — SBOM is
 // format-checked only when present; ImageKind is checked against its
 // closed value set (empty allowed for legacy entries). These hold at
 // every promotion stage, so both Validate (release) and ValidateForStage

@@ -20,7 +20,7 @@ const (
 // validEntry is a minimal schema-valid entry scoped to release tag v1.2.3.
 func validEntry() imageledger.Entry {
 	return imageledger.Entry{
-		Kind:     "distroless",
+		Role:     "distroless",
 		Ref:      "codeberg.org/itiquette/gommitlint@" + goodDigest,
 		Digest:   goodDigest,
 		SBOM:     "dist/image-sbom-amd64.cyclonedx.json",
@@ -103,10 +103,10 @@ func TestValidate_Rejects(t *testing.T) {
 func TestValidate_AcceptsOptionalManifestMetadata(t *testing.T) {
 	t.Parallel()
 
-	// Kind and SBOM are optional release-manifest metadata; a promotion
+	// Role and SBOM are optional release-manifest metadata; a promotion
 	// entry without them is valid.
 	bare := validEntry()
-	bare.Kind = ""
+	bare.Role = ""
 	bare.SBOM = ""
 
 	if err := bare.Validate("v1.2.3"); err != nil {
@@ -164,7 +164,7 @@ func baseEntry() imageledger.Entry {
 	baseID := strings.Repeat("b", 64)
 
 	return imageledger.Entry{
-		Kind:         "base",
+		Role:         "base",
 		ImageKind:    imageledger.ImageKindBase,
 		Flavor:       "go",
 		Ref:          repo + "@" + goodDigest,
@@ -250,7 +250,7 @@ func TestAppend_RoundTrip(t *testing.T) {
 	}
 
 	second := validEntry()
-	second.Kind = "alpine"
+	second.Role = "alpine"
 
 	out, added, err = imageledger.Append(out, second, "v1.2.3")
 	if err != nil {
@@ -266,7 +266,7 @@ func TestAppend_RoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(entries) != 2 || entries[0].Kind != "distroless" || entries[1].Kind != "alpine" {
+	if len(entries) != 2 || entries[0].Role != "distroless" || entries[1].Role != "alpine" {
 		t.Errorf("round-trip entries = %+v", entries)
 	}
 }
@@ -352,7 +352,7 @@ func TestAppend_IdempotentOnRetry(t *testing.T) {
 	const tag = "v1.2.3"
 
 	entry := imageledger.Entry{
-		Kind: "distroless", Ref: "codeberg.org/o/r@sha256:" + strings.Repeat("a", 64),
+		Role: "distroless", Ref: "codeberg.org/o/r@sha256:" + strings.Repeat("a", 64),
 		Digest: "sha256:" + strings.Repeat("a", 64), SBOM: "dist/image-sbom.cyclonedx.json",
 		FinalTag: "codeberg.org/o/r:v1.2.3",
 	}

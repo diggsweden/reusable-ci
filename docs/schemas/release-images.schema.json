@@ -9,7 +9,7 @@
     "additionalProperties": false,
     "required": ["ref", "digest", "final_tag"],
     "properties": {
-      "kind": {
+      "role": {
         "type": "string",
         "description": "Optional release-manifest metadata: the image role, e.g. distroless, alpine, core."
       },
