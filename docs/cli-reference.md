@@ -782,7 +782,8 @@ EXAMPLE:
 | `--release-images` | newline- or comma-separated digest-pinned release image refs whose bases must be kept | `$RELEASE_IMAGES` |
 | `--max-delete` | refuse the run when more than this many base images are unreferenced (0 disables the bound) | `$BASE_IMAGES_MAX_DELETE` |
 | `--dry-run` | report what would be deleted without deleting it | `$BASE_IMAGES_PRUNE_DRY_RUN` |
-| `--auth-file` | registry auth file for attestation verification | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
+| `--local-registry` | list and delete through a plain OCI registry (bases kept beside the runner) instead of the forge package API | `$BASE_IMAGES_LOCAL_REGISTRY` |
+| `--auth-file` | registry auth file for attestation verification and registry access | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
 
 #### `reusable-ci container base-images validate`
 

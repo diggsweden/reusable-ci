@@ -12,6 +12,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/cosign"
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/ociregistry"
 	appbaseimages "github.com/diggsweden/reusable-ci/v3/internal/app/baseimages"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
@@ -22,6 +23,7 @@ const (
 	flagReleaseImages = "release-images"
 	flagMaxDelete     = "max-delete"
 	flagDryRun        = "dry-run"
+	flagLocalRegistry = "local-registry"
 )
 
 func baseImagesPruneCmd() *cli.Command {
@@ -72,7 +74,12 @@ EXAMPLE:
 				Sources: cli.EnvVars("BASE_IMAGES_PRUNE_DRY_RUN"),
 				Usage:   "report what would be deleted without deleting it",
 			},
-			regflags.AuthFile(regflags.AuthFileOpts{Usage: "registry auth file for attestation verification"}),
+			&cli.BoolFlag{
+				Name:    flagLocalRegistry,
+				Sources: cli.EnvVars("BASE_IMAGES_LOCAL_REGISTRY"),
+				Usage:   "list and delete through a plain OCI registry (bases kept beside the runner) instead of the forge package API",
+			},
+			regflags.AuthFile(regflags.AuthFileOpts{Usage: "registry auth file for attestation verification and registry access"}),
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			common, err := baseImagesCommonFromCmd(cmd, false, true)
@@ -80,22 +87,14 @@ EXAMPLE:
 				return err
 			}
 
-			// Same two package-API roles base-image cleanup drives, resolved the
-			// same way: any forge implementing both is supported, and the rest
-			// get the typed "unsupported" refusal instead of a partial prune.
-			forge, err := deps.ProviderWithServerURL(common.ServerURL)
-			if err != nil {
-				return err
-			}
-
-			forgeProvider, err := deps.RoleFrom[baseImageStagingCleaner](forge, "base-image retention")
+			pruner, err := basePruneRegistry(cmd, common)
 			if err != nil {
 				return err
 			}
 
 			return deps.FromCmd(ctx, cmd, func(dep *deps.Deps) error {
 				result, err := appbaseimages.PruneBaseImages(ctx,
-					forgeProvider,
+					pruner,
 					cosign.NewIsolated("DOCKER_CONFIG"),
 					os.Stderr,
 					appbaseimages.BaseImagePruneInput{
@@ -156,4 +155,29 @@ func writeBaseImagesPruneOutputs(ctx context.Context, dep *deps.Deps, result app
 	}
 
 	return dep.OutputSink.Set(ctx, "pruned_base_input_ids", strings.Join(result.Deleted, ","))
+}
+
+// basePruneRegistry chooses where the base images live.
+//
+// --local-registry drives a plain OCI distribution registry through the crane
+// adapter, for the case where bases are kept beside the runner rather than
+// pushed to a remote package host. Without it the active forge's package API
+// answers, exactly as base-image cleanup resolves it: any forge implementing
+// both roles is supported, and the rest get the typed "unsupported" refusal
+// instead of a partial prune.
+func basePruneRegistry(cmd *cli.Command, common baseImagesCommon) (baseImagePackageAPI, error) {
+	if cmd.Bool(flagLocalRegistry) {
+		if authFile := cmd.String(flagAuthFile); authFile != "" {
+			return ociregistry.WithAuthFile(authFile), nil
+		}
+
+		return ociregistry.New(), nil
+	}
+
+	forge, err := deps.ProviderWithServerURL(common.ServerURL)
+	if err != nil {
+		return nil, err
+	}
+
+	return deps.RoleFrom[baseImagePackageAPI](forge, "base-image retention")
 }

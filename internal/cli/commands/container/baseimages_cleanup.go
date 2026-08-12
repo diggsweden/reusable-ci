@@ -71,7 +71,7 @@ Requires a forge implementing both container tag listing and tag deletion
 				return err
 			}
 
-			forgeProvider, err := deps.RoleFrom[baseImageStagingCleaner](forge, "base-image staging cleanup")
+			forgeProvider, err := deps.RoleFrom[baseImagePackageAPI](forge, "base-image staging cleanup")
 			if err != nil {
 				return err
 			}
@@ -85,11 +85,11 @@ Requires a forge implementing both container tag listing and tag deletion
 	}
 }
 
-// baseImageStagingCleaner is the package-API surface base-image staging cleanup
-// needs. It mirrors the app's own composition of the two port roles so the CLI
-// can refuse before doing any work, with a message naming the whole capability
-// rather than whichever half was missing.
-type baseImageStagingCleaner interface {
+// baseImagePackageAPI is the package-API surface base-image staging cleanup and
+// retention need. It mirrors the app's own composition of the two port roles so
+// the CLI can refuse before doing any work, with a message naming the whole
+// capability rather than whichever half was missing.
+type baseImagePackageAPI interface {
 	provider.TagDeleter
 	provider.ContainerPackageLister
 }
