@@ -14,23 +14,43 @@ used.
 
 ## Layers
 
-Tests sit in one of four buckets. Each has a different shape, build tag,
-and CI gate.
+Tests sit in one of six buckets. Each has a different shape, build tag,
+and CI gate. Two of them live outside this repository's `go test ./...`:
+the black-box suite is its own repository, and the live tier needs a lab.
 
 | Layer | What it tests | Build tag | Speed | Parallel | Network / CLI |
 |---|---|---|---|---|---|
 | **domain** | pure logic — parsers, transforms, decisions | (default) | <50ms | yes | no |
 | **adapter** | I/O — real CLIs (`gpg`, `git`, `trivy`), real HTTP | `!short` for slow ones; `integration` for full-stack | <2s | yes (per package) | yes |
-| **CLI / e2e** | the binary as a black box | `e2e` | <5s | no | builds binary |
+| **repo guards** | rules about the tree itself, not about behaviour | (default) | <1s | yes | no |
+| **CLI smoke** | the binary as a black box, in this repo | `e2e` | <5s | no | builds binary |
+| **black-box suite** | the binary against real toolchains and fixtures — [`diggsweden/reusable-ci-blackbox-tests`](https://github.com/diggsweden/reusable-ci-blackbox-tests) | `integration`, in that repo | minutes | yes | real tools, faked network |
 | **live / conformance** | the same scenario against every real forge | `live` | minutes | no (`-p 1`) | a real lab |
 
 Run them as:
 
 ```text
-go test ./...                          # domain + fast adapter
+go test ./...                          # domain + fast adapter + repo guards
 go test -tags=integration ./...        # + full-stack adapter
 go test -tags=e2e ./cmd/...            # + e2e binary smoke
 ```
+
+### The black-box tier lives in another repository
+
+`cmd/reusable-ci/e2e_test.go` is a smoke harness: it builds the binary and
+checks the root contract (help, version, flag parsing, the exit-code ladder).
+The bulk of the black-box scenarios — every ecosystem's real toolchain, the
+signing round-trips, reproducibility, host isolation — are in the companion
+repository, which drives the built binary against committed fixtures.
+
+`docs/cli-black-box.md` is the catalogue for both. When adding a scenario,
+the split is: if it needs a real toolchain or a fixture project, it belongs
+in the testsuite repo; if it is about the CLI's own surface and needs nothing
+installed, it can stay here.
+
+Note the vocabulary: the testsuite repo calls itself the *integration* tier
+and reserves "e2e" for a real runner talking to a real forge. This document
+uses "e2e" only for the in-repo smoke harness and its build tag.
 
 ### The live tier
 
@@ -99,6 +119,35 @@ internal/app/container/compute_metadata.go
 internal/app/container/compute_metadata_test.go       ← stubbed deps
 cmd/reusable-ci/e2e_test.go                   ← //go:build e2e
 ```
+
+### Except the repo-wide guards
+
+A guard that walks the whole tree is not a test of the package it happens to
+sit in. Four packages hold them, named for what each is answerable for:
+
+| Package | Guards | Reads |
+|---|---|---|
+| `internal/archguard` | where code may live: import direction (ADR 0004), which layer may read the environment, mint a credential, or branch on the platform | Go source under `internal/` |
+| `internal/lexiconguard` | a spelling, regex, or pattern literal is declared once | every file in the repo |
+| `internal/syncguard` | a generated file still matches the Go it is generated from | `docs/`, `.reusable-ci/` |
+| `internal/workflowguard` | the workflow contract adopters code against | `.github/workflows/`, `examples/` |
+
+They were all originally in `internal/cli`, which made that package look like
+the home of repo policy rather than the CLI. The rule now: if a guard reads
+files outside its own package, it goes in one of the four above; if it tests
+`internal/cli`, it stays in `internal/cli`.
+
+`internal/testutil/reporoot` resolves the repository root for all of them, so
+none of them carries its own copy of that logic.
+
+Two habits keep a guard useful:
+
+- **Explain the fix, not the rule.** The failure message should say what to do
+  next; the contributor can already see what they did.
+- **Poison it once.** A guard that has never been seen to fail is a guard that
+  may not work. Several carry a companion test that feeds them a violation on
+  purpose (`TestJobLevelPlanGuardCatchesPoison`,
+  `TestRuntimeImageTagGuardCatchesDivergence`).
 
 No product-level `tests/` directory. The legacy Bats harness is retired;
 Go behavior tests sit next to the code they exercise, and the remaining

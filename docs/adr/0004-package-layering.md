@@ -159,3 +159,35 @@ guards because it inspects the whole tree, not the CLI command surface.
   is a real speed bump on the "just call it" path, and it is the point.
 - The layering can no longer erode silently, which is what makes the current
   state worth freezing now rather than after it drifts further.
+
+## Update (2026-08-11): the reasoning applied to the rest of the family
+
+§6 justified giving the layering guard its own directory: a guard that
+inspects the whole tree does not belong beside the CLI command surface. That
+argument was never acted on for the eighteen other guards in `internal/cli`,
+all of which resolve the repository root and read `docs/`, `.github/`, or the
+whole tree. `internal/cli` had four production files and thirty test files,
+most of which had nothing to say about the CLI.
+
+They now sit in packages named for what each is answerable for:
+
+| Package | Answerable for |
+|---|---|
+| `internal/archguard` | where code may live — import direction, plus the env/credential/platform-branching rules |
+| `internal/lexiconguard` | a spelling, regex, or pattern literal is declared once |
+| `internal/syncguard` | a generated file still matches the Go it is generated from |
+| `internal/workflowguard` | the `.github/workflows` contract adopters code against |
+
+Nothing about the layering changed; the decision above stands as written.
+Three consequences worth recording:
+
+- `internal/testutil/reporoot` is the single source for "where is the
+  repository root", which the guards previously duplicated.
+- `internal/testutil/cliflags.Sources` replaces two near-identical reflection
+  helpers for reading a flag's value sources. The surviving version fails the
+  test when it cannot read a flag rather than returning an empty chain: for a
+  guard hunting env vars in the wrong place, "I could not read this" and
+  "this reads nothing" are opposite answers.
+- The single-source guards exclude their own declaring file by path, so
+  moving them required updating those exclusions. That they failed loudly on
+  the first run is the guards working.

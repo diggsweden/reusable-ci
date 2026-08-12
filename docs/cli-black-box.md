@@ -20,9 +20,24 @@ algorithms. The black-box layer preserves the **public CLI contract** that the
 reusable workflows in `.github/workflows/` depend on, across releases and
 across forges.
 
-The live harness is `cmd/reusable-ci/e2e_test.go` (build tag `e2e`,
-`just test-e2e`). New scenarios extend it; this document is the catalogue and
-the acceptance criteria.
+There are two harnesses, and this document is the catalogue and the
+acceptance criteria for both:
+
+- `cmd/reusable-ci/e2e_test.go` (build tag `e2e`, `just test-e2e`) — the
+  in-repo smoke harness. It needs nothing installed, so it covers the root
+  contract: command discovery, help, version, flag parsing, the exit-code
+  ladder, stream discipline.
+- [`diggsweden/reusable-ci-blackbox-tests`](https://github.com/diggsweden/reusable-ci-blackbox-tests)
+  — the companion testsuite, and where most of the scenarios below actually
+  live. It drives the built binary against committed fixture projects with
+  the real toolchains (`syft`, `gpg`, `cosign`, `mvn`, `gradle`, `cargo`,
+  `npm`) and a faked network.
+
+A new scenario goes in the testsuite if it needs a real toolchain or a
+fixture project, and here if it is about the CLI's own surface. Note that
+the testsuite calls itself the *integration* tier and reserves "e2e" for a
+real runner against a real forge; the `e2e` build tag in this repository
+means the smoke harness only.
 
 ## Scope
 
@@ -275,4 +290,5 @@ pre-release hardening jobs.
 | `docs/testing.md` | Layer boundaries, build tags, and the `e2e` harness location. |
 | `docs/providers.md` | Forge detection and the per-provider capability matrix. |
 | `docs/artifacts-reference.md` | `artifacts.yml` schema that `doctor`/`config` validate. |
-| `cmd/reusable-ci/e2e_test.go` | The live Go black-box harness implementing these scenarios. |
+| `cmd/reusable-ci/e2e_test.go` | The in-repo smoke harness: root contract, help, version, exit-code ladder. |
+| [`diggsweden/reusable-ci-blackbox-tests`](https://github.com/diggsweden/reusable-ci-blackbox-tests) | The bulk of these scenarios: real toolchains, fixtures, signing round-trips, reproducibility. |

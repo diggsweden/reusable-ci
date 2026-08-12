@@ -46,6 +46,16 @@ Understand the design and tradeoffs.
 - [CLI Black Box](cli-black-box.md) - The CLI-as-black-box contract between workflows and the binary.
 - [Signing Convergence](signing-convergence.md) - How the signing backends and verification paths converge across forges.
 
+### Architecture Decisions
+
+Records of decisions that shaped the codebase, kept as written rather than
+edited when things move. Newer decisions append an update note instead.
+
+- [ADR 0001 — Forgejo shell home](adr/0001-forgejo-shell-home.md)
+- [ADR 0002 — Signer trust boundary](adr/0002-signer-trust-boundary.md)
+- [ADR 0003 — CLI verb lexicon](adr/0003-cli-verb-lexicon.md) - the bar a guard test has to clear to earn its keep.
+- [ADR 0004 — Package layering](adr/0004-package-layering.md) - the hexagonal layering, and the guard that enforces it.
+
 ## Maintainer And Historical Docs
 
 - [Development](DEVELOPMENT.md) - Local development, testing, and branch verification for this repository.
