@@ -7,7 +7,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
@@ -34,8 +36,8 @@ type changelogReleaseOps interface {
 // ChangelogReleaseInput drives `reusable-ci version commit-changelog-release`.
 type ChangelogReleaseInput struct {
 	Tag               string // final stable release tag, e.g. v1.2.3
-	Repository        string // owner/name, used only to build the SSH origin URL
-	RemoteHost        string // required: SSH host for the origin URL (no org default; the caller/shell supplies it)
+	Repository        string // owner/name, validated against the SSH origin URL path
+	GitURL            string // required: exact ssh://git@host[:port]/owner/name.git origin URL
 	RemoteName        string // empty defaults to origin
 	Branch            string // empty defaults to main
 	ChangelogPath     string // empty defaults to CHANGELOG.md
@@ -175,7 +177,7 @@ func validateChangelogReleaseInput(in ChangelogReleaseInput) error {
 	// by the caller/shell, and we fail loudly (with the flag + env) when it is
 	// not — see the Tier A coherence track and ADR-0001.
 	required := []struct{ name, value, flag, env string }{
-		{"remote host", in.RemoteHost, "--host", "$RELEASE_GIT_HOST"},
+		{"git URL", in.GitURL, "--git-url", "$RELEASE_GIT_URL"},
 		{"author name", in.AuthorName, "--author-name", "$GIT_USER_NAME"},
 		{"author email", in.AuthorEmail, "--author-email", "$GIT_USER_EMAIL"},
 	}
@@ -185,13 +187,76 @@ func validateChangelogReleaseInput(in ChangelogReleaseInput) error {
 		}
 	}
 
+	if _, err := ParseChangelogReleaseGitURL(in.GitURL, in.Repository); err != nil {
+		return err
+	}
+
 	return nil
 }
 
+// ChangelogReleaseGitEndpoint is the host and effective port extracted from a
+// validated commit-changelog-release SSH URL.
+type ChangelogReleaseGitEndpoint struct {
+	Host string
+	Port int
+}
+
+// ParseChangelogReleaseGitURL validates the pre-release SSH URL contract and
+// returns the connection endpoint used for host-key pinning.
+func ParseChangelogReleaseGitURL(rawURL, repository string) (ChangelogReleaseGitEndpoint, error) {
+	parts := strings.Split(repository, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || parts[0] == "." || parts[0] == ".." || parts[1] == "." || parts[1] == ".." ||
+		strings.ContainsAny(repository, "\\%?#") || url.PathEscape(parts[0]) != parts[0] || url.PathEscape(parts[1]) != parts[1] {
+		return ChangelogReleaseGitEndpoint{}, fmt.Errorf("commit-changelog: repository must be an unambiguous owner/name value: %w", errs.ErrValidation)
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ChangelogReleaseGitEndpoint{}, fmt.Errorf("commit-changelog: invalid git URL: %w: %w", err, errs.ErrValidation)
+	}
+
+	if parsed.Scheme != "ssh" || parsed.Opaque != "" {
+		return ChangelogReleaseGitEndpoint{}, fmt.Errorf("commit-changelog: git URL must use the ssh scheme: %w", errs.ErrValidation)
+	}
+
+	if parsed.User == nil || parsed.User.String() != "git" {
+		return ChangelogReleaseGitEndpoint{}, fmt.Errorf("commit-changelog: git URL user must be exactly git with no password: %w", errs.ErrValidation)
+	}
+
+	if parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.ContainsAny(rawURL, "?#") {
+		return ChangelogReleaseGitEndpoint{}, fmt.Errorf("commit-changelog: git URL must not contain a query or fragment: %w", errs.ErrValidation)
+	}
+
+	host := parsed.Hostname()
+	if host == "" {
+		return ChangelogReleaseGitEndpoint{}, fmt.Errorf("commit-changelog: git URL hostname is required: %w", errs.ErrValidation)
+	}
+
+	port := 22
+	portText := parsed.Port()
+	if portText == "" {
+		if strings.HasSuffix(parsed.Host, ":") {
+			return ChangelogReleaseGitEndpoint{}, fmt.Errorf("commit-changelog: git URL port must be numeric from 1 to 65535: %w", errs.ErrValidation)
+		}
+	} else {
+		port, err = strconv.Atoi(portText)
+		if err != nil || port < 1 || port > 65535 {
+			return ChangelogReleaseGitEndpoint{}, fmt.Errorf("commit-changelog: git URL port must be numeric from 1 to 65535: %w", errs.ErrValidation)
+		}
+	}
+
+	expected := "ssh://git@" + parsed.Host + "/" + repository + ".git"
+	if rawURL != expected || parsed.Path != "/"+repository+".git" {
+		return ChangelogReleaseGitEndpoint{}, fmt.Errorf("commit-changelog: git URL must be exactly ssh://git@host[:port]/%s.git: %w", repository, errs.ErrValidation)
+	}
+
+	return ChangelogReleaseGitEndpoint{Host: host, Port: port}, nil
+}
+
 // withChangelogReleaseDefaults fills only the forge-neutral operational
-// defaults. Org identity (host, author name/email) has no default and is
+// defaults. Org identity (git URL, author name/email) has no default and is
 // required by validateChangelogReleaseInput — a general engine must not ship
-// one org's release identity or SSH host.
+// one org's release identity or SSH endpoint.
 func withChangelogReleaseDefaults(in ChangelogReleaseInput) ChangelogReleaseInput {
 	if in.RemoteName == "" {
 		in.RemoteName = defaultRemoteName
@@ -226,8 +291,7 @@ func configureChangelogReleaseGit(ctx context.Context, repo changelogReleaseOps,
 		}
 	}
 
-	remoteURL := fmt.Sprintf("git@%s:%s.git", in.RemoteHost, in.Repository)
-	if err := repo.SetRemoteURL(ctx, in.RemoteName, remoteURL); err != nil {
+	if err := repo.SetRemoteURL(ctx, in.RemoteName, in.GitURL); err != nil {
 		return fmt.Errorf("commit-changelog: set %s URL: %w", in.RemoteName, err)
 	}
 

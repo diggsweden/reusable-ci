@@ -115,7 +115,7 @@ func TestChangelogRelease_CommitsPushesTagsAndChecksOut(t *testing.T) {
 	res, err := appversion.ChangelogRelease(context.Background(), repo, fakeoutputsink.New(t), &out, appversion.ChangelogReleaseInput{
 		Tag:            "v1.2.3",
 		Repository:     "itiquette/example",
-		RemoteHost:     "codeberg.org",
+		GitURL:         "ssh://git@codeberg.org:2222/itiquette/example.git",
 		AuthorName:     "Itiquette Release Bot",
 		AuthorEmail:    "itiquette-release-bot@pm.me",
 		SigningKeyPath: "/tmp/key",
@@ -129,7 +129,7 @@ func TestChangelogRelease_CommitsPushesTagsAndChecksOut(t *testing.T) {
 		t.Fatalf("git signing config = %#v", repo.cfg)
 	}
 
-	if repo.remoteName != "origin" || repo.remoteURL != "git@codeberg.org:itiquette/example.git" {
+	if repo.remoteName != "origin" || repo.remoteURL != "ssh://git@codeberg.org:2222/itiquette/example.git" {
 		t.Fatalf("remote = (%q,%q)", repo.remoteName, repo.remoteURL)
 	}
 
@@ -164,7 +164,7 @@ func TestChangelogRelease_UnchangedSkipsCommitButTags(t *testing.T) {
 	_, err := appversion.ChangelogRelease(context.Background(), repo, nil, &bytes.Buffer{}, appversion.ChangelogReleaseInput{
 		Tag:            "v1.2.3",
 		Repository:     "itiquette/example",
-		RemoteHost:     "codeberg.org",
+		GitURL:         "ssh://git@codeberg.org/itiquette/example.git",
 		AuthorName:     "Itiquette Release Bot",
 		AuthorEmail:    "itiquette-release-bot@pm.me",
 		SigningKeyPath: "/tmp/key",
@@ -198,7 +198,7 @@ func TestChangelogRelease_DryRunSkipsGitMutationsAndNarrates(t *testing.T) {
 	res, err := appversion.ChangelogRelease(context.Background(), repo, fakeoutputsink.New(t), &out, appversion.ChangelogReleaseInput{
 		Tag:         "v1.2.3",
 		Repository:  "itiquette/example",
-		RemoteHost:  "codeberg.org",
+		GitURL:      "ssh://git@codeberg.org/itiquette/example.git",
 		AuthorName:  "Itiquette Release Bot",
 		AuthorEmail: "itiquette-release-bot@pm.me",
 		TagSigned:   true,
@@ -253,7 +253,7 @@ func TestChangelogRelease_DryRunStillFailsValidation(t *testing.T) {
 		_, err := appversion.ChangelogRelease(context.Background(), &fakeChangelogReleaseRepo{status: " M CHANGELOG.md"}, nil, &bytes.Buffer{}, appversion.ChangelogReleaseInput{
 			Tag:         "v1.2.3",
 			Repository:  "itiquette/example",
-			RemoteHost:  "codeberg.org",
+			GitURL:      "ssh://git@codeberg.org/itiquette/example.git",
 			AuthorName:  "Itiquette Release Bot",
 			AuthorEmail: "itiquette-release-bot@pm.me",
 			DryRun:      true,
@@ -269,7 +269,7 @@ func TestChangelogRelease_DryRunStillFailsValidation(t *testing.T) {
 		_, err := appversion.ChangelogRelease(context.Background(), &fakeChangelogReleaseRepo{}, nil, &bytes.Buffer{}, appversion.ChangelogReleaseInput{
 			Tag:         "v1.2.3-rc1",
 			Repository:  "itiquette/example",
-			RemoteHost:  "codeberg.org",
+			GitURL:      "ssh://git@codeberg.org/itiquette/example.git",
 			AuthorName:  "Itiquette Release Bot",
 			AuthorEmail: "itiquette-release-bot@pm.me",
 			DryRun:      true,
@@ -288,7 +288,7 @@ func TestChangelogRelease_RequiresCommitMessageWhenChangelogChanged(t *testing.T
 	_, err := appversion.ChangelogRelease(context.Background(), &fakeChangelogReleaseRepo{status: " M CHANGELOG.md"}, nil, &bytes.Buffer{}, appversion.ChangelogReleaseInput{
 		Tag:            "v1.2.3",
 		Repository:     "itiquette/example",
-		RemoteHost:     "codeberg.org",
+		GitURL:         "ssh://git@codeberg.org/itiquette/example.git",
 		AuthorName:     "Itiquette Release Bot",
 		AuthorEmail:    "itiquette-release-bot@pm.me",
 		SigningKeyPath: "/tmp/key",
@@ -304,13 +304,64 @@ func TestChangelogRelease_RequiresStableTag(t *testing.T) {
 	_, err := appversion.ChangelogRelease(context.Background(), &fakeChangelogReleaseRepo{}, nil, &bytes.Buffer{}, appversion.ChangelogReleaseInput{
 		Tag:            "v1.2.3-rc1",
 		Repository:     "itiquette/example",
-		RemoteHost:     "codeberg.org",
+		GitURL:         "ssh://git@codeberg.org/itiquette/example.git",
 		AuthorName:     "Itiquette Release Bot",
 		AuthorEmail:    "itiquette-release-bot@pm.me",
 		SigningKeyPath: "/tmp/key",
 	})
 	if !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+}
+
+func TestParseChangelogReleaseGitURL(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		rawURL     string
+		repository string
+		wantHost   string
+		wantPort   int
+		wantErr    bool
+	}{
+		{name: "default port", rawURL: "ssh://git@git.example.test/owner/repository.git", repository: "owner/repository", wantHost: "git.example.test", wantPort: 22},
+		{name: "explicit port", rawURL: "ssh://git@git.example.test:2223/owner/repository.git", repository: "owner/repository", wantHost: "git.example.test", wantPort: 2223},
+		{name: "scp form", rawURL: "git@git.example.test:owner/repository.git", repository: "owner/repository", wantErr: true},
+		{name: "wrong scheme", rawURL: "https://git@git.example.test/owner/repository.git", repository: "owner/repository", wantErr: true},
+		{name: "wrong user", rawURL: "ssh://deploy@git.example.test/owner/repository.git", repository: "owner/repository", wantErr: true},
+		{name: "password", rawURL: "ssh://git:secret@git.example.test/owner/repository.git", repository: "owner/repository", wantErr: true},
+		{name: "missing hostname", rawURL: "ssh://git@/owner/repository.git", repository: "owner/repository", wantErr: true},
+		{name: "empty explicit port", rawURL: "ssh://git@git.example.test:/owner/repository.git", repository: "owner/repository", wantErr: true},
+		{name: "nonnumeric port", rawURL: "ssh://git@git.example.test:ssh/owner/repository.git", repository: "owner/repository", wantErr: true},
+		{name: "port zero", rawURL: "ssh://git@git.example.test:0/owner/repository.git", repository: "owner/repository", wantErr: true},
+		{name: "port too large", rawURL: "ssh://git@git.example.test:65536/owner/repository.git", repository: "owner/repository", wantErr: true},
+		{name: "query", rawURL: "ssh://git@git.example.test/owner/repository.git?ref=main", repository: "owner/repository", wantErr: true},
+		{name: "fragment", rawURL: "ssh://git@git.example.test/owner/repository.git#main", repository: "owner/repository", wantErr: true},
+		{name: "wrong path", rawURL: "ssh://git@git.example.test/owner/other.git", repository: "owner/repository", wantErr: true},
+		{name: "encoded path", rawURL: "ssh://git@git.example.test/owner/repos%69tory.git", repository: "owner/repository", wantErr: true},
+		{name: "ambiguous repository", rawURL: "ssh://git@git.example.test/owner/team/repository.git", repository: "owner/team/repository", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := appversion.ParseChangelogReleaseGitURL(tc.rawURL, tc.repository)
+			if tc.wantErr {
+				if !errors.Is(err, errs.ErrValidation) {
+					t.Fatalf("err = %v, want ErrValidation", err)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("ParseChangelogReleaseGitURL: %v", err)
+			}
+
+			if got.Host != tc.wantHost || got.Port != tc.wantPort {
+				t.Errorf("endpoint = %+v, want host %q port %d", got, tc.wantHost, tc.wantPort)
+			}
+		})
 	}
 }
 

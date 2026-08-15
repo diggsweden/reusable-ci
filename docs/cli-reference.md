@@ -4140,7 +4140,7 @@ SSH-sign a pre-rendered changelog commit, push main without force, create the fi
 
 ```
 EXAMPLE:
-   reusable-ci version commit-changelog-release --tag v1.2.3 --repository owner/repo
+   reusable-ci version commit-changelog-release --tag v1.2.3 --repository owner/repo --git-url ssh://git@git.example/owner/repo.git
 ```
 
 | Flag | Description | Env vars |
@@ -4153,9 +4153,9 @@ EXAMPLE:
 | `--author-name` | git user.name for the release bump commit (required; no org default) | `$GIT_USER_NAME`, `$COMMIT_AUTHOR_NAME` |
 | `--author-email` | git user.email for the release bump commit (required; no org default) | `$GIT_USER_EMAIL`, `$COMMIT_AUTHOR_EMAIL` |
 | `--private-key-file` | path to the OpenSSH private signing key (use '-' for stdin; defaults to $SSH_SIGNING_KEY) | n/a |
-| `--host` | SSH host for origin and known_hosts pinning (required; no org default) | `$RELEASE_GIT_HOST` |
+| `--git-url` | SSH origin URL in ssh://git@host[:port]/owner/repository.git form (required) | `$RELEASE_GIT_URL` |
 | `--host-key-type` | host key type passed to ssh-keyscan | `$RELEASE_GIT_HOST_KEY_TYPE` |
-| `--host-key-fingerprint` | expected SSH host key fingerprint, required (a trust anchor, never defaulted; get it with: ssh-keyscan -t <type> <host> \| ssh-keygen -lf -) | `$RELEASE_GIT_HOST_KEY_FINGERPRINT` |
+| `--host-key-fingerprint` | expected SSH host key fingerprint, required (a trust anchor, never defaulted; get it with: ssh-keyscan [-p <port>] -t <type> <host> \| ssh-keygen -lf -) | `$RELEASE_GIT_HOST_KEY_FINGERPRINT` |
 | `--no-sign` | skip final tag signing (intended for tests; production always signs) | n/a |
 | `--signed` | create a signed final tag; set TAG_RELEASE_SIGNED=false for unsigned annotated test tags | `$TAG_RELEASE_SIGNED` |
 | `--token` | optional token for HTTP remotes; omit to use the runner-injected token ($RELEASE_TOKEN, $CI_TOKEN, $FORGEJO_TOKEN, $GITEA_TOKEN, $GITHUB_TOKEN), which is only ever sent to the server that issued it. The Forgejo release flow uses the SSH key instead. | n/a |

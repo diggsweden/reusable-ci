@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/urfave/cli/v3"
@@ -29,7 +30,7 @@ func commitChangelogReleaseCmd() *cli.Command {
 		Name:  "commit-changelog-release",
 		Usage: "SSH-sign a pre-rendered changelog commit, push main without force, create the final release tag once",
 		Description: `EXAMPLE:
-   reusable-ci version commit-changelog-release --tag v1.2.3 --repository owner/repo`,
+   reusable-ci version commit-changelog-release --tag v1.2.3 --repository owner/repo --git-url ssh://git@git.example/owner/repo.git`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagTag, Required: true, Sources: cli.EnvVars("RELEASE_TAG", "TAG_NAME"), Usage: "final stable release tag to create (vMAJOR.MINOR.PATCH)"},
 			&cli.StringFlag{Name: "repository", Required: true, Sources: cienv.Repository(), Usage: "repository in owner/name form"},
@@ -39,9 +40,9 @@ func commitChangelogReleaseCmd() *cli.Command {
 			&cli.StringFlag{Name: "author-name", Sources: cli.EnvVars("GIT_USER_NAME", "COMMIT_AUTHOR_NAME"), Usage: "git user.name for the release bump commit (required; no org default)"},
 			&cli.StringFlag{Name: "author-email", Sources: cli.EnvVars("GIT_USER_EMAIL", "COMMIT_AUTHOR_EMAIL"), Usage: "git user.email for the release bump commit (required; no org default)"},
 			&cli.StringFlag{Name: "private-key-file", Usage: "path to the OpenSSH private signing key (use '-' for stdin; defaults to $SSH_SIGNING_KEY)"},
-			&cli.StringFlag{Name: "host", Sources: cli.EnvVars("RELEASE_GIT_HOST"), Usage: "SSH host for origin and known_hosts pinning (required; no org default)"},
+			&cli.StringFlag{Name: "git-url", Required: true, Sources: cli.EnvVars("RELEASE_GIT_URL"), Usage: "SSH origin URL in ssh://git@host[:port]/owner/repository.git form"},
 			&cli.StringFlag{Name: "host-key-type", Value: "ed25519", Sources: cli.EnvVars("RELEASE_GIT_HOST_KEY_TYPE"), Usage: "host key type passed to ssh-keyscan"},
-			&cli.StringFlag{Name: "host-key-fingerprint", Sources: cli.EnvVars("RELEASE_GIT_HOST_KEY_FINGERPRINT"), Usage: "expected SSH host key fingerprint, required (a trust anchor, never defaulted; get it with: ssh-keyscan -t <type> <host> | ssh-keygen -lf -)"},
+			&cli.StringFlag{Name: "host-key-fingerprint", Sources: cli.EnvVars("RELEASE_GIT_HOST_KEY_FINGERPRINT"), Usage: "expected SSH host key fingerprint, required (a trust anchor, never defaulted; get it with: ssh-keyscan [-p <port>] -t <type> <host> | ssh-keygen -lf -)"},
 			&cli.BoolFlag{Name: "no-sign", Usage: "skip final tag signing (intended for tests; production always signs)"},
 			&cli.BoolFlag{Name: "signed", Value: true, Sources: cli.EnvVars("TAG_RELEASE_SIGNED"), Usage: "create a signed final tag; set TAG_RELEASE_SIGNED=false for unsigned annotated test tags"},
 			&cli.StringFlag{Name: flagToken, Usage: "optional token for HTTP remotes; omit to use the runner-injected token ($RELEASE_TOKEN, $CI_TOKEN, $FORGEJO_TOKEN, $GITEA_TOKEN, $GITHUB_TOKEN), which is only ever sent to the server that issued it. The Forgejo release flow uses the SSH key instead."},
@@ -53,7 +54,7 @@ func commitChangelogReleaseCmd() *cli.Command {
 				in := appversion.ChangelogReleaseInput{
 					Tag:               cmd.String(flagTag),
 					Repository:        cmd.String("repository"),
-					RemoteHost:        cmd.String("host"),
+					GitURL:            cmd.String("git-url"),
 					Branch:            cmd.String(flagBranch),
 					ChangelogPath:     cmd.String("changelog"),
 					CommitMessageFile: cmd.String("commit-message-file"),
@@ -65,6 +66,11 @@ func commitChangelogReleaseCmd() *cli.Command {
 				}
 
 				if err := appversion.ChangelogReleasePreflight(in); err != nil {
+					return err
+				}
+
+				gitEndpoint, err := appversion.ParseChangelogReleaseGitURL(in.GitURL, in.Repository)
+				if err != nil {
 					return err
 				}
 
@@ -95,11 +101,11 @@ func commitChangelogReleaseCmd() *cli.Command {
 				// no default, so require it explicitly before pinning the host.
 				fingerprint := cmd.String("host-key-fingerprint")
 				if fingerprint == "" {
-					return fmt.Errorf("commit-changelog: --host-key-fingerprint is required (a trust anchor; get it with: ssh-keyscan -t %s %s | ssh-keygen -lf -): %w",
-						cmd.String("host-key-type"), cmd.String("host"), errs.ErrUsage)
+					return fmt.Errorf("commit-changelog: --host-key-fingerprint is required (a trust anchor; get it with: %s | ssh-keygen -lf -): %w",
+						strings.Join(changelogReleaseKeyscanArgs(gitEndpoint.Host, gitEndpoint.Port, cmd.String("host-key-type")), " "), errs.ErrUsage)
 				}
 
-				sshCommand, keyPath, cleanup, err := setupChangelogReleaseSSH(ctx, privateKey, cmd.String("host"), cmd.String("host-key-type"), fingerprint)
+				sshCommand, keyPath, cleanup, err := setupChangelogReleaseSSH(ctx, privateKey, gitEndpoint.Host, gitEndpoint.Port, cmd.String("host-key-type"), fingerprint)
 				if err != nil {
 					return err
 				}
@@ -121,7 +127,7 @@ func commitChangelogReleaseCmd() *cli.Command {
 // setupChangelogReleaseSSH prepares an isolated SSH setup (signing key,
 // pinned known_hosts, ssh config) in a private temp dir and returns the
 // GIT_SSH_COMMAND value, the signing-key path and a cleanup func.
-func setupChangelogReleaseSSH(ctx context.Context, privateKey, host, keyType, expectedFingerprint string) (string, string, func(), error) {
+func setupChangelogReleaseSSH(ctx context.Context, privateKey, host string, port int, keyType, expectedFingerprint string) (string, string, func(), error) {
 	base := runcontext.TempDir().Resolve(os.Getenv)
 	if base == "" {
 		base = os.TempDir()
@@ -154,7 +160,7 @@ func setupChangelogReleaseSSH(ctx context.Context, privateKey, host, keyType, ex
 		return "", "", func() {}, fmt.Errorf("commit-changelog: write SSH public key: %w", writeErr)
 	}
 
-	knownHostsPath, err := pinChangelogReleaseHostKey(ctx, dir, host, keyType, expectedFingerprint)
+	knownHostsPath, err := pinChangelogReleaseHostKey(ctx, dir, host, port, keyType, expectedFingerprint)
 	if err != nil {
 		cleanup()
 
@@ -163,7 +169,7 @@ func setupChangelogReleaseSSH(ctx context.Context, privateKey, host, keyType, ex
 
 	configPath := filepath.Join(dir, "config")
 
-	config := fmt.Sprintf("Host %s\n  IdentityFile %s\n  IdentitiesOnly yes\n  UserKnownHostsFile %s\n  StrictHostKeyChecking yes\n", host, keyPath, knownHostsPath)
+	config := fmt.Sprintf("Host *\n  HostName %s\n  Port %d\n  User git\n  IdentityFile %s\n  IdentitiesOnly yes\n  UserKnownHostsFile %s\n  StrictHostKeyChecking yes\n", host, port, keyPath, knownHostsPath)
 	if writeErr := os.WriteFile(configPath, []byte(config), 0o600); writeErr != nil { //nolint:gosec // G703 false positive: configPath lives under the os.MkdirTemp dir above.
 		cleanup()
 
@@ -176,10 +182,10 @@ func setupChangelogReleaseSSH(ctx context.Context, privateKey, host, keyType, ex
 // pinChangelogReleaseHostKey scans the SSH host key, verifies its fingerprint
 // against the expected value and writes the pinned known_hosts file inside
 // dir, returning the final known_hosts path.
-func pinChangelogReleaseHostKey(ctx context.Context, dir, host, keyType, expectedFingerprint string) (string, error) {
+func pinChangelogReleaseHostKey(ctx context.Context, dir, host string, port int, keyType, expectedFingerprint string) (string, error) {
 	knownHostsTmp := filepath.Join(dir, "known_hosts.tmp")
 
-	knownHosts, err := runTool(ctx, "ssh-keyscan", "-t", keyType, host)
+	knownHosts, err := runTool(ctx, "ssh-keyscan", changelogReleaseKeyscanArgs(host, port, keyType)[1:]...)
 	if err != nil {
 		return "", fmt.Errorf("commit-changelog: scan SSH host key: %w", err)
 	}
@@ -203,6 +209,15 @@ func pinChangelogReleaseHostKey(ctx context.Context, dir, host, keyType, expecte
 	}
 
 	return knownHostsPath, nil
+}
+
+func changelogReleaseKeyscanArgs(host string, port int, keyType string) []string {
+	args := []string{"ssh-keyscan"}
+	if port != 22 {
+		args = append(args, "-p", strconv.Itoa(port))
+	}
+
+	return append(args, "-t", keyType, host)
 }
 
 func runTool(ctx context.Context, bin string, args ...string) (string, error) {
