@@ -197,7 +197,11 @@ func (r *Repo) PushTagNoForce(ctx context.Context, tag string, cred runcontext.C
 // used to scope a push's transient auth header to exactly the remote git will
 // contact.
 func (r *Repo) RemoteURL(ctx context.Context) (string, error) {
-	out, err := r.Run(ctx, "remote", "get-url", defaultRemote)
+	return r.remoteURL(ctx, defaultRemote)
+}
+
+func (r *Repo) remoteURL(ctx context.Context, remote string) (string, error) {
+	out, err := r.Run(ctx, "remote", "get-url", remote)
 	if err != nil {
 		return "", err
 	}
@@ -210,13 +214,17 @@ func (r *Repo) RemoteURL(ctx context.Context) (string, error) {
 // origin's URL so the token never reaches argv or .git/config. An empty token
 // yields just the no-prompt guard, leaving an unauthenticated push unchanged.
 func (r *Repo) pushAuthEnv(ctx context.Context, cred runcontext.Credential) ([]string, error) {
+	return r.remoteAuthEnv(ctx, defaultRemote, cred)
+}
+
+func (r *Repo) remoteAuthEnv(ctx context.Context, remote string, cred runcontext.Credential) ([]string, error) {
 	if !cred.Present() {
 		return authEnv("", cred), nil
 	}
 
-	remoteURL, err := r.RemoteURL(ctx)
+	remoteURL, err := r.remoteURL(ctx, remote)
 	if err != nil {
-		return nil, fmt.Errorf("resolve origin URL for authenticated push: %w", err)
+		return nil, fmt.Errorf("resolve %s URL for authenticated git operation: %w", remote, err)
 	}
 
 	return authEnv(remoteURL, cred), nil

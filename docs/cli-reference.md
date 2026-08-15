@@ -4249,6 +4249,7 @@ EXAMPLE:
 | `--existing-release-sha-file` | marker file written when same-version recovery reuses an existing release tag | `$EXISTING_RELEASE_SHA_FILE` |
 | `--remote` | git remote to query | `$RELEASE_REMOTE` |
 | `--branch` | branch containing the release bump | `$RELEASE_BRANCH`, `$BRANCH` |
+| `--token` | read token for private repository fetches; omit to use the runner token, scoped to its issuing server | n/a |
 
 ### `reusable-ci version tag-release`
 

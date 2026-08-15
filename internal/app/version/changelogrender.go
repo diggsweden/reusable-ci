@@ -12,16 +12,17 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domainversion "github.com/diggsweden/reusable-ci/v3/internal/domain/version"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // backendGitChglog is the default changelog renderer backend.
 const backendGitChglog = "git-chglog"
 
 type changelogRenderGit interface {
-	FetchBranch(ctx context.Context, remote, branch string) error
+	FetchBranch(ctx context.Context, remote, branch string, cred runcontext.Credential) error
 	Checkout(ctx context.Context, ref string) error
-	RemoteTagCommitIfExists(ctx context.Context, remote, tag string) (commit string, exists bool, err error)
-	FetchTagForceFromRemote(ctx context.Context, remote, tag string) error
+	RemoteTagCommitIfExists(ctx context.Context, remote, tag string, cred runcontext.Credential) (commit string, exists bool, err error)
+	FetchTagForceFromRemote(ctx context.Context, remote, tag string, cred runcontext.Credential) error
 	RevParse(ctx context.Context, ref string) (string, error)
 	CommitSubject(ctx context.Context, commit string) (string, error)
 	IsAncestor(ctx context.Context, ancestor, descendant string) (bool, error)
@@ -47,6 +48,7 @@ type ChangelogRenderInput struct {
 	CommitMessagePath      string // empty defaults to commit-msg.txt
 	ExistingReleaseSHAPath string // empty defaults to .existing-release-sha
 	CommitTrailers         string
+	Token                  runcontext.Credential
 }
 
 // ChangelogRenderOutput reports whether rendering occurred or same-version
@@ -67,7 +69,7 @@ func ChangelogRender(ctx context.Context, repo changelogRenderGit, renderer chan
 
 	in = withChangelogRenderDefaults(in)
 
-	if err := repo.FetchBranch(ctx, in.Remote, in.Branch); err != nil {
+	if err := repo.FetchBranch(ctx, in.Remote, in.Branch, in.Token); err != nil {
 		return nil, fmt.Errorf("render-changelog: fetch %s %s: %w", in.Remote, in.Branch, err)
 	}
 
@@ -209,7 +211,7 @@ func withChangelogRenderDefaults(in ChangelogRenderInput) ChangelogRenderInput {
 }
 
 func tryExistingReleaseRecovery(ctx context.Context, repo changelogRenderGit, out io.Writer, in ChangelogRenderInput) (string, error) {
-	remoteCommit, exists, err := repo.RemoteTagCommitIfExists(ctx, in.Remote, in.Tag)
+	remoteCommit, exists, err := repo.RemoteTagCommitIfExists(ctx, in.Remote, in.Tag, in.Token)
 	if err != nil {
 		return "", fmt.Errorf("render-changelog: resolve remote tag %s: %w", in.Tag, err)
 	}
@@ -220,7 +222,7 @@ func tryExistingReleaseRecovery(ctx context.Context, repo changelogRenderGit, ou
 
 	_ = remoteCommit
 
-	if err = repo.FetchTagForceFromRemote(ctx, in.Remote, in.Tag); err != nil {
+	if err = repo.FetchTagForceFromRemote(ctx, in.Remote, in.Tag, in.Token); err != nil {
 		return "", fmt.Errorf("render-changelog: fetch existing release tag %s: %w", in.Tag, err)
 	}
 

@@ -18,6 +18,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domaingit "github.com/diggsweden/reusable-ci/v3/internal/domain/git"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 	"github.com/diggsweden/reusable-ci/v3/internal/safeexec"
 )
 
@@ -86,6 +87,39 @@ func (r *Repo) RemoteTagCommit(ctx context.Context, repoURL, tag string) (string
 		return "", err
 	}
 
+	return remoteTagCommitFromOutput(out, repoURL, tag)
+}
+
+// RemoteTagCommitIfExists resolves a remote tag to the commit it points to,
+// returning exists=false when the remote has no matching tag.
+func (r *Repo) RemoteTagCommitIfExists(ctx context.Context, remote, tag string, cred runcontext.Credential) (string, bool, error) {
+	if remote == "" {
+		remote = defaultRemote
+	}
+
+	env, err := r.remoteAuthEnv(ctx, remote, cred)
+	if err != nil {
+		return "", false, err
+	}
+
+	out, err := r.runEnvOutput(ctx, env, "ls-remote", "--tags", remote, refsTagsPrefix+tag+"^{}", refsTagsPrefix+tag)
+	if err != nil {
+		return "", false, err
+	}
+
+	commit, err := remoteTagCommitFromOutput(out, remote, tag)
+	if err != nil {
+		if errors.Is(err, errs.ErrValidation) {
+			return "", false, nil
+		}
+
+		return "", false, err
+	}
+
+	return commit, true, nil
+}
+
+func remoteTagCommitFromOutput(out, repoURL, tag string) (string, error) {
 	var peeled, plain string
 
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
@@ -111,25 +145,6 @@ func (r *Repo) RemoteTagCommit(ctx context.Context, repoURL, tag string) (string
 	}
 
 	return "", fmt.Errorf("remote tag %q not found on %s: %w", tag, repoURL, errs.ErrValidation)
-}
-
-// RemoteTagCommitIfExists resolves a remote tag to the commit it points to,
-// returning exists=false when the remote has no matching tag.
-func (r *Repo) RemoteTagCommitIfExists(ctx context.Context, remote, tag string) (string, bool, error) {
-	if remote == "" {
-		remote = defaultRemote
-	}
-
-	commit, err := r.RemoteTagCommit(ctx, remote, tag)
-	if err != nil {
-		if errors.Is(err, errs.ErrValidation) {
-			return "", false, nil
-		}
-
-		return "", false, err
-	}
-
-	return commit, true, nil
 }
 
 // CommitSubject returns `git log -1 --format=%s <commit>`.

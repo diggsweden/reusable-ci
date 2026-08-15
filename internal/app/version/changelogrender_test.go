@@ -14,6 +14,7 @@ import (
 
 	appversion "github.com/diggsweden/reusable-ci/v3/internal/app/version"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 type fakeChangelogRenderGit struct {
@@ -27,10 +28,12 @@ type fakeChangelogRenderGit struct {
 	fetchedBranch bool
 	checkedOut    []string
 	fetchedTag    string
+	credentials   []runcontext.Credential
 }
 
-func (f *fakeChangelogRenderGit) FetchBranch(_ context.Context, _, _ string) error {
+func (f *fakeChangelogRenderGit) FetchBranch(_ context.Context, _, _ string, cred runcontext.Credential) error {
 	f.fetchedBranch = true
+	f.credentials = append(f.credentials, cred)
 
 	return nil
 }
@@ -41,12 +44,15 @@ func (f *fakeChangelogRenderGit) Checkout(_ context.Context, ref string) error {
 	return nil
 }
 
-func (f *fakeChangelogRenderGit) RemoteTagCommitIfExists(_ context.Context, _, _ string) (string, bool, error) {
+func (f *fakeChangelogRenderGit) RemoteTagCommitIfExists(_ context.Context, _, _ string, cred runcontext.Credential) (string, bool, error) {
+	f.credentials = append(f.credentials, cred)
+
 	return f.remoteTagCommit, f.remoteTagExists, nil
 }
 
-func (f *fakeChangelogRenderGit) FetchTagForceFromRemote(_ context.Context, _, tag string) error {
+func (f *fakeChangelogRenderGit) FetchTagForceFromRemote(_ context.Context, _, tag string, cred runcontext.Credential) error {
 	f.fetchedTag = tag
+	f.credentials = append(f.credentials, cred)
 
 	return nil
 }
@@ -99,12 +105,14 @@ func TestChangelogRender_GitChglogRendersCommitMessage(t *testing.T) {
 
 	var out bytes.Buffer
 
+	cred := runcontext.OperatorCredential("read-token")
 	res, err := appversion.ChangelogRender(context.Background(), gitr, renderer, &out, appversion.ChangelogRenderInput{
 		Backend:          "git-chglog",
 		Tag:              "v1.2.3",
 		ChangelogConfig:  ".chglog/full.yml",
 		CommitBodyConfig: ".chglog/body.yml",
 		CommitTrailers:   "Release-Request: release-request/v1.2.3",
+		Token:            cred,
 	})
 	if err != nil {
 		t.Fatalf("ChangelogRender: %v", err)
@@ -123,6 +131,16 @@ func TestChangelogRender_GitChglogRendersCommitMessage(t *testing.T) {
 
 	if !strings.Contains(out.String(), "Generated CHANGELOG.md (3 lines)") {
 		t.Fatalf("stdout = %q", out.String())
+	}
+
+	if len(gitr.credentials) != 2 {
+		t.Fatalf("forwarded credentials = %d, want 2", len(gitr.credentials))
+	}
+
+	for i, got := range gitr.credentials {
+		if got.For("https://forge.example") != "read-token" {
+			t.Fatalf("credential %d was not forwarded", i)
+		}
 	}
 }
 

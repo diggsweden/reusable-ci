@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
@@ -35,6 +36,13 @@ import (
 // captured output is folded (redacted) into the error. Error classification
 // mirrors Run exactly.
 func (r *Repo) runEnv(ctx context.Context, extraEnv []string, args ...string) error {
+	_, err := r.runEnvOutput(ctx, extraEnv, args...)
+
+	return err
+}
+
+// runEnvOutput is runEnv for commands whose stdout is part of the result.
+func (r *Repo) runEnvOutput(ctx context.Context, extraEnv []string, args ...string) (string, error) {
 	bin := r.GitBin
 	if bin == "" {
 		bin = "git" //nolint:goconst // generic identifier; matches Run's own default in git.go.
@@ -51,13 +59,13 @@ func (r *Repo) runEnv(ctx context.Context, extraEnv []string, args ...string) er
 	if err != nil {
 		wrapped := safeexec.WrapError(err, bin, firstGitArg(args))
 		if len(out) == 0 {
-			return wrapped
+			return "", wrapped
 		}
 
-		return fmt.Errorf("%w\n%s", wrapped, safeexec.RedactKeyMaterial(out))
+		return "", fmt.Errorf("%w\n%s", wrapped, safeexec.RedactKeyMaterial(out))
 	}
 
-	return nil
+	return strings.TrimRight(string(out), "\n"), nil
 }
 
 // safeDirArgs returns the -c safe.directory flag for this repo's Dir.
@@ -128,15 +136,18 @@ func (r *Repo) Fetch(ctx context.Context, remoteURL string, refspecs []string, c
 	return r.runEnv(ctx, authEnv(remoteURL, cred), args...)
 }
 
-// FetchBranch runs `git fetch <remote> <branch>`.
-func (r *Repo) FetchBranch(ctx context.Context, remote, branch string) error {
+// FetchBranch runs `git fetch <remote> <branch>` with transient HTTP auth.
+func (r *Repo) FetchBranch(ctx context.Context, remote, branch string, cred runcontext.Credential) error {
 	if remote == "" {
 		remote = defaultRemote
 	}
 
-	_, err := r.Run(ctx, "fetch", remote, branch)
+	env, err := r.remoteAuthEnv(ctx, remote, cred)
+	if err != nil {
+		return err
+	}
 
-	return err
+	return r.runEnv(ctx, env, "fetch", remote, branch)
 }
 
 // FetchTags fetches all tags from origin (git fetch --tags), the additive
@@ -256,13 +267,16 @@ func (r *Repo) Checkout(ctx context.Context, ref string) error {
 
 // FetchTagForceFromRemote fetches a single tag ref from remote with --force,
 // matching same-version release recovery where a local tag may already exist.
-func (r *Repo) FetchTagForceFromRemote(ctx context.Context, remote, tag string) error {
+func (r *Repo) FetchTagForceFromRemote(ctx context.Context, remote, tag string, cred runcontext.Credential) error {
 	if remote == "" {
 		remote = defaultRemote
 	}
 
 	ref := refsTagsPrefix + tag
-	_, err := r.Run(ctx, "fetch", "--force", "--no-tags", remote, ref+":"+ref)
+	env, err := r.remoteAuthEnv(ctx, remote, cred)
+	if err != nil {
+		return err
+	}
 
-	return err
+	return r.runEnv(ctx, env, "fetch", "--force", "--no-tags", remote, ref+":"+ref)
 }

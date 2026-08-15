@@ -12,6 +12,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/changelog"
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
 	appversion "github.com/diggsweden/reusable-ci/v3/internal/app/version"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/clitoken"
 )
 
 func renderChangelogCmd() *cli.Command {
@@ -34,6 +35,7 @@ func renderChangelogCmd() *cli.Command {
 			&cli.StringFlag{Name: "existing-release-sha-file", Value: ".existing-release-sha", Sources: cli.EnvVars("EXISTING_RELEASE_SHA_FILE"), Usage: "marker file written when same-version recovery reuses an existing release tag"},
 			&cli.StringFlag{Name: "remote", Value: "origin", Sources: cli.EnvVars("RELEASE_REMOTE"), Usage: "git remote to query"},
 			&cli.StringFlag{Name: flagBranch, Value: "main", Sources: cli.EnvVars("RELEASE_BRANCH", "BRANCH"), Usage: "branch containing the release bump"},
+			&cli.StringFlag{Name: "token", Usage: "read token for private repository fetches; omit to use the runner token, scoped to its issuing server"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			_, err := appversion.ChangelogRender(ctx, git.New(), changelog.New(), os.Stderr, appversion.ChangelogRenderInput{
@@ -48,6 +50,7 @@ func renderChangelogCmd() *cli.Command {
 				CommitMessagePath:      cmd.String("commit-message-file"),
 				ExistingReleaseSHAPath: cmd.String("existing-release-sha-file"),
 				CommitTrailers:         cmd.String("commit-trailers"),
+				Token:                  clitoken.Resolve(cmd),
 			})
 
 			return err
