@@ -23,7 +23,7 @@ the black-box suite is its own repository, and the live tier needs a lab.
 | **domain** | pure logic — parsers, transforms, decisions | (default) | <50ms | yes | no |
 | **adapter** | I/O — real CLIs (`gpg`, `git`, `trivy`), real HTTP | `!short` for slow ones; `integration` for full-stack | <2s | yes (per package) | yes |
 | **repo guards** | rules about the tree itself, not about behaviour | (default) | <1s | yes | no |
-| **CLI smoke** | the binary as a black box, in this repo | `e2e` | <5s | no | builds binary |
+| **CLI smoke** | the binary as a black box, in this repo | `smoke` | <5s | no | builds binary |
 | **black-box suite** | the binary against real toolchains and fixtures — [`diggsweden/reusable-ci-blackbox-tests`](https://github.com/diggsweden/reusable-ci-blackbox-tests) | `integration`, in that repo | minutes | yes | real tools, faked network |
 | **live / conformance** | the same scenario against every real forge | `live` | minutes | no (`-p 1`) | a real lab |
 
@@ -32,12 +32,12 @@ Run them as:
 ```text
 go test ./...                          # domain + fast adapter + repo guards
 go test -tags=integration ./...        # + full-stack adapter
-go test -tags=e2e ./cmd/...            # + e2e binary smoke
+go test -tags=smoke ./cmd/...          # + CLI smoke tier
 ```
 
 ### The black-box tier lives in another repository
 
-`cmd/reusable-ci/e2e_test.go` is a smoke harness: it builds the binary and
+`cmd/reusable-ci/smoke_test.go` is a smoke harness: it builds the binary and
 checks the root contract (help, version, flag parsing, the exit-code ladder).
 The bulk of the black-box scenarios — every ecosystem's real toolchain, the
 signing round-trips, reproducibility, host isolation — are in the companion
@@ -48,9 +48,9 @@ the split is: if it needs a real toolchain or a fixture project, it belongs
 in the testsuite repo; if it is about the CLI's own surface and needs nothing
 installed, it can stay here.
 
-Note the vocabulary: the testsuite repo calls itself the *integration* tier
-and reserves "e2e" for a real runner talking to a real forge. This document
-uses "e2e" only for the in-repo smoke harness and its build tag.
+Note the vocabulary: "e2e" is reserved for a real runner talking to a real
+forge, which is neither of these. The in-repo tier is named for what it does
+— `smoke` — so the word is free for the thing that earns it.
 
 ### The live tier
 
@@ -103,7 +103,7 @@ an explicit destroy confirmation naming the run.
 In this repository's own CI, the self-validation workflow runs:
 
 - `just test` (unit + integration)
-- `just test-e2e`
+- `just test-smoke`
 - `just test-fuzz` (seed corpus only; not active mutation fuzzing)
 
 ## Tests live next to source
@@ -117,7 +117,7 @@ internal/adapters/github/repo_test.go          ← real `gh` (or mocked)
 internal/adapters/github/release_integration_test.go   ← //go:build integration
 internal/app/container/compute_metadata.go
 internal/app/container/compute_metadata_test.go       ← stubbed deps
-cmd/reusable-ci/e2e_test.go                   ← //go:build e2e
+cmd/reusable-ci/smoke_test.go                 ← //go:build smoke
 ```
 
 ### Except the repo-wide guards
@@ -386,10 +386,10 @@ func TestMetadata(t *testing.T) {
 No subprocess, no network, no filesystem (except what `t.TempDir`
 creates inside the helpers).
 
-### CLI / e2e — binary as black box
+### CLI smoke — binary as black box
 
 ```go
-//go:build e2e
+//go:build smoke
 
 func TestCLI_ContainerMetadata_Smoke(t *testing.T) {
     bin := buildBinary(t) // helper that runs `go build` once per package

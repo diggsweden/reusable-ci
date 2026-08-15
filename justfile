@@ -234,7 +234,7 @@ test: test-tags-compile test-unit test-integration
 #
 # go build and go vet skip tagged files, so a tier behind //go:build can stop
 # compiling while every default check stays green. Both did: the integration tier
-# had not built for weeks after the credential type changed under it, and the e2e
+# had not built for weeks after the credential type changed under it, and the smoke
 # tier named a subcommand that had been removed. Nothing said so, because nothing
 # compiled them.
 #
@@ -243,7 +243,7 @@ test: test-tags-compile test-unit test-integration
 # those things.
 [group('test')]
 test-tags-compile:
-    @for tag in integration e2e live; do \
+    @for tag in integration smoke live; do \
         printf 'vet -tags %s\n' "$tag"; \
         go vet -tags "$tag" ./... || exit 1; \
     done
@@ -258,10 +258,10 @@ test-unit:
 test-integration:
     @go test -shuffle=on -tags=integration -count=1 -race -buildvcs=false ./...
 
-# Run binary end-to-end tests (builds the reusable-ci binary and exercises it as a black box)
+# Run the CLI smoke tier (builds the reusable-ci binary and exercises it as a black box)
 [group('test')]
-test-e2e:
-    @go test -shuffle=on -tags=e2e -count=1 -buildvcs=false ./cmd/...
+test-smoke:
+    @go test -shuffle=on -tags=smoke -count=1 -buildvcs=false ./cmd/...
 
 # Run the live-forge conformance tier against real Forgejo and GitLab instances.
 #
@@ -343,10 +343,10 @@ test-unit-verbose:
 test-integration-verbose:
     @go test -v -shuffle=on -tags=integration -count=1 -race -buildvcs=false ./...
 
-# Run binary end-to-end tests with verbose output
+# Run the CLI smoke tier with verbose output
 [group('test')]
-test-e2e-verbose:
-    @go test -v -shuffle=on -tags=e2e -count=1 -buildvcs=false ./cmd/...
+test-smoke-verbose:
+    @go test -v -shuffle=on -tags=smoke -count=1 -buildvcs=false ./cmd/...
 
 # Run all tests with verbose output
 [group('test')]

@@ -1,4 +1,4 @@
-//go:build e2e
+//go:build smoke
 
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
@@ -23,15 +23,15 @@ var (
 	sharedBinaryOnce sync.Once
 	sharedBinaryPath string
 	sharedBinaryErr  error
-	e2eBaseTemp      string
+	smokeBaseTemp    string
 )
 
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "reusable-ci-e2e-*")
+	dir, err := os.MkdirTemp("", "reusable-ci-smoke-*")
 	if err != nil {
 		panic(err)
 	}
-	e2eBaseTemp = dir
+	smokeBaseTemp = dir
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
@@ -40,11 +40,11 @@ func TestMain(m *testing.M) {
 func buildBinary(t *testing.T) string {
 	t.Helper()
 	sharedBinaryOnce.Do(func() {
-		if e2eBaseTemp == "" {
-			sharedBinaryErr = fmt.Errorf("e2e temp root not initialized")
+		if smokeBaseTemp == "" {
+			sharedBinaryErr = fmt.Errorf("smoke temp root not initialized")
 			return
 		}
-		bin := filepath.Join(e2eBaseTemp, "reusable-ci")
+		bin := filepath.Join(smokeBaseTemp, "reusable-ci")
 		cmd := exec.Command("go", "build", "-buildvcs=false", "-o", bin, "./cmd/reusable-ci")
 		cmd.Dir = repoRoot(t)
 		cmd.Env = os.Environ()
@@ -281,7 +281,7 @@ func TestBinary_ValidateAuthRegistry_MissingPasswordExitsNoPerm(t *testing.T) {
 // drive from a black box any more.
 //
 // Deleted rather than rewritten. Driving prerequisites far enough to reach the
-// ref-type check needs a forge, which makes it a live-tier concern, not an e2e
+// ref-type check needs a forge, which makes it a live-tier concern, not a smoke
 // one -- and the claim itself is asserted where it belongs:
 // internal/domain/validate/reftype_test.go on the error, and
 // internal/app/validate/refs_test.go on the use case.

@@ -317,7 +317,7 @@ func (d *Deps) RequireRegistryAuthResolver() (provider.RegistryAuthResolver, err
 | 4a Identity role *(early)* ✅ | `SigningIdentityResolver` + adapters + `AnchorIdentity`            | resolver returns correct identity on github + gitlab — **done** |
 | 1 Verify parity ✅          | verify defaults from resolver; per-method recipes in `verification.md` | verify defaults wired (artifact + container); recipes documented — **done** |
 | 2 Greenfield default ✅     | recommendation + example emit sigstore (no fallback flip)             | new projects guided to keyless; existing configs untouched — **done** |
-| 3 Git-object signing ✅(code) | opt-in `git-signing: gpg\|ssh` behind `gitSigningOps` (gitsign dropped) | producer + consumer + config + plan + full caller chain wired; **e2e ssh release not yet exercised in CI** |
+| 3 Git-object signing ✅(code) | opt-in `git-signing: gpg\|ssh` behind `gitSigningOps` (gitsign dropped) | producer + consumer + config + plan + full caller chain wired; **ssh release round-trip not yet exercised in CI** |
 | 4b Registry/KMS OIDC ◐    | `RegistryAuthResolver`; OIDC > static                                  | registry login w/ zero static secret done (3 forges); **cloud-KMS-over-OIDC still future** |
 | 5 Governance ✅(code)      | advisory lint (doctor); status labels; retire YAML branch points      | advisory + docs + plan-driven branch-point retirement done |
 
@@ -333,7 +333,7 @@ parallelizable; 5 last.
 - App-layer **fakes** (`fakesigningidentity`, mirroring `fakejobresultstore` /
   `fakeoutputsink`) injected through the narrow role interface.
 - Compile-time **conformance vars** per adapter.
-- **e2e** (`just test-e2e`) sign→verify round-trip; add scenario IDs to
+- **smoke** (`just test-smoke`) sign→verify round-trip; add scenario IDs to
   `docs/cli-black-box.md`.
 
 ## No-loss contract

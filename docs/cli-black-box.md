@@ -15,7 +15,7 @@ exit code, stdout, stderr, files written (`$GITHUB_OUTPUT`,
 loopback mock, and child-tool argv.
 
 This complements — does not replace — [`docs/testing.md`](testing.md) (the
-unit/adapter/e2e layering) and the domain unit tests that own internal
+unit/adapter/smoke layering) and the domain unit tests that own internal
 algorithms. The black-box layer preserves the **public CLI contract** that the
 reusable workflows in `.github/workflows/` depend on, across releases and
 across forges.
@@ -23,7 +23,7 @@ across forges.
 There are two harnesses, and this document is the catalogue and the
 acceptance criteria for both:
 
-- `cmd/reusable-ci/e2e_test.go` (build tag `e2e`, `just test-e2e`) — the
+- `cmd/reusable-ci/smoke_test.go` (build tag `smoke`, `just test-smoke`) — the
   in-repo smoke harness. It needs nothing installed, so it covers the root
   contract: command discovery, help, version, flag parsing, the exit-code
   ladder, stream discipline.
@@ -35,9 +35,8 @@ acceptance criteria for both:
 
 A new scenario goes in the testsuite if it needs a real toolchain or a
 fixture project, and here if it is about the CLI's own surface. Note that
-the testsuite calls itself the *integration* tier and reserves "e2e" for a
-real runner against a real forge; the `e2e` build tag in this repository
-means the smoke harness only.
+the testsuite calls itself the *integration* tier, and "e2e" is reserved
+for a real runner against a real forge — which neither harness is.
 
 ## Scope
 
@@ -102,7 +101,7 @@ helper that satisfies it.
 
 | ID | Requirement | Helper |
 |---|---|---|
-| HAR-01 | Run the freshly built binary as an external process. Do not import internal packages into the assertion. | `buildBinary(t)` + `runBinary(t, …)` in `cmd/reusable-ci/e2e_test.go` (builds once via `TestMain`). |
+| HAR-01 | Run the freshly built binary as an external process. Do not import internal packages into the assertion. | `buildBinary(t)` + `runBinary(t, …)` in `cmd/reusable-ci/smoke_test.go` (builds once via `TestMain`). |
 | HAR-02 | Create `HOME`, every XDG base, configs, output/summary files, artifact dirs, and any keyring under one isolated temp dir; delete it afterwards. | `testenv.New(t)` → `isolatedenv.Isolate(t)` (sets `HOME`, `USERPROFILE`, `XDG_{CONFIG,DATA,CACHE,STATE}_HOME`, `TMPDIR`); `testfs.NewReal(t)` for fixture files. |
 | HAR-03 | Neutralize ambient Git/GPG/SSH state. | `isolatedenv` sets `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, fixed `GIT_AUTHOR/COMMITTER_*`, `GIT_TERMINAL_PROMPT=0`, empty `GIT_ASKPASS`/`SSH_AUTH_SOCK`, `GNUPGHOME` under temp. |
 | HAR-03b | Neutralize ambient **CI/forge/token** state so a test (and any binary it spawns with `os.Environ()`) never inherits the developer's or the runner's real forge context. | `isolatedenv` scrubs every `GITHUB_*`/`ACTIONS_*`/`RUNNER_*`/`GITLAB_*`/`CI_*`/`FORGEJO_*`/`GITEA_*`/`REUSABLE_CI_*`/`ARTIFACT_*`/`REGISTRY_*` var plus standalone `CI`, `GH_TOKEN`, `DOCKER_CONFIG`, `GPG_PRIVATE_KEY`, `COSIGN_*`, … to empty (detection reads empty as absent). A test that needs one re-sets it *after* `Isolate`. Locked by `TestIsolate_ScrubsAmbientCIEnv`. |
@@ -287,8 +286,8 @@ pre-release hardening jobs.
 | `docs/cli-reference.md` | Command syntax, flags, env vars, defaults. |
 | `internal/domain/errs` (`ExitCodeFromError`, `FromHTTPStatus`) | The exit-code ladder and HTTP-status mapping. |
 | `docs/workflow-design-policy.md` | Node-less/forge-portable goal, event-context guard invariant, artifact verb contract. |
-| `docs/testing.md` | Layer boundaries, build tags, and the `e2e` harness location. |
+| `docs/testing.md` | Layer boundaries, build tags, and the `smoke` harness location. |
 | `docs/providers.md` | Forge detection and the per-provider capability matrix. |
 | `docs/artifacts-reference.md` | `artifacts.yml` schema that `doctor`/`config` validate. |
-| `cmd/reusable-ci/e2e_test.go` | The in-repo smoke harness: root contract, help, version, exit-code ladder. |
+| `cmd/reusable-ci/smoke_test.go` | The in-repo smoke harness: root contract, help, version, exit-code ladder. |
 | [`diggsweden/reusable-ci-blackbox-tests`](https://github.com/diggsweden/reusable-ci-blackbox-tests) | The bulk of these scenarios: real toolchains, fixtures, signing round-trips, reproducibility. |

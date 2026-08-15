@@ -13,7 +13,7 @@
 //   - shells out to git / gpg / ssh (they all read host env)
 //   - reads XDG config dirs ($XDG_CONFIG_HOME, $XDG_DATA_HOME, …)
 //   - detects the forge/runner or reads run-artifact/registry env
-//   - spawns the built binary with os.Environ() (e2e harness)
+//   - spawns the built binary with os.Environ() (smoke harness)
 //   - compares stdout/stderr byte-for-byte (NO_COLOR / TERM)
 //
 // Tests that already build an isolated git repo via
