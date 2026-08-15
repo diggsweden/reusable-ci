@@ -2880,6 +2880,7 @@ EXAMPLE:
 | `--release-sha` | commit the release is built from | `$RELEASE_SHA` |
 | `--tag` | release tag (e.g. v1.2.3) | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 | `--repo-url` | remote repository URL for ls-remote | `$REPO_URL` |
+| `--token` | read token for a private repository; omit to use the runner token, scoped to its issuing server | n/a |
 
 ## `reusable-ci report`
 

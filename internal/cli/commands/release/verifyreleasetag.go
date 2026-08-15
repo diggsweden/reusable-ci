@@ -12,6 +12,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
 	apprelease "github.com/diggsweden/reusable-ci/v3/internal/app/release"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/clitoken"
 )
 
 // verifyTagCmd is the Go port of forgejo-ci's verify-release-tag.sh: a
@@ -28,12 +29,14 @@ func verifyTagCmd() *cli.Command {
 			&cli.StringFlag{Name: flagReleaseSHA, Sources: cli.EnvVars("RELEASE_SHA"), Usage: "commit the release is built from"},
 			&cli.StringFlag{Name: flagTag, Sources: cienv.Tag(), Usage: "release tag (e.g. v1.2.3)"},
 			&cli.StringFlag{Name: "repo-url", Sources: cli.EnvVars("REPO_URL"), Usage: "remote repository URL for ls-remote"},
+			&cli.StringFlag{Name: "token", Usage: "read token for a private repository; omit to use the runner token, scoped to its issuing server"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return apprelease.VerifyReleaseTag(ctx, git.New(), os.Stderr, apprelease.VerifyReleaseTagInput{
 				ReleaseSHA: cmd.String(flagReleaseSHA),
 				Tag:        cmd.String(flagTag),
 				RepoURL:    cmd.String("repo-url"),
+				Token:      clitoken.Resolve(cmd),
 			})
 		},
 	}

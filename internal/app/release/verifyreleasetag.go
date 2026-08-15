@@ -10,6 +10,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/version"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // tagVerifyGit is the git surface VerifyReleaseTag needs. RevParse reads
@@ -17,8 +18,8 @@ import (
 // the trust boundary.
 type tagVerifyGit interface {
 	RevParse(ctx context.Context, ref string) (string, error)
-	RemoteTagCommit(ctx context.Context, repoURL, tag string) (string, error)
-	RemoteVersionTags(ctx context.Context, repoURL string) ([]string, error)
+	RemoteTagCommit(ctx context.Context, repoURL, tag string, cred runcontext.Credential) (string, error)
+	RemoteVersionTags(ctx context.Context, repoURL string, cred runcontext.Credential) ([]string, error)
 }
 
 // VerifyReleaseTagInput drives VerifyReleaseTag.
@@ -26,6 +27,7 @@ type VerifyReleaseTagInput struct {
 	ReleaseSHA string // the commit the release is built from
 	Tag        string // the release tag, e.g. v1.2.3
 	RepoURL    string // remote URL for ls-remote
+	Token      runcontext.Credential
 }
 
 // VerifyReleaseTag re-verifies, at the signing trust boundary, that:
@@ -57,7 +59,7 @@ func VerifyReleaseTag(ctx context.Context, git tagVerifyGit, out io.Writer, in V
 		return fmt.Errorf("verify-release-tag: checkout %s does not match release-sha %s: %w", head, in.ReleaseSHA, errs.ErrValidation)
 	}
 
-	tagCommit, err := git.RemoteTagCommit(ctx, in.RepoURL, in.Tag)
+	tagCommit, err := git.RemoteTagCommit(ctx, in.RepoURL, in.Tag, in.Token)
 	if err != nil {
 		return fmt.Errorf("verify-release-tag: resolve remote tag: %w", err)
 	}
@@ -66,7 +68,7 @@ func VerifyReleaseTag(ctx context.Context, git tagVerifyGit, out io.Writer, in V
 		return fmt.Errorf("verify-release-tag: remote tag %s points to %s, not release-sha %s: %w", in.Tag, tagCommit, in.ReleaseSHA, errs.ErrValidation)
 	}
 
-	tags, err := git.RemoteVersionTags(ctx, in.RepoURL)
+	tags, err := git.RemoteVersionTags(ctx, in.RepoURL, in.Token)
 	if err != nil {
 		return fmt.Errorf("verify-release-tag: list remote tags: %w", err)
 	}

@@ -11,6 +11,7 @@ import (
 
 	apprelease "github.com/diggsweden/reusable-ci/v3/internal/app/release"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // fakeTagGit implements the tag-verify git surface.
@@ -22,11 +23,11 @@ type fakeTagGit struct {
 
 func (f fakeTagGit) RevParse(_ context.Context, _ string) (string, error) { return f.head, nil }
 
-func (f fakeTagGit) RemoteTagCommit(_ context.Context, _, _ string) (string, error) {
+func (f fakeTagGit) RemoteTagCommit(_ context.Context, _, _ string, _ runcontext.Credential) (string, error) {
 	return f.tagCommit, nil
 }
 
-func (f fakeTagGit) RemoteVersionTags(_ context.Context, _ string) ([]string, error) {
+func (f fakeTagGit) RemoteVersionTags(_ context.Context, _ string, _ runcontext.Credential) ([]string, error) {
 	return f.tags, nil
 }
 

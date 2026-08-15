@@ -81,8 +81,8 @@ func (r *Repo) StatusPorcelain(ctx context.Context, pathspec string) (string, er
 // — not the local checkout — is the point: it re-verifies the published
 // tag at the trust boundary. Returns ErrValidation when the tag is
 // absent on the remote.
-func (r *Repo) RemoteTagCommit(ctx context.Context, repoURL, tag string) (string, error) {
-	out, err := r.Run(ctx, "ls-remote", "--tags", repoURL, refsTagsPrefix+tag+"^{}", refsTagsPrefix+tag)
+func (r *Repo) RemoteTagCommit(ctx context.Context, repoURL, tag string, cred runcontext.Credential) (string, error) {
+	out, err := r.runEnvOutput(ctx, authEnv(repoURL, cred), "ls-remote", "--tags", repoURL, refsTagsPrefix+tag+"^{}", refsTagsPrefix+tag)
 	if err != nil {
 		return "", err
 	}
@@ -170,8 +170,8 @@ func (r *Repo) RecentLogOneline(ctx context.Context, ref string, limit int) (str
 // (`git ls-remote --tags --refs`). The git-side `v*` glob is coarse IO
 // narrowing only; deciding which of these are valid release tags (and
 // which is highest) is the domain's job — see domain/version.
-func (r *Repo) RemoteVersionTags(ctx context.Context, repoURL string) ([]string, error) {
-	out, err := r.Run(ctx, "ls-remote", "--tags", "--refs", repoURL, refsTagsPrefix+"v*")
+func (r *Repo) RemoteVersionTags(ctx context.Context, repoURL string, cred runcontext.Credential) ([]string, error) {
+	out, err := r.runEnvOutput(ctx, authEnv(repoURL, cred), "ls-remote", "--tags", "--refs", repoURL, refsTagsPrefix+"v*")
 	if err != nil {
 		return nil, err
 	}
