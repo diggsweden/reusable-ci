@@ -50,13 +50,24 @@ func TestAnnotator_NonGitHubFormats_EmitPlainPrefix(t *testing.T) {
 	}
 }
 
+// TestAnnotator_ZeroValue_DiscardsWrites covers the `if a.w == nil` guard that
+// opens both emit and emitAt.
+//
+// There is no assertion because a panic is the failure: a zero-value Annotator
+// carries a nil io.Writer, so dropping either guard makes every call here a nil
+// dereference. The located variants go through emitAt, which has its own copy
+// of the check -- the other ErrorAt and WarningAt tests all supply a real
+// writer, so without these two lines that second guard is unguarded.
 func TestAnnotator_ZeroValue_DiscardsWrites(t *testing.T) {
 	t.Parallel()
-	// Zero-value Annotator (no writer set) should not panic.
+
 	var a output.Annotator
+
 	a.Errorf("boom")
 	a.Warningf("watch out")
 	a.Noticef("FYI")
+	a.ErrorAt(output.Annotation{File: "f.yml", Line: 6}, "bad value")
+	a.WarningAt(output.Annotation{Title: "Heads up"}, "watch out")
 }
 
 func TestAnnotator_FormatString_PassedThrough(t *testing.T) {

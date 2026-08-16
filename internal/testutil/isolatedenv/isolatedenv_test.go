@@ -24,6 +24,7 @@ func TestIsolate_ScrubsAndPinsProcessEnv(t *testing.T) {
 		require.True(t, strings.HasPrefix(os.Getenv(key), home),
 			"%s should be under home %q, got %q", key, home, os.Getenv(key))
 	}
+
 	require.True(t, strings.HasPrefix(os.Getenv("GNUPGHOME"), home),
 		"GNUPGHOME should be under isolated home %q, got %q", home, os.Getenv("GNUPGHOME"))
 
