@@ -111,7 +111,7 @@ jobs:
       # TestMain builds the engine from the sibling checkout itself (the
       # sibling wins over the REUSABLE_CI override), so no prebuild step.
       - name: Run the black-box suite against this checkout
-        run: go test -tags blackbox -timeout 20m ./tests/integration/
+        run: go test -tags blackbox -timeout 20m ./tests/...
         working-directory: reusable-ci-blackbox-tests
 
   go:
