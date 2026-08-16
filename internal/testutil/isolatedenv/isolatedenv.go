@@ -158,16 +158,26 @@ func Isolate(t *testing.T) string {
 	t.Setenv("all_proxy", "")
 	t.Setenv("no_proxy", "")
 
-	// TMPDIR: pin to the isolated home so subprocess temp files don't
+	// Temp: pin to the isolated home so subprocess temp files don't
 	// leak into the developer's /tmp (and races with parallel runs
 	// can't collide on shared paths). Subprocesses (gpg, git) expect
 	// the path to already exist, so create it eagerly.
+	//
+	// All three names, not just TMPDIR. TMPDIR is the Unix one and the
+	// only one Go's os.TempDir reads there, but Windows ignores it
+	// entirely in favour of TMP and TEMP — and this function already
+	// pins USERPROFILE for Windows-targeting tests, so isolating the
+	// home while leaving the temp path on the host is half a job.
+	// Node's os.tmpdir and Python's tempfile also fall back to TMP and
+	// TEMP, so a subprocess that clears TMPDIR still lands here.
 	tmp := filepath.Join(home, "tmp")
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		t.Fatalf("isolatedenv: mkdir TMPDIR %q: %v", tmp, err)
 	}
 
 	t.Setenv("TMPDIR", tmp)
+	t.Setenv("TMP", tmp)
+	t.Setenv("TEMP", tmp)
 
 	// Output stability: disable colour, force a terminal type that no
 	// CLI tries to be clever about. Golden-file comparisons need bytes

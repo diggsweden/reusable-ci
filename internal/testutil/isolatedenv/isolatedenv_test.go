@@ -17,8 +17,13 @@ func TestIsolate_ScrubsAndPinsProcessEnv(t *testing.T) {
 	home := isolatedenv.Isolate(t)
 	require.Equal(t, home, os.Getenv("HOME"))
 	require.Equal(t, home, os.Getenv("USERPROFILE"))
-	require.True(t, strings.HasPrefix(os.Getenv("TMPDIR"), home),
-		"TMPDIR should be under home %q, got %q", home, os.Getenv("TMPDIR"))
+	// All three temp names: TMPDIR is Unix's, TMP and TEMP are Windows',
+	// and Node and Python fall back to them. One of them still pointing
+	// at the host's /tmp makes the other two decorative.
+	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+		require.True(t, strings.HasPrefix(os.Getenv(key), home),
+			"%s should be under home %q, got %q", key, home, os.Getenv(key))
+	}
 	require.True(t, strings.HasPrefix(os.Getenv("GNUPGHOME"), home),
 		"GNUPGHOME should be under isolated home %q, got %q", home, os.Getenv("GNUPGHOME"))
 
