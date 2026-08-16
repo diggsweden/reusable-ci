@@ -35,8 +35,8 @@ acceptance criteria for both:
 
 A new scenario goes in the testsuite if it needs a real toolchain or a
 fixture project, and here if it is about the CLI's own surface. Note that
-the testsuite calls itself the *integration* tier, and "e2e" is reserved
-for a real runner against a real forge — which neither harness is.
+both harnesses are the *black-box* tier, and "e2e" is reserved for a real
+runner against a real forge — which neither of them is.
 
 ## Scope
 

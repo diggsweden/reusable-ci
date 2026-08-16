@@ -24,7 +24,7 @@ the black-box suite is its own repository, and the live tier needs a lab.
 | **adapter** | I/O — real CLIs (`gpg`, `git`, `trivy`), real HTTP | `!short` for slow ones; `integration` for full-stack | <2s | yes (per package) | yes |
 | **repo guards** | rules about the tree itself, not about behaviour | (default) | <1s | yes | no |
 | **CLI smoke** | the binary as a black box, in this repo | `smoke` | <5s | no | builds binary |
-| **black-box suite** | the binary against real toolchains and fixtures — [`diggsweden/reusable-ci-blackbox-tests`](https://github.com/diggsweden/reusable-ci-blackbox-tests) | `integration`, in that repo | minutes | yes | real tools, faked network |
+| **black-box suite** | the binary against real toolchains and fixtures — [`diggsweden/reusable-ci-blackbox-tests`](https://github.com/diggsweden/reusable-ci-blackbox-tests) | `blackbox`, in that repo | minutes | yes | real tools, faked network |
 | **live / conformance** | the same scenario against every real forge | `live` | minutes | no (`-p 1`) | a real lab |
 
 Run them as:
