@@ -14,86 +14,105 @@
 # stands between a scenario and a real DELETE.
 set -euo pipefail
 
-readonly expected_schema=2
+readonly expected_version=1
 readonly expected_prefix='rc-'
 readonly confirm_action='destroy-live-forge-fixtures'
 
-readonly run_id=${LAB_RUN_ID:?LAB_RUN_ID is required; source a git-provider-lab target contract}
-readonly targets=${LAB_TARGETS:?LAB_TARGETS must select at least one provider}
-readonly prefix=${LAB_RESOURCE_PREFIX:?LAB_RESOURCE_PREFIX is required}
-readonly identity=${LAB_LIVE_EXPECTED_IDENTITY:?LAB_LIVE_EXPECTED_IDENTITY is required}
+# The neutral live-target contract: infrastructure facts only. Everything that
+# authorises destruction -- the namespace, the owners, the confirmation -- is
+# this suite's own, because a producer that also supplied them would be handing
+# out permission along with the address.
+readonly contract=${LAB_TARGETS_FILE:?LAB_TARGETS_FILE must name a neutral live-target contract}
 readonly confirmation=${RC_LIVE_CONFIRM_DESTROY:?RC_LIVE_CONFIRM_DESTROY is required}
-readonly cleanup=${LAB_TOKEN_CLEANUP_CMD:?LAB_TOKEN_CLEANUP_CMD is required}
 
-[[ "${LAB_TARGETS_SCHEMA_VERSION:-}" == "$expected_schema" ]] || {
-	printf 'LAB_TARGETS_SCHEMA_VERSION must be %s\n' "$expected_schema" >&2
+[[ "$contract" == /* && -f "$contract" && ! -L "$contract" ]] || {
+	printf 'LAB_TARGETS_FILE must be an absolute path to a regular file\n' >&2
 	exit 2
 }
 
+command -v jq >/dev/null 2>&1 || {
+	printf 'live preflight needs jq to read the contract; it is pinned in .mise.toml\n' >&2
+	exit 2
+}
+
+version=$(jq -r '.version // empty' <"$contract")
+[[ "$version" == "$expected_version" ]] || {
+	printf 'live-target contract version must be %s, got %s\n' "$expected_version" "${version:-none}" >&2
+	exit 2
+}
+
+run_id=$(jq -r '.generation.id // empty' <"$contract")
 [[ "$run_id" =~ ^[a-z0-9][a-z0-9-]{2,39}$ ]] || {
-	printf 'LAB_RUN_ID is malformed\n' >&2
+	printf 'contract generation.id is malformed\n' >&2
 	exit 2
 }
+readonly run_id
 
-# The namespace is what binds the destructive guard to resources this suite
-# owns. A contract minted for another consumer is well-formed and must still be
-# refused here.
-[[ "$prefix" == "$expected_prefix" ]] || {
-	printf 'this suite owns %s, but the contract declares %s\n' "$expected_prefix" "$prefix" >&2
-	exit 2
-}
-
-[[ "$identity" == "run=${run_id}|targets="* ]] || {
-	printf 'LAB_LIVE_EXPECTED_IDENTITY is not bound to this run\n' >&2
-	exit 2
-}
-
-[[ "$confirmation" == "${confirm_action}|${identity}" ]] || {
-	printf 'RC_LIVE_CONFIRM_DESTROY must equal %s|<LAB_LIVE_EXPECTED_IDENTITY>\n' "$confirm_action" >&2
-	exit 2
-}
-
+cleanup=$(jq -r '.interfaces.credential_cleanup // empty' <"$contract")
 [[ "$cleanup" == /* && -x "$cleanup" && ! -L "$cleanup" ]] || {
-	printf 'LAB_TOKEN_CLEANUP_CMD must be an executable absolute path\n' >&2
+	printf 'contract credential_cleanup must be an executable absolute path\n' >&2
 	exit 2
 }
+readonly cleanup
 
-# Every host the run may touch must be a disposable lab host. The suffix is
-# fixed here rather than read from the environment: an allowlist supplied by the
-# same environment being validated authorises nothing.
+# Rebuilt here, not read: the identity is what the confirmation is typed
+# against, so a preflight that read it would be checking a claim against
+# itself. The Go guard derives the same string independently.
+identity="run=${run_id}|targets="
+readonly prefix="$expected_prefix"
+
+# Every host the run may touch must be a disposable lab host, and every forge
+# it may act on must have an owner the operator declared. The pattern is fixed
+# here rather than read from the environment: an allowlist supplied by the same
+# environment being validated authorises nothing.
 selected=0
+entries=()
 
-for kind in gitlab forgejo; do
-	case ",${targets}," in
-	*",${kind},"*) ;;
+while IFS=$'\t' read -r kind api_base; do
+	[[ -n "$kind" ]] || continue
+
+	case "$kind" in
+	gitlab | forgejo) ;;
 	*) continue ;;
 	esac
 
-	upper=${kind^^}
-	host_var="LAB_${upper}_HOST"
-	token_var="LAB_${upper}_TOKEN"
-	host=${!host_var:-}
+	owner_var="RC_LIVE_${kind^^}_OWNER"
+	owner=${!owner_var:-}
+	[[ -n "$owner" ]] || continue
 
-	[[ "${host%%:*}" == *.gitproviderlab ]] || {
-		printf '%s host %q is outside the disposable-forge suffix\n' "$kind" "$host" >&2
+	host=${api_base#https://}
+	host=${host%%/*}
+
+	[[ "${host%%:*}" =~ ^(gitlab|gitea|forgejo)\.(compose|k3s)\.forgelab$ ]] || {
+		printf '%s host %q is not a disposable lab forge\n' "$kind" "$host" >&2
 		exit 2
 	}
 
-	[[ -n "${!token_var:-}" ]] || {
-		printf '%s token is empty\n' "$kind" >&2
+	[[ -n "$(jq -r --arg k "$kind" '.endpoints[] | select(.kind==$k) | .credential.token // empty' <"$contract")" ]] || {
+		printf '%s credential carries no token\n' "$kind" >&2
 		exit 2
 	}
 
-	[[ "$identity" == *"${kind}@https://${host}/"* ]] || {
-		printf '%s is selected but absent from the run identity\n' "$kind" >&2
-		exit 2
-	}
-
+	entries+=("${kind}@https://${host}/${owner}#resources=${prefix}")
 	selected=$((selected + 1))
-done
+done < <(jq -r '.endpoints[] | [.kind, .api_base_url] | @tsv' <"$contract")
 
 ((selected > 0)) || {
-	printf 'LAB_TARGETS selects no provider this suite supports (gitlab, forgejo)\n' >&2
+	printf 'no contract endpoint has a declared RC_LIVE_<FORGE>_OWNER (gitlab, forgejo)\n' >&2
+	exit 2
+}
+
+# Sorted so the identity does not depend on the order the producer wrote the
+# endpoints in; the Go guard sorts the same way.
+readarray -t sorted < <(printf '%s\n' "${entries[@]}" | LC_ALL=C sort)
+identity+=$(
+	IFS=,
+	printf '%s' "${sorted[*]}"
+)
+readonly identity
+
+[[ "$confirmation" == "${confirm_action}|${identity}" ]] || {
+	printf 'RC_LIVE_CONFIRM_DESTROY must equal %s|%s\n' "$confirm_action" "$identity" >&2
 	exit 2
 }
 
@@ -115,4 +134,4 @@ done
 	exit 2
 }
 
-printf 'live preflight: %s provider(s), run %s, namespace %s\n' "$selected" "$run_id" "$prefix"
+printf 'live preflight: %s provider(s), generation %s, namespace %s\n' "$selected" "$run_id" "$prefix"

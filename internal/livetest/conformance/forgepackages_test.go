@@ -272,7 +272,7 @@ JAVA`
 	//
 	// -cacerts targets the JDK's own store (JDK 9+); changeit is its default
 	// password, unchanged in these images.
-	const trustInJVM = `keytool -importcert -noprompt -alias git-provider-lab \
+	const trustInJVM = `keytool -importcert -noprompt -alias forge-lab \
   -cacerts -storepass changeit -file ` + livetest.LabCAPath
 
 	// -B for non-interactive output.

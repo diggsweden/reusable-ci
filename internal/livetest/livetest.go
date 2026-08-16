@@ -26,18 +26,24 @@
 //
 // # Not lab-specific
 //
-// The environment contract this reads is git-provider-lab's, because that is
-// what exists and what is safe to destroy. Nothing here assumes it: a Target is
-// a host, an owner, a token, and a namespace. When a GitHub tier arrives it
-// supplies those four the same way.
+// This reads the neutral live-target contract: one JSON object describing
+// disposable provider infrastructure. Forge Lab produces it, but nothing here
+// assumes Forge Lab — any operator willing to meet the documented shape can
+// supply one. A Target is a host, an owner, a token, and a namespace. When a
+// GitHub tier arrives it supplies those four the same way.
 //
 // # Safety
 //
 // Every scenario mutates a real server, so nothing runs without four
-// independent agreements: the `live` build tag, a sourced schema-2 contract, a
-// destructive confirmation the operator types separately, and a run identity
-// that matches the contract exactly — including the resource namespace this
-// suite declared it owns. A normal `go test ./...` never sees any of it.
+// independent agreements: the `live` build tag, a contract naming hosts this
+// tier is compiled to accept as disposable, an owner the operator declared per
+// forge, and a destructive confirmation typed against the run identity this
+// suite derives from all three. A normal `go test ./...` never sees any of it.
+//
+// The contract supplies infrastructure facts only. It carries no namespace, no
+// owner, and no confirmation, because a producer that supplied those would be
+// handing out permission along with the address — and any consumer holding the
+// file could then act on any other consumer's fixtures.
 package livetest
 
 import (
@@ -45,6 +51,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -66,14 +73,23 @@ type TB interface {
 }
 
 // ResourcePrefix is the namespace this suite owns on every forge it touches.
-// It is declared to git-provider-lab when the contract is minted
-// (`emit-targets.sh --resource-prefix rc-`) and re-checked here, so a contract
-// minted for another consumer cannot authorize this suite to delete that
-// consumer's fixtures.
+//
+// It is this suite's own declaration, not something a producer tells it. The
+// neutral contract carries no namespace on purpose -- a producer that named one
+// would be authorizing a consumer it knows nothing about -- so the prefix is
+// compiled in here and every resource this tier creates or destroys is required
+// to sit under it.
 const ResourcePrefix = "rc-"
 
 const (
-	contractSchemaVersion = "2"
+	// contractFileEnv names the neutral live-target contract. The producer is
+	// Forge Lab, or any operator willing to meet the same documented shape.
+	contractFileEnv = "LAB_TARGETS_FILE"
+
+	// ownerEnvPrefix is how the operator declares which owner on each forge
+	// this run may act under. It is a consumer concern, so it lives in this
+	// suite's namespace rather than the producer's: RC_LIVE_GITLAB_OWNER.
+	ownerEnvPrefix = "RC_LIVE_"
 
 	// confirmDestroyEnv is deliberately outside the REUSABLE_CI_* namespace:
 	// that namespace belongs to the product's own flags, and a variable that
@@ -92,6 +108,18 @@ var (
 	ownerPattern         = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 	hostnamePattern      = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
 	rfc3339Pattern       = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$`)
+
+	// disposableHostPattern is the set of hosts this tier may destroy things
+	// on. It is compiled in, and it names the service and the road as well as
+	// the domain, because an allowlist read from the environment would be one
+	// typo away from pointing a destructive suite at production and the
+	// environment is exactly what an accident controls.
+	//
+	// This is the pattern Forge Lab publishes for its own instances. A bare
+	// domain suffix would also have been correct and weaker: it would admit any
+	// host someone could get that suffix onto, including one that is not a
+	// forge at all.
+	disposableHostPattern = regexp.MustCompile(`^(gitlab|gitea|forgejo)\.(compose|k3s)\.forgelab$`)
 )
 
 // Target names one selected forge instance and the identity to act as.
@@ -123,37 +151,60 @@ type targetRef struct {
 	owner string
 }
 
-// contract is the sourced environment, read once and validated as a whole.
+// contract is the run's authorization, assembled once and validated as a whole.
+//
+// It is no longer one sourced environment. The producer supplies the run
+// identifier, the endpoints, and the credentials; this suite supplies the
+// namespace it owns and the owners it was told to act under; and the operator
+// supplies the confirmation. Keeping them in one struct keeps the guard a pure
+// function of its inputs, which is what makes it table-testable without a lab.
 type contract struct {
-	schemaVersion  string
 	runID          string
 	refs           []targetRef
 	resourcePrefix string
-	identity       string
 	confirmation   string
 	cleanupCommand string
 }
 
 type tokenMetadata struct {
-	id                 string
-	name               string
-	createdAt          string
-	expiresAt          string
-	revocationRequired string
+	id        string
+	name      string
+	createdAt string
+	expiresAt string
+
+	// revocationRequired is a bool rather than the "true"/"false" string this
+	// once read out of the environment. The contract carries a JSON boolean, so
+	// a string here would be a stringly-typed round trip whose only remaining
+	// job was to be compared against a literal.
+	revocationRequired bool
 	revocationRunID    string
 }
 
-// Selected reports whether the sourced contract selected a forge. Scenarios use
-// it to skip cleanly rather than fail when an operator minted a contract for a
-// subset of providers.
+// Selected reports whether the contract carries a forge and the operator
+// declared an owner for it. Scenarios use it to skip cleanly rather than fail
+// when a contract was minted for a subset of providers.
+//
+// Both halves are required. A contract endpoint without a declared owner is
+// infrastructure this run was shown but not authorized to touch, and treating
+// it as selected would make the skip depend on the producer alone.
 func Selected(forge provider.ForgeAPI) bool {
-	for _, name := range strings.Split(os.Getenv("LAB_TARGETS"), ",") {
-		if name == string(forge) {
-			return true
-		}
+	if ownerFor(forge) == "" {
+		return false
 	}
 
-	return false
+	contract, err := loadLabContract(os.Getenv(contractFileEnv))
+	if err != nil {
+		return false
+	}
+
+	_, err = contract.endpointFor(string(forge))
+
+	return err == nil
+}
+
+// ownerFor reads the owner the operator declared for one forge.
+func ownerFor(forge provider.ForgeAPI) string {
+	return os.Getenv(ownerEnvPrefix + strings.ToUpper(string(forge)) + "_OWNER")
 }
 
 // Accept reads the contract, validates every safety rule, and returns a Target
@@ -166,34 +217,37 @@ func Accept(tb TB, forge provider.ForgeAPI) Target {
 		tb.Skipf("livetest: %s not selected by LAB_TARGETS", forge)
 	}
 
-	prefix := "LAB_" + strings.ToUpper(string(forge))
+	lab, err := loadLabContract(os.Getenv(contractFileEnv))
+	if err != nil {
+		tb.Fatalf("livetest: %s: %v", contractFileEnv, err)
+	}
+
+	endpoint, err := lab.endpointFor(string(forge))
+	if err != nil {
+		tb.Fatalf("livetest: %v", err)
+	}
+
+	host, err := endpoint.host()
+	if err != nil {
+		tb.Fatalf("livetest: %v", err)
+	}
+
 	target := Target{
 		Forge: forge,
-		Host:  os.Getenv(prefix + "_HOST"),
-		Owner: os.Getenv(prefix + "_OWNER"),
-		Token: os.Getenv(prefix + "_TOKEN"),
+		Host:  host,
+		Owner: ownerFor(forge),
+		Token: endpoint.Credential.Token,
 	}
 
 	sourced := contract{
-		schemaVersion:  os.Getenv("LAB_TARGETS_SCHEMA_VERSION"),
-		runID:          os.Getenv("LAB_RUN_ID"),
-		refs:           selectedRefs(),
-		resourcePrefix: os.Getenv("LAB_RESOURCE_PREFIX"),
-		identity:       os.Getenv("LAB_LIVE_EXPECTED_IDENTITY"),
+		runID:          lab.Generation.ID,
+		refs:           selectedRefs(lab),
+		resourcePrefix: ResourcePrefix,
 		confirmation:   os.Getenv(confirmDestroyEnv),
-		cleanupCommand: os.Getenv("LAB_TOKEN_CLEANUP_CMD"),
+		cleanupCommand: lab.cleanupCommand(),
 	}
 
-	token := tokenMetadata{
-		id:                 os.Getenv(prefix + "_TOKEN_ID"),
-		name:               os.Getenv(prefix + "_TOKEN_NAME"),
-		createdAt:          os.Getenv(prefix + "_TOKEN_CREATED_AT"),
-		expiresAt:          os.Getenv(prefix + "_TOKEN_EXPIRES_AT"),
-		revocationRequired: os.Getenv(prefix + "_TOKEN_REVOCATION_REQUIRED"),
-		revocationRunID:    os.Getenv(prefix + "_TOKEN_REVOCATION_RUN_ID"),
-	}
-
-	if err := validate(target, sourced, token, time.Now()); err != nil {
+	if err := validate(target, sourced, endpoint.tokenMeta(lab.Generation.ID), time.Now()); err != nil {
 		tb.Fatalf("livetest: destructive guard refused this run: %v", err)
 	}
 
@@ -223,26 +277,30 @@ func validate(target Target, sourced contract, token tokenMetadata, now time.Tim
 // validateContractShape checks the run-wide fields: the ones that are wrong for
 // every target at once if they are wrong at all.
 func validateContractShape(sourced contract) error {
-	if sourced.schemaVersion != contractSchemaVersion {
-		return fmt.Errorf("contract schema must be %s, got %q: %w", contractSchemaVersion, sourced.schemaVersion, errs.ErrValidation)
-	}
-
 	if !runIDPattern.MatchString(sourced.runID) {
-		return fmt.Errorf("run ID %q does not match [a-z0-9][a-z0-9-]{2,39}: %w", sourced.runID, errs.ErrValidation)
+		return fmt.Errorf("generation ID %q does not match [a-z0-9][a-z0-9-]{2,39}: %w", sourced.runID, errs.ErrValidation)
 	}
 
-	// The prefix must both be well-formed and be *ours*. A contract minted for
-	// another consumer is well-formed and still must not arm this suite.
+	// The namespace is this suite's own constant rather than a producer's
+	// claim, so the check is that the constant is still well-formed -- a
+	// malformed one would widen what the identity below binds.
 	if !resourcePrefixRegexp.MatchString(sourced.resourcePrefix) {
 		return fmt.Errorf("resource prefix %q is not a namespace: %w", sourced.resourcePrefix, errs.ErrValidation)
 	}
 
 	if sourced.resourcePrefix != ResourcePrefix {
-		return fmt.Errorf("contract declares namespace %q, but this suite owns %q: %w", sourced.resourcePrefix, ResourcePrefix, errs.ErrValidation)
+		return fmt.Errorf("run declares namespace %q, but this suite owns %q: %w", sourced.resourcePrefix, ResourcePrefix, errs.ErrValidation)
 	}
 
+	// Cleanup is not optional for this tier. A producer exposing no revocation
+	// interface cannot promise the run's credentials die with the run, and the
+	// recipe's exit trap has nothing to call.
 	if !strings.HasPrefix(sourced.cleanupCommand, "/") {
-		return fmt.Errorf("token cleanup command must be an absolute path, got %q: %w", sourced.cleanupCommand, errs.ErrValidation)
+		return fmt.Errorf("credential cleanup command must be an absolute path, got %q: %w", sourced.cleanupCommand, errs.ErrValidation)
+	}
+
+	if len(sourced.refs) == 0 {
+		return fmt.Errorf("no endpoint in the contract has a declared %s<FORGE>_OWNER: %w", ownerEnvPrefix, errs.ErrValidation)
 	}
 
 	return nil
@@ -251,20 +309,27 @@ func validateContractShape(sourced contract) error {
 // validateAuthorization is the pair that turns a well-formed contract into
 // permission to destroy: an identity this suite re-derived, and a confirmation
 // the operator typed against that exact identity.
+// validateAuthorization is what turns a well-formed contract into permission to
+// destroy: an identity this suite derives from the run's own parts, and a
+// confirmation the operator typed against that exact identity.
+//
+// The producer no longer echoes an identity back. Under the neutral contract it
+// never knew one, and a value it echoed would not have been independent
+// evidence anyway -- it would have been this suite's own derivation returned to
+// it. What survives is the half that was doing the work: the operator must have
+// typed a string naming this run, these hosts, these owners, and this
+// namespace, so a contract minted for a different set cannot arm the suite
+// without a human retyping the difference.
 func validateAuthorization(target Target, sourced contract) error {
 	wantIdentity, err := Identity(sourced.runID, sourced.refs, sourced.resourcePrefix)
 	if err != nil {
 		return err
 	}
 
-	if sourced.identity != wantIdentity {
-		return fmt.Errorf("contract identity does not match this run, hosts, owners, and namespace: %w", errs.ErrValidation)
-	}
-
 	// The target being acted on must appear in the identity by exact string,
-	// not merely be one of the selected names.
+	// not merely be one of the endpoints the contract carried.
 	want := identityEntry(string(target.Forge), target.Host, target.Owner, sourced.resourcePrefix)
-	if !strings.Contains(sourced.identity, want) {
+	if !strings.Contains(wantIdentity, want) {
 		return fmt.Errorf("identity does not contain the exact target %q: %w", want, errs.ErrValidation)
 	}
 
@@ -320,8 +385,8 @@ func validateDisposableHost(host string) error {
 		return fmt.Errorf("host %q is not a hostname: %w", host, errs.ErrValidation)
 	}
 
-	if !strings.HasSuffix(hostname, ".gitproviderlab") {
-		return fmt.Errorf("host %q is outside the disposable-forge suffix this tier may mutate: %w", host, errs.ErrValidation)
+	if !disposableHostPattern.MatchString(hostname) {
+		return fmt.Errorf("host %q is not a disposable lab forge this tier may mutate: %w", host, errs.ErrValidation)
 	}
 
 	return nil
@@ -367,7 +432,7 @@ func validateRevocableToken(forge provider.ForgeAPI, runID string, token tokenMe
 			return fmt.Errorf("%s non-expiring token is older than 24 hours: %w", forge, errs.ErrValidation)
 		}
 
-		if token.revocationRequired != "true" || token.revocationRunID != runID {
+		if !token.revocationRequired || token.revocationRunID != runID {
 			return fmt.Errorf("%s non-expiring token requires run-bound revocation metadata: %w", forge, errs.ErrValidation)
 		}
 
@@ -391,7 +456,7 @@ func validateExpiringToken(forge provider.ForgeAPI, token tokenMetadata, now tim
 		return fmt.Errorf("%s token expiry must be between 5 minutes and 31 days from now: %w", forge, errs.ErrValidation)
 	}
 
-	if token.revocationRequired != "false" || token.revocationRunID != "" {
+	if token.revocationRequired || token.revocationRunID != "" {
 		return fmt.Errorf("%s native expiry conflicts with revocation fallback metadata: %w", forge, errs.ErrValidation)
 	}
 
@@ -410,19 +475,32 @@ func parseExpiry(value string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("%q is neither RFC3339 nor a date: %w", value, errs.ErrMalformedInput)
 }
 
-// selectedRefs reads the identity-bearing fields of every selected target. This
-// is the one place the environment is consulted; everything downstream is pure.
-func selectedRefs() []targetRef {
-	names := strings.Split(os.Getenv("LAB_TARGETS"), ",")
-	refs := make([]targetRef, 0, len(names))
+// selectedRefs reads the identity-bearing fields of every endpoint in the
+// contract for which the operator declared an owner.
+//
+// Every endpoint the operator armed contributes, not only the one being acted
+// on, and not only the kinds this suite drives. A credential the run can revoke
+// is a credential the run is answerable for, so leaving a forge out of the
+// identity would let one contract be silently reused against a provider the
+// operator never confirmed.
+func selectedRefs(lab labContract) []targetRef {
+	refs := make([]targetRef, 0, len(lab.Endpoints))
 
-	for _, forge := range names {
-		envPrefix := "LAB_" + strings.ToUpper(forge)
-		refs = append(refs, targetRef{
-			forge: forge,
-			host:  os.Getenv(envPrefix + "_HOST"),
-			owner: os.Getenv(envPrefix + "_OWNER"),
-		})
+	for _, endpoint := range lab.Endpoints {
+		owner := ownerFor(provider.ForgeAPI(endpoint.Kind))
+		if owner == "" {
+			continue
+		}
+
+		// An endpoint whose host cannot be projected is left out rather than
+		// guessed at: validateTarget rejects the one being acted on, and a
+		// half-formed entry here would silently change the identity.
+		host, err := endpoint.host()
+		if err != nil {
+			continue
+		}
+
+		refs = append(refs, targetRef{forge: endpoint.Kind, host: host, owner: owner})
 	}
 
 	return refs
@@ -471,6 +549,14 @@ func Identity(runID string, refs []targetRef, resourcePrefix string) (string, er
 	if len(entries) == 0 {
 		return "", fmt.Errorf("no provider is selected: %w", errs.ErrValidation)
 	}
+
+	// Sorted so the identity is a property of what the run may touch, not of
+	// the order the producer happened to write its endpoints in. Without this,
+	// a producer reordering its contract would invalidate a confirmation the
+	// operator had already typed for exactly the same set of targets, and the
+	// shell preflight -- which reads the same file -- would have to reproduce
+	// that ordering to agree.
+	sort.Strings(entries)
 
 	return "run=" + runID + "|targets=" + strings.Join(entries, ","), nil
 }

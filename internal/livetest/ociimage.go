@@ -48,7 +48,7 @@ import (
 // Image is a synthetic image pushed to a lab registry.
 type Image struct {
 	// Ref is the full tagged reference, e.g.
-	// registry.gitlab.compose.gitproviderlab:8443/garga/rc-ledger:staging-v0.0.1
+	// registry.gitlab.compose.forgelab/garga/rc-ledger:staging-v0.0.1
 	Ref string
 
 	// Digest is what the registry reports for it, in sha256:... form. This is

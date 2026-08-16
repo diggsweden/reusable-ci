@@ -266,12 +266,19 @@ test-smoke:
 # Run the live-forge conformance tier against real Forgejo and GitLab instances.
 #
 # Gated by the `live` build tag, so `just test` never reaches it. It needs a
-# sourced git-provider-lab schema-2 contract minted for this suite's namespace:
+# neutral live-target contract from a disposable lab, plus the two things the
+# contract deliberately does not carry -- the owner this run may act under on
+# each forge, and a confirmation typed against the run identity:
 #
-#   scripts/emit-targets.sh --resource-prefix rc- gitlab forgejo   # in the lab
-#   source "${XDG_STATE_HOME:-$HOME/.local/state}/git-provider-lab/lab-targets.env"
-#   export RC_LIVE_CONFIRM_DESTROY="destroy-live-forge-fixtures|$LAB_LIVE_EXPECTED_IDENTITY"
-#   just test-live
+#   LAB_TARGETS_FILE=/private/state/reusable-ci.json \
+#     scripts/emit-targets.sh gitlab forgejo          # in the lab
+#   export LAB_TARGETS_FILE=/private/state/reusable-ci.json
+#   export RC_LIVE_GITLAB_OWNER=... RC_LIVE_FORGEJO_OWNER=...
+#   just test-live                                    # prints the identity and
+#                                                     # the exact confirmation
+#
+# The preflight below derives the identity and fails with the confirmation to
+# export, so it is copied from a run rather than assembled by hand.
 #
 # -p 1 is load-bearing: one lab is a single shared mutable fixture, and packages
 # running concurrently would seed and tear down each other's scratch repos.
@@ -283,14 +290,14 @@ test-smoke:
 # An EXIT trap revokes the run's credential on every outcome. Cleanup failure
 # changes the recipe result: a token left live on a lab is a real defect, and
 # the whole point of a per-run credential is that it does not outlive the run.
-[doc('Run the live-forge conformance tier (needs a sourced lab contract + confirmation). Optional arg is a -run filter.')]
+[doc('Run the live-forge conformance tier (needs a lab contract, owners, and confirmation). Optional arg is a -run filter.')]
 [group('test')]
 test-live scenario='':
     #!/usr/bin/env bash
     set -euo pipefail
 
-    # Validate the whole sourced contract before anything is built, and before
-    # any contract-supplied command is installed as a trap.
+    # Validate the whole contract before anything is built, and before any
+    # contract-supplied command is installed as a trap.
     bash scripts/ci/validate-live-inputs.sh
 
     state=
@@ -298,11 +305,17 @@ test-live scenario='':
         local status=$? cleanup_status=0
         trap - EXIT INT TERM
 
-        if [[ -x "${LAB_TOKEN_CLEANUP_CMD:-}" ]]; then
-            "${LAB_TOKEN_CLEANUP_CMD}" || cleanup_status=1
+        # Read from the contract, not from a parallel environment variable:
+        # the preflight validated the command in that file, and a second copy
+        # elsewhere is a second thing that can drift out of agreement with it.
+        local cleanup_cmd
+        cleanup_cmd=$(jq -r '.interfaces.credential_cleanup // empty' <"$LAB_TARGETS_FILE" 2>/dev/null || printf '')
+
+        if [[ -x "$cleanup_cmd" ]]; then
+            "$cleanup_cmd" || cleanup_status=1
         else
             cleanup_status=1
-            printf 'x live token cleanup interface is missing or not executable\n' >&2
+            printf 'x live credential cleanup interface is missing or not executable\n' >&2
         fi
 
         [[ -z "$state" || ! -d "$state" ]] || rm -rf -- "$state"

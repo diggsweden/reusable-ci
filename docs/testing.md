@@ -96,9 +96,23 @@ It is an environment variable rather than a flag on purpose — awkward enough
 that nobody leaves it on. Nothing accumulates either way: the next run deletes
 the repository before recreating it, so what is kept is one generation.
 
-It is **never in PR CI**: it is live, destructive, and human-invoked against
-git-provider-lab. The recipe refuses to run without a valid target contract and
-an explicit destroy confirmation naming the run.
+It is **never in PR CI**: it is live, destructive, and human-invoked against a
+disposable lab. The recipe refuses to run without a valid neutral target
+contract, an owner declared per forge (`RC_LIVE_<FORGE>_OWNER`), and an explicit
+destroy confirmation naming the run.
+
+The contract is a file, not a sourced environment, and it describes
+infrastructure only — hosts, credentials, and a credential-cleanup command.
+Everything that authorises destruction is this suite's own: the `rc-` namespace
+is compiled in, the owners are declared by the operator, and the confirmation is
+typed against a run identity derived from all three. A producer that supplied
+those too would hand out permission along with the address, and any consumer
+holding the file could act on another consumer's fixtures.
+
+Forge Lab produces such a contract; nothing here requires it to be the producer.
+`internal/livetest/testdata/contract-valid.json` is the shape, and it is parsed
+by the ordinary untagged tests so a change to it fails a normal `go test` rather
+than waiting for someone to book a lab.
 
 In this repository's own CI, the self-validation workflow runs:
 

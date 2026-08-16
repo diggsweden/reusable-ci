@@ -25,29 +25,34 @@ func validContract(now time.Time) (Target, contract, tokenMetadata) {
 	// non-empty, and a fixture that looked less like a token would say less.
 	target := Target{ //nolint:gosec
 		Forge: provider.ForgeForgejo,
-		Host:  "forgejo.compose.gitproviderlab:8443",
+		Host:  "forgejo.compose.forgelab:8443",
 		Owner: "garga",
 		Token: "fake-forgejo-token",
 	}
 
-	identity := "run=run-live-1|targets=" +
-		"forgejo@https://forgejo.compose.gitproviderlab:8443/garga#resources=rc-"
+	// Derived, not asserted: the confirmation is the operator retyping what
+	// this suite computes, so the fixture computes it the same way the guard
+	// does rather than hard-coding a second copy that could drift.
+	refs := []targetRef{{forge: "forgejo", host: "forgejo.compose.forgelab:8443", owner: "garga"}}
+
+	identity, err := Identity("run-live-1", refs, ResourcePrefix)
+	if err != nil {
+		panic("livetest fixture: " + err.Error())
+	}
 
 	c := contract{
-		schemaVersion:  contractSchemaVersion,
 		runID:          "run-live-1",
-		refs:           []targetRef{{forge: "forgejo", host: "forgejo.compose.gitproviderlab:8443", owner: "garga"}},
+		refs:           refs,
 		resourcePrefix: ResourcePrefix,
-		identity:       identity,
 		confirmation:   confirmDestroy + "|" + identity,
-		cleanupCommand: "/opt/git-provider-lab/scripts/revoke-targets.sh",
+		cleanupCommand: "/opt/forge-lab/scripts/revoke-targets.sh",
 	}
 
 	token := tokenMetadata{
 		id:                 "7",
 		name:               "lab-targets-run-live-1",
 		createdAt:          now.Add(-time.Minute).Format(time.RFC3339),
-		revocationRequired: "true",
+		revocationRequired: true,
 		revocationRunID:    "run-live-1",
 	}
 
@@ -64,24 +69,26 @@ func TestValidate_Contract_Scenarios(t *testing.T) {
 	}{
 		{name: "complete_forgejo_contract"},
 		{
-			name:    "wrong_schema_version",
-			mutate:  func(_ *Target, c *contract, _ *tokenMetadata) { c.schemaVersion = "1" },
-			wantErr: true,
-		},
-		{
 			name:    "malformed_run_id",
 			mutate:  func(_ *Target, c *contract, _ *tokenMetadata) { c.runID = "Run-Live-1" },
 			wantErr: true,
 		},
 		{
-			// The whole point of schema 2: a contract minted for
-			// git-provider-clean is well-formed and must still not arm us.
+			// A namespace that is not ours must not arm us however
+			// self-consistent the rest of the run looks.
 			name: "another_consumers_namespace",
 			mutate: func(_ *Target, c *contract, _ *tokenMetadata) {
 				c.resourcePrefix = "cl-"
-				c.identity = "run=run-live-1|targets=forgejo@https://forgejo.compose.gitproviderlab:8443/garga#resources=cl-"
-				c.confirmation = confirmDestroy + "|" + c.identity
+				c.confirmation = confirmDestroy +
+					"|run=run-live-1|targets=forgejo@https://forgejo.compose.forgelab:8443/garga#resources=cl-"
 			},
+			wantErr: true,
+		},
+		{
+			// The producer no longer supplies an owner, so an endpoint the
+			// operator never armed must leave the run with nothing to act on.
+			name:    "no_owner_declared",
+			mutate:  func(_ *Target, c *contract, _ *tokenMetadata) { c.refs = nil },
 			wantErr: true,
 		},
 		{
@@ -96,7 +103,7 @@ func TestValidate_Contract_Scenarios(t *testing.T) {
 		},
 		{
 			name:    "host_with_invalid_port",
-			mutate:  func(tg *Target, _ *contract, _ *tokenMetadata) { tg.Host = "forgejo.compose.gitproviderlab:65536" },
+			mutate:  func(tg *Target, _ *contract, _ *tokenMetadata) { tg.Host = "forgejo.compose.forgelab:65536" },
 			wantErr: true,
 		},
 		{
@@ -110,8 +117,23 @@ func TestValidate_Contract_Scenarios(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "identity_for_a_different_run",
-			mutate:  func(_ *Target, c *contract, _ *tokenMetadata) { c.identity = "run=other|targets=x" },
+			// The confirmation is the human half of the authorization: one
+			// typed against a different run must not carry over to this one.
+			name: "confirmation_for_a_different_run",
+			mutate: func(_ *Target, c *contract, _ *tokenMetadata) {
+				c.confirmation = confirmDestroy + "|run=other|targets=x"
+			},
+			wantErr: true,
+		},
+		{
+			// A second armed forge changes the identity, so a confirmation
+			// typed for one forge must not authorize a run spanning two.
+			name: "confirmation_predates_a_second_target",
+			mutate: func(_ *Target, c *contract, _ *tokenMetadata) {
+				c.refs = append(c.refs, targetRef{
+					forge: "gitlab", host: "gitlab.compose.forgelab", owner: "garga",
+				})
+			},
 			wantErr: true,
 		},
 		{
@@ -126,7 +148,7 @@ func TestValidate_Contract_Scenarios(t *testing.T) {
 		},
 		{
 			name:    "non_expiring_token_without_revocation",
-			mutate:  func(_ *Target, _ *contract, tk *tokenMetadata) { tk.revocationRequired = "false" },
+			mutate:  func(_ *Target, _ *contract, tk *tokenMetadata) { tk.revocationRequired = false },
 			wantErr: true,
 		},
 		{
@@ -174,10 +196,10 @@ func TestValidateDisposableHost_RejectsRealForges(t *testing.T) {
 		"codeberg.org",
 		"gitlab.com",
 		"github.com",
-		"forgejo.compose.gitproviderlab.evil.example",
+		"forgejo.compose.forgelab.evil.example",
 		"",
 		"not a host",
-		"forgejo.compose.gitproviderlab:0",
+		"forgejo.compose.forgelab:0",
 	} {
 		if err := validateDisposableHost(host); err == nil {
 			t.Errorf("validateDisposableHost(%q) accepted a host this tier must not mutate", host)
@@ -185,9 +207,9 @@ func TestValidateDisposableHost_RejectsRealForges(t *testing.T) {
 	}
 
 	for _, host := range []string{
-		"forgejo.compose.gitproviderlab:8443",
-		"gitlab.k3s.gitproviderlab",
-		"gitea.compose.gitproviderlab:8443",
+		"forgejo.compose.forgelab:8443",
+		"gitlab.k3s.forgelab",
+		"gitea.compose.forgelab:8443",
 	} {
 		if err := validateDisposableHost(host); err != nil {
 			t.Errorf("validateDisposableHost(%q) = %v, want accepted", host, err)
@@ -203,7 +225,7 @@ func TestRequireAccepted_RefusesUnguardedTarget(t *testing.T) {
 	recorder := &fatalRecorder{}
 	requireAccepted(recorder, Target{
 		Forge: provider.ForgeForgejo,
-		Host:  "forgejo.compose.gitproviderlab:8443",
+		Host:  "forgejo.compose.forgelab:8443",
 		Owner: "garga",
 		Token: "token",
 	})
@@ -216,7 +238,7 @@ func TestRequireAccepted_RefusesUnguardedTarget(t *testing.T) {
 func TestDeleteScratchRepo_RefusesForeignNamespace(t *testing.T) {
 	t.Parallel()
 
-	target := Target{Forge: provider.ForgeForgejo, Host: "forgejo.compose.gitproviderlab:8443", Owner: "garga"}
+	target := Target{Forge: provider.ForgeForgejo, Host: "forgejo.compose.forgelab:8443", Owner: "garga"}
 
 	// cl- belongs to git-provider-clean. Even armed, this suite must not reach
 	// outside the namespace it declared.
