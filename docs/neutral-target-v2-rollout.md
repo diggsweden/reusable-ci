@@ -138,9 +138,9 @@ non-null Fulcio object is published.
 
 ## Phase 1: Forge Lab Contract Authority
 
-- [ ] Finish and preserve the in-progress cleanup-runtime hardening.
-- [ ] Correct cleanup ordering so evidence is not removed after its runtime.
-- [ ] Make delegated cleanup use the advertised frozen launcher.
+- [x] Finish and preserve the in-progress cleanup-runtime hardening.
+- [x] Correct cleanup ordering so evidence is not removed after its runtime.
+- [x] Make delegated cleanup use the advertised frozen launcher.
 - [ ] Set `LAB_NEUTRAL_TARGETS_SCHEMA_CURRENT=2`.
 - [ ] Replace the active v1 validator with an exact v2 validator.
 - [ ] Add one canonical OCI registry topology helper shared by target emission
@@ -156,7 +156,7 @@ non-null Fulcio object is published.
 - [ ] Update public contract, reference, development, explanation, how-to,
   README, and agent documentation.
 - [ ] Run `just verify-pr` and focused shell syntax checks.
-- [ ] Commit the Forge Lab cleanup hardening separately if it remains a
+- [x] Commit the Forge Lab cleanup hardening separately if it remains a
   coherent pre-v2 fix.
 - [ ] Commit the Forge Lab v2 hard break.
 
@@ -301,8 +301,8 @@ generation.
 
 | Repository | Milestone | Commit |
 | --- | --- | --- |
-| reusable-ci | Rollout plan | Pending |
-| Forge Lab | Cleanup-runtime hardening | Pending |
+| reusable-ci | Rollout plan | `4457bd7d` |
+| Forge Lab | Cleanup-runtime hardening | `5ab1238` |
 | Forge Lab | Neutral-v2 producer | Pending |
 | reusable-ci | Neutral-v2 consumer | Pending |
 | forge-tidy | Neutral-v2 consumer | Pending |
