@@ -47,6 +47,7 @@ path = [
   "docs/cli-reference.md",
   "docs/flows.md",
   "docs/forgejo.md",
+  "docs/neutral-target-v2-rollout.md",
   "docs/providers.md",
   "docs/release-flow-architecture.md",
   "docs/runtime-images.md",
