@@ -36,7 +36,7 @@ type CheckoutGit interface {
 // CheckoutInput drives Checkout.
 type CheckoutInput struct {
 	Repository   string                // "owner/name"
-	ServerURL    string                // e.g. https://codeberg.org
+	ServerURL    string                // e.g. https://forgejo.example.com
 	Ref          string                // commit SHA, refs/tags/…, refs/heads/…, or a bare tag/branch name
 	Workspace    string                // target directory (must not already contain .git)
 	Token        runcontext.Credential // optional; absent means an anonymous checkout

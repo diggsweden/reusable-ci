@@ -30,7 +30,7 @@ GitLab SAST report published as `artifacts:reports:sast`.
 include:
   - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/nanolinter@1.0.0
     inputs:
-      nanolinter-image: "codeberg.org/itiquette/nanolinter:java"   # flavour for your stack
+      nanolinter-image: "codefloe.com/itiquette/nanolinter:java"   # flavour for your stack
 ```
 
 The component's inputs and defaults are documented on its Catalog page (GitLab

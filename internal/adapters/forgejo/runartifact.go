@@ -27,7 +27,7 @@ import (
 
 // runArtifactAPIVersion is the Actions runtime artifact protocol version
 // Forgejo implements (the v3 / Azure-pipelines container API). The shell
-// download-consumer this replaces runs against this version on Codeberg.
+// download-consumer this replaces runs against this version on Forgejo.
 const runArtifactAPIVersion = "6.0-preview"
 
 // defaultForgejoRetentionDays is sent when the caller leaves retention
@@ -647,7 +647,7 @@ func (p *Provider) runtimeSend(ctx context.Context, method, rawURL, token, conte
 	// which then sends Transfer-Encoding: chunked — Forgejo's upload-chunk
 	// handler 500s on that. NoBody makes the zero-length case an explicit
 	// Content-Length: 0, the shape the canonical clients send. Hit in the
-	// wild by the first live Codeberg round-trip: the zero-byte fixture
+	// wild by the first live Forgejo round-trip: the zero-byte fixture
 	// file failed while every sized file was fine.
 	if contentLength == 0 {
 		body = http.NoBody

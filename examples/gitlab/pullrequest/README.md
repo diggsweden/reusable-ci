@@ -60,7 +60,7 @@ include:
   - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/nanolinter@1.0.0
     inputs:
       stage: quality
-      nanolinter-image: "codeberg.org/itiquette/nanolinter:java"   # flavour for your stack
+      nanolinter-image: "codefloe.com/itiquette/nanolinter:java"   # flavour for your stack
 ```
 
 Pin `@<version>` to a release. Component inputs are documented on each Catalog

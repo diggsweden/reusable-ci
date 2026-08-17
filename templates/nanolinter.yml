@@ -24,7 +24,7 @@
 #   include:
 #     - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/nanolinter@1.0.0
 #       inputs:
-#         nanolinter-image: "codeberg.org/itiquette/nanolinter:java"
+#         nanolinter-image: "codefloe.com/itiquette/nanolinter:java"
 spec:
   inputs:
     stage:
@@ -34,7 +34,7 @@ spec:
       default: nanolinter
       description: Name of the generated job.
     nanolinter-image:
-      default: "codeberg.org/itiquette/nanolinter:full"
+      default: "codefloe.com/itiquette/nanolinter:full"
       description: nanolinter flavour image matching the project's ecosystem (pin by @sha256).
     required-lints:
       default: "secrets,sast"

@@ -18,7 +18,7 @@ const forgejoPackagePageSize = 50
 // Deliberately the owner-level ListPackages route (one entry per package
 // version, filtered by type + name query): the SDK's ListPackageVersions
 // hits GET /packages/{owner}/{type}/{name}, a Gitea-only route Forgejo
-// does not serve — Codeberg answers it with a literal "404 page not
+// does not serve — Forgejo answers it with a literal "404 page not
 // found" (v0.8.6 cleanup sweep, run 336). The q filter is a substring
 // match, so the exact-name filter below still decides membership.
 func (p *Provider) ListContainerPackageVersions(ctx context.Context, owner, name string) ([]string, error) {

@@ -104,7 +104,7 @@ func RunURL() cli.ValueSourceChain { return Sources(runcontext.RunURL()) }
 // Actor resolves the triggering user.
 func Actor() cli.ValueSourceChain { return Sources(runcontext.Actor()) }
 
-// ServerURL resolves the forge base URL (e.g. https://codeberg.org).
+// ServerURL resolves the forge base URL (e.g. https://forgejo.example.com).
 func ServerURL() cli.ValueSourceChain { return Sources(runcontext.ServerURL()) }
 
 // TempDir resolves the runner scratch directory.

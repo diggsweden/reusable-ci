@@ -82,9 +82,9 @@ stdin or $REGISTRY_PASSWORD — never argv — and the file is written 0600.
 
 EXAMPLES:
    echo "$TOKEN" | reusable-ci container login --registry ghcr.io --registry-username "$GITHUB_ACTOR" --registry-password-file -
-   reusable-ci container login --registry codeberg.org --registry-username bot   # password from $REGISTRY_TOKEN / $REGISTRY_PASSWORD`,
+   reusable-ci container login --registry forgejo.example.com --registry-username bot   # password from $REGISTRY_TOKEN / $REGISTRY_PASSWORD`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: flagRegistry, Value: domaincontainer.DefaultRegistry, Sources: cli.EnvVars("CONTAINER_REGISTRY"), Usage: "registry host (e.g. ghcr.io, codeberg.org)"},
+			&cli.StringFlag{Name: flagRegistry, Value: domaincontainer.DefaultRegistry, Sources: cli.EnvVars("CONTAINER_REGISTRY"), Usage: "registry host (e.g. ghcr.io, forgejo.example.com)"},
 			&cli.StringFlag{Name: flagServerURL, Usage: "forge/server URL used to derive the registry host when --registry is empty or omitted"},
 			regflags.Username(),
 			regflags.PasswordFile(),
@@ -303,7 +303,7 @@ EXAMPLES:
    reusable-ci container logout --registry ghcr.io
    reusable-ci container logout   # defaults to $CONTAINER_REGISTRY, else ` + domaincontainer.DefaultRegistry,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: flagRegistry, Value: domaincontainer.DefaultRegistry, Sources: cli.EnvVars("CONTAINER_REGISTRY"), Usage: "registry host to log out of (e.g. ghcr.io, codeberg.org)"},
+			&cli.StringFlag{Name: flagRegistry, Value: domaincontainer.DefaultRegistry, Sources: cli.EnvVars("CONTAINER_REGISTRY"), Usage: "registry host to log out of (e.g. ghcr.io, forgejo.example.com)"},
 			&cli.StringFlag{Name: flagAuthFile, Usage: "override the auth config path (default: $REGISTRY_AUTH_FILE, else $DOCKER_CONFIG/config.json, else ~/.docker/config.json)"},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {

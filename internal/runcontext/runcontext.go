@@ -361,7 +361,7 @@ func Actor() Var {
 	}}
 }
 
-// ServerURL resolves the forge base URL (e.g. https://codeberg.org). It
+// ServerURL resolves the forge base URL (e.g. https://forgejo.example.com). It
 // builds git-over-HTTPS clone URLs, so it must resolve on every forge:
 // CI_SERVER_URL (GitLab-native / neutral) → FORGEJO_SERVER_URL → the
 // GitHub-native GITHUB_SERVER_URL the Forgejo runner also sets.
@@ -578,7 +578,7 @@ func (c Credential) Present() bool { return c.secret != "" }
 //
 // destination is any absolute URL; only its origin (scheme, host, port) is
 // compared. A destination that does not parse as an absolute URL — an SSH
-// remote such as git@codeberg.org:o/r.git — matches nothing, which is
+// remote such as git@forgejo.example.com:o/r.git — matches nothing, which is
 // correct: HTTP credentials have no meaning there.
 func (c Credential) For(destination string) string {
 	if c.secret == "" {

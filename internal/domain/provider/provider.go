@@ -291,7 +291,7 @@ type WebURLBuilder interface {
 // domain importing the other.
 type TagDeleter interface {
 	// DeleteTag removes the tag named by ref (e.g.
-	// "codeberg.org/owner/repo:staging-v1.2.3"), keeping the manifest.
+	// "forgejo.example.com/owner/repo:staging-v1.2.3"), keeping the manifest.
 	DeleteTag(ctx context.Context, ref string) error
 }
 

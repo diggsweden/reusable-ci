@@ -31,4 +31,4 @@ include:
     inputs:
       stage: quality
       # Pick the nanolinter flavour matching your stack (pin by @sha256).
-      nanolinter-image: "codeberg.org/itiquette/nanolinter:java"
+      nanolinter-image: "codefloe.com/itiquette/nanolinter:java"

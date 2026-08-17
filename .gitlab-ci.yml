@@ -20,7 +20,7 @@ include:
     inputs:
       job-name: selftest-nanolinter
       # reusable-ci is a Go + just project; use the Go flavour to self-test.
-      nanolinter-image: "codeberg.org/itiquette/nanolinter:full"
+      nanolinter-image: "codefloe.com/itiquette/nanolinter:full"
       # Keep the self-test hermetic: the SAST step would pull a *published*
       # reusable-ci release to convert the SARIF, which tests an external
       # artifact rather than this checkout. The conversion itself is covered by

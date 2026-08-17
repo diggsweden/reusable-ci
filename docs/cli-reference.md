@@ -1026,14 +1026,14 @@ validate one image entry and append it to the ledger
 EXAMPLES:
    # Record a pushed image, capturing its digest from the registry
    reusable-ci container ledger add --role distroless \
-     --candidate-tag codeberg.org/owner/repo:staging-v1.2.3 \
-     --final-tag codeberg.org/owner/repo:v1.2.3 \
+     --candidate-tag forgejo.example.com/owner/repo:staging-v1.2.3 \
+     --final-tag forgejo.example.com/owner/repo:v1.2.3 \
      --sbom dist/image-sbom.cyclonedx.json --tag v1.2.3 --capture-digest
 
    # Direct-push consumer with an explicit digest
    reusable-ci container ledger add --role alpine \
-     --ref codeberg.org/owner/repo@sha256:… --digest sha256:… \
-     --final-tag codeberg.org/owner/repo:v1.2.3-alpine \
+     --ref forgejo.example.com/owner/repo@sha256:… --digest sha256:… \
+     --final-tag forgejo.example.com/owner/repo:v1.2.3-alpine \
      --sbom dist/image-sbom-alpine.cyclonedx.json --tag v1.2.3
 ```
 
@@ -1052,7 +1052,7 @@ EXAMPLES:
 | `--final-tag-name` | immutable release tag name/portion combined with --image-name; when --tag is empty, derives the release tag from vMAJOR.MINOR.PATCH[-suffix] | n/a |
 | `--final-tag` | immutable release tag ref (scoped to --tag); derived from --image-name when omitted | n/a |
 | `--moving-tag-name` | optional moving tag name/portion combined with --image-name | n/a |
-| `--moving-tag` | optional moving tag ref, e.g. codeberg.org/owner/repo:rust | n/a |
+| `--moving-tag` | optional moving tag ref, e.g. forgejo.example.com/owner/repo:rust | n/a |
 | `--flavor` | optional base-image flavour | n/a |
 | `--derive-candidate-tag` | derive --candidate-tag as <image>:staging-<final-tag-name>; mutually exclusive with explicit candidate tag flags | `$LEDGER_DERIVE_CANDIDATE_TAG` |
 | `--default-sbom` | when --sbom is empty, use dist/image-sbom-<flavor\|role>.cyclonedx.json | n/a |
@@ -1114,7 +1114,7 @@ EXAMPLES:
 | `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 | `--auth-file` | registry auth file for the promotion copies and digest verification | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
 | `--stage` | promotion stage: 'release' adds the <base>:release pointer and enforces the release scope; a named stage ('dev', 'staging') adds <base>:<stage> on the same digest and needs no --tag. The immutable :<version> tag is build-only. | `$PROMOTE_STAGE` |
-| `--stage-repo` | rehome the promotion onto a destination registry/namespace PREFIX (e.g. a sovereign codeberg.org/owner); each image lands at <prefix>/<image-name>, so a multi-container release never collides. A different registry is a cross-registry promotion that copies the signature via cosign | `$PROMOTE_STAGE_REPO` |
+| `--stage-repo` | rehome the promotion onto a destination registry/namespace PREFIX (e.g. a sovereign Forgejo host, e.g. forgejo.example.com/owner); each image lands at <prefix>/<image-name>, so a multi-container release never collides. A different registry is a cross-registry promotion that copies the signature via cosign | `$PROMOTE_STAGE_REPO` |
 | `--release-tags-from-ledger` | for the release stage, promote to each entry's final_tag and optional moving_tag instead of the generic <base>:release pointer | `$PROMOTE_RELEASE_TAGS_FROM_LEDGER` |
 | `--allow-digest-ref-fallback` | when candidate_tag is absent or no longer serves the recorded digest, copy from the ledger ref digest instead; recovers a re-run release whose candidate tag has since been cleaned up | `$PROMOTE_ALLOW_DIGEST_REF_FALLBACK` |
 | `--expected-image-repository` | optional exact image repository allowed for ledger refs/tags at the signer/publisher boundary | `$LEDGER_EXPECTED_IMAGE_REPOSITORY` |
@@ -1136,7 +1136,7 @@ EXAMPLE:
 | `--tag` | release tag that final_tag (and candidate_tag) must be scoped to | `$TAG_NAME`, `$RELEASE_TAG`, `$REF_NAME`, `$CI_REF_NAME`, `$FORGEJO_REF_NAME`, `$GITHUB_REF_NAME` |
 | `--auth-file` | registry auth file for the digest checks the rollback makes before deleting | `$REUSABLE_CI_REGISTRY_AUTH_FILE` |
 | `--stage` | promotion stage: 'release' adds the <base>:release pointer and enforces the release scope; a named stage ('dev', 'staging') adds <base>:<stage> on the same digest and needs no --tag. The immutable :<version> tag is build-only. | `$PROMOTE_STAGE` |
-| `--stage-repo` | rehome the promotion onto a destination registry/namespace PREFIX (e.g. a sovereign codeberg.org/owner); each image lands at <prefix>/<image-name>, so a multi-container release never collides. A different registry is a cross-registry promotion that copies the signature via cosign | `$PROMOTE_STAGE_REPO` |
+| `--stage-repo` | rehome the promotion onto a destination registry/namespace PREFIX (e.g. a sovereign Forgejo host, e.g. forgejo.example.com/owner); each image lands at <prefix>/<image-name>, so a multi-container release never collides. A different registry is a cross-registry promotion that copies the signature via cosign | `$PROMOTE_STAGE_REPO` |
 | `--release-tags-from-ledger` | for the release stage, promote to each entry's final_tag and optional moving_tag instead of the generic <base>:release pointer | `$PROMOTE_RELEASE_TAGS_FROM_LEDGER` |
 | `--expected-image-repository` | optional exact image repository allowed for ledger refs/tags at the signer/publisher boundary | `$LEDGER_EXPECTED_IMAGE_REPOSITORY` |
 | `--journal` | JSONL promotion rollback journal; promote writes it before tag moves, rollback restores/deletes from it | `$IMAGE_PROMOTIONS_JOURNAL` |
@@ -1215,12 +1215,12 @@ stdin or $REGISTRY_PASSWORD — never argv — and the file is written 0600.
 
 EXAMPLES:
    echo "$TOKEN" | reusable-ci container login --registry ghcr.io --registry-username "$GITHUB_ACTOR" --registry-password-file -
-   reusable-ci container login --registry codeberg.org --registry-username bot   # password from $REGISTRY_TOKEN / $REGISTRY_PASSWORD
+   reusable-ci container login --registry forgejo.example.com --registry-username bot   # password from $REGISTRY_TOKEN / $REGISTRY_PASSWORD
 ```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--registry` | registry host (e.g. ghcr.io, codeberg.org) | `$CONTAINER_REGISTRY` |
+| `--registry` | registry host (e.g. ghcr.io, forgejo.example.com) | `$CONTAINER_REGISTRY` |
 | `--server-url` | forge/server URL used to derive the registry host when --registry is empty or omitted | n/a |
 | `--registry-username` | registry username; the password is read from --registry-password-file or $REGISTRY_TOKEN / $REGISTRY_PASSWORD | `$REGISTRY_USER`, `$REGISTRY_USERNAME` |
 | `--registry-password-file` | file containing the registry password/token ("-" reads stdin); defaults to $REGISTRY_TOKEN then $REGISTRY_PASSWORD. The password never appears in argv. | n/a |
@@ -1246,7 +1246,7 @@ EXAMPLES:
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
-| `--registry` | registry host to log out of (e.g. ghcr.io, codeberg.org) | `$CONTAINER_REGISTRY` |
+| `--registry` | registry host to log out of (e.g. ghcr.io, forgejo.example.com) | `$CONTAINER_REGISTRY` |
 | `--auth-file` | override the auth config path (default: $REGISTRY_AUTH_FILE, else $DOCKER_CONFIG/config.json, else ~/.docker/config.json) | n/a |
 
 ### `reusable-ci container manifest`
@@ -2045,7 +2045,7 @@ EXAMPLES:
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--repository` | owner/name to check out | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
-| `--server-url` | forge base URL (e.g. https://codeberg.org) | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
+| `--server-url` | forge base URL (e.g. https://forgejo.example.com) | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
 | `--ref` | commit SHA, refs/tags/…, refs/heads/…, or a bare tag/branch name to check out. Set via $CHECKOUT_REF; defaults to the triggering commit. | `$CHECKOUT_REF`, `$CI_COMMIT`, `$CI_COMMIT_SHA`, `$FORGEJO_SHA`, `$GITHUB_SHA` |
 | `--workspace` | target directory (default: current directory) | `$CI_WORKSPACE`, `$FORGEJO_WORKSPACE`, `$GITHUB_WORKSPACE` |
 | `--token` | clone token; omit to use the token the runner injected ($CI_TOKEN, $FORGEJO_TOKEN, $GITEA_TOKEN, $GITHUB_TOKEN), which is only ever sent to the server that issued it. Empty means an anonymous checkout. | n/a |

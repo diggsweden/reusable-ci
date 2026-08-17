@@ -7,7 +7,7 @@ import "github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 
 // Describe returns Forgejo's self-description. The token-setup URL is
 // derived from the resolved server so it points at the actual instance
-// (e.g. https://codeberg.org/user/settings/applications).
+// (e.g. https://forgejo.example.com/user/settings/applications).
 //
 // OIDCIssuer is left empty deliberately — NOT because Forgejo lacks OIDC.
 // Forgejo v15.0+ (Runner >v12.5.0) does issue OIDC id-tokens: a job with

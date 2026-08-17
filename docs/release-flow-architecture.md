@@ -21,7 +21,7 @@ the *same bytes* (identified by their content digest, `@sha256:…`) move throug
 `dev → staging → release` by **re-tagging**, never rebuilding. Every promotion is a
 **verified tag-move**; the digest is the trust anchor.
 
-```
+```text
               ┌──────────────────────────────────────────────┐
               │     ONE immutable image   @sha256:abc…        │
               └──────────────────────────────────────────────┘
@@ -42,7 +42,7 @@ something you didn't ship. Build-once guarantees prod **is** dev, bit-for-bit.
 
 ## 2. The moving parts
 
-```
+```text
   ┌──────────────────────────────────────────────────────────────────────┐
   │  Workflow (YAML)         WHEN + WHO: triggers, environment approvals    │
   │     │  calls verbs                                                      │
@@ -53,7 +53,7 @@ something you didn't ship. Build-once guarantees prod **is** dev, bit-for-bit.
   │  domain (pure Go)          POLICY: stage graph, tag rules, digest checks │
   │     ▼                                                                    │
   │  adapters                  IO: registry endpoint (ghcr / GitLab /        │
-  │                            Codeberg-Forgejo), cosign, forge API          │
+  │                            Forgejo), cosign, forge API          │
   └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -62,7 +62,7 @@ something you didn't ship. Build-once guarantees prod **is** dev, bit-for-bit.
   *source of truth* for "what digest is this release", so promotion never asks a
   human to paste a SHA.
 - **Registry endpoint** — an interface; `ghcr.io` today, GitLab Container Registry
-  and **Codeberg/Forgejo** as peers. The same flow works on any of them.
+  and **Forgejo** as peers. The same flow works on any of them.
 - **Forge provider** — GitHub / GitLab / Forgejo, with a **capability** model so
   the flow degrades gracefully where a forge lacks a feature.
 
@@ -70,7 +70,7 @@ something you didn't ship. Build-once guarantees prod **is** dev, bit-for-bit.
 
 ## 3. End-to-end flow
 
-```
+```text
    source ─┐
            ▼
      ┌───────────┐   BUILD ONCE — create ATTESTATIONS OF FACT, bound to the digest
@@ -129,7 +129,7 @@ package, IPA, AAB) has its version *baked into the bytes* at build (`-X
 main.version`, maven `<version>`), so you can't re-tag a `1.2.3-dev` binary into
 `1.2.3` without lying. So the flow has **two tracks**:
 
-```
+```text
                       ┌──────────────── BUILD (once) ────────────────┐
        CONTAINER track│                          BINARY / PACKAGE track│
        (PROMOTE)      ▼                          (BUILD-AT-RELEASE)    ▼
@@ -150,7 +150,7 @@ Every promotion — at every stage, on every registry — runs the same check. A
 promotion that would land the wrong image **fails loud** (exit 1), it never passes
 silently.
 
-```
+```text
   promote  candidate ──► dest :
     1. resolve(candidate) == ledger.digest ?   ─ no ─►  REFUSE (before any copy)
     2. copy:  same-repo   → CopyTag (registry-native retag)
@@ -169,7 +169,7 @@ finished, unit-tested engine.
 Because a promotion's destination is an *interfaced endpoint*, **every stage's
 registry is free-form** — each stage can land on a *different* registry. The base
 is just a registry/path string, and the `<base>:<tag>` scheme is registry-agnostic,
-so ghcr, GitLab CR, Codeberg/Forgejo and Harbor are peers. A fully split pipeline is
+so ghcr, GitLab CR, Forgejo and Harbor are peers. A fully split pipeline is
 legal:
 
 `--stage-repo` is a destination **prefix** (typically the registry host,
@@ -177,11 +177,11 @@ optionally + a namespace); each image's **source path is preserved** beneath it
 (`<prefix>/<source-path-after-host>`), the skopeo-sync / registry-replication
 idiom — so distinct images map to distinct paths *by construction*:
 
-```
+```text
   build once → push candidate (one digest, per container)
         │
         ├─ promote --stage dev     --stage-repo ghcr.io        → ghcr.io/org/<app>:dev
-        ├─ promote --stage staging --stage-repo codeberg.org   → codeberg.org/org/<app>:staging
+        ├─ promote --stage staging --stage-repo forgejo.example.com   → forgejo.example.com/org/<app>:staging
         └─ promote --stage release --stage-repo harbor.io/m    → harbor.io/m/org/<app>:<version> + :release
 
   • ONE digest throughout — build-once holds across every registry
@@ -197,8 +197,8 @@ signature is already shared). The moment the base differs it routes through
 registry. A cross-registry copy with **no signature copier configured is refused**
 (`ErrUsage`) — the flow never lands an unsigned image silently.
 
-```
-  ghcr.io/org/app@digest  ──cosign copy (image + signature)──►  codeberg.org/org/app:release@digest
+```text
+  ghcr.io/org/app@digest  ──cosign copy (image + signature)──►  forgejo.example.com/org/app:release@digest
        (dev / staging)                                              (sovereign prod)
 
   • same digest (build-once holds across registries)
@@ -240,7 +240,7 @@ and every stage points at it. Dev carries **no** signing cost and gets no signat
 of its own. The real question is only *which* signatures are facts (made at build)
 vs. decisions (made at prod).
 
-```
+```text
    ATTESTATIONS OF FACT                      APPROVALS OF DECISION
    (created at BUILD, bound to the digest,   (created at RELEASE/PROD,
     inherited free by every stage)            after the gate passes)
@@ -390,7 +390,7 @@ rebuild was removed.
 - **Gate** — who/what allows a promotion: `auto` (dev), `environment` approval
   (staging/prod), or a tag push.
 - **Registry endpoint** — the OCI registry a stage targets (ghcr, GitLab,
-  Codeberg/Forgejo, Harbor); an interface, not hard-wired. Free-form per stage —
+  Forgejo, Harbor); an interface, not hard-wired. Free-form per stage —
   each stage may land on a different registry (`--stage-repo`).
 - **Capability** — a forge/registry feature flag (e.g. attestation API, referrers);
   the flow degrades gracefully where one is absent.

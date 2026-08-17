@@ -6,7 +6,7 @@
 # repository and uploads nanolinter's security findings (OpenGrep SAST, OSV
 # dependency scan, secrets, trivy-fs) to GitHub Code Scanning as SARIF.
 #
-# Runs inside a nanolinter FLAVOUR image (e.g. codeberg.org/itiquette/nanolinter:java),
+# Runs inside a nanolinter FLAVOUR image (e.g. codefloe.com/itiquette/nanolinter:java),
 # which bakes nanolinter + its whole check toolchain (xmllint, opengrep,
 # osv-scanner, java checkstyle/pmd/spotbugs, …) plus curl + cosign. reusable-ci
 # is installed at runtime via the canonical cosign-verified bootstrap installer
@@ -35,9 +35,9 @@ on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
       nanolinter-image:
-        description: "nanolinter flavour image to lint in (pin by @sha256). e.g. codeberg.org/itiquette/nanolinter:java"
+        description: "nanolinter flavour image to lint in (pin by @sha256). e.g. codefloe.com/itiquette/nanolinter:java"
         required: false
-        default: "codeberg.org/itiquette/nanolinter:full"
+        default: "codefloe.com/itiquette/nanolinter:full"
         type: string
       required-lints:
         description: "Mandated lint floor — comma-separated check ids passed to `nanolinter verify --require`. These checks are forced to run AND block regardless of the consumer's nanolinter.toml, so a project cannot silently skip them. Empty disables the floor."

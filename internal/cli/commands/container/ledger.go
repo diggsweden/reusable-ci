@@ -173,7 +173,7 @@ func stageRepoFlag() cli.Flag {
 	return &cli.StringFlag{
 		Name:    "stage-repo",
 		Sources: cli.EnvVars("PROMOTE_STAGE_REPO"),
-		Usage:   "rehome the promotion onto a destination registry/namespace PREFIX (e.g. a sovereign codeberg.org/owner); each image lands at <prefix>/<image-name>, so a multi-container release never collides. A different registry is a cross-registry promotion that copies the signature via cosign",
+		Usage:   "rehome the promotion onto a destination registry/namespace PREFIX (e.g. a sovereign Forgejo host, e.g. forgejo.example.com/owner); each image lands at <prefix>/<image-name>, so a multi-container release never collides. A different registry is a cross-registry promotion that copies the signature via cosign",
 	}
 }
 

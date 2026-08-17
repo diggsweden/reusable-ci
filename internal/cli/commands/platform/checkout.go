@@ -33,7 +33,7 @@ func checkoutCmd() *cli.Command {
 			"   reusable-ci platform checkout --repository org/app --ref main --depth 1 --path app",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "repository", Sources: cienv.Repository(), Usage: "owner/name to check out"},
-			&cli.StringFlag{Name: "server-url", Sources: cienv.ServerURL(), Usage: "forge base URL (e.g. https://codeberg.org)"},
+			&cli.StringFlag{Name: "server-url", Sources: cienv.ServerURL(), Usage: "forge base URL (e.g. https://forgejo.example.com)"},
 			&cli.StringFlag{Name: "ref", Sources: cienv.CheckoutRef(), Usage: "commit SHA, refs/tags/…, refs/heads/…, or a bare tag/branch name to check out. Set via $CHECKOUT_REF; defaults to the triggering commit."},
 			&cli.StringFlag{Name: "workspace", Sources: cienv.Workspace(), Usage: "target directory (default: current directory)"},
 			&cli.StringFlag{Name: "token", Usage: "clone token; omit to use the token the runner injected ($CI_TOKEN, $FORGEJO_TOKEN, $GITEA_TOKEN, $GITHUB_TOKEN), which is only ever sent to the server that issued it. Empty means an anonymous checkout."}, //nolint:lll // single-line flag declaration for grep-ability, matching the package convention.

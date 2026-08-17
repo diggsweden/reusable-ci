@@ -50,7 +50,7 @@ on:
         required: true
         type: string
       stage-repo:
-        description: "Optional destination PREFIX (typically the registry host, optionally + a new namespace) for cross-registry / sovereignty promotion. Each image's SOURCE PATH is preserved beneath it — <prefix>/<source-path-after-host> (e.g. codeberg.org + ghcr.io/org/app → codeberg.org/org/app) — so a multi-container release maps to distinct paths by construction; a cross-registry release also carries the immutable :<version> tag. Empty keeps the image's own registry."
+        description: "Optional destination PREFIX (typically the registry host, optionally + a new namespace) for cross-registry / sovereignty promotion. Each image's SOURCE PATH is preserved beneath it — <prefix>/<source-path-after-host> (e.g. forgejo.example.com + ghcr.io/org/app → forgejo.example.com/org/app) — so a multi-container release maps to distinct paths by construction; a cross-registry release also carries the immutable :<version> tag. Empty keeps the image's own registry."
         required: false
         default: ""
         type: string
@@ -89,7 +89,7 @@ on:
       # source. cosign copy then carries the image + signature across, and it
       # needs a second login to the destination registry.
       stage-registry:
-        description: "Destination registry host to authenticate to for a cross-registry promotion (e.g. codeberg.org, harbor.example.com). Empty = same-registry promotion (no second login)."
+        description: "Destination registry host to authenticate to for a cross-registry promotion (e.g. forgejo.example.com, harbor.example.com). Empty = same-registry promotion (no second login)."
         required: false
         default: ""
         type: string

@@ -19,7 +19,7 @@ on:
       nanolinter-image:
         description: "nanolinter flavour image the nanolinter lint job runs in (pin by @sha256)"
         required: false
-        default: "codeberg.org/itiquette/nanolinter:full"
+        default: "codefloe.com/itiquette/nanolinter:full"
         type: string
       required-lints:
         description: "Mandated lint floor passed to `nanolinter verify --require` (comma-separated check ids forced to run + block)."

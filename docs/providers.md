@@ -201,7 +201,7 @@ that issued it. `PAR-PKG-1` and `PAR-REG-5` check both against real runners.
 Releases + asset upload via the Gitea `/api/v1` surface (official Gitea Go
 SDK). Auth precedence `$CI_TOKEN` → `$FORGEJO_TOKEN` → `$GITEA_TOKEN` →
 `$GITHUB_TOKEN`; server from `$FORGEJO_SERVER_URL` → `$GITHUB_SERVER_URL` →
-`codeberg.org`. Precedence is only half the rule: a token is handed over only
+`forgejo.example.com`. Precedence is only half the rule: a token is handed over only
 if it may be sent to the server being called. A token the current runner
 injected is valid only at that runner's own server — so on a GitHub runner
 publishing to a Forgejo instance, `$GITHUB_TOKEN` is GitHub's job token and is
@@ -230,7 +230,7 @@ Honest maturity per forge, so you know what to rely on:
 |---|---|
 | **github** | ✅ Established production path (the original target). |
 | **gitlab** | 🟡 Partial — release creation, asset upload/linking (project uploads + release links), token validation, and repo metadata; **no** SARIF ingestion (GitLab consumes the JSON SAST report instead) and no GitLab-specific provenance profile (the generic one applies). |
-| **forgejo** | 🟢 Adapter fully implemented (release create + asset upload, token + bot-permission probes, repo metadata, capabilities), unit-tested against an httptest Gitea server, and **live in production via the forgejo-ci middle layer** — its vendored binary drives real Codeberg releases (nanolinter). Consumers adopt via forgejo-ci's reusable workflows + consumer kit (requires Forgejo v15+ for workflow_call job expansion), not via engine-shipped orchestrators. |
+| **forgejo** | 🟢 Adapter fully implemented (release create + asset upload, token + bot-permission probes, repo metadata, capabilities), unit-tested against an httptest Gitea server, and **live in production via the release-ci middle layer** — its vendored binary drives real Forgejo releases (nanolinter). Consumers adopt via release-ci's reusable workflows + consumer kit (requires Forgejo v15+ for workflow_call job expansion), not via engine-shipped orchestrators. |
 | **local** | ✅ Dev/test fallback; forge-API commands gate with a typed "unsupported" error. |
 
 Cross-forge verbs status:
@@ -275,4 +275,4 @@ These work the same on every forge (the forge-specific plumbing is hidden):
   release-image ledger: record image entries, re-validate them at the trust
   boundary, and verify/promote/clean up candidate→final tags against the
   registry. Pure OCI refs/digests/tags — identical on `ghcr.io` and
-  `codeberg.org`.
+  `forgejo.example.com`.

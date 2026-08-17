@@ -80,9 +80,9 @@ on:
         default: "ghcr.io/diggsweden/reusable-ci-runtime-base:v3.0.0"
         type: string
       nanolinter-image:
-        description: "nanolinter flavour image the nanolinter lint job runs in (pin by @sha256 to your ecosystem flavour, e.g. codeberg.org/itiquette/nanolinter:java)"
+        description: "nanolinter flavour image the nanolinter lint job runs in (pin by @sha256 to your ecosystem flavour, e.g. codefloe.com/itiquette/nanolinter:java)"
         required: false
-        default: "codeberg.org/itiquette/nanolinter:full"
+        default: "codefloe.com/itiquette/nanolinter:full"
         type: string
       required-lints:
         description: "Mandated lint floor for the nanolinter engine — comma-separated check ids forced to run AND block via `nanolinter verify --require`, so a project cannot silently skip them. Default mandates secrets + SAST across all projects. Empty disables the floor."

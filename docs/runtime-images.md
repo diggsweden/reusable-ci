@@ -56,7 +56,7 @@ across both images on the runner.
 
 | Workflow | Image | Notes |
 |---|---|---|
-| `lint-nanolinter` | nanolinter flavour image (external, e.g. `codeberg.org/itiquette/nanolinter:full`) | Runs `nanolinter verify` against the consumer's `nanolinter.toml`; the flavour image bakes nanolinter + its check toolchain (opengrep, osv-scanner, …). reusable-ci is installed at runtime, cosign-verified, for SARIF enrich/upload only |
+| `lint-nanolinter` | nanolinter flavour image (external, e.g. `codefloe.com/itiquette/nanolinter:full`) | Runs `nanolinter verify` against the consumer's `nanolinter.toml`; the flavour image bakes nanolinter + its check toolchain (opengrep, osv-scanner, …). reusable-ci is installed at runtime, cosign-verified, for SARIF enrich/upload only |
 | `lint-megalinter` | MegaLinter image (external, `oxsecurity/megalinter`) | Runs MegaLinter against the consumer's `.mega-linter.yml` on a standard runner; the alternative `lint-engine` |
 | `release-*-stage`, `pullrequest-quality-stage`, all orchestrators | `runtime-base` | Just bash + jq + yq for summaries |
 | `release-create-github`, `release-snapshot-publish-stage`'s `generate-snapshot-sboms` | `runtime` (full) | Needs syft for SBOM aggregation |

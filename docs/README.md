@@ -23,7 +23,7 @@ Solve a specific task.
 - [Runtime Images](runtime-images.md) - Override runtime images for reproducibility, mirroring, or branch testing.
 - [Verification](verification.md) - Verify release assets, checksums, signatures, attestations, and SBOMs.
 - [SBOM](sbom.md) - Configure SBOM layers and understand release/snapshot defaults.
-- [Forgejo](forgejo.md) - Adopting on Forgejo/Codeberg: the forgejo-ci middle layer, consumer kit, and platform notes.
+- [Forgejo](forgejo.md) - Adopting on Forgejo: the release-ci middle layer, consumer kit, and platform notes.
 - [Threat Model](threat-model.md) - What reusable-ci defends against, what it deliberately doesn't, and where adopter controls layer on top.
 
 ## Reference

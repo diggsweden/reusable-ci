@@ -15,7 +15,7 @@ import (
 // MergeAuth adds (or replaces) the credential for registry in a docker/OCI auth
 // config document — the {"auths": {"<registry>": {"auth": "<b64>"}}} format read
 // by docker, podman/buildah, skopeo, and cosign alike, so one written file
-// authenticates every tool on both ghcr and Codeberg/Forgejo. existing may be
+// authenticates every tool on both ghcr and Forgejo. existing may be
 // empty (a fresh config) or a prior config, whose other registries and fields
 // are preserved untouched.
 //

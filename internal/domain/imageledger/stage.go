@@ -31,7 +31,7 @@ func validStageName(name string) bool { return container.ValidOCITagComponent(na
 // build and is never re-written by promotion.
 //
 // Naming is deliberately registry-agnostic: the same <base>:<name> scheme
-// works on ghcr, GitLab CR, and Codeberg/Forgejo alike, matching the
+// works on ghcr, GitLab CR, and Forgejo alike, matching the
 // ledger's existing cross-registry design.
 type Stage struct {
 	// Name is the stage label ("dev", "stage", "release"). Empty == release.
@@ -39,11 +39,11 @@ type Stage struct {
 
 	// TargetRepo optionally rehomes the promotion onto a different registry —
 	// cross-registry / digital-sovereignty promotion (e.g. build on ghcr,
-	// promote release to a Codeberg/Forgejo or Harbor registry you own). It is
+	// promote release to a Forgejo or Harbor registry you own). It is
 	// a destination PREFIX — typically the registry host, optionally with a new
 	// namespace — beneath which each image's source repository path is
 	// preserved: <TargetRepo>/<source-path-after-host> (e.g. TargetRepo
-	// "codeberg.org" + source "ghcr.io/org/app" → "codeberg.org/org/app"). This
+	// "forgejo.example.com" + source "ghcr.io/org/app" → "forgejo.example.com/org/app"). This
 	// maps every image to a distinct path by construction, so a multi-container
 	// release never collides. A cross-registry release also carries the
 	// immutable :<version> tag to the target. Empty keeps the entry's own

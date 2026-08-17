@@ -6,7 +6,7 @@ SPDX-License-Identifier: CC0-1.0
 
 # Forgejo quick start
 
-How `reusable-ci` runs on Forgejo (Codeberg or self-hosted). For the
+How `reusable-ci` runs on Forgejo (hosted or self-hosted). For the
 per-forge maturity table see [`providers.md`](providers.md) — the forgejo
 adapter is fully implemented and unit-tested, with live-instance
 validation tracked as the remaining integration step.
@@ -40,7 +40,7 @@ mismatch, or missing/invalid signature terminates installation;
 variable the forgejo-ci signer toolchain asserts).
 
 In practice most Forgejo consumers do not call the binary directly: the
-[forgejo-ci](https://codeberg.org/itiquette/forgejo-ci) actions library
+[release-ci](https://codefloe.com/itiquette/release-ci) actions library
 wraps the verbs in composite actions pinned by commit SHA, and versions
 the binary pin together with the action set.
 

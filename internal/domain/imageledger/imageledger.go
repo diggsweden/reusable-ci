@@ -6,7 +6,7 @@
 // records entries) and the sign/publish stage (which signs, attests, and
 // promotes exactly those digests). It is forge-agnostic — entries are
 // pure OCI/registry concepts (digests, refs, tags), so the same ledger
-// serves GitHub (ghcr.io) and Forgejo (codeberg.org) alike.
+// serves GitHub (ghcr.io) and Forgejo alike.
 //
 // The validation here is first-line enforcement at record time; the
 // signer re-validates the same rules at the trust

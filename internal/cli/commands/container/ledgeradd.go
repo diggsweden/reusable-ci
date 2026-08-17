@@ -26,14 +26,14 @@ func ledgerAddCmd() *cli.Command {
 		Description: `EXAMPLES:
    # Record a pushed image, capturing its digest from the registry
    reusable-ci container ledger add --role distroless \
-     --candidate-tag codeberg.org/owner/repo:staging-v1.2.3 \
-     --final-tag codeberg.org/owner/repo:v1.2.3 \
+     --candidate-tag forgejo.example.com/owner/repo:staging-v1.2.3 \
+     --final-tag forgejo.example.com/owner/repo:v1.2.3 \
      --sbom dist/image-sbom.cyclonedx.json --tag v1.2.3 --capture-digest
 
    # Direct-push consumer with an explicit digest
    reusable-ci container ledger add --role alpine \
-     --ref codeberg.org/owner/repo@sha256:… --digest sha256:… \
-     --final-tag codeberg.org/owner/repo:v1.2.3-alpine \
+     --ref forgejo.example.com/owner/repo@sha256:… --digest sha256:… \
+     --final-tag forgejo.example.com/owner/repo:v1.2.3-alpine \
      --sbom dist/image-sbom-alpine.cyclonedx.json --tag v1.2.3`,
 		Flags: []cli.Flag{
 			ledgerPathFlag(),
@@ -49,7 +49,7 @@ func ledgerAddCmd() *cli.Command {
 			&cli.StringFlag{Name: "final-tag-name", Usage: "immutable release tag name/portion combined with --image-name; when --tag is empty, derives the release tag from vMAJOR.MINOR.PATCH[-suffix]"},
 			&cli.StringFlag{Name: "final-tag", Usage: "immutable release tag ref (scoped to --tag); derived from --image-name when omitted"},
 			&cli.StringFlag{Name: "moving-tag-name", Usage: "optional moving tag name/portion combined with --image-name"},
-			&cli.StringFlag{Name: "moving-tag", Usage: "optional moving tag ref, e.g. codeberg.org/owner/repo:rust"},
+			&cli.StringFlag{Name: "moving-tag", Usage: "optional moving tag ref, e.g. forgejo.example.com/owner/repo:rust"},
 			&cli.StringFlag{Name: flagFlavor, Usage: "optional base-image flavour"},
 			&cli.BoolFlag{Name: "derive-candidate-tag", Sources: cli.EnvVars("LEDGER_DERIVE_CANDIDATE_TAG"), Usage: "derive --candidate-tag as <image>:staging-<final-tag-name>; mutually exclusive with explicit candidate tag flags"},
 			&cli.BoolFlag{Name: "default-sbom", Usage: "when --sbom is empty, use dist/image-sbom-<flavor|role>.cyclonedx.json"},

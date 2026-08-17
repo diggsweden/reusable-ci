@@ -19,7 +19,7 @@ import (
 // release image. The package API deletes the tag's package *version*,
 // leaving the manifest reachable by the final tag.
 //
-// ref is a full image ref, e.g. "codeberg.org/owner/repo:staging-v1.2.3". The
+// ref is a full image ref, e.g. "forgejo.example.com/owner/repo:staging-v1.2.3". The
 // split is container.ParseTaggedRef — shared with the other forge adapters so
 // the digest-pinned refusal is stated once — and the parts are resolved against
 // the configured Forgejo server rather than the ref's own host.
