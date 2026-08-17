@@ -21,7 +21,16 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
-func TestAssemble_StagesCanonicalReleaseFiles(t *testing.T) {
+// TestAssemble_StagesEveryProducerLayoutIntoOneManifest feeds Assemble the
+// shapes different producers leave behind — a Maven target directory, loose Go
+// binaries, an extracted binaries tree, SBOMs beside their service and in a
+// scan output directory, an attached file matched by glob — and requires all of
+// it to land in one staged release-files layout described by one manifest.
+//
+// The manifest file is asserted, not just its existence. Assemble exits after
+// writing it and a later command reads it back, so the file is the handoff;
+// the struct Assemble returned is not what anything downstream sees.
+func TestAssemble_StagesEveryProducerLayoutIntoOneManifest(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.Chdir()
 
@@ -52,14 +61,14 @@ func TestAssemble_StagesCanonicalReleaseFiles(t *testing.T) {
 
 	wantAssets := []string{"app.apk", "app.ipa", "app.jar", "readme.txt", "service-darwin-arm64", "service-linux-amd64"}
 	if !reflect.DeepEqual(gotAssets, wantAssets) {
-		t.Fatalf("assets = %v, want %v", gotAssets, wantAssets)
+		t.Errorf("assets = %v, want %v", gotAssets, wantAssets)
 	}
 
 	gotSBOMs := assemblyFileNames(asm.SBOMs)
 
 	wantSBOMs := []string{"api-sbom.spdx.json", "web-analyzed-container-sbom.spdx.json"}
 	if !reflect.DeepEqual(gotSBOMs, wantSBOMs) {
-		t.Fatalf("sboms = %v, want %v", gotSBOMs, wantSBOMs)
+		t.Errorf("sboms = %v, want %v", gotSBOMs, wantSBOMs)
 	}
 
 	if asm.ChecksumFile != "release-files/checksums.sha256" {
@@ -76,8 +85,16 @@ func TestAssemble_StagesCanonicalReleaseFiles(t *testing.T) {
 		}
 	}
 
-	if _, err := os.Stat(domainrelease.DefaultAssemblyFile); err != nil {
-		t.Errorf("assembly manifest missing: %v", err)
+	// The written manifest is the handoff to every later command, and it
+	// carries the source_* provenance fields that exist only for auditing.
+	// Round-tripping it covers all of that without restating field by field.
+	var onDisk domainrelease.Assembly
+	if err := json.Unmarshal([]byte(readFile(t, domainrelease.DefaultAssemblyFile)), &onDisk); err != nil {
+		t.Fatalf("assembly manifest is missing or not valid JSON: %v", err)
+	}
+
+	if !reflect.DeepEqual(&onDisk, asm) {
+		t.Errorf("manifest on disk = %+v\nAssemble returned  %+v", onDisk, *asm)
 	}
 }
 
