@@ -4,12 +4,10 @@
 package release_test
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 
@@ -45,10 +43,14 @@ func TestCreateSBOMZip_NoSBOMsIsNoOp(t *testing.T) {
 	}
 }
 
-func TestCreateSBOMZip_BundlesAllLayers(t *testing.T) {
+// TestCreateSBOMZip_FlattensSBOMsFoundInDifferentPlaces varies where an SBOM
+// was left: two beside the build and one in the container-scan output
+// directory. All three go into the archive, and the nested one loses its
+// directory prefix — a consumer unpacking the zip gets a flat set of SBOMs,
+// not a sbom-artifacts/ tree.
+func TestCreateSBOMZip_FlattensSBOMsFoundInDifferentPlaces(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.Chdir()
-	dir := fsys.Root
 	fsys.WriteFile("my-app-sbom.spdx.json", []byte(`{"spdx":1}`))
 	fsys.WriteFile("my-app-sbom.cyclonedx.json", []byte(`{"cdx":1}`))
 	fsys.WriteFile(filepath.Join("sbom-artifacts", "my-app-analyzed-container-sbom.spdx.json"), []byte(`{}`))
@@ -68,35 +70,11 @@ func TestCreateSBOMZip_BundlesAllLayers(t *testing.T) {
 		t.Errorf("entries = %d, want 3", res.EntryCount)
 	}
 
-	// Inspect the zip to check container SBOM is path-flattened.
-	r, err := zip.OpenReader(filepath.Join(dir, res.ZipName)) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	defer func() { _ = r.Close() }()
-
-	names := make([]string, 0, len(r.File))
-	for _, f := range r.File {
-		names = append(names, f.Name)
-	}
-
-	sort.Strings(names)
-
-	want := []string{
-		"my-app-analyzed-container-sbom.spdx.json", // flattened (no sbom-artifacts/ prefix)
+	assertZipEntries(t, res.ZipName, []string{
+		"my-app-analyzed-container-sbom.spdx.json", // flattened: no sbom-artifacts/ prefix
 		"my-app-sbom.cyclonedx.json",
 		"my-app-sbom.spdx.json",
-	}
-	if len(names) != len(want) {
-		t.Fatalf("zip entries = %v, want %v", names, want)
-	}
-
-	for i, n := range names {
-		if n != want[i] {
-			t.Errorf("entry[%d] = %q, want %q", i, n, want[i])
-		}
-	}
+	})
 }
 
 func TestCreateSBOMZip_VersionedZipName(t *testing.T) {
@@ -131,10 +109,14 @@ func TestCreateSBOMZip_VersionedZipName(t *testing.T) {
 	}
 }
 
-func TestCreateSBOMZip_MixedFormatsAndTararchiveIncluded(t *testing.T) {
+// TestCreateSBOMZip_RecognisesEverySBOMNamingConvention varies the filename
+// instead of the location: the SPDX one a build tool writes from the POM, the
+// CycloneDX one from analysing the built jar, and the SPDX one from analysing
+// a tar archive. Each producer names its output differently and all three must
+// be recognised as SBOMs.
+func TestCreateSBOMZip_RecognisesEverySBOMNamingConvention(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.Chdir()
-	dir := fsys.Root
 	fsys.WriteFile("myapp-pom-sbom.spdx.json", []byte(`{"spdxVersion":"2.3"}`))
 	fsys.WriteFile("myapp-analyzed-jar-sbom.cyclonedx.json", []byte(`{"bomFormat":"CycloneDX"}`))
 	fsys.WriteFile("myapp-analyzed-tararchive-sbom.spdx.json", []byte(`{"spdx":"tararchive"}`))
@@ -146,33 +128,13 @@ func TestCreateSBOMZip_MixedFormatsAndTararchiveIncluded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r, err := zip.OpenReader(filepath.Join(dir, res.ZipName)) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	defer func() { _ = r.Close() }()
-
-	names := make([]string, 0, len(r.File))
-	for _, f := range r.File {
-		names = append(names, f.Name)
-	}
-
-	for _, want := range []string{"myapp-pom-sbom.spdx.json", "myapp-analyzed-jar-sbom.cyclonedx.json", "myapp-analyzed-tararchive-sbom.spdx.json"} {
-		found := false
-
-		for _, n := range names {
-			if n == want {
-				found = true
-
-				break
-			}
-		}
-
-		if !found {
-			t.Errorf("missing %q in zip entries %v", want, names)
-		}
-	}
+	// Exactly these: the old check only looked for each wanted name and so
+	// could not notice a fourth file being swept into a published archive.
+	assertZipEntries(t, res.ZipName, []string{
+		"myapp-pom-sbom.spdx.json",
+		"myapp-analyzed-jar-sbom.cyclonedx.json",
+		"myapp-analyzed-tararchive-sbom.spdx.json",
+	})
 }
 
 func TestCreateSBOMZip_SigningRequestedCreatesAsc(t *testing.T) {

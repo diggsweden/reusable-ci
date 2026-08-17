@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -351,6 +353,10 @@ func mustReleaseJSON(t *testing.T, value any) string {
 	return string(body)
 }
 
+// assertZipEntries requires the archive to hold exactly these entries. Both
+// sides are sorted first: nothing reads these archives in order, so entry order
+// is discovery order rather than a contract, and pinning it would fail on a
+// harmless change to how SBOMs are found.
 func assertZipEntries(t *testing.T, zipName string, want []string) {
 	t.Helper()
 
@@ -366,7 +372,12 @@ func assertZipEntries(t *testing.T, zipName string, want []string) {
 		got = append(got, file.Name)
 	}
 
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("zip entries = %v, want %v", got, want)
+	sort.Strings(got)
+
+	wantSorted := slices.Clone(want)
+	sort.Strings(wantSorted)
+
+	if !reflect.DeepEqual(got, wantSorted) {
+		t.Errorf("zip entries = %v, want %v", got, wantSorted)
 	}
 }
