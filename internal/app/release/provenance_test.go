@@ -40,9 +40,32 @@ func TestGenerateProvenance_CarriesIdentifiersAndDeps(t *testing.T) {
 		t.Errorf("invocation id = %q", id)
 	}
 
-	// Source dep first, then the parsed go.sum module.
-	if n := len(got.Predicate.BuildDefinition.ResolvedDependencies); n != 2 {
-		t.Fatalf("got %d resolved deps, want 2 (source + 1 module)", n)
+	// externalParameters.source is where a verifier reads which repository
+	// the artifact claims to come from, and it is composed here rather than
+	// in the domain. Nothing asserted it: the whole suite passed with this
+	// hardcoded to a foreign repository.
+	ext := got.Predicate.BuildDefinition.ExternalParameters
+	if src, ref := string(ext["source"]), string(ext["ref"]); src != `"git+https://codeberg.org/itiquette/repo"` || ref != `"v2.0.0"` {
+		t.Errorf("externalParameters source = %s, ref = %s", src, ref)
+	}
+
+	// Source dep first, then the parsed go.sum module. A count alone would
+	// not notice the commit digest going missing or the ref dropping out of
+	// the source URI, and this statement is what a verifier trusts.
+	deps := got.Predicate.BuildDefinition.ResolvedDependencies
+	if len(deps) != 2 {
+		t.Fatalf("got %d resolved deps, want 2 (source + 1 module)", len(deps))
+	}
+
+	if source := decodeDependency(t, deps[0]); source.URI != "git+https://codeberg.org/itiquette/repo@v2.0.0" || source.Digest["gitCommit"] != strings.Repeat("d", 40) {
+		t.Errorf("source dep = %+v", source)
+	}
+
+	// That the module carries through at all is the claim here. How a
+	// go.sum line becomes a purl is provenance.ParseGoSum's rule and is
+	// pinned by TestParseGoSum in internal/domain/provenance.
+	if module := decodeDependency(t, deps[1]); module.URI != "pkg:golang/github.com/foo/bar@v1.0.0" || module.Digest["gomod_h1"] != "xyz" {
+		t.Errorf("module dep = %+v", module)
 	}
 }
 
@@ -100,6 +123,23 @@ func decodeStatement(t *testing.T, body []byte) statement {
 	return s
 }
 
+// dependency is a minimal view of one resolvedDependencies entry.
+type dependency struct {
+	URI    string            `json:"uri"`
+	Digest map[string]string `json:"digest"`
+}
+
+func decodeDependency(t *testing.T, raw json.RawMessage) dependency {
+	t.Helper()
+
+	var dep dependency
+	if err := json.Unmarshal(raw, &dep); err != nil {
+		t.Fatalf("resolved dependency is not valid JSON: %v", err)
+	}
+
+	return dep
+}
+
 func TestGenerateProvenance_NoGoSum(t *testing.T) {
 	t.Parallel()
 
@@ -122,7 +162,16 @@ func TestGenerateProvenance_NoGoSum(t *testing.T) {
 	}
 }
 
-func TestGenerateProvenance_ForgejoActionsProfile(t *testing.T) {
+// TestGenerateProvenance_ForgejoProfileNamesTheWorkflowNotAGenericSource pins
+// what the forgejo-actions profile changes: the build is described as a
+// workflow run — its own buildType, runner and workflow parameters — and the
+// generic externalParameters.source is deliberately absent, because under this
+// profile the workflow parameters carry that identity instead.
+//
+// What the profile must not change is the dependency list, so the count is
+// asserted here. What the entries look like is the release statement's own
+// behaviour and is pinned by TestGenerateProvenance_CarriesIdentifiersAndDeps.
+func TestGenerateProvenance_ForgejoProfileNamesTheWorkflowNotAGenericSource(t *testing.T) {
 	t.Parallel()
 
 	body, err := apprelease.GenerateProvenance(apprelease.ProvenanceInput{
@@ -169,33 +218,10 @@ func TestGenerateProvenance_ForgejoActionsProfile(t *testing.T) {
 		t.Error("forgejo-actions profile must not emit generic externalParameters.source")
 	}
 
-	deps := build.ResolvedDependencies
-	if len(deps) != 2 {
-		t.Fatalf("got %d deps, want source + module", len(deps))
-	}
-
-	var sourceDep struct {
-		URI    string            `json:"uri"`
-		Digest map[string]string `json:"digest"`
-	}
-	if err := json.Unmarshal(deps[0], &sourceDep); err != nil {
-		t.Fatalf("source dep: %v", err)
-	}
-
-	if sourceDep.URI != "git+https://codeberg.org/Itiquette/example@v1.2.3" || sourceDep.Digest["gitCommit"] != strings.Repeat("2", 40) {
-		t.Errorf("source dep = %+v", sourceDep)
-	}
-
-	var moduleDep struct {
-		URI    string            `json:"uri"`
-		Digest map[string]string `json:"digest"`
-	}
-	if err := json.Unmarshal(deps[1], &moduleDep); err != nil {
-		t.Fatalf("module dep: %v", err)
-	}
-
-	if moduleDep.URI != "pkg:golang/example.com/mod@v0.1.0%2Bincompatible" || moduleDep.Digest["gomod_h1"] != "abc123" {
-		t.Errorf("module dep = %+v", moduleDep)
+	// Naming the build after the workflow must not cost the attestation its
+	// dependencies: the source commit and the go.sum module are still there.
+	if n := len(build.ResolvedDependencies); n != 2 {
+		t.Errorf("got %d deps, want source + module", n)
 	}
 }
 
