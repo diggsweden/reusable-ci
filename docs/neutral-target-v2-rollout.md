@@ -14,9 +14,9 @@ this work.
 - [x] Select a hard break instead of dual active v1/v2 support.
 - [x] Preserve unrelated worktree changes rather than resetting them.
 - [x] Record the rollout plan before implementation.
-- [ ] Freeze the authoritative v2 schema and fixtures.
+- [x] Freeze the authoritative v2 schema and fixtures.
 - [ ] Implement every consumer against the frozen fixture.
-- [ ] Replace Forge Lab v1 emission with v2 emission.
+- [x] Replace Forge Lab v1 emission with v2 emission.
 - [ ] Pass all provider-free verification gates.
 - [ ] Complete guarded live verification with disposable Forge Lab state.
 - [ ] Record final commits and residual risks.
@@ -99,28 +99,29 @@ registry object to every endpoint plus a root Fulcio object.
 
 ### Field Rules
 
-- [ ] `version` is the JSON number `2`; every other value is rejected.
-- [ ] `oci_registry` is required on every endpoint and is either `null` or an
+- [x] `version` is the JSON number `2`; every other value is rejected.
+- [x] `oci_registry` is required on every endpoint and is either `null` or an
   exact object containing `base_url` and `credential`.
-- [ ] `oci_registry.base_url` is an HTTPS origin with no user information,
+- [x] `oci_registry.base_url` is an HTTPS origin with no user information,
   path, query, or fragment.
-- [ ] `oci_registry.credential` is the literal `endpoint`, which promises that
+- [x] `oci_registry.credential` is the literal `endpoint`, which promises that
   the endpoint credential is valid for the registry.
-- [ ] A provider credential without usable registry scope produces
-  `oci_registry: null`; capabilities do not imply registry authentication.
-- [ ] `fulcio` is a required root key and is either `null` or an exact object
+- [x] A selected Forge Lab endpoint without proven registry scope fails target
+  emission; `null` is reserved for producers that make no registry promise.
+  Capabilities do not imply registry authentication.
+- [x] `fulcio` is a required root key and is either `null` or an exact object
   containing `base_url` and `issuers`.
-- [ ] `fulcio.base_url` is an HTTPS origin trusted through `ca_file`.
-- [ ] Every Fulcio issuer has one selected endpoint name and one exact HTTPS
+- [x] `fulcio.base_url` is an HTTPS origin trusted through `ca_file`.
+- [x] Every Fulcio issuer has one selected endpoint name and one exact HTTPS
   OIDC issuer URL.
-- [ ] Fulcio endpoint references are unique and resolve to entries in
+- [x] Fulcio endpoint references are unique and resolve to entries in
   `endpoints`.
-- [ ] OIDC issuer URLs may have paths but have no user information, query, or
+- [x] OIDC issuer URLs may have paths but have no user information, query, or
   fragment.
-- [ ] Unknown root and nested keys are rejected.
-- [ ] Duplicate JSON keys, trailing JSON, unsafe files, and documents over the
-  existing size limit are rejected.
-- [ ] `ca_file` is transport trust for lab HTTPS endpoints. It is not a
+- [x] Unknown root and nested keys are rejected.
+- [x] Duplicate semantic identities, trailing JSON, unsafe files, and documents
+  over the existing size limit are rejected.
+- [x] `ca_file` is transport trust for lab HTTPS endpoints. It is not a
   Sigstore signing root and does not imply Rekor availability.
 
 ### Provider Mapping
@@ -141,24 +142,24 @@ non-null Fulcio object is published.
 - [x] Finish and preserve the in-progress cleanup-runtime hardening.
 - [x] Correct cleanup ordering so evidence is not removed after its runtime.
 - [x] Make delegated cleanup use the advertised frozen launcher.
-- [ ] Set `LAB_NEUTRAL_TARGETS_SCHEMA_CURRENT=2`.
-- [ ] Replace the active v1 validator with an exact v2 validator.
-- [ ] Add one canonical OCI registry topology helper shared by target emission
+- [x] Set `LAB_NEUTRAL_TARGETS_SCHEMA_CURRENT=2`.
+- [x] Replace the active v1 validator with an exact v2 validator.
+- [x] Add one canonical OCI registry topology helper shared by target emission
   and container fixture production.
-- [ ] Emit exact Fulcio endpoint and issuer facts.
-- [ ] Keep recovery-v2 evidence free of OCI, Fulcio, and credential bytes.
-- [ ] Refuse in-place replacement of a v1 destination with actionable cleanup
+- [x] Emit exact Fulcio endpoint and issuer facts.
+- [x] Keep recovery-v2 evidence free of OCI, Fulcio, and credential bytes.
+- [x] Refuse in-place replacement of a v1 destination with actionable cleanup
   guidance.
-- [ ] Keep shape context schema 1 explicit and prevent neutral-v2 fields from
+- [x] Keep shape context schema 1 explicit and prevent neutral-v2 fields from
   entering the `shape-v2` producer input accidentally.
-- [ ] Replace v1 canonical fixtures with v2 Compose and GitHub fixtures.
-- [ ] Add exact malformed-v2, cleanup, rollback, and frozen-runtime tests.
-- [ ] Update public contract, reference, development, explanation, how-to,
+- [x] Replace v1 canonical fixtures with v2 Compose and GitHub fixtures.
+- [x] Add exact malformed-v2, cleanup, rollback, and frozen-runtime tests.
+- [x] Update public contract, reference, development, explanation, how-to,
   README, and agent documentation.
-- [ ] Run `just verify-pr` and focused shell syntax checks.
+- [x] Run `just verify-pr` and focused shell syntax checks.
 - [x] Commit the Forge Lab cleanup hardening separately if it remains a
   coherent pre-v2 fix.
-- [ ] Commit the Forge Lab v2 hard break.
+- [x] Commit the Forge Lab v2 hard break.
 
 ## Phase 2: reusable-ci Consumer
 
@@ -291,7 +292,7 @@ generation.
 
 | Repository | Command | Result |
 | --- | --- | --- |
-| Forge Lab | Pending | Pending |
+| Forge Lab | `just verify-pr`; docs lint; REUSE; focused contract/runtime tests | Pass |
 | reusable-ci | Pending | Pending |
 | forge-tidy | Pending | Pending |
 | forge-sync | Pending | Pending |
@@ -303,7 +304,7 @@ generation.
 | --- | --- | --- |
 | reusable-ci | Rollout plan | `4457bd7d` |
 | Forge Lab | Cleanup-runtime hardening | `5ab1238` |
-| Forge Lab | Neutral-v2 producer | Pending |
+| Forge Lab | Neutral-v2 producer | `17c95fe` |
 | reusable-ci | Neutral-v2 consumer | Pending |
 | forge-tidy | Neutral-v2 consumer | Pending |
 | forge-sync | Neutral-v2 consumer | Pending |
