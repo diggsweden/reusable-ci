@@ -40,7 +40,7 @@ func TestReleaseFiles_SelectsPublishesAndGuardsTheReleaseFileSet(t *testing.T) {
 	}
 
 	t.Run("collects every publishable artifact and its signature", func(t *testing.T) {
-		for _, name := range []string{
+		assertReleaseAssetsInclude(t, assets.Assets,
 			"app.tar.gz",
 			"app.deb", "app.deb.sig",
 			"app.rpm", "app.rpm.sig",
@@ -48,25 +48,17 @@ func TestReleaseFiles_SelectsPublishesAndGuardsTheReleaseFileSet(t *testing.T) {
 			"app.tar.gz.sbom.json", "app.tar.gz.sbom.json.bundle",
 			"app_checksums.txt", "app_checksums.txt.bundle",
 			"slsa-provenance.intoto.json", "slsa-provenance.intoto.json.bundle",
-		} {
-			if !releaseFileEntryNamed(assets.Assets, name) {
-				t.Errorf("expected release asset %q in %#v", name, releaseFileEntryNames(assets.Assets))
-			}
-		}
+		)
 	})
 
 	t.Run("leaves build internals and stray files out", func(t *testing.T) {
-		for _, name := range []string{
+		assertReleaseAssetsExclude(t, assets.Assets,
 			"metadata.json", "internal-binary",
 			"image-sbom.cyclonedx.json", "image-sbom.cyclonedx.json.bundle",
 			"trivy-results-core-amd64.json", "trivy-results-core-amd64.json.bundle",
 			"doctor-core.json", "doctor-core.json.bundle",
 			"stray.sbom.json", "stray.sbom.json.bundle",
-		} {
-			if releaseFileEntryNamed(assets.Assets, name) {
-				t.Errorf("unexpected release asset %q", name)
-			}
-		}
+		)
 	})
 
 	t.Run("accepts a checksum file naming exactly the public assets", func(t *testing.T) {
@@ -76,19 +68,11 @@ func TestReleaseFiles_SelectsPublishesAndGuardsTheReleaseFileSet(t *testing.T) {
 	})
 
 	t.Run("rejects a checksum file listing a subject twice", func(t *testing.T) {
-		writeReleaseFilesTestFile(t, "duplicate_checksums.txt", readFile(t, "dist/app_checksums.txt")+strings.Repeat("a", 64)+"  app.tar.gz\n")
-
-		if dupErr := apprelease.ValidateReleaseChecksums(apprelease.ValidateReleaseChecksumsInput{ChecksumsFile: "duplicate_checksums.txt"}); !errors.Is(dupErr, errs.ErrValidation) || !strings.Contains(dupErr.Error(), "duplicate subjects") {
-			t.Fatalf("duplicate checksum err = %v", dupErr)
-		}
+		requireChecksumFileRejected(t, "duplicate_checksums.txt", "app.tar.gz", "duplicate subjects")
 	})
 
 	t.Run("rejects a checksum file naming something never published", func(t *testing.T) {
-		writeReleaseFilesTestFile(t, "nonpublic_checksums.txt", readFile(t, "dist/app_checksums.txt")+strings.Repeat("a", 64)+"  metadata.json\n")
-
-		if nonpublicErr := apprelease.ValidateReleaseChecksums(apprelease.ValidateReleaseChecksumsInput{ChecksumsFile: "nonpublic_checksums.txt"}); !errors.Is(nonpublicErr, errs.ErrValidation) || !strings.Contains(nonpublicErr.Error(), "not public release assets") {
-			t.Fatalf("nonpublic checksum err = %v", nonpublicErr)
-		}
+		requireChecksumFileRejected(t, "nonpublic_checksums.txt", "metadata.json", "not public release assets")
 	})
 
 	withManifest := apprelease.FilesInput{ManifestFile: "dist/forgejo-ci-release-files.json"}
@@ -196,6 +180,44 @@ func writeReleaseFilesFixture(t *testing.T) {
   {"path":"dist/metadata.json","type":"Metadata"},
   {"path":"dist/internal-binary","type":"Binary"}
 ]`)
+}
+
+// assertReleaseAssetsInclude reports every name missing from entries, rather
+// than stopping at the first, so one run names the whole gap.
+func assertReleaseAssetsInclude(t *testing.T, entries []apprelease.FileEntry, names ...string) {
+	t.Helper()
+
+	for _, name := range names {
+		if !releaseFileEntryNamed(entries, name) {
+			t.Errorf("expected release asset %q in %#v", name, releaseFileEntryNames(entries))
+		}
+	}
+}
+
+// assertReleaseAssetsExclude is the counterpart: every name that leaked into
+// the published set is reported.
+func assertReleaseAssetsExclude(t *testing.T, entries []apprelease.FileEntry, names ...string) {
+	t.Helper()
+
+	for _, name := range names {
+		if releaseFileEntryNamed(entries, name) {
+			t.Errorf("unexpected release asset %q", name)
+		}
+	}
+}
+
+// requireChecksumFileRejected appends one more line naming subject to the
+// fixture's checksum file and requires validation to refuse the result as a
+// validation error mentioning wantReason.
+func requireChecksumFileRejected(t *testing.T, name, subject, wantReason string) {
+	t.Helper()
+
+	writeReleaseFilesTestFile(t, name, readFile(t, "dist/app_checksums.txt")+strings.Repeat("a", 64)+"  "+subject+"\n")
+
+	err := apprelease.ValidateReleaseChecksums(apprelease.ValidateReleaseChecksumsInput{ChecksumsFile: name})
+	if !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), wantReason) {
+		t.Fatalf("%s: err = %v, want validation error mentioning %q", name, err, wantReason)
+	}
 }
 
 func releaseFileEntryNamed(entries []apprelease.FileEntry, name string) bool {
