@@ -120,6 +120,39 @@ In this repository's own CI, the self-validation workflow runs:
 - `just test-smoke`
 - `just test-fuzz` (seed corpus only; not active mutation fuzzing)
 
+#### What the live tier actually covers
+
+`providers.md` says what each forge *supports*. This says what has been
+*observed* against a real one — a different axis, and the one that decides how
+much a green suite is worth.
+
+Proven live on GitLab **and** Forgejo, on both roads (33 scenarios, 2026-07-29):
+
+| Group | What it settles |
+|---|---|
+| `TOK-1..4` | the run's own credential validates; a refusal is classified as a refusal and not as an outage; bot permissions match real access |
+| `REL-1..5` | create with assets, verified through the raw forge API; asset upload as its own role; re-release of an existing tag; `release publish`; a 40 MiB asset served back with a matching digest |
+| `REG-1..5` | registry fixture; image ledger against a real registry; cleanup deletes staging without disturbing the release; promotion rollback; `ResolveRegistryAuth` |
+| `SIGN-1..2` | `container ledger sign` against a real registry; GitLab keyless OIDC against the lab's own Fulcio |
+| `ART-1..3` | a forge without an artifact store refuses and says what is missing; one with a store does not refuse as though it lacked one; run-artifact round trip |
+| `PKG-1..2` | `publish forge-packages` for npm and Maven — the auth schemes diverge (Job-Token on GitLab, `Authorization: token` on Forgejo) and both are proven |
+| `CAP-1..3` | the published matrix is rendered from the adapters and fails on drift; SARIF and provenance refusals |
+| `RUN-1..5` | Forgejo resolves as Forgejo and not GitHub on a real runner; runtime self-report; annotation dialect; step summaries; output-file writes |
+| `CHK-1` | `platform checkout` |
+| `UX-1..4` | printed links resolve; `--dry-run` mutates nothing while the same verb does mutate when real; identical `--json` shape; identical exit code per failure class |
+
+**The standing gap: GitHub is not in the lab.** There is no GitHub target, so
+every scenario above is two-forge. GitHub's *exclusive* positive paths — SARIF
+upload and the attestation API — are verified only against fakes written from
+the same assumptions as the adapter, which is precisely the tie this tier exists
+to break. It is the largest asymmetry in the suite and it does not close without
+a real GitHub organisation.
+
+One lesson worth keeping from the keyless work: signing **succeeded** and
+verification **failed**, from a signing verb, three steps from the missing
+anchor. Verification needs a trust root, because cosign checks the certificate
+it was just issued and cannot learn a private CA's root on its own.
+
 ## Tests live next to source
 
 ```text
