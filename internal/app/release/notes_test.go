@@ -33,8 +33,7 @@ func TestPrepareNotes_CopiesSourceWhenPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, _ := os.ReadFile(tgt) //nolint:gosec // test fixture
-	if string(got) != body {
+	if got := readFile(t, tgt); got != body {
 		t.Errorf("target = %q, want copy of source", got)
 	}
 
@@ -67,8 +66,7 @@ func TestPrepareNotes_EmptySourceFallsBackToVersionStub(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, _ := os.ReadFile(tgt) //nolint:gosec // test fixture
-	if !strings.Contains(string(got), "# Release v1.0.0") {
+	if got := readFile(t, tgt); !strings.Contains(got, "# Release v1.0.0") {
 		t.Errorf("target = %q, want fallback stub", got)
 	}
 
@@ -77,20 +75,20 @@ func TestPrepareNotes_EmptySourceFallsBackToVersionStub(t *testing.T) {
 	}
 }
 
-func TestPrepareNotes_FallbackWithVersion(t *testing.T) {
+// TestPrepareNotes_StubCitesTheCommitOnlyWhenGivenOne covers the version stub
+// written when there is no source to copy. It always carries the version
+// heading; the commit line appears only when a commit was supplied, so the
+// published notes never claim to come from a commit nobody named.
+func TestPrepareNotes_StubCitesTheCommitOnlyWhenGivenOne(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name       string
-		commit     string
-		want       []string
-		wantAbsent []string
-	}{
-		{name: "with_commit", commit: "abcdef0", want: []string{"# Release v1.0.0", "Release created from commit abcdef0"}},
-		{name: "without_commit", want: []string{"# Release v1.0.0"}, wantAbsent: []string{"Release created from commit"}},
-	}
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
+	const commitLine = "Release created from commit"
+
+	for name, commit := range map[string]string{
+		"commit supplied": "abcdef0",
+		"no commit":       "",
+	} {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			fsys := testfs.NewReal(t)
 			dir := fsys.Root
@@ -102,23 +100,22 @@ func TestPrepareNotes_FallbackWithVersion(t *testing.T) {
 				SourceFile:     filepath.Join(dir, "missing.md"),
 				TargetFile:     tgt,
 				ReleaseVersion: "v1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-				ReleaseCommit:  testCase.commit,
+				ReleaseCommit:  commit,
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			got, _ := os.ReadFile(tgt) //nolint:gosec // test fixture
-			for _, want := range testCase.want {
-				if !strings.Contains(string(got), want) {
-					t.Errorf("target missing %q\nfull: %s", want, got)
-				}
+			got := readFile(t, tgt)
+			if !strings.Contains(got, "# Release v1.0.0") {
+				t.Errorf("target missing the version heading\nfull: %s", got)
 			}
 
-			for _, wantAbsent := range testCase.wantAbsent {
-				if strings.Contains(string(got), wantAbsent) {
-					t.Errorf("target should not contain %q\nfull: %s", wantAbsent, got)
-				}
+			switch cited := strings.Contains(got, commitLine+" "+commit); {
+			case commit != "" && !cited:
+				t.Errorf("target should cite commit %q\nfull: %s", commit, got)
+			case commit == "" && strings.Contains(got, commitLine):
+				t.Errorf("target should not mention a commit\nfull: %s", got)
 			}
 
 			if !strings.Contains(buf.String(), "creating fallback") {
@@ -128,7 +125,10 @@ func TestPrepareNotes_FallbackWithVersion(t *testing.T) {
 	}
 }
 
-func TestPrepareNotes_TouchesEmptyTargetWhenNoSourceNoVersion(t *testing.T) {
+// TestPrepareNotes_LeavesAnEmptyFileRatherThanNoFile is the last rung of the
+// precedence: no source to copy and no version to stub. It still creates the
+// target, because everything downstream is entitled to a notes file existing.
+func TestPrepareNotes_LeavesAnEmptyFileRatherThanNoFile(t *testing.T) {
 	t.Parallel()
 	fsys := testfs.NewReal(t)
 	dir := fsys.Root
