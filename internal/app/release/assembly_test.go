@@ -115,7 +115,16 @@ func TestAssemble_RejectsUnsafeAttachmentPattern(t *testing.T) {
 	}
 }
 
-func TestAssemblyConsumersUseManifestFiles(t *testing.T) {
+// TestAssembly_EveryStageTakesItsFilesFromTheManifest runs the four consumers
+// of an assembly manifest in the order a release runs them: zip the SBOMs,
+// checksum what ships, sign it, publish it. The claim they share is that none
+// of them discovers files for itself — each file set comes from the manifest.
+//
+// Every stage writes what the next one reads, so they share a fixture and run
+// in order. They are subtests because they are four separate claims: as one
+// linear run of t.Fatal calls the first failure hid the rest, and the name had
+// become a list of the stages rather than the behaviour they share.
+func TestAssembly_EveryStageTakesItsFilesFromTheManifest(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.Chdir()
 
@@ -130,70 +139,84 @@ func TestAssemblyConsumersUseManifestFiles(t *testing.T) {
 		SBOMs: []domainrelease.AssemblyFile{
 			{Path: "release-files/sboms/api-sbom.spdx.json", Name: "api-sbom.spdx.json", Required: true},
 		},
-		ChecksumFile: "release-files/checksums.sha256",
-		SBOMZipFile:  "release-files/assets/my-app-1.2.3-sboms.zip",
+		ChecksumFile: assemblyChecksumPath,
+		SBOMZipFile:  assemblySBOMZipPath,
 	})
 
-	zipRes, err := apprelease.CreateSBOMZip(context.Background(), nil, apprelease.SBOMZipInput{
-		ProjectName:  "my-app",
-		Version:      "v1.2.3",
-		AssemblyFile: domainrelease.DefaultAssemblyFile,
-	}, &bytes.Buffer{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	t.Run("zips the SBOMs the manifest lists, under the name it chose", func(t *testing.T) {
+		zipRes, err := apprelease.CreateSBOMZip(context.Background(), nil, apprelease.SBOMZipInput{
+			ProjectName:  "my-app",
+			Version:      "v1.2.3",
+			AssemblyFile: domainrelease.DefaultAssemblyFile,
+		}, &bytes.Buffer{})
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	if zipRes.EntryCount != 1 || zipRes.ZipName != "release-files/assets/my-app-1.2.3-sboms.zip" {
-		t.Fatalf("SBOM zip result = %+v", zipRes)
-	}
+		if zipRes.ZipName != assemblySBOMZipPath || zipRes.EntryCount != 1 {
+			t.Errorf("SBOM zip result = %+v", zipRes)
+		}
 
-	assertZipEntries(t, zipRes.ZipName, []string{"api-sbom.spdx.json"})
+		assertZipEntries(t, assemblySBOMZipPath, []string{"api-sbom.spdx.json"})
+	})
 
-	count, err := apprelease.Checksums(&bytes.Buffer{}, apprelease.ChecksumsInput{AssemblyFile: domainrelease.DefaultAssemblyFile})
-	if err != nil {
-		t.Fatal(err)
-	}
+	t.Run("checksums what ships, naming each subject as it is published", func(t *testing.T) {
+		count, err := apprelease.Checksums(&bytes.Buffer{}, apprelease.ChecksumsInput{AssemblyFile: domainrelease.DefaultAssemblyFile})
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	if count != 2 {
-		t.Fatalf("checksum count = %d, want 2", count)
-	}
+		if count != 2 {
+			t.Errorf("checksum count = %d, want 2", count)
+		}
 
-	signer := &fakeSigner{}
-	if err := apprelease.SignArtifacts(context.Background(), signer, &bytes.Buffer{}, apprelease.SignInput{AssemblyFile: domainrelease.DefaultAssemblyFile}); err != nil {
-		t.Fatal(err)
-	}
+		// The written file is what a consumer runs sha256sum --check
+		// against, so the subjects it names are the contract. A count
+		// alone cannot tell the SBOM zip from the SBOM it was made from.
+		want := []string{"app.jar", "my-app-1.2.3-sboms.zip"}
+		if got := checksumSubjects(t, assemblyChecksumPath); !reflect.DeepEqual(got, want) {
+			t.Errorf("checksum subjects = %v, want %v", got, want)
+		}
+	})
 
-	wantSigned := []string{
-		"release-files/assets/app.jar",
-		"release-files/assets/my-app-1.2.3-sboms.zip",
-		"release-files/checksums.sha256",
-	}
-	if !reflect.DeepEqual(signer.signed, wantSigned) {
-		t.Fatalf("signed = %v, want %v", signer.signed, wantSigned)
-	}
+	t.Run("signs the assets, the SBOM zip and the checksum file", func(t *testing.T) {
+		signer := &fakeSigner{}
+		if err := apprelease.SignArtifacts(context.Background(), signer, &bytes.Buffer{}, apprelease.SignInput{AssemblyFile: domainrelease.DefaultAssemblyFile}); err != nil {
+			t.Fatal(err)
+		}
 
-	prov := fakeprovider.New(t)
-	if err := apprelease.CreateRelease(context.Background(), prov, &fakeFS{Files: map[string]bool{}}, &bytes.Buffer{}, apprelease.CreateReleaseInput{
-		Tag:          "v1.2.3",
-		Repository:   "owner/repo",
-		AssemblyFile: domainrelease.DefaultAssemblyFile,
-	}); err != nil {
-		t.Fatal(err)
-	}
+		wantSigned := []string{
+			"release-files/assets/app.jar",
+			assemblySBOMZipPath,
+			assemblyChecksumPath,
+		}
+		if !reflect.DeepEqual(signer.signed, wantSigned) {
+			t.Errorf("signed = %v, want %v", signer.signed, wantSigned)
+		}
+	})
 
-	assets := prov.CreateReleaseCalls()[0].Spec.Assets
+	t.Run("publishes every signed file alongside its signature", func(t *testing.T) {
+		prov := fakeprovider.New(t)
+		if err := apprelease.CreateRelease(context.Background(), prov, &fakeFS{Files: map[string]bool{}}, &bytes.Buffer{}, apprelease.CreateReleaseInput{
+			Tag:          "v1.2.3",
+			Repository:   "owner/repo",
+			AssemblyFile: domainrelease.DefaultAssemblyFile,
+		}); err != nil {
+			t.Fatal(err)
+		}
 
-	wantAssets := []string{
-		"release-files/assets/app.jar",
-		"release-files/assets/app.jar.asc",
-		"release-files/assets/my-app-1.2.3-sboms.zip",
-		"release-files/assets/my-app-1.2.3-sboms.zip.asc",
-		"release-files/checksums.sha256",
-		"release-files/checksums.sha256.asc",
-	}
-	if !reflect.DeepEqual(assets, wantAssets) {
-		t.Fatalf("release assets = %v, want %v", assets, wantAssets)
-	}
+		wantAssets := []string{
+			"release-files/assets/app.jar",
+			"release-files/assets/app.jar.asc",
+			assemblySBOMZipPath,
+			assemblySBOMZipPath + ".asc",
+			assemblyChecksumPath,
+			assemblyChecksumPath + ".asc",
+		}
+		if assets := prov.CreateReleaseCalls()[0].Spec.Assets; !reflect.DeepEqual(assets, wantAssets) {
+			t.Errorf("release assets = %v, want %v", assets, wantAssets)
+		}
+	})
 }
 
 func TestChecksums_AssemblyRequiresSBOMZipWhenSBOMInputsExist(t *testing.T) {
@@ -248,6 +271,35 @@ func releaseAssemblyTransferJSON(t *testing.T) string {
 			{Kind: pipeline.ArtifactTransferAnalyzedContainerSBOM, NameTemplate: "analyzed-container-sbom-{run_id}", Path: "./sbom-artifacts", Required: false},
 		},
 	})
+}
+
+// The two files an assembly manifest names for the release to generate. Every
+// stage after Assemble takes them from the manifest rather than deriving them,
+// so the test states each path once and asserts against that.
+const (
+	assemblyChecksumPath = "release-files/checksums.sha256"
+	assemblySBOMZipPath  = "release-files/assets/my-app-1.2.3-sboms.zip"
+)
+
+// checksumSubjects returns the file names a sha256sum manifest lists, in the
+// order it lists them. sha256sum separates digest from subject with two spaces.
+func checksumSubjects(t *testing.T, path string) []string {
+	t.Helper()
+
+	lines := strings.Split(strings.TrimSpace(readFile(t, path)), "\n")
+
+	subjects := make([]string, 0, len(lines))
+
+	for _, line := range lines {
+		_, subject, found := strings.Cut(line, "  ")
+		if !found {
+			t.Fatalf("%s: malformed checksum line %q", path, line)
+		}
+
+		subjects = append(subjects, subject)
+	}
+
+	return subjects
 }
 
 func assemblyFileNames(files []domainrelease.AssemblyFile) []string {
