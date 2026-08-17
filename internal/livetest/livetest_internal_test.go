@@ -14,6 +14,7 @@ package livetest
 // repository's carve-out convention.
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -59,118 +60,131 @@ func validContract(now time.Time) (Target, contract, tokenMetadata) {
 	return target, c, token
 }
 
-func TestValidate_Contract_Scenarios(t *testing.T) {
+// TestValidate_RejectsEachUnsafeContractForItsOwnReason mutates one field of a
+// valid live-test contract at a time and requires the rule that guards that
+// field to be the one that objects.
+//
+// The stakes are why the reason matters: validate decides whether a run is
+// allowed to mutate a real forge. A mutation rejected by some other rule leaves
+// the guard it was written for free to rot unnoticed.
+func TestValidate_RejectsEachUnsafeContractForItsOwnReason(t *testing.T) {
 	now := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
 
 	tests := []struct {
-		name    string
-		mutate  func(*Target, *contract, *tokenMetadata)
-		wantErr bool
+		name   string
+		mutate func(*Target, *contract, *tokenMetadata)
+		// wantErrContains identifies the rule that must reject the mutation.
+		// Every failure here wraps errs.ErrValidation, so identity cannot tell
+		// them apart, and several mutations are caught by more than one rule:
+		// a malformed run ID also breaks the confirmation identity that embeds
+		// it. Without this, deleting the run-ID format check left the row named
+		// for it still passing.
+		wantErrContains string
 	}{
 		{name: "complete_forgejo_contract"},
 		{
-			name:    "malformed_run_id",
-			mutate:  func(_ *Target, c *contract, _ *tokenMetadata) { c.runID = "Run-Live-1" },
-			wantErr: true,
+			name:            "malformed_run_id",
+			wantErrContains: "does not match",
+			mutate:          func(_ *Target, c *contract, _ *tokenMetadata) { c.runID = "Run-Live-1" },
 		},
 		{
 			// A namespace that is not ours must not arm us however
 			// self-consistent the rest of the run looks.
-			name: "another_consumers_namespace",
+			name:            "another_consumers_namespace",
+			wantErrContains: "but this suite owns",
 			mutate: func(_ *Target, c *contract, _ *tokenMetadata) {
 				c.resourcePrefix = "cl-"
 				c.confirmation = confirmDestroy +
 					"|run=run-live-1|targets=forgejo@https://forgejo.compose.forgelab:8443/garga#resources=cl-"
 			},
-			wantErr: true,
 		},
 		{
 			// The producer no longer supplies an owner, so an endpoint the
 			// operator never armed must leave the run with nothing to act on.
-			name:    "no_owner_declared",
-			mutate:  func(_ *Target, c *contract, _ *tokenMetadata) { c.refs = nil },
-			wantErr: true,
+			name:            "no_owner_declared",
+			wantErrContains: "has a declared",
+			mutate:          func(_ *Target, c *contract, _ *tokenMetadata) { c.refs = nil },
 		},
 		{
-			name:    "malformed_namespace",
-			mutate:  func(_ *Target, c *contract, _ *tokenMetadata) { c.resourcePrefix = "rc" },
-			wantErr: true,
+			name:            "malformed_namespace",
+			wantErrContains: "is not a namespace",
+			mutate:          func(_ *Target, c *contract, _ *tokenMetadata) { c.resourcePrefix = "rc" },
 		},
 		{
-			name:    "host_outside_disposable_suffix",
-			mutate:  func(tg *Target, _ *contract, _ *tokenMetadata) { tg.Host = "codeberg.org" },
-			wantErr: true,
+			name:            "host_outside_disposable_suffix",
+			wantErrContains: "is not a disposable lab forge",
+			mutate:          func(tg *Target, _ *contract, _ *tokenMetadata) { tg.Host = "codeberg.org" },
 		},
 		{
-			name:    "host_with_invalid_port",
-			mutate:  func(tg *Target, _ *contract, _ *tokenMetadata) { tg.Host = "forgejo.compose.forgelab:65536" },
-			wantErr: true,
+			name:            "host_with_invalid_port",
+			wantErrContains: "has an invalid port",
+			mutate:          func(tg *Target, _ *contract, _ *tokenMetadata) { tg.Host = "forgejo.compose.forgelab:65536" },
 		},
 		{
-			name:    "empty_token",
-			mutate:  func(tg *Target, _ *contract, _ *tokenMetadata) { tg.Token = "" },
-			wantErr: true,
+			name:            "empty_token",
+			wantErrContains: "token is empty",
+			mutate:          func(tg *Target, _ *contract, _ *tokenMetadata) { tg.Token = "" },
 		},
 		{
-			name:    "owner_parent_directory",
-			mutate:  func(tg *Target, _ *contract, _ *tokenMetadata) { tg.Owner = ".." },
-			wantErr: true,
+			name:            "owner_parent_directory",
+			wantErrContains: "is not a resource owner",
+			mutate:          func(tg *Target, _ *contract, _ *tokenMetadata) { tg.Owner = ".." },
 		},
 		{
 			// The confirmation is the human half of the authorization: one
 			// typed against a different run must not carry over to this one.
-			name: "confirmation_for_a_different_run",
+			name:            "confirmation_for_a_different_run",
+			wantErrContains: "must equal",
 			mutate: func(_ *Target, c *contract, _ *tokenMetadata) {
 				c.confirmation = confirmDestroy + "|run=other|targets=x"
 			},
-			wantErr: true,
 		},
 		{
 			// A second armed forge changes the identity, so a confirmation
 			// typed for one forge must not authorize a run spanning two.
-			name: "confirmation_predates_a_second_target",
+			name:            "confirmation_predates_a_second_target",
+			wantErrContains: "must equal",
 			mutate: func(_ *Target, c *contract, _ *tokenMetadata) {
 				c.refs = append(c.refs, targetRef{
 					forge: "gitlab", host: "gitlab.compose.forgelab", owner: "garga",
 				})
 			},
-			wantErr: true,
 		},
 		{
-			name:    "confirmation_missing_identity",
-			mutate:  func(_ *Target, c *contract, _ *tokenMetadata) { c.confirmation = confirmDestroy },
-			wantErr: true,
+			name:            "confirmation_missing_identity",
+			wantErrContains: "must equal",
+			mutate:          func(_ *Target, c *contract, _ *tokenMetadata) { c.confirmation = confirmDestroy },
 		},
 		{
-			name:    "token_not_bound_to_run",
-			mutate:  func(_ *Target, _ *contract, tk *tokenMetadata) { tk.name = "lab-targets-some-other-run" },
-			wantErr: true,
+			name:            "token_not_bound_to_run",
+			wantErrContains: "is not bound to run",
+			mutate:          func(_ *Target, _ *contract, tk *tokenMetadata) { tk.name = "lab-targets-some-other-run" },
 		},
 		{
-			name:    "non_expiring_token_without_revocation",
-			mutate:  func(_ *Target, _ *contract, tk *tokenMetadata) { tk.revocationRequired = false },
-			wantErr: true,
+			name:            "non_expiring_token_without_revocation",
+			wantErrContains: "requires run-bound revocation metadata",
+			mutate:          func(_ *Target, _ *contract, tk *tokenMetadata) { tk.revocationRequired = false },
 		},
 		{
-			name: "non_expiring_token_older_than_a_day",
+			name:            "non_expiring_token_older_than_a_day",
+			wantErrContains: "is older than 24 hours",
 			mutate: func(_ *Target, _ *contract, tk *tokenMetadata) {
 				tk.createdAt = now.Add(-25 * time.Hour).Format(time.RFC3339)
 			},
-			wantErr: true,
 		},
 		{
 			// Forgejo's API cannot attach an expiry, so one appearing is a
 			// fabricated claim, not a bonus.
-			name: "fabricated_forgejo_expiry",
+			name:            "fabricated_forgejo_expiry",
+			wantErrContains: "has no native token expiry",
 			mutate: func(_ *Target, _ *contract, tk *tokenMetadata) {
 				tk.expiresAt = now.Add(24 * time.Hour).Format(time.RFC3339)
 			},
-			wantErr: true,
 		},
 		{
-			name:    "relative_cleanup_command",
-			mutate:  func(_ *Target, c *contract, _ *tokenMetadata) { c.cleanupCommand = "scripts/revoke-targets.sh" },
-			wantErr: true,
+			name:            "relative_cleanup_command",
+			wantErrContains: "must be an absolute path",
+			mutate:          func(_ *Target, c *contract, _ *tokenMetadata) { c.cleanupCommand = "scripts/revoke-targets.sh" },
 		},
 	}
 
@@ -182,8 +196,22 @@ func TestValidate_Contract_Scenarios(t *testing.T) {
 			}
 
 			err := validate(target, contractValue, token, now)
-			if (err != nil) != testCase.wantErr {
-				t.Fatalf("validate() error = %v, wantErr %v", err, testCase.wantErr)
+
+			if testCase.wantErrContains == "" {
+				if err != nil {
+					t.Fatalf("validate() rejected a valid contract: %v", err)
+				}
+
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("validate() accepted a contract it must reject")
+			}
+
+			if !strings.Contains(err.Error(), testCase.wantErrContains) {
+				t.Fatalf("validate() rejected the contract, but not for the reason this row is about:\n got: %v\nwant it to mention: %q",
+					err, testCase.wantErrContains)
 			}
 		})
 	}
