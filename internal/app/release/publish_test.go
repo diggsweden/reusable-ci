@@ -17,7 +17,11 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeprovider"
 )
 
-func TestPublishRelease_HappyPath(t *testing.T) {
+// TestPublishRelease_PassesEveryFieldThroughToTheProvider checks that what the
+// caller asked for is what the provider is told: tag, name, notes file, draft
+// flag and assets all arrive in one call, and the operator sees a line saying
+// what is being published.
+func TestPublishRelease_PassesEveryFieldThroughToTheProvider(t *testing.T) {
 	chdirTemp(t)
 	mustWrite(t, "dist/release-notes.md", "release notes\n")
 	mustWrite(t, "dist/asset.tgz", "asset\n")
@@ -88,7 +92,13 @@ func TestPublishRelease_RejectsDuplicateAssetBasenamesBeforeProviderCall(t *test
 	}
 }
 
-func TestPublishRelease_RejectsUnsafeOrMissingInputs(t *testing.T) {
+// TestPublishRelease_RefusesBadInputWithoutCallingTheProvider covers each way
+// an input can be refused — a missing tag, a path that climbs out of the
+// working directory, an absolute path, a symlink standing in for a file, a
+// file that is not there. What every row shares is the second assertion: the
+// provider is never reached. Refusing late, after the release exists upstream,
+// would not be a refusal.
+func TestPublishRelease_RefusesBadInputWithoutCallingTheProvider(t *testing.T) {
 	chdirTemp(t)
 	mustWrite(t, "dist/release-notes.md", "release notes\n")
 	mustWrite(t, "dist/asset.tgz", "asset\n")
@@ -96,6 +106,17 @@ func TestPublishRelease_RejectsUnsafeOrMissingInputs(t *testing.T) {
 	if err := os.Symlink("release-notes.md", "dist/notes-link.md"); err != nil {
 		t.Fatal(err)
 	}
+
+	// An absolute path to a file that is real, valid and inside this test's
+	// own directory. Being absolute is then the only thing left to refuse it
+	// for. The row used to name /tmp/asset.tgz, which was safe only because
+	// the absolute-path check happens to run before anything opens the file.
+	sandbox, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	absoluteAsset := filepath.Join(sandbox, "dist", "asset.tgz")
 
 	tests := map[string]struct {
 		in      apprelease.PublishReleaseInput
@@ -105,19 +126,19 @@ func TestPublishRelease_RejectsUnsafeOrMissingInputs(t *testing.T) {
 			in:      apprelease.PublishReleaseInput{Repository: "owner/repo", ReleaseNotesFile: "dist/release-notes.md", Assets: []string{"dist/asset.tgz"}},
 			wantErr: errs.ErrUsage,
 		},
-		"unsafe notes": {
+		"notes path climbs out of the working directory": {
 			in:      apprelease.PublishReleaseInput{Tag: "v1.2.3", Repository: "owner/repo", ReleaseNotesFile: "../release-notes.md", Assets: []string{"dist/asset.tgz"}},
 			wantErr: errs.ErrValidation,
 		},
-		"notes symlink": {
+		"notes are a symlink": {
 			in:      apprelease.PublishReleaseInput{Tag: "v1.2.3", Repository: "owner/repo", ReleaseNotesFile: "dist/notes-link.md", Assets: []string{"dist/asset.tgz"}},
 			wantErr: errs.ErrMissingInput,
 		},
-		"unsafe asset": {
-			in:      apprelease.PublishReleaseInput{Tag: "v1.2.3", Repository: "owner/repo", ReleaseNotesFile: "dist/release-notes.md", Assets: []string{"/tmp/asset.tgz"}},
+		"asset path is absolute": {
+			in:      apprelease.PublishReleaseInput{Tag: "v1.2.3", Repository: "owner/repo", ReleaseNotesFile: "dist/release-notes.md", Assets: []string{absoluteAsset}},
 			wantErr: errs.ErrValidation,
 		},
-		"missing asset": {
+		"asset is not there": {
 			in:      apprelease.PublishReleaseInput{Tag: "v1.2.3", Repository: "owner/repo", ReleaseNotesFile: "dist/release-notes.md", Assets: []string{"dist/missing.tgz"}},
 			wantErr: errs.ErrMissingInput,
 		},
