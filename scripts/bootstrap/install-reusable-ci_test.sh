@@ -73,11 +73,13 @@ path_without_cosign() {
 stub_cosign() {
 	local dir="$1" verify_exit="$2"
 	mkdir -p "$dir/bin"
-	cat >"$dir/bin/cosign" <<EOF
-#!/bin/sh
-if [ "\$1" = "verify-blob" ]; then exit ${verify_exit}; fi
+	{
+		printf '#!/bin/sh\nverify_exit=%s\n' "$verify_exit"
+		cat <<'EOF'
+if [ "$1" = "verify-blob" ]; then exit "$verify_exit"; fi
 exit 0
 EOF
+	} >"$dir/bin/cosign"
 	chmod +x "$dir/bin/cosign"
 }
 
