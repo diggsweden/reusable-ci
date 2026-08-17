@@ -300,22 +300,42 @@ const (
 	assemblySBOMZipPath  = "release-files/assets/my-app-1.2.3-sboms.zip"
 )
 
-// checksumSubjects returns the file names a sha256sum manifest lists, in the
-// order it lists them. sha256sum separates digest from subject with two spaces.
-func checksumSubjects(t *testing.T, path string) []string {
+// checksumEntry is one line of a sha256sum manifest.
+type checksumEntry struct {
+	Digest  string
+	Subject string
+}
+
+// checksumEntries parses a sha256sum manifest in the order it lists its lines.
+// sha256sum separates digest from subject with two spaces.
+func checksumEntries(t *testing.T, path string) []checksumEntry {
 	t.Helper()
 
 	lines := strings.Split(strings.TrimSpace(readFile(t, path)), "\n")
 
-	subjects := make([]string, 0, len(lines))
+	entries := make([]checksumEntry, 0, len(lines))
 
 	for _, line := range lines {
-		_, subject, found := strings.Cut(line, "  ")
+		digest, subject, found := strings.Cut(line, "  ")
 		if !found {
 			t.Fatalf("%s: malformed checksum line %q", path, line)
 		}
 
-		subjects = append(subjects, subject)
+		entries = append(entries, checksumEntry{Digest: digest, Subject: subject})
+	}
+
+	return entries
+}
+
+// checksumSubjects returns just the file names a manifest lists, in order.
+func checksumSubjects(t *testing.T, path string) []string {
+	t.Helper()
+
+	entries := checksumEntries(t, path)
+
+	subjects := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		subjects = append(subjects, entry.Subject)
 	}
 
 	return subjects

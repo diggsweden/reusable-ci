@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -14,7 +15,13 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
-func TestChecksums_ReleaseArtifacts(t *testing.T) {
+// TestChecksums_HashesReleaseArtifactsUnderTheirBasename pins both halves of a
+// manifest line for the release-artifacts directory: the subject is the plain
+// basename, and the digest is the file's real SHA-256.
+//
+// The digests below were produced by sha256sum, not by this package, so a
+// regression that emitted something merely 64 characters long would fail here.
+func TestChecksums_HashesReleaseArtifactsUnderTheirBasename(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.Chdir()
 	fsys.WriteFile(filepath.Join("release-artifacts", "app.jar"), []byte("hi"))
@@ -29,33 +36,26 @@ func TestChecksums_ReleaseArtifacts(t *testing.T) {
 		t.Errorf("count = %d, want 2", count)
 	}
 
-	// Manifest entries use basename labels.
-	data, err := os.ReadFile("checksums.sha256")
-	if err != nil {
-		t.Fatal(err)
+	want := map[string]string{
+		"app.jar": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4", // sha256 of "hi"
+		"app.tgz": "e9058ab198f6908f702111b0c0fb5b36f99d00554521886c40e2891b349dc7a1", // sha256 of "yo"
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("got %d lines, want 2: %q", len(lines), lines)
+	entries := checksumEntries(t, "checksums.sha256")
+	if len(entries) != len(want) {
+		t.Fatalf("manifest = %+v, want %d lines", entries, len(want))
 	}
 
-	for _, line := range lines {
-		// Lines look like "<64hex>  <name>"
-		parts := strings.SplitN(line, "  ", 2)
-		if len(parts) != 2 {
-			t.Errorf("malformed line: %q", line)
+	for _, entry := range entries {
+		wantDigest, known := want[entry.Subject]
+		if !known {
+			t.Errorf("unexpected subject %q", entry.Subject)
 
 			continue
 		}
 
-		hash, name := parts[0], parts[1]
-		if len(hash) != 64 {
-			t.Errorf("hash len = %d, want 64: %q", len(hash), hash)
-		}
-
-		if !strings.HasSuffix(name, ".jar") && !strings.HasSuffix(name, ".tgz") {
-			t.Errorf("unexpected basename label: %q", name)
+		if entry.Digest != wantDigest {
+			t.Errorf("%s: digest = %q, want %q", entry.Subject, entry.Digest, wantDigest)
 		}
 	}
 }
@@ -82,7 +82,9 @@ func TestChecksums_AttachArtifactsKeepsPath(t *testing.T) {
 	}
 }
 
-func TestChecksums_SBOMs(t *testing.T) {
+// TestChecksums_ListsBothSBOMFormats covers SBOMs sitting next to the build.
+// Both formats are picked up, under their own names.
+func TestChecksums_ListsBothSBOMFormats(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.Chdir()
 	fsys.WriteFile("my-app-sbom.spdx.json", []byte(`{"spdx":1}`))
@@ -96,9 +98,19 @@ func TestChecksums_SBOMs(t *testing.T) {
 	if count != 2 {
 		t.Errorf("count = %d, want 2", count)
 	}
+
+	want := []string{"my-app-sbom.spdx.json", "my-app-sbom.cyclonedx.json"}
+	if got := checksumSubjects(t, "checksums.sha256"); !reflect.DeepEqual(got, want) {
+		t.Errorf("subjects = %v, want %v", got, want)
+	}
 }
 
-func TestChecksums_AnalyzedContainerSBOMs(t *testing.T) {
+// TestChecksums_LabelsContainerSBOMsWithoutTheirDirectory covers the SBOM that
+// arrives in the scan output directory rather than beside the build. It is
+// listed under its basename alone: the manifest sits beside the published
+// files, so a subject naming sbom-artifacts/ would not resolve for anyone
+// running sha256sum --check against the release.
+func TestChecksums_LabelsContainerSBOMsWithoutTheirDirectory(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.Chdir()
 	fsys.WriteFile(filepath.Join("sbom-artifacts", "my-app-analyzed-container-sbom.spdx.json"), []byte(`{}`))
@@ -110,6 +122,11 @@ func TestChecksums_AnalyzedContainerSBOMs(t *testing.T) {
 
 	if count != 1 {
 		t.Errorf("count = %d, want 1", count)
+	}
+
+	want := []string{"my-app-analyzed-container-sbom.spdx.json"}
+	if got := checksumSubjects(t, "checksums.sha256"); !reflect.DeepEqual(got, want) {
+		t.Errorf("subjects = %v, want %v", got, want)
 	}
 }
 
