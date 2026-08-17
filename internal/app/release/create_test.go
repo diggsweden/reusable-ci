@@ -6,6 +6,7 @@ package release_test
 import (
 	"bytes"
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -71,7 +72,15 @@ func TestCreateRelease_RequiresTagAndRepo(t *testing.T) {
 	}
 }
 
-func TestCreateRelease_HappyPath(t *testing.T) {
+// TestCreateRelease_AttachesEachArtifactWithItsSignature covers a release run
+// with everything present: an artifact in the release directory, an SBOM zip,
+// a checksums file, and a signature beside each one.
+//
+// The claim is the pairing, so assets are asserted as an ordered list. The
+// order is the behaviour — the collector emits each artifact immediately
+// followed by its signature — and a set comparison cannot tell that apart from
+// the same six names arriving in any arrangement.
+func TestCreateRelease_AttachesEachArtifactWithItsSignature(t *testing.T) {
 	t.Parallel()
 	prov := fakeprovider.New(t).WithPlatform(provider.ForgeGitHub)
 	fs := &fakeFS{
@@ -119,45 +128,42 @@ func TestCreateRelease_HappyPath(t *testing.T) {
 		t.Errorf("Name should default to Tag, got %q", got.Spec.Name)
 	}
 
-	if got.Spec.Prerelease {
-		t.Errorf("v1.0.0 should not be prerelease")
+	wantAssets := []string{
+		"./release-artifacts/my-app-1.0.0.tgz",
+		"my-app-1.0.0.tgz.asc",
+		"my-app-1.0.0-sboms.zip",
+		"my-app-1.0.0-sboms.zip.asc",
+		"checksums.sha256",
+		"checksums.sha256.asc",
 	}
-
-	wantAssets := map[string]bool{
-		"./release-artifacts/my-app-1.0.0.tgz": true,
-		"my-app-1.0.0.tgz.asc":                 true,
-		"my-app-1.0.0-sboms.zip":               true,
-		"my-app-1.0.0-sboms.zip.asc":           true,
-		"checksums.sha256":                     true,
-		"checksums.sha256.asc":                 true,
-	}
-	for _, a := range got.Spec.Assets {
-		if !wantAssets[a] {
-			t.Errorf("unexpected asset %q in %v", a, got.Spec.Assets)
-		}
-	}
-
-	if len(got.Spec.Assets) != len(wantAssets) {
+	if !reflect.DeepEqual(got.Spec.Assets, wantAssets) {
 		t.Errorf("assets = %v\nwant %v", got.Spec.Assets, wantAssets)
 	}
 }
 
-func TestCreateRelease_PrereleaseDetection(t *testing.T) {
+// TestCreateRelease_MarksOnlyPrereleaseTagsAsPrerelease states the rule in both
+// directions. The negative case used to sit inside the full-release test, where
+// a reader looking for the prerelease rule would not find it.
+func TestCreateRelease_MarksOnlyPrereleaseTagsAsPrerelease(t *testing.T) {
 	t.Parallel()
-	prov := fakeprovider.New(t)
-	fs := &fakeFS{Files: map[string]bool{}}
 
-	err := apprelease.CreateRelease(context.Background(), prov, fs, &bytes.Buffer{}, apprelease.CreateReleaseInput{
-		Tag:        "v1.0.0-rc.1",
-		Repository: "owner/repo",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	for tag, want := range map[string]bool{
+		"v1.0.0":      false,
+		"v1.0.0-rc.1": true,
+	} {
+		prov := fakeprovider.New(t)
 
-	calls := prov.CreateReleaseCalls()
-	if !calls[0].Spec.Prerelease {
-		t.Error("rc tag should be prerelease")
+		err := apprelease.CreateRelease(context.Background(), prov, &fakeFS{Files: map[string]bool{}}, &bytes.Buffer{}, apprelease.CreateReleaseInput{
+			Tag:        tag,
+			Repository: "owner/repo",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if got := prov.CreateReleaseCalls()[0].Spec.Prerelease; got != want {
+			t.Errorf("tag %q: prerelease = %v, want %v", tag, got, want)
+		}
 	}
 }
 
