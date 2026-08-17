@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # Testing conventions
 
 Test architecture for the Go runtime. Follow these patterns when adding new

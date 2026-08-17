@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # Artifacts Reference
 
 Complete reference for the artifacts config format.

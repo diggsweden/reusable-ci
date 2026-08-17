@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # GitLab CI Support — Architecture & Future Plan
 
 > Status: living plan, moving to active testing. GitLab is second-tier today

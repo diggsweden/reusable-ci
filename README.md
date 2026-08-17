@@ -1,11 +1,5 @@
 # Reusable CI/CD Workflows
 
-<!--
-SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 [![Tag](https://img.shields.io/github/v/tag/diggsweden/reusable-ci?style=for-the-badge&color=green)](https://github.com/diggsweden/reusable-ci/tags)
 
 [![License: EUPL-1.2 OR GPL-3.0-or-later](https://img.shields.io/badge/License-EUPL--1.2%20OR%20GPL--3.0--or--later-blue?style=for-the-badge)](LICENSE)

@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # ADR 0004: The internal package layering
 
 Status: Proposed (2026-07-14)

@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # Gradle JVM Build Example
 
 Gradle JVM build example. For Android applications, see [examples/android-app](../android-app/) — that path uses `project-type: gradle-android` and routes to `build-gradle-android.yml`, which understands product flavors, AABs, and Google Play publishing.

@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # Documentation Index
 
 This index separates end-user documentation by purpose. The examples and docs

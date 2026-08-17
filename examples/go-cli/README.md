@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # Go CLI example
 
 A Go command-line tool released as standalone binaries. This is the

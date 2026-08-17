@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # Example: stage-result aggregation on GitLab CI
 
 How reusable-ci aggregates a multi-job stage's outcome on GitLab — the GitLab

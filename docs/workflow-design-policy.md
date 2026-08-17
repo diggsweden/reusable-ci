@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # Workflow Design Policy
 
 This document defines the preferred structure for GitHub Actions workflows in this repository.

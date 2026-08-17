@@ -10,15 +10,57 @@ path = "LICENSE"
 SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
 SPDX-License-Identifier = "CC0-1.0"
 
-# misc - test explicit paths first
+# Markdown documentation.
 [[annotations]]
-path = "README.md"
+path = [
+  "README.md",
+  "CHANGELOG.md",
+  "docs/DEVELOPMENT.md",
+  "docs/artifacts-reference.md",
+  "docs/components.md",
+  "docs/ecosystems.md",
+  "docs/gitlabsupportplan.md",
+  "docs/publishing.md",
+  "docs/reference.md",
+  "docs/sbom.md",
+  "docs/verification.md",
+  "docs/workflow-design-policy.md",
+  "docs/workflows.md",
+  "examples/README.md",
+  "examples/android-app/README.md",
+  "examples/cargo-app/README.md",
+  "examples/gradle-app/README.md",
+  "examples/maven-app/README.md",
+  "examples/monorepo/README.md",
+  "examples/npm-app/README.md",
+]
+precedence = "override"
 SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
 SPDX-License-Identifier = "CC0-1.0"
 
 [[annotations]]
-path = ".gitgnore"
-SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
+path = [
+  "SECURITY.md",
+  "docs/README.md",
+  "docs/adr/*.md",
+  "docs/cli-black-box.md",
+  "docs/cli-reference.md",
+  "docs/flows.md",
+  "docs/forgejo.md",
+  "docs/providers.md",
+  "docs/release-flow-architecture.md",
+  "docs/runtime-images.md",
+  "docs/scripts.md",
+  "docs/signing-convergence.md",
+  "docs/testing.md",
+  "docs/threat-model.md",
+  "examples/gitlab/*/README.md",
+  "examples/go-cli/README.md",
+  "examples/go-service/README.md",
+  "examples/signing/*/README.md",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
 SPDX-License-Identifier = "CC0-1.0"
 
 [[annotations]]
@@ -32,32 +74,7 @@ SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
 SPDX-License-Identifier = "CC0-1.0"
 
 [[annotations]]
-path = "docs/components.md"
-SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
-SPDX-License-Identifier = "CC0-1.0"
-
-[[annotations]]
-path = "docs/DEVELOPMENT.md"
-SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
-SPDX-License-Identifier = "CC0-1.0"
-
-[[annotations]]
-path = "TODO.md"
-SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
-SPDX-License-Identifier = "CC0-1.0"
-
-[[annotations]]
-path = "docs/reference.md"
-SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
-SPDX-License-Identifier = "CC0-1.0"
-
-[[annotations]]
 path = "examples/monorepo/Containerfile.multi-artifact"
-SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
-SPDX-License-Identifier = "CC0-1.0"
-
-[[annotations]]
-path = "CHANGELOG.md"
 SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
 SPDX-License-Identifier = "CC0-1.0"
 
@@ -106,6 +123,7 @@ path = [
   "internal/domain/pipeline/testdata/**",
   "internal/domain/provenance/testdata/**",
   "internal/testutil/fixtures/testdata/**",
+  "internal/livetest/testdata/**",
 ]
 SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
 SPDX-License-Identifier = "CC0-1.0"

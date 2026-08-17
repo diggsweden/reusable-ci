@@ -1,8 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-SPDX-License-Identifier: CC0-1.0
--->
-
 # reusable-ci — Release Flow Architecture
 
 > Audience: a DevSecOps engineer or architect new to reusable-ci.

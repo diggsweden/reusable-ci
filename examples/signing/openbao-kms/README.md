@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # OpenBao (KMS) signing example
 
 A Maven library released with signatures produced by OpenBao's

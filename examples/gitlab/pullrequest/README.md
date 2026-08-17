@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # Example: PR quality orchestration on GitLab CI
 
 The GitLab counterpart of GitHub's **pull-request orchestrator**. On GitHub a

@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # Example: MegaLinter PR lint gate on GitLab CI
 
 The GitLab counterpart of setting `lint-engine: megalinter` on a GitHub PR:

@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # ADR 0001: Where the Forgejo consumer shell lives
 
 Status: Proposed (2026-07-03)

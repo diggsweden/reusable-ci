@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # SBOM generation
 
 reusable-ci produces Software Bills of Materials at multiple points in the pipeline. This page tells you what you get by default, how to change that, and how it works under the hood.

@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # Runtime Container Images
 
 reusable-ci ships a family of OCI images that GitHub Actions workflows pull via

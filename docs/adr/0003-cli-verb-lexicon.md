@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # ADR 0003: The CLI verb lexicon
 
 Status: Accepted (2026-07-09; §1 and §3 revised 2026-07-14)

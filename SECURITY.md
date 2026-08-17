@@ -1,8 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-SPDX-License-Identifier: CC0-1.0
--->
-
 # Security policy
 
 reusable-ci is published by the `diggsweden` GitHub org and follows

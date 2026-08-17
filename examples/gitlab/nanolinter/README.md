@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # Example: nanolinter PR lint gate on GitLab CI
 
 The GitLab counterpart of enabling `lint-engine: nanolinter` on a GitHub PR: instead

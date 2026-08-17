@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # Signing convergence
 
 Status: **in progress** — Phase 4a (the `SigningIdentityResolver` role) has

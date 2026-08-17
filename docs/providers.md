@@ -1,9 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
-
-SPDX-License-Identifier: CC0-1.0
--->
-
 # Providers and runners
 
 The `reusable-ci` CLI is forge-agnostic: the same verbs run on GitHub
