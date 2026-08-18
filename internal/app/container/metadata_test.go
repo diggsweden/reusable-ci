@@ -125,17 +125,12 @@ func TestComputeMetadata_MultipleRulesInDeclarationOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tags := sink.Multiline("tags")
-
+	// Declared ref, then semver version, then semver major. Sorting these
+	// would give 1, 1.0.0, v1.0.0 -- a different order, so the fixture can
+	// tell the rule it tests from the obvious alternative.
 	want := []string{testImage + ":v1.0.0", testImage + ":1.0.0", testImage + ":1"}
-	if len(tags) != len(want) {
-		t.Fatalf("tags = %v", tags)
-	}
-
-	for i := range want {
-		if tags[i] != want[i] {
-			t.Errorf("tags[%d] = %q, want %q", i, tags[i], want[i])
-		}
+	if got := sink.Multiline("tags"); !reflect.DeepEqual(got, want) {
+		t.Errorf("tags = %v, want %v", got, want)
 	}
 }
 
@@ -160,6 +155,14 @@ func TestComputeMetadata_PrimaryByPriority(t *testing.T) {
 
 	if got := sink.Single("version"); got != "1.0.0" {
 		t.Errorf("version = %q, want 1.0.0", got)
+	}
+
+	// Priority decides which tag is primary, not which rules apply. Dropping
+	// the lower-priority rule would leave the version right and the release
+	// short a tag, which asserting the version alone could not see.
+	want := []string{testImage + ":sha-abcdef0", testImage + ":1.0.0"}
+	if got := sink.Multiline("tags"); !reflect.DeepEqual(got, want) {
+		t.Errorf("tags = %v, want both rules applied in declaration order: %v", got, want)
 	}
 }
 
@@ -383,12 +386,20 @@ func TestComputeMetadata_JSONShape(t *testing.T) {
 		t.Fatalf("unmarshal: %v\nraw: %s", err, jsonStr)
 	}
 
-	if len(doc.Tags) != 2 || doc.Tags[0] != testImage+":1.0.0" {
-		t.Errorf("Tags = %v", doc.Tags)
+	// The JSON output is the same metadata as the individual outputs, for
+	// consumers that want one document. Comparing it against them says that,
+	// and covers the second tag and the other seven labels -- only Tags[0]
+	// and one label were looked at.
+	if want := sink.Multiline("tags"); !reflect.DeepEqual(doc.Tags, want) {
+		t.Errorf("json tags = %v, want the tags output %v", doc.Tags, want)
+	}
+
+	if want := labelsFromSink(t, sink); !reflect.DeepEqual(doc.Labels, want) {
+		t.Errorf("json labels = %v, want the labels output %v", doc.Labels, want)
 	}
 
 	if doc.Labels["org.opencontainers.image.licenses"] != "MIT" {
-		t.Errorf("Labels = %v", doc.Labels)
+		t.Errorf("licence label = %q, want the override MIT", doc.Labels["org.opencontainers.image.licenses"])
 	}
 }
 
