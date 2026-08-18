@@ -198,7 +198,7 @@ adding a temporary v1 compatibility layer.
 - [x] Add shell-entrypoint tests covering preflight and cleanup traps.
 - [x] Update live-testing documentation.
 - [x] Run ordinary unit tests plus smoke-tag compile/tests.
-- [ ] Commit reusable-ci v2 support without staging unrelated worktree edits.
+- [x] Commit reusable-ci v2 support without staging unrelated worktree edits.
 
 ## Phase 3: forge-tidy Consumer
 
@@ -315,7 +315,7 @@ generation.
 | reusable-ci | Rollout plan | `4457bd7d` |
 | Forge Lab | Cleanup-runtime hardening | `5ab1238` |
 | Forge Lab | Neutral-v2 producer | `17c95fe` |
-| reusable-ci | Neutral-v2 consumer | Pending |
+| reusable-ci | Neutral-v2 consumer | `5aaab5df` |
 | forge-tidy | Neutral-v2 consumer | Pending |
 | forge-sync | Neutral-v2 consumer | Pending |
 | release-ci | Existing live fixes | Pending |
