@@ -209,6 +209,31 @@ func TestImageEvidence_RejectsInvalidTrivyShape(t *testing.T) {
 	}
 }
 
+// assertNoEvidenceToolsRan requires that a refused input reached none of the
+// four tools. Each rejection test used to check a different subset -- one
+// looked at the image export and trivy, the other at the manifest export,
+// skopeo and trivy -- and neither looked at syft, so an input refused only
+// after an SBOM had been generated would have passed both.
+func assertNoEvidenceToolsRan(t *testing.T, buildah *fakeImageEvidenceBuildah, skopeo *fakeImageEvidenceSkopeo, trivy *fakeImageEvidenceTrivy, syft *fakeImageEvidenceSyft) {
+	t.Helper()
+
+	if buildah.imageRef != "" || buildah.manifest != "" {
+		t.Errorf("buildah exported before validation: image=%q manifest=%q", buildah.imageRef, buildah.manifest)
+	}
+
+	if len(skopeo.localCopies) != 0 || len(skopeo.registryCopies) != 0 {
+		t.Errorf("skopeo copied before validation: local=%+v registry=%+v", skopeo.localCopies, skopeo.registryCopies)
+	}
+
+	if len(trivy.calls) != 0 {
+		t.Errorf("trivy scanned before validation: %v", trivy.calls)
+	}
+
+	if len(syft.targets) != 0 {
+		t.Errorf("syft generated an SBOM before validation: %v", syft.targets)
+	}
+}
+
 func TestImageEvidence_RejectsInvalidInputsBeforeTools(t *testing.T) {
 	t.Parallel()
 	work := t.TempDir()
@@ -225,23 +250,23 @@ func TestImageEvidence_RejectsInvalidInputsBeforeTools(t *testing.T) {
 	}{
 		{name: "no source", in: appcontainer.ImageEvidenceInput{TrivyOutput: filepath.Join(work, "trivy.json")}, want: errs.ErrUsage},
 		{name: "two sources", in: appcontainer.ImageEvidenceInput{OCILayout: layout, LocalImageRef: "local:test", TrivyOutput: filepath.Join(work, "trivy.json")}, want: errs.ErrUsage},
-		{name: "no trivy output", in: appcontainer.ImageEvidenceInput{OCILayout: layout}, want: errs.ErrUsage},
+		{name: "no trivy output", in: appcontainer.ImageEvidenceInput{OCILayout: layout, SBOMOutput: filepath.Join(work, "sbom.json")}, want: errs.ErrUsage},
 		{name: "missing layout", in: appcontainer.ImageEvidenceInput{OCILayout: filepath.Join(work, "missing"), TrivyOutput: filepath.Join(work, "trivy.json")}, want: errs.ErrMissingInput},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			buildah := &fakeImageEvidenceBuildah{}
+			skopeo := &fakeImageEvidenceSkopeo{}
 			trivy := &fakeImageEvidenceTrivy{}
+			syft := &fakeImageEvidenceSyft{}
 
-			err := appcontainer.ImageEvidence(context.Background(), buildah, &fakeImageEvidenceSkopeo{}, trivy, &fakeImageEvidenceSyft{}, io.Discard, io.Discard, tt.in)
+			err := appcontainer.ImageEvidence(context.Background(), buildah, skopeo, trivy, syft, io.Discard, io.Discard, tt.in)
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("err = %v, want %v", err, tt.want)
 			}
 
-			if buildah.imageRef != "" || len(trivy.args) != 0 {
-				t.Fatalf("tools invoked before validation: buildah=%q trivy=%v", buildah.imageRef, trivy.args)
-			}
+			assertNoEvidenceToolsRan(t, buildah, skopeo, trivy, syft)
 		})
 	}
 }
@@ -537,15 +562,14 @@ func TestImageEvidence_RejectsInvalidMultiArchInputsBeforeTools(t *testing.T) {
 			buildah := &fakeImageEvidenceBuildah{}
 			skopeo := &fakeImageEvidenceSkopeo{}
 			trivy := &fakeImageEvidenceTrivy{}
+			syft := &fakeImageEvidenceSyft{}
 
-			err := appcontainer.ImageEvidence(context.Background(), buildah, skopeo, trivy, &fakeImageEvidenceSyft{}, io.Discard, io.Discard, tt.in)
+			err := appcontainer.ImageEvidence(context.Background(), buildah, skopeo, trivy, syft, io.Discard, io.Discard, tt.in)
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("err = %v, want %v", err, tt.want)
 			}
 
-			if buildah.manifest != "" || len(skopeo.localCopies) != 0 || len(skopeo.registryCopies) != 0 || len(trivy.args) != 0 {
-				t.Fatalf("tools invoked before validation: buildah=%q skopeo=%+v/%+v trivy=%v", buildah.manifest, skopeo.localCopies, skopeo.registryCopies, trivy.args)
-			}
+			assertNoEvidenceToolsRan(t, buildah, skopeo, trivy, syft)
 		})
 	}
 }
