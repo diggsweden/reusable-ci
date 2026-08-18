@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,6 +19,7 @@ import (
 	apprelease "github.com/diggsweden/reusable-ci/v3/internal/app/release"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/gpgkey"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/isolatedenv"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/isolatedgit"
 )
 
@@ -82,6 +84,11 @@ func TestGPGImport_EmitsExpectedOutputs(t *testing.T) {
 }
 
 func TestGPGImport_RejectsEmptyKey(t *testing.T) {
+	// A real gpg adapter is constructed here, so scrub the environment even
+	// though the input is refused before any gpg command runs. Without this
+	// the test's safety depends on that ordering holding.
+	isolatedenv.Isolate(t)
+
 	sink := fakeoutputsink.New(t)
 	_, err := apprelease.GPGImport(context.Background(), adaptergpg.New(), openpgp.ReadMetadata, nil, sink,
 		apprelease.GPGImportInput{}, &bytes.Buffer{})
@@ -124,6 +131,54 @@ func TestGPGImport_ConfiguresGitSigning(t *testing.T) {
 	}
 	if got := repo.Git("config", "--get", "commit.gpgsign"); got != "true" {
 		t.Errorf("commit.gpgsign = %q, want %q", got, "true")
+	}
+}
+
+// TestGPGImport_WritesSigningConfigToTheScopeAsked pins which git config the
+// signing settings land in. Repo-local by default; with GitConfigGlobal they
+// go to the global gitconfig, which on a shared runner outlives the job.
+//
+// Nothing exercised the flag, so it could have been ignored in either
+// direction unnoticed. Reading with an explicit --local/--global matters:
+// plain `config --get` searches every scope and would be satisfied either way.
+func TestGPGImport_WritesSigningConfigToTheScopeAsked(t *testing.T) {
+	for name, global := range map[string]bool{
+		"repo-local by default": false,
+		"global when asked":     true,
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := isolatedgit.NewRepo(t)
+			gitRepo := &git.Repo{Dir: repo.Dir}
+
+			k := gpgkey.New(t)
+
+			// isolatedenv points GIT_CONFIG_GLOBAL at /dev/null so a stray
+			// global write can never reach the developer's ~/.gitconfig, and
+			// gpgkey.New re-applies that after isolatedgit had repointed it.
+			// Opt in to a writable one, the way isolatedenv documents, so the
+			// --global path has somewhere of our own to land.
+			t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
+
+			sink := fakeoutputsink.New(t)
+			gpgRoundTrip(t, k, sink, apprelease.GPGImportInput{
+				GitUserSigningKey: true,
+				GitConfigGlobal:   global,
+			}, gitRepo)
+
+			wrote, untouched := "--local", "--global"
+			if global {
+				wrote, untouched = "--global", "--local"
+			}
+
+			ctx := context.Background()
+			if got, err := gitRepo.Run(ctx, "config", wrote, "--get", "user.signingkey"); err != nil || got != k.KeyID() {
+				t.Errorf("%s user.signingkey = %q (err %v), want %q", wrote, got, err, k.KeyID())
+			}
+
+			if got, err := gitRepo.Run(ctx, "config", untouched, "--get", "user.signingkey"); err == nil {
+				t.Errorf("user.signingkey also reached the %s scope: %q", untouched, got)
+			}
+		})
 	}
 }
 
@@ -208,6 +263,11 @@ func TestGPGCleanup_RemovesKeyAndIsIdempotent(t *testing.T) {
 }
 
 func TestGPGCleanup_NoOpOnEmptyFingerprint(t *testing.T) {
+	// GPGCleanup deletes keys. It returns early on an empty fingerprint, so
+	// nothing is deleted here, but an isolated GNUPGHOME means that stays
+	// true even if that guard ever moves below the delete calls.
+	isolatedenv.Isolate(t)
+
 	a := adaptergpg.New()
 	var log bytes.Buffer
 	apprelease.GPGCleanup(context.Background(), a, "", &log)
