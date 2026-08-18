@@ -10,6 +10,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -19,10 +21,15 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
-// TestMaterializeBuildSecrets_WritesFilesAndEmitsBuildxFormat is the
-// happy path: a 2-entry envelope produces two tmpfiles + the right
-// docker/build-push-action `secrets:` payload.
-func TestMaterializeBuildSecrets_WritesFilesAndEmitsBuildxFormat(t *testing.T) {
+// TestMaterializeBuildSecrets_MaterializesOnlyTheDeclaredNames covers the happy
+// path: two declared names become two files the builder can mount, and the
+// envelope's third entry becomes nothing at all.
+//
+// Both halves are asserted exhaustively rather than by looking for what should
+// be there. These are secrets on a shared runner: a file nobody declared, or a
+// mount entry pointing at one, is the failure worth catching, and a
+// contains-check cannot see either.
+func TestMaterializeBuildSecrets_MaterializesOnlyTheDeclaredNames(t *testing.T) {
 	t.Parallel()
 
 	fsys := testfs.NewReal(t)
@@ -37,7 +44,7 @@ func TestMaterializeBuildSecrets_WritesFilesAndEmitsBuildxFormat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Files written at the lowercased id.
+	// Files are written at the lowercased id.
 	for _, want := range []struct{ name, body string }{
 		{"db_password", "pw-value"},
 		{"api_token", "tok-value"},
@@ -46,44 +53,57 @@ func TestMaterializeBuildSecrets_WritesFilesAndEmitsBuildxFormat(t *testing.T) {
 
 		got, err := os.ReadFile(path) //nolint:gosec // test fixture path
 		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
+			t.Errorf("read %s: %v", path, err)
+
+			continue
 		}
 
 		if string(got) != want.body {
 			t.Errorf("%s = %q, want %q", path, got, want.body)
 		}
 
-		// Mode must be 0600 — adversary on the same runner shouldn't
-		// be able to read the materialized secret.
-		info, _ := os.Stat(path)
+		// Mode must be 0600 — an adversary on the same runner should not be
+		// able to read the materialized secret.
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Errorf("stat %s: %v", path, err)
+
+			continue
+		}
+
 		if info.Mode().Perm() != 0o600 {
 			t.Errorf("%s mode = %v, want 0600", path, info.Mode().Perm())
 		}
 	}
 
-	// EXTRA must not produce a file — extras in the envelope are
-	// ignored, only declared names get materialized.
-	if _, err := os.Stat(filepath.Join(fsys.Root, "extra")); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("EXTRA should not have been materialized")
+	// Exactly those two files. EXTRA is in the envelope and undeclared, so it
+	// must not be written -- and neither must anything else.
+	entries, err := os.ReadDir(fsys.Root)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	// secret-mounts output: one line per declared name, lowercased id.
-	got := sink.Single("secret-mounts")
-	for _, want := range []string{
+	gotNames := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		gotNames = append(gotNames, entry.Name())
+	}
+
+	sort.Strings(gotNames)
+
+	if wantNames := []string{"api_token", "db_password"}; !reflect.DeepEqual(gotNames, wantNames) {
+		t.Errorf("materialized %v, want %v", gotNames, wantNames)
+	}
+
+	// One mount line per declared name, in the order they were declared.
+	wantMounts := strings.Join([]string{
 		"id=db_password,src=" + filepath.Join(fsys.Root, "db_password"),
 		"id=api_token,src=" + filepath.Join(fsys.Root, "api_token"),
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("secret-mounts missing %q\nfull:\n%s", want, got)
-		}
+	}, "\n")
+	if got := sink.Single("secret-mounts"); got != wantMounts {
+		t.Errorf("secret-mounts =\n%s\nwant\n%s", got, wantMounts)
 	}
 }
 
-// TestMaterializeBuildSecrets_TightensPreexistingLooseDir guards the
-// least-privilege invariant: if the output directory already exists with
-// a world-listable mode (MkdirAll would leave it untouched), the secret
-// dir is still forced to 0700 so the materialized secret *filenames*
-// can't be enumerated by another user on a shared runner.
 func TestMaterializeBuildSecrets_TightensPreexistingLooseDir(t *testing.T) {
 	t.Parallel()
 
