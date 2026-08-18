@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -57,7 +58,10 @@ func (f *fakeManifestPushRegistry) Manifest(_ context.Context, _ string) ([]byte
 	return f.raw, nil
 }
 
-func TestPushManifest_VerifiesRegistryDigestAndEmitsOutputs(t *testing.T) {
+// TestPushManifest_ReportsTheDigestTheRegistryHolds is the manifest counterpart
+// to TestPushImage_ReportsTheDigestTheRegistryHolds, with the local manifest
+// removed afterwards.
+func TestPushManifest_ReportsTheDigestTheRegistryHolds(t *testing.T) {
 	raw := []byte(`{"schemaVersion":2}`)
 	digest := manifestTestDigest(raw)
 	tool := &fakeManifestPushTool{failures: 1, digest: digest}
@@ -79,20 +83,34 @@ func TestPushManifest_VerifiesRegistryDigestAndEmitsOutputs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got.Digest != digest || got.Ref != "registry.example/app:staging-v1@"+digest {
-		t.Fatalf("output = %+v", got)
+	if got.Digest != digest {
+		t.Errorf("digest = %q, want the digest of the manifest the registry returned %q", got.Digest, digest)
 	}
 
-	if sink.Single("digest") != digest || sink.Single("ref") != got.Ref {
-		t.Fatalf("sink digest=%q ref=%q", sink.Single("digest"), sink.Single("ref"))
+	if want := "registry.example/app:staging-v1@" + digest; got.Ref != want {
+		t.Errorf("ref = %q, want %q", got.Ref, want)
 	}
 
-	if len(tool.pushes) != 2 {
-		t.Fatalf("pushes = %v, want retry", tool.pushes)
+	if v := sink.Single("digest"); v != digest {
+		t.Errorf("output digest = %q, want %q", v, digest)
 	}
 
-	if !tool.remove || !tool.tlsVerify {
-		t.Fatalf("remove=%v tls=%v, want true true", tool.remove, tool.tlsVerify)
+	if v := sink.Single("ref"); v != got.Ref {
+		t.Errorf("output ref = %q, want it to match the returned ref %q", v, got.Ref)
+	}
+
+	// The double records auth file, source and destination; counting the
+	// pushes said nothing about where they went or what they carried.
+	if want := []string{"auth.json|localhost/app:candidate|registry.example/app:staging-v1", "auth.json|localhost/app:candidate|registry.example/app:staging-v1"}; !reflect.DeepEqual(tool.pushes, want) {
+		t.Errorf("pushes = %v, want the same push retried once: %v", tool.pushes, want)
+	}
+
+	if !tool.tlsVerify {
+		t.Error("pushed without TLS verification")
+	}
+
+	if !tool.remove {
+		t.Error("local manifest was not removed after the push")
 	}
 
 	if !strings.Contains(log.String(), "attempt 1/2") {

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -37,7 +38,14 @@ func (f *fakeImagePushTool) PushImageToRefWithDigest(_ context.Context, authFile
 	return f.digest, nil
 }
 
-func TestPushImage_VerifiesRegistryDigestAndEmitsOutputs(t *testing.T) {
+// TestPushImage_ReportsTheDigestTheRegistryHolds covers a push that succeeds on
+// the second attempt: the digest reported back is the one computed from the
+// manifest the registry actually serves, and it is published as an output
+// alongside the pinned reference.
+//
+// TestPushImage_RejectsDigestMismatch covers the other half -- what happens
+// when the pushed digest and the registry's disagree.
+func TestPushImage_ReportsTheDigestTheRegistryHolds(t *testing.T) {
 	raw := []byte(`{"schemaVersion":2}`)
 	digest := manifestTestDigest(raw)
 	tool := &fakeImagePushTool{failures: 1, digest: digest}
@@ -58,20 +66,30 @@ func TestPushImage_VerifiesRegistryDigestAndEmitsOutputs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got.Digest != digest || got.Ref != "registry.example/app:staging-amd64@"+digest {
-		t.Fatalf("output = %+v", got)
+	if got.Digest != digest {
+		t.Errorf("digest = %q, want the digest of the manifest the registry returned %q", got.Digest, digest)
 	}
 
-	if sink.Single("digest") != digest || sink.Single("ref") != got.Ref {
-		t.Fatalf("sink digest=%q ref=%q", sink.Single("digest"), sink.Single("ref"))
+	if want := "registry.example/app:staging-amd64@" + digest; got.Ref != want {
+		t.Errorf("ref = %q, want %q", got.Ref, want)
 	}
 
-	if len(tool.pushes) != 2 {
-		t.Fatalf("pushes = %v, want retry", tool.pushes)
+	if v := sink.Single("digest"); v != digest {
+		t.Errorf("output digest = %q, want %q", v, digest)
+	}
+
+	if v := sink.Single("ref"); v != got.Ref {
+		t.Errorf("output ref = %q, want it to match the returned ref %q", v, got.Ref)
+	}
+
+	// The double records auth file, source and destination; counting the
+	// pushes said nothing about where they went or what they carried.
+	if want := []string{"auth.json|localhost/app:arch|registry.example/app:staging-amd64", "auth.json|localhost/app:arch|registry.example/app:staging-amd64"}; !reflect.DeepEqual(tool.pushes, want) {
+		t.Errorf("pushes = %v, want the same push retried once: %v", tool.pushes, want)
 	}
 
 	if !tool.tlsVerify {
-		t.Fatalf("tls=%v, want true", tool.tlsVerify)
+		t.Error("pushed without TLS verification")
 	}
 
 	if !strings.Contains(log.String(), "attempt 1/2") {
