@@ -81,7 +81,18 @@ registry object to every endpoint plus a root Fulcio object.
         "packages",
         "repositories"
       ],
-      "credential": {}
+      "credential": {
+        "username": "fixture-user",
+        "token": "private-example-token",
+        "provider_id": "101",
+        "name": "lab-targets-run-example",
+        "created_at": "2026-08-18T10:00:00Z",
+        "expires_at": null,
+        "revocation": {
+          "required": true,
+          "generation_id": "run-example"
+        }
+      }
     }
   ],
   "fulcio": {
@@ -89,7 +100,7 @@ registry object to every endpoint plus a root Fulcio object.
     "issuers": [
       {
         "endpoint": "forgejo",
-        "oidc_issuer": "https://forgejo.compose.forgelab:8443"
+        "oidc_issuer": "https://forgejo.compose.forgelab:8443/api/actions"
       }
     ]
   },
@@ -314,9 +325,9 @@ generation.
 | --- | --- | --- |
 | reusable-ci | Rollout plan | `4457bd7d` |
 | Forge Lab | Cleanup-runtime hardening | `5ab1238` |
-| Forge Lab | Neutral-v2 producer | `17c95fe` |
+| Forge Lab | Neutral-v2 producer | `17c95fe`, `bdef622` |
 | reusable-ci | Neutral-v2 consumer | `5aaab5df` |
-| forge-tidy | Neutral-v2 consumer | `4e293e3` |
+| forge-tidy | Neutral-v2 consumer | `4e293e3`, `b18466b` |
 | forge-sync | Neutral-v2 consumer | `0ac79bb` |
 | release-ci | Token and live-cleanup fixes | `b4474e3`, `c97f1d6` |
 | release-ci | Neutral-v2 consumer | `428a931` |
