@@ -276,12 +276,32 @@ func TestGenerateProvenance_ExternalParameters(t *testing.T) {
 		}
 	})
 
-	t.Run("reserved-key collision fails", func(t *testing.T) {
-		t.Parallel()
+	// Every key the engine computed is reserved, so a declared document can
+	// never shadow an engine fact. Only "source" was covered, which left the
+	// rule stated once rather than for each key it protects.
+	forgejo := func(extras map[string]any) apprelease.ProvenanceInput {
+		in := input(extras)
+		in.Profile = apprelease.ProvenanceProfileForgejoActions
+		in.Workflow = "release.yml"
 
-		_, err := apprelease.GenerateProvenance(input(map[string]any{"source": "shadowed"}))
-		if !errors.Is(err, errs.ErrValidation) {
-			t.Fatalf("err = %v, want ErrValidation", err)
-		}
-	})
+		return in
+	}
+
+	for name, testCase := range map[string]struct {
+		build func(map[string]any) apprelease.ProvenanceInput
+		key   string
+	}{
+		"source is computed by the default profile":   {build: input, key: "source"},
+		"ref is computed by the default profile":      {build: input, key: "ref"},
+		"workflow is computed by the forgejo profile": {build: forgejo, key: "workflow"},
+	} {
+		t.Run("refuses to let a caller shadow "+testCase.key, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := apprelease.GenerateProvenance(testCase.build(map[string]any{testCase.key: "shadowed"}))
+			if !errors.Is(err, errs.ErrValidation) {
+				t.Fatalf("%s: err = %v, want ErrValidation", name, err)
+			}
+		})
+	}
 }
