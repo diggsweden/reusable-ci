@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -82,18 +83,34 @@ func (f *fakeSignerImageTool) PushManifest(_ context.Context, _ string, localMan
 	return nil
 }
 
-func TestBuildSignerImageArch_WritesMetadataAndRetriesPush(t *testing.T) {
+// TestBuildSignerImageArch_NamesTheImageByTheDigestItPushed covers one
+// architecture of the signer image: it is built, pushed with a retry, and
+// described by metadata that is both returned and written to disk.
+//
+// The digest is asserted against a value computed outside this package. It was
+// only ever checked against itself -- ref was compared to repo + "@" + digest,
+// which holds just as well when the digest is empty -- and the digest is what
+// identifies the image everything downstream signs and verifies.
+func TestBuildSignerImageArch_NamesTheImageByTheDigestItPushed(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeAuthFileForSignerImage(t, "auth.json")
 
-	tool := &fakeSignerImageTool{pushFails: 1, raw: []byte("arch manifest")}
+	// The digest is the SHA-256 of the raw manifest the registry returns.
+	const (
+		rawManifest = "arch manifest"
+		wantDigest  = "sha256:2a0f79b4846ba2d6951708ea5defc8ac29b6d1d5afd44cc88ac251840149b46d"
+		wantRepo    = "codeberg.org/itiquette/forgejo-ci-signer"
+		sourceSHA   = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	)
+
+	tool := &fakeSignerImageTool{pushFails: 1, raw: []byte(rawManifest)}
 
 	var out bytes.Buffer
 
 	meta, err := appcontainer.BuildSignerImageArch(context.Background(), tool, &out, appcontainer.SignerImageBuildArchInput{
 		AuthFile:         "auth.json",
 		Arch:             "amd64",
-		SourceSHA:        strings.Repeat("a", 40),
+		SourceSHA:        sourceSHA,
 		ServerURL:        "https://codeberg.org",
 		Repository:       "Itiquette/Forgejo-CI",
 		RepositorySuffix: "-signer",
@@ -107,32 +124,52 @@ func TestBuildSignerImageArch_WritesMetadataAndRetriesPush(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantRepo := "codeberg.org/itiquette/forgejo-ci-signer"
-	if meta.Tag != wantRepo+":signer-"+strings.Repeat("a", 40)+"-amd64" {
-		t.Fatalf("tag = %q", meta.Tag)
+	wantTag := wantRepo + ":signer-" + sourceSHA + "-amd64"
+	if meta.Tag != wantTag {
+		t.Errorf("tag = %q, want %q", meta.Tag, wantTag)
 	}
 
-	if meta.Ref != wantRepo+"@"+meta.Digest {
-		t.Fatalf("ref = %q digest = %q", meta.Ref, meta.Digest)
+	if meta.Digest != wantDigest {
+		t.Errorf("digest = %q, want the manifest's SHA-256 %q", meta.Digest, wantDigest)
 	}
 
-	if len(tool.pushes) != 2 {
-		t.Fatalf("pushes = %v, want retry", tool.pushes)
+	if want := wantRepo + "@" + wantDigest; meta.Ref != want {
+		t.Errorf("ref = %q, want %q", meta.Ref, want)
+	}
+
+	// The retry pushes the same tag again rather than moving on.
+	if !reflect.DeepEqual(tool.pushes, []string{wantTag, wantTag}) {
+		t.Errorf("pushes = %v, want %q twice", tool.pushes, wantTag)
 	}
 
 	if !strings.Contains(out.String(), "attempt 1/2") {
-		t.Fatalf("retry message missing from output: %q", out.String())
+		t.Errorf("retry message missing from output: %q", out.String())
 	}
 
-	if len(tool.buildReqs) != 1 || tool.buildReqs[0].Platform != "linux/amd64" || tool.buildReqs[0].SourceURL != "https://codeberg.org/Itiquette/Forgejo-CI" || tool.buildReqs[0].Title != "forgejo-ci signer" {
-		t.Fatalf("build request = %+v", tool.buildReqs)
+	if len(tool.buildReqs) != 1 {
+		t.Fatalf("build requests = %+v, want exactly one", tool.buildReqs)
 	}
 
+	build := tool.buildReqs[0]
+	if build.Platform != "linux/amd64" {
+		t.Errorf("built platform = %q, want linux/amd64", build.Platform)
+	}
+
+	if build.SourceURL != "https://codeberg.org/Itiquette/Forgejo-CI" {
+		t.Errorf("source URL = %q", build.SourceURL)
+	}
+
+	if build.Title != "forgejo-ci signer" {
+		t.Errorf("title = %q", build.Title)
+	}
+
+	// What is written to disk is what the next job reads; the returned value
+	// never leaves this process.
 	var disk appcontainer.SignerImageArchMetadata
 	readJSONForSignerImage(t, "signer-image-arch-amd64/signer-image-amd64.json", &disk)
 
 	if disk != *meta {
-		t.Fatalf("disk metadata = %+v want %+v", disk, *meta)
+		t.Errorf("disk metadata = %+v, want %+v", disk, *meta)
 	}
 }
 
