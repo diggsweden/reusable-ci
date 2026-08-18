@@ -97,39 +97,60 @@ func TestPushImage_ReportsTheDigestTheRegistryHolds(t *testing.T) {
 	}
 }
 
-func TestPushImage_RejectsDigestMismatch(t *testing.T) {
-	registry := &fakeManifestPushRegistry{raw: []byte(`{"schemaVersion":2}`)}
-
-	_, err := appcontainer.PushImage(context.Background(), &fakeImagePushTool{digest: "sha256:" + strings.Repeat("0", 64)}, registry, fakeoutputsink.New(t), io.Discard, appcontainer.PushImageInput{
-		LocalImage:  "localhost/app:arch",
-		Destination: "registry.example/app:staging-amd64",
-		TLSVerify:   "true",
-	})
-	if !errors.Is(err, errs.ErrValidation) {
-		t.Fatalf("err = %v, want ErrValidation", err)
-	}
-}
-
-func TestPushImage_UsesRegistryDigestWhenDigestFileInvalid(t *testing.T) {
+// TestPushImage_TreatsThePushedDigestAsAnExpectation covers the three states
+// the digest buildah reports can be in. The digest that is published is always
+// the one computed from the manifest the registry serves; what the push
+// reported is checked against it.
+//
+// Unlike the manifest resolution there is no "not configured" state -- a push
+// always reports something -- which is why this path warns unconditionally on
+// an unusable value. The quiet case is asserted all the same: the ordinary
+// push must not tell an operator its digest was invalid.
+func TestPushImage_TreatsThePushedDigestAsAnExpectation(t *testing.T) {
 	raw := []byte(`{"schemaVersion":2}`)
-	digest := manifestTestDigest(raw)
+	registryDigest := manifestTestDigest(raw)
 
-	var log bytes.Buffer
+	for name, testCase := range map[string]struct {
+		pushed   string
+		wantErr  error
+		wantWarn bool
+	}{
+		"push agrees with the registry": {pushed: registryDigest, wantWarn: false},
+		"push reported nothing usable":  {pushed: "", wantWarn: true},
+		"push reported another image":   {pushed: "sha256:" + strings.Repeat("0", 64), wantErr: errs.ErrValidation},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var log bytes.Buffer
 
-	got, err := appcontainer.PushImage(context.Background(), &fakeImagePushTool{digest: ""}, &fakeManifestPushRegistry{raw: raw}, fakeoutputsink.New(t), &log, appcontainer.PushImageInput{
-		LocalImage:  "localhost/app:arch",
-		Destination: "registry.example/app:staging-amd64",
-		TLSVerify:   "true",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+			got, err := appcontainer.PushImage(context.Background(),
+				&fakeImagePushTool{digest: testCase.pushed},
+				&fakeManifestPushRegistry{raw: raw},
+				fakeoutputsink.New(t), &log, appcontainer.PushImageInput{
+					LocalImage:  "localhost/app:arch",
+					Destination: "registry.example/app:staging-amd64",
+					TLSVerify:   "true",
+				})
 
-	if got.Digest != digest {
-		t.Fatalf("digest = %q, want %q", got.Digest, digest)
-	}
+			if testCase.wantErr != nil {
+				if !errors.Is(err, testCase.wantErr) {
+					t.Fatalf("err = %v, want %v", err, testCase.wantErr)
+				}
 
-	if !strings.Contains(log.String(), "digest file was empty or invalid") {
-		t.Fatalf("log missing invalid digestfile message: %q", log.String())
+				return
+			}
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got.Digest != registryDigest {
+				t.Errorf("digest = %q, want the registry's %q", got.Digest, registryDigest)
+			}
+
+			const warning = "digest file was empty or invalid"
+			if warned := strings.Contains(log.String(), warning); warned != testCase.wantWarn {
+				t.Errorf("warned = %v, want %v; log = %q", warned, testCase.wantWarn, log.String())
+			}
+		})
 	}
 }
