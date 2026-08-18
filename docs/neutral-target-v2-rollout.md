@@ -202,20 +202,20 @@ adding a temporary v1 compatibility layer.
 
 ## Phase 3: forge-tidy Consumer
 
-- [ ] Vendor canonical v2 fixtures.
-- [ ] Replace `CurrentVersion=1` with a strict v2 wire decoder.
-- [ ] Validate OCI and Fulcio globally, then project only fields the harness
+- [x] Vendor canonical v2 fixtures.
+- [x] Replace `CurrentVersion=1` with a strict v2 wire decoder.
+- [x] Validate OCI and Fulcio globally, then project only fields the harness
   uses.
-- [ ] Keep `shape-v2` context at its independent schema version 1 through an
+- [x] Keep `shape-v2` context at its independent schema version 1 through an
   explicit DTO.
-- [ ] Ensure extended cleanup parses v2 and executes once after every armed
+- [x] Ensure extended cleanup parses v2 and executes once after every armed
   failure path.
-- [ ] Emit `extended-neutral-v2` and `portable-neutral-v2` evidence profiles.
-- [ ] Keep historical evidence profiles readable.
-- [ ] Add v1 rejection, malformed-v2, shape, cleanup, and recovery tests.
-- [ ] Update live-target documentation and changelog.
-- [ ] Run unit tests and compile-only black-box/live tagged harnesses.
-- [ ] Commit forge-tidy v2 support.
+- [x] Emit `extended-neutral-v2` and `portable-neutral-v2` evidence profiles.
+- [x] Keep historical evidence profiles readable.
+- [x] Add v1 rejection, malformed-v2, shape, cleanup, and recovery tests.
+- [x] Update live-target documentation and changelog.
+- [x] Run unit tests and compile-only black-box/live tagged harnesses.
+- [x] Commit forge-tidy v2 support.
 
 ## Phase 4: forge-sync Consumer
 
@@ -304,7 +304,7 @@ generation.
 | --- | --- | --- |
 | Forge Lab | `just verify-pr`; docs lint; REUSE; focused contract/runtime tests | Pass |
 | reusable-ci | Unit/race tests; tagged vet compiles; smoke tests; Bash/ShellCheck; REUSE; diff check | Pass |
-| forge-tidy | Pending | Pending |
+| forge-tidy | `just test-race`; Go lint; REUSE; tagged compile-only checks | Pass |
 | forge-sync | Pending | Pending |
 | release-ci | Pending | Pending |
 
@@ -316,7 +316,7 @@ generation.
 | Forge Lab | Cleanup-runtime hardening | `5ab1238` |
 | Forge Lab | Neutral-v2 producer | `17c95fe` |
 | reusable-ci | Neutral-v2 consumer | `5aaab5df` |
-| forge-tidy | Neutral-v2 consumer | Pending |
+| forge-tidy | Neutral-v2 consumer | `4e293e3` |
 | forge-sync | Neutral-v2 consumer | Pending |
 | release-ci | Existing live fixes | Pending |
 | release-ci | Neutral-v2 consumer | Pending |
