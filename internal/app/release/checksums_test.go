@@ -165,27 +165,32 @@ func TestChecksums_CreatesEmptyOutputWhenNothingFound(t *testing.T) {
 	}
 }
 
-func TestChecksums_CustomOutput(t *testing.T) {
-	tests := []struct {
-		name       string
-		outputFile string
-		wantPath   []string
-	}{
-		{name: "file", outputFile: "custom-checksums.txt", wantPath: []string{"custom-checksums.txt"}},
-		{name: "nested_path", outputFile: filepath.Join("output", "checksums.sha256"), wantPath: []string{"output", "checksums.sha256"}}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-	}
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
+// TestChecksums_HonoursACustomOutputPath covers --output: the manifest is
+// written where it was asked for, with its contents, and the default path is
+// left alone so nothing downstream picks up a stale one.
+//
+// The nested row creates the directory first. That is a precondition, not
+// setup noise, and it is worth knowing about: on this path the manifest is
+// opened with O_CREATE, which does not create parent directories, so
+// --output some/dir/file fails when some/dir does not exist. The assembly
+// path in checksums.go calls MkdirAll and does create it, so the same flag
+// behaves differently in the two modes.
+func TestChecksums_HonoursACustomOutputPath(t *testing.T) {
+	for name, outputFile := range map[string]string{
+		"a plain file name":     "custom-checksums.txt",
+		"a path with directory": filepath.Join("output", "checksums.sha256"),
+	} {
+		t.Run(name, func(t *testing.T) {
 			fsys := testfs.NewReal(t)
 			fsys.Chdir()
 
-			if len(testCase.wantPath) > 1 {
-				fsys.MkdirAll(testCase.wantPath[:len(testCase.wantPath)-1]...)
+			if dir := filepath.Dir(outputFile); dir != "." {
+				fsys.MkdirAll(dir)
 			}
 
 			fsys.WriteFile(filepath.Join("release-artifacts", "test.jar"), []byte("test"))
 
-			count, err := apprelease.Checksums(&bytes.Buffer{}, apprelease.ChecksumsInput{OutputFile: testCase.outputFile})
+			count, err := apprelease.Checksums(&bytes.Buffer{}, apprelease.ChecksumsInput{OutputFile: outputFile})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -194,12 +199,16 @@ func TestChecksums_CustomOutput(t *testing.T) {
 				t.Errorf("count = %d, want 1", count)
 			}
 
-			if _, err := os.Stat(fsys.Path(testCase.wantPath...)); err != nil {
-				t.Errorf("custom output missing: %v", err)
+			// Assert the contents, not just that a file appeared: a manifest
+			// created empty at the custom path would satisfy every other
+			// check here.
+			want := []string{"test.jar"}
+			if got := checksumSubjects(t, outputFile); !reflect.DeepEqual(got, want) {
+				t.Errorf("subjects in %s = %v, want %v", outputFile, got, want)
 			}
 
 			if _, err := os.Stat("checksums.sha256"); !os.IsNotExist(err) {
-				t.Errorf("default output should not exist when custom path used: %v", err)
+				t.Errorf("default output should not exist when a custom path is used: %v", err)
 			}
 		})
 	}
