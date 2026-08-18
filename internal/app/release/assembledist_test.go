@@ -111,35 +111,54 @@ func TestAssembleDist_DownloadsTransferPlanAndWarnsForOptionalFailures(t *testin
 	}
 }
 
-func TestAssembleDist_MergesReleaseImageLedgers(t *testing.T) {
+// TestAssembleDist_MergesLedgersKeepingFirstSeenOrder covers the release image
+// ledger merge: several inputs, named individually or as a directory to search,
+// combined into the one file a release publishes.
+//
+// The images are c,b and b,a, which is deliberate. Merging keeps the order the
+// inputs were listed in and drops later duplicates, so the result is c,b,a --
+// a fixture of a,b and b,c would merge to a,b,c under that rule and also under
+// sorting, proving neither. The merged file is published, so its bytes being
+// determined by the input order rather than by chance is the point.
+func TestAssembleDist_MergesLedgersKeepingFirstSeenOrder(t *testing.T) {
 	chdirTempForAssembleDist(t)
-	writeFileForAssembleDist(t, "ledgers/a.json", "[{\"image\":\"a\"},{\"image\":\"b\"}]\n")
-	writeFileForAssembleDist(t, "ledgers/nested/one/release-images.json", "[{\"image\":\"b\"},{\"image\":\"c\"}]\n")
-
-	dl := &assembleDistDownloader{}
+	writeFileForAssembleDist(t, "ledgers/a.json", `[{"image":"c"},{"image":"b"}]`+"\n")
+	writeFileForAssembleDist(t, "ledgers/nested/one/release-images.json", `[{"image":"b"},{"image":"a"}]`+"\n")
 
 	var stderr bytes.Buffer
 
-	_, err := apprelease.AssembleDist(context.Background(), dl, fakeoutputsink.New(t), &stderr, apprelease.AssembleDistInput{
-		ArtifactNames:            "build",
-		Path:                     "dist/",
-		LedgerFiles:              "ledgers/a.json\nmissing-ledger.json\nledgers/nested",
-		LedgerExpectedCount:      3,
-		ReleaseImagesPath:        "dist/release-images.json",
-		ArtifactTransferPlanJSON: "",
+	_, err := apprelease.AssembleDist(context.Background(), &assembleDistDownloader{}, fakeoutputsink.New(t), &stderr, apprelease.AssembleDistInput{
+		ArtifactNames:       "build",
+		Path:                "dist/",
+		LedgerFiles:         "ledgers/a.json\nmissing-ledger.json\nledgers/nested",
+		LedgerExpectedCount: 3,
+		ReleaseImagesPath:   "dist/release-images.json",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	got := readFileForAssembleDist(t, "dist/release-images.json")
-	if got != `[{"image":"a"},{"image":"b"},{"image":"c"}]`+"\n" {
-		t.Fatalf("merged ledger = %q", got)
-	}
+	t.Run("keeps input order and drops the duplicate", func(t *testing.T) {
+		want := `[{"image":"c"},{"image":"b"},{"image":"a"}]` + "\n"
+		if got := readFileForAssembleDist(t, "dist/release-images.json"); got != want {
+			t.Errorf("merged ledger = %q, want %q", got, want)
+		}
+	})
 
-	if !strings.Contains(stderr.String(), "release image ledger input not found") || !strings.Contains(stderr.String(), "release image ledger contains 3 images") {
-		t.Fatalf("stderr = %q", stderr.String())
-	}
+	t.Run("an input that is not there is a warning, not a failure", func(t *testing.T) {
+		if !strings.Contains(stderr.String(), "release image ledger input not found") {
+			t.Errorf("stderr = %q", stderr.String())
+		}
+	})
+
+	t.Run("the expected count is checked against the merged images", func(t *testing.T) {
+		// Four entries were read and three survive deduplication. The run
+		// asked for three and was accepted, so the guard counts what ships
+		// rather than what was read -- otherwise this would have failed.
+		if !strings.Contains(stderr.String(), "release image ledger contains 3 images") {
+			t.Errorf("stderr = %q", stderr.String())
+		}
+	})
 }
 
 // TestAssembleDist_PrunesDirectoriesBeforeTheDigestIsTaken covers --prune-dirs:
