@@ -15,7 +15,7 @@ this work.
 - [x] Preserve unrelated worktree changes rather than resetting them.
 - [x] Record the rollout plan before implementation.
 - [x] Freeze the authoritative v2 schema and fixtures.
-- [ ] Implement every consumer against the frozen fixture.
+- [x] Implement every consumer against the frozen fixture.
 - [x] Replace Forge Lab v1 emission with v2 emission.
 - [ ] Pass all provider-free verification gates.
 - [ ] Complete guarded live verification with disposable Forge Lab state.
@@ -234,22 +234,22 @@ adding a temporary v1 compatibility layer.
 ## Phase 5: release-ci Consumer
 
 - [x] Preserve and separately commit the existing token and live-cleanup fixes.
-- [ ] Add a strict neutral-v2 shell parser without weakening duplicate-key or
+- [x] Add a strict neutral-v2 shell parser without weakening duplicate-key or
   exact-key checks.
-- [ ] Parse and validate Fulcio but do not use it for the current KMS signing
+- [x] Parse and validate Fulcio but do not use it for the current KMS signing
   scenarios.
-- [ ] Replace road-derived signer registry assumptions with the declared OCI
+- [x] Replace road-derived signer registry assumptions with the declared OCI
   registry.
-- [ ] Bind the canonical OCI authority into live identity and start evidence.
-- [ ] Preserve cleanup command/file freezing and same-generation recovery.
-- [ ] Add v1 rejection, malformed-v2, OCI image binding, cleanup, and retained
+- [x] Bind the canonical OCI authority into live identity and start evidence.
+- [x] Preserve cleanup command/file freezing and same-generation recovery.
+- [x] Add v1 rejection, malformed-v2, OCI image binding, cleanup, and retained
   claim tests.
-- [ ] Update usage, development documentation, runbooks, test plan, and
+- [x] Update usage, development documentation, runbooks, test plan, and
   changelog.
-- [ ] Do not modify production workflows solely for neutral-v2 support.
-- [ ] Do not re-vendor `bin/reusable-ci` for this test-only parser change.
-- [ ] Run `bash .forgejo/scripts/test-static.sh`.
-- [ ] Commit release-ci v2 support without absorbing unrelated edits.
+- [x] Do not modify production workflows solely for neutral-v2 support.
+- [x] Do not re-vendor `bin/reusable-ci` for this test-only parser change.
+- [x] Run `bash .forgejo/scripts/test-static.sh` with the pinned jq tool.
+- [x] Commit release-ci v2 support without absorbing unrelated edits.
 
 ## Phase 6: Provider-Free Cross-Repository Gate
 
@@ -306,7 +306,7 @@ generation.
 | reusable-ci | Unit/race tests; tagged vet compiles; smoke tests; Bash/ShellCheck; REUSE; diff check | Pass |
 | forge-tidy | `just test-race`; Go lint; REUSE; tagged compile-only checks | Pass |
 | forge-sync | Offline unit/race; integration; fuzz seeds; REUSE; tagged compile-only checks | Pass |
-| release-ci | Pending | Pending |
+| release-ci | Pinned `test-static.sh`; acceptance unit; ShellCheck; actionlint; REUSE | Pass |
 
 ## Commit Record
 
@@ -319,7 +319,7 @@ generation.
 | forge-tidy | Neutral-v2 consumer | `4e293e3` |
 | forge-sync | Neutral-v2 consumer | `0ac79bb` |
 | release-ci | Token and live-cleanup fixes | `b4474e3`, `c97f1d6` |
-| release-ci | Neutral-v2 consumer | Pending |
+| release-ci | Neutral-v2 consumer | `428a931` |
 | reusable-ci | Final rollout status | Pending |
 
 ## Residual Risks
