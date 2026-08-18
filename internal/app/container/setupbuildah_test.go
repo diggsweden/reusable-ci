@@ -78,57 +78,92 @@ func (f *fakeSummarySink) Append(_ context.Context, markdown string) error {
 	return nil
 }
 
-func TestSetupBuildah_FallsBackToVFSAfterOverlayProbeFailure(t *testing.T) {
+// TestSetupBuildah_ChoosesTheDriverItsProbeAccepts covers driver selection in
+// both directions: overlay is tried first and kept when a probe build works,
+// and vfs is the fallback when it does not.
+//
+// Only the fallback was covered. A change that always ended up on vfs would
+// have passed, and nothing would report it -- vfs is the slow path, so the
+// symptom is builds quietly taking longer rather than failing.
+func TestSetupBuildah_ChoosesTheDriverItsProbeAccepts(t *testing.T) {
 	t.Parallel()
 
-	scratch := t.TempDir()
-	tool := &fakeBuildahSetupTool{
-		commands: map[string]bool{
-			"buildah":        true,
-			"fuse-overlayfs": true,
-		},
-		failOverlayProbe: true,
-	}
-	sink := fakeoutputsink.New(t)
-	summary := &fakeSummarySink{}
-	envFile := filepath.Join(scratch, "env")
+	for name, testCase := range map[string]struct {
+		failOverlayProbe bool
+		wantDriver       string
+		wantProbes       []string
+	}{
+		"overlay works":       {failOverlayProbe: false, wantDriver: "overlay", wantProbes: []string{"overlay"}},
+		"overlay probe fails": {failOverlayProbe: true, wantDriver: "vfs", wantProbes: []string{"overlay", "vfs"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	got, err := appcontainer.SetupBuildah(context.Background(), tool, nil, sink, summary, io.Discard, appcontainer.SetupBuildahInput{
-		InstallPackages: false,
-		ProbeBuild:      true,
-		WriteSummary:    true,
-		StorageConf:     filepath.Join(scratch, "storage.conf"),
-		StorageRoot:     filepath.Join(scratch, "root"),
-		TmpDir:          filepath.Join(scratch, "tmp"),
-		RunnerTemp:      scratch,
-		EnvFile:         envFile,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+			scratch := t.TempDir()
+			tool := &fakeBuildahSetupTool{
+				commands: map[string]bool{
+					"buildah":        true,
+					"fuse-overlayfs": true,
+				},
+				failOverlayProbe: testCase.failOverlayProbe,
+			}
+			sink := fakeoutputsink.New(t)
+			summary := &fakeSummarySink{}
+			envFile := filepath.Join(scratch, "env")
 
-	if got.Driver != "vfs" {
-		t.Fatalf("driver = %q, want vfs", got.Driver)
-	}
+			got, err := appcontainer.SetupBuildah(context.Background(), tool, nil, sink, summary, io.Discard, appcontainer.SetupBuildahInput{
+				InstallPackages: false,
+				ProbeBuild:      true,
+				WriteSummary:    true,
+				StorageConf:     filepath.Join(scratch, "storage.conf"),
+				StorageRoot:     filepath.Join(scratch, "root"),
+				TmpDir:          filepath.Join(scratch, "tmp"),
+				RunnerTemp:      scratch,
+				EnvFile:         envFile,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	if !reflect.DeepEqual(tool.probeCalls, []string{"overlay", "vfs"}) {
-		t.Fatalf("probe calls = %v, want overlay then vfs", tool.probeCalls)
-	}
+			if got.Driver != testCase.wantDriver {
+				t.Errorf("driver = %q, want %q", got.Driver, testCase.wantDriver)
+			}
 
-	if body := readText(t, got.StorageConf); !strings.Contains(body, `driver = "vfs"`) {
-		t.Fatalf("storage conf = %q", body)
-	}
+			// Overlay is always tried first; vfs only appears after it fails.
+			if !reflect.DeepEqual(tool.probeCalls, testCase.wantProbes) {
+				t.Errorf("probe calls = %v, want %v", tool.probeCalls, testCase.wantProbes)
+			}
 
-	if env := readText(t, envFile); !strings.Contains(env, "CONTAINERS_STORAGE_CONF="+got.StorageConf) || !strings.Contains(env, "TMPDIR="+got.TmpDir) {
-		t.Fatalf("env file = %q", env)
-	}
+			// The driver buildah will actually use comes from this file, not
+			// from the returned value.
+			if body := readText(t, got.StorageConf); !strings.Contains(body, `driver = "`+testCase.wantDriver+`"`) {
+				t.Errorf("storage conf does not select %s:\n%s", testCase.wantDriver, body)
+			}
 
-	if sink.Single("driver") != "vfs" || sink.Single("storage-conf") != got.StorageConf || sink.Single("storage-root") != got.StorageRoot {
-		t.Fatalf("unexpected outputs: %#v", sink.AllScalar())
-	}
+			env := readText(t, envFile)
+			for _, want := range []string{
+				"CONTAINERS_STORAGE_CONF=" + got.StorageConf,
+				"TMPDIR=" + got.TmpDir,
+			} {
+				if !strings.Contains(env, want) {
+					t.Errorf("env file missing %q:\n%s", want, env)
+				}
+			}
 
-	if !strings.Contains(summary.body, "* Driver: `vfs`") {
-		t.Fatalf("summary = %q", summary.body)
+			for key, want := range map[string]string{
+				"driver":       testCase.wantDriver,
+				"storage-conf": got.StorageConf,
+				"storage-root": got.StorageRoot,
+			} {
+				if sink.Single(key) != want {
+					t.Errorf("output %s = %q, want %q", key, sink.Single(key), want)
+				}
+			}
+
+			if !strings.Contains(summary.body, "* Driver: `"+testCase.wantDriver+"`") {
+				t.Errorf("summary does not report the driver:\n%s", summary.body)
+			}
+		})
 	}
 }
 
