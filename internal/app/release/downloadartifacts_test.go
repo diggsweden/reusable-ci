@@ -80,22 +80,41 @@ func TestDownloadArtifacts_RequiredFailureErrors(t *testing.T) {
 }
 
 func TestDownloadArtifacts_RejectsMissingPlan(t *testing.T) {
-	err := apprelease.DownloadArtifacts(context.Background(), &fakeArtifactDownloader{}, nil, apprelease.DownloadArtifactsInput{})
+	dl := &fakeArtifactDownloader{}
+
+	err := apprelease.DownloadArtifacts(context.Background(), dl, nil, apprelease.DownloadArtifactsInput{})
 	if !errors.Is(err, errs.ErrUsage) {
 		t.Errorf("err = %v", err)
+	}
+
+	if len(dl.calls) != 0 {
+		t.Errorf("fetched without a plan: %+v", dl.calls)
 	}
 }
 
 func TestDownloadArtifacts_RejectsUnsupportedPlanVersion(t *testing.T) {
-	plan := `{"version":2,"items":[]}`
+	dl := &fakeArtifactDownloader{}
 
-	err := apprelease.DownloadArtifacts(context.Background(), &fakeArtifactDownloader{}, nil, apprelease.DownloadArtifactsInput{ArtifactTransferPlanJSON: plan})
+	// Items are present so the refusal is the version, not an empty plan.
+	plan := `{"version":2,"items":[{"kind":"build_artifact","name":"app","path":"./release-artifacts/"}]}`
+
+	err := apprelease.DownloadArtifacts(context.Background(), dl, nil, apprelease.DownloadArtifactsInput{ArtifactTransferPlanJSON: plan})
 	if err == nil || !strings.Contains(err.Error(), "unsupported version 2") {
 		t.Errorf("err = %v", err)
 	}
+
+	if len(dl.calls) != 0 {
+		t.Errorf("fetched from a plan of an unsupported version: %+v", dl.calls)
+	}
 }
 
-func TestDownloadArtifacts_RejectsInvalidTransferItems(t *testing.T) {
+// TestDownloadArtifacts_RefusesAnInvalidItemBeforeFetchingIt covers the plan
+// items a transfer can be told to make and must not.
+//
+// Every row also asserts that nothing was fetched. That is the point of
+// validating an item: a plan that is refused should leave the workspace as it
+// found it, not half-populated with whatever came before the bad entry.
+func TestDownloadArtifacts_RefusesAnInvalidItemBeforeFetchingIt(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		plan string
@@ -123,12 +142,18 @@ func TestDownloadArtifacts_RejectsInvalidTransferItems(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := apprelease.DownloadArtifacts(context.Background(), &fakeArtifactDownloader{}, nil, apprelease.DownloadArtifactsInput{
+			dl := &fakeArtifactDownloader{}
+
+			err := apprelease.DownloadArtifacts(context.Background(), dl, nil, apprelease.DownloadArtifactsInput{
 				ArtifactTransferPlanJSON: tc.plan,
 				RunID:                    "123",
 			})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v", err)
+			}
+
+			if len(dl.calls) != 0 {
+				t.Errorf("fetched despite an invalid plan: %+v", dl.calls)
 			}
 		})
 	}
