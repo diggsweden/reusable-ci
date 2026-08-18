@@ -219,17 +219,17 @@ adding a temporary v1 compatibility layer.
 
 ## Phase 4: forge-sync Consumer
 
-- [ ] Vendor canonical v2 fixtures.
-- [ ] Replace the strict v1 decoder with a strict v2 decoder.
-- [ ] Validate OCI and Fulcio globally and deliberately omit them from the
+- [x] Vendor canonical v2 fixtures.
+- [x] Replace the strict v1 decoder with a strict v2 decoder.
+- [x] Validate OCI and Fulcio globally and deliberately omit them from the
   normalized sync topology.
-- [ ] Preserve evidence profiles `existing` and `prepare`.
-- [ ] Preserve the independent outer credential-cleanup wrapper.
-- [ ] Add v1 rejection, malformed-v2, projection, wrapper-cleanup, and retained
+- [x] Preserve evidence profiles `existing` and `prepare`.
+- [x] Preserve the independent outer credential-cleanup wrapper.
+- [x] Add v1 rejection, malformed-v2, projection, wrapper-cleanup, and retained
   journal tests.
-- [ ] Update live-target documentation and changelog.
-- [ ] Run offline unit/race checks and compile-only tagged harnesses.
-- [ ] Commit forge-sync v2 support.
+- [x] Update live-target documentation and changelog.
+- [x] Run offline unit/race checks and compile-only tagged harnesses.
+- [x] Commit forge-sync v2 support.
 
 ## Phase 5: release-ci Consumer
 
@@ -305,7 +305,7 @@ generation.
 | Forge Lab | `just verify-pr`; docs lint; REUSE; focused contract/runtime tests | Pass |
 | reusable-ci | Unit/race tests; tagged vet compiles; smoke tests; Bash/ShellCheck; REUSE; diff check | Pass |
 | forge-tidy | `just test-race`; Go lint; REUSE; tagged compile-only checks | Pass |
-| forge-sync | Pending | Pending |
+| forge-sync | Offline unit/race; integration; fuzz seeds; REUSE; tagged compile-only checks | Pass |
 | release-ci | Pending | Pending |
 
 ## Commit Record
@@ -317,7 +317,7 @@ generation.
 | Forge Lab | Neutral-v2 producer | `17c95fe` |
 | reusable-ci | Neutral-v2 consumer | `5aaab5df` |
 | forge-tidy | Neutral-v2 consumer | `4e293e3` |
-| forge-sync | Neutral-v2 consumer | Pending |
+| forge-sync | Neutral-v2 consumer | `0ac79bb` |
 | release-ci | Existing live fixes | Pending |
 | release-ci | Neutral-v2 consumer | Pending |
 | reusable-ci | Final rollout status | Pending |
