@@ -80,6 +80,47 @@ reusable-ci's validators reject some patterns that aren't really security threat
 
 These rejections are **input hygiene**, not security boundaries. The runner is fresh per job; the workspace contains only the consumer's own files. A clear parse-time error pointing at the offending field is the value, not "we prevented an exploit."
 
+## Open question: externalParameters reserved keys
+
+`MergeExternalParameters` refuses a caller-declared key that collides with one
+the engine computed, so a declared document cannot rewrite an attested fact.
+The reserved set is positional: it is whatever keys are already in the map when
+the merge runs, which depends on the profile.
+
+- The default profile computes `source` and `ref`, so both are reserved.
+- The forgejo-actions profile computes `workflow` instead, so under it `source`
+  and `ref` are **not** reserved and a caller may declare them. The mirror case
+  holds too: nothing computes `workflow` under the default profile.
+
+Confirmed by probe, not inference: with the forgejo profile selected, extras of
+`{"source": "git+https://example.invalid/attacker"}` are accepted and appear in
+`buildDefinition.externalParameters.source` of the statement.
+
+The blast radius is bounded. The authoritative source identity is
+`resolvedDependencies[0]` — `git+<repo>@<ref>` with the `gitCommit` digest —
+which is engine-computed under both profiles, and extras merge only into
+`externalParameters`. A verifier following SLSA (check `builder.id`, then
+`resolvedDependencies`) is unaffected. The exposure is a verifier or a human
+reading `externalParameters.source` and taking it for an engine fact, which it
+is under one profile and not the other.
+
+**What settles the classification:** whether calling-repo configuration can
+reach `--external-parameters-json`. If only the engine's own workflow writes
+that flag, this is input hygiene of the kind described above. If repo-declared
+config flows into it — the `base_input_set` and `build_group` examples suggest
+it might — the guard is a real trust boundary and is applied inconsistently.
+
+If it is a boundary, the cheap fix is to reserve a fixed set of names
+independent of profile (`source`, `ref`, `workflow`, plus the container-side
+`image`, `flavor`, `base_input_id`) while still emitting exactly what each
+profile emits today. Output is unchanged, so existing verifiers see identical
+documents; only a caller declaring one of those names under a profile that does
+not compute it starts getting an error, which is the case worth rejecting.
+
+Note that emitting `source` under the forgejo profile is not an option: its
+absence is deliberate compatibility shaping for existing forgejo-ci verifiers,
+pinned by `TestGenerateProvenance_ForgejoProfileNamesTheWorkflowNotAGenericSource`.
+
 ## Reporting a security issue
 
 See [SECURITY.md](../SECURITY.md) for the disclosure process. The threat
