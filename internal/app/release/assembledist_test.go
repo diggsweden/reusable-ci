@@ -142,37 +142,71 @@ func TestAssembleDist_MergesReleaseImageLedgers(t *testing.T) {
 	}
 }
 
-func TestAssembleDist_PrunesTopLevelDirectoriesBeforeDigest(t *testing.T) {
-	chdirTempForAssembleDist(t)
+// TestAssembleDist_PrunesDirectoriesBeforeTheDigestIsTaken covers --prune-dirs:
+// directories under the hand-off are removed, files beside them are kept, and
+// the removal happens before the digest so pruned content cannot appear in it.
+//
+// The ordering claim is checked by comparing two runs rather than asserting a
+// fixed hash. A tree with a nested directory must digest identically to the
+// same tree without one; if the prune ran after the digest, the nested file
+// would be folded in and the two would differ. The test used to name the
+// ordering and never look at the digest at all.
+func TestAssembleDist_PrunesDirectoriesBeforeTheDigestIsTaken(t *testing.T) {
+	assembleWith := func(t *testing.T, files map[string]string) apprelease.AssembleDistResult {
+		t.Helper()
+		chdirTempForAssembleDist(t)
 
-	dl := &assembleDistDownloader{}
+		for name, body := range files {
+			writeFileForAssembleDist(t, name, body)
+		}
 
-	if _, err := apprelease.AssembleDist(context.Background(), dl, fakeoutputsink.New(t), nil, apprelease.AssembleDistInput{
-		ArtifactNames: "build",
-		Path:          "dist/",
-		PruneDirs:     true,
-	}); err != nil {
-		t.Fatal(err)
+		res, err := apprelease.AssembleDist(context.Background(), &assembleDistDownloader{}, fakeoutputsink.New(t), nil, apprelease.AssembleDistInput{
+			ArtifactNames: "build",
+			Path:          "dist/",
+			PruneDirs:     true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return res
 	}
 
-	writeFileForAssembleDist(t, "dist/nested/file", "must be pruned\n")
-	writeFileForAssembleDist(t, "dist/top.txt", "keep\n")
+	var withNested, withoutNested apprelease.AssembleDistResult
 
-	if _, err := apprelease.AssembleDist(context.Background(), dl, fakeoutputsink.New(t), nil, apprelease.AssembleDistInput{
-		ArtifactNames: "build",
-		Path:          "dist/",
-		PruneDirs:     true,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	t.Run("directories go, files stay", func(t *testing.T) {
+		withNested = assembleWith(t, map[string]string{
+			"dist/nested/file": "must be pruned\n",
+			"dist/top.txt":     "keep\n",
+		})
 
-	if _, err := os.Stat("dist/nested/file"); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("nested directory survived prune: %v", err)
-	}
+		if _, err := os.Stat("dist/nested"); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("nested directory survived prune: %v", err)
+		}
 
-	if _, err := os.Stat("dist/top.txt"); err != nil {
-		t.Fatalf("top-level file was pruned: %v", err)
-	}
+		if _, err := os.Stat("dist/top.txt"); err != nil {
+			t.Errorf("top-level file was pruned: %v", err)
+		}
+
+		// The downloaded artifact lands in the hand-off as a top-level file.
+		// Pruning must leave it, or the release would ship without it.
+		if _, err := os.Stat("dist/build.txt"); err != nil {
+			t.Errorf("downloaded artifact was pruned: %v", err)
+		}
+	})
+
+	t.Run("the pruned content is not in the digest", func(t *testing.T) {
+		withoutNested = assembleWith(t, map[string]string{"dist/top.txt": "keep\n"})
+
+		if withNested.Digest == "" {
+			t.Fatal("no digest returned")
+		}
+
+		if withNested.Digest != withoutNested.Digest {
+			t.Errorf("digest with a pruned directory = %s, without = %s; pruned content reached the digest",
+				withNested.Digest, withoutNested.Digest)
+		}
+	})
 }
 
 // TestAssembleDist_RefusesBadInput covers each way the inputs can be rejected,
