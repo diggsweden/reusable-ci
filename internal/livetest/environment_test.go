@@ -38,6 +38,8 @@ func (r *recordingTB) Fatalf(format string, args ...any) { r.fatal = sprintf(for
 // handled would fall to the default case and only be noticed the first time a
 // scenario asked for it — during a live run, against a real forge.
 func TestRequires_HandlesEveryNeed(t *testing.T) {
+	setCurrentContract(t, writeContract(t, composeFixtureBody(t)))
+
 	for _, need := range allNeeds() {
 		tb := &recordingTB{}
 		Requires(tb, provider.ForgeGitLab, need)
@@ -51,15 +53,14 @@ func TestRequires_HandlesEveryNeed(t *testing.T) {
 // An unmet need must say which contract field decides it, so the reader is sent
 // to the environment's description of itself rather than to a symptom.
 func TestRequires_NamesTheContractField(t *testing.T) {
+	setCurrentContract(t, writeContract(t, composeFixtureBody(t)))
 	t.Setenv("LAB_RUNNER_FORGES", "")
-	t.Setenv("LAB_FULCIO_URL", "")
 
 	for _, tc := range []struct {
 		need Need
 		want string
 	}{
 		{NeedsInRunner, "LAB_RUNNER_FORGES"},
-		{NeedsFulcio, "LAB_FULCIO_URL"},
 	} {
 		tb := &recordingTB{}
 		if Requires(tb, provider.ForgeGitLab, tc.need) {
@@ -71,5 +72,20 @@ func TestRequires_NamesTheContractField(t *testing.T) {
 		if len(tb.logs) == 0 || !strings.Contains(tb.logs[0], tc.want) {
 			t.Errorf("Need %d skipped without naming %s: %v", int(tc.need), tc.want, tb.logs)
 		}
+	}
+}
+
+func TestRequires_InRunnerNeedsSelectedEndpointWorkflowCapability(t *testing.T) {
+	body := strings.ReplaceAll(composeFixtureBody(t), `, "workflow-runs"`, "")
+	setCurrentContract(t, writeContract(t, body))
+	t.Setenv("LAB_RUNNER_FORGES", "gitlab")
+
+	tb := &recordingTB{}
+	if Requires(tb, provider.ForgeGitLab, NeedsInRunner) {
+		t.Fatal("in-runner scenario accepted endpoint without workflow-runs")
+	}
+
+	if len(tb.logs) == 0 || !strings.Contains(tb.logs[0], "workflow-runs") {
+		t.Fatalf("missing workflow-runs skip diagnostic: %v", tb.logs)
 	}
 }

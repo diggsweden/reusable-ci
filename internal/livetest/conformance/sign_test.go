@@ -54,7 +54,11 @@ func TestSign_LedgerImages_ProducesAVerifiableSignature(t *testing.T) {
 			authDir := livetest.RegistryAuthConfigDir(t, target, work)
 			privateKey, publicKey := livetest.CosignKey(t, work)
 
-			opts := livetest.RunOptions{Dir: work, Env: livetest.CosignEnv(authDir)}
+			opts := livetest.RunOptions{
+				Dir:             work,
+				Env:             livetest.CosignEnv(authDir),
+				CredentialScope: livetest.CredentialScopeRegistry,
+			}
 
 			pushed := livetest.PushImageTags(t, target, repo, candidateTag, releaseTag)
 
@@ -86,7 +90,7 @@ func TestSign_LedgerImages_ProducesAVerifiableSignature(t *testing.T) {
 			// The claim, checked with cosign rather than with the tool's own
 			// report: a verifier holding only the public key accepts the image
 			// the ledger recorded.
-			verifyCosignSignature(t, string(forge), imagePath+"@"+pushed.Digest, publicKey, authDir)
+			verifyCosignSignature(t, target, imagePath+"@"+pushed.Digest, publicKey, authDir)
 
 			// And that the containment held. Publishing to Rekor is
 			// irreversible, so this is asserted every run rather than trusted
@@ -125,7 +129,7 @@ func writePredicate(t *testing.T, dir string) string {
 // weakening of it: a signature that needed no such flag would be one that had
 // been published to the public log, which is the outcome the containment exists
 // to prevent.
-func verifyCosignSignature(t *testing.T, forge, digestRef, publicKey, authDir string) {
+func verifyCosignSignature(t *testing.T, target livetest.Target, digestRef, publicKey, authDir string) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -138,12 +142,15 @@ func verifyCosignSignature(t *testing.T, forge, digestRef, publicKey, authDir st
 		"--insecure-ignore-tlog=true",
 		digestRef,
 	)
-	cmd.Env = append(os.Environ(), "DOCKER_CONFIG="+authDir, "COSIGN_PASSWORD=")
+	cmd.Env = livetest.ToolEnvironment(t, target, livetest.CredentialScopeRegistry, map[string]string{
+		"DOCKER_CONFIG":   authDir,
+		"COSIGN_PASSWORD": "",
+	})
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s: cosign could not verify the signature reusable-ci wrote for %s: %v\n%s",
-			forge, digestRef, err, out)
+			target.Forge, digestRef, err, out)
 	}
 
 }

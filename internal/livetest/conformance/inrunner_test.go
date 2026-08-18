@@ -127,7 +127,7 @@ func TestInRunner_ProductDetectsItsRunner(t *testing.T) {
 			// the job, because what is under test is the product's answer, not
 			// the fixture's cleverness.
 			conclusion := livetest.RunWorkflow(t, target, repo, "detect-runner",
-				productProbe(forge, assetURL, expectedRunner(forge)))
+				productProbe(target, assetURL, expectedRunner(forge)))
 			if conclusion != "success" {
 				t.Errorf("%s: the product's runner detection concluded %q inside a real job — it is reporting the wrong runtime, so annotations and step summaries go to the wrong place",
 					forge, conclusion)
@@ -146,13 +146,13 @@ func expectedRunner(forge provider.ForgeAPI) string {
 	return "forgejo"
 }
 
-func productProbe(forge provider.ForgeAPI, assetURL, want string) string {
-	if forge == provider.ForgeGitLab {
+func productProbe(target livetest.Target, assetURL, want string) string {
+	if target.Forge == provider.ForgeGitLab {
 		return `detect:
   image: ` + livetest.ProbeImage + `
   script:
     - |
-      ` + indent(livetest.ProbePrelude(assetURL), 6) + `
+      ` + indent(livetest.ProbePrelude(target, assetURL), 6) + `
       run_product doctor --json > report.json || true
       cat report.json
       grep -qE '"runner":[[:space:]]*"` + want + `"' report.json
@@ -166,7 +166,7 @@ jobs:
     steps:
       - name: the product reports its own runner
         run: |
-          ` + indent(livetest.ProbePrelude(assetURL), 10) + `
+          ` + indent(livetest.ProbePrelude(target, assetURL), 10) + `
           run_product doctor --json > report.json || true
           cat report.json
           grep -qE '"runner":[[:space:]]*"` + want + `"' report.json
@@ -201,7 +201,7 @@ func TestInRunner_NoGitHubAnnotationsOnOtherForges(t *testing.T) {
 			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
 
 			conclusion := livetest.RunWorkflow(t, target, repo, "annotation-dialect",
-				annotationProbe(forge, assetURL))
+				annotationProbe(target, assetURL))
 			if conclusion != "success" {
 				t.Errorf("%s: run concluded %q — the product emitted GitHub workflow commands on a runner that does not render them, so its diagnostics reach the log as literal text",
 					forge, conclusion)
@@ -216,7 +216,7 @@ func TestInRunner_NoGitHubAnnotationsOnOtherForges(t *testing.T) {
 // `doctor` is the vehicle because it always has something to say and never
 // mutates anything, so the probe stays about the dialect. Its exit status is
 // ignored: whether this lab passes a health check is not the claim.
-func annotationProbe(forge provider.ForgeAPI, assetURL string) string {
+func annotationProbe(target livetest.Target, assetURL string) string {
 	check := `./reusable-ci doctor > out.txt 2>&1 || true
 cat out.txt
 
@@ -229,12 +229,12 @@ if grep -qE '::(error|warning|notice|group|endgroup)::' out.txt; then
   exit 1
 fi`
 
-	if forge == provider.ForgeGitLab {
+	if target.Forge == provider.ForgeGitLab {
 		return `detect:
   image: ` + livetest.ProbeImage + `
   script:
     - |
-      ` + indent(livetest.TrustLabCA(), 6) + `
+      ` + indent(livetest.TrustLabCA(target), 6) + `
     - curl -fsSL -o reusable-ci "` + assetURL + `"
     - chmod +x reusable-ci
     - |
@@ -288,7 +288,7 @@ func TestInRunner_StepSummaryReachesAReader(t *testing.T) {
 			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
 
 			conclusion := livetest.RunWorkflow(t, target, repo, "step-summary",
-				summaryProbe(forge, assetURL))
+				summaryProbe(target, assetURL))
 			if conclusion != "success" {
 				t.Errorf("%s: run concluded %q — the step summary reached no reader, so a job that reported one produced nothing anybody sees",
 					forge, conclusion)
@@ -305,18 +305,18 @@ func TestInRunner_StepSummaryReachesAReader(t *testing.T) {
 // pipeline never named would be testing the fixture. Forgejo is deliberately
 // given none — the claim there is exactly that the summary falls back to the job
 // log rather than vanishing.
-func summaryProbe(forge provider.ForgeAPI, assetURL string) string {
+func summaryProbe(target livetest.Target, assetURL string) string {
 	const report = `run_product report build go --binary-name demo \
   --module example.com/demo --platforms linux/amd64 --version v1.0.0`
 
-	if forge == provider.ForgeGitLab {
+	if target.Forge == provider.ForgeGitLab {
 		return `detect:
   image: ` + livetest.ProbeImage + `
   variables:
     CI_SUMMARY_FILE: summary.md
   script:
     - |
-      ` + indent(livetest.ProbePrelude(assetURL), 6) + `
+      ` + indent(livetest.ProbePrelude(target, assetURL), 6) + `
       ` + indent(report, 6) + `
       cat summary.md
       grep -q 'Go Build Summary' summary.md
@@ -330,7 +330,7 @@ jobs:
     steps:
       - name: the summary must reach the job log when the runner renders none
         run: |
-          ` + indent(livetest.ProbePrelude(assetURL), 10) + `
+          ` + indent(livetest.ProbePrelude(target, assetURL), 10) + `
 
           # No GITHUB_STEP_SUMMARY is exported: the claim is the fallback.
           unset GITHUB_STEP_SUMMARY
@@ -385,7 +385,7 @@ func TestInRunner_StepOutputsReachTheRunnersOutputFile(t *testing.T) {
 			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
 
 			conclusion := livetest.RunWorkflow(t, target, repo, "step-outputs",
-				outputFileProbe(forge, assetURL))
+				outputFileProbe(target, assetURL))
 			if conclusion != "success" {
 				t.Errorf("%s: run concluded %q — step outputs did not reach the file this runner reads, so a later step sees an empty value and silently uses its default",
 					forge, conclusion)
@@ -403,11 +403,11 @@ func TestInRunner_StepOutputsReachTheRunnersOutputFile(t *testing.T) {
 // native $FORGEJO_OUTPUT is required to be the one written. Asserting a
 // preference that the runner's own configuration makes unobservable would be
 // testing the fixture.
-func outputFileProbe(forge provider.ForgeAPI, assetURL string) string {
+func outputFileProbe(target livetest.Target, assetURL string) string {
 	const resolve = `run_product release resolve metadata \
   --version v9.9.9-parrun5 --repository livetest/outputs`
 
-	if forge == provider.ForgeGitLab {
+	if target.Forge == provider.ForgeGitLab {
 		// GitLab does not provide an output file; the pipeline nominates one,
 		// which is the documented contract rather than a fixture convenience.
 		return `detect:
@@ -416,7 +416,7 @@ func outputFileProbe(forge provider.ForgeAPI, assetURL string) string {
     CI_OUTPUT: build.env
   script:
     - |
-      ` + indent(livetest.ProbePrelude(assetURL), 6) + `
+      ` + indent(livetest.ProbePrelude(target, assetURL), 6) + `
       ` + indent(resolve, 6) + `
 
       echo "--- $CI_OUTPUT ---"
@@ -437,7 +437,7 @@ jobs:
     steps:
       - name: outputs must land in the file this runner reads
         run: |
-          ` + indent(livetest.ProbePrelude(assetURL), 10) + `
+          ` + indent(livetest.ProbePrelude(target, assetURL), 10) + `
 
           echo "FORGEJO_OUTPUT=${FORGEJO_OUTPUT:-unset}"
           echo "GITHUB_OUTPUT=${GITHUB_OUTPUT:-unset}"

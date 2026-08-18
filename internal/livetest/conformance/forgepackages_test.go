@@ -101,7 +101,7 @@ func TestInRunner_ForgePackages_NPMPublishReachesTheRegistry(t *testing.T) {
 			}
 
 			conclusion := livetest.RunWorkflow(t, target, repo, "forge-packages-npm",
-				npmPublishProbe(forge, assetURL, name, version))
+				npmPublishProbe(target, assetURL, name, version))
 			if conclusion != "success" {
 				t.Fatalf("%s: the publish job concluded %q — `publish forge-packages deploy --project-type npm` did not complete against this forge",
 					forge, conclusion)
@@ -124,7 +124,7 @@ func TestInRunner_ForgePackages_NPMPublishReachesTheRegistry(t *testing.T) {
 // ecosystem; that is the product's design, not the scenario's choice. Nothing
 // below asserts anything about npm — the assertion is made by the Go test
 // against the forge afterwards.
-func npmPublishProbe(forge provider.ForgeAPI, assetURL, name, version string) string {
+func npmPublishProbe(target livetest.Target, assetURL, name, version string) string {
 	// Single-quoted heredoc: the package manifest must reach disk verbatim,
 	// without the shell touching anything inside it.
 	//
@@ -147,12 +147,12 @@ echo "module.exports = 1;" > pkg/index.js
 ( cd pkg && npm pack --silent )
 ls -l pkg`
 
-	if forge == provider.ForgeGitLab {
+	if target.Forge == provider.ForgeGitLab {
 		return `publish:
   image: node:24
   script:
     - |
-      ` + indent(livetest.ProbePrelude(assetURL), 6) + `
+      ` + indent(livetest.ProbePrelude(target, assetURL), 6) + `
       ` + indent(manifest, 6) + `
       ` + indent(`run_product publish forge-packages deploy --project-type npm --working-dir pkg`, 6) + `
 `
@@ -170,7 +170,7 @@ jobs:
           # Overrides the automatic token, which the package registry refuses.
           FORGEJO_TOKEN: ${{ secrets.RC_PACKAGE_TOKEN }}
         run: |
-          ` + indent(livetest.ProbePrelude(assetURL), 10) + `
+          ` + indent(livetest.ProbePrelude(target, assetURL), 10) + `
           ` + indent(manifest, 10) + `
           ` + indent(`run_product publish forge-packages deploy --project-type npm --working-dir pkg`, 10) + `
 `
@@ -227,7 +227,7 @@ func TestInRunner_ForgePackages_MavenDeployReachesTheRegistry(t *testing.T) {
 			}
 
 			conclusion := livetest.RunWorkflow(t, target, repo, "forge-packages-maven",
-				mavenDeployProbe(forge, assetURL, groupID, artifactID, version))
+				mavenDeployProbe(target, assetURL, groupID, artifactID, version))
 			if conclusion != "success" {
 				t.Fatalf("%s: the deploy job concluded %q — `publish forge-packages deploy --project-type maven` did not complete against this forge",
 					forge, conclusion)
@@ -246,7 +246,7 @@ func TestInRunner_ForgePackages_MavenDeployReachesTheRegistry(t *testing.T) {
 //
 // The pom sits at the job root because `publish forge-packages deploy` runs mvn
 // in the current directory, which is also where the prelude puts the binary.
-func mavenDeployProbe(forge provider.ForgeAPI, assetURL, groupID, artifactID, version string) string {
+func mavenDeployProbe(target livetest.Target, assetURL, groupID, artifactID, version string) string {
 	pom := `cat > pom.xml <<'POM'
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0">
@@ -278,12 +278,12 @@ JAVA`
 	// -B for non-interactive output.
 	const deploy = `run_product publish forge-packages deploy --project-type maven --cli-opts "-B"`
 
-	if forge == provider.ForgeGitLab {
+	if target.Forge == provider.ForgeGitLab {
 		return `publish:
   image: maven:3.9-eclipse-temurin-21
   script:
     - |
-      ` + indent(livetest.ProbePrelude(assetURL), 6) + `
+      ` + indent(livetest.ProbePrelude(target, assetURL), 6) + `
       ` + indent(pom, 6) + `
       ` + indent(trustInJVM, 6) + `
       ` + indent(deploy, 6) + `
@@ -301,7 +301,7 @@ jobs:
         env:
           FORGEJO_TOKEN: ${{ secrets.RC_PACKAGE_TOKEN }}
         run: |
-          ` + indent(livetest.ProbePrelude(assetURL), 10) + `
+          ` + indent(livetest.ProbePrelude(target, assetURL), 10) + `
           ` + indent(pom, 10) + `
           ` + indent(trustInJVM, 10) + `
           ` + indent(deploy, 10) + `

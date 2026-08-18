@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "generation": {"id": "run-github-fixture"},
+  "ca_file": null,
+  "endpoints": [
+    {
+      "name": "github-public",
+      "kind": "github",
+      "web_base_url": "https://github.com",
+      "api_base_url": "https://api.github.com",
+      "git_base_url": "https://github.com",
+      "capabilities": ["repositories", "workflow-runs", "artifacts", "caches", "packages"],
+      "oci_registry": {
+        "base_url": "https://ghcr.io",
+        "credential": "endpoint"
+      },
+      "credential": {
+        "username": "fixture-user",
+        "token": "fake-github-packages-token",
+        "provider_id": null,
+        "name": "fixture-classic-packages-pat",
+        "created_at": "2026-08-06T10:00:00Z",
+        "expires_at": "2026-08-06T11:00:00Z",
+        "revocation": {"required": false, "generation_id": null}
+      }
+    }
+  ],
+  "fulcio": null,
+  "interfaces": {}
+}

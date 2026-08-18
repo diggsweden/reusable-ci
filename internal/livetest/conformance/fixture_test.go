@@ -55,7 +55,10 @@ func newLedgerFixture(t *testing.T, forge provider.ForgeAPI, name string) ledger
 		imagePath: registry + "/" + target.Owner + "/" + repo,
 		work:      work,
 		authFile:  livetest.RegistryAuthFile(t, target, work),
-		opts:      livetest.RunOptions{Dir: work},
+		opts: livetest.RunOptions{
+			Dir:             work,
+			CredentialScope: livetest.CredentialScopeRegistry,
+		},
 	}
 }
 

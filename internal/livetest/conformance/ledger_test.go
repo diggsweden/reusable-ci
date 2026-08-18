@@ -101,7 +101,7 @@ func recordVerifyPromote(
 	// in has no keychain by design, and a test that leaned on
 	// the operator's ~/.docker/config.json would pass or fail
 	// based on who ran it.
-	opts := livetest.RunOptions{Dir: work}
+	opts := livetest.RunOptions{Dir: work, CredentialScope: livetest.CredentialScopeRegistry}
 	pushed := push(t, target, repo, candidateTag)
 
 	ledger := "release-images.json"
@@ -206,7 +206,7 @@ func TestLedger_Cleanup_RemovesTheCandidateAndKeepsTheRelease(t *testing.T) {
 
 			work := t.TempDir()
 			authFile := livetest.RegistryAuthFile(t, target, work)
-			opts := livetest.RunOptions{Dir: work}
+			opts := livetest.RunOptions{Dir: work, CredentialScope: livetest.CredentialScopeRegistry}
 
 			// One manifest under both names, which is what a build leaves
 			// behind: the immutable version tag is written at build time and

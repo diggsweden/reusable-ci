@@ -1,0 +1,93 @@
+{
+  "version": 2,
+  "generation": {"id": "run-neutral-fixture"},
+  "ca_file": "/opt/forge-lab/certs/forge-lab-ca.crt",
+  "endpoints": [
+    {
+      "name": "forgejo",
+      "kind": "forgejo",
+      "web_base_url": "https://forgejo.compose.forgelab:8443",
+      "api_base_url": "https://forgejo.compose.forgelab:8443/api/v1",
+      "git_base_url": "https://forgejo.compose.forgelab:8443",
+      "capabilities": ["artifacts", "organizations", "packages", "repositories", "workflow-runs"],
+      "oci_registry": {
+        "base_url": "https://forgejo.compose.forgelab:8443",
+        "credential": "endpoint"
+      },
+      "credential": {
+        "username": "fixture-user",
+        "token": "fake-forgejo-token",
+        "provider_id": "101",
+        "name": "lab-targets-run-neutral-fixture",
+        "created_at": "2026-08-06T10:00:00Z",
+        "expires_at": null,
+        "revocation": {"required": true, "generation_id": "run-neutral-fixture"}
+      }
+    },
+    {
+      "name": "gitea",
+      "kind": "gitea",
+      "web_base_url": "https://gitea.compose.forgelab:8443",
+      "api_base_url": "https://gitea.compose.forgelab:8443/api/v1",
+      "git_base_url": "https://gitea.compose.forgelab:8443",
+      "capabilities": ["artifacts", "organizations", "packages", "repositories", "workflow-runs"],
+      "oci_registry": {
+        "base_url": "https://gitea.compose.forgelab:8443",
+        "credential": "endpoint"
+      },
+      "credential": {
+        "username": "fixture-user",
+        "token": "fake-gitea-token",
+        "provider_id": "102",
+        "name": "lab-targets-run-neutral-fixture",
+        "created_at": "2026-08-06T10:00:00Z",
+        "expires_at": null,
+        "revocation": {"required": true, "generation_id": "run-neutral-fixture"}
+      }
+    },
+    {
+      "name": "gitlab",
+      "kind": "gitlab",
+      "web_base_url": "https://gitlab.compose.forgelab:8443",
+      "api_base_url": "https://gitlab.compose.forgelab:8443/api/v4",
+      "git_base_url": "https://gitlab.compose.forgelab:8443",
+      "capabilities": ["artifacts", "groups", "packages", "repositories", "workflow-runs"],
+      "oci_registry": {
+        "base_url": "https://registry.gitlab.compose.forgelab:8443",
+        "credential": "endpoint"
+      },
+      "credential": {
+        "username": "fixture-user",
+        "token": "fake-gitlab-token",
+        "provider_id": "103",
+        "name": "lab-targets-run-neutral-fixture",
+        "created_at": "2026-08-06T10:00:00Z",
+        "expires_at": "2026-09-05",
+        "revocation": {"required": false, "generation_id": null}
+      }
+    }
+  ],
+  "fulcio": {
+    "base_url": "https://fulcio.compose.forgelab:8443",
+    "issuers": [
+      {
+        "endpoint": "forgejo",
+        "oidc_issuer": "https://forgejo.compose.forgelab:8443/api/actions"
+      },
+      {
+        "endpoint": "gitlab",
+        "oidc_issuer": "https://gitlab.compose.forgelab:8443"
+      }
+    ]
+  },
+  "interfaces": {
+    "credential_cleanup": {
+      "command": "/home/garga/.local/state/forge-lab/target-cleanup-run-neutral-fixture/cleanup",
+      "contract_file": "/tmp/neutral-targets.run-neutral-fixture.recovery-v2.env"
+    },
+    "extended_fixture_producer": {
+      "command": "/opt/forge-lab/scripts/shape.sh",
+      "protocol": "shape-v2"
+    }
+  }
+}

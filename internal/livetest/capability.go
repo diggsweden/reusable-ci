@@ -5,9 +5,6 @@
 package livetest
 
 import (
-	"os"
-	"strings"
-
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/forgejo"
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/github"
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/gitlab"
@@ -42,21 +39,17 @@ func Platforms() []provider.ForgeAPI {
 // every scenario iterate two.
 //
 // Before, only the first half was here and the second was discovered late:
-// Accept skips inside the subtest with "not selected by LAB_TARGETS", so the
-// loop body ran for a forge that was never coming. Deciding it here means a
+// Accept used to skip inside the subtest after reading a second ambient list, so
+// the loop body ran for a forge that was never coming. Deciding it here means a
 // scenario iterates exactly what it can drive.
-func LiveForges() []provider.ForgeAPI {
+func LiveForges(tb TB) []provider.ForgeAPI {
+	tb.Helper()
+
 	supported := []provider.ForgeAPI{provider.ForgeGitLab, provider.ForgeForgejo}
-
-	selected := map[string]bool{}
-	for _, name := range strings.Split(os.Getenv("LAB_TARGETS"), ",") {
-		selected[strings.ToLower(strings.TrimSpace(name))] = true
-	}
-
 	live := make([]provider.ForgeAPI, 0, len(supported))
 
 	for _, forge := range supported {
-		if selected[string(forge)] {
+		if Selected(tb, forge) {
 			live = append(live, forge)
 		}
 	}

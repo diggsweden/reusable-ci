@@ -100,7 +100,7 @@ func TestProvenance_GeneratesEquivalentlyOnEveryForge(t *testing.T) {
 
 	subjects := map[provider.ForgeAPI]string{}
 
-	for _, forge := range livetest.LiveForges() {
+	for _, forge := range livetest.LiveForges(t) {
 		t.Run(string(forge), func(t *testing.T) {
 			target := livetest.Accept(t, forge)
 			repo := livetest.NewScratchRepo(t, target, "provenance-parity")
@@ -179,7 +179,7 @@ func forgesLacking(t *testing.T, claims func(provider.Capabilities) bool, capabi
 
 	var forges []provider.ForgeAPI
 
-	for _, forge := range livetest.LiveForges() {
+	for _, forge := range livetest.LiveForges(t) {
 		capabilities, known := livetest.Capabilities(forge)
 		if !known {
 			t.Fatalf("no adapter for platform %q", forge)

@@ -5,6 +5,8 @@
 package livetest
 
 import (
+	"time"
+
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/forgejo"
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/gitlab"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
@@ -30,11 +32,16 @@ func Provider(tb TB, target Target, repo string) provider.Provider {
 
 	env := targetEnv(target, repo)
 
+	client, err := targetHTTPClient(target, time.Minute)
+	if err != nil {
+		tb.Fatalf("livetest: configure target HTTP trust: %v", err)
+	}
+
 	switch target.Forge {
 	case provider.ForgeForgejo:
-		return &forgejo.Provider{Env: env, APIBaseOverride: target.BaseURL()}
+		return &forgejo.Provider{Env: env, APIBaseOverride: target.BaseURL(), HTTPClient: client}
 	case provider.ForgeGitLab:
-		return &gitlab.Provider{Env: env, APIBaseOverride: target.BaseURL()}
+		return &gitlab.Provider{Env: env, APIBaseOverride: target.BaseURL(), HTTPClient: client}
 	case provider.ForgeGitHub, provider.ForgeLocal:
 		tb.Fatalf("livetest: platform %q is not a live-forge target in this tier", target.Forge)
 	default:

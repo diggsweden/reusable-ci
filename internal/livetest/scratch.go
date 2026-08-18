@@ -34,7 +34,10 @@ import (
 
 // defaultBranch is the branch every scratch repository is created with, on both
 // forges, so a scenario never has to ask which one it got.
-const defaultBranch = "main"
+const (
+	defaultBranch = "main"
+	wireName      = "name"
+)
 
 // ScratchRepo returns the name of a scratch repository for a scenario, always
 // inside the namespace this suite declared it owns.
@@ -283,10 +286,10 @@ func gitLabRegistryRepositoryIDs(ctx context.Context, target Target, list string
 	return ids, nil
 }
 
-func createRepo(ctx context.Context, target Target, repo string) error {
+func createRepo(ctx context.Context, target Target, repo string) error { //nolint:goconst // Wire field spelling repeats across forge payloads.
 	switch target.Forge {
 	case provider.ForgeForgejo:
-		body := map[string]any{"name": repo, "auto_init": true, "default_branch": defaultBranch, "private": false}
+		body := map[string]any{wireName: repo, "auto_init": true, "default_branch": defaultBranch, "private": false}
 
 		return discard(ctx, target, http.MethodPost, target.BaseURL()+"/api/v1/user/repos", body, http.StatusCreated)
 
@@ -295,7 +298,7 @@ func createRepo(ctx context.Context, target Target, repo string) error {
 		// commit issued straight after creation can 400 with "branch does not
 		// exist" whenever sidekiq is busy. PrepareTag makes the first commit
 		// itself, which creates the default branch synchronously.
-		body := map[string]any{"name": repo, "path": repo, "visibility": "public"}
+		body := map[string]any{wireName: repo, "path": repo, "visibility": "public"}
 
 		return discard(ctx, target, http.MethodPost, target.BaseURL()+"/api/v4/projects", body, http.StatusCreated)
 
@@ -405,7 +408,7 @@ func discard(ctx context.Context, target Target, method, endpoint string, body a
 // decode performs an authenticated request, checks the status against the
 // accepted set, and optionally decodes the body. It returns the status so a
 // caller can distinguish "found" from "absent" without a second call.
-func decode(ctx context.Context, target Target, method, endpoint string, body, into any, accept ...int) (int, error) {
+func decode(ctx context.Context, target Target, method, endpoint string, body, into any, accept ...int) (int, error) { //nolint:cyclop,goconst // Shared wire decoder classifies each forge response shape.
 	var reader io.Reader
 
 	if body != nil {
@@ -428,7 +431,12 @@ func decode(ctx context.Context, target Target, method, endpoint string, body, i
 
 	authorize(req, target)
 
-	resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
+	client, err := targetHTTPClient(target, time.Minute)
+	if err != nil {
+		return 0, fmt.Errorf("configure target HTTP trust: %w", err)
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("%s %s: %w", method, redact(endpoint), err)
 	}

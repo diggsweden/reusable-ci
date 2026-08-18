@@ -76,8 +76,8 @@ func RunsInRunner(forge provider.ForgeAPI) bool {
 	return forge == provider.ForgeForgejo || forge == provider.ForgeGitLab
 }
 
-// RunnerAvailable reports whether this environment has a runner that will pick
-// up a job for the given forge, read from the contract.
+// RunnerAvailable reports whether the operator says this environment has a
+// runner that will pick up a job for the given forge.
 //
 // Separate from RunsInRunner because the two answer different questions, and
 // only one of them is about the code. A road can deploy forges without
@@ -89,9 +89,8 @@ func RunsInRunner(forge provider.ForgeAPI) bool {
 // at labels on a road that deployed no runner at all. Ten scenarios doing that
 // is forty minutes of wrong diagnosis.
 //
-// An absent field means no runner, for the same reason FulcioTrusts trusts
-// nothing when unset: assuming a runner turns a road that cannot run jobs into
-// a suite that reports failures about labels.
+// An absent operator input means no runner. Assuming one turns a road that
+// cannot run jobs into a suite that reports failures about labels.
 func RunnerAvailable(forge provider.ForgeAPI) bool {
 	for _, deployed := range strings.Split(os.Getenv(labRunnerForgesEnv), ",") {
 		if strings.EqualFold(strings.TrimSpace(deployed), string(forge)) {
@@ -102,7 +101,7 @@ func RunnerAvailable(forge provider.ForgeAPI) bool {
 	return false
 }
 
-// labRunnerForgesEnv names the contract field listing forges with a live runner.
+// labRunnerForgesEnv is a separate operator-owned runner-availability input.
 const labRunnerForgesEnv = "LAB_RUNNER_FORGES"
 
 // RunWorkflow commits a workflow to the scratch repository, waits for the run it
@@ -303,7 +302,12 @@ func runLogTail(ctx context.Context, target Target, repo string) string {
 
 	authorize(req, target)
 
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	client, err := targetHTTPClient(target, 30*time.Second)
+	if err != nil {
+		return ""
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return ""
 	}
@@ -470,6 +474,28 @@ func ReleaseAssetURL(tb TB, target Target, repo, tag, name string) string {
 // does not have to know the build's filename.
 func PublishBinaryAsset(tb TB, target Target, repo, tag, stageDir string) {
 	tb.Helper()
+	publishBinaryAssets(tb, target, repo, tag, stageDir, []binaryAsset{
+		{source: Binary(tb), name: "reusable-ci"},
+	})
+}
+
+// PublishKeylessAssets publishes the product and the separate static CONNECT
+// proxy used to constrain the runner's OIDC token to its validated Fulcio.
+func PublishKeylessAssets(tb TB, target Target, repo, tag, stageDir string) {
+	tb.Helper()
+	publishBinaryAssets(tb, target, repo, tag, stageDir, []binaryAsset{
+		{source: Binary(tb), name: "reusable-ci"},
+		{source: credentialProxyBinary(tb), name: "credential-proxy"},
+	})
+}
+
+type binaryAsset struct {
+	source string
+	name   string
+}
+
+func publishBinaryAssets(tb TB, target Target, repo, tag, stageDir string, assets []binaryAsset) {
+	tb.Helper()
 
 	adapter := Provider(tb, target, repo)
 
@@ -478,19 +504,40 @@ func PublishBinaryAsset(tb TB, target Target, repo, tag, stageDir string) {
 		tb.Fatalf("livetest: %s cannot create releases", target.Forge)
 	}
 
-	staged := filepath.Join(stageDir, "reusable-ci")
-	if err := copyFile(Binary(tb), staged); err != nil {
-		tb.Fatalf("livetest: stage binary: %v", err)
+	staged := make([]string, 0, len(assets))
+	for _, asset := range assets {
+		path := filepath.Join(stageDir, asset.name)
+		if err := copyFile(asset.source, path); err != nil {
+			tb.Fatalf("livetest: stage %s: %v", asset.name, err)
+		}
+
+		staged = append(staged, path)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
 	if err := creator.CreateRelease(ctx, RepoSlug(target, repo), provider.ReleaseSpec{
-		Tag: tag, Name: "in-runner fixture", Assets: []string{staged},
+		Tag: tag, Name: "in-runner fixture", Assets: staged,
 	}); err != nil {
 		tb.Fatalf("livetest: publish binary asset: %v", err)
 	}
+}
+
+func credentialProxyBinary(tb TB) string {
+	tb.Helper()
+
+	path := os.Getenv(proxyBinaryEnv)
+	if !filepath.IsAbs(path) {
+		tb.Fatalf("livetest: %s must be the absolute path of the built credential proxy", proxyBinaryEnv)
+	}
+
+	info, err := os.Stat(path) //nolint:gosec // Guarded lifecycle supplies this exact static helper path.
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+		tb.Fatalf("livetest: %s is not an executable regular file", proxyBinaryEnv)
+	}
+
+	return path
 }
 
 func copyFile(from, to string) error {
@@ -514,8 +561,8 @@ func copyFile(from, to string) error {
 // has always had to do it properly, because cosign offers no such flag, so the
 // honest pattern was already in the suite; only the other probes opted out.
 //
-// The CA comes from LAB_CA_FILE, a required contract field, rather than from
-// the connection being tested — trusting whatever the endpoint serves would
+// The CA comes from the parsed target contract rather than from the connection
+// being tested — trusting whatever the endpoint serves would
 // verify nothing. It is appended to the bundle rather than replacing it: both
 // alpine- and debian-based job images read that path, and pointing
 // SSL_CERT_FILE at the lab CA alone would break every public TLS client in the
@@ -527,15 +574,20 @@ func copyFile(from, to string) error {
 // runtime added later needs the same question asked of it — "does this read
 // /etc/ssl/certs?" — and the answer is often no.
 //
-// The PEM is embedded in the workflow, which is public certificate material and
-// not a secret; no token or key is ever inlined this way.
-func TrustLabCA() string {
-	pem, err := os.ReadFile(os.Getenv(labCAFileEnv)) //nolint:gosec // a path from the validated contract.
+// The validated PEM is base64-encoded before embedding. The alphabet cannot
+// terminate shell quoting or introduce commands; no token or key is embedded.
+func TrustLabCA(target Target) string {
+	if !target.accepted {
+		panic("livetest: refusing to load a CA through an unaccepted target")
+	}
+
+	if target.CAFile == "" {
+		panic("livetest: accepted local target has no ca_file")
+	}
+
+	certificatePEM, err := loadTargetCAPEM(target)
 	if err != nil {
-		// Unreachable through the recipe: validate-live-inputs.sh requires the
-		// field, and RequireContract re-checks it. A probe that quietly skipped
-		// trust here would put `-k` back by another name.
-		panic("livetest: " + labCAFileEnv + " is unreadable, so no probe can verify TLS: " + err.Error())
+		panic("livetest: contract ca_file is unreadable, so no probe can verify TLS: " + err.Error())
 	}
 
 	// Each client is told where the CA is, rather than the image's system bundle
@@ -557,9 +609,9 @@ func TrustLabCA() string {
 	// Exported unconditionally: each costs nothing in an image without that
 	// client, and a prelude that had to remember which image it was running in is
 	// a prelude that will forget.
-	return `cat >` + LabCAPath + ` <<'LAB_CA_PEM'
-` + strings.TrimRight(string(pem), "\n") + `
-LAB_CA_PEM
+	encoded := base64.StdEncoding.EncodeToString(certificatePEM)
+
+	return `printf '%s' '` + encoded + `' | base64 -d >` + LabCAPath + `
 export SSL_CERT_FILE=` + LabCAPath + `
 export CURL_CA_BUNDLE=` + LabCAPath + `
 export GIT_SSL_CAINFO=` + LabCAPath + `
@@ -577,9 +629,6 @@ export NODE_EXTRA_CA_CERTS=` + LabCAPath
 // Anything else needing the CA by path takes it from here rather than embedding
 // a second copy.
 const LabCAPath = "/tmp/lab-ca.crt"
-
-// labCAFileEnv names the contract field holding the environment's CA bundle.
-const labCAFileEnv = "LAB_CA_FILE"
 
 // ProbeImage is the job image every in-runner probe runs in: podman/stable
 // v5.6.2, by digest.
@@ -612,8 +661,8 @@ const ProbeImage = "quay.io/podman/stable@sha256:b4bdf91d79ef0396ec1c070faa395b8
 // flag without re-running by hand. Making the call part of a compound command
 // suspends `set -e` for it, so the diagnostics are always printed and the status
 // is still returned to the caller.
-func ProbePrelude(assetURL string) string {
-	return TrustLabCA() + `
+func ProbePrelude(target Target, assetURL string) string {
+	return TrustLabCA(target) + `
 curl -fsSL -o reusable-ci "` + assetURL + `"
 chmod +x reusable-ci
 

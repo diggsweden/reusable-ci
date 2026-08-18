@@ -12,14 +12,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
-	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
 // The image-ledger scenarios need images in a real registry. They do not need
@@ -61,18 +59,23 @@ type Image struct {
 	Index bool
 }
 
-// RegistryHost is where a forge serves its OCI registry. GitLab runs a separate
-// registry host; the Gitea family serves packages from the forge host itself.
+// RegistryHost returns the contract-declared OCI authority after independently
+// checking its accepted relationship to the selected disposable forge.
 func RegistryHost(target Target) (string, error) {
-	switch target.Forge {
-	case provider.ForgeGitLab:
-		return "registry." + target.Host, nil
-	case provider.ForgeForgejo:
-		return target.Host, nil
-	case provider.ForgeGitHub, provider.ForgeLocal:
+	if target.RegistryOrigin == "" {
+		return "", fmt.Errorf("contract declares no OCI registry for platform %q: %w", target.Forge, errs.ErrUnsupported)
 	}
 
-	return "", fmt.Errorf("no lab registry host for platform %q: %w", target.Forge, errs.ErrUnsupported)
+	if err := validateTargetAuthorities(target); err != nil {
+		return "", err
+	}
+
+	registry, err := parseHTTPSURL(string(target.Forge)+" OCI registry", target.RegistryOrigin, true)
+	if err != nil {
+		return "", err
+	}
+
+	return registry.host, nil
 }
 
 // PushImage puts a synthetic single-arch image at owner/repo:tag and returns
@@ -142,18 +145,21 @@ func pushArtifact(tb TB, target Target, repo string, tags []string, artifact pus
 		tb.Fatalf("livetest: refusing to push to %q, outside the %q namespace", repo, ResourcePrefix)
 	}
 
-	auth := remote.WithAuth(&authn.Basic{Username: target.Owner, Password: target.Token})
+	remoteOptions, err := registryRemoteOptions(target)
+	if err != nil {
+		tb.Fatalf("livetest: constrain registry transport: %v", err)
+	}
 
 	var reference name.Tag
 
 	for _, tag := range tags {
-		reference = writeArtifact(tb, fmt.Sprintf("%s/%s/%s:%s", host, target.Owner, repo, tag), artifact, auth)
+		reference = writeArtifact(tb, fmt.Sprintf("%s/%s/%s:%s", host, target.Owner, repo, tag), artifact, remoteOptions)
 	}
 
 	// Read the digest back from the registry rather than trusting the local
 	// computation: what every later verification compares against is what the
 	// registry serves, and those are only the same thing if the push landed.
-	descriptor, err := remote.Head(reference, auth)
+	descriptor, err := remote.Head(reference, remoteOptions...)
 	if err != nil {
 		tb.Fatalf("livetest: read back %s: %v", reference, err)
 	}
@@ -164,7 +170,7 @@ func pushArtifact(tb TB, target Target, repo string, tags []string, artifact pus
 // writeArtifact pushes one image or index to a single tag and returns the
 // parsed reference, so pushArtifact's loop stays about the tag set rather than
 // about the two artifact shapes.
-func writeArtifact(tb TB, ref string, artifact pushable, auth remote.Option) name.Tag {
+func writeArtifact(tb TB, ref string, artifact pushable, remoteOptions []remote.Option) name.Tag {
 	tb.Helper()
 
 	reference, err := name.NewTag(ref)
@@ -174,9 +180,9 @@ func writeArtifact(tb TB, ref string, artifact pushable, auth remote.Option) nam
 
 	switch typed := artifact.(type) {
 	case v1.Image:
-		err = remote.Write(reference, typed, auth)
+		err = remote.Write(reference, typed, remoteOptions...)
 	case v1.ImageIndex:
-		err = remote.WriteIndex(reference, typed, auth)
+		err = remote.WriteIndex(reference, typed, remoteOptions...)
 	default:
 		tb.Fatalf("livetest: unsupported artifact type %T", artifact)
 	}
@@ -205,7 +211,7 @@ func RegistryAuthFile(tb TB, target Target, dir string) string {
 		tb.Fatalf("livetest: %v", err)
 	}
 
-	credential := base64.StdEncoding.EncodeToString([]byte(target.Owner + ":" + target.Token))
+	credential := base64.StdEncoding.EncodeToString([]byte(target.CredentialUsername + ":" + target.Token))
 
 	config := map[string]any{
 		"auths": map[string]any{
@@ -278,9 +284,12 @@ func SignaturePublishedToTransparencyLog(tb TB, target Target, repo, digest stri
 		tb.Fatalf("livetest: parse signature reference: %v", err)
 	}
 
-	image, err := remote.Image(reference, remote.WithAuth(&authn.Basic{
-		Username: target.Owner, Password: target.Token,
-	}))
+	remoteOptions, err := registryRemoteOptions(target)
+	if err != nil {
+		tb.Fatalf("livetest: constrain registry transport: %v", err)
+	}
+
+	image, err := remote.Image(reference, remoteOptions...)
 	if err != nil {
 		tb.Fatalf("livetest: read signature manifest %s: %v", reference, err)
 	}
@@ -314,14 +323,17 @@ func RegistrySnapshot(tb TB, target Target, repo string) map[string]string {
 		tb.Fatalf("livetest: %v", err)
 	}
 
-	auth := remote.WithAuth(&authn.Basic{Username: target.Owner, Password: target.Token})
+	remoteOptions, err := registryRemoteOptions(target)
+	if err != nil {
+		tb.Fatalf("livetest: constrain registry transport: %v", err)
+	}
 
 	repository, err := name.NewRepository(fmt.Sprintf("%s/%s/%s", host, target.Owner, repo))
 	if err != nil {
 		tb.Fatalf("livetest: parse repository: %v", err)
 	}
 
-	tags, err := remote.List(repository, auth)
+	tags, err := remote.List(repository, remoteOptions...)
 	if err != nil {
 		// A repository with nothing pushed yet is an empty snapshot, not a
 		// failure: a scenario may snapshot before its first push.
@@ -361,10 +373,12 @@ func ImageDigest(tb TB, target Target, repo, tag string) (string, bool) {
 		tb.Fatalf("livetest: parse registry reference: %v", err)
 	}
 
-	descriptor, err := remote.Head(reference, remote.WithAuth(&authn.Basic{
-		Username: target.Owner,
-		Password: target.Token,
-	}))
+	remoteOptions, err := registryRemoteOptions(target)
+	if err != nil {
+		tb.Fatalf("livetest: constrain registry transport: %v", err)
+	}
+
+	descriptor, err := remote.Head(reference, remoteOptions...)
 	if err != nil {
 		if strings.Contains(err.Error(), "MANIFEST_UNKNOWN") || strings.Contains(err.Error(), "NAME_UNKNOWN") ||
 			strings.Contains(err.Error(), "404") {

@@ -25,10 +25,12 @@ func validContract(now time.Time) (Target, contract, tokenMetadata) {
 	// G101: every value here is inert; the guard only checks the token is
 	// non-empty, and a fixture that looked less like a token would say less.
 	target := Target{ //nolint:gosec
-		Forge: provider.ForgeForgejo,
-		Host:  "forgejo.compose.forgelab:8443",
-		Owner: "garga",
-		Token: "fake-forgejo-token",
+		Forge:              provider.ForgeForgejo,
+		Host:               "forgejo.compose.forgelab:8443",
+		Owner:              "garga",
+		Token:              "fake-forgejo-token",
+		CredentialUsername: "garga",
+		RegistryOrigin:     "https://forgejo.compose.forgelab:8443",
 	}
 
 	// Derived, not asserted: the confirmation is the operator retyping what
@@ -42,11 +44,12 @@ func validContract(now time.Time) (Target, contract, tokenMetadata) {
 	}
 
 	c := contract{
-		runID:          "run-live-1",
-		refs:           refs,
-		resourcePrefix: ResourcePrefix,
-		confirmation:   confirmDestroy + "|" + identity,
-		cleanupCommand: "/opt/forge-lab/scripts/revoke-targets.sh",
+		runID:               "run-live-1",
+		refs:                refs,
+		resourcePrefix:      ResourcePrefix,
+		confirmation:        confirmDestroy + "|" + identity,
+		cleanupCommand:      "/opt/forge-lab/scripts/revoke-targets.sh",
+		cleanupContractFile: "/tmp/run-live-1.recovery-v2.env",
 	}
 
 	token := tokenMetadata{
@@ -186,6 +189,36 @@ func TestValidate_RejectsEachUnsafeContractForItsOwnReason(t *testing.T) {
 			wantErrContains: "must be an absolute path",
 			mutate:          func(_ *Target, c *contract, _ *tokenMetadata) { c.cleanupCommand = "scripts/revoke-targets.sh" },
 		},
+		{
+			name:            "relative_cleanup_contract_file",
+			wantErrContains: "contract_file must be an absolute path",
+			mutate: func(_ *Target, c *contract, _ *tokenMetadata) {
+				c.cleanupContractFile = "run-live-1.recovery-v2.env"
+			},
+		},
+		{
+			name:            "foreign_oci_authority",
+			wantErrContains: "not the accepted local relationship",
+			mutate: func(tg *Target, _ *contract, _ *tokenMetadata) {
+				tg.RegistryOrigin = "https://registry.attacker.example"
+			},
+		},
+		{
+			name:            "foreign_fulcio_authority",
+			wantErrContains: "not on the selected forge road",
+			mutate: func(tg *Target, _ *contract, _ *tokenMetadata) {
+				tg.FulcioURL = "https://fulcio.k3s.forgelab:8443"
+				tg.OIDCIssuer = "https://forgejo.compose.forgelab:8443/api/actions"
+			},
+		},
+		{
+			name:            "derived_instead_of_mapped_issuer",
+			wantErrContains: "OIDC issuer must equal",
+			mutate: func(tg *Target, _ *contract, _ *tokenMetadata) {
+				tg.FulcioURL = "https://fulcio.compose.forgelab:8443"
+				tg.OIDCIssuer = "https://forgejo.compose.forgelab:8443"
+			},
+		},
 	}
 
 	for _, testCase := range tests {
@@ -245,6 +278,30 @@ func TestValidateDisposableHost_RejectsRealForges(t *testing.T) {
 	}
 }
 
+func TestRegistryHost_UsesDeclaredOrigin(t *testing.T) {
+	t.Parallel()
+
+	target := Target{
+		Forge:          provider.ForgeGitLab,
+		Host:           "gitlab.compose.forgelab:8443",
+		RegistryOrigin: "https://registry.gitlab.compose.forgelab:8443",
+	}
+
+	host, err := RegistryHost(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if host != "registry.gitlab.compose.forgelab:8443" {
+		t.Fatalf("RegistryHost() = %q", host)
+	}
+
+	target.RegistryOrigin = ""
+	if _, err := RegistryHost(target); err == nil {
+		t.Fatal("RegistryHost derived an undeclared registry")
+	}
+}
+
 func TestRequireAccepted_RefusesUnguardedTarget(t *testing.T) {
 	t.Parallel()
 
@@ -277,11 +334,15 @@ func TestDeleteScratchRepo_RefusesForeignNamespace(t *testing.T) {
 
 // fatalRecorder is the minimum TB that records a Fatalf without stopping the
 // test, so a refusal can be asserted rather than crashing the run.
-type fatalRecorder struct{ failed bool }
+type fatalRecorder struct {
+	failed  bool
+	fatal   bool
+	skipped bool
+}
 
 func (f *fatalRecorder) Helper()               {}
 func (f *fatalRecorder) Logf(string, ...any)   {}
-func (f *fatalRecorder) Skipf(string, ...any)  { f.failed = true }
-func (f *fatalRecorder) Fatalf(string, ...any) { f.failed = true }
+func (f *fatalRecorder) Skipf(string, ...any)  { f.failed, f.skipped = true, true }
+func (f *fatalRecorder) Fatalf(string, ...any) { f.failed, f.fatal = true, true }
 func (f *fatalRecorder) Errorf(string, ...any) { f.failed = true }
 func (f *fatalRecorder) Cleanup(func())        {}

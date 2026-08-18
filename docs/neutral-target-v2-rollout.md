@@ -167,27 +167,37 @@ The current reusable-ci live harness is incompatible even with the evidenced
 Forge Lab v1 shape. V2 replaces that integration directly rather than first
 adding a temporary v1 compatibility layer.
 
-- [ ] Replace the reduced contract fixture with the canonical Forge Lab v2
+- [x] Replace the reduced contract fixture with the canonical Forge Lab v2
   fixtures.
-- [ ] Model capabilities, object-form cleanup, OCI registry, and Fulcio.
-- [ ] Keep exact unknown-field rejection and add duplicate-key rejection.
-- [ ] Reject v1 explicitly.
-- [ ] Select live forges from the parsed target contract instead of
+- [x] Model capabilities, object-form cleanup, OCI registry, and Fulcio.
+- [x] Keep exact unknown-field rejection and add duplicate-key rejection.
+- [x] Reject v1 explicitly.
+- [x] Select live forges from the parsed target contract instead of
   `LAB_TARGETS`.
-- [ ] Use parsed `ca_file` instead of `LAB_CA_FILE`.
-- [ ] Use declared OCI origins instead of deriving registry hostnames.
-- [ ] Use declared Fulcio URL and exact issuer mappings instead of
+- [x] Permit multiple endpoint entries of one kind and require an exact
+  `RC_LIVE_<FORGE>_ENDPOINT` selector when kind-only selection is ambiguous.
+- [x] Use parsed `ca_file` instead of `LAB_CA_FILE`.
+- [x] Use declared OCI origins instead of deriving registry hostnames.
+- [x] Use declared Fulcio URL and exact issuer mappings instead of
   `LAB_FULCIO_URL` and `LAB_FULCIO_ISSUERS`.
-- [ ] Keep runner availability as a separate, documented operator input.
-- [ ] Independently constrain registry and Fulcio authorities before sending
+- [x] Keep runner availability as a separate, documented operator input.
+- [x] Require `workflow-runs` only for scenarios that request an in-runner
+  workflow, not for host-side target acceptance.
+- [x] Independently constrain registry and Fulcio authorities before sending
   credentials or OIDC tokens.
-- [ ] Stop treating malformed target contracts as unselected targets.
-- [ ] Validate and freeze the cleanup command and contract file before builds
-  or provider mutation.
-- [ ] Execute cleanup as the exact command/file pair.
-- [ ] Add shell-entrypoint tests covering preflight and cleanup traps.
-- [ ] Update live-testing documentation.
-- [ ] Run ordinary unit tests plus smoke-tag compile/tests.
+- [x] Stop treating malformed target contracts as unselected targets.
+- [x] Validate and freeze the contract, CA, and cleanup launcher bytes before
+  builds or provider mutation, while retaining the producer's exact recovery
+  path.
+- [x] Descriptor-pin the frozen launcher and revalidate the original recovery
+  file immediately before cleanup.
+- [x] Publish a separate static loopback CONNECT proxy for keyless runner jobs
+  and constrain actual OIDC token use to the mapped Fulcio authority.
+- [x] Keep generated registry and keyless failure diagnostics free of
+  credential values and auth-file contents.
+- [x] Add shell-entrypoint tests covering preflight and cleanup traps.
+- [x] Update live-testing documentation.
+- [x] Run ordinary unit tests plus smoke-tag compile/tests.
 - [ ] Commit reusable-ci v2 support without staging unrelated worktree edits.
 
 ## Phase 3: forge-tidy Consumer
@@ -293,7 +303,7 @@ generation.
 | Repository | Command | Result |
 | --- | --- | --- |
 | Forge Lab | `just verify-pr`; docs lint; REUSE; focused contract/runtime tests | Pass |
-| reusable-ci | Pending | Pending |
+| reusable-ci | Unit/race tests; tagged vet compiles; smoke tests; Bash/ShellCheck; REUSE; diff check | Pass |
 | forge-tidy | Pending | Pending |
 | forge-sync | Pending | Pending |
 | release-ci | Pending | Pending |

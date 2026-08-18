@@ -91,22 +91,74 @@ that nobody leaves it on. Nothing accumulates either way: the next run deletes
 the repository before recreating it, so what is kept is one generation.
 
 It is **never in PR CI**: it is live, destructive, and human-invoked against a
-disposable lab. The recipe refuses to run without a valid neutral target
-contract, an owner declared per forge (`RC_LIVE_<FORGE>_OWNER`), and an explicit
-destroy confirmation naming the run.
+disposable lab. `LAB_TARGETS_FILE` must name an owner-only neutral target
+contract version 2; version 1 and every other version are rejected. The recipe
+also requires an owner declared per forge (`RC_LIVE_<FORGE>_OWNER`) and an
+explicit destroy confirmation naming the exact run, hosts, owners, and `rc-`
+namespace.
 
-The contract is a file, not a sourced environment, and it describes
-infrastructure only — hosts, credentials, and a credential-cleanup command.
-Everything that authorises destruction is this suite's own: the `rc-` namespace
-is compiled in, the owners are declared by the operator, and the confirmation is
-typed against a run identity derived from all three. A producer that supplied
-those too would hand out permission along with the address, and any consumer
-holding the file could act on another consumer's fixtures.
+The contract is JSON data, never sourced. It describes endpoint capabilities,
+credentials, explicit OCI origins, an optional Fulcio origin with exact endpoint
+issuer mappings, transport `ca_file`, and an object-form credential-cleanup
+`command`/`contract_file` pair. Everything that authorises destruction is this
+suite's own: the `rc-` namespace is compiled in, the owners are declared by the
+operator, and the confirmation is typed against a run identity derived from all
+three. A producer that supplied those too would hand out permission along with
+the address, and any consumer holding the file could act on another consumer's
+fixtures.
+
+`LAB_RUNNER_FORGES` remains a separate operator-owned comma-separated list of
+runners that are actually available. Endpoint `workflow-runs`, OCI, and Fulcio
+facts do not imply runner availability. `workflow-runs` is required only by
+scenarios that request `NeedsInRunner`; host-side scenarios can use an endpoint
+without it. When a contract carries more than one endpoint of one kind, select
+one exact endpoint name with `RC_LIVE_<FORGE>_ENDPOINT`.
+
+The shell entrypoint first builds a small provider-free validator. That build is
+outside cleanup ownership because no contract-supplied command is trusted yet;
+if it fails, the entrypoint reports that the producer still owns the generation
+and that cleanup must be inspected manually. The prebuilt helper then strictly
+validates the entire contract, including exact-case and duplicate keys, UTF-8,
+file safety, the 64 KiB limit, URL grammar, required capabilities, lifecycle
+metadata, and the compiled disposable-host relationships.
+
+Only after complete validation does the helper freeze the contract, a
+certificate-only CA bundle, and the validated cleanup launcher bytes into
+private run state. It records identity and digest facts for all three. The CA
+source must be a bounded regular non-symlink owned by root or the current user,
+with no group/world write access; its opened inode and pathname are rechecked
+after the read. The original producer recovery file remains the launcher's exact
+argument and is bound by canonical path, device, inode, mode, owner, size, and
+SHA-256.
+
+The shell pins the setup-built helper by an open descriptor, captures the frozen
+launcher and original recovery path, and installs the trap before tool checks,
+the product build, or provider work. At exit the pinned helper, not `realpath`,
+`stat`, or `sha256sum`, descriptor-pins and verifies the frozen launcher,
+revalidates the original recovery file, and executes the launcher through that
+descriptor with the exact producer path. Replacing the source launcher cannot
+change the frozen bytes; replacing the helper, frozen launcher, or recovery file
+is refused and reported with the original pair for manual recovery. Malformed
+JSON never supplies a command to the shell, and credential values are omitted
+from generated diagnostics.
+
+Authority classes are independent. Forge/API credentials may reach only the
+selected endpoint roots. OCI credentials may reach only the declared registry
+origin and the endpoint API origin explicitly needed for Forgejo/GitLab token
+exchange. OIDC tokens may reach only the mapped Fulcio origin. Host-side clients
+use the frozen CA, and each spawned product or cosign process is forced through a
+per-invocation loopback CONNECT proxy for its one selected class. The keyless
+runner receives a separately built static proxy, fetches its Forgejo token before
+enabling that proxy, and then permits token-bearing traffic only to the exact
+Fulcio authority. Approving Fulcio never makes it an OCI challenge or redirect
+destination.
 
 Forge Lab produces such a contract; nothing here requires it to be the producer.
-`internal/livetest/testdata/contract-valid.json` is the shape, and it is parsed
-by the ordinary untagged tests so a change to it fails a normal `go test` rather
-than waiting for someone to book a lab.
+`internal/livetest/testdata/neutral-targets-v2-compose.json` and
+`neutral-targets-v2-github.json` are byte-for-byte copies of the canonical Forge
+Lab fixtures at commit `17c95fee179d4deab99f44ef116eacffa56bd4177d43e4007dd64265461b5ed0`.
+Ordinary untagged tests parse both, exercise malformed variants, and test the
+shell preflight/cleanup lifecycle without reaching a provider.
 
 In this repository's own CI, the self-validation workflow runs:
 

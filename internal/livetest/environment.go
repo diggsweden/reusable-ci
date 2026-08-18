@@ -43,8 +43,15 @@ const (
 // the environment's own description of itself rather than to a symptom. That is
 // the whole reason this exists: an unmet need used to surface as a queued job or
 // an opaque cosign error, both of which read as product defects.
-func Requires(tb TB, forge provider.ForgeAPI, needs ...Need) bool {
+func Requires(tb TB, forge provider.ForgeAPI, needs ...Need) bool { //nolint:cyclop // One diagnostic branch per capability.
 	tb.Helper()
+
+	contract, err := currentLabContract()
+	if err != nil {
+		tb.Fatalf("livetest: %s: %v", contractFileEnv, err)
+
+		return false
+	}
 
 	for _, need := range needs {
 		switch need {
@@ -60,15 +67,44 @@ func Requires(tb TB, forge provider.ForgeAPI, needs ...Need) bool {
 
 				return false
 			}
-		case NeedsFulcio:
-			if _, ok := FulcioURL(); !ok {
-				tb.Logf("SKIP %s: this environment provides no Fulcio (LAB_FULCIO_URL unset)", forge)
+
+			endpoint, endpointErr := selectedEndpointFor(contract, forge)
+			if endpointErr != nil {
+				tb.Fatalf("livetest: %v", endpointErr)
 
 				return false
 			}
 
-			if !FulcioTrusts(forge) {
-				tb.Logf("SKIP %s: this environment's Fulcio is not configured to trust it (LAB_FULCIO_ISSUERS)", forge)
+			if !endpoint.hasCapability("workflow-runs") {
+				tb.Logf("SKIP %s: selected endpoint %q lacks scenario-required capability workflow-runs", forge, endpoint.Name)
+
+				return false
+			}
+		case NeedsFulcio:
+			endpoint, err := selectedEndpointFor(contract, forge)
+			if err != nil {
+				tb.Fatalf("livetest: %v", err)
+
+				return false
+			}
+
+			fulcioURL, issuer, ok := contract.fulcioFor(endpoint.Name)
+			if !ok {
+				tb.Logf("SKIP %s: contract fulcio has no issuer mapping for endpoint %q", forge, endpoint.Name)
+
+				return false
+			}
+
+			host, hostErr := endpoint.host()
+			if hostErr != nil {
+				tb.Fatalf("livetest: %v", hostErr)
+
+				return false
+			}
+
+			target := Target{Forge: forge, Host: host, FulcioURL: fulcioURL, OIDCIssuer: issuer}
+			if trustErr := validateTargetAuthorities(target); trustErr != nil {
+				tb.Fatalf("livetest: Fulcio trust boundary refused %s: %v", forge, trustErr)
 
 				return false
 			}

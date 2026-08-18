@@ -103,6 +103,10 @@ type RunOptions struct {
 	// explicit about what the product sees.
 	Env map[string]string
 
+	// CredentialScope selects the one contract authority class the child and
+	// any nested network tools may reach. The zero value is forge/API only.
+	CredentialScope CredentialScope
+
 	// AllowUsageError opts out of the parser-rejection guard, for a scenario
 	// whose subject IS how the CLI handles a bad invocation.
 	AllowUsageError bool
@@ -114,6 +118,10 @@ func CLIIn(tb TB, target Target, repo string, opts RunOptions, args ...string) R
 	tb.Helper()
 	requireAccepted(tb, target)
 
+	if err := verifyTargetCAPath(target); err != nil {
+		tb.Fatalf("livetest: refusing changed frozen ca_file: %v", err)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
@@ -121,7 +129,16 @@ func CLIIn(tb TB, target Target, repo string, opts RunOptions, args ...string) R
 	cmd := exec.CommandContext(ctx, Binary(tb), args...) //nolint:gosec
 
 	env := cliEnv(target, repo)
+
 	for key, value := range opts.Env {
+		if isTrustEnvironmentKey(key) {
+			tb.Fatalf("livetest: scenario environment may not override containment variable %s", key)
+		}
+
+		env = append(env, key+"="+value)
+	}
+
+	for key, value := range credentialProxyEnvironment(tb, target, opts.CredentialScope) {
 		env = append(env, key+"="+value)
 	}
 
@@ -232,11 +249,14 @@ func cliEnv(target Target, repo string) []string {
 		}
 	}
 
+	for key, value := range targetTrustEnvironment(target) {
+		values[key] = value
+	}
+
 	// Runtime only. HOME and TMPDIR because subprocesses and temp files need
-	// them; PATH because the product shells out to git and cosign; the TLS
-	// variables because the lab's CA may be trusted through a file rather than
-	// the system store.
-	for _, key := range []string{"PATH", "HOME", "TMPDIR", "SSL_CERT_FILE", "SSL_CERT_DIR"} {
+	// them; PATH because the product shells out to git and cosign. TLS variables
+	// come only from the frozen target above, never from ambient process trust.
+	for _, key := range []string{"PATH", "HOME", "TMPDIR"} {
 		if value := os.Getenv(key); value != "" {
 			values[key] = value
 		}

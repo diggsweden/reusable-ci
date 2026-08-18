@@ -170,7 +170,7 @@ func TestInRunner_ArtifactRoundTripsThroughTheStore(t *testing.T) {
 			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
 
 			conclusion := livetest.RunWorkflow(t, target, repo, "artifact-roundtrip",
-				artifactRoundTripProbe(assetURL))
+				artifactRoundTripProbe(target, assetURL))
 			if conclusion != "success" {
 				t.Errorf("%s: the artifact round-trip concluded %q inside a real job — this forge reports RunArtifacts, but a file uploaded from a job did not come back intact",
 					forge, conclusion)
@@ -183,7 +183,7 @@ func TestInRunner_ArtifactRoundTripsThroughTheStore(t *testing.T) {
 // and compares. Written in the Actions dialect only: GitLab has no artifact store
 // to round-trip through, and a forge that gains one would arrive with its own
 // dialect rather than reusing this text.
-func artifactRoundTripProbe(assetURL string) string {
+func artifactRoundTripProbe(target livetest.Target, assetURL string) string {
 	return `on: [push]
 jobs:
   roundtrip:
@@ -191,7 +191,7 @@ jobs:
     steps:
       - name: upload an artifact and read it back
         run: |
-          ` + indent(livetest.ProbePrelude(assetURL), 10) + `
+          ` + indent(livetest.ProbePrelude(target, assetURL), 10) + `
 
           # Unique to this run, so a leftover artifact cannot pass for a fresh one.
           nonce="par-art-3-${GITHUB_RUN_ID:-norun}-${GITHUB_SHA:-nosha}"

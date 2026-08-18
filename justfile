@@ -287,64 +287,15 @@ test-smoke:
 # by path. A suite that compiles its own binary proves something about the
 # source it happened to see, not about the artifact the release flow produces.
 #
-# An EXIT trap revokes the run's credential on every outcome. Cleanup failure
-# changes the recipe result: a token left live on a lab is a real defect, and
-# the whole point of a per-run credential is that it does not outlive the run.
+# The lifecycle script validates neutral-v2 once, freezes the contract, CA, and
+# cleanup launcher bytes, retains the producer's exact cleanup contract_file,
+# then arms cleanup before checking tools, building, or entering provider code.
+# LAB_RUNNER_FORGES remains a separate operator-owned runner-availability input;
+# OCI/Fulcio facts never imply that a runner exists.
 [doc('Run the live-forge conformance tier (needs a lab contract, owners, and confirmation). Optional arg is a -run filter.')]
 [group('test')]
 test-live scenario='':
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    # Validate the whole contract before anything is built, and before any
-    # contract-supplied command is installed as a trap.
-    bash scripts/ci/validate-live-inputs.sh
-
-    state=
-    cleanup_live_run() {
-        local status=$? cleanup_status=0
-        trap - EXIT INT TERM
-
-        # Read from the contract, not from a parallel environment variable:
-        # the preflight validated the command in that file, and a second copy
-        # elsewhere is a second thing that can drift out of agreement with it.
-        local cleanup_cmd
-        cleanup_cmd=$(jq -r '.interfaces.credential_cleanup // empty' <"$LAB_TARGETS_FILE" 2>/dev/null || printf '')
-
-        if [[ -x "$cleanup_cmd" ]]; then
-            "$cleanup_cmd" || cleanup_status=1
-        else
-            cleanup_status=1
-            printf 'x live credential cleanup interface is missing or not executable\n' >&2
-        fi
-
-        [[ -z "$state" || ! -d "$state" ]] || rm -rf -- "$state"
-
-        if ((cleanup_status != 0)); then
-            printf 'x live token cleanup failed; revoke it by hand before walking away\n' >&2
-            status=1
-        fi
-
-        exit "$status"
-    }
-    trap cleanup_live_run EXIT
-    trap 'exit 130' INT
-    trap 'exit 143' TERM
-
-    state=$(mktemp -d "${TMPDIR:-/tmp}/reusable-ci-live.XXXXXXXX")
-    CGO_ENABLED=0 go build -trimpath -buildvcs=false -o "$state/{{executable}}" ./cmd/{{executable}}
-    ( cd "$state" && sha256sum "{{executable}}" >"{{executable}}.sha256" && sha256sum --check --quiet "{{executable}}.sha256" )
-
-    export RC_LIVE_BIN="$state/{{executable}}"
-
-    # An optional -run filter, so iterating on one scenario does not cost the
-    # whole tier. Every guard above still applies: the contract is validated,
-    # the product is built and checksummed, and the credential is revoked on
-    # exit — a filtered run is narrower, not laxer.
-    filter=()
-    [[ -z "{{ scenario }}" ]] || filter=(-run "{{ scenario }}")
-
-    go test -tags=live -p 1 -count=1 -buildvcs=false -timeout=30m -v "${filter[@]}" ./internal/livetest/...
+    @bash scripts/ci/prepare-live-tests.sh "{{scenario}}"
 
 # Run unit tests with verbose output
 [group('test')]

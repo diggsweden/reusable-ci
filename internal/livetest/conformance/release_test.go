@@ -42,7 +42,7 @@ func forgesClaiming(t *testing.T, needs func(provider.Capabilities) bool, capabi
 
 	var forges []provider.ForgeAPI
 
-	for _, forge := range livetest.LiveForges() {
+	for _, forge := range livetest.LiveForges(t) {
 		capabilities, known := livetest.Capabilities(forge)
 		if !known {
 			t.Fatalf("no adapter for platform %q", forge)
@@ -119,10 +119,11 @@ func TestRelease_CreateWithAssets_IsEquivalentAcrossForges(t *testing.T) {
 			// adapter would let an adapter that misreads its own writes agree
 			// with itself and pass.
 			reader := rawref.Reader{
-				Forge: string(forge),
-				Base:  target.BaseURL(),
-				Token: target.Token,
-				Owner: target.Owner,
+				Forge:  string(forge),
+				Base:   target.BaseURL(),
+				Token:  target.Token,
+				Owner:  target.Owner,
+				Client: livetest.HTTPClient(t, target, time.Minute),
 			}
 
 			release, found, err := rawref.ReleaseByTag(ctx, reader, repo, tag)
@@ -353,10 +354,11 @@ func mustReadRelease(ctx context.Context, t *testing.T, target livetest.Target, 
 	t.Helper()
 
 	reader := rawref.Reader{
-		Forge: string(target.Forge),
-		Base:  target.BaseURL(),
-		Token: target.Token,
-		Owner: target.Owner,
+		Forge:  string(target.Forge),
+		Base:   target.BaseURL(),
+		Token:  target.Token,
+		Owner:  target.Owner,
+		Client: livetest.HTTPClient(t, target, time.Minute),
 	}
 
 	release, found, err := rawref.ReleaseByTag(ctx, reader, repo, tag)

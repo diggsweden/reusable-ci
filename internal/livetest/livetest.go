@@ -29,8 +29,8 @@
 // This reads the neutral live-target contract: one JSON object describing
 // disposable provider infrastructure. Forge Lab produces it, but nothing here
 // assumes Forge Lab — any operator willing to meet the documented shape can
-// supply one. A Target is a host, an owner, a token, and a namespace. When a
-// GitHub tier arrives it supplies those four the same way.
+// supply one. A Target carries the selected forge identity plus its declared
+// registry, transport CA, and Fulcio issuer facts.
 //
 // # Safety
 //
@@ -84,7 +84,10 @@ const ResourcePrefix = "rc-"
 const (
 	// contractFileEnv names the neutral live-target contract. The producer is
 	// Forge Lab, or any operator willing to meet the same documented shape.
-	contractFileEnv = "LAB_TARGETS_FILE"
+	contractFileEnv        = "LAB_TARGETS_FILE"
+	frozenContractFactsEnv = "RC_LIVE_CONTRACT_FACTS"
+	frozenCAFactsEnv       = "RC_LIVE_CA_FACTS"
+	proxyBinaryEnv         = "RC_LIVE_CREDENTIAL_PROXY_BIN"
 
 	// ownerEnvPrefix is how the operator declares which owner on each forge
 	// this run may act under. It is a consumer concern, so it lives in this
@@ -103,7 +106,7 @@ const (
 )
 
 var (
-	runIDPattern         = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,39}$`)
+	runIDPattern         = regexp.MustCompile(`^[a-z][a-z0-9-]{2,39}$`)
 	resourcePrefixRegexp = regexp.MustCompile(`^[a-z][a-z0-9]{0,7}-$`)
 	ownerPattern         = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 	hostnamePattern      = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
@@ -124,10 +127,21 @@ var (
 
 // Target names one selected forge instance and the identity to act as.
 type Target struct {
-	Forge provider.ForgeAPI
-	Host  string // host[:port], no scheme
-	Owner string
-	Token string
+	Forge               provider.ForgeAPI
+	Host                string // host[:port], no scheme
+	Owner               string
+	Token               string
+	CredentialUsername  string
+	RegistryOrigin      string
+	ForgeAuthorities    []string
+	RegistryAuthorities []string
+	OIDCAuthorities     []string
+	Capabilities        []string
+	CAFile              string
+	CAFacts             string
+	FulcioURL           string
+	OIDCIssuer          string
+	caPEM               []byte
 
 	// accepted is set only by the destructive guard. Every mutating helper
 	// refuses a Target without it, so a hand-built Target cannot reach a
@@ -159,11 +173,12 @@ type targetRef struct {
 // supplies the confirmation. Keeping them in one struct keeps the guard a pure
 // function of its inputs, which is what makes it table-testable without a lab.
 type contract struct {
-	runID          string
-	refs           []targetRef
-	resourcePrefix string
-	confirmation   string
-	cleanupCommand string
+	runID               string
+	refs                []targetRef
+	resourcePrefix      string
+	confirmation        string
+	cleanupCommand      string
+	cleanupContractFile string
 }
 
 type tokenMetadata struct {
@@ -187,17 +202,24 @@ type tokenMetadata struct {
 // Both halves are required. A contract endpoint without a declared owner is
 // infrastructure this run was shown but not authorized to touch, and treating
 // it as selected would make the skip depend on the producer alone.
-func Selected(forge provider.ForgeAPI) bool {
+func Selected(tb TB, forge provider.ForgeAPI) bool {
+	tb.Helper()
+
+	contract, err := currentLabContract()
+	if err != nil {
+		tb.Fatalf("livetest: %s: %v", contractFileEnv, err)
+
+		return false
+	}
+
 	if ownerFor(forge) == "" {
 		return false
 	}
 
-	contract, err := loadLabContract(os.Getenv(contractFileEnv))
-	if err != nil {
-		return false
+	_, err = selectedEndpointFor(contract, forge)
+	if err != nil && !strings.Contains(err.Error(), "selects no") {
+		tb.Fatalf("livetest: %v", err)
 	}
-
-	_, err = contract.endpointFor(string(forge))
 
 	return err == nil
 }
@@ -207,44 +229,62 @@ func ownerFor(forge provider.ForgeAPI) string {
 	return os.Getenv(ownerEnvPrefix + strings.ToUpper(string(forge)) + "_OWNER")
 }
 
+func endpointNameFor(forge provider.ForgeAPI) string {
+	return os.Getenv(ownerEnvPrefix + strings.ToUpper(string(forge)) + "_ENDPOINT")
+}
+
+func selectedEndpointFor(contract labContract, forge provider.ForgeAPI) (labEndpoint, error) {
+	return contract.endpointFor(string(forge), endpointNameFor(forge))
+}
+
 // Accept reads the contract, validates every safety rule, and returns a Target
 // armed for mutation. It fails the test rather than returning an error: a
 // half-armed target is not a thing a scenario should be able to hold.
-func Accept(tb TB, forge provider.ForgeAPI) Target {
+func Accept(tb TB, forge provider.ForgeAPI) Target { //nolint:cyclop,govet // Ordered guard projection deliberately fails through TB.
 	tb.Helper()
 
-	if !Selected(forge) {
-		tb.Skipf("livetest: %s not selected by LAB_TARGETS", forge)
+	if !Selected(tb, forge) {
+		tb.Skipf("livetest: %s has no endpoint and explicit %s%s_OWNER", forge, ownerEnvPrefix, strings.ToUpper(string(forge)))
 	}
 
-	lab, err := loadLabContract(os.Getenv(contractFileEnv))
+	lab, err := currentLabContract()
 	if err != nil {
 		tb.Fatalf("livetest: %s: %v", contractFileEnv, err)
 	}
 
-	endpoint, err := lab.endpointFor(string(forge))
+	endpoint, err := selectedEndpointFor(lab, forge)
 	if err != nil {
 		tb.Fatalf("livetest: %v", err)
 	}
 
-	host, err := endpoint.host()
-	if err != nil {
-		tb.Fatalf("livetest: %v", err)
+	if capabilityErr := endpoint.requireLiveCapabilities(); capabilityErr != nil {
+		tb.Fatalf("livetest: %v", capabilityErr)
 	}
 
-	target := Target{
-		Forge: forge,
-		Host:  host,
-		Owner: ownerFor(forge),
-		Token: endpoint.Credential.Token,
+	target, err := targetFromContract(lab, endpoint, forge, ownerFor(forge))
+	if err != nil {
+		tb.Fatalf("livetest: endpoint trust boundary refused this run: %v", err)
+	}
+
+	target, err = captureTargetCA(target)
+	if err != nil {
+		tb.Fatalf("livetest: frozen ca_file refused this run: %v", err)
+	}
+
+	cleanupCommand, cleanupContractFile := lab.cleanupPair()
+
+	refs, err := selectedRefs(lab)
+	if err != nil {
+		tb.Fatalf("livetest: selected endpoint projection failed: %v", err)
 	}
 
 	sourced := contract{
-		runID:          lab.Generation.ID,
-		refs:           selectedRefs(lab),
-		resourcePrefix: ResourcePrefix,
-		confirmation:   os.Getenv(confirmDestroyEnv),
-		cleanupCommand: lab.cleanupCommand(),
+		runID:               lab.Generation.ID,
+		refs:                refs,
+		resourcePrefix:      ResourcePrefix,
+		confirmation:        os.Getenv(confirmDestroyEnv),
+		cleanupCommand:      cleanupCommand,
+		cleanupContractFile: cleanupContractFile,
 	}
 
 	if err := validate(target, sourced, endpoint.tokenMeta(lab.Generation.ID), time.Now()); err != nil {
@@ -278,7 +318,7 @@ func validate(target Target, sourced contract, token tokenMetadata, now time.Tim
 // every target at once if they are wrong at all.
 func validateContractShape(sourced contract) error {
 	if !runIDPattern.MatchString(sourced.runID) {
-		return fmt.Errorf("generation ID %q does not match [a-z0-9][a-z0-9-]{2,39}: %w", sourced.runID, errs.ErrValidation)
+		return fmt.Errorf("generation ID %q does not match [a-z][a-z0-9-]{2,39}: %w", sourced.runID, errs.ErrValidation)
 	}
 
 	// The namespace is this suite's own constant rather than a producer's
@@ -299,6 +339,10 @@ func validateContractShape(sourced contract) error {
 		return fmt.Errorf("credential cleanup command must be an absolute path, got %q: %w", sourced.cleanupCommand, errs.ErrValidation)
 	}
 
+	if !strings.HasPrefix(sourced.cleanupContractFile, "/") {
+		return fmt.Errorf("credential cleanup contract_file must be an absolute path, got %q: %w", sourced.cleanupContractFile, errs.ErrValidation)
+	}
+
 	if len(sourced.refs) == 0 {
 		return fmt.Errorf("no endpoint in the contract has a declared %s<FORGE>_OWNER: %w", ownerEnvPrefix, errs.ErrValidation)
 	}
@@ -306,9 +350,6 @@ func validateContractShape(sourced contract) error {
 	return nil
 }
 
-// validateAuthorization is the pair that turns a well-formed contract into
-// permission to destroy: an identity this suite re-derived, and a confirmation
-// the operator typed against that exact identity.
 // validateAuthorization is what turns a well-formed contract into permission to
 // destroy: an identity this suite derives from the run's own parts, and a
 // confirmation the operator typed against that exact identity.
@@ -353,11 +394,194 @@ func validateTarget(target Target) error {
 		return fmt.Errorf("%s token is empty: %w", target.Forge, errs.ErrValidation)
 	}
 
+	if target.CredentialUsername == "" {
+		return fmt.Errorf("%s credential username is empty: %w", target.Forge, errs.ErrValidation)
+	}
+
 	if !ownerPattern.MatchString(target.Owner) || target.Owner == "." || target.Owner == ".." {
 		return fmt.Errorf("owner %q is not a resource owner: %w", target.Owner, errs.ErrValidation)
 	}
 
-	return validateDisposableHost(target.Host)
+	if err := validateDisposableHost(target.Host); err != nil {
+		return err
+	}
+
+	return validateTargetAuthorities(target)
+}
+
+func validateSelectedEndpoint(endpoint labEndpoint, target Target) error {
+	web, err := parseHTTPSURL(endpoint.Kind+" web_base_url", endpoint.WebBaseURL, true)
+	if err != nil {
+		return err
+	}
+
+	api, err := parseHTTPSURL(endpoint.Kind+" api_base_url", endpoint.APIBaseURL, false)
+	if err != nil {
+		return err
+	}
+
+	git, err := parseHTTPSURL(endpoint.Kind+" git_base_url", endpoint.gitURL(), true)
+	if err != nil {
+		return err
+	}
+
+	if web.host != api.host || web.host != git.host {
+		return fmt.Errorf("%s web, API, and Git URLs must share one local authority: %w", endpoint.Kind, errs.ErrValidation)
+	}
+
+	wantAPIPath := "/api/v1"
+	if endpoint.Kind == string(provider.ForgeGitLab) {
+		wantAPIPath = "/api/v4"
+	}
+
+	if api.path != wantAPIPath {
+		return fmt.Errorf("%s api_base_url path must equal %q: %w", endpoint.Kind, wantAPIPath, errs.ErrValidation)
+	}
+
+	if target.Host != api.host {
+		return fmt.Errorf("%s projected host does not match api_base_url: %w", endpoint.Kind, errs.ErrValidation)
+	}
+
+	return validateTargetAuthorities(target)
+}
+
+func validateLocalContractTopology(contract labContract) error {
+	for _, endpoint := range contract.Endpoints {
+		web, err := parseHTTPSURL(endpoint.Kind+" web_base_url", endpoint.WebBaseURL, true)
+		if err != nil {
+			return err
+		}
+
+		if !strings.HasSuffix(web.hostname, ".forgelab") {
+			continue
+		}
+
+		host, err := endpoint.host()
+		if err != nil {
+			return err
+		}
+
+		fulcioURL, oidcIssuer, _ := contract.fulcioFor(endpoint.Name)
+
+		target := Target{
+			Forge:          provider.ForgeAPI(endpoint.Kind),
+			Host:           host,
+			RegistryOrigin: endpoint.registryOrigin(),
+			FulcioURL:      fulcioURL,
+			OIDCIssuer:     oidcIssuer,
+		}
+		if err := validateSelectedEndpoint(endpoint, target); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateTargetAuthorities(target Target) error { //nolint:cyclop // Explicitly validates each approved local authority relationship.
+	if target.RegistryOrigin != "" {
+		registry, err := parseHTTPSURL(string(target.Forge)+" OCI registry", target.RegistryOrigin, true)
+		if err != nil {
+			return err
+		}
+
+		forgeHost, forgePort, err := splitValidatedHost(target.Host)
+		if err != nil {
+			return err
+		}
+
+		wantRegistryHost := forgeHost
+		if target.Forge == provider.ForgeGitLab {
+			wantRegistryHost = "registry." + forgeHost
+		}
+
+		if registry.hostname != wantRegistryHost || effectivePort(registry.port) != effectivePort(forgePort) {
+			return fmt.Errorf("%s OCI registry %q is not the accepted local relationship to %q: %w",
+				target.Forge, registry.host, target.Host, errs.ErrValidation)
+		}
+	}
+
+	if target.FulcioURL == "" && target.OIDCIssuer == "" {
+		return nil
+	}
+
+	if target.FulcioURL == "" || target.OIDCIssuer == "" {
+		return fmt.Errorf("%s Fulcio URL and issuer mapping must be supplied together: %w", target.Forge, errs.ErrValidation)
+	}
+
+	fulcio, err := parseHTTPSURL("fulcio.base_url", target.FulcioURL, true)
+	if err != nil {
+		return err
+	}
+
+	forgeHost, forgePort, err := splitValidatedHost(target.Host)
+	if err != nil {
+		return err
+	}
+
+	labels := strings.Split(forgeHost, ".")
+	if len(labels) != 3 {
+		return fmt.Errorf("forge host %q has no Forge Lab road: %w", forgeHost, errs.ErrValidation)
+	}
+
+	wantFulcioHost := "fulcio." + labels[1] + ".forgelab"
+	if fulcio.hostname != wantFulcioHost || effectivePort(fulcio.port) != effectivePort(forgePort) {
+		return fmt.Errorf("fulcio %q is not on the selected forge road and edge port: %w", fulcio.host, errs.ErrValidation)
+	}
+
+	wantIssuer := target.BaseURL()
+	if target.Forge == provider.ForgeForgejo {
+		wantIssuer += "/api/actions"
+	}
+
+	if target.OIDCIssuer != wantIssuer {
+		return fmt.Errorf("%s OIDC issuer must equal the contract endpoint mapping %q, got %q: %w",
+			target.Forge, wantIssuer, target.OIDCIssuer, errs.ErrValidation)
+	}
+
+	return nil
+}
+
+func splitValidatedHost(host string) (string, string, error) {
+	if err := validateDisposableHost(host); err != nil {
+		return "", "", err
+	}
+
+	if !strings.Contains(host, ":") {
+		return host, "", nil
+	}
+
+	hostname, port, err := net.SplitHostPort(host)
+	if err != nil {
+		return "", "", fmt.Errorf("host %q is not host[:port]: %w", host, errs.ErrValidation)
+	}
+
+	return hostname, port, nil
+}
+
+func effectivePort(port string) string {
+	if port == "" {
+		return "443"
+	}
+
+	return port
+}
+
+// FulcioConfig returns the exact contract mapping only after rechecking the
+// accepted target's local Fulcio and issuer relationship at the use boundary.
+func FulcioConfig(tb TB, target Target) (string, string) {
+	tb.Helper()
+	requireAccepted(tb, target)
+
+	if target.FulcioURL == "" || target.OIDCIssuer == "" {
+		tb.Fatalf("livetest: target has no Fulcio issuer mapping")
+	}
+
+	if err := validateTargetAuthorities(target); err != nil {
+		tb.Fatalf("livetest: refusing to send an OIDC token to Fulcio: %v", err)
+	}
+
+	return target.FulcioURL, target.OIDCIssuer
 }
 
 // validateDisposableHost accepts only hosts this tier is allowed to destroy.
@@ -483,27 +707,41 @@ func parseExpiry(value string) (time.Time, error) {
 // is a credential the run is answerable for, so leaving a forge out of the
 // identity would let one contract be silently reused against a provider the
 // operator never confirmed.
-func selectedRefs(lab labContract) []targetRef {
+func selectedRefs(lab labContract) ([]targetRef, error) {
 	refs := make([]targetRef, 0, len(lab.Endpoints))
 
-	for _, endpoint := range lab.Endpoints {
-		owner := ownerFor(provider.ForgeAPI(endpoint.Kind))
+	seenKinds := make(map[string]struct{}, len(lab.Endpoints))
+	for _, candidate := range lab.Endpoints {
+		if _, seen := seenKinds[candidate.Kind]; seen {
+			continue
+		}
+
+		seenKinds[candidate.Kind] = struct{}{}
+		forge := provider.ForgeAPI(candidate.Kind)
+
+		owner := ownerFor(forge)
 		if owner == "" {
 			continue
 		}
 
-		// An endpoint whose host cannot be projected is left out rather than
-		// guessed at: validateTarget rejects the one being acted on, and a
-		// half-formed entry here would silently change the identity.
+		endpoint, err := selectedEndpointFor(lab, forge)
+		if err != nil {
+			return nil, err
+		}
+
 		host, err := endpoint.host()
 		if err != nil {
-			continue
+			return nil, err
+		}
+
+		if err := validateDisposableHost(host); err != nil {
+			return nil, err
 		}
 
 		refs = append(refs, targetRef{forge: endpoint.Kind, host: host, owner: owner})
 	}
 
-	return refs
+	return refs, nil
 }
 
 // Identity re-derives the run identity from the contract's parts. The guard
@@ -530,7 +768,7 @@ func Identity(runID string, refs []targetRef, resourcePrefix string) (string, er
 		seen[ref.forge] = true
 
 		switch ref.forge {
-		case string(provider.ForgeGitLab), string(provider.ForgeForgejo), "gitea":
+		case string(provider.ForgeGitLab), string(provider.ForgeForgejo), endpointKindGitea:
 		default:
 			return "", fmt.Errorf("unknown provider %q is selected: %w", ref.forge, errs.ErrValidation)
 		}
@@ -563,40 +801,4 @@ func Identity(runID string, refs []targetRef, resourcePrefix string) (string, er
 
 func identityEntry(forge, host, owner, resourcePrefix string) string {
 	return forge + "@https://" + host + "/" + owner + "#resources=" + resourcePrefix
-}
-
-// FulcioURL returns the certificate authority the target environment provides
-// for keyless signing, and whether it has one.
-//
-// Read from the contract rather than derived from the forge's hostname. The
-// derivation would be one line and would put the environment's topology back
-// inside this kit -- the same mistake as requiring a deployment road, which was
-// removed for the same reason. An environment that runs no Sigstore simply does
-// not set it, and scenarios skip rather than fail: keyless signing needs a CA
-// that trusts the forge, and not every disposable environment will have one.
-func FulcioURL() (string, bool) {
-	url := strings.TrimSpace(os.Getenv("LAB_FULCIO_URL"))
-
-	return url, url != ""
-}
-
-// FulcioTrusts reports whether the environment's Fulcio is configured to issue
-// certificates for jobs running on forge.
-//
-// Read from the contract for the same reason as FulcioURL: which issuers a CA
-// accepts is a fact about the deployment, and deriving it from a forge name
-// here would put that topology back inside this kit. A forge the CA does not
-// trust is an environment limit rather than a product one, so scenarios skip on
-// it.
-//
-// An unset variable trusts nothing. The alternative — assuming a forge — would
-// let a keyless scenario report success for a certificate no CA ever issued.
-func FulcioTrusts(forge provider.ForgeAPI) bool {
-	for _, issuer := range strings.Split(os.Getenv("LAB_FULCIO_ISSUERS"), ",") {
-		if strings.EqualFold(strings.TrimSpace(issuer), string(forge)) {
-			return true
-		}
-	}
-
-	return false
 }

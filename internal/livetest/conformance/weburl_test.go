@@ -65,7 +65,7 @@ func TestWebURLs_ResolveOnEveryForge(t *testing.T) {
 				{"release", urls.ReleaseWebURL(target.BaseURL(), slug, tag)},
 				{"packages", urls.PackagesWebURL(target.BaseURL(), slug)},
 			} {
-				assertPageResolves(t, ctx, forge, page.what, page.url)
+				assertPageResolves(t, ctx, target, page.what, page.url)
 			}
 		})
 	}
@@ -74,7 +74,7 @@ func TestWebURLs_ResolveOnEveryForge(t *testing.T) {
 // assertPageResolves fails unless the URL serves a page. A redirect is not
 // accepted: on both forges an unauthenticated redirect is how a missing or
 // private page is served, so following it would turn a dead link into a pass.
-func assertPageResolves(t *testing.T, ctx context.Context, forge provider.ForgeAPI, what, url string) {
+func assertPageResolves(t *testing.T, ctx context.Context, target livetest.Target, what, url string) {
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -82,22 +82,18 @@ func assertPageResolves(t *testing.T, ctx context.Context, forge provider.ForgeA
 		t.Fatalf("build request for %s: %v", url, err)
 	}
 
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	client := livetest.HTTPClient(t, target, 30*time.Second)
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 	resp, err := client.Do(req)
 	if err != nil {
-		t.Fatalf("%s %s page %s: %v", forge, what, url, err)
+		t.Fatalf("%s %s page %s: %v", target.Forge, what, url, err)
 	}
 
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("%s %s page %s returned HTTP %d — the summary would print a dead link",
-			forge, what, url, resp.StatusCode)
+			target.Forge, what, url, resp.StatusCode)
 	}
 }
