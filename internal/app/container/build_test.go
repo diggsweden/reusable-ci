@@ -6,6 +6,7 @@ package container_test
 import (
 	"context"
 	"io"
+	"reflect"
 	"testing"
 
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
@@ -44,14 +45,23 @@ func (f *fakePusher) PushLayoutByDigest(_ context.Context, _, imageRef string) (
 	return f.digest, nil
 }
 
-func TestBuildImage_PushByDigest_EmitsDigestAndThreadsFlags(t *testing.T) {
+// TestBuildImage_PushByDigestHandsTheBuilderEveryInput covers push-by-digest:
+// the build goes through a layout, the pushed digest is what comes back and
+// what is published as an output, and the request the builder receives carries
+// every input it was given.
+//
+// The request is compared whole. It was checked five fields at a time with a
+// condition that reported the whole struct, and the fields it did not name --
+// build arguments and labels among them -- could have been dropped without
+// failing anything, despite being the flags in the old name.
+func TestBuildImage_PushByDigestHandsTheBuilderEveryInput(t *testing.T) {
 	t.Parallel()
 
 	builder := &fakeBuilder{}
 	pusher := &fakePusher{digest: "sha256:abc123"}
 	sink := fakeoutputsink.New(t)
 
-	got, err := appcontainer.BuildImage(context.Background(), builder, pusher, sink, io.Discard, appcontainer.BuildImageInput{
+	in := appcontainer.BuildImageInput{
 		Context:         ".",
 		Containerfile:   "Containerfile",
 		Target:          "build",
@@ -65,35 +75,54 @@ func TestBuildImage_PushByDigest_EmitsDigestAndThreadsFlags(t *testing.T) {
 		CachePush:       true,
 		Mode:            container.BuildModePushByDigest,
 		ImageRef:        "ghcr.io/org/repo",
-	})
+	}
+
+	got, err := appcontainer.BuildImage(context.Background(), builder, pusher, sink, io.Discard, in)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if got != "sha256:abc123" {
-		t.Errorf("returned digest = %q", got)
-	}
-
-	if !builder.builtLayout {
-		t.Error("push-by-digest must go through BuildToLayout")
+		t.Errorf("returned digest = %q, want the digest the push reported", got)
 	}
 
 	if v := sink.Single("digest"); v != "sha256:abc123" {
 		t.Errorf("sink digest = %q, want sha256:abc123", v)
 	}
 
+	// Push-by-digest builds to an OCI layout and pushes that, rather than
+	// building straight to a tag.
+	if !builder.builtLayout {
+		t.Error("push-by-digest must go through BuildToLayout")
+	}
+
 	if pusher.gotRef != "ghcr.io/org/repo" {
-		t.Errorf("pusher got ref %q", pusher.gotRef)
+		t.Errorf("pushed to %q, want ghcr.io/org/repo", pusher.gotRef)
 	}
 
-	r := builder.got
-	if r.Target != "build" || r.Platform != "linux/arm64" || r.SourceDateEpoch != "1700000000" ||
-		r.CacheRef() != "ghcr.io/org/buildcache:app-arm64" || !r.CachePush {
-		t.Errorf("request not threaded: %+v", r)
+	wantRequest := container.BuildRequest{
+		Context:         ".",
+		Containerfile:   "Containerfile",
+		Target:          "build",
+		Platform:        "linux/arm64",
+		BuildArgs:       []string{"VERSION=1.2.3"},
+		Secrets:         []string{"id=db,src=/run/secrets/db"},
+		Labels:          []string{"org.opencontainers.image.version=1.2.3"},
+		SourceDateEpoch: "1700000000",
+		CacheRepo:       "ghcr.io/org/buildcache",
+		CacheScope:      "app-arm64",
+		CachePush:       true,
+		Mode:            container.BuildModePushByDigest,
+		ImageRef:        "ghcr.io/org/repo",
+	}
+	if !reflect.DeepEqual(builder.got, wantRequest) {
+		t.Errorf("build request =\n%+v\nwant\n%+v", builder.got, wantRequest)
 	}
 
-	if len(r.Secrets) != 1 || r.Secrets[0] != "id=db,src=/run/secrets/db" {
-		t.Errorf("secrets not threaded: %v", r.Secrets)
+	// The cache reference is assembled by the domain rather than re-encoded
+	// by callers, so it is worth naming separately from the two fields.
+	if ref := builder.got.CacheRef(); ref != "ghcr.io/org/buildcache:app-arm64" {
+		t.Errorf("cache ref = %q, want ghcr.io/org/buildcache:app-arm64", ref)
 	}
 }
 
