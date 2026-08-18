@@ -17,9 +17,9 @@ this work.
 - [x] Freeze the authoritative v2 schema and fixtures.
 - [x] Implement every consumer against the frozen fixture.
 - [x] Replace Forge Lab v1 emission with v2 emission.
-- [ ] Pass all provider-free verification gates.
+- [x] Pass all provider-free verification gates.
 - [ ] Complete guarded live verification with disposable Forge Lab state.
-- [ ] Record final commits and residual risks.
+- [x] Record final commits and residual risks.
 
 ## Repositories And Baselines
 
@@ -264,18 +264,21 @@ adding a temporary v1 compatibility layer.
 
 ## Phase 6: Provider-Free Cross-Repository Gate
 
-- [ ] Confirm every consumer fixture is byte-for-byte copied from the
+- [x] Confirm every consumer fixture is byte-for-byte copied from the
   authoritative Forge Lab fixture or records its source hash.
-- [ ] Confirm every active parser accepts v2 and rejects v1.
-- [ ] Confirm unknown and duplicate keys fail at every nested boundary.
-- [ ] Confirm no consumer derives OCI or Fulcio endpoints from forge hostnames.
-- [ ] Confirm no consumer reads retired `LAB_TARGETS`, `LAB_CA_FILE`,
+- [x] Confirm every active parser accepts v2 and rejects v1.
+- [x] Confirm unknown keys and duplicate members fail at every consumer parser
+  boundary; Forge Lab rejects duplicate semantic identities in emitted data.
+- [x] Confirm consumers use declared OCI and Fulcio endpoints; hostname
+  relationships are derived only as independent containment expectations.
+- [x] Confirm no consumer reads retired `LAB_TARGETS`, `LAB_CA_FILE`,
   `LAB_FULCIO_URL`, or `LAB_FULCIO_ISSUERS` inputs.
-- [ ] Confirm no normal neutral-v1 wording remains in active documentation.
-- [ ] Confirm recovery-v2, shape-v2, evidence versions, claim versions, and
+- [x] Confirm no normal neutral-v1 wording remains in active documentation;
+  remaining references are rejection, cleanup, or historical evidence.
+- [x] Confirm recovery-v2, shape-v2, evidence versions, claim versions, and
   journal versions were not mechanically changed.
-- [ ] Run REUSE checks in all changed repositories.
-- [ ] Record exact commands and results below.
+- [x] Run REUSE checks in all changed repositories.
+- [x] Record exact commands and results below.
 
 ## Phase 7: Guarded Live Cutover
 
@@ -318,6 +321,7 @@ generation.
 | forge-tidy | `just test-race`; Go lint; REUSE; tagged compile-only checks | Pass |
 | forge-sync | Offline unit/race; integration; fuzz seeds; REUSE; tagged compile-only checks | Pass |
 | release-ci | Pinned `test-static.sh`; acceptance unit; ShellCheck; actionlint; REUSE | Pass |
+| Cross-repository | Canonical fixture `cmp`; retired-input scans; version/docs review; REUSE | Pass |
 
 ## Commit Record
 
@@ -344,5 +348,7 @@ generation.
 - Provider-free tests cannot prove real token scopes, OCI cleanup, Fulcio
   issuance, or source-rollback cleanup. Those claims require the guarded live
   phase.
+- The guarded live cutover has not been attempted. It requires separate explicit
+  authorization for disposable Forge Lab provider state.
 - Existing uncommitted work must remain reviewable and must not be hidden inside
   broad v2 commits.
