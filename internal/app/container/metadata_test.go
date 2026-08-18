@@ -6,6 +6,7 @@ package container_test
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -162,7 +163,29 @@ func TestComputeMetadata_PrimaryByPriority(t *testing.T) {
 	}
 }
 
-func TestComputeMetadata_LabelsWithOverrides_SkipFetch(t *testing.T) {
+// labelsFromSink parses the multi-line labels output into key/value pairs.
+// Three tests were each doing this inline.
+func labelsFromSink(t *testing.T, sink *fakeoutputsink.Sink) map[string]string {
+	t.Helper()
+
+	got := map[string]string{}
+
+	for _, line := range sink.Multiline("labels") {
+		key, value, _ := strings.Cut(line, "=")
+		got[key] = value
+	}
+
+	return got
+}
+
+// TestComputeMetadata_OverriddenFieldsAreNotFetched covers the supplied side of
+// the rule: a description and licence given on the input are used as-is and the
+// forge is not asked for them.
+//
+// The labels are compared as a whole set. They ship on the published image, so
+// one appearing that nobody asked for is worth seeing, and checking only the
+// expected keys cannot.
+func TestComputeMetadata_OverriddenFieldsAreNotFetched(t *testing.T) {
 	t.Parallel()
 	prov := newFake(t, provider.EventContext{
 		Repo:    "example/app",                    //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
@@ -183,7 +206,6 @@ func TestComputeMetadata_LabelsWithOverrides_SkipFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	labels := sink.Multiline("labels")
 	want := map[string]string{
 		"org.opencontainers.image.title":       "app",
 		"org.opencontainers.image.description": "A test image",
@@ -194,25 +216,22 @@ func TestComputeMetadata_LabelsWithOverrides_SkipFetch(t *testing.T) {
 		"org.opencontainers.image.version":     "main",
 		"org.opencontainers.image.created":     "2026-01-01T00:00:00Z",
 	}
-	got := map[string]string{}
-
-	for _, line := range labels {
-		k, v, _ := strings.Cut(line, "=")
-		got[k] = v
+	if got := labelsFromSink(t, sink); !reflect.DeepEqual(got, want) {
+		t.Errorf("labels = %v\nwant %v", got, want)
 	}
 
-	for k, v := range want {
-		if got[k] != v {
-			t.Errorf("%s = %q, want %q", k, got[k], v)
-		}
-	}
-	// Both overrides set → no FetchRepoMetadata call.
+	// Both fields were supplied, so there is nothing to look up. The fetch is
+	// a network call against the forge; skipping it is the point of the
+	// overrides, not an incidental saving.
 	if c := prov.Calls().FetchRepoMetadata; c != 0 {
-		t.Errorf("FetchRepoMetadata calls = %d, want 0 when both overrides set", c)
+		t.Errorf("FetchRepoMetadata calls = %d, want 0 when both overrides are set", c)
 	}
 }
 
-func TestComputeMetadata_LabelsFetchOnMissingFields(t *testing.T) {
+// TestComputeMetadata_MissingFieldsComeFromTheForge is the other side: with
+// neither field supplied, both are fetched once from the repository named in
+// the event context.
+func TestComputeMetadata_MissingFieldsComeFromTheForge(t *testing.T) {
 	t.Parallel()
 	prov := newFake(t, provider.EventContext{
 		Repo:    "example/app",
@@ -233,22 +252,20 @@ func TestComputeMetadata_LabelsFetchOnMissingFields(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	labels := sink.Multiline("labels")
 	want := map[string]string{
+		"org.opencontainers.image.title":       "app",
 		"org.opencontainers.image.description": "fetched description",
 		"org.opencontainers.image.licenses":    "MIT",
+		"org.opencontainers.image.url":         "https://github.com/example/app",
+		"org.opencontainers.image.source":      "https://github.com/example/app",
+		"org.opencontainers.image.version":     "main",
+		"org.opencontainers.image.created":     "2026-01-01T00:00:00Z",
+		// This fixture has no SHA, and the label is emitted empty rather
+		// than left out. Asserting the whole set is what shows that.
+		"org.opencontainers.image.revision": "",
 	}
-	got := map[string]string{}
-
-	for _, line := range labels {
-		k, v, _ := strings.Cut(line, "=")
-		got[k] = v
-	}
-
-	for k, v := range want {
-		if got[k] != v {
-			t.Errorf("%s = %q, want %q", k, got[k], v)
-		}
+	if got := labelsFromSink(t, sink); !reflect.DeepEqual(got, want) {
+		t.Errorf("labels = %v\nwant %v", got, want)
 	}
 
 	if c := prov.Calls().FetchRepoMetadata; c != 1 {
@@ -276,18 +293,13 @@ func TestComputeMetadata_LabelsFetchErrorIsNonFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("API error should be non-fatal, got: %v", err)
 	}
-	// description / license should be empty in the labels.
-	labels := sink.Multiline("labels")
-	got := map[string]string{}
-
-	for _, line := range labels {
-		k, v, _ := strings.Cut(line, "=")
-		got[k] = v
-	}
-
-	if got["org.opencontainers.image.description"] != "" {
-		t.Errorf("description should be empty after fetch failure, got %q",
-			got["org.opencontainers.image.description"])
+	// A failed lookup leaves the fields it would have filled empty, rather
+	// than aborting the whole metadata step.
+	got := labelsFromSink(t, sink)
+	for _, key := range []string{"org.opencontainers.image.description", "org.opencontainers.image.licenses"} {
+		if got[key] != "" {
+			t.Errorf("%s = %q, want empty after a failed fetch", key, got[key])
+		}
 	}
 }
 
