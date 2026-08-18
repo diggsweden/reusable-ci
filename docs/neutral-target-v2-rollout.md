@@ -335,7 +335,7 @@ generation.
 | forge-sync | Neutral-v2 consumer | `0ac79bb` |
 | release-ci | Token and live-cleanup fixes | `b4474e3`, `c97f1d6` |
 | release-ci | Neutral-v2 consumer | `428a931` |
-| reusable-ci | Final rollout status | Pending |
+| reusable-ci | Final rollout status | `b9f8673c` |
 
 ## Residual Risks
 
