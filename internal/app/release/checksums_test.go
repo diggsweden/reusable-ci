@@ -130,22 +130,37 @@ func TestChecksums_LabelsContainerSBOMsWithoutTheirDirectory(t *testing.T) {
 	}
 }
 
+// TestChecksums_CreatesEmptyOutputWhenNothingFound covers a run that finds
+// nothing to hash. The manifest is still written, empty, because everything
+// downstream is entitled to the file existing.
+//
+// The two rows are the two ways of finding nothing, which are different code
+// paths: a directory that is not there returns before the walk begins, while
+// one that exists and is empty walks zero entries. The old rows were named for
+// that distinction but did not make it -- both ran against a bare temp dir, so
+// both took the missing-directory path. The announcement line, printed only
+// once the directory has been read, is what tells them apart.
 func TestChecksums_CreatesEmptyOutputWhenNothingFound(t *testing.T) {
-	tests := []struct {
-		name  string
-		input apprelease.ChecksumsInput
+	for _, testCase := range []struct {
+		name          string
+		createDirs    bool
+		wantAnnounced bool
 	}{
-		{name: "default_dirs_empty"},
-		{name: "missing_dirs", input: apprelease.ChecksumsInput{ReleaseArtifactsDir: "./nonexistent", SBOMDir: "./missing-sbom"}},
-	}
-	for _, testCase := range tests {
+		{name: "the directories are not there", createDirs: false, wantAnnounced: false},
+		{name: "the directories exist but are empty", createDirs: true, wantAnnounced: true},
+	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			fsys := testfs.NewReal(t)
 			fsys.Chdir()
 
+			if testCase.createDirs {
+				fsys.MkdirAll("release-artifacts")
+				fsys.MkdirAll("sbom-artifacts")
+			}
+
 			var out bytes.Buffer
 
-			count, err := apprelease.Checksums(&out, testCase.input)
+			count, err := apprelease.Checksums(&out, apprelease.ChecksumsInput{})
 			if err != nil {
 				t.Fatalf("Checksums: %v", err)
 			}
@@ -154,12 +169,22 @@ func TestChecksums_CreatesEmptyOutputWhenNothingFound(t *testing.T) {
 				t.Errorf("count = %d, want 0", count)
 			}
 
-			if _, err := os.Stat("checksums.sha256"); err != nil {
-				t.Errorf("output file should still be created (empty): %v", err)
+			info, err := os.Stat("checksums.sha256")
+			if err != nil {
+				t.Fatalf("output file should still be created: %v", err)
+			}
+
+			// The name of this test is the claim; nothing checked it.
+			if info.Size() != 0 {
+				t.Errorf("manifest = %d bytes, want empty", info.Size())
 			}
 
 			if !strings.Contains(out.String(), "Generated 0 checksums") {
 				t.Errorf("out = %q", out.String())
+			}
+
+			if announced := strings.Contains(out.String(), "Checksumming release artifacts from"); announced != testCase.wantAnnounced {
+				t.Errorf("announced walking the directory = %v, want %v\nout = %q", announced, testCase.wantAnnounced, out.String())
 			}
 		})
 	}
