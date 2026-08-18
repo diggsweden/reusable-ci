@@ -8,6 +8,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -104,15 +105,21 @@ func TestGenerateContainer_LoopsPerArtifactType(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// 2 artifact-type iterations × 1 multi-output syft call each = 2 calls.
-	if len(syft.calls) != 2 {
-		t.Errorf("expected 2 syft calls (one per artifact type, each emitting both formats), got %d", len(syft.calls))
+	// One scan per artifact type, and every scan is identical: same image,
+	// same two output files. The artifact type reaches the log line and
+	// nothing else -- GenerateContainer passes the same GenerateInput on
+	// every iteration -- so a second type doubles the scanning to overwrite
+	// the first result. Asserted as it is, rather than as a call count, so
+	// the duplication is visible rather than implied.
+	wantCall := syftCall{
+		target: "img@sha256:abc",
+		outputs: map[string]string{
+			"cyclonedx-json": "repo-1.0.0-analyzed-container-sbom.cyclonedx.json",
+			"spdx-json":      "repo-1.0.0-analyzed-container-sbom.spdx.json",
+		},
 	}
-
-	for i, c := range syft.calls {
-		if got := len(c.outputs); got != 2 {
-			t.Errorf("call %d: expected 2 output formats, got %d", i, got)
-		}
+	if want := []syftCall{wantCall, wantCall}; !reflect.DeepEqual(syft.calls, want) {
+		t.Errorf("syft calls =\n%+v\nwant\n%+v", syft.calls, want)
 	}
 
 	for _, want := range []string{

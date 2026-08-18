@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -311,8 +312,21 @@ func TestGenerate_PythonArtifactLayer_TrimsWheelAndSdistNames(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(syft.calls) != 2 {
-		t.Fatalf("syft calls = %+v", syft.calls)
+	// Every other test in this file names what syft was pointed at; this one
+	// checked only how many times it was called, so scanning the same wheel
+	// twice would have passed.
+	wantTargets := []string{
+		filepath.Join("dist", "demo-1.2.3-py3-none-any.whl"),
+		filepath.Join("dist", "demo-1.2.3.tar.gz"),
+	}
+
+	gotTargets := make([]string, 0, len(syft.calls))
+	for _, call := range syft.calls {
+		gotTargets = append(gotTargets, call.target)
+	}
+
+	if !reflect.DeepEqual(gotTargets, wantTargets) {
+		t.Errorf("syft targets = %v, want %v", gotTargets, wantTargets)
 	}
 
 	for _, want := range []string{
