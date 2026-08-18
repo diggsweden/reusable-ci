@@ -14,6 +14,8 @@ import (
 
 	adaptergit "github.com/diggsweden/reusable-ci/internal/adapters/git"
 	domaingit "github.com/diggsweden/reusable-ci/internal/domain/git"
+	"github.com/diggsweden/reusable-ci/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/internal/domain/version"
 	"github.com/diggsweden/reusable-ci/internal/testutil/isolatedgit"
 )
 
@@ -323,5 +325,36 @@ func TestVerifyTagSignature_NonExistentTagErrors(t *testing.T) {
 	_, _, _, err := r.VerifyTagSignature(context.Background(), "nope", []byte("anything"))
 	if err == nil {
 		t.Error("expected error for missing tag")
+	}
+}
+
+// TestAddPathspecs_StagesPresentDespiteMissing is the regression guard for
+// the batched-add bug: `git add -- a b c` aborts the whole invocation when
+// any one pathspec matches nothing, staging none of the others. A real
+// Kotlin-DSL Gradle project hits this on every version bump, because
+// version.FilePattern(Gradle) names files that project does not have.
+//
+// The pre-existing AddPathspecs test passed while the bug shipped because
+// it only ever called with all-missing or all-present pathspecs. The mix
+// is the case that matters.
+func TestAddPathspecs_StagesPresentDespiteMissing(t *testing.T) {
+	r, ig := newRepo(t)
+	ctx := context.Background()
+
+	// A Kotlin-DSL-only worktree: no build.gradle, no gradle.properties.
+	for _, name := range []string{"CHANGELOG.md", "build.gradle.kts", "settings.gradle.kts"} {
+		if err := os.WriteFile(filepath.Join(ig.Dir, name), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The real production pattern, not a hand-picked one.
+	r.AddPathspecs(ctx, strings.Fields(version.FilePattern(projecttype.Gradle)))
+
+	staged := ig.Git("diff", "--cached", "--name-only")
+	for _, want := range []string{"CHANGELOG.md", "build.gradle.kts", "settings.gradle.kts"} {
+		if !strings.Contains(staged, want) {
+			t.Errorf("staged = %q, want it to contain %q", staged, want)
+		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
@@ -22,14 +23,33 @@ func (r *Repo) Config(ctx context.Context, key, value string) error {
 	return err
 }
 
-// AddPathspecs runs `git add -- <pathspec> ...`. A pathspec that
-// matches no files causes git to exit non-zero; this is *expected*
-// during bump flows where the bump may legitimately produce nothing to
-// stage. The error is swallowed — callers use HasStagedChanges() to
-// determine if anything was actually added.
+// AddPathspecs stages each pathspec with a separate `git add -- <pathspec>`.
+//
+// One invocation per pathspec is deliberate, not wasteful. `git add`
+// aborts the *entire* invocation when any pathspec matches nothing —
+// it does not stage the ones that did match:
+//
+//	git add -- CHANGELOG.md build.gradle.kts build.gradle  # build.gradle absent
+//	fatal: pathspec 'build.gradle' did not match any files  (exit 128, nothing staged)
+//
+// Version-bump patterns legitimately list files a given project may not
+// have (a Kotlin-DSL Gradle project has no build.gradle; a pnpm project
+// has no package-lock.json), so a single batched add would silently stage
+// nothing and the bump commit would be skipped with no error. Pathspec
+// glob magic does not help: `:(glob)settings.gradle*` is equally fatal
+// when it matches nothing.
+//
+// Per-pathspec failures are best-effort — a missing optional project file
+// is normal — but they are logged rather than swallowed, because that
+// silence is exactly what hid the batched-add bug. Callers still use
+// HasStagedChanges() to decide whether anything was actually added.
 func (r *Repo) AddPathspecs(ctx context.Context, pathspecs []string) {
-	args := append([]string{"add", "--"}, pathspecs...)
-	_, _ = r.Run(ctx, args...) // intentional swallow
+	for _, pathspec := range pathspecs {
+		if _, err := r.Run(ctx, "add", "--", pathspec); err != nil {
+			slog.Debug("git add staged nothing for pathspec",
+				"pathspec", pathspec, "err", err)
+		}
+	}
 }
 
 // HasStagedChanges reports whether the index differs from HEAD.

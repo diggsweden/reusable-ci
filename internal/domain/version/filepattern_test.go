@@ -17,9 +17,9 @@ func TestFilePattern_KnownTypes(t *testing.T) {
 	cases := map[projecttype.Type]string{
 		projecttype.Maven:         "CHANGELOG.md :(glob)**/pom.xml",
 		projecttype.NPM:           "CHANGELOG.md package.json package-lock.json",
-		projecttype.Gradle:        "CHANGELOG.md gradle.properties build.gradle.kts settings.gradle.kts build.gradle settings.gradle",
-		projecttype.GradleAndroid: "CHANGELOG.md gradle.properties build.gradle.kts settings.gradle.kts build.gradle settings.gradle",
-		projecttype.XcodeIOS:      "CHANGELOG.md versions.xcconfig :(glob)**/*.xcconfig",
+		projecttype.Gradle:        "CHANGELOG.md :(glob)gradle.properties :(glob)build.gradle* :(glob)settings.gradle*",
+		projecttype.GradleAndroid: "CHANGELOG.md :(glob)gradle.properties :(glob)build.gradle* :(glob)settings.gradle*",
+		projecttype.XcodeIOS:      "CHANGELOG.md :(glob)**/*.xcconfig",
 		projecttype.Python:        "CHANGELOG.md pyproject.toml",
 		projecttype.Go:            "CHANGELOG.md", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		projecttype.Cargo:         "CHANGELOG.md Cargo.toml Cargo.lock",
