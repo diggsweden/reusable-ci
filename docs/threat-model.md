@@ -150,6 +150,30 @@ The fix is one line — run `--path` through `validateSafeRelativePath` like its
 two neighbours — and it would reject nothing any current caller passes, since
 the engine's own workflows pass `dist/`.
 
+## Open question: an empty expected identity matches an unlabelled image
+
+`OCIReleaseIdentityMatches` compares four label values against an expected
+identity. Every comparison is between a label that may be absent and a field
+that may be empty, so when the caller supplies nothing and the image carries no
+labels, all four comparisons hold. Confirmed by probe:
+`OCIReleaseIdentityMatches("{}", OCIReleaseIdentityInput{})` returns **true**.
+
+It fails closed the moment either side has content — a labelled image against
+an empty expectation returns false — so this is only reachable when the
+expected identity is itself empty.
+
+The CLI cannot reach it: `container oci-release-identity-matches` marks all
+four identity flags `Required`. The other caller,
+`releaseimageverify.go`, passes `expected.IdentityVersion`,
+`expected.IdentityRefName`, `expected.IdentitySource` and `expected.Commit`
+from a verification record. Whether those can be empty at that point decides
+whether this matters, and that is the question to settle.
+
+If they can, the predicate answers "yes, this is the expected release" about an
+image carrying no identity at all, which is the wrong direction for a check
+that gates re-attestation. Requiring a non-empty expected identity — refusing
+rather than matching — would cost nothing for callers that already populate it.
+
 ## Open question: artifact transfer plan validation
 
 `DownloadArtifacts` re-parses and re-validates the artifact transfer plan on the
