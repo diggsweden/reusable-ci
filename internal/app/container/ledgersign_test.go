@@ -13,6 +13,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -165,7 +167,18 @@ func asMap(t *testing.T, value any, label string) map[string]any {
 	return m
 }
 
-func TestSignLedgerImages_SignsSBOMAndImagePredicate(t *testing.T) {
+// TestSignLedgerImages_AttestsAGeneratedSBOMAndTheImagesLineage covers the
+// ordinary entry: no SBOM is pinned, so one is generated from the same
+// digest-pinned reference that gets signed, and the provenance that follows
+// records the image's tags and names the base it was built on as a resolved
+// dependency.
+//
+// The attested externalParameters are compared whole rather than field by
+// field. These are claims a verifier reads, so a field appearing that nobody
+// meant to attest is as much a change as one going missing, and the previous
+// seven-way condition could see neither -- it reported the entire map without
+// saying which field was wrong, and never looked at image.digest at all.
+func TestSignLedgerImages_AttestsAGeneratedSBOMAndTheImagesLineage(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	entry := ledgerSignEntry(t)
@@ -187,12 +200,19 @@ func TestSignLedgerImages_SignsSBOMAndImagePredicate(t *testing.T) {
 		t.Fatalf("SignLedgerImages: %v", err)
 	}
 
-	if len(signer.signs) != 1 || signer.signs[0].ImageRef != resolvedRef {
-		t.Fatalf("sign calls = %+v, want one sign of %s", signer.signs, resolvedRef)
+	if len(signer.signs) != 1 {
+		t.Fatalf("sign calls = %+v, want exactly one", signer.signs)
 	}
 
-	if len(syft.targets) != 1 || syft.targets[0] != resolvedRef {
-		t.Fatalf("syft targets = %v, want %s", syft.targets, resolvedRef)
+	if got := signer.signs[0].ImageRef; got != resolvedRef {
+		t.Errorf("signed %q, want the digest-pinned candidate %q", got, resolvedRef)
+	}
+
+	// The SBOM is generated from the same reference that is signed. Scanning
+	// a tag while signing a digest would attest a different image than the
+	// one the signature covers.
+	if !reflect.DeepEqual(syft.targets, []string{resolvedRef}) {
+		t.Errorf("syft targets = %v, want [%s]", syft.targets, resolvedRef)
 	}
 
 	if len(signer.attests) != 2 {
@@ -215,13 +235,32 @@ func TestSignLedgerImages_SignsSBOMAndImagePredicate(t *testing.T) {
 	build := asMap(t, predicate["buildDefinition"], "buildDefinition")
 	ext := asMap(t, build["externalParameters"], "externalParameters")
 
-	image := asMap(t, ext["image"], "image")
-	if image["ref"] != resolvedRef || image["final_tag"] != entry.FinalTag || image["moving_tag"] != entry.MovingTag || image["candidate_tag"] != entry.CandidateTag || image["role"] != entry.Role || image["flavor"] != entry.Flavor || image["sbom"] != entry.SBOM {
-		t.Errorf("image externalParameters mismatch: %#v", image)
+	wantImage := map[string]any{
+		"ref":           resolvedRef,
+		"digest_ref":    entry.Digest,
+		"digest":        map[string]any{"sha256": strings.TrimPrefix(entry.Digest, "sha256:")},
+		"final_tag":     entry.FinalTag,
+		"moving_tag":    entry.MovingTag,
+		"candidate_tag": entry.CandidateTag,
+		"role":          entry.Role,
+		"flavor":        entry.Flavor,
+		"sbom":          entry.SBOM,
+	}
+	if image := asMap(t, ext["image"], "image"); !reflect.DeepEqual(image, wantImage) {
+		t.Errorf("image externalParameters =\n %#v\nwant %#v", image, wantImage)
 	}
 
-	if image["digest_ref"] != entry.Digest {
-		t.Errorf("image.digest_ref = %#v", image["digest_ref"])
+	// Which parameters are attested at all, not only what the ones we expected
+	// contain. An extra key here is an extra claim in a signed document.
+	gotKeys := make([]string, 0, len(ext))
+	for key := range ext {
+		gotKeys = append(gotKeys, key)
+	}
+
+	sort.Strings(gotKeys)
+
+	if wantKeys := []string{"base", "image", "ref", "source"}; !reflect.DeepEqual(gotKeys, wantKeys) {
+		t.Errorf("externalParameters keys = %v, want %v", gotKeys, wantKeys)
 	}
 
 	if asMap(t, ext["base"], "base")["ref"] != entry.BaseRef {
@@ -233,8 +272,12 @@ func TestSignLedgerImages_SignsSBOMAndImagePredicate(t *testing.T) {
 		t.Fatalf("resolvedDependencies is not a slice: %#v", build["resolvedDependencies"])
 	}
 
-	if len(deps) != 1 || asMap(t, deps[0], "resolvedDependencies[0]")["uri"] != "oci://"+entry.BaseRef {
-		t.Errorf("base dependency mismatch: %#v", deps)
+	if len(deps) != 1 {
+		t.Fatalf("resolvedDependencies = %#v, want exactly the base image", deps)
+	}
+
+	if uri := asMap(t, deps[0], "resolvedDependencies[0]")["uri"]; uri != "oci://"+entry.BaseRef {
+		t.Errorf("base dependency uri = %#v, want oci://%s", uri, entry.BaseRef)
 	}
 }
 
