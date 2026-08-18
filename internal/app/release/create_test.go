@@ -167,7 +167,14 @@ func TestCreateRelease_MarksOnlyPrereleaseTagsAsPrerelease(t *testing.T) {
 	}
 }
 
-func TestCreateRelease_AttachArtifactsGlobExpands(t *testing.T) {
+// TestCreateRelease_AttachesGlobMatchesInSortedOrder pins the determinism the
+// collector goes out of its way to provide: glob matches are sorted before
+// they are attached, so the release carries the same asset list from one run
+// to the next whatever order the filesystem enumerated them in.
+//
+// The fixture returns foo before bar for exactly that reason. A set comparison
+// -- what this asserted before -- cannot see a sort at all.
+func TestCreateRelease_AttachesGlobMatchesInSortedOrder(t *testing.T) {
 	t.Parallel()
 	prov := fakeprovider.New(t)
 	fs := &fakeFS{
@@ -189,21 +196,20 @@ func TestCreateRelease_AttachArtifactsGlobExpands(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assets := prov.CreateReleaseCalls()[0].Spec.Assets
-
-	gotSet := map[string]bool{}
-	for _, a := range assets {
-		gotSet[a] = true
-	}
-
-	for _, want := range []string{"build/foo.zip", "build/bar.zip"} {
-		if !gotSet[want] {
-			t.Errorf("missing %q in %v", want, assets)
-		}
+	wantAssets := []string{"build/bar.zip", "build/foo.zip"}
+	if assets := prov.CreateReleaseCalls()[0].Spec.Assets; !reflect.DeepEqual(assets, wantAssets) {
+		t.Errorf("assets = %v, want %v", assets, wantAssets)
 	}
 }
 
-func TestCreateRelease_AttachArtifactsCSVAndSignatures(t *testing.T) {
+// TestCreateRelease_SplitsTheAttachListOnCommas covers the caller-facing shape
+// of --attach-artifacts: one comma-separated list, surrounding spaces ignored,
+// entries attached in the order they were written.
+//
+// The signature is in the expected list rather than in the test's name. It is
+// not attached by the list at all -- the sidecar sweep runs at the end of
+// collection and appends it, which is why it lands after both named files.
+func TestCreateRelease_SplitsTheAttachListOnCommas(t *testing.T) {
 	t.Parallel()
 	prov := fakeprovider.New(t)
 
@@ -227,17 +233,9 @@ func TestCreateRelease_AttachArtifactsCSVAndSignatures(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assets := prov.CreateReleaseCalls()[0].Spec.Assets
-
-	gotSet := map[string]bool{}
-	for _, asset := range assets {
-		gotSet[asset] = true
-	}
-
-	for _, want := range []string{"file1.txt", "file1.txt.asc", "file2.md"} {
-		if !gotSet[want] {
-			t.Errorf("missing %q in %v", want, assets)
-		}
+	wantAssets := []string{"file1.txt", "file2.md", "file1.txt.asc"}
+	if assets := prov.CreateReleaseCalls()[0].Spec.Assets; !reflect.DeepEqual(assets, wantAssets) {
+		t.Errorf("assets = %v, want %v", assets, wantAssets)
 	}
 }
 
