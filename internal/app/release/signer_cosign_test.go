@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"reflect"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/cosign"
@@ -78,13 +79,13 @@ func TestCosignSigner_SigstoreSignFileShape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := signer.SignFile(context.Background(), "/tmp/app.tgz"); err != nil {
+	if err := signer.SignFile(context.Background(), "app.tgz"); err != nil {
 		t.Fatal(err)
 	}
 
 	want := cosign.SignBlobInput{
-		Artifact:   "/tmp/app.tgz",
-		BundlePath: "/tmp/app.tgz.bundle",
+		Artifact:   "app.tgz",
+		BundlePath: "app.tgz.bundle",
 		Keyless:    true,
 		OIDCIssuer: "https://token.actions.githubusercontent.com",
 	}
@@ -104,13 +105,13 @@ func TestCosignSigner_KMSSignFileShape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := signer.SignFile(context.Background(), "/tmp/app.tgz"); err != nil {
+	if err := signer.SignFile(context.Background(), "app.tgz"); err != nil {
 		t.Fatal(err)
 	}
 
 	want := cosign.SignBlobInput{
-		Artifact:   "/tmp/app.tgz",
-		BundlePath: "/tmp/app.tgz.bundle",
+		Artifact:   "app.tgz",
+		BundlePath: "app.tgz.bundle",
 		KeyRef:     "hashivault://transit/keys/release",
 	}
 	if rec.got != want {
@@ -118,38 +119,43 @@ func TestCosignSigner_KMSSignFileShape(t *testing.T) {
 	}
 }
 
-func TestCosignSigner_ExtensionsMatchMethod(t *testing.T) {
-	cases := []struct {
-		method domainrelease.SignMethod
-		want   []string
-	}{
-		{domainrelease.SignMethodSigstore, []string{".bundle"}},
-		{domainrelease.SignMethodKMS, []string{".bundle"}},
-	}
+// TestCosignSigner_AdvertisesTheExtensionItWrites ties the two halves of the
+// sidecar contract together. Extensions() is what the release flow later scans
+// for to find a signature, and BundlePath is where cosign is told to put one.
+// If those drift apart the signature is written under a name nothing looks
+// for, and the release is published missing it.
+//
+// Both cosign methods write .bundle, so the previous table asserted the same
+// value twice and could not have caught the two sides disagreeing.
+func TestCosignSigner_AdvertisesTheExtensionItWrites(t *testing.T) {
+	const artifact = "app.tgz"
 
-	for _, c := range cases {
-		in := apprelease.CosignSignerInput{Method: c.method}
-		if c.method == domainrelease.SignMethodKMS {
-			in.KeyRef = "awskms:///alias/X"
-		}
+	for name, in := range map[string]apprelease.CosignSignerInput{
+		"sigstore": {Method: domainrelease.SignMethodSigstore, OIDCIssuer: "https://token.example.internal"},
+		"kms":      {Method: domainrelease.SignMethodKMS, KeyRef: "awskms:///alias/X"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := &recordingBlobber{}
 
-		signer, err := apprelease.NewCosignSigner(&recordingBlobber{}, in, io.Discard)
-		if err != nil {
-			t.Fatalf("method %s: %v", c.method, err)
-		}
-
-		got := signer.Extensions()
-		if len(got) != len(c.want) {
-			t.Errorf("method %s extensions = %v, want %v", c.method, got, c.want)
-
-			continue
-		}
-
-		for i, ext := range c.want {
-			if got[i] != ext {
-				t.Errorf("method %s extensions[%d] = %q, want %q", c.method, i, got[i], ext)
+			signer, err := apprelease.NewCosignSigner(rec, in, io.Discard)
+			if err != nil {
+				t.Fatalf("method %s: %v", name, err)
 			}
-		}
+
+			want := []string{".bundle"}
+			if got := signer.Extensions(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("extensions = %v, want %v", got, want)
+			}
+
+			if err := signer.SignFile(context.Background(), artifact); err != nil {
+				t.Fatal(err)
+			}
+
+			if wantPath := artifact + signer.Extensions()[0]; rec.got.BundlePath != wantPath {
+				t.Errorf("BundlePath = %q, but Extensions() advertises %q, so it wants %q",
+					rec.got.BundlePath, signer.Extensions()[0], wantPath)
+			}
+		})
 	}
 }
 
@@ -170,24 +176,24 @@ func TestCosignSigner_SigstoreCarriesSelfHostedEndpoints(t *testing.T) {
 		OIDCIssuer:      "https://gitlab.example.internal",
 		FulcioURL:       "https://fulcio.example.internal",
 		RekorURL:        "https://rekor.example.internal",
-		TrustedRootPath: "/tmp/trusted-root.json",
+		TrustedRootPath: "trusted-root.json",
 	}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := signer.SignFile(context.Background(), "/tmp/app.tgz"); err != nil {
+	if err := signer.SignFile(context.Background(), "app.tgz"); err != nil {
 		t.Fatal(err)
 	}
 
 	want := cosign.SignBlobInput{
-		Artifact:        "/tmp/app.tgz",
-		BundlePath:      "/tmp/app.tgz.bundle",
+		Artifact:        "app.tgz",
+		BundlePath:      "app.tgz.bundle",
 		Keyless:         true,
 		OIDCIssuer:      "https://gitlab.example.internal",
 		FulcioURL:       "https://fulcio.example.internal",
 		RekorURL:        "https://rekor.example.internal",
-		TrustedRootPath: "/tmp/trusted-root.json",
+		TrustedRootPath: "trusted-root.json",
 	}
 	if rec.got != want {
 		t.Errorf("SignBlobInput:\n got=%+v\nwant=%+v", rec.got, want)
