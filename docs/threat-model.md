@@ -121,6 +121,35 @@ Note that emitting `source` under the forgejo profile is not an option: its
 absence is deliberate compatibility shaping for existing forgejo-ci verifiers,
 pinned by `TestGenerateProvenance_ForgejoProfileNamesTheWorkflowNotAGenericSource`.
 
+## Open question: `assemble-dist --path` is the least validated destructive flag
+
+`release assemble-dist --prune-dirs` deletes every subdirectory of `--path`
+with `os.RemoveAll`. That path is taken straight from the flag and validated
+only by `validateSingleLineValue`, which rejects an empty value and embedded
+newlines. It is not checked for traversal or absoluteness. The last-ditch guard
+in `pruneAssembleDistDirs` refuses only the literal `.` and `/`.
+
+Confirmed by probe, inside a temp directory: with the working directory at
+`<tmp>/work` and `--path ../victim --prune-dirs`, `<tmp>/victim/precious` was
+deleted. The command then failed on the empty tree, well after the removal.
+
+The inconsistency is the argument. `--release-images-path`, which only *writes*
+a file, is checked with `validateSafeRelativePath`. Transfer item paths, which
+only decide where a download lands, are checked the same way in this very
+function. `--path`, the one flag that deletes directories, is not.
+
+Classifying it honestly: on a fresh runner where the consumer already executes
+their own build code, this is not an escalation — they can remove files anyway.
+It is a foot-gun of the destructive kind, in the sense used above: a typo'd
+`--path ..` does not produce a confusing error deep in the pipeline, it removes
+directories and then reports something unrelated about an empty hand-off. It
+becomes more than that anywhere the flag could be set from less-trusted
+configuration, or in a privileged context of the kind ADR 0002 describes.
+
+The fix is one line — run `--path` through `validateSafeRelativePath` like its
+two neighbours — and it would reject nothing any current caller passes, since
+the engine's own workflows pass `dist/`.
+
 ## Open question: artifact transfer plan validation
 
 `DownloadArtifacts` re-parses and re-validates the artifact transfer plan on the
