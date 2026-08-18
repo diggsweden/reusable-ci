@@ -121,6 +121,38 @@ Note that emitting `source` under the forgejo profile is not an option: its
 absence is deliberate compatibility shaping for existing forgejo-ci verifiers,
 pinned by `TestGenerateProvenance_ForgejoProfileNamesTheWorkflowNotAGenericSource`.
 
+## Open question: artifact transfer plan validation
+
+`DownloadArtifacts` re-parses and re-validates the artifact transfer plan on the
+far side of a process boundary, since the plan arrives as JSON on
+`--artifact-transfer-plan-json`. That re-validation covers the item kind, the
+name/name_template exclusivity and a non-empty path. Two things it does not do,
+both confirmed by probe:
+
+- **`path` is not checked for safety.** `"path": "../../../etc/"` and
+  `"path": "/etc/"` are both accepted and handed to the downloader as the
+  directory to extract into. The same package guards publish assets and release
+  notes with `safeRelativePath`, and artifacts.yml rejects absolute and
+  traversal paths as described above, so this is the one re-validated field
+  held to a weaker standard than its neighbours.
+- **Validation is interleaved with fetching.** Items are validated inside the
+  download loop, so a plan whose first item is valid and whose second is invalid
+  downloads the first before failing. A refused plan can leave the workspace
+  partly populated.
+
+Severity is low as things stand: plans are engine-generated in
+`internal/domain/pipeline/releaseplan.go` and `snapshotreleaseplan.go`, where
+every path is a hardcoded constant (`./release-artifacts/`, `./sbom-artifacts/`,
+`./release-artifacts/binaries/`). Nothing consumer-authored reaches these
+fields today. This is defence in depth at a boundary that already re-validates
+everything else, not a live hole.
+
+Deciding either way is cheap. Validating the whole plan before the first fetch
+makes a refusal mean nothing happened, and running `path` through the same
+relative-path check as the rest of the package closes the gap with the
+convention the codebase already follows. Both change behaviour only for plans
+that no current producer emits.
+
 ## Reporting a security issue
 
 See [SECURITY.md](../SECURITY.md) for the disclosure process. The threat
