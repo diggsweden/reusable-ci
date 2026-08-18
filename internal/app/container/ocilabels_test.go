@@ -75,52 +75,69 @@ func TestOCIReleaseLabelFlags_RejectsMissingRequiredLabel(t *testing.T) {
 	}
 }
 
-func TestOCIReleaseIdentityMatches_SourceCaseDriftOnly(t *testing.T) {
+// TestOCIReleaseIdentityMatches_ToleratesCaseOnlyInTheSource pins how much
+// drift this predicate forgives. The source is compared case-insensitively,
+// because forge owner names drift in case; revision, version and ref.name are
+// exact.
+//
+// The second half of that rule was never tested. Three cases covered a match,
+// a wrong revision and a wrong repository path, so a predicate that folded
+// case everywhere -- accepting an image whose version differs only in case --
+// would have passed.
+func TestOCIReleaseIdentityMatches_ToleratesCaseOnlyInTheSource(t *testing.T) {
 	t.Parallel()
 
 	commit := strings.Repeat("b", 40)
-	labels := `{"org.opencontainers.image.revision":"` + commit + `","org.opencontainers.image.version":"v0.7.9","org.opencontainers.image.ref.name":"v0.7.9-alpine","org.opencontainers.image.source":"https://codeberg.org/Itiquette/nanolinter"}`
+	labels := `{"org.opencontainers.image.revision":"` + commit +
+		`","org.opencontainers.image.version":"v0.7.9","org.opencontainers.image.ref.name":"v0.7.9-alpine",` +
+		`"org.opencontainers.image.source":"https://codeberg.org/Itiquette/nanolinter"}`
 
-	match, err := appcontainer.OCIReleaseIdentityMatches(labels, appcontainer.OCIReleaseIdentityInput{
+	expected := appcontainer.OCIReleaseIdentityInput{
 		Revision: commit,
 		Version:  "v0.7.9",
 		RefName:  "v0.7.9-alpine",
-		Source:   "https://codeberg.org/itiquette/nanolinter",
-	})
-	if err != nil {
-		t.Fatal(err)
+		Source:   "https://codeberg.org/Itiquette/nanolinter",
 	}
 
-	if !match {
-		t.Fatal("source owner-case drift should match")
-	}
+	// Each row changes one field of an otherwise matching identity.
+	for name, testCase := range map[string]struct {
+		mutate func(*appcontainer.OCIReleaseIdentityInput)
+		want   bool
+	}{
+		"identical": {mutate: func(*appcontainer.OCIReleaseIdentityInput) {}, want: true},
+		"source owner case drift": {mutate: func(in *appcontainer.OCIReleaseIdentityInput) {
+			in.Source = "https://codeberg.org/itiquette/nanolinter"
+		}, want: true},
+		"source host case drift": {mutate: func(in *appcontainer.OCIReleaseIdentityInput) {
+			in.Source = "https://CODEBERG.ORG/Itiquette/nanolinter"
+		}, want: true},
 
-	match, err = appcontainer.OCIReleaseIdentityMatches(labels, appcontainer.OCIReleaseIdentityInput{
-		Revision: strings.Repeat("c", 40),
-		Version:  "v0.7.9",
-		RefName:  "v0.7.9-alpine",
-		Source:   "https://codeberg.org/itiquette/nanolinter",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+		"different repository path": {mutate: func(in *appcontainer.OCIReleaseIdentityInput) { in.Source = "https://codeberg.org/other/nanolinter" }, want: false},
+		"different revision":        {mutate: func(in *appcontainer.OCIReleaseIdentityInput) { in.Revision = strings.Repeat("c", 40) }, want: false},
+		"different version":         {mutate: func(in *appcontainer.OCIReleaseIdentityInput) { in.Version = "v0.7.10" }, want: false},
+		"different ref name":        {mutate: func(in *appcontainer.OCIReleaseIdentityInput) { in.RefName = "v0.7.9-debian" }, want: false},
 
-	if match {
-		t.Fatal("wrong revision should not match")
-	}
+		// The tolerance is the source's alone. A digest, a version or a tag
+		// differing only in case is a different identity, not drift.
+		"revision case drift": {mutate: func(in *appcontainer.OCIReleaseIdentityInput) { in.Revision = strings.ToUpper(commit) }, want: false},
+		"version case drift":  {mutate: func(in *appcontainer.OCIReleaseIdentityInput) { in.Version = "V0.7.9" }, want: false},
+		"ref name case drift": {mutate: func(in *appcontainer.OCIReleaseIdentityInput) { in.RefName = "V0.7.9-Alpine" }, want: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	match, err = appcontainer.OCIReleaseIdentityMatches(labels, appcontainer.OCIReleaseIdentityInput{
-		Revision: commit,
-		Version:  "v0.7.9",
-		RefName:  "v0.7.9-alpine",
-		Source:   "https://codeberg.org/other/nanolinter",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+			in := expected
+			testCase.mutate(&in)
 
-	if match {
-		t.Fatal("different repository path should not match")
+			match, err := appcontainer.OCIReleaseIdentityMatches(labels, in)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if match != testCase.want {
+				t.Errorf("match = %v, want %v for %+v", match, testCase.want, in)
+			}
+		})
 	}
 }
 
