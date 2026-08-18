@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -155,7 +156,11 @@ func TestPushManifest_UsesRegistryDigestWhenDigestFileInvalid(t *testing.T) {
 	}
 }
 
-func TestResolvePushedManifestDigest_VerifiesDigestFileAndEmitsOutputs(t *testing.T) {
+// TestResolvePushedManifestDigest_EmitsOutputsAndRetries covers what the
+// resolution publishes and that a registry read is retried. The digest file
+// rule itself is covered by
+// TestResolvePushedManifestDigest_TreatsTheDigestFileAsAnExpectation.
+func TestResolvePushedManifestDigest_EmitsOutputsAndRetries(t *testing.T) {
 	raw := []byte(`{"schemaVersion":2}`)
 	digest := manifestTestDigest(raw)
 
@@ -192,46 +197,65 @@ func TestResolvePushedManifestDigest_VerifiesDigestFileAndEmitsOutputs(t *testin
 	}
 }
 
-func TestResolvePushedManifestDigest_RejectsDigestMismatch(t *testing.T) {
-	digestFile := t.TempDir() + "/manifest.digest"
-	if err := os.WriteFile(digestFile, []byte("sha256:"+strings.Repeat("0", 64)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := appcontainer.ResolvePushedManifestDigest(context.Background(), &fakeManifestPushRegistry{raw: []byte(`{"schemaVersion":2}`)}, fakeoutputsink.New(t), io.Discard, appcontainer.PushedManifestDigestInput{
-		Ref:        "registry.example/app:staging-v1",
-		DigestFile: digestFile,
-	})
-	if !errors.Is(err, errs.ErrValidation) {
-		t.Fatalf("err = %v, want ErrValidation", err)
-	}
-}
-
-func TestResolvePushedManifestDigest_UsesRegistryDigestWhenDigestFileInvalid(t *testing.T) {
+// TestResolvePushedManifestDigest_TreatsTheDigestFileAsAnExpectation covers the
+// four states the digest file can be in. The digest returned is always the one
+// computed from the manifest the registry serves; the file is a cross-check on
+// it, not the source.
+//
+// The quiet case was missing. warnOnInvalidExpected exists to tell "no digest
+// file was configured" from "one was configured and could not be used", and
+// only the second was tested -- a flag left permanently on would print "digest
+// file was empty or invalid" on every ordinary run, which nothing would catch.
+func TestResolvePushedManifestDigest_TreatsTheDigestFileAsAnExpectation(t *testing.T) {
 	raw := []byte(`{"schemaVersion":2}`)
-	digest := manifestTestDigest(raw)
+	registryDigest := manifestTestDigest(raw)
 
-	digestFile := t.TempDir() + "/manifest.digest"
-	if err := os.WriteFile(digestFile, []byte("not-a-digest"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	for name, testCase := range map[string]struct {
+		fileBody string // "" means no digest file is configured at all
+		wantErr  error
+		wantWarn bool
+	}{
+		"no digest file configured":       {fileBody: "", wantWarn: false},
+		"digest file agrees":              {fileBody: registryDigest + "\n", wantWarn: false},
+		"digest file is not a digest":     {fileBody: "not-a-digest", wantWarn: true},
+		"digest file names another image": {fileBody: "sha256:" + strings.Repeat("0", 64), wantErr: errs.ErrValidation},
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := appcontainer.PushedManifestDigestInput{Ref: "registry.example/app:staging-v1"}
 
-	var log bytes.Buffer
+			if testCase.fileBody != "" {
+				in.DigestFile = filepath.Join(t.TempDir(), "manifest.digest")
+				if err := os.WriteFile(in.DigestFile, []byte(testCase.fileBody), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-	got, err := appcontainer.ResolvePushedManifestDigest(context.Background(), &fakeManifestPushRegistry{raw: raw}, fakeoutputsink.New(t), &log, appcontainer.PushedManifestDigestInput{
-		Ref:        "registry.example/app:staging-v1",
-		DigestFile: digestFile,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+			var log bytes.Buffer
 
-	if got.Digest != digest {
-		t.Fatalf("digest = %q, want %q", got.Digest, digest)
-	}
+			got, err := appcontainer.ResolvePushedManifestDigest(context.Background(),
+				&fakeManifestPushRegistry{raw: raw}, fakeoutputsink.New(t), &log, in)
 
-	if !strings.Contains(log.String(), "digest file was empty or invalid") {
-		t.Fatalf("log missing invalid digestfile message: %q", log.String())
+			if testCase.wantErr != nil {
+				if !errors.Is(err, testCase.wantErr) {
+					t.Fatalf("err = %v, want %v", err, testCase.wantErr)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got.Digest != registryDigest {
+				t.Errorf("digest = %q, want the registry's %q", got.Digest, registryDigest)
+			}
+
+			const warning = "digest file was empty or invalid"
+			if warned := strings.Contains(log.String(), warning); warned != testCase.wantWarn {
+				t.Errorf("warned = %v, want %v; log = %q", warned, testCase.wantWarn, log.String())
+			}
+		})
 	}
 }
 
