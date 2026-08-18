@@ -19,6 +19,7 @@ Solve a specific task.
 - [SBOM](sbom.md) - Configure SBOM layers and understand release/snapshot defaults.
 - [Forgejo](forgejo.md) - Adopting on Forgejo: the release-ci middle layer, consumer kit, and platform notes.
 - [Threat Model](threat-model.md) - What reusable-ci defends against, what it deliberately doesn't, and where adopter controls layer on top.
+- [Open Questions](open-questions.md) - Behaviours found by the test review that need a decision: duplicated container SBOM scans, an asymmetric `--output`, signing zero packages, an empty revision label.
 
 ## Reference
 
