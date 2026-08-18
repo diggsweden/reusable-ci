@@ -500,7 +500,18 @@ func TestSignLedgerImages_ProvenanceExtras(t *testing.T) {
 // needs no release scope, its premade SBOM pin is verified (never
 // regenerated), and the attested predicate carries the retired
 // base-lineage field names (externalParameters.base_input_id, .flavor).
-func TestSignLedgerImages_BaseKindEntries(t *testing.T) {
+// TestSignLedgerImages_BaseEntryRecordsItsLineageWithoutAParent covers what is
+// particular about signing a base image: it is the bottom of the chain, so its
+// provenance carries its own lineage -- the base input it was built from, and
+// its flavor -- while naming no parent base of its own. Everything else that
+// signs a base entry is shared with the ordinary path.
+//
+// The premade SBOM is attested by content, not merely by "syft did not run".
+// Not regenerating is one half of attesting a pinned SBOM as-is; the other is
+// that what reaches the attestation is the file that was pinned, and the two
+// fail differently. TestSignLedgerImages_PremadeSBOMPin pins the path this
+// comes from and rejects a hash that does not match.
+func TestSignLedgerImages_BaseEntryRecordsItsLineageWithoutAParent(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	repo := "codeberg.org/itiquette/nanolinter-base"
@@ -554,16 +565,33 @@ func TestSignLedgerImages_BaseKindEntries(t *testing.T) {
 		t.Fatalf("SignLedgerImages: %v", err)
 	}
 
-	if len(signer.signs) != 1 || signer.signs[0].ImageRef != candidateTag+"@"+digest {
-		t.Fatalf("sign calls = %+v, want one sign of the staged candidate", signer.signs)
+	if len(signer.signs) != 1 {
+		t.Fatalf("sign calls = %+v, want exactly one", signer.signs)
+	}
+
+	// Signed by digest through the staging tag: what was verified is what is
+	// signed, rather than whatever the final tag points at by then.
+	if got := signer.signs[0].ImageRef; got != candidateTag+"@"+digest {
+		t.Errorf("signed %q, want the staged candidate %q", got, candidateTag+"@"+digest)
 	}
 
 	if len(syft.targets) != 0 {
 		t.Errorf("syft ran %v; the pinned premade base SBOM must be attested as-is", syft.targets)
 	}
 
-	if len(signer.attests) != 2 || signer.attests[0].input.PredicateType != "cyclonedx" {
+	if len(signer.attests) != 2 {
 		t.Fatalf("attests = %+v, want premade SBOM then provenance", signer.attests)
+	}
+
+	if got := signer.attests[0].input.PredicateType; got != "cyclonedx" {
+		t.Errorf("first attestation type = %q, want cyclonedx", got)
+	}
+
+	// The half that "syft did not run" does not cover: the bytes attested are
+	// the pinned file's. Attesting some other file, or an empty one, leaves
+	// syft unused too.
+	if got := signer.attests[0].predicate; !bytes.Equal(got, sbomContent) {
+		t.Errorf("attested SBOM = %s, want the pinned file %s", got, sbomContent)
 	}
 
 	var predicate map[string]any
