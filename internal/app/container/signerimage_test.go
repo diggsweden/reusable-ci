@@ -173,18 +173,36 @@ func TestBuildSignerImageArch_NamesTheImageByTheDigestItPushed(t *testing.T) {
 	}
 }
 
-func TestAssembleSignerImageManifest_WritesOutputsAndMetadata(t *testing.T) {
+// TestAssembleSignerImageManifest_IndexesTheArchImagesItWasGiven covers the
+// second half of the signer image build: the per-architecture images become one
+// manifest index, pushed under the release tag and described by metadata.
+//
+// Like the per-arch half in 6c389caf, the digest is pinned to a value computed
+// outside this package. The outputs were compared against the returned struct
+// rather than to anything known, so an empty digest satisfied both sides.
+func TestAssembleSignerImageManifest_IndexesTheArchImagesItWasGiven(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeAuthFileForSignerImage(t, "auth.json")
-	writeSignerArchMetadata(t, "amd64", "codeberg.org/itiquette/forgejo-ci-signer", strings.Repeat("1", 64))
-	writeSignerArchMetadata(t, "arm64", "codeberg.org/itiquette/forgejo-ci-signer", strings.Repeat("2", 64))
 
-	tool := &fakeSignerImageTool{raw: []byte("index manifest")}
+	const (
+		repo        = "codeberg.org/itiquette/forgejo-ci-signer"
+		sourceSHA   = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		rawManifest = "index manifest"
+		wantDigest  = "sha256:981f6eedf34f3f508fecef64cafd67bfaef0f8f80f3aad9766a98fa9b41f0285"
+	)
+
+	amd64Digest := strings.Repeat("1", 64)
+	arm64Digest := strings.Repeat("2", 64)
+
+	writeAuthFileForSignerImage(t, "auth.json")
+	writeSignerArchMetadata(t, "amd64", repo, amd64Digest)
+	writeSignerArchMetadata(t, "arm64", repo, arm64Digest)
+
+	tool := &fakeSignerImageTool{raw: []byte(rawManifest)}
 	sink := fakeoutputsink.New(t)
 
 	meta, err := appcontainer.AssembleSignerImageManifest(context.Background(), tool, sink, nil, io.Discard, appcontainer.SignerImageAssembleInput{
 		AuthFile:         "auth.json",
-		SourceSHA:        strings.Repeat("b", 40),
+		SourceSHA:        sourceSHA,
 		ServerURL:        "https://codeberg.org",
 		Repository:       "itiquette/forgejo-ci",
 		RepositorySuffix: "-signer",
@@ -195,28 +213,61 @@ func TestAssembleSignerImageManifest_WritesOutputsAndMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantManifest := "localhost/signer-image:manifest-" + strings.Repeat("b", 40)
-	if tool.removedManifest != wantManifest || tool.createdManifest != wantManifest {
-		t.Fatalf("manifest lifecycle remove=%q create=%q", tool.removedManifest, tool.createdManifest)
+	wantTag := repo + ":signer-" + sourceSHA
+	if meta.Tag != wantTag {
+		t.Errorf("tag = %q, want %q", meta.Tag, wantTag)
 	}
 
-	if len(tool.adds) != 2 || tool.adds[0].Arch != "amd64" || tool.adds[1].Arch != "arm64" {
-		t.Fatalf("manifest adds = %+v", tool.adds)
+	if meta.Digest != wantDigest {
+		t.Errorf("digest = %q, want the index manifest's SHA-256 %q", meta.Digest, wantDigest)
 	}
 
-	if len(tool.manifestPushes) != 1 || !strings.Contains(tool.manifestPushes[0], ":signer-"+strings.Repeat("b", 40)) {
-		t.Fatalf("manifest pushes = %v", tool.manifestPushes)
+	if want := repo + "@" + wantDigest; meta.Ref != want {
+		t.Errorf("ref = %q, want %q", meta.Ref, want)
 	}
 
-	if sink.Single("image-ref") != meta.Ref || sink.Single("image-digest") != meta.Digest || sink.Single("image-tag") != meta.Tag {
-		t.Fatalf("outputs ref=%q digest=%q tag=%q meta=%+v", sink.Single("image-ref"), sink.Single("image-digest"), sink.Single("image-tag"), meta)
+	// A stale local manifest of the same name is removed before the new one
+	// is created, or the index would accumulate entries across runs.
+	wantLocal := "localhost/signer-image:manifest-" + sourceSHA
+	if tool.removedManifest != wantLocal {
+		t.Errorf("removed %q, want %q", tool.removedManifest, wantLocal)
 	}
 
+	if tool.createdManifest != wantLocal {
+		t.Errorf("created %q, want %q", tool.createdManifest, wantLocal)
+	}
+
+	// The index must point at the images that were actually built, by digest.
+	// Only the architecture labels were checked before, so an index built from
+	// the wrong refs looked identical.
+	wantAdds := []domaincontainer.SignerImageManifestAddToolRequest{
+		{AuthFile: "auth.json", Arch: "amd64", LocalManifest: wantLocal, Ref: repo + "@sha256:" + amd64Digest},
+		{AuthFile: "auth.json", Arch: "arm64", LocalManifest: wantLocal, Ref: repo + "@sha256:" + arm64Digest},
+	}
+	if !reflect.DeepEqual(tool.adds, wantAdds) {
+		t.Errorf("manifest adds =\n%+v\nwant\n%+v", tool.adds, wantAdds)
+	}
+
+	if want := []string{wantLocal + " -> " + wantTag}; !reflect.DeepEqual(tool.manifestPushes, want) {
+		t.Errorf("manifest pushes = %v, want %v", tool.manifestPushes, want)
+	}
+
+	for key, want := range map[string]string{
+		"image-ref":    repo + "@" + wantDigest,
+		"image-digest": wantDigest,
+		"image-tag":    wantTag,
+	} {
+		if got := sink.Single(key); got != want {
+			t.Errorf("output %s = %q, want %q", key, got, want)
+		}
+	}
+
+	// What the next job reads is the file, not the returned struct.
 	var disk appcontainer.SignerImageMetadata
 	readJSONForSignerImage(t, "signer-image-dist/signer-image.json", &disk)
 
 	if disk != *meta {
-		t.Fatalf("disk metadata = %+v want %+v", disk, *meta)
+		t.Errorf("disk metadata = %+v, want %+v", disk, *meta)
 	}
 }
 
