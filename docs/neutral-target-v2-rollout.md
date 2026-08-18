@@ -233,7 +233,7 @@ adding a temporary v1 compatibility layer.
 
 ## Phase 5: release-ci Consumer
 
-- [ ] Preserve and separately commit the existing token and live-cleanup fixes.
+- [x] Preserve and separately commit the existing token and live-cleanup fixes.
 - [ ] Add a strict neutral-v2 shell parser without weakening duplicate-key or
   exact-key checks.
 - [ ] Parse and validate Fulcio but do not use it for the current KMS signing
@@ -318,7 +318,7 @@ generation.
 | reusable-ci | Neutral-v2 consumer | `5aaab5df` |
 | forge-tidy | Neutral-v2 consumer | `4e293e3` |
 | forge-sync | Neutral-v2 consumer | `0ac79bb` |
-| release-ci | Existing live fixes | Pending |
+| release-ci | Token and live-cleanup fixes | `b4474e3`, `c97f1d6` |
 | release-ci | Neutral-v2 consumer | Pending |
 | reusable-ci | Final rollout status | Pending |
 
