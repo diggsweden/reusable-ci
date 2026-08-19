@@ -34,7 +34,21 @@ type jsonObj = map[string]any
 // artifacts-list, file-container, and per-file endpoints. entries maps a
 // container item path → file body. matchCount controls how many artifacts
 // answer to the name (0 / 1 / many), exercising the exactly-one guard.
+// runtimeServerNamed is runtimeServer with the artifact name under the
+// test's control, so a forge reporting a hostile name can be simulated.
+func runtimeServerNamed(t *testing.T, name string, entries map[string]string) *httptest.Server {
+	t.Helper()
+
+	return runtimeServerWith(t, name, entries, 1)
+}
+
 func runtimeServer(t *testing.T, entries map[string]string, matchCount int) *httptest.Server {
+	t.Helper()
+
+	return runtimeServerWith(t, artifactName, entries, matchCount)
+}
+
+func runtimeServerWith(t *testing.T, name string, entries map[string]string, matchCount int) *httptest.Server {
 	t.Helper()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +64,7 @@ func runtimeServer(t *testing.T, entries map[string]string, matchCount int) *htt
 		case "/_apis/pipelines/workflows/7/artifacts":
 			arts := make([]jsonObj, 0, matchCount)
 			for range matchCount {
-				arts = append(arts, jsonObj{"name": artifactName, "fileContainerResourceUrl": base + "/container"})
+				arts = append(arts, jsonObj{"name": name, "fileContainerResourceUrl": base + "/container"})
 			}
 
 			writeJSON(w, jsonObj{"value": arts})
@@ -165,6 +179,64 @@ func TestDownloadRunArtifact_RejectsTraversal(t *testing.T) {
 
 	if _, statErr := os.Stat(filepath.Join(filepath.Dir(dir), "escape.txt")); statErr == nil {
 		t.Error("traversal wrote a file outside the destination")
+	}
+}
+
+// TestDownloadRunArtifact_RejectsHostileArtifactName covers the second
+// SafeJoin site. There are two: one guards the per-file entry path inside
+// an artifact, which RejectsTraversal above exercises, and one guards the
+// artifact *name* the forge reports, which becomes a directory under the
+// destination when several artifacts are downloaded without
+// --merge-multiple.
+//
+// A name is not caller-controlled -- it comes back from the forge API --
+// which is exactly why it is worth guarding and worth testing: a
+// compromised or buggy forge is the case the check exists for. The github
+// provider has the equivalent test
+// (TestProvider_DownloadRunArtifact_RejectsHostileForgeName).
+func TestDownloadRunArtifact_RejectsHostileArtifactName(t *testing.T) {
+	// path.Match selects the artifacts, and "*" does not cross a slash --
+	// so only slash-free names reach the join at all. A name containing a
+	// slash is filtered out before the guard, which is a second layer
+	// rather than a gap.
+	for _, name := range []string{
+		// Reach SafeJoin: a traversal that survives glob matching.
+		"..", `..\escape`, `..\..\escape`,
+
+		// Reach ValidateName instead: a control character is not
+		// traversal, so SafeJoin would pass it. This is why both guards
+		// are there.
+		//
+		// ValidateName also rejects invalid UTF-8, which cannot be
+		// exercised through this path: the name arrives as JSON, and
+		// encoding/json substitutes U+FFFD for invalid bytes, so it is
+		// already valid by the time it is checked. That guard defends a
+		// non-JSON caller and is covered in domain/artifact.
+		//
+		// An ANSI escape is the input that separates them: it is not
+		// traversal, so SafeJoin passes it, and the name is echoed into
+		// the CI log and becomes a directory — a terminal-spoof vector.
+		"dist\x00evil", "evil\x1b[31mRED",
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := runtimeServerNamed(t, name, map[string]string{"file.txt": "data"})
+			dir := t.TempDir()
+
+			// Pattern, not Name: the by-name path writes straight into
+			// Dir and never uses the artifact name as a directory, so the
+			// guard only applies when several artifacts are matched and
+			// each needs its own subdirectory.
+			_, err := runtimeProvider(srv).DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{
+				Pattern: "*", Dir: dir,
+			})
+			if !errors.Is(err, errs.ErrValidation) {
+				t.Fatalf("err = %v, want ErrValidation (hostile artifact name rejected)", err)
+			}
+
+			if _, statErr := os.Stat(filepath.Join(filepath.Dir(dir), "escape")); statErr == nil {
+				t.Error("hostile artifact name created a directory outside the destination")
+			}
+		})
 	}
 }
 
