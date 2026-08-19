@@ -167,6 +167,29 @@ func asMap(t *testing.T, value any, label string) map[string]any {
 	return m
 }
 
+// assertNothingPublished requires a refusal to have reached neither cosign nor
+// the registry.
+//
+// These five refusals are all decided from the inputs, before any signing
+// begins, and none of them said so -- each discarded its signer. That is the
+// claim worth holding: a guard that refuses an unexpected repository after
+// signing it has not refused anything.
+//
+// Two refusals elsewhere in this file deliberately do not use this helper. A
+// mismatched SBOM pin and a reserved-key collision are both found later, with
+// a signature already published, and their tests assert that as it is.
+func assertNothingPublished(t *testing.T, signer *recordingImageSigner) {
+	t.Helper()
+
+	if len(signer.signs) != 0 {
+		t.Errorf("signed despite refusing the input: %+v", signer.signs)
+	}
+
+	if len(signer.attests) != 0 {
+		t.Errorf("attested despite refusing the input: %+v", signer.attests)
+	}
+}
+
 // TestSignLedgerImages_AttestsAGeneratedSBOMAndTheImagesLineage covers the
 // ordinary entry: no SBOM is pinned, so one is generated from the same
 // digest-pinned reference that gets signed, and the provenance that follows
@@ -334,7 +357,9 @@ func TestSignLedgerImages_RejectsEnvelopeWithoutPredicate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := appcontainer.SignLedgerImages(context.Background(), &recordingImageSigner{}, &fakeLedgerSyft{}, fakeLedgerResolver{}, io.Discard, io.Discard, appcontainer.SignLedgerImagesInput{
+	signer := &recordingImageSigner{}
+
+	err := appcontainer.SignLedgerImages(context.Background(), signer, &fakeLedgerSyft{}, fakeLedgerResolver{}, io.Discard, io.Discard, appcontainer.SignLedgerImagesInput{
 		Entries:               []imageledger.Entry{ledgerSignEntry(t)},
 		ReleaseTag:            "v1.2.3",
 		PredicateEnvelopePath: path,
@@ -344,6 +369,8 @@ func TestSignLedgerImages_RejectsEnvelopeWithoutPredicate(t *testing.T) {
 	if !errors.Is(err, errs.ErrMalformedInput) {
 		t.Fatalf("err = %v, want ErrMalformedInput", err)
 	}
+
+	assertNothingPublished(t, signer)
 }
 
 func TestSignLedgerImages_RejectsUnexpectedRepository(t *testing.T) {
@@ -352,7 +379,9 @@ func TestSignLedgerImages_RejectsUnexpectedRepository(t *testing.T) {
 	entry := ledgerSignEntry(t)
 	entry.CandidateTag = "codeberg.org/evil/gommitlint:staging-v1.2.3-rust"
 
-	err := appcontainer.SignLedgerImages(context.Background(), &recordingImageSigner{}, &fakeLedgerSyft{}, fakeLedgerResolver{}, io.Discard, io.Discard, appcontainer.SignLedgerImagesInput{
+	signer := &recordingImageSigner{}
+
+	err := appcontainer.SignLedgerImages(context.Background(), signer, &fakeLedgerSyft{}, fakeLedgerResolver{}, io.Discard, io.Discard, appcontainer.SignLedgerImagesInput{
 		Entries:                 []imageledger.Entry{entry},
 		ReleaseTag:              "v1.2.3",
 		PredicatePath:           writeBasePredicate(t),
@@ -367,6 +396,8 @@ func TestSignLedgerImages_RejectsUnexpectedRepository(t *testing.T) {
 	if !strings.Contains(err.Error(), "candidate_tag") {
 		t.Fatalf("err = %v, want candidate_tag context", err)
 	}
+
+	assertNothingPublished(t, signer)
 }
 
 func TestSignLedgerImages_RejectsStrictSBOMPatternMismatch(t *testing.T) {
@@ -375,7 +406,9 @@ func TestSignLedgerImages_RejectsStrictSBOMPatternMismatch(t *testing.T) {
 	entry := ledgerSignEntry(t)
 	entry.SBOM = "gommitlint-1.2.3-analyzed-container-sbom.cyclonedx.json"
 
-	err := appcontainer.SignLedgerImages(context.Background(), &recordingImageSigner{}, &fakeLedgerSyft{}, fakeLedgerResolver{}, io.Discard, io.Discard, appcontainer.SignLedgerImagesInput{
+	signer := &recordingImageSigner{}
+
+	err := appcontainer.SignLedgerImages(context.Background(), signer, &fakeLedgerSyft{}, fakeLedgerResolver{}, io.Discard, io.Discard, appcontainer.SignLedgerImagesInput{
 		Entries:         []imageledger.Entry{entry},
 		ReleaseTag:      "v1.2.3",
 		PredicatePath:   writeBasePredicate(t),
@@ -390,6 +423,8 @@ func TestSignLedgerImages_RejectsStrictSBOMPatternMismatch(t *testing.T) {
 	if !strings.Contains(err.Error(), "sbom") {
 		t.Fatalf("err = %v, want sbom context", err)
 	}
+
+	assertNothingPublished(t, signer)
 }
 
 func TestSignLedgerImages_FallsBackToDigestRefWhenCandidateMissing(t *testing.T) {
@@ -430,7 +465,9 @@ func TestSignLedgerImages_RejectsRefDigestMismatch(t *testing.T) {
 	entry := ledgerSignEntry(t)
 	entry.Ref = "codeberg.org/itiquette/gommitlint@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 
-	err := appcontainer.SignLedgerImages(context.Background(), &recordingImageSigner{}, &fakeLedgerSyft{}, fakeLedgerResolver{}, io.Discard, io.Discard, appcontainer.SignLedgerImagesInput{
+	signer := &recordingImageSigner{}
+
+	err := appcontainer.SignLedgerImages(context.Background(), signer, &fakeLedgerSyft{}, fakeLedgerResolver{}, io.Discard, io.Discard, appcontainer.SignLedgerImagesInput{
 		Entries:       []imageledger.Entry{entry},
 		ReleaseTag:    "v1.2.3",
 		PredicatePath: writeBasePredicate(t),
@@ -440,6 +477,8 @@ func TestSignLedgerImages_RejectsRefDigestMismatch(t *testing.T) {
 	if !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("err = %v, want ErrValidation", err)
 	}
+
+	assertNothingPublished(t, signer)
 }
 
 // signInput builds the standard SignLedgerImagesInput for one entry,
@@ -726,7 +765,9 @@ func TestSignLedgerImages_BaseKindRequiresBaseInputID(t *testing.T) {
 		FinalTag:   repo + ":" + baseID + "-go",
 	}
 
-	err := appcontainer.SignLedgerImages(context.Background(), &recordingImageSigner{}, &fakeLedgerSyft{}, fakeLedgerResolver{}, io.Discard, io.Discard, appcontainer.SignLedgerImagesInput{
+	signer := &recordingImageSigner{}
+
+	err := appcontainer.SignLedgerImages(context.Background(), signer, &fakeLedgerSyft{}, fakeLedgerResolver{}, io.Discard, io.Discard, appcontainer.SignLedgerImagesInput{
 		Entries:       []imageledger.Entry{entry},
 		PredicatePath: writeBasePredicate(t),
 		Method:        domainrelease.SignMethodKMS,
@@ -735,4 +776,6 @@ func TestSignLedgerImages_BaseKindRequiresBaseInputID(t *testing.T) {
 	if !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), "base entries must declare base_input_id") {
 		t.Fatalf("err = %v, want base_input_id requirement", err)
 	}
+
+	assertNothingPublished(t, signer)
 }
