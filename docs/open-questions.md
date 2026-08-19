@@ -418,6 +418,15 @@ Recorded rather than fixed because widening an allowlist is a security-policy
 change even when the current behaviour is the accident. Both shapes are pinned
 in `tags_allowlist_test.go`.
 
+The same blindness sits one layer down, in the verification half rather than
+the allowlist half: `VerifyDetachedArmored` reads its trust anchor with the
+same `ReadArmoredKeyRing` call, so a signature made by a key in an appended
+block is refused as "signature made by unknown entity" before the fingerprint
+check is ever reached. Whichever fix is chosen has to cover both readers, or
+the file will authorise a signer the verifier still cannot see. Pinned from the
+verification side in `TestVerifyDetachedArmored_AcceptsAnyKeyInTheRing`, whose
+helper says why its fixture is one block.
+
 ## A failed signature check exits differently for GPG and for cosign
 
 `VerifyArtifactSignature` documents its contract as: "Returns nil on success;

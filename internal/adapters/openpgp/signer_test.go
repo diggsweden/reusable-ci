@@ -6,6 +6,7 @@ package openpgp_test
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -78,6 +79,35 @@ func armorPublicKey(t *testing.T, entity *gocrypto.Entity) []byte {
 
 	if err := entity.Serialize(armorWriter); err != nil {
 		t.Fatalf("Serialize public: %v", err)
+	}
+
+	if err := armorWriter.Close(); err != nil {
+		t.Fatalf("armor close: %v", err)
+	}
+
+	return buf.Bytes()
+}
+
+// armorPublicKeyRing serialises several entities into ONE armor block --
+// the shape `gpg --armor --export A B` writes. Concatenating separate
+// blocks instead reads back as one key only; that is a known behaviour,
+// recorded in docs/open-questions.md ("Appending a key to
+// allowed_gpg_keys.asc does not authorise it") and pinned at the tag
+// level in app/validate/tags_allowlist_test.go.
+func armorPublicKeyRing(t *testing.T, entities ...*gocrypto.Entity) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+
+	armorWriter, err := armor.Encode(&buf, gocrypto.PublicKeyType, nil)
+	if err != nil {
+		t.Fatalf("armor.Encode public ring: %v", err)
+	}
+
+	for _, entity := range entities {
+		if err := entity.Serialize(armorWriter); err != nil {
+			t.Fatalf("Serialize public: %v", err)
+		}
 	}
 
 	if err := armorWriter.Close(); err != nil {
@@ -286,3 +316,229 @@ func TestFingerprint_StableAcrossReloadFromArmor(t *testing.T) {
 }
 
 var _ = io.EOF
+
+// TestVerifyDetachedArmored_RejectsASignatureFromAnotherKey is the
+// identity half of verification. Every other GPG test in the repository
+// signs and verifies with the same key, which a function that merely
+// checked the signature was well-formed would also pass. This one signs
+// with key A and offers key B as the trust anchor: only a check that
+// binds signature to key can tell the difference.
+func TestVerifyDetachedArmored_RejectsASignatureFromAnotherKey(t *testing.T) {
+	t.Parallel()
+
+	const message = "artifact bytes\n"
+
+	signer := openpgp.NewSignerFromEntity(mintTestEntity(t))
+
+	var sig bytes.Buffer
+	if err := signer.WriteSignature(&sig, strings.NewReader(message)); err != nil {
+		t.Fatal(err)
+	}
+
+	other := mintTestEntity(t)
+
+	err := openpgp.VerifyDetachedArmored(
+		strings.NewReader(message),
+		bytes.NewReader(sig.Bytes()),
+		armorPublicKey(t, other),
+	)
+	if !errors.Is(err, errs.ErrPermissionDenied) {
+		t.Fatalf("a signature from an unrelated key verified against another key's armor: err = %v", err)
+	}
+}
+
+// TestVerifyDetachedArmored_AcceptsAnyKeyInTheRing covers the allowlist
+// shape: allowed_gpg_keys.asc is a bundle, and a signature from any key
+// in it verifies. The signer is placed second so a check that only ever
+// looked at the first entity would fail here.
+func TestVerifyDetachedArmored_AcceptsAnyKeyInTheRing(t *testing.T) {
+	t.Parallel()
+
+	const message = "artifact bytes\n"
+
+	entity := mintTestEntity(t)
+
+	signer := openpgp.NewSignerFromEntity(entity)
+
+	var sig bytes.Buffer
+	if err := signer.WriteSignature(&sig, strings.NewReader(message)); err != nil {
+		t.Fatal(err)
+	}
+
+	ring := armorPublicKeyRing(t, mintTestEntity(t), entity)
+
+	if err := openpgp.VerifyDetachedArmored(strings.NewReader(message), bytes.NewReader(sig.Bytes()), ring); err != nil {
+		t.Fatalf("signature from the second key in the ring rejected: %v", err)
+	}
+}
+
+// TestVerifyDetachedArmored_RefusalsAreDistinguishable keeps a broken
+// trust anchor from reading as a rejected signature: a caller that maps
+// ErrPermissionDenied to "untrusted signer" must not be handed that for
+// armor it simply failed to parse.
+func TestVerifyDetachedArmored_RefusalsAreDistinguishable(t *testing.T) {
+	t.Parallel()
+
+	const message = "artifact bytes\n"
+
+	entity := mintTestEntity(t)
+
+	signer := openpgp.NewSignerFromEntity(entity)
+
+	var sig bytes.Buffer
+	if err := signer.WriteSignature(&sig, strings.NewReader(message)); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		pubKey  []byte
+		sig     []byte
+		message string
+		want    error
+	}{
+		{
+			name:    "unparseable public key armor",
+			pubKey:  []byte("-----BEGIN PGP PUBLIC KEY BLOCK-----\nnot base64\n-----END PGP PUBLIC KEY BLOCK-----\n"),
+			sig:     sig.Bytes(),
+			message: message,
+			want:    errs.ErrMalformedInput,
+		},
+		{
+			name:    "no public key armor at all",
+			pubKey:  nil,
+			sig:     sig.Bytes(),
+			message: message,
+			want:    errs.ErrMalformedInput,
+		},
+		{
+			// The artifact changed after signing: the same refusal as
+			// an untrusted signer, which is what the caller reports.
+			name:    "artifact does not match the signature",
+			pubKey:  armorPublicKey(t, entity),
+			sig:     sig.Bytes(),
+			message: "artifact bytes tampered\n",
+			want:    errs.ErrPermissionDenied,
+		},
+		{
+			name:    "signature is not a signature",
+			pubKey:  armorPublicKey(t, entity),
+			sig:     []byte("-----BEGIN PGP SIGNATURE-----\nnot base64\n-----END PGP SIGNATURE-----\n"),
+			message: message,
+			want:    errs.ErrPermissionDenied,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := openpgp.VerifyDetachedArmored(strings.NewReader(tc.message), bytes.NewReader(tc.sig), tc.pubKey)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestPrimaryFingerprints_ReadsEveryKeyInTheBundle covers the other use
+// of allowed_gpg_keys.asc: the same file is the trust anchor and the
+// authorised-fingerprint list, so a bundle that verifies two signers has
+// to yield two fingerprints. Dropping one would silently narrow the
+// allowlist to whoever happens to be first.
+func TestPrimaryFingerprints_ReadsEveryKeyInTheBundle(t *testing.T) {
+	t.Parallel()
+
+	first := mintTestEntity(t)
+	second := mintTestEntity(t)
+
+	got, err := openpgp.PrimaryFingerprints(armorPublicKeyRing(t, first, second))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		strings.ToUpper(hex.EncodeToString(first.PrimaryKey.Fingerprint)),
+		strings.ToUpper(hex.EncodeToString(second.PrimaryKey.Fingerprint)),
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("fingerprints = %v, want %v", got, want)
+	}
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("fingerprint %d = %q, want %q", i, got[i], want[i])
+		}
+
+		if len(got[i]) != 40 {
+			t.Errorf("fingerprint %d is %d characters, want the 40-char form gpg --with-colons prints", i, len(got[i]))
+		}
+	}
+}
+
+// TestPrimaryFingerprints_EmptyArmorIsNotAnError pins the documented
+// "no keys from this source" contract, which is how a repository with no
+// allowed_gpg_keys.asc is distinguished from one with a broken file.
+func TestPrimaryFingerprints_EmptyArmorIsNotAnError(t *testing.T) {
+	t.Parallel()
+
+	got, err := openpgp.PrimaryFingerprints([]byte("  \n\t\n"))
+	if err != nil || len(got) != 0 {
+		t.Fatalf("got (%v, %v), want (empty, nil)", got, err)
+	}
+
+	if _, err := openpgp.PrimaryFingerprints([]byte("-----BEGIN PGP PUBLIC KEY BLOCK-----\nnope\n-----END PGP PUBLIC KEY BLOCK-----\n")); !errors.Is(err, errs.ErrMalformedInput) {
+		t.Errorf("a broken keyring file must not read as an empty allowlist: err = %v", err)
+	}
+}
+
+// TestReadMetadata_ReportsTheIdentityAndKeyID covers the replacement for
+// `gpg --list-secret-keys --with-colons`: the key ID is the fingerprint's
+// last 16 characters, which is what the operator output and the forge
+// signature UI are matched against.
+func TestReadMetadata_ReportsTheIdentityAndKeyID(t *testing.T) {
+	t.Parallel()
+
+	entity := mintTestEntity(t)
+	wantFP := strings.ToUpper(hex.EncodeToString(entity.PrimaryKey.Fingerprint))
+
+	for _, tc := range []struct {
+		name  string
+		armor []byte
+	}{
+		{name: "private key armor", armor: armorPrivateKey(t, entity, "")},
+		{name: "public key armor", armor: armorPublicKey(t, entity)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			md, err := openpgp.ReadMetadata(tc.armor)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if md.Fingerprint != wantFP {
+				t.Errorf("fingerprint = %q, want %q", md.Fingerprint, wantFP)
+			}
+
+			if md.KeyID != wantFP[24:] {
+				t.Errorf("key id = %q, want the last 16 of the fingerprint %q", md.KeyID, wantFP[24:])
+			}
+
+			if md.Name != "Test" || md.Email != "test@example.com" {
+				t.Errorf("identity = (%q, %q), want (%q, %q)", md.Name, md.Email, "Test", "test@example.com")
+			}
+		})
+	}
+}
+
+func TestReadMetadata_Refusals(t *testing.T) {
+	t.Parallel()
+
+	if _, err := openpgp.ReadMetadata([]byte(" \n")); !errors.Is(err, errs.ErrMissingInput) {
+		t.Errorf("empty armor: err = %v, want ErrMissingInput", err)
+	}
+
+	if _, err := openpgp.ReadMetadata([]byte("-----BEGIN PGP PUBLIC KEY BLOCK-----\nnope\n-----END PGP PUBLIC KEY BLOCK-----\n")); !errors.Is(err, errs.ErrMalformedInput) {
+		t.Errorf("malformed armor: err = %v, want ErrMalformedInput", err)
+	}
+}
