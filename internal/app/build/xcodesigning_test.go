@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -53,24 +54,40 @@ func TestXcodeSetupCodeSigning_HappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 6 security invocations: create / set-settings / unlock / import /
-	// partition-list / list-keychain.
-	if len(sec.calls) != 6 {
-		t.Errorf("expected 6 security calls, got %d", len(sec.calls))
+	// The order matters, not just the count: the keychain is unlocked before
+	// the certificate is imported, and the partition list is set afterwards
+	// so codesign can use the key without prompting. Counting six calls and
+	// naming only the first could not see them reordered.
+	wantCalls := []string{
+		"create-keychain",
+		"set-keychain-settings",
+		"unlock-keychain",
+		"import",
+		"set-key-partition-list",
+		"list-keychain",
 	}
-	// Cert decoded to disk at mode 0600.
-	if _, err := os.Stat(filepath.Join(tmp, "certificate.p12")); err != nil {
+
+	gotCalls := make([]string, 0, len(sec.calls))
+	for _, call := range sec.calls {
+		gotCalls = append(gotCalls, call[0])
+	}
+
+	if !reflect.DeepEqual(gotCalls, wantCalls) {
+		t.Errorf("security calls = %v\nwant %v", gotCalls, wantCalls)
+	}
+
+	// The decoded p12 holds the signing certificate and its private key. The
+	// comment here claimed 0600 and nothing checked it.
+	certInfo, err := os.Stat(filepath.Join(tmp, "certificate.p12"))
+	if err != nil {
 		t.Errorf("certificate not written: %v", err)
+	} else if certInfo.Mode().Perm() != 0o600 {
+		t.Errorf("certificate mode = %v, want 0600", certInfo.Mode().Perm())
 	}
 	// Provisioning profile copied into profilesDir.
 	if _, err := os.Stat(filepath.Join(profiles, "pp.mobileprovision")); err != nil {
 		t.Errorf("provisioning profile not installed: %v", err)
 	}
-	// Sanity: first security call is create-keychain with the path.
-	if sec.calls[0][0] != "create-keychain" {
-		t.Errorf("first call = %v", sec.calls[0])
-	}
-
 	if got := strings.TrimSpace(out.String()); got != "✓ Code signing configured successfully" {
 		t.Errorf("out = %q", got)
 	}
