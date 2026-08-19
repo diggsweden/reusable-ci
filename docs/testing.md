@@ -524,6 +524,52 @@ just test-coverage-html     # alias for test-coverage
 go tool cover -func=bin/coverage.out
 ```
 
+## Assertions that do not bite
+
+A passing test is not evidence until you know what would make it fail. These
+shapes recur, and each was found in this repository holding a real defect open.
+When reviewing a test, check for them.
+
+**A one-element fixture hides a loop.** All four image-ledger operations —
+`Verify`, `Promote`, `Cleanup` and the promotion journal — were tested only with
+`[]Entry{e}`. Truncating each loop to its first entry broke nothing, while a
+release with several images would have gone half-verified, half-promoted and
+half-cleaned. If the function takes a slice, one of its tests must pass at least
+two elements, with the interesting one *not* first.
+
+**Existence is not identity.** `sink.Single("version") != ""` passes on the
+literal `"unknown"`, which is the value emitted when version resolution failed.
+Assert the value.
+
+**Inequality is not identity either.** Asserting two generated ids merely differ
+accepts any scheme at all, including one that drops the shared prefix a consumer
+groups by. Assert what each one is.
+
+**Co-presence is not association.** Finding `"level": "error"` and
+`"level": "note"` somewhere in a document does not show which finding got which:
+swapping the mapping outright leaves both strings present. Read the field off
+the object that owns it.
+
+**A subset check suits prose, not data.** `strings.Contains` is fine on a log
+line or a summary block. On argv, job outputs, published labels or a manifest it
+cannot see an extra entry, a reordering, or two argv entries that should have
+been one. Compare those whole.
+
+**Message text is not the contract; the sentinel is.** Error strings may be
+reworded freely — the wrapped `errs.*` value is what maps to an exit code, so
+that is what a refusal test should assert. Where the refusal must also leave
+nothing behind, assert that too: no output emitted, no file written, no tool
+invoked.
+
+**A double must not be more permissive than what it doubles.** `fakeoutputsink`
+accepted scalar values containing newlines while both real sinks reject them,
+which hid a command that fails on any project with two build secrets. When a
+guard exists in the adapter, the fake needs it too, or no test can reach it.
+
+**Poison the product to check the test.** Make the change the test claims to
+catch and confirm it fails — and confirm the poison actually compiled and
+applied first. A green run under a poison that never took is not evidence.
+
 ## Three rules
 
 1. **Never mock at your own layer.** Domain tests don't use
