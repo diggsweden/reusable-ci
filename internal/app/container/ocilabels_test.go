@@ -6,6 +6,7 @@ package container_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -63,6 +64,45 @@ func TestOCIReleaseLabelFlags_EmitsBuildahTokensAndDefaultsDocumentation(t *test
 
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("label flags = %#v, want %#v", got, want)
+	}
+}
+
+// TestOCIReleaseLabelFlags_OmitsOptionalLabelsWithNoValue covers the other half
+// of the builder's rule. The eight required labels are refused when empty; the
+// four optional ones are left out instead, so an image never carries a label
+// claiming its description or licence is the empty string.
+//
+// Only the refusing half had a test.
+func TestOCIReleaseLabelFlags_OmitsOptionalLabelsWithNoValue(t *testing.T) {
+	t.Parallel()
+
+	got, err := appcontainer.OCIReleaseLabelFlags(appcontainer.OCIReleaseLabelsInput{
+		OCILabels: domaincontainer.OCILabels{
+			Title:    "nanolinter",
+			Version:  "v0.7.9",
+			Revision: strings.Repeat("a", 40),
+			RefName:  "v0.7.9-alpine",
+			// Description, Licenses, Vendor and Authors deliberately unset.
+		},
+		Created: "2026-06-30T12:34:56Z",
+		Source:  "https://codeberg.org/Itiquette/nanolinter",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"--label", "org.opencontainers.image.title=nanolinter",
+		"--label", "org.opencontainers.image.version=v0.7.9",
+		"--label", "org.opencontainers.image.created=2026-06-30T12:34:56Z",
+		"--label", "org.opencontainers.image.revision=" + strings.Repeat("a", 40),
+		"--label", "org.opencontainers.image.ref.name=v0.7.9-alpine",
+		"--label", "org.opencontainers.image.source=https://codeberg.org/Itiquette/nanolinter",
+		"--label", "org.opencontainers.image.url=https://codeberg.org/Itiquette/nanolinter",
+		"--label", "org.opencontainers.image.documentation=https://codeberg.org/Itiquette/nanolinter#readme",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("label flags = %#v\nwant %#v", got, want)
 	}
 }
 
