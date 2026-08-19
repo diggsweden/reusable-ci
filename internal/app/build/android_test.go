@@ -229,7 +229,7 @@ func TestAndroidDecodeKeystore_WritesFileAndPrintsEnvLine(t *testing.T) {
 	body := []byte("\x01\x02fake-keystore-bytes\x03")
 	enc := base64.StdEncoding.EncodeToString(body)
 
-	var out, stderr bytes.Buffer
+	var out bytes.Buffer
 
 	err := appbuild.AndroidDecodeKeystore(&out, io.Discard, appbuild.AndroidDecodeKeystoreInput{
 		Base64: enc, Dir: dir,
@@ -248,12 +248,14 @@ func TestAndroidDecodeKeystore_WritesFileAndPrintsEnvLine(t *testing.T) {
 		t.Errorf("keystore body = %q, want %q", got, body)
 	}
 
-	info, _ := os.Stat(want)
+	info, err := os.Stat(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if info.Mode().Perm() != 0o600 {
 		t.Errorf("keystore mode = %o, want 0o600", info.Mode().Perm())
 	}
-
-	_ = stderr
 }
 
 func TestAndroidDecodeKeystore_PrintsSuccessToStderr(t *testing.T) {
@@ -301,12 +303,52 @@ func TestAndroidDecodeKeystore_RelativeDirPrintsAbsolutePath(t *testing.T) {
 	}
 }
 
-func TestAndroidDecodeKeystore_RejectsEmptySecret(t *testing.T) {
-	fsys := testfs.NewReal(t)
+// TestAndroidDecodeKeystore_Refusals separates the two ways the keystore
+// can be unusable. They carry different sentinels on purpose: an absent
+// secret is a permissions problem the operator resolves in the forge
+// (EX_NOPERM), while a secret that is present but not decodable is
+// malformed input. Neither may leave a partial keystore on disk.
+func TestAndroidDecodeKeystore_Refusals(t *testing.T) {
+	t.Parallel()
 
-	err := appbuild.AndroidDecodeKeystore(io.Discard, io.Discard, appbuild.AndroidDecodeKeystoreInput{Dir: fsys.Root})
-	if err == nil || !strings.Contains(err.Error(), "ANDROID_KEYSTORE") {
-		t.Errorf("expected secret-required error, got %v", err)
+	for _, tc := range []struct {
+		name    string
+		base64  string
+		wantErr error
+	}{
+		{name: "no secret at all", wantErr: errs.ErrPermissionDenied},
+		{name: "secret is not base64", base64: "not!valid!base64", wantErr: errs.ErrMalformedInput},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fsys := testfs.NewReal(t)
+
+			var out, stderr bytes.Buffer
+
+			err := appbuild.AndroidDecodeKeystore(&out, &stderr, appbuild.AndroidDecodeKeystoreInput{
+				Base64: tc.base64,
+				Dir:    fsys.Root,
+			})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+
+			if _, statErr := os.Stat(filepath.Join(fsys.Root, "release.keystore")); !os.IsNotExist(statErr) {
+				t.Errorf("left a keystore behind (stat err = %v)", statErr)
+			}
+
+			// No ANDROID_KEYSTORE_PATH line: the workflow redirects w to
+			// $GITHUB_ENV, so a path emitted here would point gradle at a
+			// keystore that was never written.
+			if out.Len() != 0 {
+				t.Errorf("emitted %q on a refused run", out.String())
+			}
+
+			if stderr.Len() != 0 {
+				t.Errorf("reported success on a refused run: %q", stderr.String())
+			}
+		})
 	}
 }
 
