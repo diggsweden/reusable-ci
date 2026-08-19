@@ -9,11 +9,17 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
+// Named so the package's goconst budget is not spent on test
+// fixtures repeating the runner's own vocabulary.
+const (
+	refTypeBranch = "branch"
+)
+
 // TestClassifyRefType covers all seven branches; roughly a third were
 // exercised before.
 //
 // The precedence is the part that matters. A Forgejo runner reports
-// REF_TYPE="branch" during a pull_request event, so without the
+// REF_TYPE=refTypeBranch during a pull_request event, so without the
 // event-name override every PR would classify as a branch push — and a
 // branch push is the trusted context that a PR deliberately is not.
 func TestClassifyRefType(t *testing.T) {
@@ -30,16 +36,16 @@ func TestClassifyRefType(t *testing.T) {
 	}{
 		{
 			// The override, and the reason it exists: REF_TYPE says
-			// "branch" and the ref looks like a branch, yet this is a PR.
+			// refTypeBranch and the ref looks like a branch, yet this is a PR.
 			name: "pull_request wins over a branch REF_TYPE",
-			vars: map[string]string{"EVENT_NAME": "pull_request", "REF_TYPE": "branch", "REF": "refs/heads/feature"},
+			vars: map[string]string{"EVENT_NAME": "pull_request", "REF_TYPE": refTypeBranch, "REF": "refs/heads/feature"},
 			want: provider.RefTypePR,
 		},
 		{
 			// Forgejo emits pull_request_target and similar; the prefix
 			// match is what keeps them all on the untrusted path.
 			name: "pull_request_target is still a PR",
-			vars: map[string]string{"EVENT_NAME": "pull_request_target", "REF_TYPE": "branch"},
+			vars: map[string]string{"EVENT_NAME": "pull_request_target", "REF_TYPE": refTypeBranch},
 			want: provider.RefTypePR,
 		},
 		{
@@ -49,7 +55,7 @@ func TestClassifyRefType(t *testing.T) {
 		},
 		{
 			name: "explicit branch",
-			vars: map[string]string{"REF_TYPE": "branch", "REF": "refs/heads/main"},
+			vars: map[string]string{"REF_TYPE": refTypeBranch, "REF": "refs/heads/main"},
 			want: provider.RefTypeBranch,
 		},
 

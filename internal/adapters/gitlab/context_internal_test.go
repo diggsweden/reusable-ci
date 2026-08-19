@@ -9,6 +9,13 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
+// Named so the package's goconst budget is not spent on test
+// fixtures repeating the runner's own vocabulary.
+const (
+	refTypeBranch     = "branch"
+	mergeRequestEvent = "merge_request_event"
+)
+
 // TestClassifyRefType covers the gitlab half of the shared rule. The PR
 // case was reached through the provider tests; the rest of the ladder
 // was not, and the ladder is ordered for a reason.
@@ -30,7 +37,7 @@ func TestClassifyRefType(t *testing.T) {
 			// without this first the branch rungs would claim it.
 			name: "merge request wins over the branch rungs",
 			vars: map[string]string{
-				"CI_PIPELINE_SOURCE": "merge_request_event",
+				"CI_PIPELINE_SOURCE": mergeRequestEvent,
 				"CI_COMMIT_BRANCH":   "feature",
 				"CI_COMMIT_REF_NAME": "feature",
 			},
@@ -39,7 +46,7 @@ func TestClassifyRefType(t *testing.T) {
 		{
 			// Exact match, unlike the github and forgejo prefix tests:
 			// gitlab's pipeline sources are a closed set of exact values,
-			// and "merge_request_event" is the only one that means a MR.
+			// and mergeRequestEvent is the only one that means a MR.
 			name: "another pipeline source is not a merge request",
 			vars: map[string]string{"CI_PIPELINE_SOURCE": "push", "CI_COMMIT_BRANCH": "main"},
 			want: provider.RefTypeBranch,
@@ -52,7 +59,7 @@ func TestClassifyRefType(t *testing.T) {
 			want: provider.RefTypeTag,
 		},
 		{
-			name: "branch",
+			name: refTypeBranch,
 			vars: map[string]string{"CI_COMMIT_BRANCH": "main", "CI_COMMIT_REF_NAME": "main"},
 			want: provider.RefTypeBranch,
 		},

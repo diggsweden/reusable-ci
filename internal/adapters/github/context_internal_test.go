@@ -9,8 +9,14 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
+// Named so the package's goconst budget is not spent on test
+// fixtures repeating the runner's own vocabulary.
+const (
+	refTypeBranch = "branch"
+)
+
 // TestClassifyRefType covers the GitHub half of a rule the three
-// providers share: GITHUB_REF_TYPE reports "branch" during a
+// providers share: GITHUB_REF_TYPE reports refTypeBranch during a
 // pull_request event, so the event-name override is the only thing that
 // keeps a PR off the trusted branch-push path.
 //
@@ -30,7 +36,7 @@ func TestClassifyRefType(t *testing.T) {
 	}{
 		{
 			name: "pull_request wins over a branch REF_TYPE",
-			vars: map[string]string{"GITHUB_EVENT_NAME": "pull_request", "GITHUB_REF_TYPE": "branch"},
+			vars: map[string]string{"GITHUB_EVENT_NAME": "pull_request", "GITHUB_REF_TYPE": refTypeBranch},
 			want: provider.RefTypePR,
 		},
 		{
@@ -38,12 +44,12 @@ func TestClassifyRefType(t *testing.T) {
 			// so misclassifying it as a branch push is the costliest of
 			// these cases. The prefix match is what covers it.
 			name: "pull_request_target is still a PR",
-			vars: map[string]string{"GITHUB_EVENT_NAME": "pull_request_target", "GITHUB_REF_TYPE": "branch"},
+			vars: map[string]string{"GITHUB_EVENT_NAME": "pull_request_target", "GITHUB_REF_TYPE": refTypeBranch},
 			want: provider.RefTypePR,
 		},
 		{
 			name: "pull_request_review is still a PR",
-			vars: map[string]string{"GITHUB_EVENT_NAME": "pull_request_review", "GITHUB_REF_TYPE": "branch"},
+			vars: map[string]string{"GITHUB_EVENT_NAME": "pull_request_review", "GITHUB_REF_TYPE": refTypeBranch},
 			want: provider.RefTypePR,
 		},
 		{
@@ -53,7 +59,7 @@ func TestClassifyRefType(t *testing.T) {
 		},
 		{
 			name: "branch push",
-			vars: map[string]string{"GITHUB_EVENT_NAME": "push", "GITHUB_REF_TYPE": "branch"},
+			vars: map[string]string{"GITHUB_EVENT_NAME": "push", "GITHUB_REF_TYPE": refTypeBranch},
 			want: provider.RefTypeBranch,
 		},
 		{

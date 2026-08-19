@@ -14,6 +14,14 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
+// The two renderer binary names appear throughout; named so the package's
+// goconst budget is not spent on a test fixture.
+const (
+	gitCliffBin  = "git-cliff"
+	gitChglogBin = "git-chglog"
+	cacheSubdir  = "cache"
+)
+
 // TestChangelogRendererSelector pins the backend allowlist. The selector
 // returned here is handed to `mise install` verbatim, so the closed set is
 // what stops a caller-supplied backend from naming an arbitrary aqua
@@ -30,29 +38,29 @@ func TestChangelogRendererSelector(t *testing.T) {
 		wantErrSentinel error
 	}{
 		{
-			name:         "git-chglog",
-			in:           InstallChangelogRendererInput{Backend: "git-chglog", GitChglogVersion: "0.15.4"},
+			name:         gitChglogBin,
+			in:           InstallChangelogRendererInput{Backend: gitChglogBin, GitChglogVersion: "0.15.4"},
 			wantSelector: "aqua:git-chglog/git-chglog",
-			wantBin:      "git-chglog",
+			wantBin:      gitChglogBin,
 			wantVersion:  "0.15.4",
 		},
 		{
-			name:         "git-cliff",
-			in:           InstallChangelogRendererInput{Backend: "git-cliff", GitCliffVersion: "2.6.1"},
+			name:         gitCliffBin,
+			in:           InstallChangelogRendererInput{Backend: gitCliffBin, GitCliffVersion: "2.6.1"},
 			wantSelector: "aqua:orhun/git-cliff",
-			wantBin:      "git-cliff",
+			wantBin:      gitCliffBin,
 			wantVersion:  "2.6.1",
 		},
 		{
 			// The version is not defaulted: an unpinned renderer would
 			// resolve to whatever aqua serves that day.
 			name:            "git-cliff without a version",
-			in:              InstallChangelogRendererInput{Backend: "git-cliff"},
+			in:              InstallChangelogRendererInput{Backend: gitCliffBin},
 			wantErrSentinel: errs.ErrUsage,
 		},
 		{
 			name:            "git-chglog without a version",
-			in:              InstallChangelogRendererInput{Backend: "git-chglog", GitChglogVersion: "   "},
+			in:              InstallChangelogRendererInput{Backend: gitChglogBin, GitChglogVersion: "   "},
 			wantErrSentinel: errs.ErrUsage,
 		},
 		{
@@ -139,7 +147,7 @@ func TestPrepareChangelogMiseEnv(t *testing.T) {
 	prepareDir := filepath.Join(runnerTemp, "reusable-ci-prepare-mise-42")
 
 	for name, sub := range map[string]string{
-		"MISE_CACHE_DIR":  "cache",
+		"MISE_CACHE_DIR":  cacheSubdir,
 		"MISE_CONFIG_DIR": "config",
 		"MISE_DATA_DIR":   "data",
 		"MISE_STATE_DIR":  "state",
@@ -237,9 +245,9 @@ func TestFindMiseToolBinary(t *testing.T) {
 		t.Parallel()
 
 		dir := t.TempDir()
-		want := writeExecutable(t, dir, "git-cliff")
+		want := writeExecutable(t, dir, gitCliffBin)
 
-		got, err := findMiseToolBinary(dir, "git-cliff")
+		got, err := findMiseToolBinary(dir, gitCliffBin)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -253,9 +261,9 @@ func TestFindMiseToolBinary(t *testing.T) {
 		t.Parallel()
 
 		dir := t.TempDir()
-		want := writeExecutable(t, filepath.Join(dir, "bin"), "git-cliff")
+		want := writeExecutable(t, filepath.Join(dir, "bin"), gitCliffBin)
 
-		got, err := findMiseToolBinary(dir, "git-cliff")
+		got, err := findMiseToolBinary(dir, gitCliffBin)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -269,15 +277,15 @@ func TestFindMiseToolBinary(t *testing.T) {
 		t.Parallel()
 
 		dir := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(dir, "git-cliff"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(dir, gitCliffBin), 0o755); err != nil {
 			t.Fatal(err)
 		}
 
 		// The real binary sits one level down; the same-named directory
 		// at the top must not shadow it.
-		want := writeExecutable(t, filepath.Join(dir, "v2.6.1"), "git-cliff")
+		want := writeExecutable(t, filepath.Join(dir, "v2.6.1"), gitCliffBin)
 
-		got, err := findMiseToolBinary(dir, "git-cliff")
+		got, err := findMiseToolBinary(dir, gitCliffBin)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -291,11 +299,11 @@ func TestFindMiseToolBinary(t *testing.T) {
 		t.Parallel()
 
 		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "git-cliff"), []byte("# readme"), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, gitCliffBin), []byte("# readme"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 
-		if got, err := findMiseToolBinary(dir, "git-cliff"); !errors.Is(err, errs.ErrMissingInput) {
+		if got, err := findMiseToolBinary(dir, gitCliffBin); !errors.Is(err, errs.ErrMissingInput) {
 			t.Errorf("got (%q, %v), want ErrMissingInput", got, err)
 		}
 	})
@@ -303,7 +311,7 @@ func TestFindMiseToolBinary(t *testing.T) {
 	t.Run("nothing installed", func(t *testing.T) {
 		t.Parallel()
 
-		if _, err := findMiseToolBinary(t.TempDir(), "git-cliff"); !errors.Is(err, errs.ErrMissingInput) {
+		if _, err := findMiseToolBinary(t.TempDir(), gitCliffBin); !errors.Is(err, errs.ErrMissingInput) {
 			t.Errorf("err = %v, want ErrMissingInput", err)
 		}
 	})
@@ -316,20 +324,20 @@ func TestLinkChangelogBinary(t *testing.T) {
 	t.Parallel()
 
 	binHome := t.TempDir()
-	old := writeExecutable(t, t.TempDir(), "git-cliff")
-	current := writeExecutable(t, t.TempDir(), "git-cliff")
+	old := writeExecutable(t, t.TempDir(), gitCliffBin)
+	current := writeExecutable(t, t.TempDir(), gitCliffBin)
 
-	link, err := linkChangelogBinary(old, binHome, "git-cliff")
+	link, err := linkChangelogBinary(old, binHome, gitCliffBin)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if link != filepath.Join(binHome, "git-cliff") {
+	if link != filepath.Join(binHome, gitCliffBin) {
 		t.Errorf("link = %q", link)
 	}
 
 	// Second run of the same verb, pointing somewhere else.
-	if _, err = linkChangelogBinary(current, binHome, "git-cliff"); err != nil {
+	if _, err = linkChangelogBinary(current, binHome, gitCliffBin); err != nil {
 		t.Fatal(err)
 	}
 
@@ -350,9 +358,9 @@ func TestResolveChangelogBinary(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	want := writeExecutable(t, dir, "git-cliff")
+	want := writeExecutable(t, dir, gitCliffBin)
 
-	got, err := resolveChangelogBinary(t.Context(), whereRunner{out: dir + "\n"}, nil, "aqua:orhun/git-cliff@2.6.1", "git-cliff")
+	got, err := resolveChangelogBinary(t.Context(), whereRunner{out: dir + "\n"}, nil, "aqua:orhun/git-cliff@2.6.1", gitCliffBin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,11 +369,11 @@ func TestResolveChangelogBinary(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 
-	if _, err := resolveChangelogBinary(t.Context(), whereRunner{out: "  \n"}, nil, "t", "git-cliff"); !errors.Is(err, errs.ErrValidation) {
+	if _, err := resolveChangelogBinary(t.Context(), whereRunner{out: "  \n"}, nil, "t", gitCliffBin); !errors.Is(err, errs.ErrValidation) {
 		t.Errorf("empty `mise where` output: err = %v, want ErrValidation", err)
 	}
 
-	if _, err := resolveChangelogBinary(t.Context(), whereRunner{err: errs.ErrUnsupported}, nil, "t", "git-cliff"); err == nil {
+	if _, err := resolveChangelogBinary(t.Context(), whereRunner{err: errs.ErrUnsupported}, nil, "t", gitCliffBin); err == nil {
 		t.Error("a failing `mise where` must not yield an install dir")
 	}
 }
