@@ -6,6 +6,7 @@ package imageledger_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -379,5 +380,67 @@ func TestPromote_RefusesCandidateDigestMismatchBeforeCopy(t *testing.T) {
 
 	if len(reg.copies) != 0 {
 		t.Errorf("no copy should happen when candidate digest is wrong, got %v", reg.copies)
+	}
+}
+
+// TestPromote_PromotesEveryEntry covers the loop. All sixteen tests above
+// pass a single entry, so a Promote that stopped after the first would
+// satisfy every one of them while shipping a release in which only one
+// image carries its release tag -- the others still reachable only under
+// their staging candidates.
+//
+// An entry without a candidate tag is skipped, as the doc comment says,
+// so it must neither be copied nor fail the run.
+func TestPromote_PromotesEveryEntry(t *testing.T) {
+	t.Parallel()
+
+	first := candidateEntry()
+
+	second := candidateEntry()
+	second.Role = "static"
+	second.Ref = "codeberg.org/itiquette/gommitlint-static@" + goodDigest
+	second.CandidateTag = "codeberg.org/itiquette/gommitlint-static:staging-v1.2.3"
+	second.FinalTag = "codeberg.org/itiquette/gommitlint-static:v1.2.3"
+
+	noCandidate := validEntry()
+	noCandidate.Role = "debug"
+	noCandidate.Ref = "codeberg.org/itiquette/gommitlint-debug@" + goodDigest
+	noCandidate.FinalTag = "codeberg.org/itiquette/gommitlint-debug:v1.2.3"
+
+	reg := &fakeRegistry{digests: map[string]string{
+		first.CandidateTag:  goodDigest,
+		second.CandidateTag: goodDigest,
+	}}
+
+	if err := imageledger.Promote(context.Background(), reg, []imageledger.Entry{first, noCandidate, second}, "v1.2.3"); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+
+	// Both promotable entries copied to their :release moving pointer, in
+	// entry order, and the entry with no candidate contributed nothing.
+	const (
+		firstPointer  = "codeberg.org/itiquette/gommitlint:release"
+		secondPointer = "codeberg.org/itiquette/gommitlint-static:release"
+	)
+
+	want := []string{
+		first.CandidateTag + "->" + firstPointer,
+		second.CandidateTag + "->" + secondPointer,
+	}
+	if !reflect.DeepEqual(reg.copies, want) {
+		t.Errorf("copies = %v, want %v", reg.copies, want)
+	}
+
+	// Both pointers now serve the recorded digest, so the release is
+	// fully promoted rather than promoted up to the first entry.
+	for _, tag := range []string{firstPointer, secondPointer} {
+		if got := reg.digests[tag]; got != goodDigest {
+			t.Errorf("%s serves %q, want %q", tag, got, goodDigest)
+		}
+	}
+
+	// The skipped entry got no pointer of its own.
+	if _, ok := reg.digests["codeberg.org/itiquette/gommitlint-debug:release"]; ok {
+		t.Error("promoted an entry that has no candidate tag")
 	}
 }
