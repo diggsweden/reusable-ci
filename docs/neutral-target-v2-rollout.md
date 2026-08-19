@@ -325,12 +325,28 @@ hours of the guarded cutover, after every Phase 6 gate had passed.
 | Bearer-challenge parser required exactly two attributes; Forgejo and Gitea send a standard third (`scope`) | Neutral-v2 emission could not authenticate to the lab's own registry at all | Forge Lab `67d59f5` |
 | The `access`-claim grant proof is unimplementable on Forgejo and Gitea, whose token service returns `{"token":…}` and a payload carrying no grant; separately, the durable `fx-container` fixture reads anonymously, so the manifest probe proves topology rather than credential usability | Emission impossible for two of four kinds, and would have silently proven nothing if the claim check were merely dropped | Forge Lab `67d59f5` |
 | Bound-token self-revocation is impossible on Forgejo and Gitea: token auth, and the token offered as a basic-auth password, both answer `401`; only the account secret is accepted | Every v2 Forgejo generation was uncleanable through its advertised interface — the lab minted credentials it could not retire | Forge Lab `9b43d23` |
+| GitLab cleanup used `POST /personal_access_tokens/self/revoke`, a route GitLab does not have. It answers `404` while leaving the credential active; the real route is `DELETE /personal_access_tokens/self` | A completed forge-sync run left a live GitLab credential behind, reported only as an ambiguous status code | Forge Lab `9e71ebc` |
+| forge-tidy's container scenario widened package scope to the owner (correct for Forgejo, which scopes packages there), planned destruction from that broad listing, and asserted *zero* container tags remained | It destroyed the operator-owned `fx-container` OCI probe, which target emission requires and never creates, breaking every later generation with a `404` on the manifest proof | forge-tidy `f640f3b` |
 
-Three of these are one failure repeated: implemented from a specification,
+Four of these are one failure repeated: implemented from a specification,
 verified against a stub built from the same specification, never run against the
 software. In each case the test asserted a status code or a document shape while
-the defect lived in which credential went on the wire. The fixes pin the method
-per provider, not only the result.
+the defect lived in which credential, method, or route went on the wire. One
+stub returned `204` for every URL; another accepted a route the provider does
+not publish. The fixes pin the method and path per provider, not only the result.
+
+The last is a different failure and a cross-repository one: a consumer deleting
+outside the resource prefix its own harness identity declares. It is worth
+separating because no amount of producer-side testing could have found it — the
+producer's fixture was destroyed by another repository's live suite, and the
+only symptom was the next generation failing to emit.
+
+Two facts about the lab's own query languages fell out of that fix and are worth
+keeping. forge-tidy's filter terms are fuzzy by design, so `ft-container` also
+selects `fx-container`; a filter is therefore not usable as the safety boundary
+of a destructive plan. And the packages scenario already had the right idiom —
+assert the generated plan's IDs against a reference listing before applying —
+which is what the container scenario lacked.
 
 ## Rollback
 
