@@ -45,7 +45,7 @@ func BuildLabels(in LabelInputs) []Label {
 
 	created := in.CreatedAt.UTC().Format("2006-01-02T15:04:05Z")
 
-	return []Label{
+	return nonEmptyLabels([]Label{
 		{Key: "org.opencontainers.image.title", Value: title},
 		{Key: "org.opencontainers.image.description", Value: in.Description},
 		{Key: "org.opencontainers.image.url", Value: in.RepoURL},
@@ -54,7 +54,29 @@ func BuildLabels(in LabelInputs) []Label {
 		{Key: "org.opencontainers.image.created", Value: created},
 		{Key: "org.opencontainers.image.revision", Value: in.SHA},
 		{Key: "org.opencontainers.image.licenses", Value: in.License},
+	})
+}
+
+// nonEmptyLabels drops labels whose value is unknown.
+//
+// An absent label says nothing; an empty one claims the value is the empty
+// string, which is what a published image carried when the event context had
+// no commit -- org.opencontainers.image.revision= on every such build. The
+// sibling builder in internal/app/container already works this way: it refuses
+// empty values for the labels it requires and omits the optional ones. This
+// path cannot refuse, because it runs where a commit is genuinely absent (the
+// local provider resolves it from the environment and may find nothing), so
+// omitting is the half of that policy it can adopt.
+func nonEmptyLabels(labels []Label) []Label {
+	kept := make([]Label, 0, len(labels))
+
+	for _, label := range labels {
+		if label.Value != "" {
+			kept = append(kept, label)
+		}
 	}
+
+	return kept
 }
 
 // PrimaryVersion picks the tag with the highest priority. Ties resolve

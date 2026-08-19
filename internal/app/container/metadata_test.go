@@ -263,9 +263,8 @@ func TestComputeMetadata_MissingFieldsComeFromTheForge(t *testing.T) {
 		"org.opencontainers.image.source":      "https://github.com/example/app",
 		"org.opencontainers.image.version":     "main",
 		"org.opencontainers.image.created":     "2026-01-01T00:00:00Z",
-		// This fixture has no SHA, and the label is emitted empty rather
-		// than left out. Asserting the whole set is what shows that.
-		"org.opencontainers.image.revision": "",
+		// No revision: this fixture has no SHA, and a label whose value is
+		// unknown is left out rather than published empty.
 	}
 	if got := labelsFromSink(t, sink); !reflect.DeepEqual(got, want) {
 		t.Errorf("labels = %v\nwant %v", got, want)
@@ -296,12 +295,14 @@ func TestComputeMetadata_LabelsFetchErrorIsNonFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("API error should be non-fatal, got: %v", err)
 	}
-	// A failed lookup leaves the fields it would have filled empty, rather
-	// than aborting the whole metadata step.
+	// A failed lookup leaves out the fields it would have filled, rather than
+	// aborting the whole metadata step. Absence is asserted directly: reading
+	// a missing key returns "", so checking for an empty value would pass
+	// whether the label was omitted or published blank.
 	got := labelsFromSink(t, sink)
 	for _, key := range []string{"org.opencontainers.image.description", "org.opencontainers.image.licenses"} {
-		if got[key] != "" {
-			t.Errorf("%s = %q, want empty after a failed fetch", key, got[key])
+		if value, present := got[key]; present {
+			t.Errorf("%s = %q, want the label omitted after a failed fetch", key, value)
 		}
 	}
 }
