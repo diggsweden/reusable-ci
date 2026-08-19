@@ -129,6 +129,33 @@ func TestVerifyImage_SigstoreDispatch(t *testing.T) {
 	}
 }
 
+// TestVerifyImage_KMSDispatch is the counterpart to the sigstore dispatch.
+// Signing covered both methods; verification covered only one, so the KMS
+// branch -- which verifies against a key rather than a keyless identity -- had
+// no test at all.
+func TestVerifyImage_KMSDispatch(t *testing.T) {
+	rec := &recordingVerifier{}
+
+	err := appcontainer.VerifyImage(context.Background(), rec, &bytes.Buffer{}, appcontainer.VerifyImageInput{
+		Image:  testImageDigest,
+		Method: domainrelease.SignMethodKMS,
+		KeyRef: "hashivault://transit/keys/release",
+	})
+	if err != nil {
+		t.Fatalf("VerifyImage: %v", err)
+	}
+
+	// Keyless stays false: a KMS verification must not fall back to trusting
+	// an OIDC identity.
+	want := cosign.VerifyImageInput{
+		ImageRef: testImageDigest,
+		KeyRef:   "hashivault://transit/keys/release",
+	}
+	if rec.got != want {
+		t.Errorf("VerifyImageInput:\n got=%+v\nwant=%+v", rec.got, want)
+	}
+}
+
 func TestVerifyImage_GPGMethodRejected(t *testing.T) {
 	err := appcontainer.VerifyImage(context.Background(), &recordingVerifier{}, &bytes.Buffer{}, appcontainer.VerifyImageInput{
 		Image:  testImageDigest,
