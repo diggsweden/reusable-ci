@@ -145,6 +145,39 @@ func TestAssembleDist_AcceptsAnAbsolutePathInsideTheWorkspace(t *testing.T) {
 //
 // The images are c,b and b,a, which is deliberate. Merging keeps the order the
 // inputs were listed in and drops later duplicates, so the result is c,b,a --
+// TestAssembleDist_NoLedgerEntriesWritesAnEmptyLedger covers the other
+// side of the vanished-ledger case: with no images expected, a release
+// that genuinely has none writes a well-formed empty ledger rather than
+// leaving the file absent.
+//
+// A consumer reads this file to learn which images a release published.
+// An absent file and an empty one are different answers -- absent is
+// "the step did not run", "[]" is "there are none".
+func TestAssembleDist_NoLedgerEntriesWritesAnEmptyLedger(t *testing.T) {
+	chdirTempForAssembleDist(t)
+
+	var stderr bytes.Buffer
+
+	_, err := apprelease.AssembleDist(context.Background(), &assembleDistDownloader{}, fakeoutputsink.New(t), &stderr, apprelease.AssembleDistInput{
+		ArtifactNames:     "build",
+		Path:              "dist/",
+		LedgerFiles:       "gone.json",
+		ReleaseImagesPath: "dist/release-images.json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := readFileForAssembleDist(t, "dist/release-images.json"); got != "[]\n" {
+		t.Errorf("ledger = %q, want an empty JSON array", got)
+	}
+
+	// And it says so, rather than writing an empty ledger silently.
+	if !strings.Contains(stderr.String(), "wrote empty ledger") {
+		t.Errorf("stderr = %q, want a warning about the empty ledger", stderr.String())
+	}
+}
+
 // a fixture of a,b and b,c would merge to a,b,c under that rule and also under
 // sorting, proving neither. The merged file is published, so its bytes being
 // determined by the input order rather than by chance is the point.
@@ -328,6 +361,17 @@ func TestAssembleDist_RefusesBadInput(t *testing.T) {
 			name:         "a ledger count is expected but no ledger given",
 			in:           apprelease.AssembleDistInput{Path: "dist/", ArtifactNames: "build", LedgerExpectedCount: 1},
 			want:         errs.ErrUsage,
+			fetchedFirst: true,
+		},
+		{
+			// A ledger input that does not exist is skipped with a
+			// warning, so the run reaches the merge with nothing at all.
+			// With images expected, that must refuse: it is the shape of
+			// an image job that produced nothing, and publishing an
+			// empty ledger would ship a release claiming no images.
+			name:         "the ledger input vanished but images were expected",
+			in:           apprelease.AssembleDistInput{Path: "dist/", ArtifactNames: "build", LedgerFiles: "gone.json", LedgerExpectedCount: 3},
+			want:         errs.ErrValidation,
 			fetchedFirst: true,
 		},
 	} {
