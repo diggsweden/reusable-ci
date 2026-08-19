@@ -116,6 +116,30 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## `gradle.properties` is parsed more strictly than the format allows
+
+`gradleProperty` matches on the literal prefix `version=`, so a file written as
+
+```properties
+version = 1.2.3
+```
+
+is not recognised. `java.util.Properties` — the format gradle.properties is —
+accepts whitespace around the separator, as well as `:` and a bare space as
+separators.
+
+The consequence is quiet: `GradleMetadata` treats an unparsed version as absent,
+which is deliberately a warning rather than a failure ("some projects compute
+version in build.gradle(.kts)"). So a project using the spaced form gets
+"version not found in gradle.properties" and an empty version output, having
+written a perfectly valid file.
+
+Widening the match is a few characters. It is recorded rather than done because
+the same helper reads other keys, and because "absence is not an error" means
+the blast radius of getting it wrong is a wrong version rather than a failed
+run — which is the worse direction. Covered as a documented row in
+`TestGradleMetadata_WarnsWhenMissing` so the behaviour is at least visible.
+
 ## `SanitizePathToken` lets `..` through, and says it does not
 
 Its doc comment is explicit: "The result is safe for filesystem paths, Docker/OCI
