@@ -183,6 +183,63 @@ jobs:
 	}
 }
 
+// TestIsolation_ReportsEveryViolatingJob covers the scan across jobs.
+// Every fixture here has a single job with a single problem, so a check
+// that reported the first violation and stopped, or that only inspected
+// the first job, would satisfy all of them -- while a workflow whose
+// second job persists checkout credentials passed as isolated.
+//
+// This is a SLSA Build L3 invariant: a credential left on disk in any job
+// is reachable by anything that job runs, not only by the first one.
+func TestIsolation_ReportsEveryViolatingJob(t *testing.T) {
+	body := `name: release
+jobs:
+  prepare:
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+  build:
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+  test:
+    steps:
+      - uses: actions/checkout@v5
+  docs:
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: true
+`
+
+	out, err := runIsolation(t, body)
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+
+	// Two offending jobs, both annotated. Counting the annotations is
+	// what distinguishes "found them all" from "found one and stopped".
+	if got := strings.Count(out, "persist-credentials: false"); got != 2 {
+		t.Errorf("annotated %d checkout violations, want 2:\n%s", got, out)
+	}
+
+	// Each on its own line, so the annotations point at the right steps
+	// rather than all at the first.
+	lines := map[string]bool{}
+
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "persist-credentials: false") {
+			lines[line] = true
+		}
+	}
+
+	if len(lines) != 2 {
+		t.Errorf("both violations annotated at the same location:\n%s", out)
+	}
+}
+
 func TestIsolation_CheckoutConsumerIsExempt(t *testing.T) {
 	body := `name: release
 jobs:
