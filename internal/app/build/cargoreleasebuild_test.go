@@ -6,7 +6,8 @@ package build_test
 import (
 	"bytes"
 	"context"
-	"strings"
+	"reflect"
+	"slices"
 	"testing"
 
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
@@ -24,7 +25,69 @@ func cargoSubcommands(calls []appbuild.CargoRunInput) []string {
 	return out
 }
 
-func TestCargoReleaseBuild_RunsFullSequence(t *testing.T) {
+func TestCargoReleaseBuild_RunsStepsInOrder(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		skipTests bool
+		sbom      bool
+		want      []string
+	}{
+		{
+			name: "full sequence",
+			sbom: true,
+			want: []string{"metadata", "fetch", "test", "cyclonedx", "build"},
+		},
+		{
+			name:      "skipping tests removes only the test step",
+			skipTests: true,
+			sbom:      true,
+			want:      []string{"metadata", "fetch", "cyclonedx", "build"},
+		},
+		{
+			name: "disabling the SBOM removes only the SBOM step",
+			want: []string{"metadata", "fetch", "test", "build"},
+		},
+		{
+			name:      "both skipped",
+			skipTests: true,
+			want:      []string{"metadata", "fetch", "build"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			tool := &fakeCargoTool{metadata: sampleCargoMetadata, binaryNames: []string{"hello"}}
+
+			var out bytes.Buffer
+
+			err := appbuild.CargoReleaseBuild(context.Background(), &recordingSummarySink{}, tool, &out, &out, appbuild.CargoReleaseBuildInput{
+				ReleaseBuildOptions: appbuild.ReleaseBuildOptions{Dir: t.TempDir(), SkipTests: tc.skipTests, EnableBuildSBOM: tc.sbom},
+				Version:             "1.2.3",
+				Platforms:           "linux/amd64",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// The exact sequence. The previous assertion searched a joined
+			// string for each subcommand, so it saw neither order nor
+			// repetition -- and its skip cases were satisfied by a run in
+			// which nothing happened at all.
+			if got := cargoSubcommands(tool.calls); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("cargo subcommands = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCargoReleaseBuild_UsesTheLockfileAsWritten asserts --locked on every
+// step that resolves dependencies. Without it cargo may update Cargo.lock
+// mid-release, so the artifact would not correspond to the committed
+// lockfile -- and the build would still succeed, which is why this needs a
+// test rather than a reviewer.
+func TestCargoReleaseBuild_UsesTheLockfileAsWritten(t *testing.T) {
 	t.Parallel()
 
 	tool := &fakeCargoTool{metadata: sampleCargoMetadata, binaryNames: []string{"hello"}}
@@ -32,7 +95,7 @@ func TestCargoReleaseBuild_RunsFullSequence(t *testing.T) {
 	var out bytes.Buffer
 
 	err := appbuild.CargoReleaseBuild(context.Background(), &recordingSummarySink{}, tool, &out, &out, appbuild.CargoReleaseBuildInput{
-		ReleaseBuildOptions: appbuild.ReleaseBuildOptions{Dir: t.TempDir(), EnableBuildSBOM: true},
+		ReleaseBuildOptions: appbuild.ReleaseBuildOptions{Dir: t.TempDir()},
 		Version:             "1.2.3",
 		Platforms:           "linux/amd64",
 	})
@@ -40,37 +103,13 @@ func TestCargoReleaseBuild_RunsFullSequence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// cargo ran: metadata (resolve), fetch, test, cyclonedx (SBOM), build.
-	got := strings.Join(cargoSubcommands(tool.calls), ",")
-	for _, want := range []string{"metadata", "fetch", "test", "cyclonedx", "build"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("missing %q in cargo calls: %s", want, got)
-		}
-	}
-}
-
-func TestCargoReleaseBuild_SkipTests(t *testing.T) {
-	t.Parallel()
-
-	tool := &fakeCargoTool{metadata: sampleCargoMetadata, binaryNames: []string{"hello"}}
-
-	err := appbuild.CargoReleaseBuild(context.Background(), &recordingSummarySink{}, tool, &bytes.Buffer{}, &bytes.Buffer{}, appbuild.CargoReleaseBuildInput{
-		ReleaseBuildOptions: appbuild.ReleaseBuildOptions{Dir: t.TempDir(), SkipTests: true, EnableBuildSBOM: false},
-		Version:             "1.2.3",
-		Platforms:           "linux/amd64",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	got := cargoSubcommands(tool.calls)
-	for _, a := range got {
-		if a == "test" {
-			t.Errorf("cargo test ran despite --skip-tests: %v", got)
+	for _, c := range tool.calls {
+		if len(c.Args) == 0 || c.Args[0] == "metadata" {
+			continue // metadata resolves nothing
 		}
 
-		if a == "cyclonedx" {
-			t.Errorf("SBOM ran despite EnableBuildSBOM=false: %v", got)
+		if !slices.Contains(c.Args, "--locked") {
+			t.Errorf("cargo %v ran without --locked", c.Args)
 		}
 	}
 }
