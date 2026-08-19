@@ -116,6 +116,47 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## An empty `--repository` makes the namespace check accept what it should refuse
+
+`ValidateNamespace` builds its expected prefix as
+`<registry>/<namespace>/<repo-short>` and matches
+`^<prefix>(-[^/]*|/.*)?$`. With an empty `Repository` the prefix ends in a bare
+slash, and that optional tail then matches:
+
+| Image | Accepted with empty repository |
+|---|---|
+| `ghcr.io/myorg/-evil` | **yes** |
+| `ghcr.io/myorg//evil/deeper` | **yes** |
+| `ghcr.io/myorg/legit` | no |
+| `ghcr.io/other/evil` | no |
+
+So the check passes exactly the shapes it exists to refuse — a sibling package
+masquerading via the suffix or subpath tail — while still refusing an ordinary
+name. The guard fails open.
+
+**Reach is narrow, and the shipped path is not affected.**
+`publish-container.yml` runs `reusable-ci container validate namespace` with no
+flags and lets the env sources fill them; an unset or empty `$GITHUB_REPOSITORY`
+fails urfave's `Required` check before this code runs, which was verified
+against the built binary. It takes an explicit `--repository ""` on the command
+line — which a consumer interpolating an unset shell variable into a direct
+invocation would produce:
+
+```
+$ reusable-ci container validate namespace --image-name ghcr.io/myorg/-evil \
+    --repository "" --registry ghcr.io --enforce-namespace myorg
+✓ Image namespace validated: ghcr.io/myorg/-evil
+```
+
+The fix is to refuse an empty `Repository` with `ErrUsage`, the way the function
+already treats other unusable input. It is recorded rather than made because
+`ValidateNamespace` currently has no required-field checks at all — `Registry`
+and `EnforceNamespace` are equally unguarded, and the empty-namespace case
+happens to fail closed — so which fields become required is one decision rather
+than three.
+
+Pinned in `TestValidateNamespace_EmptyRepositoryFailsOpen`.
+
 ## Re-authenticating leaves a stale `identitytoken` in the auth config
 
 `MergeAuth` replaces the `auth` value for a registry and preserves the entry's

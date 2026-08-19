@@ -191,6 +191,54 @@ func TestValidateNamespace(t *testing.T) {
 	}
 }
 
+// TestValidateNamespace_EmptyRepositoryFailsOpen records a gap.
+//
+// The expected prefix is built as "<registry>/<namespace>/<repo-short>".
+// With an empty Repository the prefix ends in a bare slash, and the
+// optional "-suffix" / "/subpath" tail then matches anything shaped like
+// "<registry>/<namespace>/-<x>" or "<registry>/<namespace>//<x>" -- so
+// the check passes images it exists to refuse.
+//
+// Reach is narrow. The shipped workflow invokes the command with no
+// flags and lets the env sources fill them, and an unset or empty
+// $GITHUB_REPOSITORY fails the Required check before this code runs.
+// It takes an explicit `--repository ""` on the command line, which a
+// consumer interpolating an unset variable would produce.
+//
+// The direction is what makes it worth writing down: a guard on an
+// empty input should refuse, not accept. See docs/open-questions.md.
+func TestValidateNamespace_EmptyRepositoryFailsOpen(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		image        string
+		wantAccepted bool
+	}{
+		{image: "ghcr.io/myorg/-evil", wantAccepted: true},
+		{image: "ghcr.io/myorg//evil/deeper", wantAccepted: true},
+		{image: "ghcr.io/myorg/", wantAccepted: true},
+
+		// A plain sibling is still refused, so the hole is specifically
+		// the suffix/subpath tail rather than the check being disabled.
+		{image: "ghcr.io/myorg/legit", wantAccepted: false},
+		{image: "ghcr.io/other/evil", wantAccepted: false},
+	} {
+		t.Run(tc.image, func(t *testing.T) {
+			t.Parallel()
+
+			err := container.ValidateNamespace(container.ValidateNamespaceInput{
+				ImageName:        tc.image,
+				Repository:       "",
+				Registry:         "ghcr.io",
+				EnforceNamespace: "myorg",
+			})
+			if accepted := err == nil; accepted != tc.wantAccepted {
+				t.Errorf("accepted = %v, want %v (err = %v); if an empty repository is now refused outright, update docs/open-questions.md", accepted, tc.wantAccepted, err)
+			}
+		})
+	}
+}
+
 func TestNamespaceViolation_ErrorMessage(t *testing.T) {
 	t.Parallel()
 
