@@ -6,10 +6,13 @@ package manifest_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/manifest"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testenv"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
@@ -80,12 +83,36 @@ func TestNewFromEnv_HonoursOverride(t *testing.T) {
 	}
 }
 
-func TestSink_Write_RejectsEmptyStage(t *testing.T) {
+func TestSink_RejectsEmptyStage(t *testing.T) {
 	t.Parallel()
-	fsys := testfs.NewReal(t)
 
+	fsys := testfs.NewReal(t)
 	s := manifest.New(fsys.Root)
-	if err := s.Write(context.Background(), "", nil); err == nil {
-		t.Error("empty stage should error")
+	ctx := context.Background()
+
+	// Both write paths. The stage name becomes the filename, so an empty
+	// one would write "-result.json" -- a file no consumer globs for and
+	// that every stage would then overwrite in turn.
+	if err := s.Write(ctx, "", nil); !errors.Is(err, errs.ErrUsage) {
+		t.Errorf("Write err = %v, want ErrUsage", err)
+	}
+
+	if err := s.WriteJSON(ctx, "", jsonBody(`{}`)); !errors.Is(err, errs.ErrUsage) {
+		t.Errorf("WriteJSON err = %v, want ErrUsage", err)
+	}
+
+	// Refused before the directory is made, so a bad call leaves nothing.
+	entries, err := os.ReadDir(fsys.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(entries) != 0 {
+		t.Errorf("refused writes left %d entries behind", len(entries))
 	}
 }
+
+// jsonBody is a minimal json.Marshaler for driving WriteJSON.
+type jsonBody string
+
+func (b jsonBody) MarshalJSON() ([]byte, error) { return []byte(b), nil }
