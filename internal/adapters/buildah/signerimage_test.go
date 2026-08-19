@@ -120,3 +120,100 @@ func TestRemoveManifest_MissingIsANoOp(t *testing.T) {
 		}
 	})
 }
+
+// TestSignerImageManifestArgv covers the remaining manifest helpers in
+// one place. They are thin, but each argv encodes something a reader
+// cannot infer from the call site.
+func TestSignerImageManifestArgv(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		call func(a *buildah.Adapter, w *strings.Builder) error
+		want string
+	}{
+		{
+			name: "create",
+			call: func(a *buildah.Adapter, w *strings.Builder) error {
+				return a.CreateManifest(context.Background(), "localhost/app:list", w)
+			},
+			want: "manifest create localhost/app:list",
+		},
+		{
+			// --arch and --os describe the entry inside the list. Wrong
+			// values do not fail the push; they make a client pull the
+			// wrong architecture. The ref is digest-pinned by the caller
+			// and carries the docker:// transport so buildah resolves it
+			// from the registry rather than local storage.
+			name: "add",
+			call: func(a *buildah.Adapter, w *strings.Builder) error {
+				return a.AddManifest(context.Background(), container.SignerImageManifestAddToolRequest{
+					AuthFile: "/tmp/auth.json", Arch: "arm64",
+					LocalManifest: "localhost/app:list",
+					Ref:           "registry.example/app@sha256:abc",
+				}, w)
+			},
+			want: "manifest add --authfile /tmp/auth.json --arch arm64 --os linux localhost/app:list docker://registry.example/app@sha256:abc",
+		},
+		{
+			// --all pushes every entry; --rm drops the local list once it
+			// is published, so a later run does not append to a stale one.
+			name: "push",
+			call: func(a *buildah.Adapter, w *strings.Builder) error {
+				return a.PushManifest(context.Background(), "/tmp/auth.json", "localhost/app:list", "registry.example/app:v1", w)
+			},
+			want: "manifest push --all --quiet --rm --authfile /tmp/auth.json localhost/app:list docker://registry.example/app:v1",
+		},
+		{
+			name: "push image",
+			call: func(a *buildah.Adapter, w *strings.Builder) error {
+				return a.PushImage(context.Background(), "/tmp/auth.json", "localhost/app:amd64", "registry.example/app:staging", w)
+			},
+			want: "push --quiet --authfile /tmp/auth.json localhost/app:amd64 docker://registry.example/app:staging",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := mockbinary.New(t)
+			m.Add("buildah", `printf 'ARGV %s\n' "$*" >&2`)
+
+			a := &buildah.Adapter{Bin: m.Path("buildah")}
+
+			var stderr strings.Builder
+
+			if err := tc.call(a, &stderr); err != nil {
+				t.Fatal(err)
+			}
+
+			got := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(stderr.String()), "ARGV"))
+			if got != tc.want {
+				t.Errorf("argv = %q\nwant %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRawManifest_UsesSkopeo covers the one helper that shells out to
+// skopeo rather than buildah, and returns the document rather than a
+// status. The raw manifest is what the digest of a pushed image is
+// computed from, so reading it through the wrong tool or ref would give
+// a digest for something else.
+func TestRawManifest_UsesSkopeo(t *testing.T) {
+	m := mockbinary.New(t)
+	m.Add("skopeo", `printf '{"schemaVersion":2}'; printf 'ARGV %s\n' "$*" >&2`)
+
+	a := &buildah.Adapter{SkopeoBin: m.Path("skopeo")}
+
+	var stderr strings.Builder
+
+	raw, err := a.RawManifest(context.Background(), "/tmp/auth.json", "registry.example/app@sha256:abc", &stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(raw) != `{"schemaVersion":2}` {
+		t.Errorf("raw = %q, want the document skopeo printed", raw)
+	}
+
+	want := "inspect --raw --authfile /tmp/auth.json docker://registry.example/app@sha256:abc"
+	if got := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(stderr.String()), "ARGV")); got != want {
+		t.Errorf("argv = %q\nwant %q", got, want)
+	}
+}
