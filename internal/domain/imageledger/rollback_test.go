@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -325,5 +326,67 @@ func TestValidatePromotionRecordRepository(t *testing.T) {
 	record.MovingTag = "codeberg.org/evil/gommitlint:latest"
 	if err := imageledger.ValidatePromotionRecordRepository(record, "codeberg.org/itiquette/gommitlint"); !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("unexpected repository should be validation error, got %v", err)
+	}
+}
+
+// TestPlanReleasePromotionRollback_JournalsEveryPromotableEntry covers
+// the loop and its skip. Every other journal test passes one entry, so a
+// planner that recorded only the first would satisfy them all -- and this
+// journal is what a failed publish is rolled back from, so an image with
+// no record keeps its release tags after the rollback runs.
+//
+// An entry with no candidate tag is skipped when the digest-ref fallback
+// is off, because there is no source to promote from. Records must line
+// up with the entries that were promotable, not with the entries.
+func TestPlanReleasePromotionRollback_JournalsEveryPromotableEntry(t *testing.T) {
+	t.Parallel()
+
+	first := candidateEntry()
+
+	second := candidateEntry()
+	second.Role = "static"
+	second.Ref = "codeberg.org/itiquette/gommitlint-static@" + goodDigest
+	second.CandidateTag = "codeberg.org/itiquette/gommitlint-static:staging-v1.2.3"
+	second.FinalTag = "codeberg.org/itiquette/gommitlint-static:v1.2.3"
+
+	// No candidate tag, and the fallback is off, so this one is skipped.
+	skipped := validEntry()
+	skipped.Role = "debug"
+	skipped.Ref = "codeberg.org/itiquette/gommitlint-debug@" + goodDigest
+	skipped.FinalTag = "codeberg.org/itiquette/gommitlint-debug:v1.2.3"
+
+	reg := &fakePromotionRollbackRegistry{digests: map[string]string{
+		first.CandidateTag:  goodDigest,
+		second.CandidateTag: goodDigest,
+	}}
+
+	records, err := imageledger.PlanReleasePromotionRollback(
+		context.Background(), reg,
+		[]imageledger.Entry{first, skipped, second},
+		"v1.2.3",
+		imageledger.Stage{Name: "release", UseEntryReleaseTags: true},
+	)
+	if err != nil {
+		t.Fatalf("PlanReleasePromotionRollback: %v", err)
+	}
+
+	// Two records, in entry order, for the two promotable entries.
+	want := []string{first.CandidateTag, second.CandidateTag}
+	if len(records) != len(want) {
+		t.Fatalf("records = %d, want %d: %+v", len(records), len(want), records)
+	}
+
+	for i, wantCandidate := range want {
+		if records[i].CandidateTag != wantCandidate {
+			t.Errorf("record %d candidate = %q, want %q", i, records[i].CandidateTag, wantCandidate)
+		}
+	}
+
+	// The skipped entry must not appear under any field, or a rollback
+	// would act on a promotion that never happened.
+	for _, r := range records {
+		if strings.Contains(r.FinalTag, "debug") || strings.Contains(r.SourceRef, "debug") {
+			t.Errorf("skipped entry leaked into a record: %+v", r)
+		}
 	}
 }
