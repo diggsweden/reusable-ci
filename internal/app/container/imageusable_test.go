@@ -6,6 +6,7 @@ package container_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -58,8 +59,12 @@ func TestUsableImageDigest_ReturnsDigestWhenArchAndLabelsMatch(t *testing.T) {
 		t.Fatalf("sink digest=%q ref=%q", sink.Single("digest"), sink.Single("ref"))
 	}
 
-	if registry.refs[0] != "registry.example/app:staging-amd64" || registry.archs[0] != "amd64" {
-		t.Fatalf("registry call refs=%v archs=%v", registry.refs, registry.archs)
+	if !reflect.DeepEqual(registry.refs, []string{"registry.example/app:staging-amd64"}) {
+		t.Errorf("registry refs = %v, want the requested ref once", registry.refs)
+	}
+
+	if !reflect.DeepEqual(registry.archs, []string{"amd64"}) {
+		t.Errorf("registry archs = %v, want [amd64]", registry.archs)
 	}
 }
 
@@ -80,22 +85,57 @@ func TestUsableImageDigest_RejectsArchitectureMismatch(t *testing.T) {
 	}
 }
 
+// TestUsableImageDigest_RejectsRequiredLabelMismatch covers the ways a
+// candidate image fails its required labels. This decides whether a prebuilt
+// image is reused, so accepting one that should not be means a release ships
+// an image built from different inputs.
+//
+// Only a differing value was covered. A label the image does not carry at all
+// is the ordinary case -- an image built before the label existed -- and a
+// second label that disagrees is what shows every label is checked rather than
+// just the first.
 func TestUsableImageDigest_RejectsRequiredLabelMismatch(t *testing.T) {
 	t.Parallel()
 
-	registry := &fakeUsableImageRegistry{
-		digest: "sha256:" + strings.Repeat("c", 64),
-		arch:   "amd64",
-		labels: map[string]string{"org.example.content-id": "other"},
-	}
+	for name, testCase := range map[string]struct {
+		labels   map[string]string
+		required []string
+	}{
+		"the value differs": {
+			labels:   map[string]string{"org.example.content-id": "other"},
+			required: []string{"org.example.content-id=cid"},
+		},
+		"the label is absent": {
+			labels:   map[string]string{"org.example.something-else": "cid"},
+			required: []string{"org.example.content-id=cid"},
+		},
+		"the image carries no labels": {
+			labels:   nil,
+			required: []string{"org.example.content-id=cid"},
+		},
+		"a later label disagrees": {
+			labels:   map[string]string{"org.example.content-id": "cid", "org.example.build-group": "other"},
+			required: []string{"org.example.content-id=cid", "org.example.build-group=core"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	_, err := appcontainer.UsableImageDigest(context.Background(), registry, fakeoutputsink.New(t), appcontainer.UsableImageDigestInput{
-		Ref:            "registry.example/app:staging-amd64",
-		Arch:           "amd64",
-		RequiredLabels: []string{"org.example.content-id=cid"},
-	})
-	if !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), "not reusable") {
-		t.Fatalf("err = %v, want not reusable validation", err)
+			registry := &fakeUsableImageRegistry{
+				digest: "sha256:" + strings.Repeat("c", 64),
+				arch:   "amd64",
+				labels: testCase.labels,
+			}
+
+			_, err := appcontainer.UsableImageDigest(context.Background(), registry, fakeoutputsink.New(t), appcontainer.UsableImageDigestInput{
+				Ref:            "registry.example/app:staging-amd64",
+				Arch:           "amd64",
+				RequiredLabels: testCase.required,
+			})
+			if !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), "not reusable") {
+				t.Errorf("err = %v, want a not-reusable validation error", err)
+			}
+		})
 	}
 }
 
