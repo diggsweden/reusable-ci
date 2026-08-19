@@ -80,6 +80,16 @@ func TestSignConfig_Validate_KMSKeySchemeAllowlist(t *testing.T) {
 		"ftp://x",
 		"javascript:alert(0)",
 		"",
+
+		// Near-misses on an allowed scheme. The comparison is exact
+		// against the text before the first colon, and these are the
+		// inputs that would slip through if it ever became a prefix or
+		// substring match.
+		"awskmsevil://alias/release",
+		"evilawskms://alias/release",
+		"awskms.attacker.example://alias/release",
+		"AWSKMS://alias/release", // case-sensitive by design
+		"://no-scheme",
 	}
 
 	for _, k := range badKeys {
