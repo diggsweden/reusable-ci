@@ -127,19 +127,87 @@ func TestResolveAndroidBuildTasks(t *testing.T) {
 	}
 }
 
+// TestParseGradleVersionFromProperties covers the parser as it behaves,
+// including four cases where it differs from gradleProperty in
+// internal/app/build, which reads the same file format. Three of the four
+// are recorded in docs/open-questions.md rather than changed here.
 func TestParseGradleVersionFromProperties(t *testing.T) {
-	body := "android.useAndroidX=true\nversionName=1.2.3\nversionCode=42\n"
+	t.Parallel()
 
-	v, c := build.ParseGradleVersionFromProperties(body)
-	if v != "1.2.3" || c != "42" { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		t.Errorf("got (%q, %q), want (\"1.2.3\", \"42\")", v, c)
-	}
-}
+	for _, tc := range []struct {
+		name        string
+		body        string
+		wantVersion string
+		wantCode    string
+	}{
+		{
+			name:        "plain assignments among other properties",
+			body:        "android.useAndroidX=true\nversionName=1.2.3\nversionCode=42\n",
+			wantVersion: "1.2.3",
+			wantCode:    "42",
+		},
+		{
+			name:        "nothing useful falls back to unknown",
+			body:        "# nothing useful\n",
+			wantVersion: "unknown",
+			wantCode:    "unknown",
+		},
+		{
+			name:        "only one of the two present",
+			body:        "versionName=1.2.3\n",
+			wantVersion: "1.2.3",
+			wantCode:    "unknown",
+		},
+		{
+			// A CRLF file leaves the carriage return in the value, and
+			// both line-oriented output sinks refuse a scalar containing
+			// one -- so `android version-info` fails outright on a
+			// CRLF gradle.properties. Recorded, not endorsed.
+			name:        "CRLF leaves a carriage return in the value",
+			body:        "versionName=1.2.3\r\nversionCode=42\r\n",
+			wantVersion: "1.2.3\r",
+			wantCode:    "42\r",
+		},
+		{
+			// The line is not trimmed before the prefix test, so an
+			// indented assignment is not seen at all. gradleProperty
+			// trims and would find it.
+			name:        "an indented assignment is not seen",
+			body:        "  versionName=1.2.3\n  versionCode=42\n",
+			wantVersion: "unknown",
+			wantCode:    "unknown",
+		},
+		{
+			// Nor is the value trimmed, so the surrounding spaces reach
+			// the job output and the artifact names built from it.
+			name:        "surrounding spaces survive into the value",
+			body:        "versionName=1.2.3  \nversionCode= 42 \n",
+			wantVersion: "1.2.3  ",
+			wantCode:    " 42 ",
+		},
+		{
+			// Last assignment wins here; gradleProperty returns on the
+			// first. The two readers of this file format disagree.
+			name:        "the last assignment wins",
+			body:        "versionName=1.0\nversionName=2.0\n",
+			wantVersion: "2.0",
+			wantCode:    "unknown",
+		},
+		{
+			name:        "a commented assignment is not read",
+			body:        "#versionName=9.9.9\nversionName=1.2.3\n",
+			wantVersion: "1.2.3",
+			wantCode:    "unknown",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestParseGradleVersionFromProperties_DefaultsToUnknown(t *testing.T) {
-	v, c := build.ParseGradleVersionFromProperties("# nothing useful\n")
-	if v != "unknown" || c != "unknown" { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		t.Errorf("got (%q, %q), want (\"unknown\", \"unknown\")", v, c)
+			v, c := build.ParseGradleVersionFromProperties(tc.body) //nolint:varnamelen // mirrors the function's own two-value shape.
+			if v != tc.wantVersion || c != tc.wantCode {
+				t.Errorf("got (%q, %q), want (%q, %q)", v, c, tc.wantVersion, tc.wantCode)
+			}
+		})
 	}
 }
 

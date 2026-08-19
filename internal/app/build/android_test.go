@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/ghaoutput"
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
@@ -120,36 +121,46 @@ func TestAndroidArtifactNames_RequiresRepoNameOrOverride(t *testing.T) {
 }
 
 func TestAndroidVersionInfo_ReadsGradleProperties(t *testing.T) {
+	t.Parallel()
+
 	fsys := testfs.NewReal(t)
-	dir := fsys.Root
-	fsys.WriteFile("gradle.properties", []byte("versionName=1.2.3\nversionCode=42\n"))
+	fsys.WriteFile("gradle.properties", []byte("versionName=1.0.0-beta1\nversionCode=5\n"))
 
 	sink := fakeoutputsink.New(t)
-	if err := appbuild.AndroidVersionInfo(context.Background(), sink, io.Discard, output.Annotator{}, appbuild.AndroidVersionInfoInput{Dir: dir}); err != nil {
+
+	var stderr bytes.Buffer
+
+	if err := appbuild.AndroidVersionInfo(context.Background(), sink, &stderr, output.Annotator{}, appbuild.AndroidVersionInfoInput{Dir: fsys.Root}); err != nil {
 		t.Fatalf("AndroidVersionInfo: %v", err)
 	}
 
-	if sink.Single("version") != "1.2.3" || sink.Single("version-code") != "42" { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		t.Errorf("version=%q version-code=%q", sink.Single("version"), sink.Single("version-code"))
+	want := map[string]string{"version": "1.0.0-beta1", "version-code": "5"}
+	if got := sink.AllScalar(); !reflect.DeepEqual(got, want) {
+		t.Errorf("outputs = %v, want %v", got, want)
+	}
+
+	if got := strings.TrimSpace(stderr.String()); got != "Version: 1.0.0-beta1 (5)" {
+		t.Errorf("stderr = %q", got)
 	}
 }
 
 func TestAndroidVersionInfo_MissingFileFallsBackToUnknown(t *testing.T) {
-	fsys := testfs.NewReal(t)
-	dir := fsys.Root // no gradle.properties
+	t.Parallel()
+
+	fsys := testfs.NewReal(t) // no gradle.properties
 	sink := fakeoutputsink.New(t)
 
 	var stderr bytes.Buffer
-	if err := appbuild.AndroidVersionInfo(context.Background(), sink, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), appbuild.AndroidVersionInfoInput{Dir: dir}); err != nil {
+
+	if err := appbuild.AndroidVersionInfo(context.Background(), sink, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), appbuild.AndroidVersionInfoInput{Dir: fsys.Root}); err != nil {
 		t.Fatalf("AndroidVersionInfo: %v", err)
 	}
 
-	if sink.Single("version") != "unknown" { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		t.Errorf("version = %q, want unknown", sink.Single("version"))
-	}
-
-	if sink.Single("version-code") != "unknown" {
-		t.Errorf("version-code = %q, want unknown", sink.Single("version-code"))
+	// Both outputs are still emitted, so a consumer always has something
+	// to read -- absence is a warning here, not a failure.
+	want := map[string]string{"version": "unknown", "version-code": "unknown"}
+	if got := sink.AllScalar(); !reflect.DeepEqual(got, want) {
+		t.Errorf("outputs = %v, want %v", got, want)
 	}
 
 	if !strings.Contains(stderr.String(), "gradle.properties not found") {
@@ -157,28 +168,58 @@ func TestAndroidVersionInfo_MissingFileFallsBackToUnknown(t *testing.T) {
 	}
 }
 
-func TestAndroidVersionInfo_PrintsExactVersionLine(t *testing.T) {
-	fsys := testfs.NewReal(t)
-	dir := fsys.Root
-	fsys.WriteFile("gradle.properties", []byte("versionName=1.0.0-beta1\nversionCode=5\n"))
+// TestAndroidVersionInfo_CRLFPropertiesFailOnARealSink pins a defect the
+// fake sink cannot see. ParseGradleVersionFromProperties splits on "\n"
+// only, so a CRLF gradle.properties leaves a carriage return in both
+// values, and every line-oriented sink refuses a scalar containing one.
+//
+// The result is that `android version-info` fails outright on a
+// CRLF-checked-out Android project, with a message about newlines and
+// SetMultiline that points nowhere near the cause. See
+// docs/open-questions.md.
+func TestAndroidVersionInfo_CRLFPropertiesFailOnARealSink(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		body    string
+		wantErr error
+		wantOut string
+	}{
+		{
+			name:    "LF",
+			body:    "versionName=1.2.3\nversionCode=42\n",
+			wantOut: "version=1.2.3\nversion-code=42\n",
+		},
+		{
+			name:    "CRLF",
+			body:    "versionName=1.2.3\r\nversionCode=42\r\n",
+			wantErr: errs.ErrValidation,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fsys := testfs.NewReal(t)
+			fsys.WriteFile("gradle.properties", []byte(tc.body))
 
-	sink := fakeoutputsink.New(t)
+			outPath := filepath.Join(t.TempDir(), "gha_output")
+			if err := os.WriteFile(outPath, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
 
-	var stderr bytes.Buffer
-	if err := appbuild.AndroidVersionInfo(context.Background(), sink, &stderr, output.Annotator{}, appbuild.AndroidVersionInfoInput{Dir: dir}); err != nil {
-		t.Fatalf("AndroidVersionInfo: %v", err)
-	}
+			t.Setenv("GITHUB_OUTPUT", outPath)
 
-	if got := sink.Single("version"); got != "1.0.0-beta1" {
-		t.Errorf("version = %q", got)
-	}
+			err := appbuild.AndroidVersionInfo(context.Background(), ghaoutput.NewFromEnv(), io.Discard, output.Annotator{}, appbuild.AndroidVersionInfoInput{Dir: fsys.Root})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
 
-	if got := sink.Single("version-code"); got != "5" {
-		t.Errorf("version-code = %q", got)
-	}
+			body, readErr := os.ReadFile(outPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
 
-	if got := strings.TrimSpace(stderr.String()); got != "Version: 1.0.0-beta1 (5)" {
-		t.Errorf("stderr = %q", got)
+			if string(body) != tc.wantOut {
+				t.Errorf("output = %q, want %q", body, tc.wantOut)
+			}
+		})
 	}
 }
 

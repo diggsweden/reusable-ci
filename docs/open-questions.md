@@ -116,6 +116,47 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## A CRLF `gradle.properties` breaks `android version-info`
+
+`ParseGradleVersionFromProperties` splits on `"\n"` and neither trims the line
+before testing the prefix nor trims the value after it. Four consequences,
+all probed:
+
+| Input | version | version-code |
+|---|---|---|
+| `versionName=1.2.3\nversionCode=42\n` | `1.2.3` | `42` |
+| `versionName=1.2.3\r\nversionCode=42\r\n` | `1.2.3\r` | `42\r` |
+| `  versionName=1.2.3\n` (indented) | `unknown` | `unknown` |
+| `versionName=1.2.3  \n` | `1.2.3  ` | `unknown` |
+| `versionName=1.0\nversionName=2.0\n` | `2.0` (last wins) | `unknown` |
+
+The carriage-return row is the damaging one. Both line-oriented sinks refuse a
+scalar containing `\r`, so on a CRLF-checked-out Android project the command
+does not merely report a wrong version — it fails:
+
+```
+ghaoutput: scalar output "version" contains a newline; use SetMultiline: validation failed
+```
+
+with an empty `$GITHUB_OUTPUT` and a message pointing nowhere near the cause.
+Confirmed end-to-end against the real sink in
+`TestAndroidVersionInfo_CRLFPropertiesFailOnARealSink`.
+
+The indented row is a silent wrong answer rather than a failure: the project
+reports version `unknown`, which then flows into the artifact names.
+
+**One change fixes all of them** — trim the line before the prefix test and the
+value after it, which is exactly what the sibling `gradleProperty` in
+`internal/app/build/gradle.go` already does for the same file format. That also
+resolves the last-wins/first-wins disagreement between the two readers if the
+loop breaks on match.
+
+Recorded rather than made because it changes values that are emitted as job
+outputs and baked into artifact names, and because the two parsers should
+probably become one — which is a slightly larger call than the trim itself.
+Every row above is pinned in `TestParseGradleVersionFromProperties`, so a fix
+will fail these tests and bring whoever makes it back to this entry.
+
 ## `materialize-build-secrets` fails with more than one build secret
 
 `secret-mounts` is a newline-separated list of `id=NAME,src=PATH` entries,
