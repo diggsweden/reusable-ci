@@ -154,3 +154,74 @@ func TestPushImage_TreatsThePushedDigestAsAnExpectation(t *testing.T) {
 		})
 	}
 }
+
+// TestPushImage_InputRefusals covers validatePushImageInput, which had
+// about half its branches exercised. Nothing may be pushed on a refusal.
+//
+// The tls-verify check is the one that carries weight: the field is a
+// string, and an unrecognised value silently treated as "false" would
+// push a release image over an unverified TLS connection. It is refused
+// instead, so a typo fails the run rather than downgrading it.
+func TestPushImage_InputRefusals(t *testing.T) {
+	t.Parallel()
+
+	valid := func() appcontainer.PushImageInput {
+		return appcontainer.PushImageInput{
+			LocalImage:  "localhost/app:arch",
+			Destination: "registry.example/app:staging-amd64",
+			TLSVerify:   "true",
+		}
+	}
+
+	t.Run("missing collaborators", func(t *testing.T) {
+		t.Parallel()
+
+		// Unchecked, a nil adapter is a panic rather than an error.
+		if _, err := appcontainer.PushImage(context.Background(), nil, &fakeManifestPushRegistry{}, fakeoutputsink.New(t), io.Discard, valid()); !errors.Is(err, errs.ErrUsage) {
+			t.Errorf("nil push tool: err = %v, want ErrUsage", err)
+		}
+
+		if _, err := appcontainer.PushImage(context.Background(), &fakeImagePushTool{}, nil, fakeoutputsink.New(t), io.Discard, valid()); !errors.Is(err, errs.ErrUsage) {
+			t.Errorf("nil registry: err = %v, want ErrUsage", err)
+		}
+	})
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*appcontainer.PushImageInput)
+	}{
+		{name: "no local image", mutate: func(in *appcontainer.PushImageInput) { in.LocalImage = "" }},
+		{name: "blank local image", mutate: func(in *appcontainer.PushImageInput) { in.LocalImage = "   " }},
+		{name: "no destination", mutate: func(in *appcontainer.PushImageInput) { in.Destination = "" }},
+
+		// Whitespace in a ref is refused because the ref reaches an argv
+		// entry; a space would split it into two arguments.
+		{name: "destination with a space", mutate: func(in *appcontainer.PushImageInput) { in.Destination = "registry.example/app:tag --tls-verify=false" }},
+		{name: "destination with a newline", mutate: func(in *appcontainer.PushImageInput) { in.Destination = "registry.example/app:tag\nevil" }},
+		{name: "destination with a tab", mutate: func(in *appcontainer.PushImageInput) { in.Destination = "registry.example/app:tag\tevil" }},
+
+		{name: "tls-verify unset", mutate: func(in *appcontainer.PushImageInput) { in.TLSVerify = "" }},
+		{name: "tls-verify yes", mutate: func(in *appcontainer.PushImageInput) { in.TLSVerify = "yes" }},
+		{name: "tls-verify TRUE", mutate: func(in *appcontainer.PushImageInput) { in.TLSVerify = "TRUE" }},
+		{name: "tls-verify 1", mutate: func(in *appcontainer.PushImageInput) { in.TLSVerify = "1" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			in := valid()
+			tc.mutate(&in)
+
+			tool := &fakeImagePushTool{}
+			registry := &fakeManifestPushRegistry{}
+
+			_, err := appcontainer.PushImage(context.Background(), tool, registry, fakeoutputsink.New(t), io.Discard, in)
+			if !errors.Is(err, errs.ErrUsage) {
+				t.Fatalf("err = %v, want ErrUsage", err)
+			}
+
+			if len(tool.pushes) != 0 {
+				t.Errorf("pushed %v on a refused input", tool.pushes)
+			}
+		})
+	}
+}
