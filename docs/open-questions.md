@@ -116,6 +116,48 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## An unrecognised `--fail-on-severity` narrows the gate instead of failing
+
+`security scan dependencies --fail-on-severity` accepts `low`, `moderate`,
+`high` or `critical`. Anything else warns and falls back to `CRITICAL`:
+
+```
+::warning::Unknown severity "medium", defaulting to critical
+```
+
+The fallback is in the unsafe direction. A caller who asked for a wide gate and
+mistyped it gets the narrowest one, so HIGH and MEDIUM findings stop blocking
+the release — and the only signal is one warning line in a CI log.
+
+Two plausible spellings both land there:
+
+| Input | Known | Filter used |
+|---|---|---|
+| `moderate` | yes | `CRITICAL,HIGH,MEDIUM` |
+| `medium` | **no** | `CRITICAL` |
+| `CRITICAL,HIGH` | **no** | `CRITICAL` |
+
+`medium` is what trivy itself calls that band. `CRITICAL,HIGH` is worse: it is
+the grammar the *sibling* command documents for the identical flag name —
+`security scan container --fail-on-severity` takes a comma-list ("comma-list,
+e.g. 'CRITICAL,HIGH'; narrow to 'CRITICAL' to relax"), while `scan
+dependencies` takes a single word. A consumer who learns one command and
+copies the spelling into the other silently loses coverage.
+
+Two directions to consider, neither taken here:
+
+- **Refuse an unknown value** (`ErrUsage`) instead of warning. A misconfigured
+  gate is a configuration error, and failing closed is the safer reading for a
+  security control.
+- **Accept both grammars**, so the two subcommands stop disagreeing about what
+  the same flag means.
+
+The existing app-layer test covers the warning and the CRITICAL default, so the
+behaviour is deliberate and tested; what is recorded here is the direction of
+the fallback and the collision between the two subcommands. The two plausible
+inputs are now rows in `TestMapTrivyFailSeverity`, where someone changing this
+will see them.
+
 ## A camelCase Android product flavor produces a task gradle does not have
 
 `capitalizeFirst` upper-cases the first letter and lower-cases everything after

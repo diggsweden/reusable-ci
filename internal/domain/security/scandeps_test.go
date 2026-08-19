@@ -17,6 +17,18 @@ func TestMapTrivyFailSeverity(t *testing.T) {
 		"Moderate": "CRITICAL,HIGH,MEDIUM",     //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"low":      "CRITICAL,HIGH,MEDIUM,LOW", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"weird":    "CRITICAL",                 // default
+
+		// The default is reached by two spellings a caller is likely to
+		// try, and it narrows the gate rather than widening it: a HIGH
+		// finding stops blocking the release. Both only warn. See
+		// docs/open-questions.md.
+		//
+		// "medium" is what trivy itself calls this band; this flag wants
+		// "moderate". "CRITICAL,HIGH" is the grammar the sibling
+		// `security scan container --fail-on-severity` documents for the
+		// very same flag name.
+		"medium":        "CRITICAL",
+		"CRITICAL,HIGH": "CRITICAL",
 	}
 	for in, want := range cases {
 		if got := security.ParseDepSeverity(in).TrivyFilter(); got != want {
