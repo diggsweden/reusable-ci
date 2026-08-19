@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/owenrumney/go-sarif/v3/pkg/report/v210/sarif"
+
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/security"
 )
 
@@ -192,26 +194,109 @@ func TestTrivyToSARIF_ResultsAreDeterministicallyOrdered(t *testing.T) {
 	}
 }
 
-func TestTrivyToSARIF_MessageIncludesFixWhenAvailable(t *testing.T) {
-	t.Parallel()
-	writeAndAssert(t, sample(), security.Options{}, []string{
-		"openssl@3.0.0",
-		"(fix: 3.0.1)",
-		"OpenSSL RCE",
-	})
+// resultByRuleID returns the message text and location URI of the result
+// carrying ruleID, so tests can assert what a finding says rather than
+// that a substring exists somewhere in the document.
+func resultByRuleID(t *testing.T, doc *sarif.Report, ruleID string) (string, string) {
+	t.Helper()
+
+	for _, r := range doc.Runs[0].Results { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+		if r.RuleID == nil || *r.RuleID != ruleID {
+			continue
+		}
+
+		msg := ""
+		if r.Message.Text != nil {
+			msg = *r.Message.Text
+		}
+
+		uri := ""
+		if len(r.Locations) > 0 &&
+			r.Locations[0].PhysicalLocation != nil &&
+			r.Locations[0].PhysicalLocation.ArtifactLocation != nil &&
+			r.Locations[0].PhysicalLocation.ArtifactLocation.URI != nil {
+			uri = *r.Locations[0].PhysicalLocation.ArtifactLocation.URI
+		}
+
+		return msg, uri
+	}
+
+	t.Fatalf("no result for rule %q", ruleID)
+
+	return "", ""
 }
 
-func TestTrivyToSARIF_FallsBackToVulnIDWhenTitleMissing(t *testing.T) {
+// TestTrivyToSARIF_MessageComposition pins the whole message for each
+// shape it can take. The previous checks looked for "openssl@3.0.0" and
+// "(fix: 3.0.1)" as substrings of the document, which cannot show they
+// belong to the same finding, nor in what order the parts appear.
+func TestTrivyToSARIF_MessageComposition(t *testing.T) {
 	t.Parallel()
 
 	report := &security.TrivyReport{
 		Results: []security.TrivyResult{{
 			Vulnerabilities: []security.TrivyVulnerability{
-				{VulnerabilityID: "CVE-X-1", PkgName: "p", Severity: "HIGH"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+				{VulnerabilityID: "CVE-FULL", PkgName: "openssl", InstalledVersion: "3.0.0", FixedVersion: "3.0.1", Severity: "HIGH", Title: "OpenSSL RCE"},
+				{VulnerabilityID: "CVE-NOFIX", PkgName: "zlib", InstalledVersion: "1.2.13", Severity: "LOW", Title: "zlib issue"},
+				{VulnerabilityID: "CVE-NOVER", PkgName: "musl", Severity: "LOW", Title: "musl issue"},
+				{VulnerabilityID: "CVE-NOPKG", Severity: "LOW", Title: "loose finding"},
+				// No title: the id stands in for it. The document always
+				// carries the id as ruleId, so asserting the message text
+				// is the only way to see this fallback at all.
+				{VulnerabilityID: "CVE-NOTITLE", PkgName: "p", InstalledVersion: "1.0", Severity: "HIGH"},
+				{VulnerabilityID: "CVE-BLANKTITLE", PkgName: "q", Severity: "HIGH", Title: "   "},
 			},
 		}},
 	}
-	writeAndAssert(t, report, security.Options{}, []string{`"CVE-X-1"`})
+
+	doc := security.TrivyToSARIF(report, security.Options{})
+
+	for _, tc := range []struct{ ruleID, want string }{
+		{"CVE-FULL", "OpenSSL RCE — openssl@3.0.0 (fix: 3.0.1)"},
+		{"CVE-NOFIX", "zlib issue — zlib@1.2.13"},
+		{"CVE-NOVER", "musl issue — musl"},
+		{"CVE-NOPKG", "loose finding"},
+		{"CVE-NOTITLE", "CVE-NOTITLE — p@1.0"},
+		{"CVE-BLANKTITLE", "CVE-BLANKTITLE — q"},
+	} {
+		if got, _ := resultByRuleID(t, doc, tc.ruleID); got != tc.want {
+			t.Errorf("%s message = %q, want %q", tc.ruleID, got, tc.want)
+		}
+	}
+}
+
+// TestTrivyToSARIF_PhysicalLocationURI covers all three branches of the
+// location fallback. The image ref is what lets Code Scanning group
+// findings by image, so it has to win when present.
+func TestTrivyToSARIF_PhysicalLocationURI(t *testing.T) {
+	t.Parallel()
+
+	report := &security.TrivyReport{
+		Results: []security.TrivyResult{{
+			Vulnerabilities: []security.TrivyVulnerability{
+				{VulnerabilityID: "CVE-PKG", PkgName: "lib-foo", Severity: "LOW"},
+				{VulnerabilityID: "CVE-BARE", Severity: "LOW"},
+			},
+		}},
+	}
+
+	withoutImage := security.TrivyToSARIF(report, security.Options{})
+
+	if _, got := resultByRuleID(t, withoutImage, "CVE-PKG"); got != "lib-foo" {
+		t.Errorf("uri = %q, want the package name", got)
+	}
+
+	if _, got := resultByRuleID(t, withoutImage, "CVE-BARE"); got != "unknown" {
+		t.Errorf("uri = %q, want unknown", got)
+	}
+
+	// An image ref outranks the package name for every finding.
+	withImage := security.TrivyToSARIF(report, security.Options{ImageRef: "ghcr.io/example/img@sha256:deadbeef"})
+	for _, id := range []string{"CVE-PKG", "CVE-BARE"} {
+		if _, got := resultByRuleID(t, withImage, id); got != "ghcr.io/example/img@sha256:deadbeef" {
+			t.Errorf("%s uri = %q, want the image ref", id, got)
+		}
+	}
 }
 
 func TestTrivyToSARIF_EmptyReportProducesValidEmptySARIF(t *testing.T) {
@@ -225,17 +310,4 @@ func TestTrivyToSARIF_EmptyReportProducesValidEmptySARIF(t *testing.T) {
 	if len(doc.Runs[0].Results) != 0 {
 		t.Errorf("expected zero results in empty SARIF, got %d", len(doc.Runs[0].Results))
 	}
-}
-
-func TestTrivyToSARIF_PhysicalLocationFallsBackToPkgNameWithoutImageRef(t *testing.T) {
-	t.Parallel()
-
-	report := &security.TrivyReport{
-		Results: []security.TrivyResult{{
-			Vulnerabilities: []security.TrivyVulnerability{
-				{VulnerabilityID: "CVE-X-2", PkgName: "lib-foo", Severity: "LOW"},
-			},
-		}},
-	}
-	writeAndAssert(t, report, security.Options{}, []string{`"uri": "lib-foo"`})
 }
