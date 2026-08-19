@@ -2,100 +2,63 @@
 
 Behaviours found while reviewing the test suite that look deliberate enough not
 to change unasked, but odd enough to be worth a decision. Each was confirmed by
-running the code, not by reading it. None is fixed.
+running the code, not by reading it.
 
-Security-shaped findings live in [Threat Model](threat-model.md) and are listed
-at the bottom of this page rather than repeated.
+Most of the original set turned out to be answerable and has been fixed; those
+are listed at the bottom with the commit that closed them. What follows is what
+is still open.
 
-## 1. A container SBOM is generated once per artifact type, identically
-
-`GenerateContainer` builds one `GenerateInput` and passes it unchanged on every
-iteration of the artifact-type loop. The type reaches the log line and nothing
-else. With `--artifact-types "maven,npm"` syft is invoked twice with the same
-image and the same two output paths, so the second scan overwrites the first
-result.
-
-Recorded by the multiple-artifact-types test in
-`internal/app/sbom/generatecontainer_test.go`, which asserts both calls as they
-are so the duplication is visible rather than implied by a count.
-
-Container scanning is not cheap, so this is duplicated wall-clock on every
-release declaring more than one artifact type. Either the loop should vary
-something per type, or the SBOM should be generated once and the loop should go.
-Deciding which needs to know what the per-type SBOM was originally meant to
-contain.
-
-## 2. `checksums --output` creates the parent directory in one mode and not the other
-
-The assembly path calls `os.MkdirAll(filepath.Dir(outputFile))`. The
-non-assembly path opens the manifest with `O_CREATE`, which does not create
-parents, so `--output some/dir/file` fails with "no such file or directory"
-when `some/dir` does not exist. The same flag behaves differently depending on
-whether `--assembly` was passed.
-
-Noted in `TestChecksums_HonoursACustomOutputPath`, whose nested row creates the
-directory first — a precondition that read as fixture noise until the asymmetry
-was found.
-
-Making the non-assembly path create it too is one line and matches the flag's
-generated description, which says nothing about the directory having to exist.
-
-## 3. Signing zero packages succeeds
+## Signing zero packages succeeds
 
 `GPGSignPackages` returns `count = 0` and prints "GPG-signed 0 package(s)" when
-the directory holds no `.deb`, `.rpm` or `.apk`. A release configured to sign
-distro packages that produced none therefore passes the signing step.
+the directory holds no `.deb`, `.rpm` or `.apk`.
 
-The comparable case in `Checksums` is deliberate and differs: it *writes* an
-empty manifest so downstream steps can rely on the file existing. Signing
-nothing produces nothing, so there is no equivalent reason. Whether this should
-be an error, a warning, or silence depends on whether a release is ever
-expected to declare package signing and legitimately produce no packages.
+This is harder to call than it first looks, and the answer depends on a gap
+elsewhere:
 
-## 4. An empty `revision` label ships on the image
+- **Nothing in this repository calls `release gpg sign-packages`.** It appears
+  in no workflow and no script — only in the generated CLI reference — while
+  its siblings `gpg import` and `gpg cleanup` *are* invoked from
+  `publish-maven-central.yml` and `release-prepare-stage.yml`.
+- **It is not dead surface.** The release path already collects `.deb`, `.rpm`
+  and `.apk` as publishable assets *and publishes their `.sig` sidecars*, and
+  this command is the only thing that produces those sidecars. A consumer whose
+  build emits distro packages gets them published unsigned unless it invokes
+  the CLI directly.
+- **There is nothing to gate a step on.** Neither `artifacts.yml` nor the
+  config plan has any notion of a project producing distro packages, so a
+  publish-stage step could only be gated on gpg signing being enabled — true
+  for most releases, nearly all of which produce no packages. Under that
+  design, succeeding silently on zero is correct, and an `--expect-packages`
+  flag mirroring `--ledger-expected-count` would be wrong.
 
-When the event context carries no SHA, `BuildLabels` emits
-`org.opencontainers.image.revision=` rather than omitting the label. The
-published image then carries an empty revision claim.
+So the real question is not the zero case. It is whether `artifacts.yml` should
+be able to declare that a project produces distro packages, which would both
+give the publish stage something to gate on and make the zero case meaningful.
 
-Surfaced by comparing the label set exactly in
-`TestComputeMetadata_MissingFieldsComeFromTheForge`, which now records it.
+## Still open in the threat model
 
-Omitting a label whose value is unknown is the usual OCI convention; emitting it
-empty is a claim that the revision is the empty string.
+- [Profile-dependent `externalParameters` reserved keys](threat-model.md) — a
+  caller can declare `source` under the forgejo profile, where the engine does
+  not compute it and so does not reserve it. Confirmed not reachable through
+  any shipped workflow; worth removing as hygiene.
+- [Vacuous OCI release identity match](threat-model.md) — an empty expected
+  identity matches an image carrying no labels. Confirmed not reachable: both
+  callers require a tag and a commit, so the check fails closed.
 
-## 5. A refused transfer plan can leave downloads behind
+## Resolved
 
-`DownloadArtifacts` validates each item inside the download loop, so a plan
-whose first item is valid and whose second is invalid downloads the first before
-failing. Validating the whole plan up front would make a refusal mean nothing
-happened.
+| Finding | Closed by |
+|---|---|
+| `assemble-dist --path` ran `os.RemoveAll` over a path validated only for being non-empty and single-line, deleting directories outside the workspace | `824f492c` |
+| Metadata labels were published with empty values, so a build with no commit shipped `org.opencontainers.image.revision=` | `42321763` |
+| `checksums --output some/dir/file` created the parent directory under `--assembly` and failed without it; the two modes had two copies of the writing half | `502e9ef3` |
+| `DownloadArtifacts` did not validate the transfer item path that decides where files are unpacked, while `AssembleDist` validated the same field on the same plan | `63b1e533` |
+| A transfer plan refused on a later item had already downloaded the earlier ones | `63b1e533` |
+| The container SBOM was generated once per declared artifact type, identically, each run overwriting the last at the cost of a full image scan | `64fd043e` |
+| `internal/livetest` test build was broken (`undefined: requestErr`), so `go test ./...` could not pass | fixed outside this review |
 
-The path-safety half of this is in the threat model; the ordering half is a
-plain behaviour question and sits here.
-
-## 6. `internal/livetest` test build is broken
-
-`go test ./...` cannot pass repo-wide:
-
-```
-internal/livetest/trust_internal_test.go:203:12: undefined: requestErr
-```
-
-`go build ./internal/livetest/` succeeds, so this is test-file only. It is
-unrelated to the test review — the package has a large uncommitted working tree
-— but it means the repo-wide suite has been red throughout.
-
-## Recorded in the threat model
-
-- Profile-dependent `externalParameters` reserved keys — a caller can declare
-  `source` under the forgejo profile, where the engine does not compute it and
-  so does not reserve it.
-- Artifact transfer plan path validation — `DownloadArtifacts` does not check
-  the item path that decides where files land, while `AssembleDist` checks the
-  same field on the same plan.
-- `assemble-dist --path` deletes without a path check — `--prune-dirs` runs
-  `os.RemoveAll` over a path validated only for being non-empty and
-  single-line, while its two neighbours use `validateSafeRelativePath`.
-- Vacuous OCI release identity match — an empty expected identity matches an
-  image carrying no labels.
+One correction worth recording: the container SBOM duplication was **not** an
+oversight. `GenerateContainer`'s doc comment described the loop as
+"observationally idempotent", which is true of the output and not of the work.
+The fix keeps every declared type named in the operator output and scans once.

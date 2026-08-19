@@ -104,11 +104,11 @@ which is engine-computed under both profiles, and extras merge only into
 reading `externalParameters.source` and taking it for an engine fact, which it
 is under one profile and not the other.
 
-**What settles the classification:** whether calling-repo configuration can
-reach `--external-parameters-json`. If only the engine's own workflow writes
-that flag, this is input hygiene of the kind described above. If repo-declared
-config flows into it — the `base_input_set` and `build_group` examples suggest
-it might — the guard is a real trust boundary and is applied inconsistently.
+**Classification: input hygiene, not a live trust boundary.** No shipped
+workflow sets `--external-parameters-json`, and `base_input_set` exists only as
+a fixture name in a test — nothing repo-declared reaches the flag today. It is
+CLI surface a consumer could drive directly, so the asymmetry is still worth
+removing, but nothing currently injects through it.
 
 If it is a boundary, the cheap fix is to reserve a fixed set of names
 independent of profile (`source`, `ref`, `workflow`, plus the container-side
@@ -120,35 +120,6 @@ not compute it starts getting an error, which is the case worth rejecting.
 Note that emitting `source` under the forgejo profile is not an option: its
 absence is deliberate compatibility shaping for existing forgejo-ci verifiers,
 pinned by `TestGenerateProvenance_ForgejoProfileNamesTheWorkflowNotAGenericSource`.
-
-## Open question: `assemble-dist --path` is the least validated destructive flag
-
-`release assemble-dist --prune-dirs` deletes every subdirectory of `--path`
-with `os.RemoveAll`. That path is taken straight from the flag and validated
-only by `validateSingleLineValue`, which rejects an empty value and embedded
-newlines. It is not checked for traversal or absoluteness. The last-ditch guard
-in `pruneAssembleDistDirs` refuses only the literal `.` and `/`.
-
-Confirmed by probe, inside a temp directory: with the working directory at
-`<tmp>/work` and `--path ../victim --prune-dirs`, `<tmp>/victim/precious` was
-deleted. The command then failed on the empty tree, well after the removal.
-
-The inconsistency is the argument. `--release-images-path`, which only *writes*
-a file, is checked with `validateSafeRelativePath`. Transfer item paths, which
-only decide where a download lands, are checked the same way in this very
-function. `--path`, the one flag that deletes directories, is not.
-
-Classifying it honestly: on a fresh runner where the consumer already executes
-their own build code, this is not an escalation — they can remove files anyway.
-It is a foot-gun of the destructive kind, in the sense used above: a typo'd
-`--path ..` does not produce a confusing error deep in the pipeline, it removes
-directories and then reports something unrelated about an empty hand-off. It
-becomes more than that anywhere the flag could be set from less-trusted
-configuration, or in a privileged context of the kind ADR 0002 describes.
-
-The fix is one line — run `--path` through `validateSafeRelativePath` like its
-two neighbours — and it would reject nothing any current caller passes, since
-the engine's own workflows pass `dist/`.
 
 ## Open question: an empty expected identity matches an unlabelled image
 
@@ -162,52 +133,17 @@ It fails closed the moment either side has content — a labelled image against
 an empty expectation returns false — so this is only reachable when the
 expected identity is itself empty.
 
-The CLI cannot reach it: `container oci-release-identity-matches` marks all
-four identity flags `Required`. The other caller,
-`releaseimageverify.go`, passes `expected.IdentityVersion`,
-`expected.IdentityRefName`, `expected.IdentitySource` and `expected.Commit`
-from a verification record. Whether those can be empty at that point decides
-whether this matters, and that is the question to settle.
+**Not reachable through either caller.** `container oci-release-identity-matches`
+marks all four identity flags `Required`. The other caller,
+`releaseimageverify.go`, derives the identity from `--expected-tag` and
+`--expected-commit`, both of which are `Required` too: `IdentityVersion` and
+`IdentityRefName` default to the tag, and `Revision` is the commit. So the
+expected identity always carries at least a commit, an unlabelled image fails
+the comparison, and the check fails closed.
 
-If they can, the predicate answers "yes, this is the expected release" about an
-image carrying no identity at all, which is the wrong direction for a check
-that gates re-attestation. Requiring a non-empty expected identity — refusing
-rather than matching — would cost nothing for callers that already populate it.
-
-## Open question: artifact transfer plan validation
-
-`DownloadArtifacts` re-parses and re-validates the artifact transfer plan on the
-far side of a process boundary, since the plan arrives as JSON on
-`--artifact-transfer-plan-json`. That re-validation covers the item kind, the
-name/name_template exclusivity and a non-empty path. Two things it does not do,
-both confirmed by probe:
-
-- **`path` is not checked for safety.** `"path": "../../../etc/"` and
-  `"path": "/etc/"` are both accepted and handed to the downloader as the
-  directory to extract into. This is not a judgement call the codebase has
-  made once and applied: `AssembleDist` consumes the *same* transfer plan and
-  does check, via `validateSafeRelativePath(item.Path, "artifact transfer
-  path", true)`. Two consumers of one plan, one of which validates the field
-  that decides where files land. The publish path and release notes are
-  guarded by `safeRelativePath` too, and artifacts.yml rejects absolute and
-  traversal paths as described above, so `DownloadArtifacts` is the outlier.
-- **Validation is interleaved with fetching.** Items are validated inside the
-  download loop, so a plan whose first item is valid and whose second is invalid
-  downloads the first before failing. A refused plan can leave the workspace
-  partly populated.
-
-Severity is low as things stand: plans are engine-generated in
-`internal/domain/pipeline/releaseplan.go` and `snapshotreleaseplan.go`, where
-every path is a hardcoded constant (`./release-artifacts/`, `./sbom-artifacts/`,
-`./release-artifacts/binaries/`). Nothing consumer-authored reaches these
-fields today. This is defence in depth at a boundary that already re-validates
-everything else, not a live hole.
-
-Deciding either way is cheap. Validating the whole plan before the first fetch
-makes a refusal mean nothing happened, and running `path` through the same
-relative-path check as the rest of the package closes the gap with the
-convention the codebase already follows. Both change behaviour only for plans
-that no current producer emits.
+It remains worth hardening — a constructor that cannot produce an empty
+identity would make the vacuous case unrepresentable rather than merely
+unreachable — but nothing today can drive it.
 
 ## Reporting a security issue
 
