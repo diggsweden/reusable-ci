@@ -81,6 +81,19 @@ func TestXcodeXCConfig_DecodesAndEmitsPath(t *testing.T) {
 		t.Errorf("body = %q", got)
 	}
 
+	// The xcconfig is a secret -- it carries build settings including
+	// signing identity and team id -- and lands in a shared temp dir.
+	// os.CreateTemp happens to make it 0600; asserting it keeps that true
+	// if the write is ever done another way.
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("xcconfig mode = %v, want 0600", perm)
+	}
+
 	if !strings.Contains(stderr.String(), "xcconfig decoded") {
 		t.Errorf("stderr = %s", stderr.String())
 	}
@@ -96,8 +109,11 @@ func TestXcodeXCConfig_MissingSecretNoops(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := sink.Single("xcconfig-path"); got != "" {
-		t.Errorf("xcconfig-path = %q", got)
+	// Keys, not Single: an absent key and a key set to "" both read as ""
+	// through Single, and a workflow handed an empty xcconfig-path behaves
+	// differently from one handed none.
+	if got := sink.Keys(); len(got) != 0 {
+		t.Errorf("emitted %q for a run with no xcconfig", got)
 	}
 
 	if !strings.Contains(stderr.String(), "no xcconfig") {
