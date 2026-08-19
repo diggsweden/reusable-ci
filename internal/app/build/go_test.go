@@ -6,12 +6,15 @@ package build_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
@@ -147,7 +150,13 @@ func TestGoBuildSBOM_WritesCanonicalPath(t *testing.T) {
 }
 
 func TestGoBuildBinaries_BuildsPlatforms(t *testing.T) {
-	t.Parallel()
+	// Not parallel: SOURCE_DATE_EPOCH is set for this test. It is what makes
+	// the ldflags deterministic enough to compare, and it covers the
+	// reproducibility path at the same time -- resolveBuildDate documents
+	// that two identical invocations produce byte-identical binaries, and
+	// nothing exercised it.
+	t.Setenv("SOURCE_DATE_EPOCH", "1700000000")
+
 	fsys := testfs.NewReal(t)
 
 	fysDist := fsys.WriteFile("dist/old", []byte("old"))
@@ -175,16 +184,61 @@ func TestGoBuildBinaries_BuildsPlatforms(t *testing.T) {
 		t.Fatalf("calls = %+v", tool.calls)
 	}
 
-	if got := strings.Join(tool.calls[0].Env, " "); got != "CGO_ENABLED=0 GOOS=linux GOARCH=amd64" {
-		t.Errorf("env = %q", got)
-	}
+	// Both calls, both halves. The env was checked for the first platform
+	// and the args for the second, so windows/arm64 never had its GOOS and
+	// GOARCH asserted, and the first call's flags were never looked at.
+	wantLDFlags := "-s -w -X main.version=1.2.3 -X main.commit=abc123 -X main.date=2023-11-14T22:13:20Z -X main.extra=value"
 
-	if got := strings.Join(tool.calls[1].Args, " "); !strings.Contains(got, filepath.Join("dist", "windows-arm64", "app-windows-arm64.exe")) {
-		t.Errorf("windows args = %q", got)
+	for i, want := range []struct {
+		env []string
+		out string
+	}{
+		{env: []string{"CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64"}, out: filepath.Join(fsys.Root, "dist", "linux-amd64", "app-linux-amd64")},
+		{env: []string{"CGO_ENABLED=0", "GOOS=windows", "GOARCH=arm64"}, out: filepath.Join(fsys.Root, "dist", "windows-arm64", "app-windows-arm64.exe")},
+	} {
+		if !reflect.DeepEqual(tool.calls[i].Env, want.env) {
+			t.Errorf("call %d env = %q, want %q", i, tool.calls[i].Env, want.env)
+		}
+
+		wantArgs := []string{
+			"build", "-trimpath", "-buildvcs=false",
+			"-ldflags", wantLDFlags,
+			"-tags", "netgo",
+			"-o", want.out,
+			"./cmd/app",
+		}
+		if !reflect.DeepEqual(tool.calls[i].Args, wantArgs) {
+			t.Errorf("call %d args =\n%q\nwant\n%q", i, tool.calls[i].Args, wantArgs)
+		}
 	}
 
 	if !strings.Contains(out.String(), "Building linux/amd64") {
 		t.Errorf("out = %s", out.String())
+	}
+}
+
+// TestGoBuildBinaries_RejectsInvalidSourceDateEpoch covers the other half of
+// the reproducibility input. A value that is not integer seconds is a usage
+// error rather than something to fall back from silently -- falling back to
+// the clock would produce a binary that looks stamped but is not reproducible.
+func TestGoBuildBinaries_RejectsInvalidSourceDateEpoch(t *testing.T) {
+	t.Setenv("SOURCE_DATE_EPOCH", "yesterday")
+
+	fsys := testfs.NewReal(t)
+	tool := &fakeGoTool{}
+
+	err := appbuild.GoBuildBinaries(context.Background(), tool, &bytes.Buffer{}, &bytes.Buffer{}, appbuild.GoBuildBinariesInput{
+		Dir:        fsys.Root,
+		BinaryName: "app",
+		Version:    "1.2.3",
+		Platforms:  "linux/amd64",
+	})
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Errorf("err = %v, want ErrUsage", err)
+	}
+
+	if len(tool.calls) != 0 {
+		t.Errorf("built despite an unusable SOURCE_DATE_EPOCH: %+v", tool.calls)
 	}
 }
 
