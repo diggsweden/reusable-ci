@@ -5,6 +5,7 @@ package security_test
 
 import (
 	"bytes"
+	"reflect"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/security"
@@ -81,6 +82,67 @@ func TestTrivyToSARIF_MapsSeveritiesToLevels(t *testing.T) {
 		`"level": "note"`,
 		`"ghcr.io/example/img@sha256:deadbeef"`,
 	})
+}
+
+// TestTrivyToSARIF_SeverityLevelIsPerResult asserts which level each
+// finding gets, rather than that the levels appear somewhere in the
+// document. The substring checks above cannot see a swap -- mapping
+// CRITICAL to note and LOW to error still leaves all three strings
+// present -- and the level is what decides whether Code Scanning fails
+// a branch protection check.
+//
+// It also covers the two severity classes no fixture reached: HIGH,
+// which shares the error level with CRITICAL, and an unrecognised value,
+// which must degrade to "none" rather than to a severity it did not earn.
+func TestTrivyToSARIF_SeverityLevelIsPerResult(t *testing.T) {
+	t.Parallel()
+
+	report := &security.TrivyReport{
+		ArtifactName: "ghcr.io/example/img",
+		Results: []security.TrivyResult{{
+			Target: "alpine",
+			Vulnerabilities: []security.TrivyVulnerability{
+				{VulnerabilityID: "CVE-CRIT", PkgName: "a", Severity: "CRITICAL"},
+				{VulnerabilityID: "CVE-HIGH", PkgName: "b", Severity: "HIGH"},
+				{VulnerabilityID: "CVE-MED", PkgName: "c", Severity: "MEDIUM"},
+				{VulnerabilityID: "CVE-LOW", PkgName: "d", Severity: "LOW"},
+				{VulnerabilityID: "CVE-UNKNOWN", PkgName: "e", Severity: "UNKNOWN"},
+				{VulnerabilityID: "CVE-EMPTY", PkgName: "f", Severity: ""},
+				// Trivy has emitted lowercase severities; the mapping
+				// upper-cases before matching.
+				{VulnerabilityID: "CVE-LOWERCASE", PkgName: "g", Severity: "critical"},
+			},
+		}},
+	}
+
+	doc := security.TrivyToSARIF(report, security.Options{})
+	if len(doc.Runs) != 1 {
+		t.Fatalf("runs = %d, want 1", len(doc.Runs))
+	}
+
+	got := map[string]string{}
+
+	for _, r := range doc.Runs[0].Results { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+		id := ""
+		if r.RuleID != nil {
+			id = *r.RuleID
+		}
+
+		got[id] = r.Level
+	}
+
+	want := map[string]string{
+		"CVE-CRIT":      "error",
+		"CVE-HIGH":      "error",
+		"CVE-MED":       "warning",
+		"CVE-LOW":       "note",
+		"CVE-UNKNOWN":   "none",
+		"CVE-EMPTY":     "none",
+		"CVE-LOWERCASE": "error",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("levels = %v, want %v", got, want)
+	}
 }
 
 func TestTrivyToSARIF_RuleSetIsDeterministicallyOrdered(t *testing.T) {
