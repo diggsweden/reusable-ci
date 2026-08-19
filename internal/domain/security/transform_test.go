@@ -286,6 +286,19 @@ func TestDeterministicUUID_Format(t *testing.T) {
 	if id == id3 {
 		t.Errorf("different seeds produced the same UUID: %q", id)
 	}
+
+	// The value itself, not just its shape. "Deterministic" has to hold
+	// across builds, not only within one process: GitLab tracks a
+	// vulnerability by this id, so a change in the hash or in how the hex
+	// is sliced would retire every existing finding and file a new one in
+	// its place. The three checks above all survive such a change.
+	//
+	// Independently computed:
+	//   printf 'CVE-2024-0001|lodash|4.17.20|package-lock.json' | sha256sum
+	// then sliced 8-4-4-4-12.
+	if want := "463cb177-b0e0-b995-1d53-8cbbeed63f1f"; id != want {
+		t.Errorf("UUID = %q, want %q", id, want)
+	}
 }
 
 func TestDefaultsApplyWhenOptionsZero(t *testing.T) {
