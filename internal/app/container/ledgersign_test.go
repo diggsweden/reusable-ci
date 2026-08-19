@@ -779,3 +779,108 @@ func TestSignLedgerImages_BaseKindRequiresBaseInputID(t *testing.T) {
 
 	assertNothingPublished(t, signer)
 }
+
+// TestSignLedgerImages_InputRefusals covers validateSignLedgerImagesInput,
+// which had roughly half its branches exercised. Every case refuses before
+// any signing happens.
+func TestSignLedgerImages_InputRefusals(t *testing.T) {
+	predicate := filepath.Join(t.TempDir(), "predicate.json")
+	if err := os.WriteFile(predicate, []byte(`{"buildDefinition":{}}`), 0o600); err != nil { //nolint:gosec // test fixture.
+		t.Fatal(err)
+	}
+
+	envelope := filepath.Join(t.TempDir(), "envelope.intoto.json")
+	if err := os.WriteFile(envelope, []byte(`{"predicateType":"https://slsa.dev/provenance/v1","predicate":{}}`), 0o600); err != nil { //nolint:gosec // test fixture.
+		t.Fatal(err)
+	}
+
+	base := func() appcontainer.SignLedgerImagesInput {
+		return appcontainer.SignLedgerImagesInput{
+			Entries:       []imageledger.Entry{ledgerSignEntry(t)},
+			ReleaseTag:    "v1.2.3",
+			PredicatePath: predicate,
+			Method:        domainrelease.SignMethodKMS,
+			KeyRef:        "env://COSIGN_KEY",
+		}
+	}
+
+	// The collaborators are required, and their absence is a panic rather
+	// than an error if unchecked -- a CLI wiring mistake would abort the
+	// job with a stack trace instead of a usage message.
+	t.Run("missing collaborators", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+
+		for _, tc := range []struct {
+			name string
+			call func() error
+		}{
+			{
+				name: "no cosign adapter",
+				call: func() error {
+					return appcontainer.SignLedgerImages(context.Background(), nil, &fakeLedgerSyft{}, fakeLedgerResolver{}, io.Discard, io.Discard, base())
+				},
+			},
+			{
+				name: "no syft adapter",
+				call: func() error {
+					return appcontainer.SignLedgerImages(context.Background(), &recordingImageSigner{}, nil, fakeLedgerResolver{}, io.Discard, io.Discard, base())
+				},
+			},
+			{
+				name: "no registry resolver",
+				call: func() error {
+					return appcontainer.SignLedgerImages(context.Background(), &recordingImageSigner{}, &fakeLedgerSyft{}, nil, io.Discard, io.Discard, base())
+				},
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				if err := tc.call(); !errors.Is(err, errs.ErrUsage) {
+					t.Fatalf("err = %v, want ErrUsage", err)
+				}
+			})
+		}
+	})
+
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*appcontainer.SignLedgerImagesInput)
+		wantErr error
+	}{
+		{
+			// Provenance is what the attestation asserts; with neither
+			// source there is nothing to attest.
+			name:    "neither predicate nor envelope",
+			mutate:  func(in *appcontainer.SignLedgerImagesInput) { in.PredicatePath = "" },
+			wantErr: errs.ErrMissingInput,
+		},
+		{
+			// Both is ambiguous rather than redundant: the two can
+			// disagree, and silently preferring one would attest
+			// provenance the operator did not choose.
+			name:    "both predicate and envelope",
+			mutate:  func(in *appcontainer.SignLedgerImagesInput) { in.PredicateEnvelopePath = envelope },
+			wantErr: errs.ErrUsage,
+		},
+		{
+			name:    "empty ledger",
+			mutate:  func(in *appcontainer.SignLedgerImagesInput) { in.Entries = nil },
+			wantErr: errs.ErrValidation,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+
+			in := base()
+			tc.mutate(&in)
+
+			signer := &recordingImageSigner{}
+
+			err := appcontainer.SignLedgerImages(context.Background(), signer, &fakeLedgerSyft{}, fakeLedgerResolver{}, io.Discard, io.Discard, in)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+
+			assertNothingPublished(t, signer)
+		})
+	}
+}
