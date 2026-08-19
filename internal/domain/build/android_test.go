@@ -117,6 +117,23 @@ func TestResolveAndroidBuildTasks(t *testing.T) {
 			in:   build.ResolveAndroidBuildTasksInput{Flavor: "FDroid", BuildTypes: "release", BuildModule: "app"},
 			want: "assembleFdroidRelease",
 		},
+		{
+			// Recorded, not endorsed. capitalizeFirst lower-cases
+			// everything after the first letter, so a camelCase product
+			// flavor becomes a task name gradle does not have: gradle
+			// derives assembleProDemoRelease from flavor "proDemo".
+			// See docs/open-questions.md.
+			name: "a camelCase flavor is flattened",
+			in:   build.ResolveAndroidBuildTasksInput{Flavor: "proDemo", BuildTypes: "release", BuildModule: "app"},
+			want: "assembleProdemoRelease",
+		},
+		{
+			// An unrecognised build-types value matches neither substring
+			// and yields no tasks at all, rather than being refused.
+			name: "a misspelled build type yields nothing",
+			in:   build.ResolveAndroidBuildTasksInput{BuildTypes: "relase", IncludeAAB: true, BuildModule: "app"},
+			want: "",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

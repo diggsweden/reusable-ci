@@ -636,8 +636,23 @@ func TestAndroidGradleBuild_WithoutSkipTestsRunsTasksDirectly(t *testing.T) {
 }
 
 func TestAndroidGradleBuild_RequiresTasks(t *testing.T) {
-	if err := appbuild.AndroidGradleBuild(context.Background(), &fakeGradle{}, io.Discard, io.Discard, appbuild.AndroidGradleBuildInput{Tasks: "  "}); err == nil {
-		t.Fatal("expected error")
+	t.Parallel()
+
+	for _, tasks := range []string{"", "  ", "\t\n"} {
+		ops := &fakeGradle{}
+
+		err := appbuild.AndroidGradleBuild(context.Background(), ops, io.Discard, io.Discard, appbuild.AndroidGradleBuildInput{Tasks: tasks})
+		if !errors.Is(err, errs.ErrUsage) {
+			t.Errorf("tasks %q: err = %v, want ErrUsage", tasks, err)
+		}
+
+		// This is the guard that catches an unresolvable build-types
+		// value: ResolveAndroidBuildTasks returns "" for one it does not
+		// recognise, and running gradle bare would build the default
+		// task instead of failing.
+		if ops.args != nil {
+			t.Errorf("tasks %q: invoked gradle with %v", tasks, ops.args)
+		}
 	}
 }
 

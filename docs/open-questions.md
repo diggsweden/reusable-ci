@@ -116,6 +116,36 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## A camelCase Android product flavor produces a task gradle does not have
+
+`capitalizeFirst` upper-cases the first letter and lower-cases everything after
+it — faithfully, as its comment says, "same shape as the bash awk substr trick".
+Gradle does not do the second half: it capitalises the first character of the
+flavor and preserves the rest.
+
+| Flavor | This code builds | Gradle expects |
+|---|---|---|
+| `fdroid` | `assembleFdroidRelease` | `assembleFdroidRelease` ✓ |
+| `FDroid` | `assembleFdroidRelease` | `assembleFDroidRelease` |
+| `proDemo` | `assembleProdemoRelease` | `assembleProDemoRelease` |
+
+Lowercase flavors — the common case, and the only ones in the examples — are
+unaffected. A camelCase flavor gets a task name that does not exist, and the
+build fails at gradle with "task not found" rather than anywhere near the
+cause.
+
+The fix is to drop the `strings.ToLower` on the tail. It is recorded rather
+than made because the lower-casing is deliberate bash-compatibility, and an
+adopter whose flavor is `FDroid` may already have worked around it by declaring
+the flavor lowercase. Pinned in `TestResolveAndroidBuildTasks`.
+
+Adjacent, and lower stakes: `BuildTypes` is matched with `strings.Contains`, so
+a misspelling such as `relase` matches neither `debug` nor `release` and yields
+an empty task list rather than a refusal. Nothing is built and the run fails one
+step later, in `AndroidGradleBuild`, which does refuse an empty task list
+(`ErrUsage`). The message names the empty tasks rather than the typo that caused
+them.
+
 ## A CRLF `gradle.properties` breaks `android version-info`
 
 `ParseGradleVersionFromProperties` splits on `"\n"` and neither trims the line
