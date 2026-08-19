@@ -15,6 +15,9 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
+// recordingSummarySink captures appended markdown blocks for assertion.
+// One double for the package: swift_test.go carried a second, identical
+// one under another name.
 type recordingSummarySink struct{ buf bytes.Buffer }
 
 func (s *recordingSummarySink) Append(_ context.Context, markdown string) error {
