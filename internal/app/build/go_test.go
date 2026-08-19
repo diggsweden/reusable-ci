@@ -236,29 +236,99 @@ func TestGoMetadata_Refusals(t *testing.T) {
 	}
 }
 
-func TestGoTest_RunsWithTags(t *testing.T) {
+func TestGoTest_BuildsArgsAndRunsInDir(t *testing.T) {
 	t.Parallel()
 
-	tool := &fakeGoTool{}
-	if err := appbuild.GoTest(context.Background(), tool, &bytes.Buffer{}, &bytes.Buffer{}, appbuild.GoTestInput{Dir: "src", BuildTags: "integration"}); err != nil {
-		t.Fatal(err)
-	}
+	for _, tc := range []struct {
+		name string
+		in   appbuild.GoTestInput
+		want []string
+		dir  string
+	}{
+		{
+			name: "with tags",
+			in:   appbuild.GoTestInput{Dir: "src", BuildTags: "integration"},
+			want: []string{"test", "-tags", "integration", "./..."},
+			dir:  "src",
+		},
+		{
+			// Not "-tags" with an empty value: an empty -tags argument is
+			// a different command line, and go treats it differently.
+			name: "no tags omits the flag entirely",
+			in:   appbuild.GoTestInput{Dir: "src"},
+			want: []string{"test", "./..."},
+			dir:  "src",
+		},
+		{
+			name: "whitespace-only tags count as none",
+			in:   appbuild.GoTestInput{Dir: "src", BuildTags: "   "},
+			want: []string{"test", "./..."},
+			dir:  "src",
+		},
+		{
+			name: "tags are trimmed",
+			in:   appbuild.GoTestInput{Dir: "src", BuildTags: "  integration  "},
+			want: []string{"test", "-tags", "integration", "./..."},
+			dir:  "src",
+		},
+		{
+			name: "no dir runs in the current one",
+			in:   appbuild.GoTestInput{},
+			want: []string{"test", "./..."},
+			dir:  ".",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	if got := strings.Join(tool.calls[0].Args, " "); got != "test -tags integration ./..." {
-		t.Errorf("args = %q", got)
+			tool := &fakeGoTool{}
+			if err := appbuild.GoTest(context.Background(), tool, &bytes.Buffer{}, &bytes.Buffer{}, tc.in); err != nil {
+				t.Fatal(err)
+			}
+
+			if len(tool.calls) != 1 {
+				t.Fatalf("calls = %d, want 1", len(tool.calls))
+			}
+
+			if !reflect.DeepEqual(tool.calls[0].Args, tc.want) {
+				t.Errorf("args = %q, want %q", tool.calls[0].Args, tc.want)
+			}
+
+			// Which directory go runs in decides which module is tested.
+			if tool.calls[0].Dir != tc.dir {
+				t.Errorf("dir = %q, want %q", tool.calls[0].Dir, tc.dir)
+			}
+		})
 	}
 }
 
-func TestGoDownload_RunsModDownload(t *testing.T) {
+func TestGoDownload_RunsModDownloadInDir(t *testing.T) {
 	t.Parallel()
 
-	tool := &fakeGoTool{}
-	if err := appbuild.GoDownload(context.Background(), tool, &bytes.Buffer{}, &bytes.Buffer{}, "src"); err != nil {
-		t.Fatal(err)
-	}
+	for _, tc := range []struct{ name, dir, want string }{
+		{name: "given dir", dir: "src", want: "src"},
+		{name: "no dir runs in the current one", dir: "", want: "."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	if got := strings.Join(tool.calls[0].Args, " "); got != "mod download" {
-		t.Errorf("args = %q", got)
+			tool := &fakeGoTool{}
+			if err := appbuild.GoDownload(context.Background(), tool, &bytes.Buffer{}, &bytes.Buffer{}, tc.dir); err != nil {
+				t.Fatal(err)
+			}
+
+			if len(tool.calls) != 1 {
+				t.Fatalf("calls = %d, want 1", len(tool.calls))
+			}
+
+			if want := []string{"mod", "download"}; !reflect.DeepEqual(tool.calls[0].Args, want) {
+				t.Errorf("args = %q, want %q", tool.calls[0].Args, want)
+			}
+
+			if tool.calls[0].Dir != tc.want {
+				t.Errorf("dir = %q, want %q", tool.calls[0].Dir, tc.want)
+			}
+		})
 	}
 }
 
