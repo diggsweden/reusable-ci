@@ -33,6 +33,28 @@ func runJVMRepro(t *testing.T, plan string) (string, string, error) {
 	return outBuf.String(), errBuf.String(), err
 }
 
+// TestJVMReproducibility_RejectsUnsafeWorkingDirectory covers the shared
+// working-directory guard from this side. Both ecosystem validators walk a
+// directory the plan names through safeWorkingDir, but only the Cargo caller
+// exercised it -- so a change to the guard could have been caught for one
+// ecosystem and not the other.
+func TestJVMReproducibility_RejectsUnsafeWorkingDirectory(t *testing.T) {
+	for name, testCase := range map[string]struct{ dir, want string }{
+		"climbs out of the workspace": {dir: "../outside", want: "escapes the workspace"},
+		"is absolute":                 {dir: "/etc", want: "must be relative"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fsys := testfs.NewReal(t)
+			fsys.Chdir()
+
+			_, _, err := runJVMRepro(t, configPlanJSON(`"maven":[{"name":"api","project_type":"maven","working_directory":"`+testCase.dir+`"}]`))
+			if !errors.Is(err, errs.ErrInvalidConfig) || !strings.Contains(err.Error(), testCase.want) {
+				t.Errorf("err = %v, want an invalid-config error mentioning %q", err, testCase.want)
+			}
+		})
+	}
+}
+
 func TestJVMReproducibility_MavenWithTimestampPasses(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.WriteFile("services/api/pom.xml", []byte(`<?xml version="1.0"?>

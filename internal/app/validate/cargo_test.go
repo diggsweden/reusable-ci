@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	appvalidate "github.com/diggsweden/reusable-ci/v3/internal/app/validate"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
@@ -128,16 +129,32 @@ func TestCargoPrerequisites_FailsWhenToolchainPinMissing(t *testing.T) {
 	}
 }
 
-func TestCargoPrerequisites_RejectsEscapingWorkingDirectory(t *testing.T) {
+// TestCargoPrerequisites_RejectsUnsafeWorkingDirectory covers both refusals the
+// shared working-directory guard makes. The validator walks the directory a
+// plan names, so one that escapes or is absolute takes it outside the
+// workspace; only the escaping case had a row, leaving the absolute branch
+// untested by any caller.
+func TestCargoPrerequisites_RejectsUnsafeWorkingDirectory(t *testing.T) {
 	t.Parallel()
 
-	var stderr bytes.Buffer
+	for name, testCase := range map[string]struct{ dir, want string }{
+		"climbs out of the workspace": {dir: "../outside", want: "escapes the workspace"},
+		"is absolute":                 {dir: "/etc", want: "must be relative"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	err := appvalidate.CargoPrerequisites(context.Background(), fakeCargoTool{version: "cargo 1.90.0"}, nil, output.NewAnnotator(&stderr, output.FormatGitHub), appvalidate.CargoPrerequisitesInput{
-		PublishStagePlanJSON: `{"version":1,"stage":"publish","targets":{"cargo_container_first":{"runs":true,"items":[{"name":"api","project_type":"cargo","working_directory":"../outside"}]}}}`,
-	})
-	if err == nil || !strings.Contains(err.Error(), "escapes the workspace") {
-		t.Fatalf("err = %v", err)
+			var stderr bytes.Buffer
+
+			plan := `{"version":1,"stage":"publish","targets":{"cargo_container_first":{"runs":true,"items":[{"name":"api","project_type":"cargo","working_directory":"` + testCase.dir + `"}]}}}`
+
+			err := appvalidate.CargoPrerequisites(context.Background(), fakeCargoTool{version: "cargo 1.90.0"}, nil, output.NewAnnotator(&stderr, output.FormatGitHub), appvalidate.CargoPrerequisitesInput{
+				PublishStagePlanJSON: plan,
+			})
+			if !errors.Is(err, errs.ErrInvalidConfig) || !strings.Contains(err.Error(), testCase.want) {
+				t.Errorf("err = %v, want an invalid-config error mentioning %q", err, testCase.want)
+			}
+		})
 	}
 }
 
