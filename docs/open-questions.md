@@ -116,6 +116,63 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## `materialize-build-secrets` fails with more than one build secret
+
+`secret-mounts` is a newline-separated list of `id=NAME,src=PATH` entries,
+emitted through the scalar `sink.Set`. Both line-oriented sinks refuse a scalar
+containing a newline — it would forge further entries in their key=value files
+— so the command works with one declared build secret and fails with two.
+
+Proved against the real GitHub Actions sink, not the fake:
+
+| Secrets | Result | `$GITHUB_OUTPUT` |
+|---|---|---|
+| 1 | ok | `secret-mounts=id=a,src=/…/a` |
+| 2 | `emit secret-mounts: ghaoutput: scalar output "secret-mounts" contains a newline; use SetMultiline: validation failed` | *(empty)* |
+
+The failure lands after the secret files are written to disk at 0600, so a
+failed run leaves them behind with nothing naming them.
+
+**Why this is not a one-line fix.** The error message recommends `SetMultiline`,
+and that does work for `ghaoutput` (heredoc form, decoded back to the same
+multi-line value). But `gitlaboutput.SetMultiline` returns `ErrUnsupported`
+outright — a dotenv file has no multi-line form — so that change fixes GitHub
+and Forgejo and leaves GitLab failing with a different error. Nor can the
+separator simply become a comma: `id=NAME,src=PATH` already contains one, and
+space is unsafe because a path may contain spaces.
+
+So the real question is how a multi-valued output crosses the sink boundary at
+all on a dotenv-only forge — `ManifestSink` is what `gitlaboutput` points at,
+and whether this output should move to it is a contract decision.
+
+Pinned as it behaves today in
+`TestMaterializeBuildSecrets_MultipleSecretsFailOnARealSink`.
+
+## The fake output sink is more permissive than every sink it doubles
+
+The bug above survived because `fakeoutputsink.Set` accepts any value, while
+both `ghaoutput` and `gitlaboutput` reject `\r` and `\n` in a scalar. Every
+test in the repository that emits an output does so through the fake, so no
+test can observe a value that the real adapters would refuse.
+
+Tightening the fake to match was tried and immediately caught the
+`secret-mounts` case above — the only one in the suite. It was reverted rather
+than kept: with the defect unfixed, the guard turns two otherwise sound tests
+(file materialisation, name splitting) into assertions about a bug, which
+obscures what they exist to prove.
+
+The guard is three lines and should go in as soon as `secret-mounts` is
+resolved, so this class cannot reappear:
+
+```go
+if strings.ContainsAny(value, "\r\n") {
+    return fmt.Errorf("fakeoutputsink: scalar output %q contains a newline; use SetMultiline: %w", key, errs.ErrValidation)
+}
+```
+
+Related: `ParseGradleVersionFromProperties` can produce exactly such a value —
+see the entry below.
+
 ## A missing package.json exits two different ways
 
 Two functions in `internal/app/build/npm.go` read the same file:

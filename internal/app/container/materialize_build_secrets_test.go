@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/ghaoutput"
+
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
@@ -250,5 +252,80 @@ func TestMaterializeBuildSecrets_SplitsNewlinesCommasOrSpaces(t *testing.T) {
 		}); err != nil {
 			t.Errorf("input %q rejected: %v", input, err)
 		}
+	}
+}
+
+// TestMaterializeBuildSecrets_MultipleSecretsFailOnARealSink pins a defect
+// the fake sink cannot see.
+//
+// secret-mounts is a newline-separated list emitted through the scalar
+// Set. Both line-oriented sinks refuse a scalar containing a newline --
+// ghaoutput and gitlaboutput each guard it, because such a value would
+// forge further entries in their key=value files. So the command works
+// with one declared build secret and fails with two, on every forge.
+//
+// The fake sink accepts any value, which is why the tests above pass. This
+// one drives the real GitHub Actions sink instead. See
+// docs/open-questions.md -- the fix is a design decision, not a one-liner,
+// because gitlaboutput has no multiline path at all.
+func TestMaterializeBuildSecrets_MultipleSecretsFailOnARealSink(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		names      string
+		envelope   string
+		wantErr    error
+		wantOutput string
+	}{
+		{
+			name:       "one secret is emitted",
+			names:      "A",
+			envelope:   `{"A":"a"}`,
+			wantOutput: "secret-mounts=id=a,src=",
+		},
+		{
+			name:     "two secrets are refused by the sink",
+			names:    "A\nB",
+			envelope: `{"A":"a","B":"b"}`,
+			wantErr:  errs.ErrValidation,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			outPath := filepath.Join(dir, "gha_output")
+
+			if err := os.WriteFile(outPath, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			t.Setenv("GITHUB_OUTPUT", outPath)
+
+			err := appcontainer.MaterializeBuildSecrets(context.Background(), ghaoutput.NewFromEnv(), io.Discard, appcontainer.MaterializeBuildSecretsInput{
+				Names:        tc.names,
+				EnvelopeJSON: tc.envelope,
+				OutputDir:    filepath.Join(dir, "secrets"),
+			})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+
+			body, readErr := os.ReadFile(outPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+
+			if tc.wantErr != nil {
+				// Nothing written: the run fails after the secret files
+				// are on disk but before anything names them.
+				if len(body) != 0 {
+					t.Errorf("wrote %q despite the refusal", body)
+				}
+
+				return
+			}
+
+			if !strings.HasPrefix(string(body), tc.wantOutput) {
+				t.Errorf("output = %q, want it to start with %q", body, tc.wantOutput)
+			}
+		})
 	}
 }
