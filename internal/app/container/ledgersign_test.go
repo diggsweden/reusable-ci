@@ -373,31 +373,102 @@ func TestSignLedgerImages_RejectsEnvelopeWithoutPredicate(t *testing.T) {
 	assertNothingPublished(t, signer)
 }
 
+// TestSignLedgerImages_RejectsUnexpectedRepository covers the guard that
+// keeps a ledger entry from pointing signing at an image outside the
+// release's own repository.
+//
+// Five ref fields are checked and only candidate_tag was covered.
+//
+// Each case moves the whole set of refs that must agree with the field
+// under test, so the entry stays internally consistent and only the
+// repository constraint can fire. Moving one field alone does not test
+// this guard: Entry.Validate separately requires moving_tag to share
+// final_tag's repository, and that error also mentions "final_tag" --
+// so a naive fixture passes while the repository check is switched off.
+// The assertion matches the repository rule's own wording for the same
+// reason.
 func TestSignLedgerImages_RejectsUnexpectedRepository(t *testing.T) {
-	t.Chdir(t.TempDir())
+	const (
+		imageRepo = "codeberg.org/itiquette/gommitlint"
+		baseRepo  = "codeberg.org/itiquette/gommitlint-base"
+		evilRepo  = "codeberg.org/evil/gommitlint"
+	)
 
-	entry := ledgerSignEntry(t)
-	entry.CandidateTag = "codeberg.org/evil/gommitlint:staging-v1.2.3-rust"
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*imageledger.Entry)
+		wantCtx string
+	}{
+		{
+			name:    "ref",
+			mutate:  func(e *imageledger.Entry) { e.Ref = evilRepo + "@" + ledgerSignDigest },
+			wantCtx: "ref must be under " + imageRepo,
+		},
+		{
+			// final_tag, moving_tag and candidate_tag must share a
+			// repository with each other, so they move together.
+			name: "the release tags",
+			mutate: func(e *imageledger.Entry) {
+				e.FinalTag = evilRepo + ":v1.2.3-rust"
+				e.MovingTag = evilRepo + ":rust"
+				e.CandidateTag = evilRepo + ":staging-v1.2.3-rust"
+			},
+			wantCtx: "final_tag must be under " + imageRepo,
+		},
+		// There is deliberately no row isolating moving_tag. Its
+		// repository check cannot be reached on its own: Entry.Validate
+		// already requires moving_tag to share final_tag's repository, so
+		// moving it alone fails there, and moving both fails on final_tag
+		// first. That check is defence in depth behind a rule that
+		// already covers it -- removing it breaks no test, which is the
+		// honest state of it rather than a gap in this table.
+		{
+			// candidate_tag alone: its consistency rule compares only the
+			// tag name, so the repository check is what catches this.
+			name:    "candidate_tag",
+			mutate:  func(e *imageledger.Entry) { e.CandidateTag = evilRepo + ":staging-v1.2.3-rust" },
+			wantCtx: "candidate_tag must be under " + imageRepo,
+		},
+		{
+			// base_ref is checked against a different repository, so a
+			// single shared check would not do -- the base image lives
+			// somewhere else by design.
+			name:    "base_ref",
+			mutate:  func(e *imageledger.Entry) { e.BaseRef = "codeberg.org/evil/gommitlint-base@" + ledgerSignDigest },
+			wantCtx: "base_ref must be under " + baseRepo,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
 
-	signer := &recordingImageSigner{}
+			entry := ledgerSignEntry(t)
+			tc.mutate(&entry)
 
-	err := appcontainer.SignLedgerImages(context.Background(), signer, &fakeLedgerSyft{}, fakeLedgerResolver{}, io.Discard, io.Discard, appcontainer.SignLedgerImagesInput{
-		Entries:                 []imageledger.Entry{entry},
-		ReleaseTag:              "v1.2.3",
-		PredicatePath:           writeBasePredicate(t),
-		Method:                  domainrelease.SignMethodKMS,
-		KeyRef:                  "env://COSIGN_KEY",
-		ExpectedImageRepository: "codeberg.org/itiquette/gommitlint",
-	})
-	if !errors.Is(err, errs.ErrValidation) {
-		t.Fatalf("err = %v, want ErrValidation", err)
+			signer := &recordingImageSigner{}
+
+			err := appcontainer.SignLedgerImages(context.Background(), signer, &fakeLedgerSyft{}, fakeLedgerResolver{}, io.Discard, io.Discard, appcontainer.SignLedgerImagesInput{
+				Entries:                 []imageledger.Entry{entry},
+				ReleaseTag:              "v1.2.3",
+				PredicatePath:           writeBasePredicate(t),
+				Method:                  domainrelease.SignMethodKMS,
+				KeyRef:                  "env://COSIGN_KEY",
+				ExpectedImageRepository: imageRepo,
+				ExpectedBaseRepository:  baseRepo,
+			})
+			if !errors.Is(err, errs.ErrValidation) {
+				t.Fatalf("err = %v, want ErrValidation", err)
+			}
+
+			// The repository rule's own wording, so a consistency error
+			// that merely mentions the same field name cannot stand in
+			// for it.
+			if !strings.Contains(err.Error(), tc.wantCtx) {
+				t.Errorf("err = %v, want the repository constraint on %q", err, tc.wantCtx)
+			}
+
+			assertNothingPublished(t, signer)
+		})
 	}
-
-	if !strings.Contains(err.Error(), "candidate_tag") {
-		t.Fatalf("err = %v, want candidate_tag context", err)
-	}
-
-	assertNothingPublished(t, signer)
 }
 
 func TestSignLedgerImages_RejectsStrictSBOMPatternMismatch(t *testing.T) {
