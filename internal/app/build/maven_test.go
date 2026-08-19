@@ -67,9 +67,13 @@ func TestMavenMetadata_WritesAllOutputsAndStatusLineFromPOM(t *testing.T) {
 		t.Fatalf("MavenMetadata: %v", err)
 	}
 
-	if len(ops.runs) > 0 || len(ops.answers) > 0 {
-		// No EvalExpression was needed — the literal POM was sufficient.
-		t.Logf("mvn never invoked, as expected for a literal POM")
+	// A POM with no ${} properties is read directly; mvn is only invoked to
+	// interpolate. The check here logged "mvn never invoked" when it had in
+	// fact been invoked, and logged rather than failed, so an implementation
+	// that shelled out to mvn for every literal POM would have passed
+	// silently -- at the cost of a JVM start per metadata read.
+	if len(ops.runs) != 0 {
+		t.Errorf("mvn invoked %v for a POM needing no interpolation", ops.runs)
 	}
 
 	want := map[string]string{
