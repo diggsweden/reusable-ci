@@ -222,7 +222,15 @@ func TestInspectManifest_PropagatesDigestResolveFailure(t *testing.T) {
 	}
 }
 
-func TestMergeManifest_PassesSortedDigestsAndTags(t *testing.T) {
+// TestMergeManifest_SortsDigestsAndKeepsTagOrder covers the two orderings,
+// which differ. Digest markers are read from a directory, so their order is
+// whatever the filesystem gives and is sorted for a reproducible manifest;
+// tags are a caller-declared list and keep the order they were written in.
+//
+// The fixture tells both apart: the markers are written b then a and expected
+// a then b, while the tags are v1 then latest and expected in that order,
+// which sorting would reverse. The old name said both were sorted.
+func TestMergeManifest_SortsDigestsAndKeepsTagOrder(t *testing.T) {
 	t.Parallel()
 	fsys := testfs.NewReal(t)
 	dir := fsys.MkdirAll("digests")
