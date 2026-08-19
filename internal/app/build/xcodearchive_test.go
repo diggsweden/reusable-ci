@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -54,17 +55,22 @@ func TestXcodeArchive_WorkspaceArgComposition(t *testing.T) {
 		t.Fatalf("expected 1 xcodebuild call, got %d", len(ops.calls))
 	}
 
-	args := ops.calls[0]
-	if args[0] != "archive" {
-		t.Errorf("first arg = %q", args[0])
+	// The whole invocation, in order. Membership checks proved the flag and
+	// its value were both somewhere in the argv, which is not the same as
+	// their being a pair -- the comment claimed a pair and nothing said so.
+	want := []string{
+		"archive",
+		"-workspace", "App.xcworkspace",
+		"-scheme", "App",
+		"-configuration", "Release",
+		"-archivePath", "build/app.xcarchive",
+		"-destination", "generic/platform=iOS",
+		"-skipPackagePluginValidation",
+		"-xcconfig", "Config.xcconfig",
+		"CURRENT_PROJECT_VERSION=42",
 	}
-
-	if !contains(args, "-workspace") || !contains(args, "App.xcworkspace") {
-		t.Errorf("missing -workspace arg pair: %v", args)
-	}
-
-	if !contains(args, "CURRENT_PROJECT_VERSION=42") {
-		t.Errorf("missing build-number override: %v", args)
+	if !reflect.DeepEqual(ops.calls[0], want) {
+		t.Errorf("xcodebuild args =\n%q\nwant\n%q", ops.calls[0], want)
 	}
 
 	for _, want := range []string{
