@@ -36,7 +36,7 @@ So the real question is not the zero case. It is whether `artifacts.yml` should
 be able to declare that a project produces distro packages, which would both
 give the publish stage something to gate on and make the zero case meaningful.
 
-## A ledger image is signed before its SBOM pin is checked
+## A ledger image is signed and attested before its inputs are fully checked
 
 `SignLedgerImages` signs the image, then verifies the pinned SBOM digest. When
 the pin does not match, the run aborts with `ErrValidation` and produces no
@@ -51,10 +51,17 @@ Whether it matters depends on what a verifier requires. A consumer checking
 only the signature would accept an image whose SBOM pin was rejected; one that
 also requires the CycloneDX attestation would not, because none was produced.
 
-The pin check is a local file hash — cheap, and dependent on nothing the
-signing step provides. Doing it before the first irreversible publish would
-cost nothing and would mean a failed run leaves no signature behind. That is a
-change to the order of operations inside the signer boundary, which
+The same shape appears again, one step later. A ledger entry declaring a
+provenance key the engine computes (`image`, `base`, `ref`, `source`) is
+refused with `ErrValidation` — but the collision is found while building the
+provenance predicate, by which point the image is signed *and* its CycloneDX
+SBOM is attested. Recorded in `TestSignLedgerImages_ProvenanceExtras`.
+
+Both checks are pure functions of inputs the run already holds: a file hash,
+and a set of key names. Neither depends on anything signing or attesting
+produces, so both could run before the first irreversible publish, and a
+refused run would leave nothing behind. That is a change to the order of
+operations inside the signer boundary, which
 [ADR 0002](adr/0002-signer-trust-boundary.md) governs, so it is recorded rather
 than made.
 

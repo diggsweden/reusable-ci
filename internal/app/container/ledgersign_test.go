@@ -545,16 +545,35 @@ func TestSignLedgerImages_ProvenanceExtras(t *testing.T) {
 		}
 	})
 
-	t.Run("collision with a computed key fails the run", func(t *testing.T) {
-		entry := ledgerSignEntry(t)
-		entry.Provenance = map[string]any{"image": "shadowed"}
-		signer := &recordingImageSigner{}
+	// Every key the engine computed is reserved, so a ledger entry cannot
+	// rewrite an attested fact. Only "image" was covered, which demonstrated
+	// the rule once rather than for each key it guards -- the same gap closed
+	// on the release provenance path in 8a1e0ff8.
+	for _, key := range []string{"image", "base", "ref", "source"} {
+		t.Run("declaring "+key+" collides with a computed key", func(t *testing.T) {
+			entry := ledgerSignEntry(t)
+			entry.Provenance = map[string]any{key: "shadowed"}
+			signer := &recordingImageSigner{}
 
-		err := appcontainer.SignLedgerImages(context.Background(), signer, &fakeLedgerSyft{}, fakeLedgerResolver{entry.CandidateTag: entry.Digest}, &bytes.Buffer{}, io.Discard, signInput(t, entry))
-		if !errors.Is(err, errs.ErrValidation) {
-			t.Fatalf("err = %v, want ErrValidation for reserved-key collision", err)
-		}
-	})
+			err := appcontainer.SignLedgerImages(context.Background(), signer, &fakeLedgerSyft{}, fakeLedgerResolver{entry.CandidateTag: entry.Digest}, &bytes.Buffer{}, io.Discard, signInput(t, entry))
+			if !errors.Is(err, errs.ErrValidation) {
+				t.Fatalf("err = %v, want ErrValidation for reserved key %q", err, key)
+			}
+
+			// The collision is a property of the ledger entry alone, but it
+			// is found while building the provenance predicate -- by which
+			// point the image is signed and its SBOM attested. Recorded as
+			// it is, so the order cannot change unnoticed; see
+			// docs/open-questions.md.
+			if len(signer.signs) != 1 {
+				t.Errorf("signs = %+v, want the image signed before the collision was found", signer.signs)
+			}
+
+			if len(signer.attests) != 1 || signer.attests[0].input.PredicateType != "cyclonedx" {
+				t.Errorf("attests = %+v, want the SBOM attested and no provenance", signer.attests)
+			}
+		})
+	}
 }
 
 // TestSignLedgerImages_BaseKindEntries is the signer-flip proof: a
