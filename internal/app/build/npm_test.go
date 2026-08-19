@@ -8,12 +8,13 @@ import (
 	"context"
 	"errors"
 	"io"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
@@ -65,12 +66,18 @@ func TestNPMMetadata_RejectsWrongScope(t *testing.T) {
 	var stderr bytes.Buffer
 
 	err := appbuild.NPMMetadata(context.Background(), sink, &bytes.Buffer{}, output.NewAnnotator(&stderr, output.FormatGitHub), appbuild.NPMMetadataInput{Dir: fsys.Root, PackageScope: "@org"})
-	if err == nil {
-		t.Fatal("expected error")
+	if !errors.Is(err, errs.ErrInvalidConfig) {
+		t.Fatalf("err = %v, want ErrInvalidConfig", err)
 	}
 
 	if !strings.Contains(stderr.String(), "package.json name must be scoped") {
 		t.Errorf("stderr = %s", stderr.String())
+	}
+
+	// The scope decides where this would be published, so a mismatch must
+	// not leave a name and version behind for a later step to act on.
+	if got := sink.Keys(); len(got) != 0 {
+		t.Errorf("emitted %q despite the scope mismatch", got)
 	}
 }
 
@@ -91,14 +98,42 @@ func TestNPMPack_EmitsTarballOutput(t *testing.T) {
 	}
 }
 
-func TestNPMPack_RejectsAmbiguousPackOutput(t *testing.T) {
+// TestNPMPack_RejectsUnusablePackOutput covers every way the pack output
+// can fail to name exactly one tarball. The previous test was called
+// RejectsAmbiguousPackOutput and fed it "[]" -- the empty case, not the
+// ambiguous one -- so the branch its name described was never run.
+func TestNPMPack_RejectsUnusablePackOutput(t *testing.T) {
 	t.Parallel()
-	fsys := testfs.NewReal(t)
-	sink := fakeoutputsink.New(t)
 
-	err := appbuild.NPMPack(context.Background(), fakeNPMOps{out: `[]`}, sink, &bytes.Buffer{}, &bytes.Buffer{}, appbuild.NPMMetadataInput{Dir: fsys.Root})
-	if err == nil || !strings.Contains(err.Error(), "want exactly 1") {
-		t.Fatalf("err = %v", err)
+	for _, tc := range []struct {
+		name string
+		out  string
+	}{
+		{name: "no packages", out: `[]`},
+		{
+			// The case the old name promised: npm packed a workspace and
+			// returned several, so which one to publish is not decidable.
+			name: "several packages",
+			out:  `[{"filename":"a-1.0.0.tgz"},{"filename":"b-1.0.0.tgz"}]`,
+		},
+		{name: "a package with no filename", out: `[{}]`},
+		{name: "not json at all", out: `npm ERR! code ENOENT`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fsys := testfs.NewReal(t)
+			sink := fakeoutputsink.New(t)
+
+			err := appbuild.NPMPack(context.Background(), fakeNPMOps{out: tc.out}, sink, &bytes.Buffer{}, &bytes.Buffer{}, appbuild.NPMMetadataInput{Dir: fsys.Root})
+			if !errors.Is(err, errs.ErrInvalidConfig) {
+				t.Fatalf("err = %v, want ErrInvalidConfig", err)
+			}
+
+			if got := sink.Keys(); len(got) != 0 {
+				t.Errorf("emitted %q for an unusable pack output", got)
+			}
+		})
 	}
 }
 
@@ -125,11 +160,20 @@ func TestNPMPack_RequiresCreatedFile(t *testing.T) {
 	sink := fakeoutputsink.New(t)
 
 	err := appbuild.NPMPack(context.Background(), fakeNPMOps{out: `[{"filename":"missing.tgz"}]`}, sink, &bytes.Buffer{}, &bytes.Buffer{}, appbuild.NPMMetadataInput{Dir: fsys.Root})
-	if err == nil || !os.IsNotExist(errors.Unwrap(err)) {
-		// The exact wrapping includes context; checking text keeps this stable.
-		if err == nil || !strings.Contains(err.Error(), "missing.tgz") {
-			t.Fatalf("err = %v", err)
-		}
+
+	// npm reported a tarball that is not on disk. errors.Is walks the
+	// chain, so the wrapping context needs no special handling -- the
+	// previous nested form could pass without ever reaching a claim.
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("err = %v, want a not-exist error", err)
+	}
+
+	if !strings.Contains(err.Error(), "missing.tgz") {
+		t.Errorf("err = %v, want it to name the missing tarball", err)
+	}
+
+	if got := sink.Keys(); len(got) != 0 {
+		t.Errorf("emitted %q for a tarball that does not exist", got)
 	}
 }
 
