@@ -116,6 +116,45 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## A minimal-header JWT escapes the output redactor
+
+`safeexec.RedactKeyMaterial` scrubs subprocess output before it is folded into
+an error and printed to the CI log. Its JWT pattern is:
+
+```go
+regexp.MustCompile(`eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}`)
+```
+
+The `{20,}` floor exists, per the comment, to avoid matching "short coincidental
+dot-separated strings like file paths or version numbers". It also excludes the
+smallest valid JWT header:
+
+| Header JSON | base64url | chars after `eyJ` | redacted |
+|---|---|---|---|
+| `{"alg":"HS256"}` | `eyJhbGciOiJIUzI1NiJ9` | 17 | **no** |
+| `{"alg":"RS256"}` | `eyJhbGciOiJSUzI1NiJ9` | 17 | **no** |
+| `{"alg":"HS256","typ":"JWT"}` | … | 33 | yes |
+| `{"alg":"RS256","typ":"JWT","kid":…}` | … | 49 | yes |
+
+`typ` is optional under RFC 7519, so a bare `{"alg":…}` header is valid and
+common from minimal issuers. Such a token passes through unredacted.
+
+GitHub's OIDC tokens carry `typ` and `kid`, so the tokens most likely to appear
+in this pipeline *are* caught — which is why this is a narrow gap rather than an
+open leak.
+
+The fix is to lower the floor on the first segment alone. The `eyJ` prefix is
+already highly specific — it is the base64url of `{"` — so a shorter floor there
+does not reintroduce the false positives the comment is guarding against; the
+existing benign cases (`foo.bar.baz`, `version 1.2.3`, `key.pgp`) do not begin
+with `eyJ` at all.
+
+Recorded rather than changed because loosening a redaction pattern deserves its
+own review, and because the same floor may be deliberate for the payload and
+signature segments. Pinned in
+`TestRedactKeyMaterial_MinimalHeaderJWTIsNotRedacted`, which fails once the gap
+closes.
+
 ## skopeo keeps the signing secrets that syft is given up
 
 `container image-evidence` builds two subprocess adapters in the same function:

@@ -97,6 +97,35 @@ func TestRedactKeyMaterial_RedactsJWTShapedToken(t *testing.T) {
 	}
 }
 
+// TestRedactKeyMaterial_MinimalHeaderJWTIsNotRedacted records a gap.
+//
+// The pattern requires 20 base64url characters after the leading "eyJ" in
+// every segment. A JWT header of just {"alg":"HS256"} -- valid, and the
+// smallest one RFC 7519 permits, since "typ" is optional -- encodes to
+// exactly 20 characters, which is 17 after the "eyJ". It therefore does
+// not match, and such a token is propagated into the error and the CI
+// log unredacted.
+//
+// Tokens whose header also carries "typ" or "kid" clear the floor and are
+// redacted; GitHub's OIDC tokens do. See docs/open-questions.md.
+func TestRedactKeyMaterial_MinimalHeaderJWTIsNotRedacted(t *testing.T) {
+	t.Parallel()
+
+	// base64url({"alg":"HS256"}) = eyJhbGciOiJIUzI1NiJ9
+	minimal := []byte("auth failed: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk")
+
+	if got := safeexec.RedactKeyMaterial(minimal); !bytes.Equal(got, minimal) {
+		t.Errorf("minimal-header JWT is now redacted -- good; update this test and docs/open-questions.md: %s", got)
+	}
+
+	// The same token with "typ" in the header is caught, which is what
+	// makes the threshold rather than the shape the deciding factor.
+	withTyp := []byte("auth failed: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk")
+	if got := string(safeexec.RedactKeyMaterial(withTyp)); !strings.Contains(got, "JWT-shaped token") {
+		t.Errorf("a typ-carrying header should still be redacted: %s", got)
+	}
+}
+
 func TestRedactKeyMaterial_DoesNotMatchShortDotSeparatedStrings(t *testing.T) {
 	t.Parallel()
 
