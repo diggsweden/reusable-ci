@@ -116,6 +116,42 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## A failed signature check exits differently for GPG and for cosign
+
+`VerifyArtifactSignature` documents its contract as: "Returns nil on success;
+errs.ErrPermissionDenied wrapping the underlying verify error on signature
+mismatch."
+
+That holds for one of the two methods.
+
+| Method | Failure carries | Path |
+|---|---|---|
+| GPG | `ErrPermissionDenied` | `internal/adapters/openpgp` wraps it |
+| sigstore (keyless) | raw error | dispatcher returns `VerifyBlob` unchanged |
+| KMS | raw error | same |
+
+`verifyCosign` is `return verifier.VerifyBlob(ctx, in, errOut)`, and the real
+adapter wraps only with `cosign <args>: %w`. So no layer adds the sentinel on
+the cosign side.
+
+The consequence is an exit code that depends on how the artifact was signed
+rather than on what went wrong. A workflow distinguishing "this artifact is not
+trustworthy" (EX_NOPERM, 77) from "the tool failed" gets the right answer for a
+GPG-signed artifact and the wrong one for a sigstore- or KMS-signed artifact —
+and sigstore is the default for container and blob signing here.
+
+The fix is one wrap in `verifyCosign`. It is recorded rather than made because
+it changes an exit code, and because the same question applies to the other
+cosign verify paths (`container verify`, `release image verify`) which were not
+examined here — doing one and not the others would trade one inconsistency for
+another.
+
+Nothing hid this: the fake verifier has carried a `returnEr` field since it was
+written and every test set it to `nil`, so no test ever reached the cosign
+failure path. Pinned now in
+`TestVerifyArtifactSignature_CosignFailureIsNotPermissionDenied`, which fails
+when the gap closes so whoever closes it is sent back here.
+
 ## `sign --file` signs as it validates, so a bad list signs part of it
 
 `signExactFiles` checks each file exists at the point it signs it, inside one

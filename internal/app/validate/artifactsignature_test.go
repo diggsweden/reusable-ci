@@ -21,6 +21,9 @@ import (
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
 
+// errVerifyFailed stands in for cosign refusing a signature.
+var errVerifyFailed = errors.New("cosign: signature verification failed")
+
 // recordingVerifier captures the VerifyBlobInput the dispatcher
 // builds, so we can pin the per-method args without a subprocess.
 type recordingVerifier struct {
@@ -94,6 +97,79 @@ func TestVerifyArtifactSignature_DetectsSigstoreWhenBundleAndIdentity(t *testing
 
 	if v.got.CertIdentityRegexp != "^https://github.com/diggsweden/" {
 		t.Errorf("CertIdentityRegexp not propagated; got %q", v.got.CertIdentityRegexp)
+	}
+
+	// The issuer is the other half of the keyless trust anchor, and was
+	// supplied by this test without ever being asserted. Dropping it
+	// leaves cosign accepting a certificate from any issuer at all whose
+	// subject happens to match the identity regexp.
+	if v.got.CertOIDCIssuer != "https://token.actions.githubusercontent.com" {
+		t.Errorf("CertOIDCIssuer not propagated; got %q", v.got.CertOIDCIssuer)
+	}
+
+	// A keyless verify must not also carry a key: that combination is
+	// what the KMS branch is for, and cosign would take the key path.
+	if v.got.KeyRef != "" {
+		t.Errorf("keyless verify carried a KeyRef: %q", v.got.KeyRef)
+	}
+}
+
+// TestVerifyArtifactSignature_CosignFailureIsNotPermissionDenied records
+// a gap between the doc comment and the code.
+//
+// VerifyArtifactSignature documents that it returns "errs.ErrPermissionDenied
+// wrapping the underlying verify error on signature mismatch". The GPG
+// path does, via internal/adapters/openpgp. Neither cosign path does: the
+// dispatcher returns VerifyBlob's error unchanged, and the real adapter
+// wraps only with "cosign <args>: %w".
+//
+// So a tampered artifact exits EX_NOPERM when it was signed with GPG and
+// a generic failure when it was signed with sigstore or KMS, and a
+// workflow telling "not trustworthy" from "the tool broke" only gets it
+// right for one of them.
+//
+// The fake has carried a returnEr field since it was written with every
+// test setting it to nil, which is why this went unseen. Pinned as it
+// behaves today; see docs/open-questions.md.
+func TestVerifyArtifactSignature_CosignFailureIsNotPermissionDenied(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   appvalidate.ArtifactSignatureInput
+	}{
+		{
+			name: "keyless",
+			in:   appvalidate.ArtifactSignatureInput{CertIdentityRegexp: "^https://example/", CertOIDCIssuer: "https://issuer"},
+		},
+		{
+			name: "kms",
+			in:   appvalidate.ArtifactSignatureInput{KeyRef: "./pubkey.pem"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			art := filepath.Join(dir, "app.tgz")
+			touch(t, art)
+			touch(t, art+".bundle")
+
+			in := tc.in
+			in.Artifact = art
+
+			v := &recordingVerifier{returnEr: errVerifyFailed}
+
+			err := appvalidate.VerifyArtifactSignature(context.Background(), v, &bytes.Buffer{}, in)
+
+			// The cause is preserved, which is right.
+			if !errors.Is(err, errVerifyFailed) {
+				t.Fatalf("err = %v, want it to wrap the verifier error", err)
+			}
+
+			// But the sentinel the doc promises is absent. When this
+			// starts failing, the gap has been closed -- flip the
+			// assertion and drop the open-questions entry.
+			if errors.Is(err, errs.ErrPermissionDenied) {
+				t.Errorf("cosign verify failure now carries ErrPermissionDenied: %v", err)
+			}
+		})
 	}
 }
 
