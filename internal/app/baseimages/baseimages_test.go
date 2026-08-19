@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -255,8 +256,19 @@ func TestCleanupStagingBaseImagesRejectsUnexpectedStagingVersion(t *testing.T) {
 	err := CleanupStagingBaseImages(context.Background(), &fakeBaseImageRegistry{digests: map[string]string{}}, cleaner, io.Discard, BaseImageCleanupStagingInput{
 		ExpectedRepository: repo,
 	})
-	if err == nil || !strings.Contains(err.Error(), "refusing to delete unexpected staging version") {
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+
+	if !strings.Contains(err.Error(), "refusing to delete unexpected staging version") {
 		t.Fatalf("err = %v, want unexpected staging version", err)
+	}
+
+	// The version list comes back from the forge API, so a name that is
+	// not a staging version is either a real release or something this
+	// command has no business removing.
+	if len(cleaner.deleted) != 0 {
+		t.Fatalf("deleted an unexpected staging version: %v", cleaner.deleted)
 	}
 }
 
@@ -391,4 +403,74 @@ func baseLineagePayload(t *testing.T, fields ...lineageFields) []byte {
 	}
 
 	return body.Bytes()
+}
+
+// TestCleanupStagingBaseImages_AbsentFinalTagDefersDeletion covers the
+// one "do not delete" branch the existing tests miss.
+//
+// A digest mismatch is covered by FailsWhenFinalDigestDiffers and an
+// unexpected version name by RejectsUnexpectedStagingVersion. This is the
+// third case: the final tag is not there at all, which means the
+// promotion may not have landed, so deleting the candidate now could
+// leave no copy of the image anywhere. It defers to the stale sweep
+// instead, and does so without failing the run.
+func TestCleanupStagingBaseImages_AbsentFinalTagDefersDeletion(t *testing.T) {
+	t.Parallel()
+
+	const repo = "codeberg.org/itiquette/nanolinter-base"
+
+	baseID := strings.Repeat("1", 64)
+	digest := "sha256:" + strings.Repeat("6", 64)
+	image := BaseImageMetadata{
+		Flavor:       "rust",
+		Tag:          repo + ":" + baseID + "-rust",
+		Ref:          repo + "@" + digest,
+		CandidateTag: repo + ":staging-" + baseID + "-rust",
+		CandidateRef: repo + "@" + digest,
+		BaseInputID:  baseID,
+	}
+
+	for _, tc := range []struct {
+		name    string
+		digests map[string]string
+		wantLog string
+	}{
+		{
+			// The final tag is not there yet, so the promotion may not
+			// have landed. Deleting the candidate now could leave no
+			// copy at all; the stale sweep picks it up later instead.
+			name: "final tag absent defers the deletion",
+			digests: map[string]string{
+				repo + ":staging-" + baseID + "-rust": digest,
+			},
+			wantLog: "Final base tag is absent before staging cleanup",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			registry := &fakeBaseImageRegistry{digests: tc.digests}
+			cleaner := &fakeBaseImagePackageAPI{}
+
+			var log bytes.Buffer
+
+			// The command reports a failed safety check through its
+			// result rather than an error, so other flavors still get
+			// cleaned up.
+			_ = CleanupStagingBaseImages(context.Background(), registry, cleaner, &log, BaseImageCleanupStagingInput{
+				Images:             []BaseImageMetadata{image},
+				BaseInputs:         []BaseInput{{Flavor: "rust", ContentID: strings.Repeat("2", 64), BaseInputID: baseID}},
+				ExpectedRepository: repo,
+			})
+
+			if !strings.Contains(log.String(), tc.wantLog) {
+				t.Errorf("log does not explain the skip (want %q):\n%s", tc.wantLog, log.String())
+			}
+
+			// The candidate survives either way.
+			if strings.Contains(strings.Join(cleaner.deleted, ","), image.CandidateTag) {
+				t.Errorf("deleted the candidate tag despite the safety check: %v", cleaner.deleted)
+			}
+		})
+	}
 }
