@@ -7,12 +7,33 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
+
+// dirEntryNames lists a directory's entries, sorted.
+func dirEntryNames(t *testing.T, dir string) []string {
+	t.Helper()
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+
+	sort.Strings(names)
+
+	return names
+}
 
 func TestSuffixExtractedBinaries_AllFilesWhenNoExpected(t *testing.T) {
 	fsys := testfs.NewReal(t)
@@ -32,10 +53,12 @@ func TestSuffixExtractedBinaries_AllFilesWhenNoExpected(t *testing.T) {
 		t.Fatalf("SuffixExtractedBinaries: %v", err)
 	}
 
-	for _, want := range []string{"hsm-worker-linux-amd64", "digg-hsm-keytool-linux-amd64"} {
-		if _, err := os.Stat(fsys.Path(want)); err != nil {
-			t.Errorf("missing %s: %v", want, err)
-		}
+	// The whole directory, not just the names expected to appear: this is a
+	// rename, so the originals must be gone. Copying instead would leave
+	// hsm-worker beside hsm-worker-linux-amd64 and both would ship.
+	want := []string{"digg-hsm-keytool-linux-amd64", "hsm-worker-linux-amd64"}
+	if got := dirEntryNames(t, dir); !reflect.DeepEqual(got, want) {
+		t.Errorf("directory = %v, want %v", got, want)
 	}
 
 	if !strings.Contains(out.String(), "renamed hsm-worker -> hsm-worker-linux-amd64") {
@@ -57,17 +80,12 @@ func TestSuffixExtractedBinaries_ExpectedNamesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// hsm-worker renamed.
-	if _, err := os.Stat(fsys.Path("hsm-worker-linux-arm64")); err != nil {
-		t.Errorf("missing rename: %v", err)
-	}
-	// extra-tool untouched.
-	if _, err := os.Stat(fsys.Path("extra-tool")); err != nil {
-		t.Errorf("extra-tool should still exist: %v", err)
-	}
-
-	if _, err := os.Stat(fsys.Path("extra-tool-linux-arm64")); !os.IsNotExist(err) {
-		t.Errorf("extra-tool should NOT be renamed (not in ExpectedNames): %v", err)
+	// hsm-worker renamed and gone; extra-tool untouched and not renamed.
+	// Stating the directory covers all three, including the one the separate
+	// checks missed: that the original no longer exists.
+	want := []string{"extra-tool", "hsm-worker-linux-arm64"}
+	if got := dirEntryNames(t, dir); !reflect.DeepEqual(got, want) {
+		t.Errorf("directory = %v, want %v", got, want)
 	}
 }
 
