@@ -491,16 +491,25 @@ func TestImageEvidence_MultiArchRegistryDigestFallback(t *testing.T) {
 	}
 }
 
-func TestImageEvidence_RegistryDigestRefScansSinglePlatformAndWritesSBOM(t *testing.T) {
+// TestImageEvidence_ScansTheRegistryImageItPulled covers the registry fallback:
+// with no local image or manifest, the named platform is copied out of the
+// registry by digest into a temporary layout, scanned there, and the layout
+// removed.
+//
+// The scans are tied to that layout. Finding the trivy output and the SBOM
+// output only shows each tool was told where to write -- the same gap its
+// multi-arch sibling had until 22ccc7b0, closed here too.
+func TestImageEvidence_ScansTheRegistryImageItPulled(t *testing.T) {
 	t.Parallel()
 	work := t.TempDir()
 	skopeo := &fakeImageEvidenceSkopeo{}
+	trivy := &fakeImageEvidenceTrivy{}
 	syft := &fakeImageEvidenceSyft{}
 	digest := "sha256:" + strings.Repeat("d", 64)
 	trivyOutput := filepath.Join(work, "trivy.json")
 	sbomOutput := filepath.Join(work, "sbom.json")
 
-	err := appcontainer.ImageEvidence(context.Background(), &fakeImageEvidenceBuildah{}, skopeo, &fakeImageEvidenceTrivy{}, syft, io.Discard, io.Discard, appcontainer.ImageEvidenceInput{
+	err := appcontainer.ImageEvidence(context.Background(), &fakeImageEvidenceBuildah{}, skopeo, trivy, syft, io.Discard, io.Discard, appcontainer.ImageEvidenceInput{
 		RegistryDigestRef: "registry.example/owner/example@" + digest,
 		Platforms:         []string{"linux/amd64"},
 		TrivyOutput:       trivyOutput,
@@ -512,24 +521,45 @@ func TestImageEvidence_RegistryDigestRefScansSinglePlatformAndWritesSBOM(t *test
 	}
 
 	if len(skopeo.registryCopies) != 1 {
-		t.Fatalf("registry copies = %d, want 1", len(skopeo.registryCopies))
+		t.Fatalf("registry copies = %+v, want exactly one", skopeo.registryCopies)
 	}
 
 	copied := skopeo.registryCopies[0]
-	if copied.ref != "registry.example/owner/example" || copied.digest != digest || copied.osName != "linux" || copied.arch != "amd64" {
-		t.Fatalf("registry copy = %+v", copied)
+
+	// Pulled by digest, with the tag stripped: what is scanned is the image
+	// the digest names, not whatever the tag points at now.
+	if copied.ref != "registry.example/owner/example" || copied.digest != digest {
+		t.Errorf("copied %s@%s, want registry.example/owner/example@%s", copied.ref, copied.digest, digest)
 	}
 
-	if _, err := os.Stat(copied.destLayout); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("temporary registry layout still exists or unexpected stat err: %v", err)
+	if copied.osName != "linux" || copied.arch != "amd64" {
+		t.Errorf("copied platform = %s/%s, want linux/amd64", copied.osName, copied.arch)
 	}
 
-	if _, err := os.Stat(trivyOutput); err != nil {
-		t.Fatalf("trivy output missing: %v", err)
+	if len(trivy.calls) != 1 {
+		t.Fatalf("trivy calls = %d, want exactly one", len(trivy.calls))
+	}
+
+	if got := trivyArg(t, trivy.calls[0], "--input"); got != copied.destLayout {
+		t.Errorf("trivy scanned %q, want the layout pulled for it %q", got, copied.destLayout)
+	}
+
+	if got := trivyArg(t, trivy.calls[0], "--output"); got != trivyOutput {
+		t.Errorf("trivy wrote %q, want %q", got, trivyOutput)
+	}
+
+	if want := []string{"oci-dir:" + copied.destLayout}; !reflect.DeepEqual(syft.targets, want) {
+		t.Errorf("syft scanned %v, want %v", syft.targets, want)
 	}
 
 	if syft.outputs["cyclonedx-json"] != sbomOutput {
-		t.Fatalf("syft outputs = %v", syft.outputs)
+		t.Errorf("syft outputs = %v, want the SBOM at %s", syft.outputs, sbomOutput)
+	}
+
+	// A whole image was unpacked to scan it; leaving it behind fills the
+	// runner's disk one release at a time.
+	if _, err := os.Stat(copied.destLayout); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("temporary registry layout was not cleaned up: %v", err)
 	}
 }
 
