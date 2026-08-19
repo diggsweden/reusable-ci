@@ -334,26 +334,111 @@ func TestGoDownload_RunsModDownloadInDir(t *testing.T) {
 
 func TestGoBuildSBOM_WritesCanonicalPath(t *testing.T) {
 	t.Parallel()
-	fsys := testfs.NewReal(t)
 
-	tool := &fakeCycloneDXGoModTool{}
-	if err := appbuild.GoBuildSBOM(context.Background(), tool, &bytes.Buffer{}, &bytes.Buffer{}, appbuild.GoBuildSBOMInput{
-		Dir:        fsys.Root,
-		BinaryName: "app",
-	}); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name    string
+		in      appbuild.GoBuildSBOMInput
+		wantDir string // path segment under .reusable-ci/go-build-sbom
+	}{
+		{
+			name:    "binary name",
+			in:      appbuild.GoBuildSBOMInput{BinaryName: "app"},
+			wantDir: "app",
+		},
+		{
+			// artifact-name outranks binary-name, and nothing showed it.
+			name:    "artifact name outranks binary name",
+			in:      appbuild.GoBuildSBOMInput{ArtifactName: "artifact", BinaryName: "app"},
+			wantDir: "artifact",
+		},
+		{
+			// The name reaches a filesystem path, so it is sanitised first.
+			name:    "a name needing sanitising becomes one safe segment",
+			in:      appbuild.GoBuildSBOMInput{BinaryName: "my app/v2!"},
+			wantDir: "my-app-v2",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fsys := testfs.NewReal(t)
+
+			in := tc.in
+			in.Dir = fsys.Root
+
+			tool := &fakeCycloneDXGoModTool{}
+			if err := appbuild.GoBuildSBOM(context.Background(), tool, &bytes.Buffer{}, &bytes.Buffer{}, in); err != nil {
+				t.Fatal(err)
+			}
+
+			if len(tool.calls) != 1 {
+				t.Fatalf("calls = %+v", tool.calls)
+			}
+
+			// Pinned whole: the output path is the contract the workflow
+			// collects by, and a Contains would pass on extra or reordered
+			// flags.
+			wantArgs := []string{
+				"mod", "-json",
+				"-output", filepath.Join(".reusable-ci", "go-build-sbom", tc.wantDir, "bom.json"),
+				".",
+			}
+			if !reflect.DeepEqual(tool.calls[0].Args, wantArgs) {
+				t.Errorf("args = %q, want %q", tool.calls[0].Args, wantArgs)
+			}
+
+			// The path above is relative, so it only lands where intended
+			// if cyclonedx-gomod runs in the module directory.
+			if tool.calls[0].Dir != fsys.Root {
+				t.Errorf("dir = %q, want %q", tool.calls[0].Dir, fsys.Root)
+			}
+
+			// The tool writes bom.json but not its parent, so the parent
+			// has to exist before the tool runs.
+			if _, err := os.Stat(filepath.Join(fsys.Root, ".reusable-ci", "go-build-sbom", tc.wantDir)); err != nil {
+				t.Fatalf("sbom dir missing: %v", err)
+			}
+		})
 	}
+}
 
-	if len(tool.calls) != 1 {
-		t.Fatalf("calls = %+v", tool.calls)
-	}
+func TestGoBuildSBOM_RefusesUnusableNames(t *testing.T) {
+	t.Parallel()
 
-	if got := strings.Join(tool.calls[0].Args, " "); !strings.Contains(got, filepath.Join(".reusable-ci", "go-build-sbom", "app", "bom.json")) {
-		t.Errorf("args = %q", got)
-	}
+	for _, tc := range []struct {
+		name string
+		in   appbuild.GoBuildSBOMInput
+	}{
+		{name: "no name at all", in: appbuild.GoBuildSBOMInput{}},
+		{name: "blank name", in: appbuild.GoBuildSBOMInput{BinaryName: "   "}},
+		{name: "name sanitising away to nothing", in: appbuild.GoBuildSBOMInput{BinaryName: "///"}},
+		{name: "name of only dashes", in: appbuild.GoBuildSBOMInput{BinaryName: "---"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	if _, err := os.Stat(filepath.Join(fsys.Root, ".reusable-ci", "go-build-sbom", "app")); err != nil {
-		t.Fatalf("sbom dir missing: %v", err)
+			fsys := testfs.NewReal(t)
+
+			in := tc.in
+			in.Dir = fsys.Root
+
+			tool := &fakeCycloneDXGoModTool{}
+
+			err := appbuild.GoBuildSBOM(context.Background(), tool, &bytes.Buffer{}, &bytes.Buffer{}, in)
+			if !errors.Is(err, errs.ErrUsage) {
+				t.Errorf("err = %v, want ErrUsage", err)
+			}
+
+			if len(tool.calls) != 0 {
+				t.Errorf("ran the tool anyway: %+v", tool.calls)
+			}
+
+			// Refused before any directory is made, so a bad name leaves
+			// no trace in the workspace.
+			if _, err := os.Stat(filepath.Join(fsys.Root, ".reusable-ci")); !os.IsNotExist(err) {
+				t.Errorf(".reusable-ci created on a refused run (stat err = %v)", err)
+			}
+		})
 	}
 }
 

@@ -116,6 +116,42 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## `SanitizePathToken` lets `..` through, and says it does not
+
+Its doc comment is explicit: "The result is safe for filesystem paths, Docker/OCI
+tags, and artifact basenames." `internal/app/sbom/generate.go` relies on that by
+name — "Sanitised here, once: every layer filename is derived from these, so the
+subject that flows down is already path-safe."
+
+`.` and `-` are both in the allowed set, so `..` passes through untouched, and
+the trailing-dash trim can *produce* it from an input that did not look like
+traversal. Probed:
+
+| Input | Token | Resulting SBOM path |
+|---|---|---|
+| `app` | `app` | `.reusable-ci/go-build-sbom/app/bom.json` |
+| `..` | `..` | `.reusable-ci/bom.json` |
+| `-..-` | `..` | `.reusable-ci/bom.json` |
+| `.` | `.` | `.reusable-ci/go-build-sbom/bom.json` |
+| `../../etc` | `..-..-etc` | (contained) |
+
+**The escape is bounded to one level and cannot leave the workspace**, because
+`/` and `\` are themselves mapped to `-`, so no token can contain a separator
+and only a single `..` is reachable. So this is not a traversal vulnerability.
+
+What it does break is the canonical path. `GoBuildSBOM` promises to write "into
+the canonical reusable-ci path", and a project named `..` gets its bom.json one
+directory above it, where the workflow that collects
+`.reusable-ci/go-build-sbom/*/bom.json` will not find it — a silently missing
+SBOM rather than a wrong one.
+
+The fix is one line — treat a token of `.` or `..` as unusable and return `""` —
+and every caller in `app/build` already handles `""` as "not a valid path token".
+It is recorded rather than made because the other three call sites
+(`app/sbom/generate.go` twice, `snapshotversion.go`) have not been checked for
+what they do with an empty token, and changing a shared sanitiser to satisfy one
+caller is how the path-safety sprawl above started.
+
 ## An unreachable branch in `readGoModulePath`
 
 `readGoModulePath` refuses an empty module path:
