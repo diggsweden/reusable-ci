@@ -92,6 +92,30 @@ substring-matching variant — which is the shape that was actually wrong, since
 it misses an OS separator. A guard that cannot catch the bug that motivated it,
 while carrying a four-entry allowlist, reads as more protection than it gives.
 
+## `container sign` documents a digest requirement it does not enforce
+
+The command's own documentation says it three times — the doc comment
+("`reusable-ci container sign <image>@<digest>`"), the description ("The image
+reference must be a digest reference (image@sha256:...)"), and the error text
+for a missing argument ("registry/image@sha256:..."). Nothing checks it.
+`SignImage` refuses only an empty reference, so `container sign myimage:latest`
+signs whatever the tag resolves to at that moment.
+
+The signature cosign produces is still bound to a digest, so this is not a
+broken signature — it is a "sign what you verified" question. If the tag moved
+between build and sign, the signed image is not the built one, and nothing in
+the run would say so.
+
+The codebase already has the check and applies it on the neighbouring path:
+`release image verify` refuses a `--ref` that is not digest-pinned, via
+`validReleaseImageDigestRef`. Every in-repo caller of `SignImage` passes a
+digest-pinned reference, so this is about the CLI surface a consumer drives
+directly.
+
+Enforcing the documented contract is small. It is recorded rather than done
+because it would start refusing input that is accepted today, and whether any
+consumer signs by tag deliberately is not visible from here.
+
 ## Still open in the threat model
 
 - [Profile-dependent `externalParameters` reserved keys](threat-model.md) — a
