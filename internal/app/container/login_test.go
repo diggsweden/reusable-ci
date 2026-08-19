@@ -4,11 +4,13 @@
 package container_test
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
@@ -92,6 +94,87 @@ func TestRegistryLogin_PathPrecedence(t *testing.T) {
 	if _, err := os.Stat(override); err != nil {
 		t.Errorf("explicit AuthFile not honored: %v", err)
 	}
+}
+
+// TestRegistryLogin_PathPrecedenceLowerRungs completes the ladder. The
+// test above covers the explicit override and $REGISTRY_AUTH_FILE; the
+// two below it were never exercised.
+//
+// They matter on a self-hosted runner: $DOCKER_CONFIG is how a job scopes
+// its credentials to a directory that goes away with the job, so a break
+// that skipped it would write them to the home directory instead, where
+// they outlive the run.
+func TestRegistryLogin_PathPrecedenceLowerRungs(t *testing.T) {
+	// No t.Parallel(): mutates process env via t.Setenv.
+	t.Run("DOCKER_CONFIG when REGISTRY_AUTH_FILE is unset", func(t *testing.T) {
+		dockerConfig := t.TempDir()
+		home := t.TempDir()
+
+		t.Setenv("REGISTRY_AUTH_FILE", "")
+		t.Setenv("DOCKER_CONFIG", dockerConfig)
+		t.Setenv("HOME", home)
+
+		var log bytes.Buffer
+
+		if err := appcontainer.RegistryLogin(&log, appcontainer.RegistryLoginInput{
+			Registry: "ghcr.io", Username: "u", Password: "p",
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		want := filepath.Join(dockerConfig, "config.json")
+		if _, err := os.Stat(want); err != nil {
+			t.Errorf("expected write to $DOCKER_CONFIG/config.json: %v", err)
+		}
+
+		// The home fallback must not have been used as well.
+		if _, err := os.Stat(filepath.Join(home, ".docker", "config.json")); !os.IsNotExist(err) {
+			t.Errorf("also wrote to the home fallback (stat err = %v)", err)
+		}
+
+		// The resolved path is reported, so an operator can see where the
+		// credential landed.
+		if !strings.Contains(log.String(), want) {
+			t.Errorf("log does not name the auth file: %s", log.String())
+		}
+	})
+
+	t.Run("home fallback when neither is set", func(t *testing.T) {
+		home := t.TempDir()
+
+		t.Setenv("REGISTRY_AUTH_FILE", "")
+		t.Setenv("DOCKER_CONFIG", "")
+		t.Setenv("HOME", home)
+
+		if err := appcontainer.RegistryLogin(io.Discard, appcontainer.RegistryLoginInput{
+			Registry: "ghcr.io", Username: "u", Password: "p",
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		path := filepath.Join(home, ".docker", "config.json")
+
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("expected write to ~/.docker/config.json: %v", err)
+		}
+
+		// The credential file and the directory created for it are
+		// owner-only; this is the rung where the directory is most likely
+		// to be created fresh.
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("auth file mode = %v, want 0600", perm)
+		}
+
+		dir, err := os.Stat(filepath.Dir(path))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if perm := dir.Mode().Perm(); perm != 0o700 {
+			t.Errorf("auth dir mode = %v, want 0700", perm)
+		}
+	})
 }
 
 func TestRegistryLogout_RemovesOneKeepsOthersAndStays0600(t *testing.T) {
