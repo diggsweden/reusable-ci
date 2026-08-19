@@ -257,12 +257,48 @@ func TestNPMApplication_SkipsWhenScriptEmpty(t *testing.T) {
 	}
 }
 
-func TestNPMApplication_RejectsInvalidPackageJSON(t *testing.T) {
-	fsys := testfs.NewReal(t)
-	fsys.WriteFile("package.json", []byte(`not json`))
+func TestNPMApplication_RejectsUnreadablePackageJSON(t *testing.T) {
+	t.Parallel()
 
-	err := appbuild.NPMApplication(context.Background(), &recordingNPMRunner{}, io.Discard, io.Discard, appbuild.NPMApplicationInput{Dir: fsys.Root})
-	if err == nil || !strings.Contains(err.Error(), "parse package.json") {
-		t.Fatalf("err = %v", err)
+	for _, tc := range []struct {
+		name    string
+		body    string // "" writes no package.json
+		wantErr error
+	}{
+		{name: "not json", body: `not json`, wantErr: errs.ErrInvalidConfig},
+		{name: "truncated json", body: `{"name":"x"`, wantErr: errs.ErrInvalidConfig},
+		{
+			// fs.ErrNotExist, not ErrMissingInput: npmHasScript returns the
+			// raw read error while its sibling readNPMPackageJSON maps the
+			// same condition to ErrMissingInput, so the exit code depends
+			// on which npm subcommand was run. Recorded in
+			// docs/open-questions.md; pinned here as it behaves today.
+			name:    "no package.json",
+			wantErr: fs.ErrNotExist,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fsys := testfs.NewReal(t)
+			if tc.body != "" {
+				fsys.WriteFile("package.json", []byte(tc.body))
+			}
+
+			runner := &recordingNPMRunner{}
+
+			err := appbuild.NPMApplication(context.Background(), runner, io.Discard, io.Discard, appbuild.NPMApplicationInput{Dir: fsys.Root})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+
+			// A package.json that cannot be read is not the same as one
+			// declaring no build script: the first must refuse, the second
+			// skips. Only the skip may reach a successful run, and neither
+			// may invoke npm.
+			if runner.args != nil {
+				t.Errorf("ran npm despite an unreadable package.json: %v", runner.args)
+			}
+		})
 	}
 }

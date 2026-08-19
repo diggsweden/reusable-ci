@@ -116,6 +116,29 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## A missing package.json exits two different ways
+
+Two functions in `internal/app/build/npm.go` read the same file:
+
+- `readNPMPackageJSON` maps `fs.ErrNotExist` to `errs.ErrMissingInput`
+- `npmHasScript` returns the raw `os.ReadFile` error, unwrapped by any sentinel
+
+So `reusable-ci build npm application` in a directory without a package.json
+exits with the generic failure code, while `build npm metadata` and `build npm
+pack` in that same directory exit per `ErrMissingInput`. Same cause, same
+package, different exit code — and exit codes are the part of the contract a
+workflow branches on.
+
+The malformed-JSON case is consistent between them (`ErrInvalidConfig`); only
+the not-found case diverges.
+
+The fix is to give `npmHasScript` the same `fs.ErrNotExist` mapping its sibling
+already has. Recorded rather than made because it changes an exit code that a
+consumer may be matching on, and because the two could equally be converged by
+having `npmHasScript` call `readNPMPackageJSON` — a slightly larger refactor
+with the same outcome. Pinned as it behaves today in
+`TestNPMApplication_RejectsUnreadablePackageJSON`.
+
 ## `XcodeListBuiltArtifacts` cannot see an .xcarchive
 
 The walk returns early on every directory:
