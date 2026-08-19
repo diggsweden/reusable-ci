@@ -74,23 +74,83 @@ func TestGoMetadata_EmitsOutputs(t *testing.T) {
 	}
 }
 
-func TestGoMetadata_UsesExplicitBinaryAndVersion(t *testing.T) {
+// TestGoMetadata_ResolvesNameAndVersion walks both precedence ladders.
+// Only the top rung of each had a test, so ArtifactName -- the middle
+// rung, and the only one a workflow sets rather than a person -- was
+// never shown to be consulted at all, and "dev" was never shown to be
+// the floor.
+func TestGoMetadata_ResolvesNameAndVersion(t *testing.T) {
 	t.Parallel()
-	fsys := testfs.NewReal(t)
-	fsys.WriteFile("go.mod", []byte("module github.com/org/app\n"))
 
-	sink := fakeoutputsink.New(t)
+	for _, tc := range []struct {
+		name        string
+		in          appbuild.GoMetadataInput
+		wantBinary  string
+		wantVersion string
+	}{
+		{
+			name:        "explicit inputs outrank everything",
+			in:          appbuild.GoMetadataInput{ArtifactName: "artifact", BinaryNameInput: "bin", VersionInput: "2.0.0", RefName: "v1.2.3"},
+			wantBinary:  "bin",
+			wantVersion: "2.0.0",
+		},
+		{
+			name:        "artifact name is the middle rung",
+			in:          appbuild.GoMetadataInput{ArtifactName: "artifact", RefName: "v1.2.3"},
+			wantBinary:  "artifact",
+			wantVersion: "1.2.3",
+		},
+		{
+			name:        "module base is the last resort",
+			in:          appbuild.GoMetadataInput{RefName: "v1.2.3"},
+			wantBinary:  "app",
+			wantVersion: "1.2.3",
+		},
+		{
+			// resolveGoMetadata says both version inputs are normalised
+			// the same way "so callers get identical output regardless of
+			// which flag they used". Only the ref-name side was shown.
+			name:        "version input is v-stripped like a ref name",
+			in:          appbuild.GoMetadataInput{VersionInput: "v2.0.0"},
+			wantBinary:  "app",
+			wantVersion: "2.0.0",
+		},
+		{
+			name:        "no version anywhere falls to dev",
+			in:          appbuild.GoMetadataInput{},
+			wantBinary:  "app",
+			wantVersion: "dev",
+		},
+		{
+			name:        "blank inputs are skipped, not taken",
+			in:          appbuild.GoMetadataInput{BinaryNameInput: "  ", ArtifactName: "artifact", VersionInput: " ", RefName: "v1.2.3"},
+			wantBinary:  "artifact",
+			wantVersion: "1.2.3",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	if err := appbuild.GoMetadata(context.Background(), sink, &bytes.Buffer{}, appbuild.GoMetadataInput{Dir: fsys.Root, ArtifactName: "artifact", BinaryNameInput: "bin", VersionInput: "2.0.0", RefName: "v1.2.3"}); err != nil { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		t.Fatal(err)
-	}
+			fsys := testfs.NewReal(t)
+			fsys.WriteFile("go.mod", []byte("module github.com/org/app\n"))
 
-	if got := sink.Single("binary-name"); got != "bin" {
-		t.Errorf("binary-name = %q", got)
-	}
+			sink := fakeoutputsink.New(t)
 
-	if got := sink.Single("version"); got != "2.0.0" {
-		t.Errorf("version = %q", got)
+			in := tc.in
+			in.Dir = fsys.Root
+
+			if err := appbuild.GoMetadata(context.Background(), sink, &bytes.Buffer{}, in); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := sink.Single("binary-name"); got != tc.wantBinary {
+				t.Errorf("binary-name = %q, want %q", got, tc.wantBinary)
+			}
+
+			if got := sink.Single("version"); got != tc.wantVersion {
+				t.Errorf("version = %q, want %q", got, tc.wantVersion)
+			}
+		})
 	}
 }
 
