@@ -84,10 +84,14 @@ func TestXcodeSetupCodeSigning_HappyPath(t *testing.T) {
 	} else if certInfo.Mode().Perm() != 0o600 {
 		t.Errorf("certificate mode = %v, want 0600", certInfo.Mode().Perm())
 	}
-	// Provisioning profile copied into profilesDir.
-	if _, err := os.Stat(filepath.Join(profiles, "pp.mobileprovision")); err != nil {
+	// The provisioning profile is written the same way and to the same mode.
+	ppInfo, err := os.Stat(filepath.Join(profiles, "pp.mobileprovision"))
+	if err != nil {
 		t.Errorf("provisioning profile not installed: %v", err)
+	} else if ppInfo.Mode().Perm() != 0o600 {
+		t.Errorf("provisioning profile mode = %v, want 0600", ppInfo.Mode().Perm())
 	}
+
 	if got := strings.TrimSpace(out.String()); got != "✓ Code signing configured successfully" {
 		t.Errorf("out = %q", got)
 	}
