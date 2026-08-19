@@ -116,6 +116,44 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## `XcodeListBuiltArtifacts` cannot see an .xcarchive
+
+The walk returns early on every directory:
+
+```go
+if d.IsDir() {
+    return nil
+}
+```
+
+and `.xcarchive` is a bundle *directory* — `Info.plist`, `Products/`, `dSYMs/`
+inside. So the extension test below it never sees one, and the walk descends
+into the bundle listing whatever `.ipa` files it finds there instead (normally
+none).
+
+Probed against the shape xcodebuild actually writes:
+
+```
+Built artifacts:
+No artifacts found
+```
+
+This bites hardest on the unsigned path, whose only output *is* the archive:
+`XcodeReleaseBuild` with `EnableCodeSigning: false` runs `archive` and no
+export, so a build that fully succeeded reports no artifacts.
+
+The existing test did not catch it because its fixture wrote
+`build/app.xcarchive` as a plain file — a shape xcodebuild never produces. That
+is the only reason the assertion held. The fixture is now realistic and the
+behaviour is pinned as-is in `TestXcodeListBuiltArtifacts_SkipsArchiveBundles`.
+
+The fix is to test the extension before the `IsDir` return, and to skip
+descending into a matched bundle. It is recorded rather than made because the
+output is a human-facing listing rather than data anything consumes, so nothing
+is broken downstream by it being wrong — and because whether an archive should
+count as a "built artifact" alongside a shippable `.ipa` is a presentation
+choice.
+
 ## A failed Xcode archive still publishes its job outputs
 
 `XcodeReleaseBuild` resolves and emits metadata before it archives. When the
