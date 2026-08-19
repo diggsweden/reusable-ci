@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 
@@ -115,9 +114,17 @@ func TestForgePackagesNPMPublish_PublishesTheTarball(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := strings.Join(npmOps.args, " ")
-	if !strings.Contains(got, "publish") || !strings.Contains(got, "pkg-1.0.0.tgz") || !strings.Contains(got, "--userconfig") {
-		t.Errorf("npm args = %v", npmOps.args)
+	if len(npmOps.args) != 4 {
+		t.Fatalf("npm args = %q, want four", npmOps.args)
+	}
+
+	// The .npmrc path is generated per run, so it is taken from the argv and
+	// checked separately: it must be the temporary file the registry token was
+	// written to. Asserting only that --userconfig is present says nothing
+	// about which config npm actually read.
+	userconfig := npmOps.args[3]
+	if !strings.Contains(filepath.Base(userconfig), "reusable-ci-npmrc-") {
+		t.Errorf("--userconfig = %q, want the generated npmrc", userconfig)
 	}
 
 	// The tarball must be handed over as "./<name>" — npm runs with dir as its
@@ -125,8 +132,10 @@ func TestForgePackagesNPMPublish_PublishesTheTarball(t *testing.T) {
 	// not exist, and npm silently reparses the argument as a package spec where
 	// "<dir>/<name>.tgz" is GitHub shorthand. A Contains check passes for both
 	// spellings, which is why this was not caught until a real npm saw it.
-	if !slices.Contains(npmOps.args, "./pkg-1.0.0.tgz") {
-		t.Errorf("tarball must be passed as ./pkg-1.0.0.tgz relative to the working dir, got %v", npmOps.args)
+	// Comparing the argv in order says it once and covers the rest with it.
+	want := []string{"publish", "./pkg-1.0.0.tgz", "--userconfig", userconfig}
+	if !reflect.DeepEqual(npmOps.args, want) {
+		t.Errorf("npm args = %q\nwant %q", npmOps.args, want)
 	}
 
 	for _, arg := range npmOps.args {
