@@ -102,13 +102,21 @@ func TestXcodeArchive_ProjectFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	args := ops.calls[0]
-	if !contains(args, "-project") || !contains(args, "App.xcodeproj") {
-		t.Errorf("missing -project: %v", args)
+	// With no workspace, the project is used instead — and nothing else
+	// changes. Comparing the invocation says both, including that
+	// -workspace is absent, which a membership check needed its own
+	// assertion for.
+	want := []string{
+		"archive",
+		"-project", "App.xcodeproj",
+		"-scheme", "App",
+		"-configuration", "Release",
+		"-archivePath", "build/app.xcarchive",
+		"-destination", "generic/platform=iOS",
+		"-skipPackagePluginValidation",
 	}
-
-	if contains(args, "-workspace") {
-		t.Errorf("workspace should not be set: %v", args)
+	if !reflect.DeepEqual(ops.calls[0], want) {
+		t.Errorf("xcodebuild args =\n%q\nwant\n%q", ops.calls[0], want)
 	}
 
 	if !strings.Contains(out.String(), "Running: xcodebuild archive -project App.xcodeproj") {
