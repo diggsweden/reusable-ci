@@ -60,8 +60,17 @@ func TestGoMetadata_EmitsOutputs(t *testing.T) {
 		t.Errorf("module = %q", got)
 	}
 
-	if !strings.Contains(out.String(), "Binary: app") {
-		t.Errorf("out = %s", out.String())
+	// The outputs are built as a slice of pairs rather than a map because
+	// jsonsink emits in insertion order, so this order is what a `--json`
+	// consumer reads. Asserting it is what stops a return to a map, which
+	// is the diff-noise the comment on that slice describes.
+	wantOrder := []string{"binary-name", "version", "module"}
+	if got := sink.Order(); !reflect.DeepEqual(got, wantOrder) {
+		t.Errorf("emission order = %q, want %q", got, wantOrder)
+	}
+
+	if got := out.String(); got != "Binary: app\nModule: github.com/org/app\nVersion: 1.2.3\n" {
+		t.Errorf("out = %q", got)
 	}
 }
 

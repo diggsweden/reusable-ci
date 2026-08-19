@@ -24,6 +24,7 @@ type Sink struct {
 	mu         sync.Mutex
 	scalar     map[string]string
 	multiline  map[string][]string
+	order      []string
 	closed     bool
 	closeCount int
 }
@@ -50,6 +51,7 @@ func (s *Sink) Set(_ context.Context, key, value string) error {
 	}
 
 	s.scalar[key] = value
+	s.note(key)
 
 	return nil
 }
@@ -74,6 +76,7 @@ func (s *Sink) SetMultiline(_ context.Context, key string, lines []string) error
 	cp := make([]string, len(lines))
 	copy(cp, lines)
 	s.multiline[key] = cp
+	s.note(key)
 
 	return nil
 }
@@ -122,6 +125,22 @@ func (s *Sink) AllScalar() map[string]string {
 	return cp
 }
 
+// Order returns the keys in the order they were first written.
+//
+// jsonsink emits its document in insertion order, so the order a caller
+// writes its outputs in is the order a consumer reads them in. Keys()
+// sorts, and the maps above lose it entirely, which left callers that
+// order their outputs deliberately with no way to say so.
+func (s *Sink) Order() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cp := make([]string, len(s.order))
+	copy(cp, s.order)
+
+	return cp
+}
+
 // Keys returns the union of scalar + multiline keys, sorted.
 func (s *Sink) Keys() []string {
 	s.mu.Lock()
@@ -157,3 +176,15 @@ func (s *Sink) CloseCount() int {
 
 // Compile-time check.
 var _ ci.OutputSink = (*Sink)(nil)
+
+// note records key in insertion order on first sight, mirroring how
+// jsonsink positions it.
+func (s *Sink) note(key string) {
+	for _, seen := range s.order {
+		if seen == key {
+			return
+		}
+	}
+
+	s.order = append(s.order, key)
+}

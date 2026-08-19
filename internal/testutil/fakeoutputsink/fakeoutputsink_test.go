@@ -5,6 +5,7 @@ package fakeoutputsink_test
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -85,5 +86,33 @@ func TestSink_AllScalar_IsCopy(t *testing.T) {
 
 	if got := s.Single("k"); got != "v" {
 		t.Errorf("AllScalar mutation leaked into sink: got %q", got)
+	}
+}
+
+func TestSink_OrderIsInsertionOrder(t *testing.T) {
+	t.Parallel()
+
+	s := fakeoutputsink.New(t)
+	ctx := context.Background()
+
+	// Deliberately not alphabetical, so a sorted result would not pass.
+	for _, k := range []string{"zebra", "alpha", "middle"} {
+		if err := s.Set(ctx, k, "v"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := s.SetMultiline(ctx, "lines", []string{"a"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A rewrite keeps the original position, matching jsonsink.
+	if err := s.Set(ctx, "zebra", "v2"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"zebra", "alpha", "middle", "lines"}
+	if got := s.Order(); !reflect.DeepEqual(got, want) {
+		t.Errorf("Order() = %q, want %q", got, want)
 	}
 }
