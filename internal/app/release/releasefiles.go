@@ -14,6 +14,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provenance"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // Release file manifest defaults shared by the `release files` commands.
@@ -768,7 +769,7 @@ func validateManifestEntry(ctx releaseFilesCtx, entry FileEntry) error {
 }
 
 func validateReleaseDistAsset(ctx releaseFilesCtx, path string) error {
-	if !safeRelativePath(path) {
+	if !pathsafe.Relative(path) {
 		return fmt.Errorf("unsafe artifact path: %s: %w", path, errs.ErrValidation)
 	}
 
@@ -782,20 +783,6 @@ func validateReleaseDistAsset(ctx releaseFilesCtx, path string) error {
 	}
 
 	return nil
-}
-
-func safeRelativePath(path string) bool {
-	if path == "" || filepath.IsAbs(path) || strings.ContainsAny(path, "\n\r") {
-		return false
-	}
-
-	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
-		if part == ".." {
-			return false
-		}
-	}
-
-	return true
 }
 
 func regularReleaseFile(path string) bool {

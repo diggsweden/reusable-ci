@@ -12,6 +12,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // PublishReleaseInput drives `release publish`: an in-place release
@@ -47,7 +48,7 @@ func PublishRelease(ctx context.Context, pub provider.ReleasePublisher, out io.W
 		return fmt.Errorf("release notes file is required: %w", errs.ErrUsage)
 	}
 
-	if !safeRelativePath(notesFile) {
+	if !pathsafe.Relative(notesFile) {
 		return fmt.Errorf("unsafe release notes path: %s: %w", notesFile, errs.ErrValidation)
 	}
 
@@ -107,7 +108,7 @@ func validatePublishAssets(paths []string) ([]string, error) {
 			return nil, fmt.Errorf("release asset path is empty: %w", errs.ErrUsage)
 		}
 
-		if !safeRelativePath(asset) {
+		if !pathsafe.Relative(asset) {
 			return nil, fmt.Errorf("unsafe release asset path: %s: %w", asset, errs.ErrValidation)
 		}
 

@@ -58,6 +58,33 @@ change to the order of operations inside the signer boundary, which
 [ADR 0002](adr/0002-signer-trust-boundary.md) governs, so it is recorded rather
 than made.
 
+## Four more path-safety rules to converge
+
+`internal/pathsafe` now holds the workspace-relative path rule, and the three
+implementations that had grown in `app/release` and `domain/pipeline` call it.
+Four others remain, each wrapping the same underlying rule in a different
+shape:
+
+| Where | Shape |
+|---|---|
+| `domain/artifact/safe.go` `SafeJoin` | validates *and* joins under a root; also rejects backslash separators |
+| `app/validate/workspacedir.go` `safeWorkingDir` | validates, cleans, and returns the path |
+| `domain/config/validate.go` | returns violation strings for the artifacts.yml report, not an error |
+| `app/release/assemble.go` | applies the rule to attach-artifact globs rather than paths |
+
+None is a copy-paste duplicate — each has a different signature, output type and
+error class, and two arguably answer a different question (joining under a root;
+validating a glob). That is why converging them is a judgement call per site
+rather than a mechanical replacement, and why it is recorded here rather than
+done in passing.
+
+A guard test was attempted to stop an eighth implementation appearing and was
+dropped as not worth its false confidence. Any signature narrow enough to avoid
+flagging image-ref parsing and variadic spread is also narrow enough to miss the
+substring-matching variant — which is the shape that was actually wrong, since
+it misses an OS separator. A guard that cannot catch the bug that motivated it,
+while carrying a four-entry allowlist, reads as more protection than it gives.
+
 ## Still open in the threat model
 
 - [Profile-dependent `externalParameters` reserved keys](threat-model.md) — a

@@ -7,12 +7,12 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/listval"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // ReleasePlanVersion is the current release plan contract version.
@@ -145,27 +145,11 @@ func ValidateArtifactTransferItem(item ArtifactTransfer) error {
 	// re-validated here rather than trusted, because the plan crosses a
 	// process boundary as JSON and this is the field that reaches the
 	// filesystem.
-	if !safeTransferPath(item.Path) {
+	if !pathsafe.Relative(item.Path) {
 		return fmt.Errorf("artifact transfer %q has an unsafe path %q: %w", cmp.Or(name, tmpl, "artifact"), item.Path, errs.ErrInvalidConfig)
 	}
 
 	return nil
-}
-
-// safeTransferPath reports whether path stays within the working directory:
-// relative, no parent-directory step, no embedded newline.
-func safeTransferPath(path string) bool {
-	if path == "" || filepath.IsAbs(path) || strings.ContainsAny(path, "\t\n\r") {
-		return false
-	}
-
-	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
-		if part == ".." {
-			return false
-		}
-	}
-
-	return true
 }
 
 // ParseArtifactTransferPlan decodes and fully validates a transfer plan.

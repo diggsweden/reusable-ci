@@ -22,6 +22,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 const defaultReleaseImagesPath = "dist/release-images.json"
@@ -60,7 +61,7 @@ func AssembleDist(ctx context.Context, dl provider.RunArtifactDownloader, sink d
 		return AssembleDistResult{}, err
 	}
 
-	if err := validateSafeRelativePath(releaseImagesPath, "release-images-path", false); err != nil {
+	if err := validateSafeRelativePath(releaseImagesPath, "release-images-path"); err != nil {
 		return AssembleDistResult{}, err
 	}
 
@@ -230,7 +231,7 @@ func collectReleaseLedgerFiles(out io.Writer, ledgerFiles string) ([]string, err
 			continue
 		}
 
-		if err := validateSafeRelativePath(file, "ledger file", false); err != nil {
+		if err := validateSafeRelativePath(file, "ledger file"); err != nil {
 			return nil, err
 		}
 
@@ -485,12 +486,11 @@ func validateAssembleDistPath(path string) error {
 	return nil
 }
 
-func validateSafeRelativePath(path, label string, rejectTab bool) error {
-	if path == "" || filepath.IsAbs(path) || path == ".." || strings.HasPrefix(path, "../") || strings.Contains(path, "/../") || strings.HasSuffix(path, "/..") || strings.ContainsAny(path, "\n\r") {
-		return fmt.Errorf("%s must be a safe relative path: %s: %w", label, path, errs.ErrUsage)
-	}
-
-	if rejectTab && strings.Contains(path, "\t") {
+// validateSafeRelativePath wraps the shared predicate in this package's error
+// shape. The rule itself lives in pathsafe so the two layers that need it
+// cannot drift apart again.
+func validateSafeRelativePath(path, label string) error {
+	if !pathsafe.Relative(path) {
 		return fmt.Errorf("%s must be a safe relative path: %s: %w", label, path, errs.ErrUsage)
 	}
 
