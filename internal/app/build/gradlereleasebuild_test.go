@@ -6,9 +6,12 @@ package build_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -46,13 +49,20 @@ func newGradleDir(t *testing.T) string {
 	return dir
 }
 
-func gradleAllArgs(calls [][]string) string {
-	parts := make([]string, 0, len(calls))
-	for _, c := range calls {
-		parts = append(parts, strings.Join(c, " "))
+// assertGradleCalls asserts the exact sequence of gradle invocations and
+// the exact argv of each.
+func assertGradleCalls(t *testing.T, got [][]string, want ...[]string) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("gradle invocations = %v, want %v", got, want)
 	}
 
-	return strings.Join(parts, "\n")
+	for i := range want {
+		if !reflect.DeepEqual(got[i], want[i]) {
+			t.Errorf("invocation %d = %q, want %q", i, got[i], want[i])
+		}
+	}
 }
 
 func TestGradleReleaseBuild_RunsTasksAndMakesWrapperExecutable(t *testing.T) {
@@ -64,22 +74,27 @@ func TestGradleReleaseBuild_RunsTasksAndMakesWrapperExecutable(t *testing.T) {
 
 	err := appbuild.GradleReleaseBuild(context.Background(), &recordingSummarySink{}, ops, &out, &out, appbuild.GradleReleaseBuildInput{
 		ReleaseBuildOptions: appbuild.ReleaseBuildOptions{Dir: dir, EnableBuildSBOM: false},
-		Tasks:               "assemble",
+		Tasks:               "assemble check",
 		JavaVersion:         "25",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// gradle tasks ran.
-	if !strings.Contains(gradleAllArgs(ops.calls), "assemble") {
-		t.Errorf("assemble task not run: %s", gradleAllArgs(ops.calls))
+	// One invocation carrying both tasks as separate argv entries -- the
+	// task string is split here rather than re-split by a shell. The
+	// previous assertion joined every call into one string and searched it,
+	// which could not tell one invocation from several, nor argv entries
+	// from a single space-joined one.
+	assertGradleCalls(t, ops.calls, []string{"assemble", "check"})
+
+	info, err := os.Stat(filepath.Join(dir, "gradlew"))
+	if err != nil {
+		t.Fatalf("stat gradlew: %v", err)
 	}
 
-	// The wrapper was made executable.
-	info, err := os.Stat(filepath.Join(dir, "gradlew"))
-	if err != nil || info.Mode().Perm()&0o100 == 0 {
-		t.Errorf("gradlew not executable: mode=%v err=%v", info.Mode(), err)
+	if info.Mode().Perm()&0o111 != 0o111 {
+		t.Errorf("gradlew mode = %v, want executable by all", info.Mode().Perm())
 	}
 }
 
@@ -96,19 +111,70 @@ func TestGradleReleaseBuild_SkipTestsAppendsFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(gradleAllArgs(ops.calls), "-x test") {
-		t.Errorf("-x test not appended despite --skip-tests: %s", gradleAllArgs(ops.calls))
-	}
+	// Appended after the tasks, as two argv entries.
+	assertGradleCalls(t, ops.calls, []string{"assemble", "-x", "test"})
 }
 
 func TestGradleReleaseBuild_MissingWrapperFails(t *testing.T) {
 	t.Parallel()
 
-	err := appbuild.GradleReleaseBuild(context.Background(), &recordingSummarySink{}, &recordingGradle{}, io.Discard, io.Discard, appbuild.GradleReleaseBuildInput{
+	ops := &recordingGradle{}
+	summary := &recordingSummarySink{}
+
+	err := appbuild.GradleReleaseBuild(context.Background(), summary, ops, io.Discard, io.Discard, appbuild.GradleReleaseBuildInput{
 		ReleaseBuildOptions: appbuild.ReleaseBuildOptions{Dir: t.TempDir()},
 		Tasks:               "assemble",
 	})
-	if err == nil || !strings.Contains(err.Error(), "executable") {
-		t.Fatalf("err = %v, want missing-gradlew error", err)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("err = %v, want a not-exist error", err)
+	}
+
+	// The wrapper is made executable first, so a checkout without one
+	// costs nothing: no gradle run and no summary claiming a build.
+	if len(ops.calls) != 0 {
+		t.Errorf("ran gradle without a wrapper: %v", ops.calls)
+	}
+
+	if summary.buf.Len() != 0 {
+		t.Errorf("wrote a summary for a build that never started: %q", summary.buf.String())
+	}
+}
+
+// TestGradleReleaseBuild_BuildSBOMIsBestEffort pins the documented
+// best-effort contract: a Build SBOM that cannot be generated warns and
+// lets the release continue.
+//
+// It also pins what the summary says while that happens, which is not
+// what it means -- see docs/open-questions.md.
+func TestGradleReleaseBuild_BuildSBOMIsBestEffort(t *testing.T) {
+	t.Parallel()
+
+	ops := &recordingGradle{}
+	summary := &recordingSummarySink{}
+
+	var stderr bytes.Buffer
+
+	// EnableBuildSBOM with no SBOMToolVersion: the version is required, so
+	// generation fails before the tool is reached.
+	err := appbuild.GradleReleaseBuild(context.Background(), summary, ops, io.Discard, &stderr, appbuild.GradleReleaseBuildInput{
+		ReleaseBuildOptions: appbuild.ReleaseBuildOptions{Dir: newGradleDir(t), EnableBuildSBOM: true},
+		Tasks:               "assemble",
+	})
+	if err != nil {
+		t.Fatalf("a failed Build SBOM must not fail the release: %v", err)
+	}
+
+	if !strings.Contains(stderr.String(), "SBOM generation failed (continuing)") {
+		t.Errorf("no warning about the failed SBOM: %q", stderr.String())
+	}
+
+	// The build itself still ran.
+	assertGradleCalls(t, ops.calls, []string{"assemble"})
+
+	// Recorded, not endorsed: the summary reports "release blocked" on a
+	// release that was not blocked, and says the same for a deliberately
+	// disabled SBOM.
+	if !strings.Contains(summary.buf.String(), "release blocked") {
+		t.Errorf("summary = %q", summary.buf.String())
 	}
 }

@@ -116,6 +116,44 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## The Build SBOM summary says "release blocked" when nothing is blocked
+
+`appsummary.BuildSBOMStatus` has two branches. Success names the bom file;
+everything else prints:
+
+```
+- ✗ Generation step did not succeed — release blocked
+```
+
+on the reasoning, in its own comment, that "The SBOM step is mandatory — a
+non-success outcome means the workflow has already failed before this summary
+block ran".
+
+That premise does not hold for any of the four release-build callers. Gradle,
+npm, cargo and maven all treat the Build SBOM as best-effort: they catch the
+error, print `WARN: ... SBOM generation failed (continuing)`, set the outcome to
+failure, and **return nil**. The release proceeds.
+
+Worse, `outcomeSkipped` takes the same branch. Probed on gradle:
+
+| Input | `err` | Summary line |
+|---|---|---|
+| `EnableBuildSBOM: false` | `nil` | `✗ … release blocked` |
+| `EnableBuildSBOM: true`, no tool version | `nil` | `✗ … release blocked` |
+
+So turning the Build SBOM off — a supported, deliberate configuration — reports
+a blocked release in the job summary of a release that completed. And a genuine
+generation failure is indistinguishable from that deliberate choice, which is
+the one case an operator would actually want to see.
+
+Three outcomes are already modelled (`outcomeSuccess`, `outcomeSkipped`,
+`outcomeFailure`) and the summary collapses two of them. Splitting the branch is
+small and local to `buildsbom.go`. It is recorded rather than done because the
+right words for each case are an operator-communication decision, and because
+the comment asserting the step is mandatory suggests the summary may be the
+correct half and the four best-effort callers the mistaken one — which is the
+opposite change, and a much larger one.
+
 ## `gradle.properties` is parsed more strictly than the format allows
 
 `gradleProperty` matches on the literal prefix `version=`, so a file written as
