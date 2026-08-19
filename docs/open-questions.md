@@ -92,6 +92,44 @@ substring-matching variant — which is the shape that was actually wrong, since
 it misses an OS separator. A guard that cannot catch the bug that motivated it,
 while carrying a four-entry allowlist, reads as more protection than it gives.
 
+## `container attest` has no digest rule, unlike its three siblings
+
+The four image request validators in `internal/domain/container/signing.go`
+each run before any cosign subprocess. Three carry the same digest-pinning
+rule; one does not:
+
+| Request | Refuses a mutable tag |
+|---|---|
+| `ImageSignRequest` | yes — "cosign refuses to sign mutable tags" |
+| `ImageVerifyRequest` | yes — "verifying a mutable tag is unsafe" |
+| `AttestationVerifyRequest` | yes — same wording |
+| `ImageAttestRequest` | **no** |
+
+So `container attest --image registry/app:latest` attaches an attestation to
+whatever the tag resolves to at that instant. The app layer does not add the
+check either — `AttestImage` requires the image reference to be non-empty and
+nothing more.
+
+The asymmetry is the argument: the *verify* counterpart of attest refuses a tag
+because verifying one proves nothing about the image that was built. Producing
+one against a tag has the same problem from the other end — the attestation
+binds to a digest the caller never named, and a tag that moves between the scan
+and the attest yields a CycloneDX or SLSA statement describing a different
+image.
+
+Reach is limited today. Every in-repo caller resolves a digest first: the ledger
+flow attests `entry.Ref`, which is digest-pinned by construction. This is a
+consumer-facing CLI gap, the same shape as the `container sign` entry below,
+and the two are best fixed together.
+
+Pinned in `TestImageRequests_RequireADigestPinnedRef`, whose attest row fails
+once the rule is added.
+
+A smaller note on all four: the rule is "the ref contains an `@sha256:`
+marker", not "the ref carries a well-formed digest". `app@sha256:` and
+`app@sha256:zzzz` pass and are refused later by cosign with a worse message.
+The package already has `ValidDigest` if that is ever tightened.
+
 ## `container sign` documents a digest requirement it does not enforce
 
 The command's own documentation says it three times — the doc comment
