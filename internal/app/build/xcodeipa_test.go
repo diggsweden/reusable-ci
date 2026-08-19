@@ -8,6 +8,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -31,46 +34,83 @@ func TestXcodeExportIPA_WritesPlistAndInvokesXcodebuild(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := fsys.ReadFile("export-options.plist")
-	if string(body) != plist {
+	if body := fsys.ReadFile("export-options.plist"); string(body) != plist {
 		t.Errorf("plist = %q", body)
 	}
 
-	if len(ops.calls) != 1 || ops.calls[0][0] != "-exportArchive" {
-		t.Errorf("xcodebuild call = %v", ops.calls)
+	// The plist carries the signing configuration -- team id, provisioning
+	// profile, distribution method -- and is written into the workspace, so
+	// it is owner-only by intent.
+	info, err := os.Stat(filepath.Join(fsys.Root, "export-options.plist"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("plist mode = %v, want 0600", perm)
+	}
+
+	// The whole invocation. Reading only calls[0][0] left the archive it
+	// exports, the directory it exports to, and the plist it was just told
+	// to write all unasserted -- so the three paths could disagree and the
+	// test would not know.
+	want := []string{
+		"-exportArchive",
+		"-archivePath", filepath.Join("build", "app.xcarchive"),
+		"-exportPath", filepath.Join("build", "export"),
+		"-exportOptionsPlist", "export-options.plist",
+	}
+
+	if len(ops.calls) != 1 {
+		t.Fatalf("xcodebuild calls = %v, want 1", ops.calls)
+	}
+
+	if !reflect.DeepEqual(ops.calls[0], want) {
+		t.Errorf("export = %q, want %q", ops.calls[0], want)
 	}
 }
 
-func TestXcodeExportIPA_EmptyOptionsErrors(t *testing.T) {
-	err := appbuild.XcodeExportIPA(context.Background(), &fakeXcodeBuild{}, io.Discard, io.Discard, appbuild.XcodeExportIPAInput{
-		ExportOptionsVar: "EXPORT_OPTIONS_BASE64",
-	})
-	if err == nil || !strings.Contains(err.Error(), "EXPORT_OPTIONS_BASE64") {
-		t.Errorf("expected env-name error, got: %v", err)
-	}
-}
+// TestXcodeExportIPA_MissingOptionsNamesItsVariable covers the refusal.
+// The error names the env var the operator has to set, taken from the
+// caller rather than hard-coded, so a workflow using its own name gets
+// told that name.
+func TestXcodeExportIPA_MissingOptionsNamesItsVariable(t *testing.T) {
+	t.Parallel()
 
-// The missing-options error names the originating env var so the operator
-// knows which one to set — using the caller-supplied ExportOptionsVar, not a
-// hard-coded default. Pinned at the app layer.
-func TestXcodeExportIPA_EmptyOptions_ReportsCustomVarName(t *testing.T) {
-	err := appbuild.XcodeExportIPA(context.Background(), &fakeXcodeBuild{}, io.Discard, io.Discard, appbuild.XcodeExportIPAInput{
-		ExportOptionsVar: "IOS_EXPORT_OPTIONS",
-	})
+	for _, tc := range []struct {
+		name    string
+		varName string
+		want    string
+	}{
+		{
+			name:    "caller-supplied name",
+			varName: "IOS_EXPORT_OPTIONS",
+			want:    "export options not found in variable IOS_EXPORT_OPTIONS",
+		},
+		{
+			name: "no name falls back to the documented default",
+			want: "export options not found in variable EXPORT_OPTIONS_BASE64",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	if err == nil || !strings.Contains(err.Error(), "export options not found in variable IOS_EXPORT_OPTIONS") {
-		t.Errorf("error must name the custom var IOS_EXPORT_OPTIONS, got: %v", err)
-	}
+			ops := &fakeXcodeBuild{}
 
-	if !errors.Is(err, errs.ErrMissingInput) {
-		t.Errorf("missing export options must wrap ErrMissingInput, got: %v", err)
-	}
-}
+			err := appbuild.XcodeExportIPA(context.Background(), ops, io.Discard, io.Discard, appbuild.XcodeExportIPAInput{
+				ExportOptionsVar: tc.varName,
+			})
+			if !errors.Is(err, errs.ErrMissingInput) {
+				t.Fatalf("err = %v, want ErrMissingInput", err)
+			}
 
-// An empty ExportOptionsVar falls back to the default env-var name in the error.
-func TestXcodeExportIPA_EmptyOptions_DefaultsVarNameWhenUnset(t *testing.T) {
-	err := appbuild.XcodeExportIPA(context.Background(), &fakeXcodeBuild{}, io.Discard, io.Discard, appbuild.XcodeExportIPAInput{})
-	if err == nil || !strings.Contains(err.Error(), "EXPORT_OPTIONS_BASE64") {
-		t.Errorf("empty ExportOptionsVar should default to EXPORT_OPTIONS_BASE64, got: %v", err)
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want it to name %q", err, tc.want)
+			}
+
+			if len(ops.calls) != 0 {
+				t.Errorf("ran xcodebuild without export options: %v", ops.calls)
+			}
+		})
 	}
 }
