@@ -4,10 +4,16 @@
 package buildah
 
 import (
+	"context"
+	"errors"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/mockbinary"
 )
 
 const (
@@ -159,5 +165,86 @@ func TestGlobal_DoesNotAliasTheSharedSlice(t *testing.T) {
 
 	if got := len(a.Global); got != 2 {
 		t.Errorf("Global grew to %d entries: %q", got, a.Global)
+	}
+}
+
+// TestBuild_ModeDispatch covers Build's mode switch, which was uncovered.
+// Each mode contributes a different tail to the argv, and two modes are
+// refusals rather than builds.
+func TestBuild_ModeDispatch(t *testing.T) {
+	// No t.Parallel(): mockbinary prepends to PATH via t.Setenv.
+	for _, tc := range []struct {
+		name     string
+		req      container.BuildRequest
+		wantTail []string
+		wantErr  bool
+	}{
+		{
+			// load: tag the image into local storage.
+			name:     "load tags the image",
+			req:      container.BuildRequest{Context: ".", Mode: container.BuildModeLoad, ImageRef: "localhost/app:arch"},
+			wantTail: []string{"-t", "localhost/app:arch", "."},
+		},
+		{
+			// local: write the filesystem out instead of an image.
+			name:     "local writes to a directory",
+			req:      container.BuildRequest{Context: ".", Mode: container.BuildModeLocal, OutputDir: "dist"},
+			wantTail: []string{"--output", "type=local,dest=dist", "."},
+		},
+		{
+			// Refused deliberately: a push-by-digest build has to go
+			// through BuildToLayout so the digest comes from the layout
+			// rather than from a tag that could move.
+			name:    "push-by-digest is redirected",
+			req:     container.BuildRequest{Context: ".", Mode: container.BuildModePushByDigest, ImageRef: "registry.example/app"},
+			wantErr: true,
+		},
+		{
+			name:    "unknown mode",
+			req:     container.BuildRequest{Context: ".", Mode: container.BuildOutputMode("sideways"), ImageRef: "x"},
+			wantErr: true,
+		},
+		{
+			// Validation runs before the switch, so an unusable request
+			// never reaches buildah.
+			name:    "no build context",
+			req:     container.BuildRequest{Mode: container.BuildModeLoad, ImageRef: "x"},
+			wantErr: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := mockbinary.New(t) //nolint:varnamelen // idiomatic short name.
+			m.Add("buildah", `printf 'ARGV %s\n' "$*" >&2`)
+
+			a := &Adapter{Bin: m.Path("buildah")}
+
+			var stderr strings.Builder
+
+			err := a.Build(context.Background(), tc.req, &stderr)
+			if gotErr := err != nil; gotErr != tc.wantErr {
+				t.Fatalf("err = %v, wantErr = %v", err, tc.wantErr)
+			}
+
+			if tc.wantErr {
+				if !errors.Is(err, errs.ErrUsage) {
+					t.Errorf("err = %v, want ErrUsage", err)
+				}
+
+				if stderr.Len() != 0 {
+					t.Errorf("buildah was invoked on a refused request: %s", stderr.String())
+				}
+
+				return
+			}
+
+			got := strings.Fields(strings.TrimPrefix(strings.TrimSpace(stderr.String()), "ARGV "))
+			if len(got) < len(tc.wantTail) {
+				t.Fatalf("argv = %q, too short for tail %q", got, tc.wantTail)
+			}
+
+			if tail := got[len(got)-len(tc.wantTail):]; !slices.Equal(tail, tc.wantTail) {
+				t.Errorf("argv tail = %q, want %q (full: %q)", tail, tc.wantTail, got)
+			}
+		})
 	}
 }
