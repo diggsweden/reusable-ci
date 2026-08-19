@@ -97,6 +97,13 @@ func TestRawContainerScan_RetriesFailedTrivy(t *testing.T) {
 	if len(trivy.args) != 2 {
 		t.Fatalf("trivy runs = %d, want 2", len(trivy.args))
 	}
+
+	// The retry re-runs the same scan. Counting the runs cannot tell that
+	// from a second attempt that dropped a scanner or changed the output
+	// path, which would report a different result under the same name.
+	if !reflect.DeepEqual(trivy.args[0], trivy.args[1]) {
+		t.Errorf("retry ran different arguments:\n first=%q\nsecond=%q", trivy.args[0], trivy.args[1])
+	}
 }
 
 func TestRawContainerScan_RejectsInvalidTrivyShape(t *testing.T) {
