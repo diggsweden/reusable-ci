@@ -5,11 +5,14 @@ package build_test
 
 import (
 	"context"
+	"errors"
 	"io"
-	"strings"
+	"path/filepath"
+	"reflect"
 	"testing"
 
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 )
@@ -31,40 +34,64 @@ func TestXcodeReleaseBuild_UnsignedSequence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// ipa-name + version emitted as job outputs.
-	if sink.Single("ipa-name") == "" || sink.Single("version") == "" {
-		t.Errorf("ipa-name/version outputs not emitted")
+	// By value. Checking these were merely non-empty passed on "unknown",
+	// the value they take when no .xcodeproj is found -- so a complete
+	// failure to resolve a version read as success.
+	wantOutputs := map[string]string{
+		"ipa-name": "app",
+		"version":  "unknown",
+		"build":    "unknown",
+	}
+	if got := sink.AllScalar(); !reflect.DeepEqual(got, wantOutputs) {
+		t.Errorf("outputs = %v, want %v", got, wantOutputs)
 	}
 
-	// Archive ran with the scheme; no IPA export (unsigned).
-	joined := xcodeCalls(buildOps.calls)
-	if !strings.Contains(joined, "MyApp") {
-		t.Errorf("archive not run with scheme: %s", joined)
+	// Exactly one xcodebuild invocation, pinned whole. Unsigned means no
+	// -exportArchive, which the old assertion checked by searching a
+	// string built from every call joined together -- so it could not tell
+	// which invocation anything belonged to.
+	wantArchive := []string{
+		"archive",
+		"-scheme", "MyApp",
+		"-configuration", "Release",
+		"-archivePath", filepath.Join("build", "app.xcarchive"),
+		"-destination", "generic/platform=iOS",
+		"-skipPackagePluginValidation",
 	}
 
-	if strings.Contains(joined, "-exportArchive") {
-		t.Errorf("export ran despite EnableCodeSigning=false: %s", joined)
+	if len(buildOps.calls) != 1 {
+		t.Fatalf("xcodebuild calls = %v, want exactly the archive", buildOps.calls)
+	}
+
+	if !reflect.DeepEqual(buildOps.calls[0], wantArchive) {
+		t.Errorf("archive = %q, want %q", buildOps.calls[0], wantArchive)
 	}
 }
 
 func TestXcodeReleaseBuild_ArchiveErrorPropagates(t *testing.T) {
 	t.Chdir(t.TempDir())
 
-	err := appbuild.XcodeReleaseBuild(context.Background(), fakeoutputsink.New(t), &fakeSecurity{}, &fakeXcodeBuild{}, output.Annotator{}, io.Discard, io.Discard, appbuild.XcodeReleaseBuildInput{
+	ops := &fakeXcodeBuild{}
+	sink := fakeoutputsink.New(t)
+
+	err := appbuild.XcodeReleaseBuild(context.Background(), sink, &fakeSecurity{}, ops, output.Annotator{}, io.Discard, io.Discard, appbuild.XcodeReleaseBuildInput{
 		RepositoryName:    "app",
 		EnableCodeSigning: false,
 		// no scheme/configuration/destination → archive fails
 	})
-	if err == nil || !strings.Contains(err.Error(), "archive") {
-		t.Fatalf("err = %v, want archive error", err)
-	}
-}
-
-func xcodeCalls(calls [][]string) string {
-	parts := make([]string, 0, len(calls))
-	for _, c := range calls {
-		parts = append(parts, strings.Join(c, " "))
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage", err)
 	}
 
-	return strings.Join(parts, " ")
+	// Refused before xcodebuild is reached.
+	if len(ops.calls) != 0 {
+		t.Errorf("ran xcodebuild without a scheme: %v", ops.calls)
+	}
+
+	// Recorded, not endorsed: metadata is emitted before the archive is
+	// attempted, so a failed run still publishes an ipa-name for a file
+	// that was never produced. See docs/open-questions.md.
+	if got := sink.Keys(); !reflect.DeepEqual(got, []string{"build", "ipa-name", "version"}) {
+		t.Errorf("outputs on a failed archive = %v", got)
+	}
 }

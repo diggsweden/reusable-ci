@@ -116,6 +116,28 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## A failed Xcode archive still publishes its job outputs
+
+`XcodeReleaseBuild` resolves and emits metadata before it archives. When the
+archive is refused — `archive: scheme is required` with `ErrUsage` — the sink
+already holds `ipa-name`, `version` and `build`, naming an IPA that was never
+produced.
+
+Confirmed by probe: `calls=[] keys=[build ipa-name version]`.
+
+In practice a failed step fails the job, so a later step would have to opt in
+with `if: always()` to read them. That makes this a smaller version of the same
+question the ledger signing entry raises: a refused run should ideally leave
+nothing behind, and the sibling commands reviewed alongside this one
+(`GoMetadata`, `MavenReleaseBuild`, `NPMReleaseBuild`, `AndroidReleaseBuild`)
+all now assert exactly that. Xcode is the one that does not.
+
+Moving the emission after the archive is a small reordering. It is recorded
+rather than made because emitting metadata early may be deliberate — a workflow
+that names an upload artifact from `ipa-name` under `if: always()` would break
+if the output disappeared on failure — and that is a workflow-contract question,
+not a code one. Pinned as-is in `TestXcodeReleaseBuild_ArchiveErrorPropagates`.
+
 ## The Build SBOM summary says "release blocked" when nothing is blocked
 
 `appsummary.BuildSBOMStatus` has two branches. Success names the bom file;
