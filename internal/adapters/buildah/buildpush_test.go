@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/buildah"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/mockbinary"
 )
 
@@ -178,5 +179,113 @@ func assertDigestFileRemoved(t *testing.T, log string) {
 
 	if _, err := os.Stat(strings.TrimSpace(path)); !os.IsNotExist(err) {
 		t.Errorf("digest file %q survived the call (stat err = %v)", path, err)
+	}
+}
+
+// TestBuildManifest_ArgvShape covers the multi-arch build invocation,
+// which had no coverage under either tag. Its argv carries four
+// decisions worth holding in place.
+func TestBuildManifest_ArgvShape(t *testing.T) {
+	m := mockbinary.New(t)
+	m.Add("buildah", `
+printf 'ARGV %s\n' "$*" >&2
+printf 'REGISTRY_AUTH_FILE=%s\n' "${REGISTRY_AUTH_FILE:-<unset>}" >&2
+`)
+
+	a := &buildah.Adapter{Bin: m.Path("buildah")}
+
+	var stderr strings.Builder
+
+	err := a.BuildManifest(context.Background(), container.BuildPushManifestBuildRequest{
+		AuthFile:        "/tmp/auth.json",
+		Manifest:        "localhost/app:list",
+		TLSVerify:       true,
+		SourceDateEpoch: "1700000000",
+		Platform:        "linux/arm64",
+		Containerfile:   "Containerfile",
+		BuildArgs:       []string{"VERSION=1.2.3", "COMMIT=abc"},
+		Labels:          []string{"org.opencontainers.image.revision=abc"},
+		Context:         ".",
+	}, &stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	log := stderr.String()
+
+	for _, want := range []struct{ flag, why string }{
+		// A stale or poisoned base image in local storage must never be
+		// used for a release build.
+		{flag: "--pull=always", why: "base images are always re-pulled"},
+		// Build isolation.
+		{flag: "--isolation chroot", why: "builds run isolated"},
+		// Explicit rather than left to buildah's default.
+		{flag: "--tls-verify=true", why: "TLS verification is stated"},
+		// The reproducibility pin: same source, same digest.
+		{flag: "--timestamp 1700000000", why: "the build is reproducible"},
+		// Without this the per-arch image is not added to the list.
+		{flag: "--manifest localhost/app:list", why: "the image joins the manifest list"},
+		{flag: "--platform linux/arm64", why: "the target arch is set"},
+		{flag: "--label org.opencontainers.image.revision=abc", why: "labels reach the image"},
+		{flag: "--build-arg VERSION=1.2.3", why: "build args reach the build"},
+	} {
+		if !strings.Contains(log, want.flag) {
+			t.Errorf("argv missing %q (%s):\n%s", want.flag, want.why, log)
+		}
+	}
+
+	// Unlike the push calls, the build passes the auth file only through
+	// the environment -- buildah bud reads REGISTRY_AUTH_FILE to
+	// authenticate the base-image pull, and no --authfile flag is added.
+	if !strings.Contains(log, "REGISTRY_AUTH_FILE=/tmp/auth.json") {
+		t.Errorf("REGISTRY_AUTH_FILE not passed to the build:\n%s", log)
+	}
+
+	if strings.Contains(log, "--authfile") {
+		t.Errorf("build unexpectedly carries --authfile:\n%s", log)
+	}
+}
+
+// TestExportLocalToLayout_ArgvShape covers the two OCI-layout exports the
+// evidence pipeline scans from. Both were uncovered.
+func TestExportLocalToLayout_ArgvShape(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		call func(a *buildah.Adapter, w *strings.Builder) error
+		want string
+	}{
+		{
+			name: "single image",
+			call: func(a *buildah.Adapter, w *strings.Builder) error {
+				return a.ExportLocalImageToLayout(context.Background(), "localhost/app:arch", "/tmp/layout", w)
+			},
+			want: "push localhost/app:arch oci:/tmp/layout:scan",
+		},
+		{
+			// --all again: the evidence scan must see every architecture,
+			// not just whichever one the list happens to resolve to.
+			name: "manifest list",
+			call: func(a *buildah.Adapter, w *strings.Builder) error {
+				return a.ExportLocalManifestToLayout(context.Background(), "localhost/app:list", "/tmp/layout", w)
+			},
+			want: "manifest push --all localhost/app:list oci:/tmp/layout:scan",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := mockbinary.New(t)
+			m.Add("buildah", `printf 'ARGV %s\n' "$*" >&2`)
+
+			a := &buildah.Adapter{Bin: m.Path("buildah")}
+
+			var stderr strings.Builder
+
+			if err := tc.call(a, &stderr); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(stderr.String()), "ARGV")); got != tc.want {
+				t.Errorf("argv = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
