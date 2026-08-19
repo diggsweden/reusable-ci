@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
@@ -92,10 +93,10 @@ func TestNPMReleaseBuild_SkipTests(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, a := range npmRunner.firstArgs() {
-		if a == "test" {
-			t.Errorf("npm test ran despite --skip-tests: %v", npmRunner.firstArgs())
-		}
+	// The rest of the sequence, not just the absence of "test": scanning
+	// for a missing step passes equally on a run that did nothing.
+	if got := strings.Join(npmRunner.firstArgs(), ","); got != "ci,run,pack" {
+		t.Errorf("npm calls = %v, want ci,run,pack", npmRunner.firstArgs())
 	}
 }
 
@@ -104,16 +105,25 @@ func TestNPMReleaseBuild_SoftTestDoesNotFailBuild(t *testing.T) {
 
 	npmRunner := &fakeNPMRunner{failOn: map[string]error{"test": errMissingTestScript}}
 
+	var stderr bytes.Buffer
+
 	// A failing `npm test` must NOT fail the release build; pack still runs.
-	err := appbuild.NPMReleaseBuild(context.Background(), &recordingSummarySink{}, npmRunner, &fakeNPMRunner{}, output.Annotator{}, io.Discard, io.Discard, appbuild.NPMReleaseBuildInput{
+	err := appbuild.NPMReleaseBuild(context.Background(), &recordingSummarySink{}, npmRunner, &fakeNPMRunner{}, output.NewAnnotator(&stderr, output.FormatGitHub), io.Discard, io.Discard, appbuild.NPMReleaseBuildInput{
 		ReleaseBuildOptions: appbuild.ReleaseBuildOptions{Dir: newNPMDir(t), EnableBuildSBOM: false},
 	})
 	if err != nil {
 		t.Fatalf("soft test failure should not fail build: %v", err)
 	}
 
-	if got := strings.Join(npmRunner.firstArgs(), ","); !strings.Contains(got, "pack") {
-		t.Errorf("pack should still run after soft test failure: %v", npmRunner.firstArgs())
+	// The whole sequence continues unchanged -- test ran, failed, and the
+	// build and pack steps still happened in order.
+	if got := strings.Join(npmRunner.firstArgs(), ","); got != "ci,test,run,pack" {
+		t.Errorf("npm calls = %v, want ci,test,run,pack", npmRunner.firstArgs())
+	}
+
+	// The failure is soft, not silent.
+	if !strings.Contains(stderr.String(), "npm test failed or no tests configured (continuing)") {
+		t.Errorf("no warning about the failed test run: %q", stderr.String())
 	}
 }
 
@@ -121,8 +131,9 @@ func TestNPMReleaseBuild_NoBuildSBOM(t *testing.T) {
 	t.Parallel()
 
 	npxRunner := &fakeNPMRunner{}
+	npmRunner := &fakeNPMRunner{}
 
-	err := appbuild.NPMReleaseBuild(context.Background(), &recordingSummarySink{}, &fakeNPMRunner{}, npxRunner, output.Annotator{}, io.Discard, io.Discard, appbuild.NPMReleaseBuildInput{
+	err := appbuild.NPMReleaseBuild(context.Background(), &recordingSummarySink{}, npmRunner, npxRunner, output.Annotator{}, io.Discard, io.Discard, appbuild.NPMReleaseBuildInput{
 		ReleaseBuildOptions: appbuild.ReleaseBuildOptions{Dir: newNPMDir(t), EnableBuildSBOM: false},
 	})
 	if err != nil {
@@ -132,16 +143,41 @@ func TestNPMReleaseBuild_NoBuildSBOM(t *testing.T) {
 	if len(npxRunner.calls) != 0 {
 		t.Errorf("npx ran despite EnableBuildSBOM=false: %v", npxRunner.calls)
 	}
+
+	// Dropping the SBOM must drop only the SBOM.
+	if got := strings.Join(npmRunner.firstArgs(), ","); got != "ci,test,run,pack" {
+		t.Errorf("npm calls = %v, want ci,test,run,pack", npmRunner.firstArgs())
+	}
 }
 
 func TestNPMReleaseBuild_ScopeMismatchFails(t *testing.T) {
 	t.Parallel()
 
-	err := appbuild.NPMReleaseBuild(context.Background(), &recordingSummarySink{}, &fakeNPMRunner{}, &fakeNPMRunner{}, output.Annotator{}, io.Discard, io.Discard, appbuild.NPMReleaseBuildInput{
+	npmRunner := &fakeNPMRunner{}
+	npxRunner := &fakeNPMRunner{}
+	summary := &recordingSummarySink{}
+
+	var stderr bytes.Buffer
+
+	err := appbuild.NPMReleaseBuild(context.Background(), summary, npmRunner, npxRunner, output.NewAnnotator(&stderr, output.FormatGitHub), io.Discard, io.Discard, appbuild.NPMReleaseBuildInput{
 		ReleaseBuildOptions: appbuild.ReleaseBuildOptions{Dir: newNPMDir(t)},
 		PackageScope:        "@other",
 	})
-	if err == nil || !strings.Contains(err.Error(), "does not match scope") {
-		t.Fatalf("err = %v, want scope mismatch", err)
+	if !errors.Is(err, errs.ErrInvalidConfig) {
+		t.Fatalf("err = %v, want ErrInvalidConfig", err)
+	}
+
+	// The scope decides where the package would be published, so it is
+	// checked before anything is installed, built or packed.
+	if len(npmRunner.calls) != 0 || len(npxRunner.calls) != 0 {
+		t.Errorf("ran tools despite the scope mismatch: npm=%v npx=%v", npmRunner.calls, npxRunner.calls)
+	}
+
+	if summary.buf.Len() != 0 {
+		t.Errorf("wrote a summary for a build that never started: %q", summary.buf.String())
+	}
+
+	if !strings.Contains(stderr.String(), "must be scoped as @other/<pkg>") {
+		t.Errorf("stderr = %q", stderr.String())
 	}
 }
