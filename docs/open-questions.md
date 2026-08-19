@@ -116,6 +116,38 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## `version commit-push` runs the repository's git hooks; its sibling does not
+
+The git adapter disables hooks almost everywhere — `core.hooksPath=/dev/null`
+appears at thirteen call sites, on rev-parse, fetch, ls-remote, tag, checkout,
+`AddPathspecsStrict`, `PushBranchNoForce` and `PushTagNoForce`. Two paths do
+not:
+
+| Path | Commit | Push |
+|---|---|---|
+| `version changelog-release` | `NoHooks: true, NoVerify: true` | `PushBranchNoForce` (hooks off) |
+| `version commit-push` | neither set | `Repo.Push` (hooks **on**) |
+
+`Repo.Push` is the only push variant without the flag, and `Repo.Commit`
+disables hooks only when the caller passes `NoHooks`. So the shipped
+`version-bump.yml` step runs the consumer's `pre-commit`, `commit-msg` and
+`pre-push` hooks, while the release step beside it deliberately does not.
+
+The hooks belong to the repository being released, so this is not a
+cross-tenant escalation — it is the consumer's own code running in the
+consumer's own job. What makes it worth writing down is that the push
+credential is in git's environment at that point, hooks inherit it, and the
+identical operation one command over is hardened against exactly this.
+
+Whether the difference is deliberate is not visible from here. A bump commit
+arguably *should* run `commit-msg` hooks, since a project may enforce its own
+message convention — which would make `changelog-release` the odd one out
+rather than this. That is the decision to make, and it is why the asymmetry is
+recorded rather than resolved.
+
+Pinned in `TestCommitPush_RunsRepositoryHooks`, which fails once the two paths
+agree.
+
 ## An empty `--repository` makes the namespace check accept what it should refuse
 
 `ValidateNamespace` builds its expected prefix as

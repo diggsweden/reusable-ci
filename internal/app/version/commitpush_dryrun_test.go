@@ -149,3 +149,46 @@ func TestCommitPush_DryRunStillFailsValidation(t *testing.T) {
 		t.Fatalf("err = %v, want ErrUsage (missing branch) in dry-run", err)
 	}
 }
+
+// TestCommitPush_RunsRepositoryHooks records a difference between two
+// sibling commit paths.
+//
+// `version changelog-release` commits with NoHooks and NoVerify set, so
+// the consumer's pre-commit and commit-msg hooks do not run. `version
+// commit-push` sets neither, and pushes through Repo.Push, which is the
+// one push variant that does not pass core.hooksPath=/dev/null --
+// PushBranchNoForce and PushTagNoForce both do.
+//
+// So the shipped version-bump workflow runs the repository's hooks
+// during a step that holds a push credential, and the release step next
+// to it does not. Recorded rather than changed; see
+// docs/open-questions.md.
+func TestCommitPush_RunsRepositoryHooks(t *testing.T) {
+	repo := &fakeCommitPushRepo{hasStaged: true}
+
+	err := appversion.CommitPush(context.Background(), repo, &bytes.Buffer{}, appversion.CommitPushInput{
+		FilePattern: "CHANGELOG.md",
+		Message:     "chore: bump",
+		AuthorName:  "ci",
+		AuthorEmail: "ci@example.com",
+		Branch:      "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// If either of these becomes true, the two paths have been aligned:
+	// update this test and drop the open-questions entry.
+	if repo.commit.NoHooks {
+		t.Error("NoHooks is now set — paths aligned, update docs/open-questions.md")
+	}
+
+	if repo.commit.NoVerify {
+		t.Error("NoVerify is now set — paths aligned, update docs/open-questions.md")
+	}
+
+	// The signoff trailer is the one commit option this path does set.
+	if !repo.commit.Signoff {
+		t.Error("Signoff not set")
+	}
+}
