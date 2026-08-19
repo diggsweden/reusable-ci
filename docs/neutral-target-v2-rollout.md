@@ -318,6 +318,18 @@ permission to edit or run provider-free tests.
 - [ ] Verify provider resources, OCI artifacts, credentials, recovery evidence,
   and cleanup runtimes are absent after each run.
 
+### Road Coverage
+
+Target emission and release-ci ran on both roads. forge-tidy and forge-sync ran
+their suites on k3s only, which is a deliberate decision rather than an omission:
+their road dependency is confined to the URLs they parse out of the contract, and
+emission proves those on both roads.
+
+The decision is backed by a spot check rather than by that argument alone —
+forge-tidy's container scenario also passes on Compose, and the Compose durable
+fixtures survive it, including the `release-ci-live-job` image the pre-fix
+scenario would have destroyed on that road too.
+
 ### Cutover Notes
 
 The v1 inventory found more than the plan assumed. One live Compose generation
