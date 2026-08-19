@@ -4,11 +4,13 @@
 package build_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 func TestResolveAndroidArtifactNames_Override(t *testing.T) {
@@ -46,6 +48,10 @@ func TestResolveAndroidArtifactNames_DateAndPrefixAndFlavor(t *testing.T) {
 		t.Errorf("debug = %q", got.DebugName)
 	}
 
+	if got.ReleaseName != "2026-05-10 - Nightly - demo-app - fdroid - APK release" {
+		t.Errorf("release = %q", got.ReleaseName)
+	}
+
 	if got.AABName != "2026-05-10 - Nightly - demo-app - fdroid - AAB release" {
 		t.Errorf("aab = %q", got.AABName)
 	}
@@ -70,8 +76,8 @@ func TestResolveAndroidArtifactNames_NoDateNoPrefixNoFlavor(t *testing.T) {
 
 func TestResolveAndroidArtifactNames_RequiresRepoOrOverride(t *testing.T) {
 	_, err := build.ResolveAndroidArtifactNames(build.AndroidArtifactNamesInput{})
-	if err == nil {
-		t.Fatal("expected error")
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage", err)
 	}
 }
 

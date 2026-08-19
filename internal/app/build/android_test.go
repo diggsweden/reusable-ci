@@ -7,88 +7,115 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
-func TestAndroidArtifactNames_OverrideMode(t *testing.T) {
-	sink := fakeoutputsink.New(t)
+// TestAndroidArtifactNames_EmitsFourNames covers what this layer owns:
+// which sink keys the four names land under, and that every input reaches
+// the resolver. How the names themselves compose is the domain's claim,
+// tested in internal/domain/build.
+//
+// Each case compares the whole output map rather than the keys it expects,
+// so an added or renamed output is caught too -- these are consumed by the
+// workflow to name uploaded artifacts.
+func TestAndroidArtifactNames_EmitsFourNames(t *testing.T) {
+	t.Parallel()
 
-	var stderr bytes.Buffer
+	for _, tc := range []struct {
+		name string
+		in   appbuild.AndroidArtifactNamesInput
+		want map[string]string
+	}{
+		{
+			name: "repo name only",
+			in:   appbuild.AndroidArtifactNamesInput{RepoName: "demo-app"},
+			want: map[string]string{
+				"debug-name":   "demo-app - APK debug",
+				"release-name": "demo-app - APK release",
+				"aab-name":     "demo-app - AAB release",
+				"sbom-name":    "demo-app - build SBOM",
+			},
+		},
+		{
+			name: "date, prefix and flavor all reach the resolver",
+			in: appbuild.AndroidArtifactNamesInput{
+				IncludeDate: true,
+				Prefix:      "Nightly",
+				RepoName:    "demo-app",
+				Flavor:      "fdroid",
+				Today:       time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC),
+			},
+			want: map[string]string{
+				"debug-name":   "2026-05-10 - Nightly - demo-app - fdroid - APK debug",
+				"release-name": "2026-05-10 - Nightly - demo-app - fdroid - APK release",
+				"aab-name":     "2026-05-10 - Nightly - demo-app - fdroid - AAB release",
+				"sbom-name":    "2026-05-10 - Nightly - demo-app - fdroid - build SBOM",
+			},
+		},
+		{
+			// An override replaces the composed name entirely, so a
+			// consumer pinning an exact artifact name is not surprised by
+			// a date or flavor appearing in it.
+			name: "an override outranks every other input",
+			in: appbuild.AndroidArtifactNamesInput{
+				IncludeDate: true,
+				Prefix:      "ci",
+				RepoName:    "myapp",
+				Flavor:      "prod",
+				Override:    "wallet-android-demo",
+				Today:       time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC),
+			},
+			want: map[string]string{
+				"debug-name":   "wallet-android-demo-debug",
+				"release-name": "wallet-android-demo-release",
+				"aab-name":     "wallet-android-demo",
+				"sbom-name":    "wallet-android-demo-sbom",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	err := appbuild.AndroidArtifactNames(context.Background(), sink, &stderr, appbuild.AndroidArtifactNamesInput{
-		Override: "myapp-1.2.3",
-		RepoName: "ignored-when-override-set",
-	})
-	if err != nil {
-		t.Fatalf("AndroidArtifactNames: %v", err)
-	}
+			sink := fakeoutputsink.New(t)
 
-	want := map[string]string{
-		"debug-name":   "myapp-1.2.3-debug",
-		"release-name": "myapp-1.2.3-release",
-		"aab-name":     "myapp-1.2.3",
-		"sbom-name":    "myapp-1.2.3-sbom",
-	}
-	for k, v := range want {
-		if got := sink.Single(k); got != v {
-			t.Errorf("output %s = %q, want %q", k, got, v)
-		}
+			if err := appbuild.AndroidArtifactNames(context.Background(), sink, io.Discard, tc.in); err != nil {
+				t.Fatalf("AndroidArtifactNames: %v", err)
+			}
+
+			if got := sink.AllScalar(); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("outputs =\n%v\nwant\n%v", got, tc.want)
+			}
+		})
 	}
 }
 
-func TestAndroidArtifactNames_DateAndPrefix(t *testing.T) {
+func TestAndroidArtifactNames_RequiresRepoNameOrOverride(t *testing.T) {
+	t.Parallel()
+
 	sink := fakeoutputsink.New(t)
 
-	err := appbuild.AndroidArtifactNames(context.Background(), sink, io.Discard, appbuild.AndroidArtifactNamesInput{
-		IncludeDate: true,
-		Prefix:      "Nightly",
-		RepoName:    "demo-app",
-		Today:       time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC),
-	})
-	if err != nil {
-		t.Fatalf("AndroidArtifactNames: %v", err)
+	err := appbuild.AndroidArtifactNames(context.Background(), sink, io.Discard, appbuild.AndroidArtifactNamesInput{})
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage", err)
 	}
 
-	if got := sink.Single("debug-name"); got != "2026-05-10 - Nightly - demo-app - APK debug" {
-		t.Errorf("debug-name = %q", got)
-	}
-}
-
-func TestAndroidArtifactNames_OverrideIgnoresDatePrefixAndFlavor(t *testing.T) {
-	sink := fakeoutputsink.New(t)
-
-	err := appbuild.AndroidArtifactNames(context.Background(), sink, io.Discard, appbuild.AndroidArtifactNamesInput{
-		IncludeDate: true,
-		Prefix:      "ci",
-		RepoName:    "myapp",
-		Flavor:      "prod",
-		Override:    "wallet-android-demo",
-		Today:       time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC),
-	})
-	if err != nil {
-		t.Fatalf("AndroidArtifactNames: %v", err)
-	}
-
-	want := map[string]string{
-		"debug-name":   "wallet-android-demo-debug",
-		"release-name": "wallet-android-demo-release",
-		"aab-name":     "wallet-android-demo",
-		"sbom-name":    "wallet-android-demo-sbom",
-	}
-	for key, wantValue := range want {
-		if got := sink.Single(key); got != wantValue {
-			t.Errorf("%s = %q, want %q", key, got, wantValue)
-		}
+	// Nothing half-emitted: a workflow reading three of four names would
+	// upload artifacts under names the fourth step never agreed to.
+	if got := sink.Keys(); len(got) != 0 {
+		t.Errorf("emitted %q with neither repo-name nor override", got)
 	}
 }
 
