@@ -36,6 +36,28 @@ So the real question is not the zero case. It is whether `artifacts.yml` should
 be able to declare that a project produces distro packages, which would both
 give the publish stage something to gate on and make the zero case meaningful.
 
+## A ledger image is signed before its SBOM pin is checked
+
+`SignLedgerImages` signs the image, then verifies the pinned SBOM digest. When
+the pin does not match, the run aborts with `ErrValidation` and produces no
+attestation — but the cosign signature has already been published, and for
+keyless signing a transparency log entry with it.
+
+Confirmed by probe: with a deliberately wrong `SBOMSHA256`, the recording
+signer holds one `SignImage` call and zero `AttestImage` calls. Recorded in
+`TestSignLedgerImages_PremadeSBOMPin` so the ordering cannot change silently.
+
+Whether it matters depends on what a verifier requires. A consumer checking
+only the signature would accept an image whose SBOM pin was rejected; one that
+also requires the CycloneDX attestation would not, because none was produced.
+
+The pin check is a local file hash — cheap, and dependent on nothing the
+signing step provides. Doing it before the first irreversible publish would
+cost nothing and would mean a failed run leaves no signature behind. That is a
+change to the order of operations inside the signer boundary, which
+[ADR 0002](adr/0002-signer-trust-boundary.md) governs, so it is recorded rather
+than made.
+
 ## Still open in the threat model
 
 - [Profile-dependent `externalParameters` reserved keys](threat-model.md) — a

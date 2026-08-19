@@ -479,11 +479,26 @@ func TestSignLedgerImages_PremadeSBOMPin(t *testing.T) {
 			t.Errorf("syft ran %v; a pinned SBOM must be attested as-is, never regenerated", syft.targets)
 		}
 
-		if len(signer.attests) != 2 || signer.attests[0].input.PredicatePath != entry.SBOM {
-			t.Errorf("attests = %+v, want the premade SBOM attested first", signer.attests)
+		if len(signer.attests) != 2 {
+			t.Fatalf("attests = %+v, want the premade SBOM then provenance", signer.attests)
+		}
+
+		if got := signer.attests[0].input.PredicatePath; got != entry.SBOM {
+			t.Errorf("attested predicate path = %q, want the pinned file %q", got, entry.SBOM)
+		}
+
+		// "As-is" has two halves and they fail differently: syft not running
+		// says the file was not regenerated, and this says the bytes that
+		// reached the attestation are the ones that were pinned.
+		if got := signer.attests[0].predicate; !bytes.Equal(got, content) {
+			t.Errorf("attested SBOM = %s, want the pinned content %s", got, content)
 		}
 	})
 
+	// The image is signed before the pin is checked, so a mismatch aborts the
+	// run with a signature already published and no SBOM attestation beside
+	// it. That ordering is recorded here rather than asserted as desirable --
+	// see docs/open-questions.md.
 	t.Run("mismatching pin fails closed before any attestation", func(t *testing.T) {
 		bad := entry
 		bad.SBOMSHA256 = strings.Repeat("0", 64)
@@ -496,6 +511,12 @@ func TestSignLedgerImages_PremadeSBOMPin(t *testing.T) {
 
 		if len(signer.attests) != 0 {
 			t.Errorf("attests = %+v, want none after a pin mismatch", signer.attests)
+		}
+
+		// Signing happens first. Recorded so a change to that order is a
+		// deliberate edit to this expectation rather than a silent one.
+		if len(signer.signs) != 1 {
+			t.Errorf("signs = %+v, want the image signed before the pin was checked", signer.signs)
 		}
 	})
 }
