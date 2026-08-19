@@ -192,3 +192,95 @@ func expectedArchivePath() string {
 
 	return "/v2026.6.11/mise-v2026.6.11-linux-" + arch + "-musl.tar.gz"
 }
+
+// tarGzipWithEntry builds an archive containing one entry with a caller
+// chosen tar header, so a non-regular entry can be presented under the
+// name the installer looks for.
+func tarGzipWithEntry(t *testing.T, hdr *tar.Header, body string) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+
+	hdr.Size = int64(len(body))
+	if err := tw.WriteHeader(hdr); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := tw.Write([]byte(body)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	return buf.Bytes()
+}
+
+// TestInstallMise_RejectsNonRegularBinaryEntry covers the type check on
+// the entry the installer extracts.
+//
+// The archive is SHA-256 pinned, so reaching this needs a compromised
+// pin — but the check is what makes the extraction safe on its own
+// terms: a symlink entry named mise/bin/mise would otherwise be copied
+// through as if it were the binary, and the installed "mise" would be
+// whatever the link pointed at.
+//
+// The extraction is safe from path traversal by construction, which is
+// worth stating: it matches one exact entry name and writes to a fixed
+// destDir/mise, never using the header name to build the output path.
+func TestInstallMise_RejectsNonRegularBinaryEntry(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		hdr  *tar.Header
+	}{
+		{
+			name: "symlink",
+			hdr:  &tar.Header{Name: "mise/bin/mise", Typeflag: tar.TypeSymlink, Linkname: "/bin/sh", Mode: 0o777},
+		},
+		{
+			name: "directory",
+			hdr:  &tar.Header{Name: "mise/bin/mise", Typeflag: tar.TypeDir, Mode: 0o755},
+		},
+		{
+			name: "hard link",
+			hdr:  &tar.Header{Name: "mise/bin/mise", Typeflag: tar.TypeLink, Linkname: "mise/README.md", Mode: 0o777},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			archive := tarGzipWithEntry(t, tc.hdr, "")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(archive) }))
+			t.Cleanup(server.Close)
+
+			destDir := t.TempDir()
+
+			_, err := toolchain.InstallMise(context.Background(), server.Client(), nil, toolchain.InstallMiseInput{
+				Version:          "2026.6.11",
+				LinuxX64SHA256:   shaHexForArch(archive, "amd64"),
+				LinuxARM64SHA256: shaHexForArch(archive, "arm64"),
+				DestDir:          destDir,
+				BaseURL:          server.URL,
+			})
+			if !errors.Is(err, errs.ErrMalformedInput) {
+				t.Fatalf("err = %v, want ErrMalformedInput", err)
+			}
+
+			// Nothing installed: a refused archive must not leave a
+			// half-written or linked binary on PATH.
+			if _, statErr := os.Lstat(filepath.Join(destDir, "mise")); !os.IsNotExist(statErr) {
+				t.Errorf("installed something from a refused archive (stat err = %v)", statErr)
+			}
+		})
+	}
+}
