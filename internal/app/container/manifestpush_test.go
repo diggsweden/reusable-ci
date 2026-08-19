@@ -264,3 +264,92 @@ func manifestTestDigest(raw []byte) string {
 
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
+
+// TestPushManifest_InputRefusals is the manifest-list counterpart of
+// TestPushImage_InputRefusals. The two validators are near-identical, and
+// both had about half their branches exercised — so they can drift apart
+// without either suite noticing.
+//
+// A manifest list is what a release tag actually points at, so the
+// tls-verify and whitespace rules matter here at least as much.
+func TestPushManifest_InputRefusals(t *testing.T) {
+	t.Parallel()
+
+	valid := func() appcontainer.PushManifestInput {
+		return appcontainer.PushManifestInput{
+			LocalManifest: "localhost/app:list",
+			Destination:   "registry.example/app:v1.2.3",
+			TLSVerify:     "true",
+			// Pinned so a regression that lets a bad input through
+			// fails immediately instead of hanging in the retry loop
+			// on its default delay.
+			RetryAttempts: 1,
+			RetryDelay:    time.Nanosecond,
+		}
+	}
+
+	t.Run("missing collaborators", func(t *testing.T) {
+		t.Parallel()
+
+		if _, err := appcontainer.PushManifest(context.Background(), nil, &fakeManifestPushRegistry{}, fakeoutputsink.New(t), io.Discard, valid()); !errors.Is(err, errs.ErrUsage) {
+			t.Errorf("nil push tool: err = %v, want ErrUsage", err)
+		}
+
+		if _, err := appcontainer.PushManifest(context.Background(), &fakeManifestPushTool{}, nil, fakeoutputsink.New(t), io.Discard, valid()); !errors.Is(err, errs.ErrUsage) {
+			t.Errorf("nil registry: err = %v, want ErrUsage", err)
+		}
+	})
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*appcontainer.PushManifestInput)
+	}{
+		{name: "no local manifest", mutate: func(in *appcontainer.PushManifestInput) { in.LocalManifest = "" }},
+		{name: "blank local manifest", mutate: func(in *appcontainer.PushManifestInput) { in.LocalManifest = "  " }},
+		{name: "no destination", mutate: func(in *appcontainer.PushManifestInput) { in.Destination = "" }},
+		{name: "destination with a space", mutate: func(in *appcontainer.PushManifestInput) {
+			in.Destination = "registry.example/app:v1 --tls-verify=false"
+		}},
+		{name: "destination with a newline", mutate: func(in *appcontainer.PushManifestInput) { in.Destination = "registry.example/app:v1\nevil" }},
+		{name: "tls-verify unset", mutate: func(in *appcontainer.PushManifestInput) { in.TLSVerify = "" }},
+		{name: "tls-verify yes", mutate: func(in *appcontainer.PushManifestInput) { in.TLSVerify = "yes" }},
+		{name: "tls-verify TRUE", mutate: func(in *appcontainer.PushManifestInput) { in.TLSVerify = "TRUE" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			in := valid()
+			tc.mutate(&in)
+
+			tool := &fakeManifestPushTool{}
+
+			_, err := appcontainer.PushManifest(context.Background(), tool, &fakeManifestPushRegistry{}, fakeoutputsink.New(t), io.Discard, in)
+			if !errors.Is(err, errs.ErrUsage) {
+				t.Fatalf("err = %v, want ErrUsage", err)
+			}
+
+			if len(tool.pushes) != 0 {
+				t.Errorf("pushed %v on a refused input", tool.pushes)
+			}
+		})
+	}
+}
+
+// TestResolvePushedManifestDigest_InputRefusals covers the third
+// validator in this file, which shares the same ref rule.
+func TestResolvePushedManifestDigest_InputRefusals(t *testing.T) {
+	t.Parallel()
+
+	if _, err := appcontainer.ResolvePushedManifestDigest(context.Background(), nil, fakeoutputsink.New(t), io.Discard, appcontainer.PushedManifestDigestInput{Ref: "registry.example/app:v1", RetryAttempts: 1, RetryDelay: time.Nanosecond}); !errors.Is(err, errs.ErrUsage) {
+		t.Errorf("nil registry: err = %v, want ErrUsage", err)
+	}
+
+	for _, ref := range []string{"", "   ", "registry.example/app:v1 extra", "registry.example/app:v1\nevil", "registry.example/app:v1\ttab"} {
+		registry := &fakeManifestPushRegistry{}
+
+		_, err := appcontainer.ResolvePushedManifestDigest(context.Background(), registry, fakeoutputsink.New(t), io.Discard, appcontainer.PushedManifestDigestInput{Ref: ref, RetryAttempts: 1, RetryDelay: time.Nanosecond})
+		if !errors.Is(err, errs.ErrUsage) {
+			t.Errorf("ref %q: err = %v, want ErrUsage", ref, err)
+		}
+	}
+}

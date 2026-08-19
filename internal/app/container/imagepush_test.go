@@ -170,6 +170,11 @@ func TestPushImage_InputRefusals(t *testing.T) {
 			LocalImage:  "localhost/app:arch",
 			Destination: "registry.example/app:staging-amd64",
 			TLSVerify:   "true",
+			// Pinned so a regression that lets a bad input through fails
+			// immediately instead of hanging in the retry loop on its
+			// default delay.
+			RetryAttempts: 1,
+			RetryDelay:    time.Nanosecond,
 		}
 	}
 
