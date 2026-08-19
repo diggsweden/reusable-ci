@@ -657,48 +657,70 @@ func TestAndroidGradleBuild_RequiresTasks(t *testing.T) {
 }
 
 func TestAndroidListArtifacts_FindsApkAndAab(t *testing.T) {
+	t.Parallel()
+
 	fsys := testfs.NewReal(t)
-	root := fsys.Root
 	module := "app"
 	fsys.WriteFile(filepath.Join(module, "build", "outputs", "apk", "debug", "demo.apk"), []byte("apk"))
 	fsys.WriteFile(filepath.Join(module, "build", "outputs", "bundle", "release", "demo.aab"), []byte("aab"))
-	// Decoy file that should be ignored.
+	// Decoys: two non-artifacts a real build genuinely produces under
+	// outputs/ -- the apk metadata and the R8 mapping -- and an .apk
+	// outside the module's outputs tree, which must not be picked up.
 	fsys.WriteFile(filepath.Join(module, "build", "outputs", "apk", "debug", "manifest.json"), []byte("{}"))
+	fsys.WriteFile(filepath.Join(module, "build", "outputs", "mapping", "release", "mapping.txt"), []byte("map"))
+	fsys.WriteFile(filepath.Join("other", "build", "outputs", "apk", "debug", "stray.apk"), []byte("apk"))
 
 	var out bytes.Buffer
+
 	if err := appbuild.AndroidListArtifacts(&out, appbuild.AndroidListArtifactsInput{
-		BuildModule: module, Root: root,
+		BuildModule: module, Root: fsys.Root,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	out0 := out.String()
-	if !strings.Contains(out0, "Built artifacts:") {
-		t.Errorf("missing header in out:\n%s", out0)
-	}
-
-	if !strings.Contains(out0, "demo.apk") || !strings.Contains(out0, "demo.aab") {
-		t.Errorf("missing artifact path in out:\n%s", out0)
-	}
-
-	if strings.Contains(out0, "manifest.json") {
-		t.Errorf("unexpected non-artifact file in out:\n%s", out0)
+	// Whole and in walk order. The listing is short and deterministic, so
+	// comparing it entire catches an extra entry as readily as a missing
+	// one -- the previous checks could not see a stray artifact from
+	// another module.
+	want := "Built artifacts:\n" +
+		filepath.Join(fsys.Root, module, "build", "outputs", "apk", "debug", "demo.apk") + "\n" +
+		filepath.Join(fsys.Root, module, "build", "outputs", "bundle", "release", "demo.aab") + "\n"
+	if got := out.String(); got != want {
+		t.Errorf("listing = %q, want %q", got, want)
 	}
 }
 
 func TestAndroidListArtifacts_NoArtifactsPrintsNotice(t *testing.T) {
-	var out bytes.Buffer
+	t.Parallel()
 
 	fsys := testfs.NewReal(t)
 
-	err := appbuild.AndroidListArtifacts(&out, appbuild.AndroidListArtifactsInput{
+	var out bytes.Buffer
+
+	if err := appbuild.AndroidListArtifacts(&out, appbuild.AndroidListArtifactsInput{
 		BuildModule: "app", Root: fsys.Root,
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(out.String(), "No artifacts found") {
-		t.Errorf("missing notice:\n%s", out.String())
+	if got, want := out.String(), "Built artifacts:\nNo artifacts found\n"; got != want {
+		t.Errorf("listing = %q, want %q", got, want)
+	}
+}
+
+func TestAndroidListArtifacts_RequiresBuildModule(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+
+	// Without a module there is no outputs tree to scan, and defaulting to
+	// one would list another module's artifacts as this one's.
+	err := appbuild.AndroidListArtifacts(&out, appbuild.AndroidListArtifactsInput{Root: t.TempDir()})
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage", err)
+	}
+
+	if out.Len() != 0 {
+		t.Errorf("wrote %q on a refused run", out.String())
 	}
 }
