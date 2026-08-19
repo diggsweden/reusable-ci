@@ -116,6 +116,32 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## An unreachable branch in `readGoModulePath`
+
+`readGoModulePath` refuses an empty module path:
+
+```go
+module := strings.TrimSpace(strings.TrimPrefix(line, "module "))
+if module == "" {
+    return "", fmt.Errorf("go.mod module path is empty: %w", errs.ErrInvalidConfig)
+}
+```
+
+It cannot fire. The line was already `strings.TrimSpace`d before the
+`HasPrefix(line, "module ")` test, so it cannot end in whitespace; for the
+prefix to match there must be a non-space character after it. Every input that
+looks like it should reach this branch — `module`, `module   `, `module\t` —
+fails the prefix test instead and falls through to "module directive not
+found", which returns the same sentinel.
+
+Confirmed by probe over those inputs: prefix NO MATCH in every case.
+
+Harmless, and the two paths agree on `ErrInvalidConfig`, so nothing observable
+differs. Left in place because removing it is a product change and the guard
+reads as intentional defence; noted so the next reader does not spend the same
+time on it, and so no test claims to cover it. `TestGoMetadata_Refusals` names
+its case for the branch it actually reaches.
+
 ## Still open in the threat model
 
 - [Profile-dependent `externalParameters` reserved keys](threat-model.md) — a

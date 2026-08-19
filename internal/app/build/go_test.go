@@ -154,16 +154,85 @@ func TestGoMetadata_ResolvesNameAndVersion(t *testing.T) {
 	}
 }
 
-func TestGoMetadata_RejectsMissingModule(t *testing.T) {
+// TestGoMetadata_Refusals covers what GoMetadata declines to describe.
+// Each case also asserts that nothing reached the sink: a half-emitted
+// contract is worse than none, since a consumer reading binary-name
+// would proceed on a run that failed.
+func TestGoMetadata_Refusals(t *testing.T) {
 	t.Parallel()
-	fsys := testfs.NewReal(t)
-	fsys.WriteFile("go.mod", []byte("go 1.26\n"))
 
-	sink := fakeoutputsink.New(t)
+	for _, tc := range []struct {
+		name    string
+		gomod   string // "" writes no go.mod at all
+		in      appbuild.GoMetadataInput
+		wantErr error
+	}{
+		{
+			name:    "no go.mod",
+			in:      appbuild.GoMetadataInput{},
+			wantErr: errs.ErrMissingInput,
+		},
+		{
+			name:    "no module directive",
+			gomod:   "go 1.26\n",
+			in:      appbuild.GoMetadataInput{},
+			wantErr: errs.ErrInvalidConfig,
+		},
+		{
+			// A bare keyword is not a directive: the line is trimmed before
+			// the "module " prefix test, so this reaches "directive not
+			// found" rather than the empty-path branch below it. That
+			// branch is unreachable for the same reason -- see
+			// docs/open-questions.md.
+			name:    "a bare module keyword is not a directive",
+			gomod:   "module \ngo 1.26\n",
+			in:      appbuild.GoMetadataInput{},
+			wantErr: errs.ErrInvalidConfig,
+		},
+		{
+			// The sinks are line-oriented, so a newline in a value can
+			// forge further outputs. ghaoutput refuses these too; this is
+			// the earlier refusal, before anything is written.
+			name:    "binary name carrying a newline",
+			gomod:   "module github.com/org/app\n",
+			in:      appbuild.GoMetadataInput{BinaryNameInput: "app\nforged=true"},
+			wantErr: errs.ErrUsage,
+		},
+		{
+			name:    "version carrying a carriage return",
+			gomod:   "module github.com/org/app\n",
+			in:      appbuild.GoMetadataInput{VersionInput: "1.0.0\rforged=true"},
+			wantErr: errs.ErrUsage,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	err := appbuild.GoMetadata(context.Background(), sink, &bytes.Buffer{}, appbuild.GoMetadataInput{Dir: fsys.Root})
-	if err == nil || !strings.Contains(err.Error(), "module directive") {
-		t.Fatalf("err = %v", err)
+			fsys := testfs.NewReal(t)
+			if tc.gomod != "" {
+				fsys.WriteFile("go.mod", []byte(tc.gomod))
+			}
+
+			sink := fakeoutputsink.New(t)
+
+			in := tc.in
+			in.Dir = fsys.Root
+
+			var out bytes.Buffer
+
+			err := appbuild.GoMetadata(context.Background(), sink, &out, in)
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+
+			if got := sink.Keys(); len(got) != 0 {
+				t.Errorf("emitted %q on a refused run", got)
+			}
+
+			if out.Len() != 0 {
+				t.Errorf("wrote %q on a refused run", out.String())
+			}
+		})
 	}
 }
 
