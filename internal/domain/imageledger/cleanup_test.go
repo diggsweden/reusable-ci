@@ -6,6 +6,7 @@ package imageledger_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -189,5 +190,51 @@ func TestCleanup_DoesNotDeleteSignatureArtifactsWhenFinalVerified(t *testing.T) 
 
 	if !slices.Equal(reg.deleted, []string{e.CandidateTag}) {
 		t.Errorf("cleanup should delete only the staging tag, not sha256-*.sig/.att package versions; deleted=%v", reg.deleted)
+	}
+}
+
+// TestCleanup_VisitsEveryEntry covers the loop and its skip. All the
+// tests above pass one entry, so a Cleanup that stopped after the first
+// would satisfy every one of them while leaving the candidate tags of
+// every other image behind -- which is exactly the litter this command
+// exists to remove.
+//
+// It also pins that an entry without a candidate tag is skipped rather
+// than treated as an error: nothing to clean up is not a failure.
+func TestCleanup_VisitsEveryEntry(t *testing.T) {
+	t.Parallel()
+
+	first := validEntry()
+	first.CandidateTag = "codeberg.org/itiquette/gommitlint:staging-v1.2.3"
+
+	second := validEntry()
+	second.Role = "static"
+	second.Ref = "codeberg.org/itiquette/gommitlint-static@" + goodDigest
+	second.FinalTag = "codeberg.org/itiquette/gommitlint-static:v1.2.3"
+	second.CandidateTag = "codeberg.org/itiquette/gommitlint-static:staging-v1.2.3"
+
+	// No candidate tag: nothing to clean up, and not an error.
+	noCandidate := validEntry()
+	noCandidate.Role = "debug"
+	noCandidate.Ref = "codeberg.org/itiquette/gommitlint-debug@" + goodDigest
+	noCandidate.FinalTag = "codeberg.org/itiquette/gommitlint-debug:v1.2.3"
+
+	reg := &fakeCleanupRegistry{digests: map[string]string{
+		first.CandidateTag:   goodDigest,
+		first.FinalTag:       goodDigest,
+		second.CandidateTag:  goodDigest,
+		second.FinalTag:      goodDigest,
+		noCandidate.FinalTag: goodDigest,
+	}}
+
+	if err := imageledger.Cleanup(context.Background(), reg, []imageledger.Entry{first, noCandidate, second}, "v1.2.3"); err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+
+	// Both candidates gone, in entry order, and nothing else touched --
+	// only the candidate tag may be deleted, never a final tag.
+	want := []string{first.CandidateTag, second.CandidateTag}
+	if !reflect.DeepEqual(reg.deleted, want) {
+		t.Errorf("deleted = %v, want %v", reg.deleted, want)
 	}
 }
