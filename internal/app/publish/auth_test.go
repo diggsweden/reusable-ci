@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	apppublish "github.com/diggsweden/reusable-ci/v3/internal/app/publish"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/publish"
 )
@@ -38,7 +39,11 @@ func TestRegistryAuth_ErrorWhenNoPasswordAndCustomAuth(t *testing.T) {
 		Registry:    "ghcr.io",
 		HasPassword: false,
 	})
-	require.Error(t, err)
+	// The class decides the exit code. validate-release-prerequisites
+	// documents this path as failing closed with EX_NOPERM (77), which
+	// ErrPermissionDenied is what produces; require.Error accepted any
+	// failure, including one from a later stage for another reason.
+	require.ErrorIs(t, err, errs.ErrPermissionDenied)
 	require.Contains(t, stderr.String(), "::error::registry-password")
 }
 
