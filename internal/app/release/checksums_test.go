@@ -194,12 +194,10 @@ func TestChecksums_CreatesEmptyOutputWhenNothingFound(t *testing.T) {
 // written where it was asked for, with its contents, and the default path is
 // left alone so nothing downstream picks up a stale one.
 //
-// The nested row creates the directory first. That is a precondition, not
-// setup noise, and it is worth knowing about: on this path the manifest is
-// opened with O_CREATE, which does not create parent directories, so
-// --output some/dir/file fails when some/dir does not exist. The assembly
-// path in checksums.go calls MkdirAll and does create it, so the same flag
-// behaves differently in the two modes.
+// The nested row deliberately does not create the directory first. Both
+// discovery modes share one manifest writer now, so --output some/dir/file
+// creates what it needs whether or not --assembly was passed; before that,
+// only the assembly path did, and this row had to make the directory itself.
 func TestChecksums_HonoursACustomOutputPath(t *testing.T) {
 	for name, outputFile := range map[string]string{
 		"a plain file name":     "custom-checksums.txt",
@@ -208,10 +206,6 @@ func TestChecksums_HonoursACustomOutputPath(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fsys := testfs.NewReal(t)
 			fsys.Chdir()
-
-			if dir := filepath.Dir(outputFile); dir != "." {
-				fsys.MkdirAll(dir)
-			}
 
 			fsys.WriteFile(filepath.Join("release-artifacts", "test.jar"), []byte("test"))
 

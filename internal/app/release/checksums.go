@@ -28,25 +28,9 @@ type ChecksumsInput struct {
 	AssemblyFile        string // when set, checksum exactly the staged release assembly
 }
 
-// Checksums computes SHA256 over a fileset and writes lines of the form
-//
-//	<hex-hash>  <filename>
-//
-// to OutputFile (sha256sum-compatible). The fileset is composed from:
-//
-//   - release-artifacts/*       → basename in the manifest
-//   - $ATTACH_ARTIFACTS globs   → original path in the manifest
-//   - sbom-artifacts/*-analyzed-container-sbom.*.json → basename
-//   - cwd *-sbom.{spdx,cyclonedx}.json → basename
-//
-// Returns the line count and any I/O error.
-//
-//nolint:cyclop // emits checksum file + uploads + summary entry per artifact.
-func Checksums(out io.Writer, in ChecksumsInput) (int, error) {
-	if in.AssemblyFile != "" {
-		return checksumsFromAssembly(out, in)
-	}
-
+// withChecksumDiscoveryDefaults fills the directories and output path the
+// discovery mode scans when the caller named none.
+func withChecksumDiscoveryDefaults(in ChecksumsInput) ChecksumsInput {
 	if in.OutputFile == "" {
 		in.OutputFile = domainrelease.ChecksumsFile
 	}
@@ -59,28 +43,90 @@ func Checksums(out io.Writer, in ChecksumsInput) (int, error) {
 		in.SBOMDir = domainrelease.DefaultSBOMArtifactsDir
 	}
 
-	f, err := cliio.CreateWriter(in.OutputFile, 0o644) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	return in
+}
+
+// checksumManifest is the sha256sum-format file both discovery modes write.
+//
+// The two modes differ in how they find files, not in how the manifest is
+// produced, and they had grown two copies of the producing half: only the
+// assembly path created the output directory, so --output some/dir/file worked
+// under --assembly and failed without it. Owning creation, the line format,
+// the count and the summary in one place is what keeps those in step.
+//
+//nolint:cyclop // emits checksum file + uploads + summary entry per artifact.
+type checksumManifest struct {
+	file  io.WriteCloser
+	path  string
+	count int
+}
+
+// newChecksumManifest creates the manifest file, and any directory it needs.
+func newChecksumManifest(outputFile string) (*checksumManifest, error) {
+	if dir := filepath.Dir(outputFile); outputFile != cliio.StdSentinel && dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec,mnd // public release staging dir.
+			return nil, fmt.Errorf("create checksum dir for %q: %w", outputFile, err)
+		}
+	}
+
+	file, err := cliio.CreateWriter(outputFile, 0o644)
 	if err != nil {
-		return 0, fmt.Errorf("create %q: %w", in.OutputFile, err)
+		return nil, fmt.Errorf("create %q: %w", outputFile, err)
 	}
 
-	defer func() { _ = f.Close() }()
+	return &checksumManifest{file: file, path: outputFile}, nil
+}
 
-	count := 0
-	write := func(path, label string) error {
-		hash, err := sha256File(path)
-		if err != nil {
-			return err
-		}
-
-		if _, err := fmt.Fprintf(f, "%s  %s\n", hash, label); err != nil {
-			return err
-		}
-
-		count++
-
-		return nil
+// add hashes path and records it under label, the name a consumer running
+// sha256sum --check resolves.
+func (m *checksumManifest) add(path, label string) error {
+	hash, err := sha256File(path)
+	if err != nil {
+		return err
 	}
+
+	if _, err := fmt.Fprintf(m.file, "%s  %s\n", hash, label); err != nil {
+		return err
+	}
+
+	m.count++
+
+	return nil
+}
+
+func (m *checksumManifest) close() { _ = m.file.Close() }
+
+func (m *checksumManifest) report(out io.Writer) {
+	_, _ = fmt.Fprintf(out, "%s Generated %d checksums in %s\n", clicolor.Check(out), m.count, m.path)
+}
+
+// Checksums computes SHA256 over a fileset and writes lines of the form
+//
+//	<hex-hash>  <filename>
+//
+// to OutputFile (sha256sum-compatible). The fileset is composed from:
+//
+//   - release-artifacts/*       → basename in the manifest
+//   - $ATTACH_ARTIFACTS globs   → original path in the manifest
+//   - sbom-artifacts/*-analyzed-container-sbom.*.json → basename
+//   - cwd *-sbom.{spdx,cyclonedx}.json → basename
+//
+// Returns the line count and any I/O error.
+func Checksums(out io.Writer, in ChecksumsInput) (int, error) {
+	if in.AssemblyFile != "" {
+		return checksumsFromAssembly(out, in)
+	}
+
+	in = withChecksumDiscoveryDefaults(in)
+
+	manifest, err := newChecksumManifest(in.OutputFile)
+	if err != nil {
+		return 0, err
+	}
+
+	defer manifest.close()
+
+	write := manifest.add
 
 	// Compute the output-file absolute path once so the per-walk
 	// helpers can skip it. Without this guard, pointing
@@ -96,27 +142,27 @@ func Checksums(out io.Writer, in ChecksumsInput) (int, error) {
 
 	// Release artifacts: basename labels.
 	if err := checksumReleaseArtifacts(in.ReleaseArtifactsDir, out, write, skip); err != nil {
-		return count, err
+		return manifest.count, err
 	}
 
 	// Attach-artifacts globs: keep original path in manifest.
 	if err := checksumAttachArtifacts(in.AttachArtifacts, out, write, skip); err != nil {
-		return count, err
+		return manifest.count, err
 	}
 
 	// Container SBOMs: basename labels.
 	if err := checksumContainerSBOMs(in.SBOMDir, out, write, skip); err != nil {
-		return count, err
+		return manifest.count, err
 	}
 
 	// Working-dir SBOMs: basename labels.
 	if err := checksumWorkdirSBOMs(in.WorkingDir, out, write, skip); err != nil {
-		return count, err
+		return manifest.count, err
 	}
 
-	_, _ = fmt.Fprintf(out, "%s Generated %d checksums in %s\n", clicolor.Check(out), count, in.OutputFile)
+	manifest.report(out)
 
-	return count, nil
+	return manifest.count, nil
 }
 
 //nolint:cyclop // sequential: read assembly → resolve output path → ensure dir → hash each entry → write manifest. Phases, not nested logic.
@@ -135,56 +181,43 @@ func checksumsFromAssembly(out io.Writer, in ChecksumsInput) (int, error) {
 		outputFile = domainrelease.ChecksumsFile
 	}
 
-	if mkdirErr := os.MkdirAll(filepath.Dir(outputFile), 0o755); mkdirErr != nil { //nolint:gosec,mnd // public release staging dir.
-		return 0, fmt.Errorf("create checksum dir for %q: %w", outputFile, mkdirErr)
-	}
-
-	f, err := cliio.CreateWriter(outputFile, 0o644) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	manifest, err := newChecksumManifest(outputFile)
 	if err != nil {
-		return 0, fmt.Errorf("create %q: %w", outputFile, err)
+		return 0, err
 	}
 
-	defer func() { _ = f.Close() }()
+	defer manifest.close()
 
-	count := 0
+	// The assembly names its inputs, so a missing one is an error rather than
+	// something to walk past — the discovery modes only ever see files that
+	// exist. That is the whole difference between the two here.
 	write := func(path, label string) error {
 		if !regularFileExists(path) {
 			return fmt.Errorf("assembly checksum input %q is missing or not a regular file: %w", path, errs.ErrMissingInput)
 		}
 
-		hash, err := sha256File(path)
-		if err != nil {
-			return err
-		}
-
-		if _, err := fmt.Fprintf(f, "%s  %s\n", hash, label); err != nil {
-			return err
-		}
-
-		count++
-
-		return nil
+		return manifest.add(path, label)
 	}
 
 	for _, asset := range asm.Assets {
 		if err := write(asset.Path, asset.Name); err != nil {
-			return count, err
+			return manifest.count, err
 		}
 	}
 
 	if asm.SBOMZipFile != "" {
 		if regularFileExists(asm.SBOMZipFile) {
 			if err := write(asm.SBOMZipFile, filepath.Base(asm.SBOMZipFile)); err != nil {
-				return count, err
+				return manifest.count, err
 			}
 		} else if len(asm.SBOMs) > 0 {
-			return count, fmt.Errorf("assembly SBOM ZIP %q is missing; run release sbom-zip --assembly first: %w", asm.SBOMZipFile, errs.ErrMissingInput)
+			return manifest.count, fmt.Errorf("assembly SBOM ZIP %q is missing; run release sbom-zip --assembly first: %w", asm.SBOMZipFile, errs.ErrMissingInput)
 		}
 	}
 
-	_, _ = fmt.Fprintf(out, "%s Generated %d checksums in %s\n", clicolor.Check(out), count, outputFile)
+	manifest.report(out)
 
-	return count, nil
+	return manifest.count, nil
 }
 
 // checksumReleaseArtifacts walks dir (one level) and invokes write for
