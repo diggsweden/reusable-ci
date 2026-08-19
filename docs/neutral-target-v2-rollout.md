@@ -21,6 +21,12 @@ this work.
 - [ ] Complete guarded live verification with disposable Forge Lab state.
 - [x] Record final commits and residual risks.
 
+A provider-free gate is not evidence that this rollout is finished. Every gate
+above passed while seven defects stood in the code they covered, and the only
+thing that found them was running against the software. Do not mark the rollout
+complete on the strength of the sections above; the guarded live phase is the
+gate.
+
 ## Repositories And Baselines
 
 | Role | Repository | Starting branch | Starting commit |
@@ -291,10 +297,24 @@ permission to edit or run provider-free tests.
 - [x] Verify no v1 credentials, claims, recovery evidence, or cleanup runtimes
   remain.
 - [x] Emit one fresh v2 generation.
-- [ ] Run forge-tidy extended and portable scenarios.
+- [x] Run forge-tidy extended and portable scenarios. Extended: 23 of 23 on k3s
+  Forgejo. Portable: the reviewed-Plan aggregate on k3s GitLab. Portable remains
+  GitLab-only here because its executable profile rejects credentials without
+  native expiry, and Forgejo tokens have none; the run reports that skip itself.
 - [ ] Run forge-sync existing, prepare, cleanup, and recovery scenarios.
-- [ ] Run all release-ci guarded Compose and k3s scenarios.
-- [ ] Run reusable-ci OCI and keyless Fulcio scenarios.
+- [x] Run all release-ci guarded Compose and k3s scenarios. All four:
+  `artifact-roundtrip-v1`, `prepare-release-missing-secret-v1` and
+  `consumer-pr-v1` on k3s, `minimal-binary-release-v1` on Compose. Every run
+  reported complete credential, provider-resource and workspace cleanup with no
+  possible orphans.
+- [ ] Run reusable-ci OCI and keyless Fulcio scenarios. **Deferred by decision.**
+  Note what that leaves uncovered: release-ci's live runs exercise reusable-ci's
+  workflow and action code, but not `internal/livetest` — the neutral-v2 consumer
+  itself. Parsed `ca_file`, forge selection from the contract, declared OCI
+  origins, declared Fulcio URL and issuer mappings, and the loopback CONNECT
+  proxy for keyless runner jobs all live there and have only ever been checked
+  provider-free, which is precisely the condition under which the other six
+  defects survived.
 - [ ] Verify provider resources, OCI artifacts, credentials, recovery evidence,
   and cleanup runtimes are absent after each run.
 
