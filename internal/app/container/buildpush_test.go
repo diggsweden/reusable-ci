@@ -227,55 +227,93 @@ func assertOCILabels(t *testing.T, builds []domaincontainer.BuildPushManifestBui
 	}
 }
 
+// TestBuildPushOCIImage_RejectsInvalidInputBeforeBuild covers every way the
+// inputs can be refused, and requires that none of them reached the builder or
+// the registry.
+//
+// Each row changes one field of an otherwise valid input. The rows used to
+// select their change through a map of string keys against a switch that
+// ignored anything it did not recognise, so a mistyped key silently produced
+// the valid input and the row passed for the wrong reason -- and only three
+// fields were reachable at all, which is why half the validation had no row.
 func TestBuildPushOCIImage_RejectsInvalidInputBeforeBuild(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeBuildPushFile(t, "Containerfile", "FROM scratch\n")
+	writeBuildPushFile(t, "auth.json", `{"auths":{}}`)
 
-	tests := []struct {
-		name string
-		in   appcontainer.BuildPushOCIImageInput
-		want error
+	for name, testCase := range map[string]struct {
+		mutate func(*appcontainer.BuildPushOCIImageInput)
+		want   error
 	}{
-		{
-			name: "empty builds",
-			in:   validBuildPushInputWith(map[string]string{"builds": "[]"}),
-			want: errs.ErrUsage,
+		"no builds": {
+			mutate: func(in *appcontainer.BuildPushOCIImageInput) { in.BuildsJSON = "[]" },
+			want:   errs.ErrUsage,
 		},
-		{
-			name: "missing containerfile",
-			in:   validBuildPushInputWith(map[string]string{"containerfile": "does/not/exist"}),
-			want: errs.ErrMissingInput,
+		"platform is not one that is built": {
+			mutate: func(in *appcontainer.BuildPushOCIImageInput) { in.BuildsJSON = `[{"platform":"windows/amd64"}]` },
+			want:   errs.ErrUsage,
 		},
-		{
-			name: "bad tls",
-			in:   validBuildPushInputWith(map[string]string{"tls": "maybe"}),
-			want: errs.ErrUsage,
+		"containerfile is missing": {
+			mutate: func(in *appcontainer.BuildPushOCIImageInput) { in.Containerfile = "does/not/exist" },
+			want:   errs.ErrMissingInput,
 		},
-		{
-			name: "bad platform",
-			in:   validBuildPushInputWith(map[string]string{"builds": `[{"platform":"windows/amd64"}]`}),
-			want: errs.ErrUsage,
+		"containerfile is a directory": {
+			mutate: func(in *appcontainer.BuildPushOCIImageInput) { in.Containerfile = "." },
+			want:   errs.ErrMissingInput,
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		"no containerfile named": {
+			mutate: func(in *appcontainer.BuildPushOCIImageInput) { in.Containerfile = "" },
+			want:   errs.ErrUsage,
+		},
+		"tls-verify is neither true nor false": {
+			mutate: func(in *appcontainer.BuildPushOCIImageInput) { in.TLSVerify = "maybe" },
+			want:   errs.ErrUsage,
+		},
+		"no tag": {
+			mutate: func(in *appcontainer.BuildPushOCIImageInput) { in.Tag = "" },
+			want:   errs.ErrUsage,
+		},
+		"tag contains a space": {
+			mutate: func(in *appcontainer.BuildPushOCIImageInput) { in.Tag = "v1 0" },
+			want:   errs.ErrUsage,
+		},
+		"auth file is named but missing": {
+			mutate: func(in *appcontainer.BuildPushOCIImageInput) { in.AuthFile = "no-such-auth.json" },
+			want:   errs.ErrMissingInput,
+		},
+		"no repository": {
+			mutate: func(in *appcontainer.BuildPushOCIImageInput) { in.Repository = "" },
+			want:   errs.ErrUsage,
+		},
+		"no server url": {
+			mutate: func(in *appcontainer.BuildPushOCIImageInput) { in.ServerURL = "" },
+			want:   errs.ErrUsage,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
 			tool := &fakeBuildPushTool{}
 
-			_, err := appcontainer.BuildPushOCIImage(context.Background(), tool, fakeBuildPushGit{revision: "abc", epoch: "1700000000"}, fakeoutputsink.New(t), io.Discard, tt.in)
-			if !errors.Is(err, tt.want) {
-				t.Fatalf("err = %v, want %v", err, tt.want)
+			in := validBuildPushInput()
+			testCase.mutate(&in)
+
+			_, err := appcontainer.BuildPushOCIImage(context.Background(), tool, fakeBuildPushGit{revision: "abc", epoch: "1700000000"}, fakeoutputsink.New(t), io.Discard, in)
+			if !errors.Is(err, testCase.want) {
+				t.Fatalf("err = %v, want %v", err, testCase.want)
 			}
 
+			// Refusing after a build would mean a layer had already been
+			// produced, and after a push that an image was already published.
 			if len(tool.builds) != 0 || len(tool.pushes) != 0 {
-				t.Fatalf("tool invoked despite invalid input: builds=%v pushes=%v", tool.builds, tool.pushes)
+				t.Errorf("tool invoked despite invalid input: builds=%v pushes=%v", tool.builds, tool.pushes)
 			}
 		})
 	}
 }
 
-func validBuildPushInputWith(overrides map[string]string) appcontainer.BuildPushOCIImageInput {
-	in := appcontainer.BuildPushOCIImageInput{
+// validBuildPushInput is the input every rejection row starts from: valid, so
+// that whatever a row changes is the only reason it is refused.
+func validBuildPushInput() appcontainer.BuildPushOCIImageInput {
+	return appcontainer.BuildPushOCIImageInput{
 		Tag:           "v0.0.0",
 		Containerfile: "Containerfile",
 		BuildsJSON:    `[{"platform":"linux/amd64"}]`,
@@ -284,19 +322,6 @@ func validBuildPushInputWith(overrides map[string]string) appcontainer.BuildPush
 		ServerURL:     "https://codeberg.org",
 		Repository:    "itiquette/forgejo-ci",
 	}
-
-	for key, value := range overrides {
-		switch key {
-		case "builds":
-			in.BuildsJSON = value
-		case "containerfile":
-			in.Containerfile = value
-		case "tls":
-			in.TLSVerify = value
-		}
-	}
-
-	return in
 }
 
 func writeBuildPushFile(t *testing.T, path, body string) {
