@@ -560,3 +560,88 @@ func TestSignBlob_KeylessWithoutEndpointsOmitsThem(t *testing.T) {
 		}
 	}
 }
+
+// TestVerify_TlogPolicyAppliesToEveryVerifySubcommand covers the branch
+// withTlogPolicy exists for. Every other verify test uses a zero-value
+// adapter, which publishes to the log, so the flag it appends when
+// transparency is off was never asserted anywhere.
+//
+// --insecure-ignore-tlog drops the requirement for a transparency-log
+// inclusion proof. Wrong in one direction it accepts a signature with no
+// public record; wrong in the other it fails every verification in a
+// deployment that deliberately keeps signatures off the public log. The
+// policy is applied in one place precisely so all three verify
+// subcommands agree, which is what this pins.
+func TestVerify_TlogPolicyAppliesToEveryVerifySubcommand(t *testing.T) {
+	const (
+		identity = "^https://github.com/diggsweden/"
+		issuer   = "https://token.actions.githubusercontent.com"
+	)
+
+	for _, tc := range []struct {
+		name         string
+		transparency domainrelease.Transparency
+		wantFlag     bool
+	}{
+		{name: "public log keeps cosign on its default", transparency: domainrelease.TransparencyPublic, wantFlag: false},
+		{name: "no log relaxes the inclusion requirement", transparency: domainrelease.TransparencyNone, wantFlag: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, sub := range []struct {
+				name string
+				call func(a *cosign.Adapter) error
+				verb string
+			}{
+				{
+					name: "verify-blob",
+					verb: "verify-blob",
+					call: func(a *cosign.Adapter) error {
+						return a.VerifyBlob(context.Background(), cosign.VerifyBlobInput{
+							Artifact: "app.tgz", BundlePath: "app.tgz.bundle",
+							Keyless: true, CertIdentityRegexp: identity, CertOIDCIssuer: issuer,
+						}, nil)
+					},
+				},
+				{
+					name: "verify",
+					verb: "verify",
+					call: func(a *cosign.Adapter) error {
+						return a.VerifyImage(context.Background(), cosign.VerifyImageInput{
+							ImageRef: testImageDigest,
+							Keyless:  true, CertIdentityRegexp: identity, CertOIDCIssuer: issuer,
+						}, nil)
+					},
+				},
+				{
+					name: "verify-attestation",
+					verb: "verify-attestation",
+					call: func(a *cosign.Adapter) error {
+						return a.VerifyAttestation(context.Background(), cosign.VerifyAttestationInput{
+							ImageRef: testImageDigest, PredicateType: "cyclonedx",
+							Keyless: true, CertIdentityRegexp: identity, CertOIDCIssuer: issuer,
+						}, nil)
+					},
+				},
+			} {
+				t.Run(sub.name, func(t *testing.T) {
+					bins := mockbinary.New(t)
+					bins.Add("cosign", ":")
+
+					a := &cosign.Adapter{Bin: bins.Path("cosign"), Transparency: tc.transparency}
+					if err := sub.call(a); err != nil {
+						t.Fatalf("%s: %v", sub.name, err)
+					}
+
+					got := bins.Invocations("cosign")[0].Args
+					if got[0] != sub.verb {
+						t.Fatalf("subcommand = %q, want %q", got[0], sub.verb)
+					}
+
+					if has := slices.Contains(got, "--insecure-ignore-tlog"); has != tc.wantFlag {
+						t.Errorf("--insecure-ignore-tlog present = %v, want %v: %v", has, tc.wantFlag, got)
+					}
+				})
+			}
+		})
+	}
+}
