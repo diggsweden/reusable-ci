@@ -116,6 +116,52 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## Appending a key to `allowed_gpg_keys.asc` does not authorise it
+
+`docs/verification.md` describes the file as "an armored public-key bundle (one
+or more `PGP PUBLIC KEY BLOCK` sections concatenated)" and tells operators to
+add one with:
+
+```sh
+gpg --armor --export <email> >> .reusable-ci/allowed_gpg_keys.asc
+```
+
+That `>>` appends a **second armor block**, and only the first is read.
+`PrimaryFingerprints` calls `openpgp.ReadArmoredKeyRing`, which decodes one
+armor block and returns the entities inside it. Probed:
+
+| File shape | Produced by | Keys parsed |
+|---|---|---|
+| one block, two keys | `gpg --armor --export A B` | 2 |
+| two blocks concatenated | `gpg --armor --export A >> file` (documented) | **1** |
+
+So a signer added exactly as the documentation instructs is not authorised, and
+a tag they sign is refused with:
+
+```
+tag signer fingerprint … is not authorised (1 key(s) in …/allowed_gpg_keys.asc)
+```
+
+The key count is the only hint that the file was read in part; there is no
+error and no warning about the trailing blocks.
+
+**This fails closed.** It denies a legitimate signer rather than admitting an
+unauthorised one, so it is a correctness and operability problem, not an
+authorisation bypass. It bites during key rotation, which is the one time the
+file is meant to hold two keys — and the moment when being unable to ship a
+release is most costly.
+
+Either half is a small fix, and they point in opposite directions:
+
+- **Read every armor block** — decode in a loop until EOF — so the documented
+  workflow works. This widens the allowlist, so it deserves deliberate review.
+- **Refuse a file with trailing blocks** so the operator is told, rather than
+  silently authorising fewer keys than the file appears to contain.
+
+Recorded rather than fixed because widening an allowlist is a security-policy
+change even when the current behaviour is the accident. Both shapes are pinned
+in `tags_allowlist_test.go`.
+
 ## A failed signature check exits differently for GPG and for cosign
 
 `VerifyArtifactSignature` documents its contract as: "Returns nil on success;
