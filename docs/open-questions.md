@@ -116,6 +116,28 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## `sign --file` signs as it validates, so a bad list signs part of it
+
+`signExactFiles` checks each file exists at the point it signs it, inside one
+loop. A list whose second entry is missing therefore signs the first and *then*
+refuses:
+
+```
+signed = [dist/present.json]
+err    = sign file "dist/missing.json" is missing or not a regular file: missing input
+```
+
+Nothing consumes a half-signed directory today — the command exits non-zero and
+the publish step does not run — so the practical effect is a stray `.asc` beside
+a file that was going to be signed anyway. It is recorded because the sibling
+paths reviewed alongside it all validate their whole input before acting, and
+because a signature is the one artefact where "produced during a failed run" is
+worth being deliberate about.
+
+The change is a validation pass over `files` before the signing pass. Pinned as
+it behaves today in
+`TestSign_ExactFileMissingRefusesBeforeSigningAnything`.
+
 ## An unrecognised `--fail-on-severity` narrows the gate instead of failing
 
 `security scan dependencies --fail-on-severity` accepts `low`, `moderate`,

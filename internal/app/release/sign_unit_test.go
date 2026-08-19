@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -76,6 +77,72 @@ func TestSign_ExactFilesStayInPlace(t *testing.T) {
 
 	if got, want := len(signer.signed), 1; got != want {
 		t.Fatalf("signed %d files, want deduped 1: %v", got, signer.signed)
+	}
+}
+
+// TestSign_ExactFilesSignsEveryDistinctFile covers the loop. The dedupe
+// test above passes the same path twice and asserts one signature, which
+// is also what a loop that stops after its first iteration produces --
+// the two claims are indistinguishable there.
+//
+// A release signs several files, and one left unsigned is not visible
+// until a consumer tries to verify it.
+func TestSign_ExactFilesSignsEveryDistinctFile(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	for _, name := range []string{"app.sbom.json", "app.tar.gz", "app.jar"} {
+		fsys.WriteFile(filepath.Join("dist", name), []byte(name))
+	}
+
+	fsys.Chdir()
+
+	files := []string{
+		filepath.Join("dist", "app.sbom.json"),
+		filepath.Join("dist", "app.tar.gz"),
+		filepath.Join("dist", "app.jar"),
+	}
+
+	signer := &fakeSigner{}
+	if err := apprelease.SignArtifacts(context.Background(), signer, &bytes.Buffer{}, apprelease.SignInput{
+		Files: files,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(signer.signed, files) {
+		t.Errorf("signed = %v, want %v", signer.signed, files)
+	}
+
+	for _, f := range files {
+		if _, err := os.Stat(f + ".asc"); err != nil {
+			t.Errorf("missing sidecar for %s: %v", f, err)
+		}
+	}
+}
+
+// TestSign_ExactFileMissingRefusesBeforeSigningAnything pins where the
+// refusal lands. The files are checked one at a time as they are signed,
+// so a missing file late in the list leaves the earlier ones already
+// signed -- a partially signed release rather than a refused one.
+func TestSign_ExactFileMissingRefusesBeforeSigningAnything(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile(filepath.Join("dist", "present.json"), []byte("x"))
+	fsys.Chdir()
+
+	signer := &fakeSigner{}
+
+	err := apprelease.SignArtifacts(context.Background(), signer, &bytes.Buffer{}, apprelease.SignInput{
+		Files: []string{filepath.Join("dist", "present.json"), filepath.Join("dist", "missing.json")},
+	})
+	if !errors.Is(err, errs.ErrMissingInput) {
+		t.Fatalf("err = %v, want ErrMissingInput", err)
+	}
+
+	// Recorded, not endorsed: the earlier file is signed before the
+	// missing one is noticed. Nothing consumes a half-signed dist
+	// directory today -- the run fails and the release is not published
+	// -- but the sidecar is on disk. See docs/open-questions.md.
+	if got := signer.signed; !reflect.DeepEqual(got, []string{filepath.Join("dist", "present.json")}) {
+		t.Errorf("signed = %v, want the first file only", got)
 	}
 }
 
