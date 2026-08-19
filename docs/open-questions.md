@@ -116,6 +116,42 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## Re-authenticating leaves a stale `identitytoken` in the auth config
+
+`MergeAuth` replaces the `auth` value for a registry and preserves the entry's
+other fields, which is what its doc comment promises: "a prior config, whose
+other registries and fields are preserved untouched". Probed:
+
+```json
+{"auths":{"ghcr.io":{
+  "auth": "<the new credential>",
+  "email": "a@b.c",
+  "identitytoken": "stale-token"     ← survives
+}}}
+```
+
+`identitytoken` is not an ordinary field. Docker, podman and containerd prefer
+it over `auth` when both are present — it is what `docker login` writes for
+registries using token authentication. So a config that already carried one
+keeps authenticating with the old token after a fresh login with new
+credentials.
+
+Reach is narrow. Nothing in this repository writes `identitytoken`; it can only
+arrive from a pre-existing config on the runner — a `docker login` earlier in
+the job, a mounted config, or a self-hosted runner whose home directory
+persists between jobs. On an ephemeral runner the config starts empty and this
+cannot happen.
+
+The fix is one line — delete `identitytoken` from the entry being
+re-authenticated, since it is an alternative credential for exactly the
+registry whose credential is being replaced. It is recorded rather than made
+because "preserve other fields" is deliberate and documented, and narrowing it
+to exclude one key is a decision about which fields are credentials rather than
+metadata.
+
+Pinned in `TestMergeAuth_ReauthenticatingReplacesTheCredential`, which points
+here if the behaviour changes.
+
 ## A minimal-header JWT escapes the output redactor
 
 `safeexec.RedactKeyMaterial` scrubs subprocess output before it is folded into

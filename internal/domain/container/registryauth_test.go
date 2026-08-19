@@ -71,6 +71,53 @@ func TestMergeAuth_PreservesOtherRegistries(t *testing.T) {
 	}
 }
 
+// TestMergeAuth_ReauthenticatingReplacesTheCredential covers the case the
+// other merge tests do not: a registry that already has an entry. Logging
+// in again must replace the credential rather than add a second one.
+//
+// It also pins the documented field preservation -- "a prior config,
+// whose other registries and fields are preserved untouched" -- which for
+// an entry being re-authenticated includes identitytoken. That has a
+// consequence worth knowing about; see docs/open-questions.md.
+func TestMergeAuth_ReauthenticatingReplacesTheCredential(t *testing.T) {
+	t.Parallel()
+
+	existing := []byte(`{"auths":{"ghcr.io":{"auth":"b2xkOnBhc3M=","identitytoken":"stale-token","email":"a@b.c"}}}`)
+
+	out, err := container.MergeAuth(existing, "ghcr.io", "alice", "newpass")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := authOf(t, out, "ghcr.io"), base64.StdEncoding.EncodeToString([]byte("alice:newpass")); got != want {
+		t.Errorf("auth = %q, want the new credential %q", got, want)
+	}
+
+	var doc struct {
+		Auths map[string]map[string]any `json:"auths"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatal(err)
+	}
+
+	// Exactly one entry for the registry, not a duplicate alongside it.
+	if got := len(doc.Auths); got != 1 {
+		t.Errorf("auths holds %d registries, want 1: %v", got, doc.Auths)
+	}
+
+	// Sibling fields survive, as documented. identitytoken is one of
+	// them, and container tools prefer it over auth when both are
+	// present -- so a re-login leaves the older credential in effect.
+	entry := doc.Auths["ghcr.io"]
+	if entry["email"] != "a@b.c" {
+		t.Errorf("email dropped: %v", entry["email"])
+	}
+
+	if entry["identitytoken"] != "stale-token" {
+		t.Errorf("identitytoken = %v; if this is now cleared, update docs/open-questions.md", entry["identitytoken"])
+	}
+}
+
 func TestMergeAuth_RejectsMissingFieldsAndBadJSON(t *testing.T) {
 	t.Parallel()
 
