@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -173,27 +174,36 @@ func TestCargoBuildBinaries_BuildsPlatforms(t *testing.T) {
 		}
 	}
 
-	// Verify --target was passed and used the canonical Rust triple.
-	wantTriples := map[string]bool{
-		"x86_64-unknown-linux-gnu":  false,
-		"aarch64-unknown-linux-gnu": false,
-	}
+	// Each platform is built for its own triple, in the declared order.
+	// Collecting the triples into a "seen somewhere" set could not tell that
+	// apart from building both platforms for one triple, or from swapping
+	// them -- the output directories are named after the platform, not the
+	// triple, so a swap would put an arm64 binary in dist/linux-amd64.
+	wantTriples := []string{"x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"}
 
+	gotTriples := make([]string, 0, len(tool.calls)-1)
 	for _, call := range tool.calls[1:] {
-		for i, a := range call.Args {
-			if a == "--target" && i+1 < len(call.Args) {
-				if _, ok := wantTriples[call.Args[i+1]]; ok {
-					wantTriples[call.Args[i+1]] = true
-				}
-			}
+		gotTriples = append(gotTriples, cargoTargetTriple(t, call.Args))
+	}
+
+	if !reflect.DeepEqual(gotTriples, wantTriples) {
+		t.Errorf("build triples = %v, want %v (amd64 then arm64, as declared)", gotTriples, wantTriples)
+	}
+}
+
+// cargoTargetTriple returns the value of --target in a recorded cargo call.
+func cargoTargetTriple(t *testing.T, args []string) string {
+	t.Helper()
+
+	for i, arg := range args {
+		if arg == "--target" && i+1 < len(args) {
+			return args[i+1]
 		}
 	}
 
-	for triple, seen := range wantTriples {
-		if !seen {
-			t.Errorf("expected build call with --target %s", triple)
-		}
-	}
+	t.Errorf("cargo called without --target: %v", args)
+
+	return ""
 }
 
 func TestCargoBuildBinaries_RejectsUnknownPlatform(t *testing.T) {
