@@ -6,10 +6,12 @@ package build_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
@@ -30,6 +32,24 @@ func goRunArgs(calls []appbuild.GoRunInput) []string {
 	}
 
 	return out
+}
+
+// assertGoSequence asserts the exact list of go steps, by their leading
+// verb. The full argv of each step is pinned by the unit tests in
+// go_test.go; what matters here is which steps ran, and in what order.
+func assertGoSequence(t *testing.T, calls []appbuild.GoRunInput, want ...string) {
+	t.Helper()
+
+	got := goRunArgs(calls)
+	if len(got) != len(want) {
+		t.Fatalf("go tool calls = %v, want %v", got, want)
+	}
+
+	for i, prefix := range want {
+		if !strings.HasPrefix(got[i], prefix) {
+			t.Errorf("call %d = %q, want it to start with %q", i, got[i], prefix)
+		}
+	}
 }
 
 func newGoModDir(t *testing.T) string {
@@ -58,11 +78,7 @@ func TestGoReleaseBuild_RunsFullSequenceInOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// go tool ran: download, test, compile (in that order).
-	args := goRunArgs(goTool.calls)
-	if len(args) != 3 || !strings.HasPrefix(args[0], "mod download") || !strings.HasPrefix(args[1], "test") || !strings.HasPrefix(args[2], "build") {
-		t.Fatalf("go tool calls = %v, want [download test build]", args)
-	}
+	assertGoSequence(t, goTool.calls, "mod download", "test", "build")
 
 	// SBOM tool ran once.
 	if len(sbomTool.calls) != 1 {
@@ -91,21 +107,20 @@ func TestGoReleaseBuild_SkipTests(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, a := range goRunArgs(goTool.calls) {
-		if strings.HasPrefix(a, "test") {
-			t.Errorf("test ran despite --skip-tests: %v", goRunArgs(goTool.calls))
-		}
-	}
+	// The whole remaining sequence, not just the absence of "test": a run
+	// that skipped everything would satisfy "no test step ran" too.
+	assertGoSequence(t, goTool.calls, "mod download", "build")
 }
 
 func TestGoReleaseBuild_NoBuildSBOM(t *testing.T) {
 	t.Parallel()
 	dir := newGoModDir(t)
 	sbomTool := &fakeCycloneDXGoModTool{}
+	goTool := &fakeGoTool{}
 
 	var out bytes.Buffer
 
-	err := appbuild.GoReleaseBuild(context.Background(), &recordingSummarySink{}, &fakeGoTool{}, sbomTool, &out, &out, appbuild.GoReleaseBuildInput{
+	err := appbuild.GoReleaseBuild(context.Background(), &recordingSummarySink{}, goTool, sbomTool, &out, &out, appbuild.GoReleaseBuildInput{
 		ReleaseBuildOptions: appbuild.ReleaseBuildOptions{Dir: dir, EnableBuildSBOM: false},
 		Version:             "1.2.3",
 		Platforms:           "linux/amd64",
@@ -117,6 +132,9 @@ func TestGoReleaseBuild_NoBuildSBOM(t *testing.T) {
 	if len(sbomTool.calls) != 0 {
 		t.Errorf("sbom ran despite EnableBuildSBOM=false: %d calls", len(sbomTool.calls))
 	}
+
+	// Dropping the SBOM must drop only the SBOM.
+	assertGoSequence(t, goTool.calls, "mod download", "test", "build")
 }
 
 func TestGoReleaseBuild_VersionFromRefName(t *testing.T) {
@@ -146,12 +164,21 @@ func TestGoReleaseBuild_VersionFromRefName(t *testing.T) {
 func TestGoReleaseBuild_MissingGoModFails(t *testing.T) {
 	t.Parallel()
 
-	err := appbuild.GoReleaseBuild(context.Background(), &recordingSummarySink{}, &fakeGoTool{}, &fakeCycloneDXGoModTool{}, &bytes.Buffer{}, &bytes.Buffer{}, appbuild.GoReleaseBuildInput{
+	goTool := &fakeGoTool{}
+	sbomTool := &fakeCycloneDXGoModTool{}
+
+	err := appbuild.GoReleaseBuild(context.Background(), &recordingSummarySink{}, goTool, sbomTool, &bytes.Buffer{}, &bytes.Buffer{}, appbuild.GoReleaseBuildInput{
 		ReleaseBuildOptions: appbuild.ReleaseBuildOptions{Dir: t.TempDir()},
 		Version:             "1.2.3",
 		Platforms:           "linux/amd64",
 	})
-	if err == nil || !strings.Contains(err.Error(), "go.mod") {
-		t.Fatalf("err = %v, want go.mod error", err)
+	if !errors.Is(err, errs.ErrMissingInput) {
+		t.Fatalf("err = %v, want ErrMissingInput", err)
+	}
+
+	// Metadata is resolved first precisely so an unusable module costs
+	// nothing: no download, no test run, no compile.
+	if len(goTool.calls) != 0 || len(sbomTool.calls) != 0 {
+		t.Errorf("ran tools before resolving metadata: go=%v sbom=%d", goRunArgs(goTool.calls), len(sbomTool.calls))
 	}
 }
