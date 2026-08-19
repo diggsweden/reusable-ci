@@ -192,6 +192,37 @@ func TestXcodeVersionInfo_AutoDiscoversXcodeproj(t *testing.T) {
 	if got := sink.Single("version"); got != "9.9.9" { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		t.Errorf("version = %q", got)
 	}
+
+	if got := sink.Single("build"); got != "100" {
+		t.Errorf("build = %q", got)
+	}
+}
+
+// TestXcodeVersionInfo_AutoDiscoveryIsDeterministic covers the guarantee
+// findFirstXcodeproj makes in its own comment. A repository holding an app
+// project alongside a framework project is ordinary, and which one supplies
+// the version has to be answerable without running the build -- otherwise
+// the released version could change with an unrelated rename.
+func TestXcodeVersionInfo_AutoDiscoveryIsDeterministic(t *testing.T) {
+	t.Parallel()
+
+	for range 5 {
+		fsys := testfs.NewReal(t)
+		// Written second-first, so insertion order and lexical order differ.
+		makeXcodeProject(t, fsys, "Zebra", "2.0.0", "200")
+		makeXcodeProject(t, fsys, "Alpha", "1.0.0", "100")
+
+		sink := fakeoutputsink.New(t)
+		if err := appbuild.XcodeVersionInfo(context.Background(), sink, io.Discard, output.Annotator{}, appbuild.XcodeVersionInfoInput{
+			Root: fsys.Root,
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		if got := sink.Single("version"); got != "1.0.0" {
+			t.Fatalf("version = %q, want the lexically first project's 1.0.0", got)
+		}
+	}
 }
 
 func TestXcodeVersionInfo_NoProjectFallsBackToUnknown(t *testing.T) {
