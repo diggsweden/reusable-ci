@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -48,11 +49,31 @@ func TestForgePackagesDeploy_BuildsMvnArgsFromResolvedRegistry(t *testing.T) {
 		t.Fatalf("expected 1 mvn run, got %d", len(mvn.runs))
 	}
 
-	got := strings.Join(mvn.runs[0], " ")
-	for _, want := range []string{"-B", "deploy", "-DskipTests", "--settings", "-DaltDeploymentRepository=gitlab-maven::default::https://gl/api/v4/projects/1/packages/maven"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("mvn args missing %q: %v", want, mvn.runs[0])
-		}
+	// The whole argv, in order. Joining it and looking for five substrings
+	// could not see an argument that should not be there, and matched "-B"
+	// inside any longer token. These are the arguments a deploy runs with.
+	argv := mvn.runs[0]
+	if len(argv) != 6 {
+		t.Fatalf("mvn args = %q, want six", argv)
+	}
+
+	// The settings path is generated per run, so it is taken from the argv and
+	// checked separately: it must be the temporary file the deploy credentials
+	// were written to, not an empty string or a path from elsewhere.
+	settings := argv[4]
+	if !strings.HasSuffix(settings, ".xml") || !strings.Contains(filepath.Base(settings), "reusable-ci-settings-") {
+		t.Errorf("--settings = %q, want the generated credentials file", settings)
+	}
+
+	want := []string{
+		"-B",
+		"deploy",
+		"-DskipTests",
+		"--settings", settings,
+		"-DaltDeploymentRepository=gitlab-maven::default::https://gl/api/v4/projects/1/packages/maven",
+	}
+	if !reflect.DeepEqual(argv, want) {
+		t.Errorf("mvn args = %q\nwant %q", argv, want)
 	}
 }
 
