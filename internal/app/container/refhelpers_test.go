@@ -115,6 +115,34 @@ func TestPlatformRef_ResolvesIndexChildDigest(t *testing.T) {
 	}
 }
 
+// TestPlatformRef_MatchesTheVariant covers the variant, which the index-child
+// test cannot: its two children differ by architecture, so ignoring the
+// variant entirely still picks the right one. Here both children are arm64 and
+// only the variant tells them apart -- a wrong pick ships an image for a CPU
+// the request did not ask for.
+func TestPlatformRef_MatchesTheVariant(t *testing.T) {
+	t.Parallel()
+
+	registry := &fakeRefManifestRegistry{raw: []byte(fmt.Sprintf(`{
+  "manifests": [
+    {"digest": "sha256:%064d", "platform": {"os": "linux", "architecture": "arm64", "variant": "v7"}},
+    {"digest": "sha256:%064d", "platform": {"os": "linux", "architecture": "arm64", "variant": "v8"}}
+  ]
+}`, 7, 8))}
+
+	got, err := appcontainer.PlatformRef(context.Background(), registry, appcontainer.PlatformRefInput{
+		Ref:      "example.invalid/ns/app:tag@sha256:index",
+		Platform: "linux/arm64/v8",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := fmt.Sprintf("example.invalid/ns/app@sha256:%064d", 8); got != want {
+		t.Errorf("platform ref = %q, want the v8 child %q", got, want)
+	}
+}
+
 func TestPlatformRef_ReturnsCanonicalSingleManifest(t *testing.T) {
 	t.Parallel()
 
