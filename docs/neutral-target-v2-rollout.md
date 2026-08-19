@@ -301,7 +301,21 @@ permission to edit or run provider-free tests.
   Forgejo. Portable: the reviewed-Plan aggregate on k3s GitLab. Portable remains
   GitLab-only here because its executable profile rejects credentials without
   native expiry, and Forgejo tokens have none; the run reports that skip itself.
-- [ ] Run forge-sync existing, prepare, cleanup, and recovery scenarios.
+- [x] Run forge-sync existing, prepare, cleanup, and recovery scenarios, with one
+  documented exception. `live-all` on k3s Forgejo and GitLab: prepare, inspect,
+  and 32 of 32 scenarios, 1 correctly skipped for an unconfigured Gitea, and both
+  credentials revoked by the contract's own cleanup interface — the exact step
+  that leaked a live GitLab token before the route fix.
+
+  The **recovery** commands are only partly covered. The read-only ones were
+  exercised and behave, though `live-lock-inspect` reports the ordinary
+  no-retained-lock case as a bare `lstat ... no such file or directory`, which is
+  a poor diagnostic in the one path an operator reaches while already worried.
+  `live-recover`, `live-suite-recover`, `live-lock-recover`, `live-clean`, and
+  `live-suite-clean` remain unexercised: they act only on stale state, and
+  producing stale state means simulating a crash. Note also that inspection and
+  credential cleanup are coupled — the lifecycle wrapper runs the mapped cleanup
+  command after every outcome, so a read-only inspect consumes the generation.
 - [x] Run all release-ci guarded Compose and k3s scenarios. All four:
   `artifact-roundtrip-v1`, `prepare-release-missing-secret-v1` and
   `consumer-pr-v1` on k3s, `minimal-binary-release-v1` on Compose. Every run
