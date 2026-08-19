@@ -225,13 +225,17 @@ func TestMavenLibrary_SkipTestsTrue_OmitsTestPhase(t *testing.T) {
 		t.Fatalf("expected 2 mvn invocations (compile + package) got %d: %v", len(ops.runs), ops.runs)
 	}
 
-	pkg := ops.runs[1]
-	if !contains(pkg, "-DskipTests=true") {
-		t.Errorf("package args missing -DskipTests=true: %v", pkg)
-	}
+	// Both invocations, exactly, as the profile sibling above already does.
+	// Looking for two flags in the package args said nothing about the
+	// compile invocation, nor about anything else the package run carries --
+	// and the test phase being omitted is the claim in the name.
+	wantCompile := []string{"-q", "clean", "compile"}
+	wantPackage := []string{"-q", "package", "-DskipTests=true", "-Dgpg.skip=true"}
 
-	if !contains(pkg, "-Dgpg.skip=true") {
-		t.Errorf("package args missing -Dgpg.skip=true: %v", pkg)
+	for i, want := range [][]string{wantCompile, wantPackage} {
+		if !equalArgs(ops.runs[i], want) {
+			t.Errorf("invocation %d:\n got: %v\nwant: %v", i, ops.runs[i], want)
+		}
 	}
 }
 
@@ -289,16 +293,6 @@ func equalArgs(a, b []string) bool { //nolint:varnamelen // idiomatic short name
 	return true
 }
 
-func contains(args []string, s string) bool {
-	for _, a := range args {
-		if a == s {
-			return true
-		}
-	}
-
-	return false
-}
-
 func TestMavenApplication_AddsSkipTests(t *testing.T) {
 	ops := &fakeMaven{}
 	if err := appbuild.MavenApplication(context.Background(), ops, &bytes.Buffer{}, &bytes.Buffer{}, appbuild.MavenApplicationInput{
@@ -326,13 +320,12 @@ func TestMavenApplication_OmitsSkipTestsByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// equalArgs already says -DskipTests is absent. The separate check that
+	// followed could not have found it anyway: the flag is always written
+	// -DskipTests=<bool>, so searching for the bare token never matches.
 	want := []string{"--batch-mode", "clean", "package"}
 	if !equalArgs(ops.runs[0], want) {
 		t.Errorf("args = %v, want %v", ops.runs[0], want)
-	}
-
-	if contains(ops.runs[0], "-DskipTests") {
-		t.Errorf("unexpected -DskipTests in args: %v", ops.runs[0])
 	}
 }
 
