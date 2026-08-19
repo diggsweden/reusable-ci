@@ -166,3 +166,134 @@ func TestForgePackagesDeploy_ResolverErrorIsReturned(t *testing.T) {
 		t.Errorf("expected resolver error to propagate, got %v", err)
 	}
 }
+
+// credObservation is what a probe records about the generated credentials
+// file at the moment the publish tool is invoked.
+type credObservation struct {
+	path     string
+	mode     os.FileMode
+	body     string
+	existed  bool
+	runCalls int
+}
+
+func (o *credObservation) observe(flag string, args []string) {
+	o.runCalls++
+
+	for i, a := range args {
+		if a != flag || i+1 >= len(args) {
+			continue
+		}
+
+		o.path = args[i+1]
+
+		info, err := os.Stat(o.path)
+		if err != nil {
+			return
+		}
+
+		o.existed = true
+		o.mode = info.Mode().Perm()
+
+		if body, readErr := os.ReadFile(o.path); readErr == nil { //nolint:gosec // reads the path the code under test generated.
+			o.body = string(body)
+		}
+	}
+}
+
+type mavenCredProbe struct{ obs credObservation }
+
+func (p *mavenCredProbe) RunInherit(_ context.Context, _, _ io.Writer, args ...string) error {
+	p.obs.observe("--settings", args)
+
+	return nil
+}
+
+type npmCredProbe struct{ obs credObservation }
+
+func (p *npmCredProbe) RunInherit(_ context.Context, _ string, _, _ io.Writer, args ...string) error {
+	p.obs.observe("--userconfig", args)
+
+	return nil
+}
+
+// TestForgePackages_CredentialFileIsOwnerOnlyAndRemoved covers the
+// lifetime of the generated credentials file. Both publish paths write a
+// registry token into the shared system temp directory -- a settings.xml
+// for maven, an .npmrc for npm -- and rely on a deferred cleanup.
+//
+// The existing tests take the generated path out of the argv and check
+// its name. Neither the mode it carries while the tool reads it, nor its
+// removal afterwards, was asserted: a leaked token in /tmp outlives the
+// job on any runner whose filesystem persists.
+func TestForgePackages_CredentialFileIsOwnerOnlyAndRemoved(t *testing.T) {
+	t.Parallel()
+
+	t.Run("maven settings.xml", func(t *testing.T) {
+		t.Parallel()
+
+		probe := &mavenCredProbe{}
+		resolver := fakeRegistryResolver{reg: provider.ForgeMavenRegistry{
+			ServerID: "gitlab-maven", URL: "https://gl/api/v4/projects/1/packages/maven",
+			AuthScheme: provider.MavenAuthJobTokenHeader, Token: "s3cret-token",
+		}}
+
+		if err := apppublish.ForgePackagesDeploy(context.Background(), probe, resolver, io.Discard, io.Discard,
+			apppublish.ForgePackagesDeployInput{CLIOpts: []string{"-B"}}); err != nil {
+			t.Fatal(err)
+		}
+
+		assertCredentialFileLifetime(t, &probe.obs, "s3cret-token")
+	})
+
+	t.Run("npm .npmrc", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "pkg-1.0.0.tgz"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		probe := &npmCredProbe{}
+		resolver := fakeNPMRegistryResolver{reg: provider.ForgeNPMRegistry{
+			Registry: "https://gl/api/v4/projects/1/packages/npm/", Token: "s3cret-token",
+		}}
+
+		if err := apppublish.ForgePackagesNPMPublish(context.Background(), probe, resolver, io.Discard, io.Discard,
+			apppublish.ForgePackagesNPMPublishInput{WorkingDir: dir}); err != nil {
+			t.Fatal(err)
+		}
+
+		assertCredentialFileLifetime(t, &probe.obs, "s3cret-token")
+	})
+}
+
+func assertCredentialFileLifetime(t *testing.T, obs *credObservation, wantToken string) {
+	t.Helper()
+
+	if obs.runCalls != 1 {
+		t.Fatalf("tool invoked %d times, want 1", obs.runCalls)
+	}
+
+	if !obs.existed {
+		t.Fatalf("credentials file %q did not exist while the tool ran", obs.path)
+	}
+
+	// Owner-only while it exists: it is in the shared system temp
+	// directory, so the mode is the only thing keeping another user on
+	// the host from reading the token.
+	if obs.mode != 0o600 {
+		t.Errorf("credentials file mode = %v, want 0600", obs.mode)
+	}
+
+	// It really does carry the token -- otherwise the assertions above
+	// would be about an empty file.
+	if !strings.Contains(obs.body, wantToken) {
+		t.Errorf("credentials file does not carry the token: %q", obs.body)
+	}
+
+	// And it is gone once the publish returns.
+	if _, err := os.Stat(obs.path); !os.IsNotExist(err) {
+		t.Errorf("credentials file %q survived the publish (stat err = %v)", obs.path, err)
+	}
+}
