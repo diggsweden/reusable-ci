@@ -211,3 +211,22 @@ func TestOCIImageLabelsJSON_FetchesCompactLabelsObject(t *testing.T) {
 		t.Fatalf("registry ref = %q", registry.ref)
 	}
 }
+
+// TestOCIImageLabelsJSON_UnlabelledImageIsAnEmptyObject covers an image that
+// carries no labels. The registry adapter returns a nil map and the JSON must
+// still be an object: a consumer decoding `null` into a map gets nil and reads
+// every label as absent-and-empty, which is indistinguishable from an image
+// whose labels were all blank. The code converts explicitly, and nothing
+// checked it.
+func TestOCIImageLabelsJSON_UnlabelledImageIsAnEmptyObject(t *testing.T) {
+	t.Parallel()
+
+	got, err := appcontainer.OCIImageLabelsJSON(context.Background(), &fakeLabelsRegistry{}, "example.invalid/ns/app:v1.2.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got != `{}` {
+		t.Errorf("labels JSON = %s, want an empty object", got)
+	}
+}
