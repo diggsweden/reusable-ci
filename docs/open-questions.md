@@ -116,6 +116,44 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## skopeo keeps the signing secrets that syft is given up
+
+`container image-evidence` builds two subprocess adapters in the same function:
+
+```go
+skopeoAdapter := skopeo.New()                    // no UnsetEnv
+...
+&syft.Adapter{UnsetEnv: signerSecretEnv()},      // 12 secrets scrubbed
+```
+
+`signerSecretEnv()` lists `COSIGN_KEY`, `COSIGN_PASSWORD`, `GPG_SIGNING_KEY`,
+`GPG_SIGNING_PASSWORD`, `REGISTRY_PASSWORD`, `REGISTRY_TOKEN`,
+`FORGEJO_TOKEN` and others. syft is spawned without them; skopeo is spawned
+with them.
+
+This is not an oversight of design — the machinery is there. `skopeo.Adapter`
+has its own `UnsetEnv` field, and `envWithout`, the helper that applies it, is
+**byte-identical** between `internal/adapters/skopeo` and
+`internal/adapters/syft`. Both were written; only one is wired to a caller.
+Nothing anywhere sets `UnsetEnv` on the skopeo adapter.
+
+It is defence in depth rather than a live exposure: skopeo is a trusted binary
+and is not known to log or forward its environment. But the whole point of
+scrubbing before the syft call is that a subprocess should not hold a signing
+key it has no use for, and skopeo has no more use for one than syft does.
+
+Two things to decide:
+
+- **Wire it** — `skopeo.New()` and `skopeo.WithAuthFile()` would need to carry
+  the list, or the call site set the field. One line, and it makes the two
+  adapters consistent.
+- **Deduplicate `envWithout`** — two identical copies of a security helper is
+  the shape where one gets fixed and the other does not. A leaf utility under
+  ADR 0004's third rule, as `pathsafe` and `listval` already are.
+
+The skopeo copy now has the same scrub test the syft copy has, so the field is
+at least proven to work when set.
+
 ## Appending a key to `allowed_gpg_keys.asc` does not authorise it
 
 `docs/verification.md` describes the file as "an armored public-key bundle (one
