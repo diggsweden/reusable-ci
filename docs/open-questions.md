@@ -116,6 +116,38 @@ Enforcing the documented contract is small. It is recorded rather than done
 because it would start refusing input that is accepted today, and whether any
 consumer signs by tag deliberately is not visible from here.
 
+## The cosign stderr filter is a five-word denylist
+
+`UnsafeCosignErrorLine` decides which lines of cosign's stderr may be echoed
+into the CI log when image verification fails. It matches five substrings,
+case-insensitively: `authorization`, `bearer`, `token`, `password`, `secret`.
+
+A denylist only holds back what it can name. These lines carry credential
+material and are printed verbatim:
+
+| Line | Why it slips through |
+|---|---|
+| `GET https://alice:ghp_…@ghcr.io/v2/…` | credentials in a URL, no marker word |
+| `auth failed for dXNlcjpodW50ZXIy` | base64 basic-auth without the header name |
+| `rejected eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.…` | a raw JWT |
+
+The last one is interesting because `safeexec.RedactKeyMaterial` *does* catch
+JWTs and PEM private-key markers — the two filters guard the same class of
+mistake with different rules, and neither subsumes the other. Cosign stderr on
+the verify path goes through this one.
+
+This is a last line of defence on an error path rather than the primary
+control: cosign is not known to print credentials, and the pipeline's real
+protection is that the token never reaches a place where it would be echoed.
+So it is a limit worth knowing rather than a defect to fix in passing.
+
+If it is tightened, the natural move is to route these lines through
+`RedactKeyMaterial` as well, so the JWT and private-key patterns apply here
+too, rather than lengthening the word list.
+
+Pinned in `TestUnsafeCosignErrorLine_DenylistMisses`, which fails if the
+denylist is widened so the entry gets revisited.
+
 ## `version commit-push` runs the repository's git hooks; its sibling does not
 
 The git adapter disables hooks almost everywhere — `core.hooksPath=/dev/null`
