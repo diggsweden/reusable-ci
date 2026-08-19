@@ -78,32 +78,38 @@ func GenerateContainer(
 		ContainerImage: image,
 	}
 
-	if in.ArtifactTypes == "" {
+	// The declared artifact types are reported, not iterated over: the
+	// analyzed-container layer describes the image and is the same document
+	// whichever ecosystems went into it. Generating it once per type wrote
+	// the same two files repeatedly, each run overwriting the last, at the
+	// cost of a full image scan apiece.
+	if declared := declaredArtifactTypes(in.ArtifactTypes); len(declared) == 0 {
 		_, _ = fmt.Fprintln(w, "No artifact dependencies - generating SBOM from container image only")
-
-		if err := Generate(ctx, syft, mvn, gitRepo, nil, w, stderr, gen); err != nil {
-			return err
+	} else {
+		for _, t := range declared { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+			_, _ = fmt.Fprintf(w, "Generating SBOM for artifact type: %s\n", t)
 		}
-
-		_, _ = fmt.Fprintf(w, "%s Container SBOM generation completed\n", clicolor.Check(w))
-
-		return nil
 	}
 
-	for _, t := range listval.Tokens(in.ArtifactTypes) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		t = strings.TrimSpace(t)
-		if t == "" {
-			continue
-		}
-
-		_, _ = fmt.Fprintf(w, "Generating SBOM for artifact type: %s\n", t)
-
-		if err := Generate(ctx, syft, mvn, gitRepo, nil, w, stderr, gen); err != nil {
-			return err
-		}
+	if err := Generate(ctx, syft, mvn, gitRepo, nil, w, stderr, gen); err != nil {
+		return err
 	}
 
 	_, _ = fmt.Fprintf(w, "%s Container SBOM generation completed\n", clicolor.Check(w))
 
 	return nil
+}
+
+// declaredArtifactTypes returns the non-empty, trimmed artifact types the
+// caller declared.
+func declaredArtifactTypes(raw string) []string {
+	out := make([]string, 0, 4)
+
+	for _, t := range listval.Tokens(raw) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+		if t = strings.TrimSpace(t); t != "" {
+			out = append(out, t)
+		}
+	}
+
+	return out
 }

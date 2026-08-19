@@ -89,7 +89,10 @@ func TestGenerateContainer_VPrefixStripped(t *testing.T) {
 	}
 }
 
-func TestGenerateContainer_LoopsPerArtifactType(t *testing.T) {
+// TestGenerateContainer_NamesEveryTypeButScansOnce covers a container with more
+// than one declared artifact type: each is named in the output, and the image
+// is scanned once.
+func TestGenerateContainer_NamesEveryTypeButScansOnce(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.Chdir()
 
@@ -105,20 +108,19 @@ func TestGenerateContainer_LoopsPerArtifactType(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// One scan per artifact type, and every scan is identical: same image,
-	// same two output files. The artifact type reaches the log line and
-	// nothing else -- GenerateContainer passes the same GenerateInput on
-	// every iteration -- so a second type doubles the scanning to overwrite
-	// the first result. Asserted as it is, rather than as a call count, so
-	// the duplication is visible rather than implied.
-	wantCall := syftCall{
+	// One scan, whatever the declared types. The analyzed-container layer
+	// describes the image and is the same document either way, so scanning
+	// once per type produced identical output twice -- the second run
+	// overwriting the first, at the cost of a full image scan. Both types are
+	// still named in the output below; only the scanning was duplicated.
+	want := []syftCall{{
 		target: "img@sha256:abc",
 		outputs: map[string]string{
 			"cyclonedx-json": "repo-1.0.0-analyzed-container-sbom.cyclonedx.json",
 			"spdx-json":      "repo-1.0.0-analyzed-container-sbom.spdx.json",
 		},
-	}
-	if want := []syftCall{wantCall, wantCall}; !reflect.DeepEqual(syft.calls, want) {
+	}}
+	if !reflect.DeepEqual(syft.calls, want) {
 		t.Errorf("syft calls =\n%+v\nwant\n%+v", syft.calls, want)
 	}
 
