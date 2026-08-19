@@ -307,12 +307,22 @@ func TestSignLedgerImages_ExtractsPredicateFromEnvelope(t *testing.T) {
 		t.Fatalf("predicate JSON: %v\n%s", err, signer.attests[1].predicate)
 	}
 
+	// The envelope's wrapper is gone.
 	if predicate["_type"] != nil || predicate["predicate"] != nil {
 		t.Fatalf("attested predicate still contains envelope fields: %#v", predicate)
 	}
 
-	if predicate["buildDefinition"] == nil || predicate["runDetails"] == nil {
-		t.Fatalf("predicate missing SLSA fields: %#v", predicate)
+	build := asMap(t, predicate["buildDefinition"], "buildDefinition")
+
+	// Values only the envelope could have supplied. Asserting that the SLSA
+	// fields merely exist cannot tell a predicate extracted from the envelope
+	// from one built here and the envelope ignored, which is the whole claim.
+	if got := build["buildType"]; got != "https://codeberg.org/itiquette/forgejo-ci/container-build/v1" {
+		t.Errorf("buildType = %#v, want the envelope's", got)
+	}
+
+	if got := asMap(t, asMap(t, predicate["runDetails"], "runDetails")["builder"], "builder")["id"]; got != "builder" {
+		t.Errorf("builder id = %#v, want the envelope's", got)
 	}
 }
 
