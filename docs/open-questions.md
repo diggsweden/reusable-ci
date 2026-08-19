@@ -882,6 +882,53 @@ reads as intentional defence; noted so the next reader does not spend the same
 time on it, and so no test claims to cover it. `TestGoMetadata_Refusals` names
 its case for the branch it actually reaches.
 
+## A YAML alias hides a signing secret from the build-job isolation check
+
+`CheckIsolation` is built two ways. `persistCredentialViolations` decodes each
+step into a struct, so yaml.v3 resolves anchors and merge keys before the check
+sees the value. Every other check — the build-job signing-secret scan, the
+prepare-job ordering scan, the sign call-site secrets, the release-identity and
+dist-digest wiring, and the setup-toolchain cache rule — walks `yaml.Node`
+`.Content` by hand, and a hand-walk sees an alias node as a leaf with no
+children. The anchored content is never visited.
+
+So the same workflow passes or fails depending on how it is spelled, and the
+direction is fail-open:
+
+```yaml
+x-shared: &sig
+  SIGNING_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+jobs:
+  build:
+    env: *sig        # reported: nothing
+```
+
+```yaml
+jobs:
+  build:
+    env:
+      SIGNING_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}   # reported: SLSA L3 violation
+```
+
+The merge-key spelling (`<<: *sig`) hides it too, and an anchored
+`setup-toolchain` step escapes the `cache: false` rule the same way.
+
+How much this matters depends on the forge. GitHub Actions rejects anchors in
+workflow files outright, so on GitHub the hidden spelling never runs. Forgejo
+and GitLab parse them, which is where this gate is aimed. The realistic shape
+is not evasion but drift: a maintainer factors shared `env` into an anchor and
+the L3 guarantee stops being checked without anything saying so.
+
+Two ways to close it, both small: resolve aliases before walking (follow
+`node.Alias` when `node.Kind == yaml.AliasNode`), or refuse a workflow that
+contains any alias node, since the workflows this gate guards do not use them.
+The second fails closed and cannot be got subtly wrong.
+
+Pinned in `TestCheckIsolation_YAMLAliasHidesTheSigningSecret` and
+`TestCheckIsolation_AliasedSetupToolchainEscapesTheCacheRule`, each with a
+positive control alongside so a zero count cannot come from a broken fixture.
+Both say to close this entry and delete themselves when they start failing.
+
 ## Still open in the threat model
 
 - [Profile-dependent `externalParameters` reserved keys](threat-model.md) — a
