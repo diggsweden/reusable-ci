@@ -395,6 +395,35 @@ It is recorded rather than made because the other three call sites
 what they do with an empty token, and changing a shared sanitiser to satisfy one
 caller is how the path-safety sprawl above started.
 
+## Two more unreachable guards
+
+Alongside the `readGoModulePath` case below, two guards cannot fire.
+
+`AndroidWriteSecretsProperties` refuses a secret that decodes to nothing:
+
+```go
+if len(body) == 0 {
+    return fmt.Errorf("SECRETS_PROPERTIES_BASE64 decoded to zero bytes: %w", errs.ErrValidation)
+}
+```
+
+The function opens with `if strings.TrimSpace(in.Base64) == ""` → skip, and the
+decode strips all whitespace via `strings.Fields`. So every input that could
+decode to zero bytes has already been skipped, and every input that gets past
+the skip either fails to decode or yields at least one byte. Probed across
+`""`, `" "`, `"\n"`, `"\t \n"`, `"="`, `"===="`, `"AA=="`: the guard is never
+reached.
+
+This one is worth more than a note, because a test asserted the opposite
+behaviour and passed. `TestAndroidWriteSecretsProperties_RejectsEmptyDecoded`
+was named for the refusal, carried a comment saying "Empty body after decode is
+treated as no secrets configured (skip)", and asserted `err == nil` — three
+different beliefs in one test, held together by a fixture
+(`base64.StdEncoding.EncodeToString(nil)`, which is `""`) that reaches the skip
+branch and never the guard. It has been replaced by
+`TestAndroidWriteSecretsProperties_NoSecretIsASkip`, which covers the branch
+that does run and says why the other cannot.
+
 ## An unreachable branch in `readGoModulePath`
 
 `readGoModulePath` refuses an empty module path:

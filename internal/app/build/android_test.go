@@ -479,50 +479,72 @@ func TestAndroidWriteSecretsProperties_WritesDecodedFileAtMode0600(t *testing.T)
 	}
 }
 
-func TestAndroidWriteSecretsProperties_EmptyBase64IsNoop(t *testing.T) {
-	fsys := testfs.NewReal(t)
+// TestAndroidWriteSecretsProperties_NoSecretIsASkip covers the absent
+// secret. A project with no secrets.properties configured must still
+// build, so this is a skip rather than an error.
+//
+// Every whitespace-only value reaches the same branch, which is why the
+// function's later "decoded to zero bytes" guard cannot fire -- see
+// docs/open-questions.md.
+func TestAndroidWriteSecretsProperties_NoSecretIsASkip(t *testing.T) {
+	t.Parallel()
 
-	var out bytes.Buffer
-	if err := appbuild.AndroidWriteSecretsProperties(&out, appbuild.AndroidWriteSecretsPropertiesInput{
-		Dir: fsys.Root,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	for _, tc := range []struct{ name, base64 string }{
+		{name: "unset", base64: ""},
+		{name: "whitespace only", base64: " \n\t "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	if _, err := os.Stat(fsys.Path("secrets.properties")); !os.IsNotExist(err) {
-		t.Errorf("secrets.properties should not be written when base64 is empty (err=%v)", err)
-	}
+			fsys := testfs.NewReal(t)
 
-	if !strings.Contains(out.String(), "skipping") {
-		t.Errorf("missing skip log: %s", out.String())
+			var out bytes.Buffer
+
+			if err := appbuild.AndroidWriteSecretsProperties(&out, appbuild.AndroidWriteSecretsPropertiesInput{
+				Base64: tc.base64,
+				Dir:    fsys.Root,
+			}); err != nil {
+				t.Fatalf("err = %v, want a skip", err)
+			}
+
+			// An empty secrets.properties is not the same as none: the
+			// gradle secrets plugin reads the file if it exists, so
+			// writing an empty one would mask a missing secret rather
+			// than leave the build to fail on the real cause.
+			if _, err := os.Stat(fsys.Path("secrets.properties")); !os.IsNotExist(err) {
+				t.Errorf("wrote secrets.properties with nothing to put in it (stat err = %v)", err)
+			}
+
+			if !strings.Contains(out.String(), "skipping") {
+				t.Errorf("missing skip log: %s", out.String())
+			}
+		})
 	}
 }
 
 func TestAndroidWriteSecretsProperties_RejectsInvalidBase64(t *testing.T) {
+	t.Parallel()
+
 	fsys := testfs.NewReal(t)
 
-	err := appbuild.AndroidWriteSecretsProperties(io.Discard, appbuild.AndroidWriteSecretsPropertiesInput{
+	var out bytes.Buffer
+
+	err := appbuild.AndroidWriteSecretsProperties(&out, appbuild.AndroidWriteSecretsPropertiesInput{
 		Base64: "!!!not-base64!!!",
 		Dir:    fsys.Root,
 	})
-	if err == nil || !strings.Contains(err.Error(), "decode secrets.properties") {
-		t.Fatalf("err = %v, want decode error", err)
-	}
-}
-
-func TestAndroidWriteSecretsProperties_RejectsEmptyDecoded(t *testing.T) {
-	fsys := testfs.NewReal(t)
-	err := appbuild.AndroidWriteSecretsProperties(io.Discard, appbuild.AndroidWriteSecretsPropertiesInput{
-		Base64: base64.StdEncoding.EncodeToString(nil),
-		Dir:    fsys.Root,
-	})
-	// Empty body after decode is treated as "no secrets configured" (skip).
-	if err != nil {
-		t.Fatalf("err = %v, want skip", err)
+	if !errors.Is(err, errs.ErrMalformedInput) {
+		t.Fatalf("err = %v, want ErrMalformedInput", err)
 	}
 
-	if _, err := os.Stat(fsys.Path("secrets.properties")); !os.IsNotExist(err) {
-		t.Errorf("empty body should not be written")
+	// A secret that is present but unusable is an error, unlike an absent
+	// one -- so it must not be quietly downgraded to the skip above.
+	if strings.Contains(out.String(), "skipping") {
+		t.Errorf("reported a skip for a malformed secret: %s", out.String())
+	}
+
+	if _, statErr := os.Stat(fsys.Path("secrets.properties")); !os.IsNotExist(statErr) {
+		t.Errorf("left a secrets.properties behind (stat err = %v)", statErr)
 	}
 }
 
