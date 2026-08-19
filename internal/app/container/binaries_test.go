@@ -5,6 +5,7 @@ package container_test
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"reflect"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
@@ -101,20 +103,39 @@ func TestSuffixExtractedBinaries_MissingExpectedNameErrors(t *testing.T) {
 	}
 }
 
-func TestSuffixExtractedBinaries_MissingDirErrors(t *testing.T) {
-	if err := appcontainer.SuffixExtractedBinaries(io.Discard, appcontainer.SuffixExtractedBinariesInput{
-		Dir: "/nonexistent", Arch: "amd64",
-	}); err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-func TestSuffixExtractedBinaries_RequiresArch(t *testing.T) {
+// TestSuffixExtractedBinaries_RefusesUnusableInput names why each refusal
+// happens. Both rows asserted only that some error came back, which any
+// failure satisfies -- including one from a later stage for an unrelated
+// reason.
+//
+// The missing-directory row points inside the test's own temp directory. It
+// named /nonexistent, a real host path, which nothing here writes to but which
+// a test has no business naming.
+func TestSuffixExtractedBinaries_RefusesUnusableInput(t *testing.T) {
 	fsys := testfs.NewReal(t)
-	if err := appcontainer.SuffixExtractedBinaries(io.Discard, appcontainer.SuffixExtractedBinariesInput{
-		Dir: fsys.Root,
-	}); err == nil {
-		t.Fatal("expected error")
+
+	for name, testCase := range map[string]struct {
+		in   appcontainer.SuffixExtractedBinariesInput
+		want error
+	}{
+		"the directory does not exist": {
+			in:   appcontainer.SuffixExtractedBinariesInput{Dir: fsys.Path("no-such-dir"), Arch: "amd64"},
+			want: errs.ErrMissingInput,
+		},
+		"no directory given": {
+			in:   appcontainer.SuffixExtractedBinariesInput{Arch: "amd64"},
+			want: errs.ErrUsage,
+		},
+		"no architecture given": {
+			in:   appcontainer.SuffixExtractedBinariesInput{Dir: fsys.Root},
+			want: errs.ErrUsage,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := appcontainer.SuffixExtractedBinaries(io.Discard, testCase.in); !errors.Is(err, testCase.want) {
+				t.Errorf("err = %v, want %v", err, testCase.want)
+			}
+		})
 	}
 }
 
