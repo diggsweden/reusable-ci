@@ -5,6 +5,7 @@ package security_test
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/security"
@@ -164,4 +165,114 @@ func firstPartialFingerprints(t *testing.T, body []byte) map[string]any {
 	}
 
 	return fp
+}
+
+// TestEnrichGitHubSARIF_PreservesEverythingElse covers the reason the
+// function decodes into `any` at all: per its doc comment it "preserves
+// the SARIF document's other fields untouched". Every other test reads
+// only runs[0].results[0].partialFingerprints, so a rewrite that dropped
+// the tool driver, the rule metadata or the schema would pass them all
+// -- and Code Scanning renders alerts from exactly those fields.
+//
+// The input already carries a hash on every result, so enrichment has
+// nothing to add and the document must come back semantically identical.
+func TestEnrichGitHubSARIF_PreservesEverythingElse(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [{
+    "tool": {"driver": {
+      "name": "opengrep",
+      "semanticVersion": "1.2.3",
+      "rules": [{"id": "RULE", "help": {"text": "do not do that"}, "properties": {"tags": ["security"]}}]
+    }},
+    "invocations": [{"executionSuccessful": true}],
+    "results": [{
+      "ruleId": "RULE",
+      "level": "error",
+      "message": {"text": "boom"},
+      "locations": [{"physicalLocation":{"artifactLocation":{"uri":"a.go"},"region":{"startLine":12,"snippet":{"text":"x := 1"}}}}],
+      "partialFingerprints": {"primaryLocationLineHash": "kept"},
+      "properties": {"confidence": "HIGH"}
+    }]
+  }]
+}`)
+
+	got, err := security.EnrichGitHubSARIF(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var before, after any
+	if err := json.Unmarshal(body, &before); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := json.Unmarshal(got, &after); err != nil {
+		t.Fatalf("output is not valid SARIF JSON: %v", err)
+	}
+
+	if !reflect.DeepEqual(before, after) {
+		t.Errorf("document changed\nbefore: %#v\nafter:  %#v", before, after)
+	}
+}
+
+// TestEnrichGitHubSARIF_EnrichesEveryResultInEveryRun covers the two
+// loops. A document from a multi-tool scan has several runs, and any
+// result left without a fingerprint gets a fresh alert ID on every push
+// -- the exact problem this function exists to prevent. Stopping after
+// the first result, or the first run, satisfied every other test here.
+func TestEnrichGitHubSARIF_EnrichesEveryResultInEveryRun(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+  "runs": [
+    {"results": [
+      {"ruleId": "A", "message": {"text": "first"}, "locations": [{"physicalLocation":{"artifactLocation":{"uri":"a.go"},"region":{"startLine":1}}}]},
+      {"ruleId": "B", "message": {"text": "second"}, "locations": [{"physicalLocation":{"artifactLocation":{"uri":"b.go"},"region":{"startLine":2}}}]}
+    ]},
+    {"results": [
+      {"ruleId": "C", "message": {"text": "third"}, "locations": [{"physicalLocation":{"artifactLocation":{"uri":"c.go"},"region":{"startLine":3}}}]}
+    ]}
+  ]
+}`)
+
+	got, err := security.EnrichGitHubSARIF(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var doc struct {
+		Runs []struct {
+			Results []struct {
+				PartialFingerprints map[string]string `json:"partialFingerprints"`
+			} `json:"results"`
+		} `json:"runs"`
+	}
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+
+	want := [][]string{
+		{"A|a.go|1|first", "B|b.go|2|second"},
+		{"C|c.go|3|third"},
+	}
+
+	if len(doc.Runs) != len(want) {
+		t.Fatalf("runs = %d, want %d", len(doc.Runs), len(want))
+	}
+
+	for i, wantRun := range want {
+		if len(doc.Runs[i].Results) != len(wantRun) {
+			t.Fatalf("run %d results = %d, want %d", i, len(doc.Runs[i].Results), len(wantRun))
+		}
+
+		for j, wantHash := range wantRun {
+			if got := doc.Runs[i].Results[j].PartialFingerprints["primaryLocationLineHash"]; got != wantHash {
+				t.Errorf("run %d result %d hash = %q, want %q", i, j, got, wantHash)
+			}
+		}
+	}
 }
