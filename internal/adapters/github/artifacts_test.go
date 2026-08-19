@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -332,6 +333,92 @@ func TestProvider_DownloadRunArtifact_PatternSeparateDirs(t *testing.T) {
 // TestProvider_DownloadRunArtifact_RejectsZipTraversal proves the shared
 // SafeJoin guard now protects the GitHub zip path too: a malicious entry
 // escaping the destination is refused and writes nothing outside.
+// buildZipWithSymlink returns a zip carrying one symlink entry pointing
+// at target, plus one ordinary file. A symlink is stored as an entry
+// whose mode has fs.ModeSymlink and whose body is the link target.
+func buildZipWithSymlink(t *testing.T, linkName, target string) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+
+	zw := zip.NewWriter(&buf)
+
+	hdr := &zip.FileHeader{Name: linkName, Method: zip.Deflate}
+	hdr.SetMode(fs.ModeSymlink | 0o777)
+
+	w, err := zw.CreateHeader(hdr)
+	if err != nil {
+		t.Fatalf("CreateHeader: %v", err)
+	}
+
+	if _, writeErr := w.Write([]byte(target)); writeErr != nil {
+		t.Fatalf("write link target: %v", writeErr)
+	}
+
+	plain, err := zw.Create("ordinary.txt")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if _, writeErr := plain.Write([]byte("data")); writeErr != nil {
+		t.Fatalf("write: %v", writeErr)
+	}
+
+	if err := zw.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	return buf.Bytes()
+}
+
+// TestProvider_DownloadRunArtifact_RejectsZipSymlink covers the guard the
+// traversal test cannot reach. A symlink entry carries no ".." in its own
+// name, so SafeJoin passes it; the escape happens when the link is
+// followed — either by a later entry in the same archive writing through
+// it, or by a build step reading the extracted tree.
+//
+// extractZipInto rejects symlink entries outright, and nothing asserted
+// that. The upload side has an equivalent test (forgejo
+// TestUploadRunArtifact_SkipsSymlinks); this is the download side.
+func TestProvider_DownloadRunArtifact_RejectsZipSymlink(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ name, link, target string }{
+		{name: "absolute target", link: "innocent.txt", target: "/etc/passwd"},
+		{name: "relative escape", link: "innocent.txt", target: "../../outside"},
+		{name: "directory link", link: "subdir", target: ".."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := serveArtifactZip(t, buildZipWithSymlink(t, tc.link, tc.target))
+
+			p := &github.Provider{
+				Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
+				APIBaseOverride: srv.URL(),
+			}
+
+			dir := t.TempDir()
+
+			_, err := p.DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Name: "build-artifacts", Dir: dir, RunID: "9876"})
+			if !errors.Is(err, errs.ErrValidation) {
+				t.Fatalf("err = %v, want ErrValidation (symlink entry rejected)", err)
+			}
+
+			// Refused for the whole archive, not just the one entry: the
+			// ordinary file alongside it must not be left behind either,
+			// or a caller could act on a partial extraction.
+			if _, statErr := os.Stat(filepath.Join(dir, "ordinary.txt")); statErr == nil {
+				t.Error("extracted a sibling entry from an archive that was refused")
+			}
+
+			if _, statErr := os.Lstat(filepath.Join(dir, tc.link)); statErr == nil {
+				t.Error("the symlink itself was created")
+			}
+		})
+	}
+}
+
 func TestProvider_DownloadRunArtifact_RejectsZipTraversal(t *testing.T) {
 	t.Parallel()
 
