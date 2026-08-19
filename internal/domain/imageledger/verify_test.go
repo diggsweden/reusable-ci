@@ -6,6 +6,7 @@ package imageledger_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -110,5 +111,63 @@ func TestValidate_StrictCandidateAndMovingRules(t *testing.T) {
 	wrong.CandidateTag = "codeberg.org/itiquette/gommitlint:staging-v1.2.3-arm64"
 	if err := wrong.Validate("v1.2.3"); !errors.Is(err, errs.ErrValidation) {
 		t.Errorf("mismatched candidate suffix should be rejected, got %v", err)
+	}
+}
+
+// TestVerify_ChecksEveryEntry covers the loop. A ledger carries one entry
+// per built image, and every test above passes a slice of one -- so a
+// Verify that stopped after the first entry would satisfy all of them
+// while waving through every image behind it. That is the whole point of
+// re-verifying at the trust boundary: the build and sign stages are
+// separate, and this is what stops an entry the registry does not back
+// from being signed.
+func TestVerify_ChecksEveryEntry(t *testing.T) {
+	t.Parallel()
+
+	good := validEntry()
+
+	// A second image in the same release, whose recorded digest the
+	// registry does not serve under any of its refs.
+	bad := validEntry()
+	bad.Role = "static"
+	bad.Ref = "codeberg.org/itiquette/gommitlint-static@" + goodDigest
+	bad.FinalTag = "codeberg.org/itiquette/gommitlint-static:v1.2.3"
+
+	otherDigest := "sha256:" + "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	resolver := fakeResolver{
+		good.FinalTag: goodDigest,
+		good.Ref:      goodDigest,
+		bad.FinalTag:  otherDigest,
+		bad.Ref:       otherDigest,
+	}
+
+	for _, tc := range []struct {
+		name    string
+		entries []imageledger.Entry
+	}{
+		{name: "bad entry last", entries: []imageledger.Entry{good, bad}},
+		{name: "bad entry first", entries: []imageledger.Entry{bad, good}},
+		{name: "bad entry in the middle", entries: []imageledger.Entry{good, bad, good}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := imageledger.Verify(context.Background(), resolver, tc.entries, "v1.2.3")
+			if !errors.Is(err, errs.ErrValidation) {
+				t.Fatalf("err = %v, want ErrValidation", err)
+			}
+
+			// The message names which entry failed; with several images
+			// in a release, "something did not verify" is not actionable.
+			if !strings.Contains(err.Error(), "gommitlint-static") {
+				t.Errorf("error should name the failing image: %v", err)
+			}
+		})
+	}
+
+	// The all-good ledger still passes, so the cases above fail for the
+	// reason claimed rather than because multiple entries break Verify.
+	if err := imageledger.Verify(context.Background(), resolver, []imageledger.Entry{good, good}, "v1.2.3"); err != nil {
+		t.Errorf("all-matching ledger rejected: %v", err)
 	}
 }
