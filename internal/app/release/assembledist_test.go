@@ -111,6 +111,34 @@ func TestAssembleDist_DownloadsTransferPlanAndWarnsForOptionalFailures(t *testin
 	}
 }
 
+// TestAssembleDist_AcceptsAnAbsolutePathInsideTheWorkspace pins the other half
+// of the containment rule. --path may be absolute -- a caller can set $DIST_DIR
+// to one -- as long as it resolves inside the working directory, so the check
+// added for the destructive prune does not cost that.
+func TestAssembleDist_AcceptsAnAbsolutePathInsideTheWorkspace(t *testing.T) {
+	chdirTempForAssembleDist(t)
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFileForAssembleDist(t, filepath.Join("dist", "top.txt"), "keep\n")
+	writeFileForAssembleDist(t, filepath.Join("dist", "nested", "file"), "pruned\n")
+
+	if _, err := apprelease.AssembleDist(context.Background(), &assembleDistDownloader{}, fakeoutputsink.New(t), nil, apprelease.AssembleDistInput{
+		ArtifactTransferPlanJSON: `{"version":1,"items":[]}`,
+		Path:                     filepath.Join(cwd, "dist"),
+		PruneDirs:                true,
+	}); err != nil {
+		t.Fatalf("absolute path inside the workspace was refused: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join("dist", "nested")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("nested directory survived prune: %v", err)
+	}
+}
+
 // TestAssembleDist_MergesLedgersKeepingFirstSeenOrder covers the release image
 // ledger merge: several inputs, named individually or as a directory to search,
 // combined into the one file a release publishes.
@@ -256,6 +284,16 @@ func TestAssembleDist_RefusesBadInput(t *testing.T) {
 		{
 			name: "artifact names and a transfer plan together",
 			in:   apprelease.AssembleDistInput{Path: "dist/", ArtifactNames: "build", ArtifactTransferPlanJSON: `{"version":1,"items":[]}`},
+			want: errs.ErrUsage,
+		},
+		{
+			name: "the assemble path climbs out of the workspace",
+			in:   apprelease.AssembleDistInput{Path: "../outside", ArtifactNames: "build"},
+			want: errs.ErrUsage,
+		},
+		{
+			name: "the assemble path is absolute and outside",
+			in:   apprelease.AssembleDistInput{Path: "/tmp", ArtifactNames: "build"},
 			want: errs.ErrUsage,
 		},
 		{

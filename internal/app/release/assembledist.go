@@ -56,6 +56,10 @@ func AssembleDist(ctx context.Context, dl provider.RunArtifactDownloader, sink d
 		return AssembleDistResult{}, err
 	}
 
+	if err := validateAssembleDistPath(path); err != nil {
+		return AssembleDistResult{}, err
+	}
+
 	if err := validateSafeRelativePath(releaseImagesPath, "release-images-path", false); err != nil {
 		return AssembleDistResult{}, err
 	}
@@ -457,6 +461,39 @@ func pruneAssembleDistDirs(dir string) error {
 func validateSingleLineValue(value, label string) error {
 	if value == "" || strings.ContainsAny(value, "\n\r") {
 		return fmt.Errorf("%s must be a non-empty single-line value: %w", label, errs.ErrUsage)
+	}
+
+	return nil
+}
+
+// validateAssembleDistPath requires the assemble target to resolve inside the
+// working directory.
+//
+// This path is downloaded into, digested, and — with --prune-dirs — walked with
+// os.RemoveAll over every subdirectory. Its two neighbours here,
+// release-images-path and each transfer item path, already go through
+// validateSafeRelativePath; the one flag that deletes went unchecked beyond
+// being non-empty and single-line, so `--path ../somewhere --prune-dirs`
+// removed directories outside the workspace.
+//
+// Containment rather than a relative-path rule: an absolute path is fine as
+// long as it lands inside. The command already treats the working directory as
+// the workspace, since transfer item paths and the default "dist/" resolve
+// against it, so anchoring here matches what everything else already assumes.
+func validateAssembleDistPath(path string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("upload-dist: resolve working directory: %w", err)
+	}
+
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("upload-dist: resolve path %s: %w", path, err)
+	}
+
+	rel, err := filepath.Rel(cwd, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("path must stay inside the working directory: %s: %w", path, errs.ErrUsage)
 	}
 
 	return nil
