@@ -285,18 +285,52 @@ adding a temporary v1 compatibility layer.
 This phase requires explicit disposable-lab authorization and is not implied by
 permission to edit or run provider-free tests.
 
-- [ ] Freeze new v1 target generation.
-- [ ] Inventory current and retired v1 target generations and consumer claims.
-- [ ] Invoke each v1 generation's advertised frozen cleanup command.
-- [ ] Verify no v1 credentials, claims, recovery evidence, or cleanup runtimes
+- [x] Freeze new v1 target generation.
+- [x] Inventory current and retired v1 target generations and consumer claims.
+- [x] Invoke each v1 generation's advertised frozen cleanup command.
+- [x] Verify no v1 credentials, claims, recovery evidence, or cleanup runtimes
   remain.
-- [ ] Emit one fresh v2 generation.
+- [x] Emit one fresh v2 generation.
 - [ ] Run forge-tidy extended and portable scenarios.
 - [ ] Run forge-sync existing, prepare, cleanup, and recovery scenarios.
 - [ ] Run all release-ci guarded Compose and k3s scenarios.
 - [ ] Run reusable-ci OCI and keyless Fulcio scenarios.
 - [ ] Verify provider resources, OCI artifacts, credentials, recovery evidence,
   and cleanup runtimes are absent after each run.
+
+### Cutover Notes
+
+The v1 inventory found more than the plan assumed. One live Compose generation
+held its credential, and two orphaned Forgejo tokens from retired k3s
+generations had no recovery evidence at all and appeared in no local state.
+Only a provider-side token listing found them.
+
+The one live v1 generation was not cleanable through its advertised interface.
+Its `credential_cleanup.command` named the live Forge Lab source path, because
+it predates the frozen-runtime work, and current v2 source correctly refuses to
+parse v1. The hard-break policy line "existing v1 generations remain cleanable
+only through their advertised, generation-bound frozen cleanup commands" did
+not hold for generations minted before that runtime existed. Retirement used a
+pre-v2 source snapshot, which is what the refusal diagnostic recommends.
+
+## Defects Found Only By Running Live
+
+Provider-free gates cannot see any of these. All five were found in the first
+hours of the guarded cutover, after every Phase 6 gate had passed.
+
+| Defect | Effect | Fix |
+| --- | --- | --- |
+| v1 refusal was classified only for a caller-selected JSON, not for the JSON reached through caller-selected recovery evidence | A still-live v1 credential reported a bare schema error, hiding the one cleanup path that worked | Forge Lab `29c4beb` |
+| `just test-blackbox-scripts` broken by `17c95fe`: `sort` used but absent from the sandbox allowlist; a new stub short-circuited GitLab Rails revocation, making an older assertion unsatisfiable; `lab_gl_pat_metadata_via_api` had no stub | The suite is not part of `verify-pr`, so the rollout's "all gates pass" record was incomplete | Forge Lab `29c4beb` |
+| Bearer-challenge parser required exactly two attributes; Forgejo and Gitea send a standard third (`scope`) | Neutral-v2 emission could not authenticate to the lab's own registry at all | Forge Lab `67d59f5` |
+| The `access`-claim grant proof is unimplementable on Forgejo and Gitea, whose token service returns `{"token":…}` and a payload carrying no grant; separately, the durable `fx-container` fixture reads anonymously, so the manifest probe proves topology rather than credential usability | Emission impossible for two of four kinds, and would have silently proven nothing if the claim check were merely dropped | Forge Lab `67d59f5` |
+| Bound-token self-revocation is impossible on Forgejo and Gitea: token auth, and the token offered as a basic-auth password, both answer `401`; only the account secret is accepted | Every v2 Forgejo generation was uncleanable through its advertised interface — the lab minted credentials it could not retire | Forge Lab `9b43d23` |
+
+Three of these are one failure repeated: implemented from a specification,
+verified against a stub built from the same specification, never run against the
+software. In each case the test asserted a status code or a document shape while
+the defect lived in which credential went on the wire. The fixes pin the method
+per provider, not only the result.
 
 ## Rollback
 
@@ -348,7 +382,15 @@ generation.
 - Provider-free tests cannot prove real token scopes, OCI cleanup, Fulcio
   issuance, or source-rollback cleanup. Those claims require the guarded live
   phase.
-- The guarded live cutover has not been attempted. It requires separate explicit
-  authorization for disposable Forge Lab provider state.
+- The guarded live cutover is under way. Its first hours found five defects that
+  every provider-free gate passed over, in code this plan already recorded as
+  verified. A completed provider-free gate is therefore not evidence that a
+  rollout is complete, and this plan should not be marked done on one again.
+- Forgejo and Gitea publish no per-repository grant in their registry token and
+  accept no token authority on token deletion. Both facts narrow what neutral-v2
+  can promise for those kinds: registry push is inferred from an authenticated
+  namespace owner rather than read from a grant, and a generation's cleanup
+  runtime holds account-level authority for its endpoint owner rather than only
+  a scoped token. A Gitea-family endpoint belongs to a disposable account.
 - Existing uncommitted work must remain reviewable and must not be hidden inside
   broad v2 commits.
