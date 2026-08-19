@@ -136,6 +136,24 @@ func TestDownloadArtifacts_RefusesAnInvalidItemBeforeFetchingIt(t *testing.T) {
 			want: "empty path",
 		},
 		{
+			name: "path climbs out of the workspace",
+			plan: `{"version":1,"items":[{"kind":"build_artifact","name":"app","path":"../../../etc/"}]}`,
+			want: "unsafe path",
+		},
+		{
+			name: "path is absolute",
+			plan: `{"version":1,"items":[{"kind":"build_artifact","name":"app","path":"/etc/"}]}`,
+			want: "unsafe path",
+		},
+		{
+			// The invalid item is second. Validation used to run inside the
+			// download loop, so the first item was already fetched by the time
+			// this plan was refused.
+			name: "a later item is invalid",
+			plan: `{"version":1,"items":[{"kind":"build_artifact","name":"good","path":"./release-artifacts/","required":true},{"kind":"unknown","name":"bad","path":"./x/"}]}`,
+			want: `artifact transfer kind "unknown" is invalid`,
+		},
+		{
 			name: "unresolved template",
 			plan: `{"version":1,"items":[{"kind":"build_artifact","name_template":"app-{other}","path":"./release-artifacts/"}]}`,
 			want: "unresolved placeholders",

@@ -302,9 +302,13 @@ func TestAssembleDist_RefusesBadInput(t *testing.T) {
 			want: errs.ErrUsage,
 		},
 		{
+			// A bad value inside the plan is a configuration error, while a
+			// bad value the operator typed is a usage error. The plan is
+			// machine-generated JSON crossing a process boundary, so the class
+			// follows where the value came from rather than what it is.
 			name: "transfer item path climbs out of the workspace",
 			in:   apprelease.AssembleDistInput{Path: "dist/", ArtifactTransferPlanJSON: `{"version":1,"items":[{"kind":"build_artifact","name":"build","path":"../dist","required":true}]}`},
-			want: errs.ErrUsage,
+			want: errs.ErrInvalidConfig,
 		},
 		{
 			name:         "ledger is not an array",

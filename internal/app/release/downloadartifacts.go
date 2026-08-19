@@ -5,7 +5,6 @@ package release
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -31,20 +30,14 @@ func DownloadArtifacts(ctx context.Context, dl provider.RunArtifactDownloader, s
 		return fmt.Errorf("artifact-transfer-plan-json is required: %w", errs.ErrUsage)
 	}
 
-	var plan pipeline.ArtifactTransferPlan
-	if err := json.Unmarshal([]byte(in.ArtifactTransferPlanJSON), &plan); err != nil {
-		return fmt.Errorf("parse artifact-transfer-plan-json: %w: %w", err, errs.ErrInvalidConfig)
-	}
-
-	if plan.Version != pipeline.ArtifactTransferPlanVersion {
-		return fmt.Errorf("artifact transfer plan has unsupported version %d: %w", plan.Version, errs.ErrInvalidConfig)
+	// The whole plan is validated before anything is fetched, so a refused
+	// plan leaves the workspace as it found it.
+	plan, err := pipeline.ParseArtifactTransferPlan(in.ArtifactTransferPlanJSON)
+	if err != nil {
+		return err
 	}
 
 	for _, item := range plan.Items {
-		if err := pipeline.ValidateArtifactTransferItem(item); err != nil {
-			return err
-		}
-
 		name, err := transferArtifactName(item, in.RunID)
 		if err != nil {
 			return err

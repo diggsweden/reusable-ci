@@ -130,13 +130,11 @@ func downloadAssembleArtifactsFromPlan(ctx context.Context, dl provider.RunArtif
 		return fmt.Errorf("artifact-transfer-plan-json and artifact-names are mutually exclusive: %w", errs.ErrUsage)
 	}
 
-	var plan pipeline.ArtifactTransferPlan
-	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
-		return fmt.Errorf("parse artifact-transfer-plan-json: %w: %w", err, errs.ErrInvalidConfig)
-	}
-
-	if plan.Version != pipeline.ArtifactTransferPlanVersion {
-		return fmt.Errorf("artifact-transfer-plan-json must be reusable-ci artifact transfer plan version %d: %w", pipeline.ArtifactTransferPlanVersion, errs.ErrInvalidConfig)
+	// Validated whole before the first download, so a plan refused on its
+	// third item has not already fetched the first two.
+	plan, err := pipeline.ParseArtifactTransferPlan(raw)
+	if err != nil {
+		return err
 	}
 
 	for _, item := range plan.Items {
@@ -153,18 +151,6 @@ func downloadAssembleArtifactsFromPlan(ctx context.Context, dl provider.RunArtif
 }
 
 func downloadAssemblePlanItem(ctx context.Context, dl provider.RunArtifactDownloader, stderr io.Writer, item pipeline.ArtifactTransfer, runID, repository string) error {
-	if err := pipeline.ValidateArtifactTransferItem(item); err != nil {
-		return err
-	}
-
-	if err := validateArtifactTransferText(item); err != nil {
-		return err
-	}
-
-	if err := validateSafeRelativePath(item.Path, "artifact transfer path", true); err != nil {
-		return err
-	}
-
 	name, err := transferArtifactName(item, runID)
 	if err != nil {
 		return err
@@ -506,18 +492,6 @@ func validateSafeRelativePath(path, label string, rejectTab bool) error {
 
 	if rejectTab && strings.Contains(path, "\t") {
 		return fmt.Errorf("%s must be a safe relative path: %s: %w", label, path, errs.ErrUsage)
-	}
-
-	return nil
-}
-
-func validateArtifactTransferText(item pipeline.ArtifactTransfer) error {
-	if strings.ContainsAny(item.Name, "\t\n\r") {
-		return fmt.Errorf("artifact transfer name must be a single-line value: %w", errs.ErrInvalidConfig)
-	}
-
-	if strings.ContainsAny(item.NameTemplate, "\t\n\r") {
-		return fmt.Errorf("artifact transfer name_template must be a single-line value: %w", errs.ErrInvalidConfig)
 	}
 
 	return nil

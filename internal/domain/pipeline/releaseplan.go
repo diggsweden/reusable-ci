@@ -5,7 +5,9 @@ package pipeline
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
@@ -127,11 +129,70 @@ func ValidateArtifactTransferItem(item ArtifactTransfer) error {
 		return fmt.Errorf("artifact transfer must set exactly one of name/name_template: %w", errs.ErrInvalidConfig)
 	}
 
+	if strings.ContainsAny(item.Name, "\t\n\r") {
+		return fmt.Errorf("artifact transfer name must be a single-line value: %w", errs.ErrInvalidConfig)
+	}
+
+	if strings.ContainsAny(item.NameTemplate, "\t\n\r") {
+		return fmt.Errorf("artifact transfer name_template must be a single-line value: %w", errs.ErrInvalidConfig)
+	}
+
 	if strings.TrimSpace(item.Path) == "" {
 		return fmt.Errorf("artifact transfer %q has empty path: %w", cmp.Or(name, tmpl, "artifact"), errs.ErrInvalidConfig)
 	}
 
+	// The path decides where a downloaded artifact is unpacked. It is
+	// re-validated here rather than trusted, because the plan crosses a
+	// process boundary as JSON and this is the field that reaches the
+	// filesystem.
+	if !safeTransferPath(item.Path) {
+		return fmt.Errorf("artifact transfer %q has an unsafe path %q: %w", cmp.Or(name, tmpl, "artifact"), item.Path, errs.ErrInvalidConfig)
+	}
+
 	return nil
+}
+
+// safeTransferPath reports whether path stays within the working directory:
+// relative, no parent-directory step, no embedded newline.
+func safeTransferPath(path string) bool {
+	if path == "" || filepath.IsAbs(path) || strings.ContainsAny(path, "\t\n\r") {
+		return false
+	}
+
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if part == ".." {
+			return false
+		}
+	}
+
+	return true
+}
+
+// ParseArtifactTransferPlan decodes and fully validates a transfer plan.
+//
+// Validating here, once, rather than per item as each is acted on, is what
+// makes a refused plan mean nothing happened: DownloadArtifacts used to
+// validate inside its download loop, so a plan whose second item was invalid
+// had already fetched the first. Both consumers of the plan now share this
+// entry point, which also stops them disagreeing about what a valid item is --
+// only one of them checked the path.
+func ParseArtifactTransferPlan(raw string) (ArtifactTransferPlan, error) {
+	var plan ArtifactTransferPlan
+	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
+		return ArtifactTransferPlan{}, fmt.Errorf("parse artifact-transfer-plan-json: %w: %w", err, errs.ErrInvalidConfig)
+	}
+
+	if plan.Version != ArtifactTransferPlanVersion {
+		return ArtifactTransferPlan{}, fmt.Errorf("artifact transfer plan has unsupported version %d: %w", plan.Version, errs.ErrInvalidConfig)
+	}
+
+	for _, item := range plan.Items {
+		if err := ValidateArtifactTransferItem(item); err != nil {
+			return ArtifactTransferPlan{}, err
+		}
+	}
+
+	return plan, nil
 }
 
 // IsArtifactTransferKind reports whether kind is a known transfer kind.
