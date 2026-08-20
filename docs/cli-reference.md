@@ -19,7 +19,7 @@ Every command supports `--help`. Global flags (`--quiet`, `--log-level`, `--form
 - [`build`](#reusable-ci-build) — toolchain build wrappers (go, cargo, maven, npm, gradle, gradle-android, xcode-ios, swift)
 - [`config`](#reusable-ci-config) — artifacts.yml schema helpers
 - [`container`](#reusable-ci-container) — container-image helpers (name resolution, manifests, namespace policy, tag/label metadata, …)
-- [`doctor`](#reusable-ci-doctor) — run setup-validation checks against the current repository (artifacts.yml present + valid, release-authorization allowlist when required, workflow id-token permission for sigstore, workflows pin reusable-ci to a tag)
+- [`doctor`](#reusable-ci-doctor) — run setup-validation checks against the current repository (artifacts.yml present + valid, release-authorization allowlist when required, workflow id-token permission for sigstore, workflows pin reusable-ci to a tag, gradle publishing prerequisites when an artifact publishes via gradle)
 - [`plan`](#reusable-ci-plan) — typed release, snapshot-release, and pull-request plan composition
 - [`platform`](#reusable-ci-platform) — introspect the CI runtime (debug workspace, resolve refs, check out a repo)
 - [`publish`](#reusable-ci-publish) — publish-side pre-flight validators and output helpers
@@ -690,7 +690,7 @@ write a validated digest marker file for manifest merging
 
 ## `reusable-ci doctor`
 
-run setup-validation checks against the current repository (artifacts.yml present + valid, release-authorization allowlist when required, workflow id-token permission for sigstore, workflows pin reusable-ci to a tag)
+run setup-validation checks against the current repository (artifacts.yml present + valid, release-authorization allowlist when required, workflow id-token permission for sigstore, workflows pin reusable-ci to a tag, gradle publishing prerequisites when an artifact publishes via gradle)
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
