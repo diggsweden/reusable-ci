@@ -460,3 +460,91 @@ func TestTagSignature_GPG_V6KeyDoesNotDegradeToNoAllowlist(t *testing.T) {
 		t.Errorf("reported as having no allowlist, but the file is present:\n%s", out.String())
 	}
 }
+
+// The warn-and-proceed branch had no test at all, though its
+// fail-closed twin did (TestTagSignature_GPG_UnverifiableRequireFailsClosed,
+// same inputs with the flag on). It is the one place where a release
+// continues despite a tag signature that could not be checked against
+// the allowlist: an allowlist IS present, the signature did not verify
+// against it, and require-authorization is off.
+//
+// Two things have to hold, and only one of them is obvious. The obvious
+// one is that it warns. The other is that it warns *loudly enough to be
+// seen*: the annotation is what lands in the forge's annotations pane,
+// and a release that silently proceeded on an unverifiable signature
+// with only a line of stdout would look identical to one that verified.
+
+// TestTagSignature_GPG_UnverifiableWarnsAndProceeds covers the branch
+// itself. The signer's key is not in the committed bundle, so
+// verification cannot conclude; with enforcement off, that is a warning.
+func TestTagSignature_GPG_UnverifiableWarnsAndProceeds(t *testing.T) {
+	t.Parallel()
+
+	keyArmor, _ := armoredPublicKey(t)
+
+	// verifySigOK=false with an allowlist present: the tag is signed by
+	// somebody, but not by anyone whose key is committed.
+	gitr := &fakeTagGit{body: gpgSignedTagBody, verifySigOK: false}
+
+	var out bytes.Buffer
+
+	annot := output.NewAnnotator(&out, output.FormatGitHub)
+
+	err := appvalidate.TagSignature(context.Background(), gitr, &out, annot, appvalidate.TagSignatureInput{
+		Tag:                      "v1.0.0",
+		RequireAllowlistedSigner: false,
+		AllowedGPGKeysPath:       writeGPGKeysFile(t, keyArmor),
+	})
+	if err != nil {
+		t.Fatalf("with require-authorization off this must warn, not fail: %v\n%s", err, out.String())
+	}
+
+	body := out.String()
+
+	// The forge-visible annotation, not just the stdout line. On GitHub
+	// this is the ::warning:: form that reaches the annotations pane.
+	if !strings.Contains(body, "::warning") {
+		t.Errorf("no forge annotation was emitted, so the skip is invisible in the run summary:\n%s", body)
+	}
+
+	if !strings.Contains(body, "enforcement skipped") {
+		t.Errorf("the operator is not told enforcement was skipped:\n%s", body)
+	}
+
+	// It must not read as a success.
+	if strings.Contains(body, "Signer fingerprint is authorised") {
+		t.Errorf("an unverifiable signature was reported as authorised:\n%s", body)
+	}
+}
+
+// TestTagSignature_GPG_UnverifiableIsNotTheNoAllowlistWarning keeps the
+// two warn-and-proceed paths distinct. "No allowlist committed" and
+// "an allowlist exists but this signature does not match it" call for
+// different actions from the operator, and the second is the more
+// serious: somebody signed the tag with a key nobody authorised.
+func TestTagSignature_GPG_UnverifiableIsNotTheNoAllowlistWarning(t *testing.T) {
+	t.Parallel()
+
+	keyArmor, _ := armoredPublicKey(t)
+	gitr := &fakeTagGit{body: gpgSignedTagBody, verifySigOK: false}
+
+	var out bytes.Buffer
+
+	if err := appvalidate.TagSignature(context.Background(), gitr, &out,
+		output.NewAnnotator(&out, output.FormatGitHub), appvalidate.TagSignatureInput{
+			Tag:                      "v1.0.0",
+			RequireAllowlistedSigner: false,
+			AllowedGPGKeysPath:       writeGPGKeysFile(t, keyArmor),
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := out.String()
+	if strings.Contains(body, "NO signer allowlist") {
+		t.Errorf("reported as having no allowlist, but one is committed:\n%s", body)
+	}
+
+	if !strings.Contains(body, "could not be verified") {
+		t.Errorf("the warning does not say the signature was unverifiable:\n%s", body)
+	}
+}
