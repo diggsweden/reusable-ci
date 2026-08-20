@@ -1230,6 +1230,29 @@ Two ways to close it, and they differ in ambition:
 Stated in `TestMockbinary_RequiresItsHostDependencies`, which fails with
 "mockbinary needs jq on PATH" instead of a JSON parse error.
 
+### One unit-tier test needs real git
+
+The same sweep — every unit test binary run from its own package directory
+against a PATH with coreutils but no domain tools — turned up exactly one other
+host dependency, and only one:
+
+`TestPinReachability_ChecksEveryPinInEveryFile` in `internal/app/validate` builds
+a real repository through `isolatedgit` and drives `PinReachability` against it
+with `realPinGit{}`. Every other real-git test in the repository carries
+`//go:build integration`; this one does not, so it sits in the tier `just test`
+runs first and treats as fast and self-contained. It fails hard rather than
+silently, which is the right direction, but on a runner without git it fails as
+`exec: "git": executable file not found` from a unit run.
+
+Either tag it `integration` alongside its peers, or give it the fake `pinGit`
+the other cases in that file already use — the reachability logic is what the
+test is about, and the real repository is there to make the fixture concrete
+rather than to test git.
+
+**The rest of the unit tier is clean.** 90 packages, none needing git, gpg,
+cosign, skopeo, buildah, mise, npm, cargo, maven, apt or ssh-keygen. That is
+worth stating as a result rather than only noting the two exceptions.
+
 ## Still open in the threat model
 
 - [Profile-dependent `externalParameters` reserved keys](threat-model.md) — a
