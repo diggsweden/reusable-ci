@@ -981,6 +981,51 @@ Pinned in `TestRemoteTagCommitFromOutput_PeeledMatchIsNotNameChecked`, which
 documents today's behaviour and says to close this entry and delete itself when
 it starts failing.
 
+## A missing `allowed_signers` file is reported as a signer denial
+
+`VerifyTagSSHAgainstAllowedSigners` documents its contract as:
+
+> err non-nil: the tag isn't signed, isn't annotated, **the file is missing**,
+> or git itself errored — distinguished by combined-output parsing.
+
+The distinction is not made. Denial is detected by one string:
+
+```go
+if strings.Contains(msg, "No principal matched") {
+    return false, msg, fmt.Errorf("tag %q signature is valid but signer is not in allowed_signers: %w", ...)
+}
+```
+
+and git prints `No principal matched.` for all three of: a genuinely
+unauthorised key, an empty allowed_signers file, and a missing one. So a
+misspelled path comes back as `ErrPermissionDenied` — the sentinel that means
+"this signer is not authorised", which the orchestrator maps to exit 77. The
+operator is told their key is untrusted when the real problem is a path.
+
+git does supply the distinction; the match just does not look for it:
+
+```
+Unable to open allowed keys file "/…/absent": No such file or directory
+sig_find_principals: sshsig_find_principal: No such file or directory
+No principal matched.
+```
+
+**Unreachable today, and fail-closed.** Both callers stat the path before they
+get here — `checkSSHSignerAllowlist` in `app/validate/tags.go`, which has its
+own missing-file branch (warn when `require-authorization` is off, refuse when
+it is on), and `requireNonEmptyFile` in `app/release/verifyreleaserequest.go`.
+Nothing reaches the adapter with a path that does not exist.
+
+What is worth recording is the shape, which recurs: the adapter's doc comment
+describes a guarantee that lives one layer up in its callers. Anyone reading
+this function to decide whether a new caller needs its own check would conclude
+it does not.
+
+The fix is one more condition on the match. Pinned in
+`TestVerifyTagSSHAgainstAllowedSigners_MissingFileReadsAsADenial`, which also
+asserts git still prints the missing-file line — if that ever stops being true,
+the fix would need a different signal.
+
 ## Still open in the threat model
 
 - [Profile-dependent `externalParameters` reserved keys](threat-model.md) — a
