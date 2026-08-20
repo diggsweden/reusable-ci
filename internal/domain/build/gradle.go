@@ -9,6 +9,20 @@ import (
 	"time"
 )
 
+// GradleBuildScripts is the ordered list of filenames that count as a
+// Gradle build script. The first existing file wins — Gradle itself
+// follows the same precedence (Kotlin DSL preferred over Groovy when
+// both exist, but in practice projects pick one).
+//
+// Shared so the reproducibility validator and the publish doctor agree
+// on what a build script is; a future third DSL filename is added once.
+//
+//nolint:gochecknoglobals // ordered enumeration of well-known filenames.
+var GradleBuildScripts = []string{
+	"build.gradle.kts",
+	"build.gradle",
+}
+
 // RenderGradleInitScript returns the Kotlin init script body that
 // applies the cyclonedx plugin to all projects.
 //

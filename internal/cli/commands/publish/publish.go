@@ -20,6 +20,7 @@ func New() *cli.Command {
 		Commands: []*cli.Command{
 			appStoreCmd(),
 			googlePlayCmd(),
+			gradleCmd(),
 			mavenCentralCmd(),
 			npmCmd(),
 		},

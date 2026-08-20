@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/internal/clicolor"
+	"github.com/diggsweden/reusable-ci/internal/domain/build"
 	"github.com/diggsweden/reusable-ci/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/internal/domain/pipeline"
@@ -257,17 +258,6 @@ func failMavenMissing(dir, reason string, out io.Writer, annot output.Annotator)
 	_, _ = fmt.Fprintf(out, "  Reference: https://maven.apache.org/guides/mini/guide-reproducible-builds.html\n")
 }
 
-// gradleBuildScripts is the ordered list of filenames `checkGradle`
-// considers a build script. The first existing file wins — Gradle
-// itself follows the same precedence (Kotlin DSL preferred over
-// Groovy when both exist, but in practice projects pick one).
-//
-//nolint:gochecknoglobals // ordered enumeration of well-known filenames.
-var gradleBuildScripts = []string{
-	"build.gradle.kts",
-	"build.gradle",
-}
-
 // checkGradleReproducibility returns true when the Gradle artefact at
 // dir satisfies the reproducibility invariant. False = a hard violation
 // that JVMReproducibility surfaces as ErrValidation.
@@ -278,7 +268,7 @@ func checkGradleReproducibility(dir string, out io.Writer, annot output.Annotato
 		err  error
 	)
 
-	for _, name := range gradleBuildScripts {
+	for _, name := range build.GradleBuildScripts {
 		candidate := filepath.Join(dir, name)
 
 		body, err = os.ReadFile(candidate) //nolint:gosec // candidate is dir+hardcoded basename; dir already validated.

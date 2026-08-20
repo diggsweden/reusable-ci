@@ -855,6 +855,22 @@ find an AAB artifact and emit aab-file
 
 validate GOOGLE_PLAY_SERVICE_ACCOUNT_JSON is present and looks like a Google service-account key
 
+### `reusable-ci publish gradle`
+
+publish gradle artifacts from source
+
+#### `reusable-ci publish gradle deploy`
+
+run the target's gradle publish task with credentials bound as ORG_GRADLE_PROJECT_\* properties
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--target` | publish destination: github-packages or maven-central | `$PUBLISH_TARGET` |
+| `--tasks` | override the target-derived publish task (e.g. publishToMavenCentral for the vanniktech plugin) | `$GRADLE_PUBLISH_TASKS` |
+| `--working-directory` | directory containing ./gradlew | `$WORKING_DIRECTORY` |
+| `--fingerprint` | signing key fingerprint emitted by 'release gpg import' (required for maven-central) | `$GPG_FINGERPRINT` |
+| `--key-id` | signing key id emitted by 'release gpg import' (required for maven-central) | `$GPG_KEY_ID` |
+
 ### `reusable-ci publish maven-central`
 
 maven central pre-flight checks
