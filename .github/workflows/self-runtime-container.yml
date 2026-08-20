@@ -43,6 +43,15 @@ on:
       # pilot consumers can resolve :v3-pre / :sha-<sha> before v3.0.0 ships.
       # Remove this branch entry once the rewrite merges and is tagged.
       - feat/refactor-go
+      # Temporary: the gradle publish path needs a runtime image carrying a
+      # binary that has `publish gradle deploy` — every published image
+      # predates it. workflow_dispatch cannot supply one either: this file
+      # does not exist on the default branch (main is still v2), so GitHub
+      # offers no Run-workflow button for it. A push entry is the only
+      # trigger available. Tags produced are sha-<sha> and the branch ref;
+      # :v3-pre stays pinned to feat/refactor-go and is not disturbed.
+      # DELETE this entry before opening the feature PR.
+      - test/gradle-publish-e2e
     tags:
       - "v*.*.*"
       # Exclude the rolling CLI pre-release tag (v3.0.0-pre): it's created by this
