@@ -1180,6 +1180,56 @@ failing. Its sibling `TestPublicKey_StderrIsRedacted` is a positive control on
 a marker the redactor does know, so the two together separate "the redactor is
 unwired" from "this format is unlisted".
 
+## The most-used test double depends on undeclared host binaries
+
+`internal/testutil/mockbinary` is the most widely used double in the suite — 29
+test files across 23 packages — and it is the one piece of test infrastructure
+that is not self-contained. Each stub is a bash script that builds its JSON
+recording by shelling out to `jq`:
+
+```sh
+printf '"args":%s,' "$(printf '%s\n' "$@" | jq -R . | jq -s -c .)"
+```
+
+So every one of those packages needs `bash` and `jq` on the host PATH. Neither
+is declared: not in `.mise.toml`, not in `docs/testing.md`, not in the
+`justfile`. `jq` is in the runtime image, which is why this has never bitten —
+and absent from a plain `golang:alpine`.
+
+Probed by rebuilding the unit tier's test binaries and running them against a
+PATH holding coreutils but no domain tools. Without `jq` the stub writes
+
+```
+{"name":,"args":,"stdin":,"cwd":}
+```
+
+and the test fails with
+
+```
+mockbinary: parse line 1: invalid character ',' looking for beginning of value
+```
+
+which names neither `jq` nor `bash`.
+
+**The failure is loud, and that part is right.** `Invocations` calls `t.Fatalf`
+on a malformed line rather than skipping it, so no assertion can pass vacuously
+against an empty recording — a test looping over invocations looking for a
+leaked secret cannot come back clean because the recording never got written.
+That property is worth keeping whatever else changes here.
+
+Two ways to close it, and they differ in ambition:
+
+- **Declare the dependency** — add `jq` to `.mise.toml` and name it in
+  `docs/testing.md`. One line, keeps the helper as it is.
+- **Remove it** — have the stub write a delimiter-separated record with
+  `printf` alone and parse that Go-side, which drops both `jq` and `bash` and
+  makes the unit tier genuinely self-contained. Slightly more work, and it is
+  the version that matches what the rest of the suite already does (`testfs`,
+  `fakegitlabserver`, `isolatedenv` need nothing from the host).
+
+Stated in `TestMockbinary_RequiresItsHostDependencies`, which fails with
+"mockbinary needs jq on PATH" instead of a JSON parse error.
+
 ## Still open in the threat model
 
 - [Profile-dependent `externalParameters` reserved keys](threat-model.md) — a
