@@ -121,6 +121,10 @@ func Run(in Input) ([]Check, error) {
 		checkWorkflowVersionRefs(root, repoSlug),
 	)
 
+	// Silent unless an artifact actually publishes through the Gradle
+	// toolchain, so existing adopters see no new output.
+	checks = append(checks, checkGradlePublishing(root, cfg.Artifacts)...)
+
 	return checks, nil
 }
 
