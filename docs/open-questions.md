@@ -1026,6 +1026,59 @@ The fix is one more condition on the match. Pinned in
 asserts git still prints the missing-file line — if that ever stops being true,
 the fix would need a different signal.
 
+## A v6 OpenPGP key in `allowed_gpg_keys.asc` authorises nobody
+
+`AllowedFingerprintSet.Add` accepts exactly 40 hex characters:
+
+```go
+func isValidFingerprint(s string) bool {
+    if len(s) != 40 { // OpenPGP primary-key fingerprint length
+        return false
+    }
+```
+
+That is the **v4** length. A v6 primary-key fingerprint (RFC 9580) is 32 bytes,
+so it renders as 64 characters and `Add` returns false. `buildGPGAllowlist`
+discards that return value, so nothing reports it.
+
+Probed end to end with a v6 entity:
+
+```
+PrimaryFingerprints -> [837F…14D8]   (64 characters, parsed fine)
+Add(…) -> false
+set.Len() -> 0
+```
+
+So a project that commits a v6 key gets an allowlist with nothing in it. The
+signature still verifies — the key is in the keyring handed to the verifier —
+and then the fingerprint lookup fails:
+
+```
+tag signer fingerprint 837F…14D8 is not authorised (0 key(s) in .reusable-ci/allowed_gpg_keys.asc)
+```
+
+naming a count of zero for a file the operator can see holds a key.
+
+**This fails closed, in both directions.** `allowlistPresent` is decided by the
+file having bytes, not by the derived set being non-empty, so an allowlist that
+derives to zero keys is still an allowlist: it is not downgraded to "no
+allowlist present", which with `require-authorization=false` would warn and
+accept any valid signature. Both directions are pinned.
+
+Reachability is the open part. gnupg generates v4 by default today, and v6
+support arrived in 2.5.x; the fingerprint length is the only thing that has to
+change for a project to hit this. It is the same operability shape as the
+appended-armor-block entry above: the file looks right, the allowlist is
+narrower than the file, and only a count hints at it.
+
+The fix is to accept both lengths — `len(s) != 40 && len(s) != 64` — which
+widens nothing, since the values still have to come out of the committed key
+material. Whether to also surface a discarded `Add` is the second half.
+
+Pinned in `TestTagSignature_GPG_V6KeyIsNotAuthorised` and
+`TestTagSignature_GPG_V6KeyDoesNotDegradeToNoAllowlist`, the first of which
+says to close this entry and delete itself when it starts failing.
+
 ## Still open in the threat model
 
 - [Profile-dependent `externalParameters` reserved keys](threat-model.md) — a

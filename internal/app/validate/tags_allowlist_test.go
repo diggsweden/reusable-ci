@@ -15,6 +15,7 @@ import (
 
 	gocrypto "github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
+	"github.com/ProtonMail/go-crypto/openpgp/packet"
 
 	adapteropenpgp "github.com/diggsweden/reusable-ci/v3/internal/adapters/openpgp"
 	appvalidate "github.com/diggsweden/reusable-ci/v3/internal/app/validate"
@@ -332,5 +333,130 @@ func TestTagSignature_SSH_NoAllowlistNoRequireWarns(t *testing.T) {
 
 	if !strings.Contains(out.String(), "⚠️ No SSH signer allowlist") {
 		t.Errorf("missing SSH no-allowlist warning:\n%s", out.String())
+	}
+}
+
+// armoredV6PublicKey mints a v6 (RFC 9580) entity and returns its
+// armored public key plus the fingerprint PrimaryFingerprints derives
+// from it -- 64 hex characters, because a v6 primary-key fingerprint is
+// 32 bytes rather than v4's 20.
+func armoredV6PublicKey(t *testing.T) ([]byte, string) {
+	t.Helper()
+
+	entity, err := gocrypto.NewEntity("V6 Signer", "ci", "v6@example.com", &packet.Config{V6Keys: true})
+	if err != nil {
+		t.Skipf("cannot mint a v6 key with this go-crypto: %v", err)
+	}
+
+	var buf bytes.Buffer
+
+	writer, err := armor.Encode(&buf, gocrypto.PublicKeyType, nil)
+	if err != nil {
+		t.Fatalf("armor.Encode: %v", err)
+	}
+
+	if err = entity.Serialize(writer); err != nil {
+		t.Fatalf("Serialize public key: %v", err)
+	}
+
+	_ = writer.Close()
+
+	fps, err := adapteropenpgp.PrimaryFingerprints(buf.Bytes())
+	if err != nil || len(fps) != 1 {
+		t.Fatalf("PrimaryFingerprints: %v (n=%d)", err, len(fps))
+	}
+
+	if len(fps[0]) != 64 {
+		t.Fatalf("fixture is not a v6 key: fingerprint is %d characters", len(fps[0]))
+	}
+
+	return buf.Bytes(), fps[0]
+}
+
+// TestTagSignature_GPG_V6KeyIsNotAuthorised records what happens when
+// allowed_gpg_keys.asc holds a modern OpenPGP key.
+//
+// AllowedFingerprintSet.Add accepts exactly 40 hex characters -- the v4
+// primary-key fingerprint length -- and returns false for anything else.
+// A v6 fingerprint is 32 bytes, so it renders as 64 characters and is
+// dropped. buildGPGAllowlist discards Add's return value, so nothing
+// says so.
+//
+// The outcome is fail-closed, which is why this is recorded rather than
+// treated as a hole: the file is non-empty, so the allowlist counts as
+// present, and the signer is refused. What the operator is told is that
+// their fingerprint "is not authorised (0 key(s) in
+// .reusable-ci/allowed_gpg_keys.asc)" -- naming a count of zero for a
+// file they can see holds a key.
+//
+// Recorded in docs/open-questions.md ("A v6 OpenPGP key in
+// allowed_gpg_keys.asc authorises nobody").
+func TestTagSignature_GPG_V6KeyIsNotAuthorised(t *testing.T) {
+	t.Parallel()
+
+	keyArmor, fpr := armoredV6PublicKey(t)
+
+	// The signature itself verifies: the key is in the keyring handed to
+	// the verifier. Only the allowlist lookup fails.
+	gitr := &fakeTagGit{
+		body:                 gpgSignedTagBody,
+		verifySigOK:          true,
+		verifySigFingerprint: fpr,
+		verifySigSigner:      "V6 Signer <v6@example.com>",
+	}
+
+	var out bytes.Buffer
+
+	err := appvalidate.TagSignature(context.Background(), gitr, &out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.TagSignatureInput{
+		Tag:                      "v1.0.0",
+		RequireAllowlistedSigner: true,
+		AllowedGPGKeysPath:       writeGPGKeysFile(t, keyArmor),
+	})
+	if err == nil {
+		t.Fatalf("a v6 key now authorises its own signer -- close the open question and delete this test\n%s", out.String())
+	}
+
+	// Fail-closed is the part that must not regress: a derived allowlist
+	// that came out empty must never be treated as "no allowlist", which
+	// warns and passes when require-authorization is off.
+	if !errors.Is(err, errs.ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied", err)
+	}
+
+	if !strings.Contains(err.Error(), "0 key(s)") {
+		t.Errorf("the count in the refusal is no longer zero, so the allowlist may now hold the key: %v", err)
+	}
+}
+
+// TestTagSignature_GPG_V6KeyDoesNotDegradeToNoAllowlist is the fail-open
+// direction of the same defect, and the one that would matter. With
+// require-authorization off, a file that derives to an empty allowlist
+// must still be an allowlist: treating it as absent would warn and pass,
+// accepting any valid signature.
+func TestTagSignature_GPG_V6KeyDoesNotDegradeToNoAllowlist(t *testing.T) {
+	t.Parallel()
+
+	keyArmor, fpr := armoredV6PublicKey(t)
+
+	gitr := &fakeTagGit{
+		body:                 gpgSignedTagBody,
+		verifySigOK:          true,
+		verifySigFingerprint: fpr,
+		verifySigSigner:      "V6 Signer <v6@example.com>",
+	}
+
+	var out bytes.Buffer
+
+	err := appvalidate.TagSignature(context.Background(), gitr, &out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.TagSignatureInput{
+		Tag:                      "v1.0.0",
+		RequireAllowlistedSigner: false,
+		AllowedGPGKeysPath:       writeGPGKeysFile(t, keyArmor),
+	})
+	if err == nil {
+		t.Fatalf("a present allowlist that derived to zero keys was treated as absent and the signer accepted:\n%s", out.String())
+	}
+
+	if strings.Contains(out.String(), "NO signer allowlist") {
+		t.Errorf("reported as having no allowlist, but the file is present:\n%s", out.String())
 	}
 }
