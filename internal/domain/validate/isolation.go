@@ -374,6 +374,11 @@ func nodeContainsSecretRef(node *yaml.Node, secret string) bool {
 // re, returning its source line (accurate, from the original document) and the
 // captured secret name.
 func findSecretRef(node *yaml.Node, re *regexp.Regexp) (int, string, bool) {
+	node = resolveAlias(node)
+	if node == nil {
+		return 0, "", false
+	}
+
 	if node.Kind == yaml.ScalarNode {
 		if m := re.FindStringSubmatch(node.Value); m != nil {
 			if len(m) > 1 {
@@ -393,28 +398,98 @@ func findSecretRef(node *yaml.Node, re *regexp.Regexp) (int, string, bool) {
 	return 0, "", false
 }
 
+// aliasDepthLimit bounds alias resolution. Valid YAML cannot nest
+// aliases indefinitely, but a hand-built node tree could, and this walk
+// runs over caller-supplied files.
+const aliasDepthLimit = 100
+
+// resolveAlias follows an alias node to the content it names.
+//
+// The checks in this file walk yaml.Node trees by hand, and a hand-walk
+// sees an alias as a childless leaf: the anchored content is never
+// visited. That made the same workflow pass or fail depending on how it
+// was spelled, in the fail-open direction -- moving a build job's env
+// behind an anchor hid its signing secrets from the SLSA Build L3 check.
+//
+// Anchors are not exotic here. This repository's own consumer-facing
+// workflow_call files use them for shared `if:` conditions, so refusing
+// them outright was not an option; every reader has to resolve instead.
+func resolveAlias(node *yaml.Node) *yaml.Node {
+	for depth := 0; node != nil && node.Kind == yaml.AliasNode; depth++ {
+		if depth >= aliasDepthLimit {
+			return nil
+		}
+
+		node = node.Alias
+	}
+
+	return node
+}
+
 func jobSteps(job yaml.Node) []yaml.Node {
-	stepsNode := mappingValue(&job, "steps")
+	stepsNode := resolveAlias(mappingValue(&job, "steps"))
 	if stepsNode == nil || stepsNode.Kind != yaml.SequenceNode {
 		return nil
 	}
 
 	steps := make([]yaml.Node, 0, len(stepsNode.Content))
+
 	for _, step := range stepsNode.Content {
-		steps = append(steps, *step)
+		if resolved := resolveAlias(step); resolved != nil {
+			steps = append(steps, *resolved)
+		}
 	}
 
 	return steps
 }
 
+// mappingValue returns the value for key, following aliases and honouring
+// the merge key (`<<`). A key written directly wins over a merged one,
+// which is what the YAML merge-key spec says and what a reader expects.
 func mappingValue(node *yaml.Node, key string) *yaml.Node {
+	node = resolveAlias(node)
 	if node == nil || node.Kind != yaml.MappingNode {
 		return nil
 	}
 
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		if node.Content[i].Value == key {
-			return node.Content[i+1]
+	var merged []*yaml.Node
+
+	for idx := 0; idx+1 < len(node.Content); idx += 2 {
+		if node.Content[idx].Value == key {
+			return resolveAlias(node.Content[idx+1])
+		}
+
+		if node.Content[idx].Value == "<<" {
+			merged = append(merged, node.Content[idx+1])
+		}
+	}
+
+	// Merge sources are searched only after every direct key, so a key
+	// written on the mapping wins over one pulled in by `<<`.
+	return mergedValue(merged, key)
+}
+
+// mergedValue searches `<<` merge sources for key, in order. A merge
+// value may be one mapping or a sequence of them.
+func mergedValue(sources []*yaml.Node, key string) *yaml.Node {
+	for _, source := range sources {
+		source = resolveAlias(source)
+		if source == nil {
+			continue
+		}
+
+		if source.Kind == yaml.SequenceNode {
+			for _, item := range source.Content {
+				if found := mappingValue(item, key); found != nil {
+					return found
+				}
+			}
+
+			continue
+		}
+
+		if found := mappingValue(source, key); found != nil {
+			return found
 		}
 	}
 
@@ -422,6 +497,7 @@ func mappingValue(node *yaml.Node, key string) *yaml.Node {
 }
 
 func scalarValue(node *yaml.Node) string {
+	node = resolveAlias(node)
 	if node == nil || node.Kind != yaml.ScalarNode {
 		return ""
 	}

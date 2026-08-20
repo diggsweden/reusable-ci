@@ -6,25 +6,29 @@ package validate_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/validate"
 )
 
 // The isolation checker is built two ways. persistCredentialViolations
-// decodes each step into a struct, which makes yaml.v3 resolve aliases and
-// merge keys before the check ever sees the value. Every other check walks
-// yaml.Node.Content by hand, and a hand-walk sees an alias node as a leaf
-// with no children -- the anchored content is never visited.
+// decodes each step into a struct, so yaml.v3 resolves aliases and merge
+// keys before the check sees the value. Every other check walks
+// yaml.Node.Content by hand, and a hand-walk saw an alias node as a leaf
+// with no children -- the anchored content was never visited.
 //
-// The consequence is that the same workflow passes or fails depending on
-// how it is spelled, and the direction is fail-OPEN: writing the secret
-// through an anchor makes the SLSA Build L3 check report nothing. These
-// tests pin both halves, with a positive control alongside each, so the
-// pair is what fails when the walk learns to follow aliases.
+// That made the same workflow pass or fail depending on how it was
+// spelled, in the fail-OPEN direction: writing a build job's env behind
+// an anchor hid its signing secrets from the SLSA Build L3 check.
+// resolveAlias now closes it in every hand-walk.
 //
-// Recorded as an open question in docs/open-questions.md ("A YAML alias
-// hides a signing secret from the build-job isolation check"); the tests
-// here document today's behaviour rather than assert it is right.
+// Anchors matter here rather than being exotic: this repository's own
+// consumer-facing workflow_call files use them for shared `if:`
+// conditions, which is also why refusing them outright was not an option.
+//
+// Each test pairs the anchored spelling with the plain one, so a check
+// that stopped resolving fails on the first and a check that stopped
+// working entirely fails on both.
 
 const aliasLeakWorkflow = `
 x-shared: &sig
@@ -75,10 +79,9 @@ func TestCheckIsolation_BuildJobSecretIsFoundWhenWrittenDirectly(t *testing.T) {
 	}
 }
 
-// TestCheckIsolation_YAMLAliasHidesTheSigningSecret records the gap. If
-// this test starts failing, the hand-walk learned to follow aliases:
-// delete the test and close the open question.
-func TestCheckIsolation_YAMLAliasHidesTheSigningSecret(t *testing.T) {
+// TestCheckIsolation_YAMLAliasDoesNotHideTheSigningSecret covers both
+// anchored spellings a workflow can use to reach the same value.
+func TestCheckIsolation_YAMLAliasDoesNotHideTheSigningSecret(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -91,9 +94,13 @@ func TestCheckIsolation_YAMLAliasHidesTheSigningSecret(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := checkBuildJob(t, tc.body); len(got) != 0 {
-				t.Fatalf("the alias blindness is fixed -- violations = %v.\n"+
-					"Close the open question and delete this test.", got)
+			got := checkBuildJob(t, tc.body)
+			if len(got) != 1 {
+				t.Fatalf("violations = %v, want the signing secret reported through the alias", got)
+			}
+
+			if !strings.Contains(got[0].Msg, "COSIGN_PRIVATE_KEY") {
+				t.Errorf("violation does not name the secret: %q", got[0].Msg)
 			}
 		})
 	}
@@ -160,11 +167,11 @@ jobs:
 	}
 }
 
-// TestCheckIsolation_AliasedSetupToolchainEscapesTheCacheRule is the same
-// blindness reached through a different check: in release isolation mode
-// setup-toolchain must run with cache: false, and an anchored step is not
-// examined at all -- so a cached toolchain passes.
-func TestCheckIsolation_AliasedSetupToolchainEscapesTheCacheRule(t *testing.T) {
+// TestCheckIsolation_AliasedSetupToolchainStillMeetsTheCacheRule is the
+// same resolution reached through a different check: in release isolation
+// mode setup-toolchain must run with cache: false, and an anchored step
+// is examined like any other.
+func TestCheckIsolation_AliasedSetupToolchainStillMeetsTheCacheRule(t *testing.T) {
 	t.Parallel()
 
 	const direct = `
@@ -201,9 +208,8 @@ jobs:
 		t.Fatal(err)
 	}
 
-	if len(got) != 0 {
-		t.Fatalf("the alias blindness is fixed -- violations = %v.\n"+
-			"Close the open question and delete this test.", got)
+	if len(got) != 1 || !strings.Contains(got[0].Msg, "cache: false") {
+		t.Fatalf("violations = %v, want the cache rule reported through the alias", got)
 	}
 }
 
@@ -242,4 +248,86 @@ func checkBuildJob(t *testing.T, body string) []validate.IsolationViolation {
 	}
 
 	return got
+}
+
+// TestCheckIsolation_MergeKeyPrecedence covers the one place alias
+// resolution can go wrong quietly. A key written directly on the mapping
+// must win over one pulled in by `<<`, per the merge-key spec -- reading
+// the merged value instead would report a workflow's shared default
+// rather than what the job actually sets.
+func TestCheckIsolation_MergeKeyPrecedence(t *testing.T) {
+	t.Parallel()
+
+	// The shared block sets cache: false; this step overrides it to true.
+	// The override is the truth, and it is the violation.
+	const overridden = `
+x-with: &shared
+  cache: false
+jobs:
+  build:
+    steps:
+      - uses: itiquette/forgejo-ci/setup-toolchain@1111111111111111111111111111111111111111
+        with:
+          <<: *shared
+          cache: true
+`
+
+	got, err := validate.CheckIsolation([]byte(overridden), validate.IsolationConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got) != 1 || !strings.Contains(got[0].Msg, "cache: false") {
+		t.Fatalf("violations = %v, want the direct cache: true to win over the merged default", got)
+	}
+
+	// And the reverse: the merged value is used when the job sets nothing.
+	const inherited = `
+x-with: &shared
+  cache: false
+jobs:
+  build:
+    steps:
+      - uses: itiquette/forgejo-ci/setup-toolchain@1111111111111111111111111111111111111111
+        with:
+          <<: *shared
+`
+
+	got, err = validate.CheckIsolation([]byte(inherited), validate.IsolationConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got) != 0 {
+		t.Fatalf("violations = %v, want none -- the merged cache: false satisfies the rule", got)
+	}
+}
+
+// TestCheckIsolation_SelfReferentialAliasTerminates covers a workflow
+// that anchors a job and aliases it from inside itself.
+//
+// Honest about what it shows: this terminates because yaml.v3 resolves
+// the alias to the mapping in one hop, not because aliasDepthLimit is
+// reached -- poisoning the limit away does not fail this test. A chain
+// of aliases long enough to need the bound is not expressible in YAML
+// the parser accepts, so the limit is belt-and-braces against a
+// hand-built node tree rather than something a workflow can reach. It
+// stays because the walk runs over caller-supplied files and the cost
+// is one comparison.
+func TestCheckIsolation_SelfReferentialAliasTerminates(t *testing.T) {
+	t.Parallel()
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		_, _ = validate.CheckIsolation([]byte("jobs:\n  build: &b\n    steps: *b\n"), validate.IsolationConfig{BuildJob: "build"})
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("alias resolution did not terminate")
+	}
 }
