@@ -14,12 +14,17 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-// The two renderer binary names appear throughout; named so the package's
-// goconst budget is not spent on a test fixture.
+// The renderer binary names and the four mise subdirectory names appear
+// throughout. goconst counts a string across the whole package, test
+// files included, so leaving these as literals here would push the
+// product file over the threshold without that file changing.
 const (
 	gitCliffBin  = "git-cliff"
 	gitChglogBin = "git-chglog"
 	cacheSubdir  = "cache"
+	dataSubdir   = "data"
+	configSubdir = "config"
+	stateSubdir  = "state"
 )
 
 // TestChangelogRendererSelector pins the backend allowlist. The selector
@@ -148,9 +153,9 @@ func TestPrepareChangelogMiseEnv(t *testing.T) {
 
 	for name, sub := range map[string]string{
 		"MISE_CACHE_DIR":  cacheSubdir,
-		"MISE_CONFIG_DIR": "config",
-		"MISE_DATA_DIR":   "data",
-		"MISE_STATE_DIR":  "state",
+		"MISE_CONFIG_DIR": configSubdir,
+		"MISE_DATA_DIR":   dataSubdir,
+		"MISE_STATE_DIR":  stateSubdir,
 	} {
 		want := filepath.Join(prepareDir, sub)
 
@@ -184,7 +189,7 @@ func TestPrepareChangelogMiseEnv_ClearsAPriorRunsTree(t *testing.T) {
 	// No t.Parallel(): reads the ambient environment.
 	runnerTemp := t.TempDir()
 	prepareDir := filepath.Join(runnerTemp, "reusable-ci-prepare-mise-42")
-	stale := filepath.Join(prepareDir, "data", "stale-tool")
+	stale := filepath.Join(prepareDir, dataSubdir, "stale-tool")
 
 	if err := os.MkdirAll(stale, 0o755); err != nil {
 		t.Fatal(err)
