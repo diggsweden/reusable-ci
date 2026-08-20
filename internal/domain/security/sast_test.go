@@ -211,3 +211,120 @@ func TestSARIFToGitLabSAST_EmptyAndDefaults(t *testing.T) {
 		t.Errorf("default scanner.version = %q, want %q", gl.Scan.Scanner.Version, "unknown")
 	}
 }
+
+// severityFixture builds a one-result SARIF carrying the given
+// security-severity property (verbatim JSON) and level.
+func severityFixture(severityJSON, level string) string {
+	props := ""
+	if severityJSON != "" {
+		props = `"properties": { "security-severity": ` + severityJSON + ` },`
+	}
+
+	return `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"opengrep"}},"results":[{` +
+		`"ruleId":"r1",` + props + `"level":"` + level + `",` +
+		`"message":{"text":"finding"}}]}]}`
+}
+
+// TestSARIFToGitLabSAST_CVSSBandBoundaries covers the mapping that
+// decides whether a finding blocks a merge request. Only 8.5 was
+// exercised before, so the Critical, Low and Info bands never ran and
+// three of the four boundaries were unpinned.
+//
+// The boundary values themselves are the rows that matter: 9.0, 7.0 and
+// 4.0 are where a `>` written instead of `>=` silently downgrades a
+// finding by one band.
+func TestSARIFToGitLabSAST_CVSSBandBoundaries(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		score string
+		want  string
+	}{
+		{name: "above critical", score: "9.8", want: security.SeverityCritical},
+		{name: "exactly critical", score: "9.0", want: security.SeverityCritical},
+		{name: "just below critical", score: "8.9", want: security.SeverityHigh},
+		{name: "exactly high", score: "7.0", want: security.SeverityHigh},
+		{name: "just below high", score: "6.9", want: security.SeverityMedium},
+		{name: "exactly medium", score: "4.0", want: security.SeverityMedium},
+		{name: "just below medium", score: "3.9", want: security.SeverityLow},
+		{name: "the smallest positive score", score: "0.1", want: security.SeverityLow},
+		{name: "zero is informational, not low", score: "0.0", want: security.SeverityInfo},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// level=error would map to High on its own; the CVSS band has
+			// to win, or the row proves nothing about banding.
+			gl := security.SARIFToGitLabSAST(
+				parseSARIF(t, severityFixture(`"`+tc.score+`"`, "error")), security.Options{})
+
+			if len(gl.Vulnerabilities) != 1 {
+				t.Fatalf("vulnerabilities = %d, want 1", len(gl.Vulnerabilities))
+			}
+
+			if got := gl.Vulnerabilities[0].Severity; got != tc.want {
+				t.Errorf("security-severity %s -> %q, want %q", tc.score, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSARIFToGitLabSAST_SeverityAcceptsBothJSONShapes covers how the
+// property actually arrives. GitHub's SARIF writes security-severity as
+// a quoted string; other producers emit a JSON number. Reading only one
+// shape would drop the band for the other and fall through to the level,
+// turning every Critical into a High.
+func TestSARIFToGitLabSAST_SeverityAcceptsBothJSONShapes(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "quoted string", raw: `"9.4"`},
+		{name: "json number", raw: `9.4`},
+		{name: "string with surrounding space", raw: `" 9.4 "`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			gl := security.SARIFToGitLabSAST(parseSARIF(t, severityFixture(tc.raw, "warning")), security.Options{})
+			if got := gl.Vulnerabilities[0].Severity; got != security.SeverityCritical {
+				t.Errorf("severity = %q, want Critical -- the band was not read from %s", got, tc.raw)
+			}
+		})
+	}
+}
+
+// TestSARIFToGitLabSAST_FallsBackToLevel covers what happens with no
+// CVSS property at all, which is most SAST output. An unparseable score
+// must fall through to the level rather than band as zero: banding a
+// garbled value as Info would hide an error-level finding entirely.
+func TestSARIFToGitLabSAST_FallsBackToLevel(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		score string
+		level string
+		want  string
+	}{
+		{name: "no property, error", score: "", level: "error", want: security.SeverityHigh},
+		{name: "no property, warning", score: "", level: "warning", want: security.SeverityMedium},
+		{name: "no property, note", score: "", level: "note", want: security.SeverityInfo},
+		{name: "no property, none", score: "", level: "none", want: security.SeverityInfo},
+		{name: "no property, unrecognised level", score: "", level: "catastrophe", want: security.SeverityUnknown},
+		{name: "unparseable score falls through to error", score: `"n/a"`, level: "error", want: security.SeverityHigh},
+		{name: "null score falls through to error", score: `null`, level: "error", want: security.SeverityHigh},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			gl := security.SARIFToGitLabSAST(parseSARIF(t, severityFixture(tc.score, tc.level)), security.Options{})
+			if got := gl.Vulnerabilities[0].Severity; got != tc.want {
+				t.Errorf("severity = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
