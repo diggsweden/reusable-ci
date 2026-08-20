@@ -938,6 +938,49 @@ Pinned in `TestCheckIsolation_YAMLAliasHidesTheSigningSecret` and
 positive control alongside so a zero count cannot come from a broken fixture.
 Both say to close this entry and delete themselves when they start failing.
 
+## The peeled branch of the remote tag parser does not check the ref name
+
+`remoteTagCommitFromOutput` decides which commit a published tag names. The
+signer compares that answer against the release SHA and refuses to publish when
+they differ, so a wrong answer either signs the wrong commit or refuses a
+correct release.
+
+Its two branches are not symmetric:
+
+```go
+case strings.HasSuffix(fields[1], "^{}"):   // any ref, last one wins
+    peeled = fields[0]
+case fields[1] == refsTagsPrefix+tag:        // this tag, exactly
+    plain = fields[0]
+```
+
+Peeled wins over plain, so given output naming two tags, the commit returned
+for `v1.2.3` can be `v9.9.9`'s:
+
+```
+3333…  refs/tags/v9.9.9^{}
+2222…  refs/tags/v1.2.3
+```
+
+**This is unreachable today.** `git ls-remote` is asked for exactly two
+refspecs, `refs/tags/<tag>^{}` and `refs/tags/<tag>`, and both callers —
+`VerifyReleaseTag` and `tryExistingReleaseRecovery` — gate the tag through
+`IsStableSemverTag` first. A ref pattern only matches a second tag if the tag
+name carries a glob metacharacter (`*`, `?`, `[`), which that gate excludes.
+
+What makes it worth recording is that the safety lives entirely in the callers,
+one layer up, while the adapter reads as though it checks the name itself — the
+plain branch does. A third caller without the semver gate would resolve one
+tag's name to another tag's commit with nothing in this function objecting.
+
+The fix is one comparison: require the peeled ref to be
+`refs/tags/<tag>^{}` rather than any ref ending in `^{}`. It cannot break the
+reachable cases, since those are the only refs git was asked for.
+
+Pinned in `TestRemoteTagCommitFromOutput_PeeledMatchIsNotNameChecked`, which
+documents today's behaviour and says to close this entry and delete itself when
+it starts failing.
+
 ## Still open in the threat model
 
 - [Profile-dependent `externalParameters` reserved keys](threat-model.md) — a
