@@ -77,29 +77,17 @@ func TestPublicKey_StderrIsRedacted(t *testing.T) {
 	}
 }
 
-// TestPublicKey_CosignsOwnKeyFormatIsNotRedacted records a gap.
+// TestPublicKey_CosignsOwnKeyFormatIsRedacted covers the format this
+// project's own signing material is stored in. A key from cosign 3.x
+// opens "-----BEGIN ENCRYPTED SIGSTORE PRIVATE KEY-----", which matches
+// none of the redactor's original six PEM markers -- "BEGIN ENCRYPTED
+// PRIVATE KEY" only if you skip the word in the middle. It was the one
+// private-key shape the redactor could not see, in the adapter that
+// exists to run cosign.
 //
-// RedactKeyMaterial carries six PEM markers, chosen for "gpg,
-// ssh-keygen, openssl" per its own doc comment. cosign's private keys
-// are not in any of those formats. A real key from cosign 3.1.2 begins:
-//
-//	-----BEGIN ENCRYPTED SIGSTORE PRIVATE KEY-----
-//
-// which contains none of the six as a substring -- "BEGIN ENCRYPTED
-// PRIVATE KEY" does not match because "SIGSTORE " sits in the middle.
-// So the one private-key format this project's own signing material is
-// stored in is the one the redactor does not recognise, in the adapter
-// that exists to run cosign.
-//
-// Unreachable with today's cosign, which does not echo key material --
-// but that is exactly the reasoning the redactor's doc comment rejects
-// for the formats it does list: "current versions don't, but we're not
-// paying the cost of trust-them-forever".
-//
-// Recorded in docs/open-questions.md ("The output redactor does not know
-// cosign's private key format"). The fix is one entry in the marker
-// list, and widening redaction cannot break anything.
-func TestPublicKey_CosignsOwnKeyFormatIsNotRedacted(t *testing.T) {
+// The header used here is the real one, taken from a generated key
+// rather than from memory.
+func TestPublicKey_CosignsOwnKeyFormatIsRedacted(t *testing.T) {
 	bins := mockbinary.New(t)
 	bins.Add("cosign", `printf 'error: -----BEGIN ENCRYPTED SIGSTORE PRIVATE KEY-----\nsecretmaterial\n-----END ENCRYPTED SIGSTORE PRIVATE KEY-----\n' >&2; exit 1`)
 
@@ -111,9 +99,8 @@ func TestPublicKey_CosignsOwnKeyFormatIsNotRedacted(t *testing.T) {
 		t.Fatal("a failing cosign was reported as success")
 	}
 
-	if !strings.Contains(errOut.String(), "secretmaterial") {
-		t.Fatal("the redactor now recognises cosign's key format -- " +
-			"close the open question and delete this test")
+	if strings.Contains(errOut.String(), "secretmaterial") {
+		t.Errorf("cosign private key material reached the caller's stderr:\n%s", errOut.String())
 	}
 }
 

@@ -27,6 +27,15 @@ var privateKeyMarkers = [][]byte{
 	[]byte("BEGIN EC PRIVATE KEY"),
 	[]byte("BEGIN ENCRYPTED PRIVATE KEY"),
 	[]byte("BEGIN PRIVATE KEY"),
+	// cosign's own formats. Its keys are in none of the PEM shapes above:
+	// a key from cosign 3.x opens
+	// "-----BEGIN ENCRYPTED SIGSTORE PRIVATE KEY-----", which contains
+	// "BEGIN ENCRYPTED PRIVATE KEY" only if you skip the word between.
+	// This is the format reusable-ci's own signing material is stored in,
+	// so it belongs here more than most.
+	[]byte("BEGIN ENCRYPTED SIGSTORE PRIVATE KEY"),
+	[]byte("BEGIN SIGSTORE PRIVATE KEY"),
+	[]byte("BEGIN ENCRYPTED COSIGN PRIVATE KEY"),
 }
 
 // jwtPattern matches a three-segment base64url-without-padding token —
