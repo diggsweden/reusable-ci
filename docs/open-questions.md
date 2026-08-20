@@ -92,68 +92,6 @@ substring-matching variant — which is the shape that was actually wrong, since
 it misses an OS separator. A guard that cannot catch the bug that motivated it,
 while carrying a four-entry allowlist, reads as more protection than it gives.
 
-## `container attest` has no digest rule, unlike its three siblings
-
-The four image request validators in `internal/domain/container/signing.go`
-each run before any cosign subprocess. Three carry the same digest-pinning
-rule; one does not:
-
-| Request | Refuses a mutable tag |
-|---|---|
-| `ImageSignRequest` | yes — "cosign refuses to sign mutable tags" |
-| `ImageVerifyRequest` | yes — "verifying a mutable tag is unsafe" |
-| `AttestationVerifyRequest` | yes — same wording |
-| `ImageAttestRequest` | **no** |
-
-So `container attest --image registry/app:latest` attaches an attestation to
-whatever the tag resolves to at that instant. The app layer does not add the
-check either — `AttestImage` requires the image reference to be non-empty and
-nothing more.
-
-The asymmetry is the argument: the *verify* counterpart of attest refuses a tag
-because verifying one proves nothing about the image that was built. Producing
-one against a tag has the same problem from the other end — the attestation
-binds to a digest the caller never named, and a tag that moves between the scan
-and the attest yields a CycloneDX or SLSA statement describing a different
-image.
-
-Reach is limited today. Every in-repo caller resolves a digest first: the ledger
-flow attests `entry.Ref`, which is digest-pinned by construction. This is a
-consumer-facing CLI gap, the same shape as the `container sign` entry below,
-and the two are best fixed together.
-
-Pinned in `TestImageRequests_RequireADigestPinnedRef`, whose attest row fails
-once the rule is added.
-
-A smaller note on all four: the rule is "the ref contains an `@sha256:`
-marker", not "the ref carries a well-formed digest". `app@sha256:` and
-`app@sha256:zzzz` pass and are refused later by cosign with a worse message.
-The package already has `ValidDigest` if that is ever tightened.
-
-## `container sign` documents a digest requirement it does not enforce
-
-The command's own documentation says it three times — the doc comment
-("`reusable-ci container sign <image>@<digest>`"), the description ("The image
-reference must be a digest reference (image@sha256:...)"), and the error text
-for a missing argument ("registry/image@sha256:..."). Nothing checks it.
-`SignImage` refuses only an empty reference, so `container sign myimage:latest`
-signs whatever the tag resolves to at that moment.
-
-The signature cosign produces is still bound to a digest, so this is not a
-broken signature — it is a "sign what you verified" question. If the tag moved
-between build and sign, the signed image is not the built one, and nothing in
-the run would say so.
-
-The codebase already has the check and applies it on the neighbouring path:
-`release image verify` refuses a `--ref` that is not digest-pinned, via
-`validReleaseImageDigestRef`. Every in-repo caller of `SignImage` passes a
-digest-pinned reference, so this is about the CLI surface a consumer drives
-directly.
-
-Enforcing the documented contract is small. It is recorded rather than done
-because it would start refusing input that is accepted today, and whether any
-consumer signs by tag deliberately is not visible from here.
-
 ## The cosign stderr filter is a five-word denylist
 
 `UnsafeCosignErrorLine` decides which lines of cosign's stderr may be echoed
@@ -484,48 +422,6 @@ worth being deliberate about.
 The change is a validation pass over `files` before the signing pass. Pinned as
 it behaves today in
 `TestSign_ExactFileMissingRefusesBeforeSigningAnything`.
-
-## An unrecognised `--fail-on-severity` narrows the gate instead of failing
-
-`security scan dependencies --fail-on-severity` accepts `low`, `moderate`,
-`high` or `critical`. Anything else warns and falls back to `CRITICAL`:
-
-```
-::warning::Unknown severity "medium", defaulting to critical
-```
-
-The fallback is in the unsafe direction. A caller who asked for a wide gate and
-mistyped it gets the narrowest one, so HIGH and MEDIUM findings stop blocking
-the release — and the only signal is one warning line in a CI log.
-
-Two plausible spellings both land there:
-
-| Input | Known | Filter used |
-|---|---|---|
-| `moderate` | yes | `CRITICAL,HIGH,MEDIUM` |
-| `medium` | **no** | `CRITICAL` |
-| `CRITICAL,HIGH` | **no** | `CRITICAL` |
-
-`medium` is what trivy itself calls that band. `CRITICAL,HIGH` is worse: it is
-the grammar the *sibling* command documents for the identical flag name —
-`security scan container --fail-on-severity` takes a comma-list ("comma-list,
-e.g. 'CRITICAL,HIGH'; narrow to 'CRITICAL' to relax"), while `scan
-dependencies` takes a single word. A consumer who learns one command and
-copies the spelling into the other silently loses coverage.
-
-Two directions to consider, neither taken here:
-
-- **Refuse an unknown value** (`ErrUsage`) instead of warning. A misconfigured
-  gate is a configuration error, and failing closed is the safer reading for a
-  security control.
-- **Accept both grammars**, so the two subcommands stop disagreeing about what
-  the same flag means.
-
-The existing app-layer test covers the warning and the CRITICAL default, so the
-behaviour is deliberate and tested; what is recorded here is the direction of
-the fallback and the collision between the two subcommands. The two plausible
-inputs are now rows in `TestMapTrivyFailSeverity`, where someone changing this
-will see them.
 
 ## A camelCase Android product flavor produces a task gradle does not have
 
@@ -891,53 +787,6 @@ reads as intentional defence; noted so the next reader does not spend the same
 time on it, and so no test claims to cover it. `TestGoMetadata_Refusals` names
 its case for the branch it actually reaches.
 
-## A YAML alias hides a signing secret from the build-job isolation check
-
-`CheckIsolation` is built two ways. `persistCredentialViolations` decodes each
-step into a struct, so yaml.v3 resolves anchors and merge keys before the check
-sees the value. Every other check — the build-job signing-secret scan, the
-prepare-job ordering scan, the sign call-site secrets, the release-identity and
-dist-digest wiring, and the setup-toolchain cache rule — walks `yaml.Node`
-`.Content` by hand, and a hand-walk sees an alias node as a leaf with no
-children. The anchored content is never visited.
-
-So the same workflow passes or fails depending on how it is spelled, and the
-direction is fail-open:
-
-```yaml
-x-shared: &sig
-  SIGNING_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-jobs:
-  build:
-    env: *sig        # reported: nothing
-```
-
-```yaml
-jobs:
-  build:
-    env:
-      SIGNING_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}   # reported: SLSA L3 violation
-```
-
-The merge-key spelling (`<<: *sig`) hides it too, and an anchored
-`setup-toolchain` step escapes the `cache: false` rule the same way.
-
-How much this matters depends on the forge. GitHub Actions rejects anchors in
-workflow files outright, so on GitHub the hidden spelling never runs. Forgejo
-and GitLab parse them, which is where this gate is aimed. The realistic shape
-is not evasion but drift: a maintainer factors shared `env` into an anchor and
-the L3 guarantee stops being checked without anything saying so.
-
-Two ways to close it, both small: resolve aliases before walking (follow
-`node.Alias` when `node.Kind == yaml.AliasNode`), or refuse a workflow that
-contains any alias node, since the workflows this gate guards do not use them.
-The second fails closed and cannot be got subtly wrong.
-
-Pinned in `TestCheckIsolation_YAMLAliasHidesTheSigningSecret` and
-`TestCheckIsolation_AliasedSetupToolchainEscapesTheCacheRule`, each with a
-positive control alongside so a zero count cannot come from a broken fixture.
-Both say to close this entry and delete themselves when they start failing.
-
 ## The peeled branch of the remote tag parser does not check the ref name
 
 `remoteTagCommitFromOutput` decides which commit a published tag names. The
@@ -1132,54 +981,6 @@ duplicates, no empties) and `TestSignerSecretEnv_KnownGaps`, which names the
 uncovered ones and fails as each is closed, so the entry and the list stay in
 step.
 
-## The output redactor does not know cosign's private key format
-
-`safeexec.RedactKeyMaterial` scrubs subprocess output before it is folded into
-an error or a CI log. It carries six PEM markers, chosen — per its own doc
-comment — to future-proof against "gpg, ssh-keygen, openssl" echoing input key
-material:
-
-```go
-[]byte("BEGIN PGP PRIVATE KEY"),
-[]byte("BEGIN OPENSSH PRIVATE KEY"),
-[]byte("BEGIN RSA PRIVATE KEY"),
-[]byte("BEGIN EC PRIVATE KEY"),
-[]byte("BEGIN ENCRYPTED PRIVATE KEY"),
-[]byte("BEGIN PRIVATE KEY"),
-```
-
-cosign's keys are in none of those formats. Generated with the cosign this
-project ships (3.1.2), `cosign.key` begins:
-
-```
------BEGIN ENCRYPTED SIGSTORE PRIVATE KEY-----
-```
-
-which contains none of the six as a substring — `BEGIN ENCRYPTED PRIVATE KEY`
-does not match, because `SIGSTORE ` sits in the middle. Confirmed by generating
-a real key rather than from memory.
-
-So the one private-key format this project's own signing material is stored in
-is the one the redactor does not recognise. `adapters/cosign` runs every cosign
-invocation's stderr through it, including `PublicKey`, which is pointed
-directly at the private key.
-
-Unreachable with today's cosign, which does not echo key material on stderr —
-but that is precisely the reasoning the redactor's doc comment rejects for the
-formats it does list: *"current versions don't, but we're not paying the cost
-of 'trust them forever'."* By its own standard, cosign's format belongs on the
-list.
-
-The fix is one entry, and widening redaction cannot break anything. The older
-spelling `BEGIN ENCRYPTED COSIGN PRIVATE KEY` is worth adding alongside it;
-`BEGIN SIGSTORE PRIVATE KEY` covers the unencrypted form.
-
-Pinned in `TestPublicKey_CosignsOwnKeyFormatIsNotRedacted`, which documents
-today's behaviour and says to close this entry and delete itself when it starts
-failing. Its sibling `TestPublicKey_StderrIsRedacted` is a positive control on
-a marker the redactor does know, so the two together separate "the redactor is
-unwired" from "this format is unlisted".
-
 ## The most-used test double depends on undeclared host binaries
 
 `internal/testutil/mockbinary` is the most widely used double in the suite — 29
@@ -1253,6 +1054,45 @@ rather than to test git.
 cosign, skopeo, buildah, mise, npm, cargo, maven, apt or ssh-keygen. That is
 worth stating as a result rather than only noting the two exceptions.
 
+## cosign runs unisolated on the path that signs release images
+
+`adapters/cosign` has an `IsolatedEnv(allow ...string)` that keeps a short
+runtime allowlist — PATH, HOME, TMPDIR, the TLS roots, the proxy settings —
+plus whatever secrets the caller names, and drops everything else. It is the
+better of the two shapes in the codebase, and five call sites use it:
+
+```
+container baseimages-verify   cosign.NewIsolated("DOCKER_CONFIG")
+container baseimages-promote  cosign.NewIsolated("DOCKER_CONFIG")
+container releaseimage        cosign.NewIsolated("DOCKER_CONFIG")
+release provenance            cosign.NewIsolated(allow...)   ← only when the key is env://
+release artifacts             cosign.NewIsolated(allow...)   ← only when the key is env://
+```
+
+`container ledger-sign` — the command that actually signs and attests release
+images — builds `cosign.New()` unconditionally, so its cosign inherits the whole
+environment. And the two `release` sites isolate only when
+`provenanceSignAllow` recognises an `env://` key ref, so KMS and keyless signing
+run unisolated there too.
+
+The same function shows all three postures at once. In `ledgersign.go`:
+
+```go
+cosign.New()                                  // unisolated
+&syft.Adapter{UnsetEnv: signerSecretEnv()}    // 12-name denylist
+```
+
+and `imageevidence.go` adds `skopeo.New()`, whose `UnsetEnv` field is never set
+by anyone (see the skopeo entry above).
+
+**Not changed here, deliberately.** Isolation is only safe once the allow-list is
+right, and the right set differs per backend: keyless needs the OIDC request
+variables the runner injects, KMS needs whichever provider credentials are in
+play (`AWS_*`, `GOOGLE_APPLICATION_CREDENTIALS`, `VAULT_*`, `AZURE_*`), and both
+need registry auth. Guessing wrong does not fail loudly at review time — it
+fails during a release. Working out that set is the decision this entry asks
+for.
+
 ## Still open in the threat model
 
 - [Profile-dependent `externalParameters` reserved keys](threat-model.md) — a
@@ -1274,8 +1114,34 @@ worth stating as a result rather than only noting the two exceptions.
 | A transfer plan refused on a later item had already downloaded the earlier ones | `63b1e533` |
 | The container SBOM was generated once per declared artifact type, identically, each run overwriting the last at the cost of a full image scan | `64fd043e` |
 | `internal/livetest` test build was broken (`undefined: requestErr`), so `go test ./...` could not pass | fixed outside this review |
+| `security scan dependencies --fail-on-severity` warned and fell back to `critical` — the narrowest filter — on an unrecognised value, so a mistyped gate stopped reporting HIGH and MEDIUM findings at all | `32f7c232` |
+| A YAML alias hid a signing secret from the SLSA Build L3 isolation check, and an anchored `setup-toolchain` step escaped the `cache: false` rule | `82372dc8` |
+| `container attest` accepted a mutable tag while its three sibling validators refused one | `7b35aa05` |
+| `RedactKeyMaterial` did not recognise cosign's own private-key formats — the ones this project's signing material is stored in | `ee6865a3` |
 
 One correction worth recording: the container SBOM duplication was **not** an
 oversight. `GenerateContainer`'s doc comment described the loop as
 "observationally idempotent", which is true of the output and not of the work.
 The fix keeps every declared type named in the operator output and scans once.
+
+Two corrections worth recording, both found by re-checking the register rather
+than by new review.
+
+**One entry was never true.** "`container sign` documents a digest requirement it
+does not enforce" claimed `SignImage` refused only an empty reference. It does
+not: `ImageSignRequest.Validate` has enforced the `@sha256:` rule since
+`1727afff` (12 July), five weeks before the entry was written, and the adapter
+calls `Validate` before anything else. Reproduced against the built binary,
+which refuses `container sign myimage:latest`. The entry also contradicted its
+own neighbour, which listed `sign` among the three validators that *did* carry
+the rule. It has been deleted. The cause was reading the app-layer function and
+stopping there instead of following the call into the adapter — the same mistake
+this review keeps finding in tests, which assert against the layer that is
+convenient rather than the one that decides.
+
+**One reachability note was wrong.** The YAML-alias entry said GitHub Actions
+rejects anchors outright, so the hidden spelling could not run there. This
+repository's own consumer-facing `workflow_call` files use anchors for shared
+`if:` conditions, so GitHub parses them and the hole was reachable on all three
+forges. That error also pointed at the wrong fix: the entry proposed refusing
+alias nodes, which would have refused the project's own shipped workflows.
