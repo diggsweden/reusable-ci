@@ -1132,6 +1132,54 @@ duplicates, no empties) and `TestSignerSecretEnv_KnownGaps`, which names the
 uncovered ones and fails as each is closed, so the entry and the list stay in
 step.
 
+## The output redactor does not know cosign's private key format
+
+`safeexec.RedactKeyMaterial` scrubs subprocess output before it is folded into
+an error or a CI log. It carries six PEM markers, chosen — per its own doc
+comment — to future-proof against "gpg, ssh-keygen, openssl" echoing input key
+material:
+
+```go
+[]byte("BEGIN PGP PRIVATE KEY"),
+[]byte("BEGIN OPENSSH PRIVATE KEY"),
+[]byte("BEGIN RSA PRIVATE KEY"),
+[]byte("BEGIN EC PRIVATE KEY"),
+[]byte("BEGIN ENCRYPTED PRIVATE KEY"),
+[]byte("BEGIN PRIVATE KEY"),
+```
+
+cosign's keys are in none of those formats. Generated with the cosign this
+project ships (3.1.2), `cosign.key` begins:
+
+```
+-----BEGIN ENCRYPTED SIGSTORE PRIVATE KEY-----
+```
+
+which contains none of the six as a substring — `BEGIN ENCRYPTED PRIVATE KEY`
+does not match, because `SIGSTORE ` sits in the middle. Confirmed by generating
+a real key rather than from memory.
+
+So the one private-key format this project's own signing material is stored in
+is the one the redactor does not recognise. `adapters/cosign` runs every cosign
+invocation's stderr through it, including `PublicKey`, which is pointed
+directly at the private key.
+
+Unreachable with today's cosign, which does not echo key material on stderr —
+but that is precisely the reasoning the redactor's doc comment rejects for the
+formats it does list: *"current versions don't, but we're not paying the cost
+of 'trust them forever'."* By its own standard, cosign's format belongs on the
+list.
+
+The fix is one entry, and widening redaction cannot break anything. The older
+spelling `BEGIN ENCRYPTED COSIGN PRIVATE KEY` is worth adding alongside it;
+`BEGIN SIGSTORE PRIVATE KEY` covers the unencrypted form.
+
+Pinned in `TestPublicKey_CosignsOwnKeyFormatIsNotRedacted`, which documents
+today's behaviour and says to close this entry and delete itself when it starts
+failing. Its sibling `TestPublicKey_StderrIsRedacted` is a positive control on
+a marker the redactor does know, so the two together separate "the redactor is
+unwired" from "this format is unlisted".
+
 ## Still open in the threat model
 
 - [Profile-dependent `externalParameters` reserved keys](threat-model.md) — a
