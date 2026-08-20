@@ -54,6 +54,7 @@ See [Workflow Guide](workflows.md) for orchestrator documentation and [Artifacts
 |-----------|---------|--------|------------------|----------|
 | **publish-maven-github** | Publishes Maven libraries/NPM to GitHub Packages | Artifacts in GitHub Packages | GITHUB_TOKEN | When supported artifacts include `publish-to: [github-packages]` |
 | **publish-maven-central** | Publishes Maven libraries to Maven Central | Public Maven artifacts | MAVEN_CENTRAL_USERNAME, MAVEN_CENTRAL_PASSWORD | Public libraries (requires build-type: library) |
+| **publish-gradle** | Publishes Gradle artifacts (incl. Android libraries) to Maven Central or GitHub Packages | Public/internal Gradle artifacts | MAVEN_CENTRAL_USERNAME, MAVEN_CENTRAL_PASSWORD, RELEASE_GPG_* (Central only) | Gradle or gradle-android artifacts with `publish-to`; Central requires build-type: library |
 
 #### Container Builders
 
@@ -202,6 +203,19 @@ with:
   artifact-source: maven-build-artifacts  # Name of workflow artifact
   working-directory: "."
   settings-path: ".mvn/settings.xml"
+```
+
+#### `publish-gradle.yml`
+Publishes Gradle-toolchain artifacts from source, using the project's own
+`maven-publish` configuration. Android libraries pass the Android runtime
+image; there is no `setup-android` input.
+```yaml
+uses: diggsweden/reusable-ci/.github/workflows/publish-gradle.yml@v3.0.0
+with:
+  target: maven-central          # or github-packages
+  working-directory: "."
+  publish-tasks: ""              # empty → derived per target
+  runtime-image: ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0
 ```
 
 ### Container Workflows

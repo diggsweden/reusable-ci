@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# Example: Android Library (AAR) published to Maven Central + GitHub Packages.
+#
+# The only thing separating this from examples/android-app/ is
+# `build-type: library`. Library and application are two build-types of the
+# same project-type — there is no separate "android library" project type
+# and no `setup-android` flag.
+#
+# Consequences of build-type: library
+#   - maven-central and github-packages become available publish targets
+#   - google-play is NOT available (a library has no Play listing)
+#   - the AAR publishes through publish-gradle.yml, the same workflow plain
+#     Gradle JVM libraries use
+#
+# Android SDK: there is no setup step. The SDK comes from the runtime image,
+# and the release orchestrator routes gradle-android artifacts to
+# `runtime-image-android` (reusable-ci-runtime-android-35) automatically.
+artifacts:
+  - name: my-android-lib
+    project-type: gradle-android
+    working-directory: .
+    build-type: library
+    publish-to:
+      - github-packages
+      - maven-central
+    config:
+      build-module: lib
+      java-version: 25
+      gradle-version-file: gradle.properties
+      # No enable-android-signing: libraries are not signed with an Android
+      # keystore. Maven Central signing uses the GPG release key instead.
+      #
+      # publish-tasks is an override and normally omitted — see
+      # examples/gradle-app/artifacts.yml for when you need it.

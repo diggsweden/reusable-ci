@@ -64,6 +64,7 @@ across both images on the runner.
 | `build-go`, `sbom-go` | `runtime-go-1.26` | Needs Go + cyclonedx-gomod |
 | `build-maven`, `build-gradle-app`, `publish-maven-central` | `runtime-java-25` | Needs JDK + Maven/Gradle |
 | `build-gradle-android` | `runtime-android-35` | JDK + Android SDK |
+| `publish-gradle` | `runtime-java-25`, or `runtime-android-35` for Android libraries | Publishes from source, so it needs the full build toolchain. The publish stage picks the image from the artefact's project-type — choosing the image *is* the entire Android setup; there is no `setup-android` step. |
 | `publish-google-play` | `runtime-base` | Upload action is JS-only; no Android tooling needed |
 | `build-npm`, `publish-snapshot-npm` | `runtime-node-24` | Node + npm + corepack baked |
 | `publish-container` | host + Docker actions | DinD blocks `container:` use |
@@ -71,6 +72,11 @@ across both images on the runner.
 | `build-xcode-ios`, `publish-apple-appstore` | macOS host + `go install` from `reusable-ci-binary-ref` | macOS can't run Linux containers |
 
 ## Why some images aren't built
+
+Note that `runtime-android-35` is a **publish-side** image as well as a
+build-side one: an Android library publishing its AAR to Maven Central
+runs `publish-gradle.yml` in this image, because that job rebuilds the
+project rather than consuming a downloaded artefact.
 
 - **`reusable-ci-runtime-android-35-ndk`**: Not built today. NDK is ~3 GB and only needed for projects with native (JNI) code — the minority. The current `reusable-ci-runtime-android-35` image covers typical Android library and app builds without NDK.
 - **Multiple LTS lines simultaneously** (`runtime-java-21` *and* `runtime-java-25`, etc.): not built today.
