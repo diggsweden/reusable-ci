@@ -29,9 +29,6 @@ func TestImageRequests_RequireADigestPinnedRef(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		with func(ref string) error
-		// attest is the one sibling without the rule; see
-		// docs/open-questions.md.
-		tagAccepted bool
 	}{
 		{
 			name: "sign",
@@ -40,11 +37,7 @@ func TestImageRequests_RequireADigestPinnedRef(t *testing.T) {
 			},
 		},
 		{
-			// Recorded, not endorsed: this validator has no digest rule,
-			// so an attestation can be attached to a mutable tag while
-			// its three siblings refuse one.
-			name:        "attest",
-			tagAccepted: true,
+			name: "attest",
 			with: func(ref string) error {
 				return container.ImageAttestRequest{
 					ImageRef: ref, PredicateType: "cyclonedx", PredicatePath: "sbom.json", KeyRef: "awskms:///k",
@@ -73,12 +66,8 @@ func TestImageRequests_RequireADigestPinnedRef(t *testing.T) {
 				t.Fatalf("digest ref rejected: %v", err)
 			}
 
-			if err := tc.with(tagRef); errors.Is(err, errs.ErrUsage) == tc.tagAccepted {
-				if tc.tagAccepted {
-					t.Errorf("a mutable tag is now refused — the gap is closed, update docs/open-questions.md")
-				} else {
-					t.Errorf("tag ref: err = %v, want ErrUsage", err)
-				}
+			if err := tc.with(tagRef); !errors.Is(err, errs.ErrUsage) {
+				t.Errorf("tag ref: err = %v, want ErrUsage", err)
 			}
 
 			if err := tc.with(""); !errors.Is(err, errs.ErrUsage) {

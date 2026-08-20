@@ -93,6 +93,45 @@ type ImageSignRequest struct {
 	KeyRef string
 }
 
+// requireDigestRef enforces the rule all four cosign requests share: the
+// image must be named by digest, never by a tag.
+//
+// It exists as one function because the rule was copied three times and
+// the fourth copy was simply missing -- `attest` had no digest check at
+// all, so an attestation could be bound to a mutable tag while its
+// siblings refused one. A shared helper is how that stays fixed.
+//
+// why says what a mutable tag costs for this particular operation; the
+// operations differ enough that one message would be vague.
+func requireDigestRef(op, ref, why string) error {
+	if !strings.Contains(ref, "@sha256:") {
+		return fmt.Errorf("%s: image reference %q must be a digest reference (registry/image@sha256:...); %s: %w",
+			op, ref, why, errs.ErrUsage)
+	}
+
+	return nil
+}
+
+// requireKeylessConsistency enforces the keyless/--key/--oidc-issuer trio
+// that sign and attest share. Same reasoning as requireDigestRef: the
+// three checks were written twice, and two copies of a rule is how they
+// drift.
+func requireKeylessConsistency(op string, keyless bool, keyRef, oidcIssuer string) error {
+	if keyless && keyRef != "" {
+		return fmt.Errorf("%s: keyless mode forbids --key (got %q): %w", op, keyRef, errs.ErrUsage)
+	}
+
+	if !keyless && keyRef == "" {
+		return fmt.Errorf("%s: non-keyless mode requires --key: %w", op, errs.ErrUsage)
+	}
+
+	if !keyless && oidcIssuer != "" {
+		return fmt.Errorf("%s: --oidc-issuer only applies to keyless mode: %w", op, errs.ErrUsage)
+	}
+
+	return nil
+}
+
 // Validate enforces request consistency. The image ref must be a
 // digest reference — cosign refuses tag-based signing, but the rule is
 // surfaced here so the operator gets an actionable error instead of a
@@ -102,23 +141,12 @@ func (in ImageSignRequest) Validate() error {
 		return fmt.Errorf("cosign sign image: image reference is empty: %w", errs.ErrUsage)
 	}
 
-	if !strings.Contains(in.ImageRef, "@sha256:") {
-		return fmt.Errorf(
-			"cosign sign image: image reference %q must be a digest reference (registry/image@sha256:...); cosign refuses to sign mutable tags: %w",
-			in.ImageRef, errs.ErrUsage,
-		)
+	if err := requireDigestRef("cosign sign image", in.ImageRef, "cosign refuses to sign mutable tags"); err != nil {
+		return err
 	}
 
-	if in.Keyless && in.KeyRef != "" {
-		return fmt.Errorf("cosign sign image: keyless mode forbids --key (got %q): %w", in.KeyRef, errs.ErrUsage)
-	}
-
-	if !in.Keyless && in.KeyRef == "" {
-		return fmt.Errorf("cosign sign image: non-keyless mode requires --key: %w", errs.ErrUsage)
-	}
-
-	if !in.Keyless && in.OIDCIssuer != "" {
-		return fmt.Errorf("cosign sign image: --oidc-issuer only applies to keyless mode: %w", errs.ErrUsage)
+	if err := requireKeylessConsistency("cosign sign image", in.Keyless, in.KeyRef, in.OIDCIssuer); err != nil {
+		return err
 	}
 
 	return nil
@@ -173,6 +201,11 @@ func (in ImageAttestRequest) Validate() error {
 		return fmt.Errorf("cosign attest: image reference is empty: %w", errs.ErrUsage)
 	}
 
+	if err := requireDigestRef("cosign attest", in.ImageRef,
+		"attesting a mutable tag records a claim about whatever it resolves to"); err != nil {
+		return err
+	}
+
 	if in.PredicateType == "" {
 		return fmt.Errorf("cosign attest: predicate type is empty: %w", errs.ErrUsage)
 	}
@@ -181,16 +214,8 @@ func (in ImageAttestRequest) Validate() error {
 		return fmt.Errorf("cosign attest: predicate path is empty: %w", errs.ErrUsage)
 	}
 
-	if in.Keyless && in.KeyRef != "" {
-		return fmt.Errorf("cosign attest: keyless mode forbids --key (got %q): %w", in.KeyRef, errs.ErrUsage)
-	}
-
-	if !in.Keyless && in.KeyRef == "" {
-		return fmt.Errorf("cosign attest: non-keyless mode requires --key: %w", errs.ErrUsage)
-	}
-
-	if !in.Keyless && in.OIDCIssuer != "" {
-		return fmt.Errorf("cosign attest: --oidc-issuer only applies to keyless mode: %w", errs.ErrUsage)
+	if err := requireKeylessConsistency("cosign attest", in.Keyless, in.KeyRef, in.OIDCIssuer); err != nil {
+		return err
 	}
 
 	return nil
@@ -219,11 +244,8 @@ func (in ImageVerifyRequest) Validate() error {
 		return fmt.Errorf("cosign verify image: image reference is empty: %w", errs.ErrUsage)
 	}
 
-	if !strings.Contains(in.ImageRef, "@sha256:") {
-		return fmt.Errorf(
-			"cosign verify image: image reference %q must be a digest reference (registry/image@sha256:...); verifying a mutable tag is unsafe: %w",
-			in.ImageRef, errs.ErrUsage,
-		)
+	if err := requireDigestRef("cosign verify image", in.ImageRef, "verifying a mutable tag is unsafe"); err != nil {
+		return err
 	}
 
 	if in.Keyless {
@@ -276,11 +298,8 @@ func (in AttestationVerifyRequest) Validate() error {
 		return fmt.Errorf("cosign verify-attestation: image reference is empty: %w", errs.ErrUsage)
 	}
 
-	if !strings.Contains(in.ImageRef, "@sha256:") {
-		return fmt.Errorf(
-			"cosign verify-attestation: image reference %q must be a digest reference (registry/image@sha256:...); verifying a mutable tag is unsafe: %w",
-			in.ImageRef, errs.ErrUsage,
-		)
+	if err := requireDigestRef("cosign verify-attestation", in.ImageRef, "verifying a mutable tag is unsafe"); err != nil {
+		return err
 	}
 
 	if in.PredicateType == "" {
