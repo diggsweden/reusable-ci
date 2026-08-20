@@ -78,12 +78,60 @@
           ]
         },
         "gradle": {
-          "runs": false,
-          "items": []
+          "runs": true,
+          "items": [
+            {
+              "name": "jvm-lib",
+              "project_type": "gradle",
+              "working_directory": "libs/jvm",
+              "build_type": "library",
+              "publish_to": [
+                "maven-central",
+                "github-packages"
+              ],
+              "sboms": "all",
+              "effective_sboms": [
+                "build",
+                "analyzed-artifact",
+                "analyzed-container"
+              ],
+              "build_artifact_name": "jvm-lib-build-artifacts",
+              "build_sbom_artifact_name": "jvm-lib-build-sbom",
+              "publish_tasks": "publishToMavenCentral",
+              "gradle": {
+                "java_version": "25",
+                "publish_tasks": "publishToMavenCentral"
+              }
+            }
+          ]
         },
         "gradle_android": {
-          "runs": false,
-          "items": []
+          "runs": true,
+          "items": [
+            {
+              "name": "android-lib",
+              "project_type": "gradle-android",
+              "working_directory": "libs/android",
+              "build_type": "library",
+              "publish_to": [
+                "maven-central"
+              ],
+              "sboms": "all",
+              "effective_sboms": [
+                "build",
+                "analyzed-artifact",
+                "analyzed-container"
+              ],
+              "build_artifact_name": "android-lib",
+              "build_sbom_artifact_name": "android-lib-sbom",
+              "android_library": true,
+              "needs_android_sdk": true,
+              "gradle_android": {
+                "java_version": "25",
+                "build_module": "lib"
+              }
+            }
+          ]
         },
         "xcode_ios": {
           "runs": false,
@@ -189,6 +237,18 @@
       {
         "kind": "build_sbom",
         "name": "web-build-sbom",
+        "path": "./release-artifacts/",
+        "required": false
+      },
+      {
+        "kind": "build_sbom",
+        "name": "jvm-lib-build-sbom",
+        "path": "./release-artifacts/",
+        "required": false
+      },
+      {
+        "kind": "build_sbom",
+        "name": "android-lib-sbom",
         "path": "./release-artifacts/",
         "required": false
       },

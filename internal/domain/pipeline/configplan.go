@@ -63,8 +63,19 @@ type ArtifactSets struct {
 	CargoContainerFirst []PlannedArtifact `json:"cargo_container_first"`
 	GitHubPackages      []PlannedArtifact `json:"github_packages"`
 	MavenCentral        []PlannedArtifact `json:"maven_central"`
-	GooglePlay          []PlannedArtifact `json:"google_play"`
-	NPMJS               []PlannedArtifact `json:"npmjs"`
+
+	// The *Gradle sets carry the Gradle-toolchain members of the two
+	// sets above, which keep the complement. A GitHub Actions job can
+	// `uses:` exactly one reusable workflow, and Gradle publishes from
+	// source via publish-gradle.yml while maven/npm publish downloaded
+	// artifacts — so the split is what lets them be separate jobs.
+	// Keeping github_packages / maven_central gradle-free preserves the
+	// existing jobs' meaning for current adopters.
+	GitHubPackagesGradle []PlannedArtifact `json:"github_packages_gradle"`
+	MavenCentralGradle   []PlannedArtifact `json:"maven_central_gradle"`
+
+	GooglePlay []PlannedArtifact `json:"google_play"`
+	NPMJS      []PlannedArtifact `json:"npmjs"`
 }
 
 // PlannedArtifact is the plan-facing artifact shape.
@@ -87,6 +98,20 @@ type PlannedArtifact struct {
 	CargoBuildMode        config.CargoBuildMode  `json:"cargo_build_mode,omitempty"`
 	BuildArtifactName     string                 `json:"build_artifact_name,omitempty"`
 	BuildSBOMArtifactName string                 `json:"build_sbom_artifact_name,omitempty"`
+
+	// Decisions the workflows would otherwise re-derive from string
+	// literals in YAML. Precomputing them here (as PlannedSign
+	// .RequiresIDToken already does) keeps the rule in one tested place
+	// and stops a second caller from silently forgetting it.
+	//
+	// AndroidLibrary selects the AAR path in build-gradle-android.yml:
+	// release-only tasks, no AAB, no keystore signing.
+	AndroidLibrary bool `json:"android_library,omitempty"`
+	// NeedsAndroidSDK routes the job to the Android runtime image.
+	NeedsAndroidSDK bool `json:"needs_android_sdk,omitempty"`
+	// PublishTasks is the adopter's override for the derived Gradle
+	// publish task, resolved from whichever typed block carries it.
+	PublishTasks string `json:"publish_tasks,omitempty"`
 
 	Maven         *config.MavenConfig         `json:"maven,omitempty"`
 	NPM           *config.NPMConfig           `json:"npm,omitempty"`
@@ -139,6 +164,13 @@ func NewConfigPlan(cfg *config.Config) ConfigPlan {
 	artifacts := planArtifacts(cfg.Artifacts)
 	containers := planContainers(cfg.Artifacts, cfg.Containers)
 
+	// Filtered once, then split by toolchain in a single pass each, so the
+	// gradle and non-gradle sets are guaranteed to be exact complements.
+	githubPackagesGradle, githubPackages := partitionGradleToolchain(
+		filterArtifactsByPublishTarget(artifacts, config.PublishGitHubPackages))
+	mavenCentralGradle, mavenCentral := partitionGradleToolchain(
+		filterArtifactsByPublishTarget(artifacts, config.PublishMavenCentral))
+
 	plan := ConfigPlan{
 		Version: ConfigPlanVersion,
 		Artifacts: ArtifactSets{
@@ -164,10 +196,12 @@ func NewConfigPlan(cfg *config.Config) ConfigPlan {
 			CargoContainerFirst: filterArtifacts(artifacts, func(a PlannedArtifact) bool {
 				return a.ProjectType == projecttype.Cargo && a.CargoBuildMode == config.CargoBuildModeContainerFirst
 			}),
-			GitHubPackages: filterArtifactsByPublishTarget(artifacts, config.PublishGitHubPackages),
-			MavenCentral:   filterArtifactsByPublishTarget(artifacts, config.PublishMavenCentral),
-			GooglePlay:     filterArtifactsByPublishTarget(artifacts, config.PublishGooglePlay),
-			NPMJS:          filterArtifactsByPublishTarget(artifacts, config.PublishNPMJS),
+			GitHubPackages:       githubPackages,
+			MavenCentral:         mavenCentral,
+			GitHubPackagesGradle: githubPackagesGradle,
+			MavenCentralGradle:   mavenCentralGradle,
+			GooglePlay:           filterArtifactsByPublishTarget(artifacts, config.PublishGooglePlay),
+			NPMJS:                filterArtifactsByPublishTarget(artifacts, config.PublishNPMJS),
 		},
 		Containers: ContainerSets{
 			All:           containers,
@@ -218,6 +252,10 @@ func planArtifacts(in []config.Artifact) []PlannedArtifact {
 			CargoBuildMode:        config.CargoArtifactBuildMode(a),
 			BuildArtifactName:     buildArtifactName(a),
 			BuildSBOMArtifactName: buildSBOMArtifactName(a),
+
+			AndroidLibrary:  a.ProjectType == projecttype.GradleAndroid && a.BuildType == config.BuildTypeLibrary,
+			NeedsAndroidSDK: a.ProjectType == projecttype.GradleAndroid,
+			PublishTasks:    a.PublishTasks(),
 
 			Maven:         a.Maven,
 			NPM:           a.NPM,
@@ -307,6 +345,12 @@ func buildArtifactName(art config.Artifact) string {
 	case projecttype.Cargo:
 		return artifactFirstCargoName(art)
 	case projecttype.GradleAndroid:
+		// A library uploads an AAR unconditionally, under the bare artifact
+		// name; the AAB gates (include-aab, build-types) are application-only.
+		if art.BuildType == config.BuildTypeLibrary {
+			return art.Name
+		}
+
 		return androidReleaseAABName(art)
 	case projecttype.XcodeIOS:
 		if !art.EnableCodeSigning() {
@@ -401,6 +445,10 @@ func filterArtifactsByPublishTarget(in []PlannedArtifact, target config.PublishT
 				ProjectType: a.ProjectType,
 				BuildType:   a.BuildType,
 			}, target) {
+				// Scoped to maven on purpose. The reason an executable
+				// maven application shouldn't land in GitHub Packages is
+				// maven-specific (shaded/executable jars), so Gradle
+				// applications are intentionally NOT excluded here.
 				if target == config.PublishGitHubPackages && a.ProjectType == projecttype.Maven && a.BuildType == config.BuildTypeApplication {
 					return false
 				}
@@ -411,6 +459,34 @@ func filterArtifactsByPublishTarget(in []PlannedArtifact, target config.PublishT
 
 		return false
 	})
+}
+
+// isGradleToolchain reports whether an artifact publishes through the
+// Gradle toolchain (publish-gradle.yml) rather than by uploading a
+// downloaded artifact. The rule itself lives in config so the doctor
+// applies the same one.
+func isGradleToolchain(a PlannedArtifact) bool {
+	return config.IsGradleToolchain(a.ProjectType)
+}
+
+// partitionGradleToolchain splits a publish set into its Gradle-toolchain
+// members and the rest, in one pass. Returning both halves together is
+// what makes them exact complements by construction.
+func partitionGradleToolchain(in []PlannedArtifact) (gradle, other []PlannedArtifact) {
+	// Both halves start non-nil: an empty set has to marshal as [] like
+	// every other artifact set, not null.
+	gradle = make([]PlannedArtifact, 0, len(in))
+	other = make([]PlannedArtifact, 0, len(in))
+
+	for _, a := range in {
+		if isGradleToolchain(a) {
+			gradle = append(gradle, a)
+		} else {
+			other = append(other, a)
+		}
+	}
+
+	return gradle, other
 }
 
 func cloneStringMap(in map[string]string) map[string]string {

@@ -105,6 +105,33 @@ func contractConfig(t *testing.T) *config.Config {
 					NodeVersion: "24",
 				},
 			},
+			// Two Gradle-toolchain artifacts so the goldens pin the
+			// *populated* github_packages_gradle / maven_central_gradle
+			// shape, and prove the partition is a true complement: "lib"
+			// (maven) must stay in maven_central and out of
+			// maven_central_gradle.
+			{
+				Name:             "jvm-lib",
+				ProjectType:      projecttype.Gradle,
+				WorkingDirectory: "libs/jvm",
+				BuildType:        config.BuildTypeLibrary,
+				PublishTo:        []config.PublishTarget{config.PublishMavenCentral, config.PublishGitHubPackages},
+				Gradle: &config.GradleConfig{
+					JavaVersion:  "25",
+					PublishTasks: "publishToMavenCentral",
+				},
+			},
+			{
+				Name:             "android-lib",
+				ProjectType:      projecttype.GradleAndroid,
+				WorkingDirectory: "libs/android",
+				BuildType:        config.BuildTypeLibrary,
+				PublishTo:        []config.PublishTarget{config.PublishMavenCentral},
+				GradleAndroid: &config.GradleAndroidConfig{
+					JavaVersion: "25",
+					BuildModule: "lib",
+				},
+			},
 			{
 				Name:             "api", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 				ProjectType:      projecttype.Go,

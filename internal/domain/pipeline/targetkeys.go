@@ -39,15 +39,17 @@ const (
 	// publish stage. The *ArtifactFirst pair (dev only today) carries
 	// the artefact-first set so dev-publish can disambiguate without
 	// re-deriving build-mode from the planned-artifact list.
-	TargetGitHubPackages      = "github_packages"
-	TargetMavenCentral        = "maven_central"
-	TargetGooglePlay          = "google_play"
-	TargetContainers          = "containers"
-	TargetCargoContainerFirst = "cargo_container_first"
-	TargetGoContainerFirst    = "go_container_first"
-	TargetCargoArtifactFirst  = "cargo_artifact_first" // dev publish only
-	TargetGoArtifactFirst     = "go_artifact_first"    // dev publish only
-	TargetSBOM                = "sbom"                 // dev publish only
+	TargetGitHubPackages       = "github_packages"
+	TargetMavenCentral         = "maven_central"
+	TargetGitHubPackagesGradle = "github_packages_gradle"
+	TargetMavenCentralGradle   = "maven_central_gradle"
+	TargetGooglePlay           = "google_play"
+	TargetContainers           = "containers"
+	TargetCargoContainerFirst  = "cargo_container_first"
+	TargetGoContainerFirst     = "go_container_first"
+	TargetCargoArtifactFirst   = "cargo_artifact_first" // dev publish only
+	TargetGoArtifactFirst      = "go_artifact_first"    // dev publish only
+	TargetSBOM                 = "sbom"                 // dev publish only
 
 	// Quality-stage targets (PR).
 	TargetNanolinter = "nanolinter"

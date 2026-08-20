@@ -179,12 +179,26 @@ type ReleasePublishStagePlan struct {
 	Version int                   `json:"version"`
 	Stage   string                `json:"stage"`
 	Targets ReleasePublishTargets `json:"targets"`
+
+	// PublishesToMavenCentral answers "does anything in this release go
+	// to Central?" across every toolchain that can. Splitting
+	// maven_central into a maven and a gradle key made every consumer of
+	// that question wrong-by-default until it was manually OR'd; owning
+	// the aggregate here means a third Central-capable toolchain is a
+	// Go-side change and no workflow has to be revisited.
+	PublishesToMavenCentral bool `json:"publishes_to_maven_central"`
 }
 
 // ReleasePublishTargets are the release publish-stage jobs.
 type ReleasePublishTargets struct {
-	GitHubPackages      TargetPlan[PlannedArtifact]  `json:"github_packages"`
-	MavenCentral        TargetPlan[PlannedArtifact]  `json:"maven_central"`
+	GitHubPackages TargetPlan[PlannedArtifact] `json:"github_packages"`
+	MavenCentral   TargetPlan[PlannedArtifact] `json:"maven_central"`
+
+	// Gradle-toolchain counterparts of the two above; see
+	// ArtifactSets.GitHubPackagesGradle for why they are separate jobs.
+	GitHubPackagesGradle TargetPlan[PlannedArtifact] `json:"github_packages_gradle"`
+	MavenCentralGradle   TargetPlan[PlannedArtifact] `json:"maven_central_gradle"`
+
 	GooglePlay          TargetPlan[PlannedArtifact]  `json:"google_play"`
 	XcodeIOS            TargetPlan[PlannedArtifact]  `json:"xcode_ios"`
 	Containers          TargetPlan[PlannedContainer] `json:"containers"`
@@ -291,14 +305,17 @@ func NewReleasePublishStagePlan(configPlan ConfigPlan, buildSBOM bool) ReleasePu
 		Version: ReleasePlanVersion,
 		Stage:   "publish",
 		Targets: ReleasePublishTargets{
-			GitHubPackages:      newTargetPlan(artifacts.GitHubPackages),
-			MavenCentral:        newTargetPlan(artifacts.MavenCentral),
-			GooglePlay:          newTargetPlan(artifacts.GooglePlay),
-			XcodeIOS:            newTargetPlan(artifacts.XcodeIOS),
-			Containers:          targetPlan(configPlan.Containers.All, configPlan.Containers.HasContainers),
-			CargoContainerFirst: newTargetPlan(cargoContainerFirst),
-			GoContainerFirst:    newTargetPlan(goContainerFirst),
+			GitHubPackages:       newTargetPlan(artifacts.GitHubPackages),
+			MavenCentral:         newTargetPlan(artifacts.MavenCentral),
+			GitHubPackagesGradle: newTargetPlan(artifacts.GitHubPackagesGradle),
+			MavenCentralGradle:   newTargetPlan(artifacts.MavenCentralGradle),
+			GooglePlay:           newTargetPlan(artifacts.GooglePlay),
+			XcodeIOS:             newTargetPlan(artifacts.XcodeIOS),
+			Containers:           targetPlan(configPlan.Containers.All, configPlan.Containers.HasContainers),
+			CargoContainerFirst:  newTargetPlan(cargoContainerFirst),
+			GoContainerFirst:     newTargetPlan(goContainerFirst),
 		},
+		PublishesToMavenCentral: len(artifacts.MavenCentral) > 0 || len(artifacts.MavenCentralGradle) > 0,
 	}
 }
 
