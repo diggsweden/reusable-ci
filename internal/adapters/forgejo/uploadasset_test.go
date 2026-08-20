@@ -82,7 +82,7 @@ func newAssetUploadServer(t *testing.T, rec *assetUpload) *httptest.Server {
 
 // TestUploadReleaseAsset_UploadsUnderTheBasenameOnly is the claim worth
 // holding. The asset name sent to the forge is filepath.Base of the local
-// path: the local layout ("dist/linux-amd64/app.tar.gz") is an artefact
+// path: the local layout ("dist/linux-amd64/app.tar.gz") is an artifact
 // of the build, and sending it as the attachment name would either be
 // rejected or publish an asset whose name carries directories.
 func TestUploadReleaseAsset_UploadsUnderTheBasenameOnly(t *testing.T) {
