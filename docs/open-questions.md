@@ -1113,6 +1113,16 @@ lists, because nothing can. The resolution there was one leaf utility under ADR
 0004's third rule. The same fits here — one exported set of credential-bearing
 variable names, with the three call sites narrowing it if they need to.
 
+A fourth place already solves it the other way round, and better.
+`adapters/gpg.IsolatedEnv` keeps an **allowlist** — PATH, HOME, TMPDIR,
+GNUPGHOME, GPG_TTY and the locale variables — and drops everything else, so a
+credential invented tomorrow is excluded without anyone updating a list. That is
+the shape worth copying: a denylist has to be right about every secret that
+exists, an allowlist has to be right about the handful of variables the
+subprocess actually needs. Pinned in
+`TestNewIsolated_SubprocessDoesNotSeeSigningSecrets`, which asserts both
+halves — the secrets are gone and GNUPGHOME and PATH survive.
+
 It also sits next to the skopeo entry above: the skopeo adapter's `UnsetEnv` is
 never wired at all, so a fourth subprocess gets the unscrubbed environment
 whatever the lists say.
