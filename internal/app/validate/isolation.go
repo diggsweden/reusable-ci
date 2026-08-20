@@ -96,7 +96,16 @@ func singlePinViolations(in IsolationInput) []validate.IsolationViolation {
 	}
 
 	subjectRe := regexp.MustCompile(regexp.QuoteMeta(in.SinglePinSubject) + `[^ "'\n]*@[0-9a-f]{40}`)
-	helpersRe := regexp.MustCompile(`forgejo-ci-helpers-sha:[[:space:]]*[0-9a-f]{40}`)
+	// The helpers input is named after the subject's repository, not after this
+	// project. Hardcoding "forgejo-ci-helpers-sha" meant a consumer of any other
+	// subject had that half of the check silently skipped: its helpers pin could
+	// disagree with its uses: pins and nothing said so.
+	helpersKey := in.SinglePinSubject
+	if i := strings.LastIndex(helpersKey, "/"); i >= 0 {
+		helpersKey = helpersKey[i+1:]
+	}
+
+	helpersRe := regexp.MustCompile(regexp.QuoteMeta(helpersKey) + `-helpers-sha:[[:space:]]*[0-9a-f]{40}`)
 	shaRe := regexp.MustCompile(`[0-9a-f]{40}`)
 	shas := map[string]struct{}{}
 
@@ -114,7 +123,19 @@ func singlePinViolations(in IsolationInput) []validate.IsolationViolation {
 		}
 	}
 
-	if len(shas) <= 1 {
+	// A subject that matches nothing is not a workflow directory with one
+	// consistent pin -- it is a check that ran over nothing and said so in the
+	// same words. A stale or misspelled subject silently disabled this entirely.
+	if len(shas) == 0 {
+		return []validate.IsolationViolation{{
+			Line: 1,
+			Msg: fmt.Sprintf(
+				"no %s pin found under workflow directory: the single-pin subject matches nothing, so pin consistency was not checked",
+				in.SinglePinSubject),
+		}}
+	}
+
+	if len(shas) == 1 {
 		return nil
 	}
 

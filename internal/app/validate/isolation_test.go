@@ -344,6 +344,57 @@ func TestIsolation_ForgejoStrictViolations(t *testing.T) {
 	}
 }
 
+func TestIsolation_UnmatchedSinglePinSubjectFails(t *testing.T) {
+	// A subject that matches nothing used to pass: the pin set was empty, empty
+	// is not "more than one", and the gate reported success. A stale or
+	// misspelled subject therefore switched this check off while still printing
+	// a tick.
+	mem := testfs.NewMemory(t)
+	mem.WriteFile(".forgejo/workflows/release.yml", []byte(forgejoIsolationCleanWorkflow))
+
+	var out bytes.Buffer
+
+	err := appvalidate.Isolation(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.IsolationInput{
+		Workflow:         ".forgejo/workflows/release.yml",
+		BuildJob:         "build-and-release",
+		SignJob:          "sign-and-publish",
+		PrepareJob:       "prepare",
+		DistDigestOutput: "dist-digest",
+		SigningSecrets:   []string{"COSIGN_SIGNING_KEY", "GPG_SIGNING_KEY"},
+		SinglePinSubject: "itiquette/nowhere-ci",
+		FS:               mem.FS(),
+	})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation\n%s", err, out.String())
+	}
+
+	if !strings.Contains(out.String(), "matches nothing") {
+		t.Errorf("missing unmatched-subject violation in:\n%s", out.String())
+	}
+}
+
+func TestIsolation_HelpersPinKeyFollowsSubject(t *testing.T) {
+	// The helpers input is named after the subject's repository. While it was
+	// hardcoded to forgejo-ci, every other subject had this half of the check
+	// skipped, so a helpers pin could disagree with the uses: pins unnoticed.
+	mem := testfs.NewMemory(t)
+	mem.WriteFile(".forgejo/workflows/release.yml", []byte(forgejoIsolationCleanWorkflow))
+	mem.WriteFile(".forgejo/workflows/other.yml", []byte(`jobs:
+  probe:
+    with:
+      forgejo-ci-helpers-sha: 3333333333333333333333333333333333333333
+`))
+
+	out, err := runForgejoIsolationInFS(t, mem, ".forgejo/workflows/release.yml")
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "mixed itiquette/forgejo-ci pins") {
+		t.Errorf("missing mixed-pin violation from the helpers key in:\n%s", out)
+	}
+}
+
 func TestIsolation_MixedPinsFail(t *testing.T) {
 	mem := testfs.NewMemory(t)
 	mem.WriteFile(".forgejo/workflows/release.yml", []byte(forgejoIsolationCleanWorkflow))
