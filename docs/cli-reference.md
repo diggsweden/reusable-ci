@@ -1678,7 +1678,7 @@ install Buildah runtime packages and configure job-local storage
 ```
 Installs missing Buildah/fuse-overlayfs packages when requested,
 writes a job-local containers storage config, prefers overlay/fuse-overlayfs only
-after buildah info and an optional scratch-image probe succeed, and falls back to
+after buildah info and an optional layered build probe succeed, and falls back to
 vfs. Emits CONTAINERS_STORAGE_CONF and TMPDIR to the runner env file for later CI
 steps.
 
@@ -1690,7 +1690,7 @@ EXAMPLE:
 |------|-------------|----------|
 | `--extra-packages` | whitespace-separated additional apt packages to install | `$SETUP_BUILDAH_EXTRA_PACKAGES` |
 | `--install-packages` | install missing Buildah/fuse-overlayfs/extra packages with apt-get | `$SETUP_BUILDAH_INSTALL_PACKAGES` |
-| `--probe-build` | validate storage with a scratch-image build probe | `$SETUP_BUILDAH_PROBE_BUILD` |
+| `--probe-build` | validate storage with a layered build probe that writes into a directory its base image owns | `$SETUP_BUILDAH_PROBE_BUILD` |
 | `--print-store` | print selected buildah storage details after setup | `$CONTAINER_STORAGE_PRINT_STORE` |
 | `--summary` | append selected storage details to the step summary | `$CONTAINER_STORAGE_SUMMARY` |
 | `--storage-conf` | containers storage config path (default: $RUNNER_TEMP/containers-storage.conf) | `$CONTAINERS_STORAGE_CONF` |
