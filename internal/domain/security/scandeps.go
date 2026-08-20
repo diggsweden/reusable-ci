@@ -62,14 +62,31 @@ const (
 // ParseDepSeverity normalizes a user-facing threshold string (case- and
 // whitespace-insensitive) into a DepSeverity. Unrecognized input is kept
 // (lowercased) so callers can distinguish it via IsKnown.
+//
+// "medium" is accepted as a spelling of "moderate" because it is what
+// trivy itself calls that band, and the sibling
+// NormalizeOpengrepFailSeverity already accepts several spellings per
+// band for the same reason. Anything still unrecognised stays as written
+// so the caller can name it in the refusal.
 func ParseDepSeverity(raw string) DepSeverity {
-	return DepSeverity(strings.ToLower(strings.TrimSpace(raw)))
+	normalised := DepSeverity(strings.ToLower(strings.TrimSpace(raw)))
+	// OpengrepSeverityMedium is the same word; reusing it keeps one
+	// spelling of "medium" in the package rather than a third literal.
+	if normalised == DepSeverity(OpengrepSeverityMedium) {
+		return DepSeverityModerate
+	}
+
+	return normalised
 }
 
 // TrivyFilter returns the cumulative Trivy --severity filter string for
 // this threshold. Lower thresholds widen the filter to include higher
-// classes. An unknown severity falls back to "CRITICAL" (the trivy
-// default) — callers that care should check IsKnown first.
+// classes.
+//
+// An unknown severity still falls back to "CRITICAL", but callers must
+// not rely on that: the fallback is the NARROWEST filter, so reaching it
+// silently stops HIGH and MEDIUM findings from being reported at all.
+// Callers reject unknown input via IsKnown before they get here.
 func (s DepSeverity) TrivyFilter() string {
 	switch s {
 	case DepSeverityCritical:

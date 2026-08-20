@@ -70,12 +70,16 @@ func ScanDependencies(
 	annot output.Annotator,
 	in ScanDependenciesInput,
 ) error {
-	cfg := resolveScanDepsConfig(in, annot)
+	cfg, err := resolveScanDepsConfig(in)
+	if err != nil {
+		return err
+	}
+
 	printScanDepsBanner(w, cfg)
 
 	deps := scanDepsDeps{trivy: trivy, gitRepo: gitRepo, w: w, stderr: stderr, annot: annot}
 
-	workDir, err := os.MkdirTemp("", "scan-deps-")
+	workDir, err := os.MkdirTemp("", "scan-deps-") //nolint:govet // err is already declared above.
 	if err != nil {
 		return fmt.Errorf("mkdir tmp: %w", err)
 	}
@@ -136,7 +140,28 @@ type scanDepsConfig struct {
 	severityFilter string
 }
 
-func resolveScanDepsConfig(in ScanDependenciesInput, annot output.Annotator) scanDepsConfig {
+// resolveScanDepsConfig resolves and defaults the inputs, refusing a
+// threshold it does not recognise.
+//
+// The refusal replaces a warn-and-continue that fell back to CRITICAL --
+// the NARROWEST filter. Because the resolved filter is passed to trivy as
+// --severity, that fallback did not merely stop HIGH and MEDIUM findings
+// from failing the build: trivy never reported them, so they were absent
+// from the SARIF and the GitLab report too. A mistyped gate silently
+// became the strictest-looking and least protective one.
+//
+// Two spellings made this easy to hit: "medium" (trivy's own name for
+// that band, now accepted as "moderate") and "CRITICAL,HIGH" (the
+// grammar the sibling `security scan container` documents for the
+// identically-named flag). The sibling `NormalizeOpengrepFailSeverity`
+// has always refused unknown input; this brings the two into line.
+func resolveScanDepsConfig(in ScanDependenciesInput) (scanDepsConfig, error) {
+	if in.FailOnSeverity != "" && !security.ParseDepSeverity(in.FailOnSeverity).IsKnown() {
+		return scanDepsConfig{}, fmt.Errorf(
+			"scan dependencies: unknown --fail-on-severity %q (want low, moderate, high or critical; note this flag takes ONE word, unlike `security scan container` which takes a comma-list): %w",
+			in.FailOnSeverity, errs.ErrUsage)
+	}
+
 	cfg := scanDepsConfig{
 		failOnSev:     cmp.Or(in.FailOnSeverity, string(security.DepSeverityCritical)),
 		mode:          cmp.Or(in.ScanMode, security.ScanModeDiff),
@@ -148,11 +173,7 @@ func resolveScanDepsConfig(in ScanDependenciesInput, annot output.Annotator) sca
 	}
 	cfg.severityFilter = security.ParseDepSeverity(cfg.failOnSev).TrivyFilter()
 
-	if in.FailOnSeverity != "" && !security.ParseDepSeverity(in.FailOnSeverity).IsKnown() {
-		annot.Warningf("Unknown severity %q, defaulting to critical", in.FailOnSeverity)
-	}
-
-	return cfg
+	return cfg, nil
 }
 
 func printScanDepsBanner(w io.Writer, cfg scanDepsConfig) {

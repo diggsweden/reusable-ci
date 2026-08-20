@@ -18,16 +18,18 @@ func TestMapTrivyFailSeverity(t *testing.T) {
 		"low":      "CRITICAL,HIGH,MEDIUM,LOW", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"weird":    "CRITICAL",                 // default
 
-		// The default is reached by two spellings a caller is likely to
-		// try, and it narrows the gate rather than widening it: a HIGH
-		// finding stops blocking the release. Both only warn. See
-		// docs/open-questions.md.
-		//
-		// "medium" is what trivy itself calls this band; this flag wants
-		// "moderate". "CRITICAL,HIGH" is the grammar the sibling
+		// "medium" is what trivy itself calls this band, and it is the
+		// spelling a caller most often reaches for; it now resolves to
+		// "moderate" rather than falling through to the narrow default.
+		"medium": "CRITICAL,HIGH,MEDIUM",
+
+		// "CRITICAL,HIGH" is the grammar the sibling
 		// `security scan container --fail-on-severity` documents for the
-		// very same flag name.
-		"medium":        "CRITICAL",
+		// very same flag name. It is still not a valid value here, and
+		// the app layer now REFUSES it rather than narrowing the gate to
+		// CRITICAL -- see TestScanDependencies_UnknownSeverityIsRefused.
+		// TrivyFilter's own fallback is unchanged and unreachable from
+		// that path.
 		"CRITICAL,HIGH": "CRITICAL",
 	}
 	for in, want := range cases {
@@ -40,13 +42,13 @@ func TestMapTrivyFailSeverity(t *testing.T) {
 func TestIsKnownTrivyFailSeverity(t *testing.T) {
 	t.Parallel()
 
-	for _, level := range []string{"critical", " HIGH ", "Moderate", "low"} {
+	for _, level := range []string{"critical", " HIGH ", "Moderate", "low", "medium", " Medium "} {
 		if !security.ParseDepSeverity(level).IsKnown() {
 			t.Errorf("%q should be known", level)
 		}
 	}
 
-	for _, level := range []string{"", "medium", "unknown"} { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+	for _, level := range []string{"", "unknown", "CRITICAL,HIGH", "error"} { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		if security.ParseDepSeverity(level).IsKnown() {
 			t.Errorf("%q should not be known", level)
 		}

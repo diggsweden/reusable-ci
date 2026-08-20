@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	appsecurity "github.com/diggsweden/reusable-ci/v3/internal/app/security"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/security"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
@@ -219,31 +220,72 @@ func TestScanDependencies_CleanResult(t *testing.T) {
 	}
 }
 
-func TestScanDependencies_UnknownSeverityWarnsAndDefaultsToCritical(t *testing.T) {
-	headJSON := `{"Results":[]}`
-	trivy := &fakeTrivy{writePerCall: []string{headJSON, ""}}
+// TestScanDependencies_UnknownSeverityIsRefused covers the gate's own
+// configuration. An unrecognised threshold used to warn and fall back to
+// CRITICAL -- the NARROWEST filter -- and because that filter is passed
+// to trivy as --severity, HIGH and MEDIUM findings were then neither
+// blocking nor reported: absent from the SARIF and the GitLab report
+// too. A mistyped gate silently became the least protective one.
+//
+// The two rows are the spellings a caller actually reaches for.
+// "CRITICAL,HIGH" is the grammar the sibling `security scan container`
+// documents for the identically-named flag; "error" is the grammar of
+// `security scan opengrep`. Both are now refused by name.
+func TestScanDependencies_UnknownSeverityIsRefused(t *testing.T) {
+	for _, value := range []string{"unknown", "CRITICAL,HIGH", "error"} {
+		t.Run(value, func(t *testing.T) {
+			trivy := &fakeTrivy{writePerCall: []string{`{"Results":[]}`, ""}}
+			sink := &appSummaryBuf{}
+
+			var stderr bytes.Buffer
+
+			fsys := testfs.NewReal(t)
+
+			err := appsecurity.ScanDependencies(context.Background(), trivy, &fakeGit{}, sink, io.Discard, &stderr,
+				output.NewAnnotator(&stderr, output.FormatGitHub), appsecurity.ScanDependenciesInput{
+					FailOnSeverity: value,
+					ScanMode:       security.ScanModeFull,
+					SARIFFile:      fsys.Path("trivy-dependency-results.sarif"),
+					GitLabDepFile:  fsys.Path("gl-dependency-scanning-report.json"),
+				})
+			if !errors.Is(err, errs.ErrUsage) {
+				t.Fatalf("err = %v, want ErrUsage", err)
+			}
+
+			// Refused before trivy ran: a scan under the wrong filter
+			// would write reports missing the findings it was meant to
+			// catch.
+			if len(trivy.calls) != 0 {
+				t.Errorf("trivy ran %d times under an unrecognised threshold", len(trivy.calls))
+			}
+		})
+	}
+}
+
+// TestScanDependencies_MediumIsAcceptedAsModerate covers the spelling
+// trivy itself uses for that band. Refusing it outright would turn the
+// most likely typo into a hard failure for a value that is unambiguous.
+func TestScanDependencies_MediumIsAcceptedAsModerate(t *testing.T) {
+	trivy := &fakeTrivy{writePerCall: []string{`{"Results":[]}`, ""}}
 	sink := &appSummaryBuf{}
 
 	var stderr bytes.Buffer
 
 	fsys := testfs.NewReal(t)
 
-	err := appsecurity.ScanDependencies(context.Background(), trivy, &fakeGit{}, sink, io.Discard, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), appsecurity.ScanDependenciesInput{
-		FailOnSeverity: "unknown",
-		ScanMode:       security.ScanModeFull,
-		SARIFFile:      fsys.Path("trivy-dependency-results.sarif"),
-		GitLabDepFile:  fsys.Path("gl-dependency-scanning-report.json"),
-	})
+	err := appsecurity.ScanDependencies(context.Background(), trivy, &fakeGit{}, sink, io.Discard, &stderr,
+		output.NewAnnotator(&stderr, output.FormatGitHub), appsecurity.ScanDependenciesInput{
+			FailOnSeverity: "medium",
+			ScanMode:       security.ScanModeFull,
+			SARIFFile:      fsys.Path("trivy-dependency-results.sarif"),
+			GitLabDepFile:  fsys.Path("gl-dependency-scanning-report.json"),
+		})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(stderr.String(), "::warning::Unknown severity") {
-		t.Errorf("missing warning:\n%s", stderr.String())
-	}
-
-	if !strings.Contains(sink.buf.String(), "| Severity filter | CRITICAL |") {
-		t.Errorf("summary should default to CRITICAL:\n%s", sink.buf.String())
+	if !strings.Contains(sink.buf.String(), "| Severity filter | CRITICAL,HIGH,MEDIUM |") {
+		t.Errorf("medium did not widen the filter to MEDIUM:\n%s", sink.buf.String())
 	}
 }
 
