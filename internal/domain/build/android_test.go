@@ -24,6 +24,7 @@ func TestResolveAndroidArtifactNames_Override(t *testing.T) {
 		ReleaseName: "myapp-1.2.3-release",
 		AABName:     "myapp-1.2.3",
 		SBOMName:    "myapp-1.2.3-sbom",
+		AARName:     "myapp-1.2.3",
 	}
 	if got != want {
 		t.Errorf("got %+v, want %+v", got, want)
@@ -100,6 +101,24 @@ func TestResolveAndroidBuildTasks(t *testing.T) {
 			name: "debug-only doesn't include bundle even with AAB true",
 			in:   build.ResolveAndroidBuildTasksInput{BuildTypes: "debug", IncludeAAB: true, BuildModule: "app"},
 			want: "assembleDebug",
+		},
+		{
+			// Library mode: an AAR, release-only, no bundle. IncludeAAB
+			// and the debug build-type are deliberately ignored — a
+			// library has no Play listing and no `bundle` task.
+			name: "library mode derives the AAR task",
+			in:   build.ResolveAndroidBuildTasksInput{BuildTypes: "debug,release", IncludeAAB: true, BuildModule: "lib", Library: true},
+			want: "lib:assembleRelease",
+		},
+		{
+			name: "library mode honours the flavor",
+			in:   build.ResolveAndroidBuildTasksInput{Flavor: "demo", BuildTypes: "release", BuildModule: "lib", Library: true},
+			want: "lib:assembleDemoRelease",
+		},
+		{
+			name: "library mode defaults the module to app",
+			in:   build.ResolveAndroidBuildTasksInput{BuildTypes: "release", Library: true},
+			want: "app:assembleRelease",
 		},
 		{
 			name: "default module is app",
@@ -200,5 +219,76 @@ func TestRenderAndroidSummary_FlavorDefaultsToDefault(t *testing.T) {
 	}, time.Now())
 	if !strings.Contains(got, "| **Flavor** | default |") {
 		t.Errorf("missing default flavor row:\n%s", got)
+	}
+}
+
+// Library mode must never derive a `bundle` task: bundleRelease does not
+// exist on an Android library module, so emitting it is a hard gradle
+// failure rather than an extra artefact.
+func TestResolveAndroidBuildTasks_LibraryNeverBundles(t *testing.T) {
+	for _, in := range []build.ResolveAndroidBuildTasksInput{
+		{BuildTypes: "debug,release", IncludeAAB: true, BuildModule: "lib", Library: true},
+		{BuildTypes: "release", IncludeAAB: true, Flavor: "prod", Library: true},
+		{BuildTypes: "debug", IncludeAAB: true, BuildModule: "sdk", Library: true},
+	} {
+		if got := build.ResolveAndroidBuildTasks(in); strings.Contains(got, "bundle") {
+			t.Errorf("library mode derived a bundle task: %q", got)
+		}
+	}
+}
+
+// The app path must be byte-for-byte unchanged by the library addition —
+// this is the regression guard for existing Android app adopters.
+func TestResolveAndroidBuildTasks_AppPathUnaffectedByLibraryField(t *testing.T) {
+	for _, in := range []build.ResolveAndroidBuildTasksInput{
+		{BuildTypes: "debug,release", IncludeAAB: true, BuildModule: "app"},
+		{Flavor: "demo", BuildTypes: "release", IncludeAAB: true, BuildModule: "app"},
+		{BuildTypes: "release", IncludeAAB: false},
+		{BuildTypes: "debug", IncludeAAB: true, BuildModule: "app"},
+	} {
+		withFalse := in
+		withFalse.Library = false
+
+		if got, want := build.ResolveAndroidBuildTasks(withFalse), build.ResolveAndroidBuildTasks(in); got != want {
+			t.Errorf("Library:false changed the app derivation: %q vs %q", got, want)
+		}
+	}
+}
+
+// The AAR is the library's primary artifact, so its upload name must be
+// the bare override — the same unsuffixed form the AAB uses for apps.
+//
+// This matters because the orchestrator passes artifacts.yml `name:` as
+// the override, and downstream download steps resolve the artifact by
+// PlannedArtifact.BuildArtifactName, which is that exact string. Using
+// the "-release" suffixed ReleaseName would upload the AAR under a name
+// nothing looks for.
+func TestResolveAndroidArtifactNames_AARMatchesPrimaryName(t *testing.T) {
+	got, err := build.ResolveAndroidArtifactNames(build.AndroidArtifactNamesInput{Override: "my-android-lib"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.AARName != "my-android-lib" {
+		t.Errorf("AARName = %q, want the bare override", got.AARName)
+	}
+
+	if got.AARName != got.AABName {
+		t.Errorf("AARName %q and AABName %q should share the primary-artifact name", got.AARName, got.AABName)
+	}
+
+	if got.AARName == got.ReleaseName {
+		t.Errorf("AARName must not be the suffixed ReleaseName (%q)", got.ReleaseName)
+	}
+}
+
+func TestResolveAndroidArtifactNames_AARDerivedForm(t *testing.T) {
+	got, err := build.ResolveAndroidArtifactNames(build.AndroidArtifactNamesInput{RepoName: "my-lib"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.AARName != "my-lib - AAR release" {
+		t.Errorf("AARName = %q", got.AARName)
 	}
 }

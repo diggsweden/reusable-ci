@@ -250,6 +250,7 @@ compute the gradle task list from flavor / build-types / include-aab / build-mod
 | `--build-types` | comma-separated Android build types to assemble | `$BUILD_TYPES` |
 | `--include-aab` | also emit bundleRelease (produces an AAB) | `$INCLUDE_AAB` |
 | `--build-module` | gradle module name (e.g. "app") | `$BUILD_MODULE` |
+| `--library` | library mode: derive the AAR-producing assembleRelease task, skipping AAB and debug variants | `$ANDROID_LIBRARY` |
 
 #### `reusable-ci build gradle-android version-info`
 
@@ -1172,6 +1173,8 @@ append the Android variants build summary block to the step summary
 | `--debug-name` | filename of the debug APK | `$DEBUG_NAME` |
 | `--release-name` | filename of the release APK | `$RELEASE_NAME` |
 | `--aab-name` | filename of the bundled AAB | `$AAB_NAME` |
+| `--library` | library mode: report the AAR instead of the APK/AAB variants | `$ANDROID_LIBRARY` |
+| `--aar-name` | filename of the library AAR | `$AAR_NAME` |
 
 #### `reusable-ci report build go`
 

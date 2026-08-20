@@ -490,12 +490,14 @@ func TestAndroidGradleBuild_RequiresTasks(t *testing.T) {
 	}
 }
 
-func TestAndroidListArtifacts_FindsApkAndAab(t *testing.T) {
+func TestAndroidListArtifacts_FindsApkAabAndAar(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	root := fsys.Root
 	module := "app"
 	fsys.WriteFile(filepath.Join(module, "build", "outputs", "apk", "debug", "demo.apk"), []byte("apk"))
 	fsys.WriteFile(filepath.Join(module, "build", "outputs", "bundle", "release", "demo.aab"), []byte("aab"))
+	// A library build's only output.
+	fsys.WriteFile(filepath.Join(module, "build", "outputs", "aar", "demo-release.aar"), []byte("aar"))
 	// Decoy file that should be ignored.
 	fsys.WriteFile(filepath.Join(module, "build", "outputs", "apk", "debug", "manifest.json"), []byte("{}"))
 
@@ -511,8 +513,10 @@ func TestAndroidListArtifacts_FindsApkAndAab(t *testing.T) {
 		t.Errorf("missing header in out:\n%s", out0)
 	}
 
-	if !strings.Contains(out0, "demo.apk") || !strings.Contains(out0, "demo.aab") {
-		t.Errorf("missing artifact path in out:\n%s", out0)
+	for _, want := range []string{"demo.apk", "demo.aab", "demo-release.aar"} {
+		if !strings.Contains(out0, want) {
+			t.Errorf("missing artifact path %q in out:\n%s", want, out0)
+		}
 	}
 
 	if strings.Contains(out0, "manifest.json") {

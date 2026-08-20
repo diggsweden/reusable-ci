@@ -120,6 +120,7 @@ func gradleAndroidResolveBuildTasksCmd() *cli.Command {
 			&cli.StringFlag{Name: "build-types", Value: "debug,release", Sources: cli.EnvVars("BUILD_TYPES"), Usage: "comma-separated Android build types to assemble"},
 			&cli.BoolFlag{Name: "include-aab", Value: true, Sources: cli.EnvVars("INCLUDE_AAB"), Usage: "also emit bundleRelease (produces an AAB)"},
 			&cli.StringFlag{Name: "build-module", Value: "app", Sources: cli.EnvVars("BUILD_MODULE"), Usage: "gradle module name (e.g. \"app\")"},
+			&cli.BoolFlag{Name: "library", Sources: cli.EnvVars("ANDROID_LIBRARY"), Usage: "library mode: derive the AAR-producing assembleRelease task, skipping AAB and debug variants"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
@@ -129,6 +130,7 @@ func gradleAndroidResolveBuildTasksCmd() *cli.Command {
 					BuildTypes:  cmd.String("build-types"),
 					IncludeAAB:  cmd.Bool("include-aab"),
 					BuildModule: cmd.String("build-module"),
+					Library:     cmd.Bool("library"),
 				})
 			})
 		},

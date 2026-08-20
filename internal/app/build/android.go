@@ -33,8 +33,8 @@ type AndroidArtifactNamesInput struct {
 	Today time.Time
 }
 
-// AndroidArtifactNames computes the four artifact names and writes
-// each to the OutputSink under its kebab-case key. The four
+// AndroidArtifactNames computes the artifact names and writes each to
+// the OutputSink under its kebab-case key. The matching
 // `printf "Artifact: ..."` status lines also go to stderr to match
 // the bash.
 func AndroidArtifactNames(ctx context.Context, sink ci.OutputSink, stderr io.Writer, in AndroidArtifactNamesInput) error {
@@ -61,6 +61,7 @@ func AndroidArtifactNames(ctx context.Context, sink ci.OutputSink, stderr io.Wri
 		{"release-name", names.ReleaseName},
 		{"aab-name", names.AABName},
 		{"sbom-name", names.SBOMName},
+		{"aar-name", names.AARName},
 	} {
 		if err := sink.Set(ctx, p.k, p.v); err != nil {
 			return fmt.Errorf("set %s: %w", p.k, err)
@@ -261,6 +262,8 @@ type AndroidResolveBuildTasksInput struct {
 	BuildTypes  string
 	IncludeAAB  bool
 	BuildModule string
+	// Library selects AAR-producing library mode (build-type: library).
+	Library bool
 }
 
 // AndroidResolveBuildTasks computes the gradle task list and writes
@@ -282,6 +285,7 @@ func AndroidResolveBuildTasks(ctx context.Context, sink ci.OutputSink, stderr io
 		BuildTypes:  in.BuildTypes,
 		IncludeAAB:  in.IncludeAAB,
 		BuildModule: in.BuildModule,
+		Library:     in.Library,
 	})
 	if err := sink.Set(ctx, "tasks", tasks); err != nil {
 		return err
@@ -366,7 +370,7 @@ func AndroidListArtifacts(w io.Writer, in AndroidListArtifactsInput) error { //n
 		}
 
 		ext := filepath.Ext(path)
-		if ext == ".apk" || ext == ".aab" {
+		if ext == ".apk" || ext == ".aab" || ext == ".aar" {
 			_, _ = fmt.Fprintln(w, path)
 
 			found = true

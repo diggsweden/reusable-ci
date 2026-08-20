@@ -33,11 +33,13 @@ func TestReleaseSummary_HappyPath(t *testing.T) {
 			"cargo":  "skipped", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		}),
 		PublishStageJSON: stageResultJSON(t, "publish", map[string]string{
-			"github_packages":       "success",
-			"xcode_ios":             "success",
-			"containers":            "success", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-			"cargo_container_first": "success",
-			"go_container_first":    "failure",
+			"github_packages":        "success",
+			"github_packages_gradle": "success",
+			"maven_central_gradle":   "failure",
+			"xcode_ios":              "success",
+			"containers":             "success", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			"cargo_container_first":  "success",
+			"go_container_first":     "failure",
 		}),
 		Platform:   provider.PlatformGitHub,
 		ServerURL:  "https://github.com", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
@@ -63,6 +65,8 @@ func TestReleaseSummary_HappyPath(t *testing.T) {
 		"| Build Go | ✓ |",
 		"| Build Cargo | − |",
 		"| Publish GitHub | ✓ |",
+		"| Publish GitHub (Gradle) | ✓ |",
+		"| Publish Maven Central (Gradle) | ✗ |",
 		"| Publish Apple App Store | ✓ |",
 		"| Containers | ✓ |",
 		"| Cargo SBOM | ✓ |",

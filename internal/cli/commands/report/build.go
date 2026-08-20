@@ -143,6 +143,8 @@ func buildAndroidCmd() *cli.Command {
 			&cli.StringFlag{Name: "debug-name", Sources: cli.EnvVars("DEBUG_NAME"), Usage: "filename of the debug APK"},
 			&cli.StringFlag{Name: "release-name", Sources: cli.EnvVars("RELEASE_NAME"), Usage: "filename of the release APK"},
 			&cli.StringFlag{Name: "aab-name", Sources: cli.EnvVars("AAB_NAME"), Usage: "filename of the bundled AAB"},
+			&cli.BoolFlag{Name: "library", Sources: cli.EnvVars("ANDROID_LIBRARY"), Usage: "library mode: report the AAR instead of the APK/AAB variants"},
+			&cli.StringFlag{Name: "aar-name", Sources: cli.EnvVars("AAR_NAME"), Usage: "filename of the library AAR"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			for _, f := range []string{"java-version", "jdk-dist", "build-module"} {
@@ -166,6 +168,8 @@ func buildAndroidCmd() *cli.Command {
 					DebugName:   cmd.String("debug-name"),
 					ReleaseName: cmd.String("release-name"),
 					AABName:     cmd.String("aab-name"),
+					Library:     cmd.Bool("library"),
+					AARName:     cmd.String("aar-name"),
 				})
 			})
 		},

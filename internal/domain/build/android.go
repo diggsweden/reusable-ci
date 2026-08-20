@@ -35,9 +35,18 @@ type AndroidArtifactNames struct {
 	ReleaseName string
 	AABName     string
 	SBOMName    string
+	// AARName is the library counterpart of AABName: the name of the
+	// module's primary published artifact. It deliberately shares
+	// AABName's *unsuffixed* form under an override, because the
+	// orchestrator forwards artifacts.yml `name:` as the override and
+	// downstream steps resolve the primary artifact by that exact
+	// string (PlannedArtifact.BuildArtifactName). Using ReleaseName
+	// here would upload the AAR as "<name>-release" and the download
+	// would miss it.
+	AARName string
 }
 
-// ResolveAndroidArtifactNames computes the four artifact names. It is
+// ResolveAndroidArtifactNames computes every artifact name. It is
 // pure: same input → same output, no I/O.
 func ResolveAndroidArtifactNames(in AndroidArtifactNamesInput) (AndroidArtifactNames, error) {
 	if in.RepoName == "" && in.Override == "" {
@@ -50,6 +59,7 @@ func ResolveAndroidArtifactNames(in AndroidArtifactNamesInput) (AndroidArtifactN
 			ReleaseName: in.Override + "-release",
 			AABName:     in.Override,
 			SBOMName:    in.Override + "-sbom",
+			AARName:     in.Override,
 		}, nil
 	}
 
@@ -75,6 +85,7 @@ func ResolveAndroidArtifactNames(in AndroidArtifactNamesInput) (AndroidArtifactN
 		ReleaseName: base + " - APK release",
 		AABName:     base + " - AAB release",
 		SBOMName:    base + " - build SBOM",
+		AARName:     base + " - AAR release",
 	}, nil
 }
 
@@ -84,6 +95,11 @@ type ResolveAndroidBuildTasksInput struct {
 	BuildTypes  string // "debug", "release", or "debug,release" — substring-matched
 	IncludeAAB  bool
 	BuildModule string // empty → "app"
+	// Library selects AAR-producing library mode. An Android library is
+	// `project-type: gradle-android` + `build-type: library`; it has no
+	// Play listing, so the AAB and debug-APK derivation below do not
+	// apply to it.
+	Library bool
 }
 
 // ResolveAndroidBuildTasks computes the gradle task list. Pure mirror.
@@ -94,6 +110,15 @@ func ResolveAndroidBuildTasks(in ResolveAndroidBuildTasksInput) string {
 	}
 
 	flavorCap := capitalizeFirst(in.Flavor)
+
+	// Library mode is deliberately release-only and AAB-free. An AAR is
+	// what gets published to Maven, and `bundle…` has no meaning for a
+	// library — asking for it is a task-not-found failure, not a variant.
+	// The flavor is still honoured, because library modules can declare
+	// product flavors.
+	if in.Library {
+		return module + ":assemble" + flavorCap + "Release"
+	}
 
 	var parts []string
 	if strings.Contains(in.BuildTypes, "debug") {
@@ -156,9 +181,16 @@ type AndroidSummaryInput struct {
 	DebugName   string
 	ReleaseName string
 	AABName     string
+
+	// Library switches the summary to the AAR shape; BuildTypes and
+	// IncludeAAB describe the application path only. Mirrors the Library
+	// flag on ResolveAndroidBuildTasksInput.
+	Library bool
+	AARName string
 }
 
-// RenderAndroidSummary is the pure markdown body of.
+// RenderAndroidSummary is the pure markdown body of the Android build
+// summary written to the job summary.
 func RenderAndroidSummary(in AndroidSummaryInput, now time.Time) string {
 	var b strings.Builder //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 
@@ -176,9 +208,22 @@ func RenderAndroidSummary(in AndroidSummaryInput, now time.Time) string {
 	}
 
 	_, _ = fmt.Fprintf(&b, "| **Flavor** | %s |\n", flavor)
-	_, _ = fmt.Fprintf(&b, "| **Build Types** | %s |\n", in.BuildTypes)
-	_, _ = fmt.Fprintf(&b, "| **Include AAB** | %s |\n", checkmark(in.IncludeAAB))
-	_, _ = fmt.Fprintf(&b, "| **Signing** | %s |\n", boolStatus(in.Signing))
+
+	// Library mode is release-only and AAB-free by construction, so the
+	// incoming BuildTypes / IncludeAAB values describe the application path
+	// and would misreport here.
+	if in.Library {
+		_, _ = fmt.Fprintf(&b, "| **Build Types** | release (library) |\n")
+	} else {
+		_, _ = fmt.Fprintf(&b, "| **Build Types** | %s |\n", in.BuildTypes)
+		_, _ = fmt.Fprintf(&b, "| **Include AAB** | %s |\n", checkmark(in.IncludeAAB))
+	}
+
+	// A library is never keystore-signed — its Maven Central signature is
+	// the GPG release key, applied in publish-gradle.yml. That rule lives
+	// here rather than in the caller's YAML, alongside every other
+	// library/application presentation difference in this function.
+	_, _ = fmt.Fprintf(&b, "| **Signing** | %s |\n", boolStatus(in.Signing && !in.Library))
 
 	if in.SkipTests {
 		_, _ = fmt.Fprintf(&b, "| **Tests** | ⊘ Skipped |\n")
@@ -191,6 +236,26 @@ func RenderAndroidSummary(in AndroidSummaryInput, now time.Time) string {
 	}
 
 	_, _ = fmt.Fprintf(&b, "\n### Artifacts Generated\n")
+	_, _ = b.WriteString(renderAndroidArtifactLines(in))
+
+	_, _ = fmt.Fprintf(&b, "\n*Build completed at %s*\n", now.UTC().Format("2006-01-02 15:04:05 UTC"))
+
+	return b.String()
+}
+
+// renderAndroidArtifactLines lists what the build actually produced. A
+// library produces exactly one artefact — the AAR — and none of the
+// APK/AAB variants; an application's variants come from BuildTypes and
+// IncludeAAB, which are the same gates build-gradle-android.yml applies
+// to its upload steps.
+func renderAndroidArtifactLines(in AndroidSummaryInput) string {
+	var b strings.Builder //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+
+	if in.Library {
+		_, _ = fmt.Fprintf(&b, "✓ Release AAR: `%s`\n", in.AARName)
+
+		return b.String()
+	}
 
 	if strings.Contains(in.BuildTypes, "debug") {
 		_, _ = fmt.Fprintf(&b, "✓ Debug APK: `%s`\n", in.DebugName)
@@ -203,8 +268,6 @@ func RenderAndroidSummary(in AndroidSummaryInput, now time.Time) string {
 	if in.IncludeAAB && strings.Contains(in.BuildTypes, "release") {
 		_, _ = fmt.Fprintf(&b, "✓ Release AAB: `%s`\n", in.AABName)
 	}
-
-	_, _ = fmt.Fprintf(&b, "\n*Build completed at %s*\n", now.UTC().Format("2006-01-02 15:04:05 UTC"))
 
 	return b.String()
 }

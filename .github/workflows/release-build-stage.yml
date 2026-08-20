@@ -209,6 +209,9 @@ jobs:
       working-directory: ${{ matrix.artifact.working_directory }}
       build-module: ${{ matrix.artifact.gradle_android.build_module }}
       branch: ${{ inputs.branch }}
+      # An Android library builds an AAR instead of APK/AAB and skips
+      # keystore signing. Empty for applications, which is the default.
+      library: ${{ matrix.artifact.android_library == true }}
       product-flavor: ${{ matrix.artifact.gradle_android.product_flavor || '' }}
       build-types: ${{ matrix.artifact.gradle_android.build_types || 'debug,release' }}
       include-aab: ${{ matrix.artifact.gradle_android.include_aab != false }}

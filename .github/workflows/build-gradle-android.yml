@@ -44,6 +44,11 @@ on:
         required: true
         type: string
       # === VARIANT CONFIGURATION ===
+      library:
+        description: "true builds an AAR for Maven publishing: the task list becomes <module>:assemble[Flavor]Release, and AAB / debug-APK / keystore-signing derivation is skipped. false (the default) is the application path and behaves exactly as before. Callers pass the plan's `android_library`, which is derived from build-type: library."
+        required: false
+        default: false
+        type: boolean
       product-flavor:
         description: "Product flavor to build (e.g., demo, prod, staging). Leave empty for no flavor."
         required: false
@@ -66,7 +71,7 @@ on:
         type: string
       # === ARTIFACT NAMING ===
       artifact-name:
-        description: "Override the derived artifact-name format. When set, the AAB is uploaded under this exact name and APK/SBOM variants get -debug/-release/-sbom suffixes. Used by the orchestrator (release-build-stage.yml) to align uploads with the artifacts.yml `name:` that release-publish-stage forwards to publish-google-play. Leave empty for date/prefix/repo/flavor-derived naming."
+        description: "Override the derived artifact-name format. When set, the AAB (application) or AAR (library) is uploaded under this exact name and APK/SBOM variants get -debug/-release/-sbom suffixes. Used by the orchestrator (release-build-stage.yml) to align uploads with the artifacts.yml `name:` that release-publish-stage forwards to publish-google-play. Leave empty for date/prefix/repo/flavor-derived naming."
         required: false
         default: ""
         type: string
@@ -138,6 +143,9 @@ on:
       aab-name:
         description: "Uploaded artefact name for the release AAB"
         value: ${{ jobs.build-variants.outputs.aab-name }}
+      aar-name:
+        description: "Artifact name the AAR was uploaded under (library builds)"
+        value: ${{ jobs.build-variants.outputs.aar-name }}
       sbom-name:
         description: "Uploaded artefact name for the build SBOM"
         value: ${{ jobs.build-variants.outputs.sbom-name }}
@@ -157,6 +165,7 @@ jobs:
       release-name: ${{ steps.artifact-names.outputs.release-name }}
       aab-name: ${{ steps.artifact-names.outputs.aab-name }}
       sbom-name: ${{ steps.artifact-names.outputs.sbom-name }}
+      aar-name: ${{ steps.artifact-names.outputs.aar-name }}
     steps:
       # Defense-in-depth: refuse PR-context triggers. ANDROID_KEYSTORE +
       # SECRETS_PROPERTIES_BASE64 land in env for this job; must never
@@ -192,7 +201,9 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         run: chmod +x ./gradlew
       - name: Decode Android keystore
-        if: ${{ inputs['enable-signing'] }}
+        # Libraries are never signed with an Android keystore — Maven
+        # Central signing uses the GPG release key, in publish-gradle.yml.
+        if: ${{ inputs['enable-signing'] && !inputs.library }}
         working-directory: ${{ inputs['working-directory'] }}
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE }}
@@ -209,6 +220,7 @@ jobs:
           BUILD_TYPES: ${{ inputs['build-types'] }}
           INCLUDE_AAB: ${{ inputs['include-aab'] }}
           BUILD_MODULE: ${{ inputs['build-module'] }}
+          ANDROID_LIBRARY: ${{ inputs.library }}
         run: reusable-ci build gradle-android resolve-build-tasks
       - name: Decode secrets properties
         # Standard Android pattern: gradle scripts read secrets.properties for
@@ -262,7 +274,7 @@ jobs:
           BUILD_MODULE: ${{ inputs['build-module'] }}
         run: reusable-ci build gradle-android list-artifacts
       - name: Upload Debug APK
-        if: contains(inputs['build-types'], 'debug')
+        if: ${{ !inputs.library && contains(inputs['build-types'], 'debug') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.artifact-names.outputs.debug-name }}
@@ -271,7 +283,7 @@ jobs:
           retention-days: "7"
           if-no-files-found: warn
       - name: Upload Release APK
-        if: contains(inputs['build-types'], 'release')
+        if: ${{ !inputs.library && contains(inputs['build-types'], 'release') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.artifact-names.outputs.release-name }}
@@ -280,12 +292,25 @@ jobs:
           retention-days: "7"
           if-no-files-found: warn
       - name: Upload AAB
-        if: ${{ inputs['include-aab'] && contains(inputs['build-types'], 'release') }}
+        if: ${{ !inputs.library && inputs['include-aab'] && contains(inputs['build-types'], 'release') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.artifact-names.outputs.aab-name }}
           path: |
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/bundle/**/*.aab
+          retention-days: "7"
+          if-no-files-found: error
+      - name: Upload AAR
+        # The library counterpart of the APK/AAB uploads above. This is
+        # what gets attached to the release and what the Build SBOM
+        # describes; publish-gradle.yml rebuilds from source rather than
+        # consuming it.
+        if: ${{ inputs.library }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.artifact-names.outputs.aar-name }}
+          path: |
+            ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/aar/*.aar
           retention-days: "7"
           if-no-files-found: error
       - name: Generate build summary
@@ -301,6 +326,8 @@ jobs:
           DEBUG_NAME: ${{ steps.artifact-names.outputs.debug-name }}
           RELEASE_NAME: ${{ steps.artifact-names.outputs.release-name }}
           AAB_NAME: ${{ steps.artifact-names.outputs.aab-name }}
+          ANDROID_LIBRARY: ${{ inputs.library }}
+          AAR_NAME: ${{ steps.artifact-names.outputs.aar-name }}
           JAVA_VERSION: "25"
           JDK_DIST: "Temurin"
         run: reusable-ci report build android

@@ -31,12 +31,12 @@ type ReleaseSummaryInput struct {
 	PromoteStagingResult string
 	PromoteReleaseResult string
 	PrepareStageJSON     string
-	BuildStageJSON      string
-	PublishStageJSON    string
-	Platform            provider.Platform
-	ServerURL           string // CI_SERVER_URL
-	Repository          string // CI_REPO
-	Now                 time.Time
+	BuildStageJSON       string
+	PublishStageJSON     string
+	Platform             provider.Platform
+	ServerURL            string // CI_SERVER_URL
+	Repository           string // CI_REPO
+	Now                  time.Time
 }
 
 // ReleaseSummary appends the release summary block to the step summary.
@@ -108,6 +108,11 @@ func ReleaseSummary(ctx context.Context, sink ci.SummarySink, in ReleaseSummaryI
 		{"Build Xcode", target(build, pipeline.TargetXcodeIOS)},
 		{"Publish GitHub", target(publish, pipeline.TargetGitHubPackages)},
 		{"Publish Maven Central", target(publish, pipeline.TargetMavenCentral)},
+		// The Gradle toolchain publishes through its own pair of jobs (see
+		// ArtifactSets.GitHubPackagesGradle) — separate rows, not folded into
+		// the two above, so a Gradle failure is attributable at a glance.
+		{"Publish GitHub (Gradle)", target(publish, pipeline.TargetGitHubPackagesGradle)},
+		{"Publish Maven Central (Gradle)", target(publish, pipeline.TargetMavenCentralGradle)},
 		{"Publish Apple App Store", target(publish, pipeline.TargetXcodeIOS)},
 		{"Publish Google Play", target(publish, pipeline.TargetGooglePlay)},
 		{"Containers", target(publish, pipeline.TargetContainers)},
