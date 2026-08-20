@@ -22,7 +22,11 @@ type fakeBuildahSetupTool struct {
 	failOverlayProbe   bool
 	probeCalls         []string
 	probeContainerfile string
-	infoJSON           []byte
+	probeDir           string
+	// calls records RemoveImage/ProbeBuild in the order they arrive, so a
+	// probe that could pass on a leftover image is visible.
+	calls    []string
+	infoJSON []byte
 }
 
 func (f *fakeBuildahSetupTool) CommandExists(name string) bool {
@@ -51,7 +55,10 @@ func (f *fakeBuildahSetupTool) ProbeBuild(_ context.Context, env []string, probe
 		f.probeContainerfile = string(body)
 	}
 
+	f.probeDir = probeDir
+	f.calls = append(f.calls, "build")
 	f.probeCalls = append(f.probeCalls, driver)
+
 	if driver == "overlay" && f.failOverlayProbe {
 		return errors.New("simulated overlay probe failure") //nolint:err113 // test double error.
 	}
@@ -59,7 +66,9 @@ func (f *fakeBuildahSetupTool) ProbeBuild(_ context.Context, env []string, probe
 	return nil
 }
 
-func (f *fakeBuildahSetupTool) RemoveImage(_ context.Context, _ []string, _ string, _ io.Writer) error {
+func (f *fakeBuildahSetupTool) RemoveImage(_ context.Context, _ []string, image string, _ io.Writer) error {
+	f.calls = append(f.calls, "remove:"+image)
+
 	return nil
 }
 
@@ -302,5 +311,94 @@ func TestSetupBuildah_ProbeWritesIntoADirectoryItsBaseOwns(t *testing.T) {
 
 	if strings.Count(body, "COPY probe.txt /owned/") != 2 {
 		t.Fatalf("the probe does not write twice into the directory its base owns:\n%s", body)
+	}
+}
+
+// TestSetupBuildah_ProbeCopiesFilesThatExist checks the probe build could
+// actually run. Its sibling above pins the Containerfile's shape, which is
+// the closest a unit test gets to "this build exercises copy-up" -- but a
+// Containerfile naming a COPY source that was never written fails every
+// real probe while satisfying any assertion made about its text.
+//
+// So this reads the sources out of the Containerfile the product wrote and
+// requires each to be a real file in the probe directory. It survives
+// renaming probe.txt or adding a stage; it fails if the two halves of
+// runBuildahProbe stop agreeing.
+func TestSetupBuildah_ProbeCopiesFilesThatExist(t *testing.T) {
+	t.Parallel()
+
+	tool := &fakeBuildahSetupTool{commands: map[string]bool{
+		"buildah": true, "fuse-overlayfs": true, "apt-get": true,
+	}}
+	runnerTemp := t.TempDir()
+
+	if _, err := appcontainer.SetupBuildah(
+		context.Background(), tool, &fakePackageInstaller{}, nil, nil, io.Discard,
+		appcontainer.SetupBuildahInput{ProbeBuild: true, RunnerTemp: runnerTemp, EnvFile: filepath.Join(runnerTemp, "env")},
+	); err != nil {
+		t.Fatalf("SetupBuildah: %v", err)
+	}
+
+	sources := copySources(t, tool.probeContainerfile)
+	if len(sources) == 0 {
+		t.Fatalf("the probe Containerfile copies nothing:\n%s", tool.probeContainerfile)
+	}
+
+	for _, source := range sources {
+		if info, err := os.Stat(filepath.Join(tool.probeDir, source)); err != nil || !info.Mode().IsRegular() {
+			t.Errorf("COPY %s names a file the probe never wrote into %s: %v", source, tool.probeDir, err)
+		}
+	}
+}
+
+// copySources returns the source operand of every COPY instruction.
+func copySources(t *testing.T, containerfile string) []string {
+	t.Helper()
+
+	var sources []string
+
+	for _, line := range strings.Split(containerfile, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && strings.EqualFold(fields[0], "COPY") {
+			sources = append(sources, fields[1])
+		}
+	}
+
+	return sources
+}
+
+// TestSetupBuildah_ProbeRemovesAStaleImageBeforeBuilding covers the reason
+// the probe deletes before it builds: the probe image name is fixed, so on
+// a self-hosted runner an image left by an earlier run is already there.
+// Building over it without removing it first would let a probe "succeed"
+// against storage that cannot in fact build anything.
+func TestSetupBuildah_ProbeRemovesAStaleImageBeforeBuilding(t *testing.T) {
+	t.Parallel()
+
+	tool := &fakeBuildahSetupTool{commands: map[string]bool{
+		"buildah": true, "fuse-overlayfs": true, "apt-get": true,
+	}}
+	runnerTemp := t.TempDir()
+
+	if _, err := appcontainer.SetupBuildah(
+		context.Background(), tool, &fakePackageInstaller{}, nil, nil, io.Discard,
+		appcontainer.SetupBuildahInput{ProbeBuild: true, RunnerTemp: runnerTemp, EnvFile: filepath.Join(runnerTemp, "env")},
+	); err != nil {
+		t.Fatalf("SetupBuildah: %v", err)
+	}
+
+	if len(tool.calls) < 2 {
+		t.Fatalf("calls = %v, want a removal followed by a build", tool.calls)
+	}
+
+	if !strings.HasPrefix(tool.calls[0], "remove:") || tool.calls[1] != "build" {
+		t.Fatalf("calls = %v, want the stale image removed before the build", tool.calls)
+	}
+
+	// The removal has to name the image the build then produces, or it
+	// deletes something else and the stale one survives.
+	removed := strings.TrimPrefix(tool.calls[0], "remove:")
+	if removed == "" {
+		t.Error("the probe removed an image with no name")
 	}
 }
