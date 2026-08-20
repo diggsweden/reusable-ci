@@ -208,6 +208,47 @@ publishing { repositories { maven { name = "sonatype" } } }
 	}
 }
 
+// "signing" is a legal bare Kotlin identifier, so the Kotlin DSL applies it
+// without the backticks or id(...) that "maven-publish" needs. Taken from a
+// real Android library that this check warned about incorrectly.
+func TestGradlePublishChecks_SigningAppliedAsBareKotlinAccessor(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"bare accessor in the plugins block": `
+plugins {
+    id("com.android.library")
+    id("maven-publish")
+    signing
+}
+java { withSourcesJar(); withJavadocJar() }
+publishing { repositories { maven { name = "MavenCentral" } } }
+`,
+		// The configuration block alone is proof enough: it does not
+		// compile unless the plugin is applied.
+		"configuration block only": `
+plugins { id("maven-publish") }
+java { withSourcesJar(); withJavadocJar() }
+publishing { repositories { maven { name = "MavenCentral" } } }
+signing {
+    useInMemoryPgpKeys(signingKey, signingPassword)
+    sign(publishing.publications["release"])
+}
+`,
+	}
+
+	for name, script := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			checks := gradleChecks(t, centralArtifacts, map[string]string{"build.gradle.kts": script})
+			if got := gradleCheckMatching(t, checks, "signing configured").Severity; got != doctor.SeverityOK {
+				t.Errorf("severity = %s, want ok — the signing plugin is applied", got)
+			}
+		})
+	}
+}
+
 // vanniktech's plugin supplies maven-publish, signing and the jars, so a
 // script applying it must not be warned about any of them.
 func TestGradlePublishChecks_VanniktechPluginSatisfiesChecks(t *testing.T) {

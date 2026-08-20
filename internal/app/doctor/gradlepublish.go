@@ -36,9 +36,18 @@ var (
 	// Deliberately not anchored to line start: `plugins { id("maven-publish") }`
 	// on one line is as common as the multi-line block form.
 	reMavenPublishPlugin = regexp.MustCompile(`(id\s*\(?\s*["']maven-publish["']|apply\s+plugin:\s*["']maven-publish["']|` + "`" + `maven-publish` + "`" + `)`)
-	reSigningPlugin      = regexp.MustCompile(`(id\s*\(?\s*["']signing["']|apply\s+plugin:\s*["']signing["']|` + "`" + `signing` + "`" + `)`)
-	reSourcesJar         = regexp.MustCompile(`withSourcesJar\s*\(`)
-	reJavadocJar         = regexp.MustCompile(`withJavadocJar\s*\(`)
+	// Two spellings beyond the maven-publish set above, because "signing"
+	// — unlike "maven-publish" — is a legal bare Kotlin identifier:
+	//
+	//   plugins { signing }   the accessor form, needing no backticks
+	//   signing { … }         the configuration block, which does not
+	//                         compile unless the plugin is applied
+	//
+	// Missing them warned "does not apply the signing plugin" at a real
+	// Android library that applies it correctly.
+	reSigningPlugin = regexp.MustCompile(`(?m)(id\s*\(?\s*["']signing["']|apply\s+plugin:\s*["']signing["']|` + "`" + `signing` + "`" + `|^\s*signing\s*$|signing\s*\{)`)
+	reSourcesJar    = regexp.MustCompile(`withSourcesJar\s*\(`)
+	reJavadocJar    = regexp.MustCompile(`withJavadocJar\s*\(`)
 	// Applied only to the `repositories { … }` regions of the script (see
 	// repositoriesRegions) — on the whole body it also matches the `name`
 	// of a pom, a publication or a project, any of which could spell
