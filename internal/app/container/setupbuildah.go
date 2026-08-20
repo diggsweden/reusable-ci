@@ -69,7 +69,7 @@ type SetupBuildahResult struct {
 
 // SetupBuildah installs missing Buildah runtime packages when requested and
 // configures job-local container storage. It prefers overlay/fuse-overlayfs only
-// after buildah info and an optional scratch-image probe succeed, then falls back
+// after buildah info and an optional layered build probe succeed, then falls back
 // to vfs. The selected storage paths are emitted for later CI steps through the
 // runner env file and the OutputSink.
 func SetupBuildah(
@@ -319,7 +319,29 @@ func runBuildahProbe(ctx context.Context, tool BuildahSetupTool, env []string, p
 		return err
 	}
 
-	if err := cliio.WriteFile(filepath.Join(probeDir, "Containerfile"), []byte("FROM scratch\nCOPY probe.txt /probe.txt\n"), 0o644); err != nil {
+	// Two stages, and both earn their place.
+	//
+	// The probe used to be "FROM scratch, COPY into /", which is the one build
+	// that cannot fail the way real builds fail. A scratch image owns nothing,
+	// so no directory has to be created inside an existing layer and nothing
+	// has to be copied up. On a nested runner -- container storage sitting on
+	// the container's own overlay filesystem, where overlay cannot stack on
+	// overlay -- that probe passed while every real build failed, and the
+	// failure surfaced much later as "mkdir /usr/local: operation not
+	// permitted" from inside Buildah's copier, naming neither the storage
+	// driver nor the nesting.
+	//
+	// The first stage creates a directory, which the old probe never did. The
+	// second writes into a directory its base image already owns, which needs a
+	// copy-up and is what real Containerfiles do constantly. Both stay offline:
+	// the second stage's base is the first, so this pulls nothing and needs no
+	// registry.
+	probeContainerfile := "FROM scratch AS owner\n" +
+		"COPY probe.txt /owned/probe.txt\n" +
+		"\n" +
+		"FROM owner\n" +
+		"COPY probe.txt /owned/second.txt\n"
+	if err := cliio.WriteFile(filepath.Join(probeDir, "Containerfile"), []byte(probeContainerfile), 0o644); err != nil {
 		return err
 	}
 

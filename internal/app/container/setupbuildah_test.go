@@ -18,10 +18,11 @@ import (
 )
 
 type fakeBuildahSetupTool struct {
-	commands         map[string]bool
-	failOverlayProbe bool
-	probeCalls       []string
-	infoJSON         []byte
+	commands           map[string]bool
+	failOverlayProbe   bool
+	probeCalls         []string
+	probeContainerfile string
+	infoJSON           []byte
 }
 
 func (f *fakeBuildahSetupTool) CommandExists(name string) bool {
@@ -40,10 +41,14 @@ func (f *fakeBuildahSetupTool) InfoJSON(_ context.Context, _ []string) ([]byte, 
 	return f.infoJSON, nil
 }
 
-func (f *fakeBuildahSetupTool) ProbeBuild(_ context.Context, env []string, _, _ string, _ io.Writer) error {
+func (f *fakeBuildahSetupTool) ProbeBuild(_ context.Context, env []string, probeDir, _ string, _ io.Writer) error {
 	driver, err := storageDriverFromEnv(env)
 	if err != nil {
 		return err
+	}
+
+	if body, readErr := os.ReadFile(filepath.Join(probeDir, "Containerfile")); readErr == nil {
+		f.probeContainerfile = string(body)
 	}
 
 	f.probeCalls = append(f.probeCalls, driver)
@@ -251,4 +256,51 @@ func readText(t *testing.T, path string) string {
 	}
 
 	return string(body)
+}
+
+// TestSetupBuildah_ProbeWritesIntoADirectoryItsBaseOwns pins the one property
+// that makes the probe worth running.
+//
+// It used to build "FROM scratch, COPY into /", which is the single build that
+// cannot fail the way real builds fail: a scratch image owns nothing, so no
+// directory is created inside an existing layer and nothing is copied up. On a
+// nested runner whose container storage sits on its own overlay filesystem the
+// probe passed and every real build failed, and the report arrived an hour into
+// a release as "mkdir /usr/local: operation not permitted" -- naming neither
+// the driver nor the nesting.
+//
+// So this asserts the shape rather than the bytes: a second stage built on the
+// first, writing into a directory that first stage already owns. Both stages
+// stay offline, which is why the base is a stage and not a pulled image.
+func TestSetupBuildah_ProbeWritesIntoADirectoryItsBaseOwns(t *testing.T) {
+	t.Parallel()
+
+	tool := &fakeBuildahSetupTool{commands: map[string]bool{
+		"buildah": true, "fuse-overlayfs": true, "apt-get": true,
+	}}
+	runnerTemp := t.TempDir()
+
+	if _, err := appcontainer.SetupBuildah(
+		context.Background(), tool, &fakePackageInstaller{}, nil, nil, io.Discard,
+		appcontainer.SetupBuildahInput{ProbeBuild: true, RunnerTemp: runnerTemp, EnvFile: filepath.Join(runnerTemp, "env")},
+	); err != nil {
+		t.Fatalf("SetupBuildah: %v", err)
+	}
+
+	body := tool.probeContainerfile
+	if body == "" {
+		t.Fatal("the probe wrote no Containerfile")
+	}
+
+	if strings.Count(body, "FROM ") < 2 {
+		t.Fatalf("the probe builds a single stage, so nothing it copies lands in a layer it does not own:\n%s", body)
+	}
+
+	if !strings.Contains(body, "FROM scratch AS owner") || !strings.Contains(body, "FROM owner") {
+		t.Fatalf("the probe's second stage is not built on its first, so no copy-up is exercised:\n%s", body)
+	}
+
+	if strings.Count(body, "COPY probe.txt /owned/") != 2 {
+		t.Fatalf("the probe does not write twice into the directory its base owns:\n%s", body)
+	}
 }

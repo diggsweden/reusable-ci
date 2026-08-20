@@ -22,7 +22,7 @@ func setupBuildahCmd() *cli.Command {
 		Usage: "install Buildah runtime packages and configure job-local storage",
 		Description: `Installs missing Buildah/fuse-overlayfs packages when requested,
 writes a job-local containers storage config, prefers overlay/fuse-overlayfs only
-after buildah info and an optional scratch-image probe succeed, and falls back to
+after buildah info and an optional layered build probe succeed, and falls back to
 vfs. Emits CONTAINERS_STORAGE_CONF and TMPDIR to the runner env file for later CI
 steps.
 
@@ -31,7 +31,7 @@ EXAMPLE:
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "extra-packages", Sources: cli.EnvVars("SETUP_BUILDAH_EXTRA_PACKAGES"), Usage: "whitespace-separated additional apt packages to install"},
 			&cli.BoolFlag{Name: "install-packages", Value: true, Sources: cli.EnvVars("SETUP_BUILDAH_INSTALL_PACKAGES"), Usage: "install missing Buildah/fuse-overlayfs/extra packages with apt-get"},
-			&cli.BoolFlag{Name: "probe-build", Value: true, Sources: cli.EnvVars("SETUP_BUILDAH_PROBE_BUILD"), Usage: "validate storage with a scratch-image build probe"},
+			&cli.BoolFlag{Name: "probe-build", Value: true, Sources: cli.EnvVars("SETUP_BUILDAH_PROBE_BUILD"), Usage: "validate storage with a layered build probe that writes into a directory its base image owns"},
 			&cli.BoolFlag{Name: "print-store", Sources: cli.EnvVars("CONTAINER_STORAGE_PRINT_STORE"), Usage: "print selected buildah storage details after setup"},
 			&cli.BoolFlag{Name: "summary", Sources: cli.EnvVars("CONTAINER_STORAGE_SUMMARY"), Usage: "append selected storage details to the step summary"},
 			&cli.StringFlag{Name: "storage-conf", Sources: cli.EnvVars("CONTAINERS_STORAGE_CONF"), Usage: "containers storage config path (default: $RUNNER_TEMP/containers-storage.conf)"},
