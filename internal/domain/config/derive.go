@@ -80,17 +80,62 @@ func CargoArtifactBuildMode(a Artifact) CargoBuildMode {
 	return CargoBuildMode(strings.TrimSpace(string(a.Cargo.BuildMode)))
 }
 
+// Project types each publish target can reach, before any build-type
+// narrowing. Named lists rather than inline || ladders so the set is
+// readable at a glance and a mis-scoped parenthesis has nowhere to hide.
+//
+//nolint:gochecknoglobals // immutable lookup tables.
+var (
+	githubPackagesTypes = []projecttype.Type{
+		projecttype.Maven, projecttype.NPM, projecttype.Gradle, projecttype.GradleAndroid,
+	}
+	mavenCentralTypes = []projecttype.Type{
+		projecttype.Maven, projecttype.Gradle, projecttype.GradleAndroid,
+	}
+)
+
+// gradleToolchainTypes are the project types that publish through the
+// Gradle toolchain (publish-gradle.yml) rather than by uploading a
+// previously built artifact.
+//
+//nolint:gochecknoglobals // immutable lookup table.
+var gradleToolchainTypes = []projecttype.Type{projecttype.Gradle, projecttype.GradleAndroid}
+
+// IsGradleToolchain reports whether a project type publishes through the
+// Gradle toolchain. Both plain gradle and gradle-android take that path,
+// which is why the publish-stage target keys are named by toolchain
+// ("…_gradle") rather than by project type.
+func IsGradleToolchain(t projecttype.Type) bool {
+	return projecttype.IsIn(t, gradleToolchainTypes)
+}
+
 // SupportedPublishTarget reports whether the current workflows support
 // publishing artifact a to target. It intentionally models the public v3
 // contract, not every schema-recognised future value.
 func SupportedPublishTarget(a Artifact, target PublishTarget) bool { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	switch target {
 	case PublishGitHubPackages:
-		return a.ProjectType == projecttype.Maven || a.ProjectType == projecttype.NPM
+		if !projecttype.IsIn(a.ProjectType, githubPackagesTypes) {
+			return false
+		}
+
+		// An Android artifact reaches GitHub Packages only as a library —
+		// an app's output is an APK/AAB, which is not a Maven artifact.
+		//
+		// Gradle *applications* are allowed on purpose: publishing an
+		// application's jar to GitHub Packages is a legitimate internal
+		// distribution channel. The maven-application exclusion in
+		// pipeline.filterArtifactsByPublishTarget is maven-specific
+		// (shaded/executable jars) and deliberately not mirrored here.
+		return a.ProjectType != projecttype.GradleAndroid || a.BuildType == BuildTypeLibrary
 	case PublishMavenCentral:
-		return a.ProjectType == projecttype.Maven && a.BuildType == BuildTypeLibrary
+		return projecttype.IsIn(a.ProjectType, mavenCentralTypes) && a.BuildType == BuildTypeLibrary
 	case PublishGooglePlay:
-		return a.ProjectType == projecttype.GradleAndroid
+		// Written as "not a library" rather than "== application" on
+		// purpose: BuildType has no default, and existing gradle-android
+		// app configs commonly leave it unset. An empty build-type must
+		// keep reaching Play, or this narrowing breaks live adopters.
+		return a.ProjectType == projecttype.GradleAndroid && a.BuildType != BuildTypeLibrary
 	case PublishNPMJS:
 		return false
 	default:

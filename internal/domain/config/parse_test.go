@@ -231,3 +231,42 @@ func TestArtifact_AccessorsHaveSafeDefaults(t *testing.T) {
 	a3 := config.Artifact{XcodeIOS: &config.XcodeIOSConfig{EnableCodeSigning: &f}}
 	require.False(t, a3.EnableCodeSigning())
 }
+
+// TestParse_GradlePublishTasks pins the publish-tasks override on both
+// gradle ecosystems. Strict decoding means the field has to exist on the
+// struct before an adopter can write it, so this is the gate for the
+// whole gradle publish path.
+func TestParse_GradlePublishTasks(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`
+artifacts:
+  - name: jvm-lib
+    project-type: gradle
+    build-type: library
+    publish-to: [maven-central]
+    config:
+      java-version: "25"
+      publish-tasks: publishToMavenCentral
+  - name: android-lib
+    project-type: gradle-android
+    build-type: library
+    publish-to: [github-packages]
+    config:
+      build-module: lib
+      publish-tasks: publishReleasePublicationToGitHubPackagesRepository
+`)
+
+	c, err := config.Parse(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	require.Len(t, c.Artifacts, 2)
+
+	require.NotNil(t, c.Artifacts[0].Gradle)
+	require.Equal(t, "publishToMavenCentral", c.Artifacts[0].Gradle.PublishTasks)
+
+	require.NotNil(t, c.Artifacts[1].GradleAndroid)
+	require.Equal(t, "publishReleasePublicationToGitHubPackagesRepository", c.Artifacts[1].GradleAndroid.PublishTasks)
+}

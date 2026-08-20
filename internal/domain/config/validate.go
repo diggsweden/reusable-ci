@@ -117,16 +117,29 @@ func (e *ValidationError) Error() string {
 func (e *ValidationError) Unwrap() error { return errs.ErrInvalidConfig }
 
 // unsupportedTargetReason explains why an artifact cannot publish to a
-// target. For maven-central the real constraint is build-type — libraries
-// publish to Central, applications don't — so the generic "does not
-// support" wording would mislead (maven *does* support Central). Spell the
-// rule out and show the artifact's actual build-type.
+// target.
+//
+// When the project type *is* capable and only the build-type stands in
+// the way, say that instead of the generic "does not support" wording —
+// maven does support Central, and gradle-android does support GitHub
+// Packages; what they don't support is doing it from this build-type.
+//
+// The rule is not re-enumerated here. SupportedPublishTarget owns which
+// (project-type, build-type) pairs work, so this probes it: if some
+// build-type would have made the pair legal, that is the real
+// constraint. Adding a project type to SupportedPublishTarget therefore
+// keeps producing the right message with no edit here.
 func unsupportedTargetReason(artifact Artifact, target PublishTarget) string {
-	if target == PublishMavenCentral && artifact.ProjectType == projecttype.Maven {
-		return fmt.Sprintf(
-			"artifact %q: publish target %q requires build-type %q (got %q)",
-			artifact.Name, target, BuildTypeLibrary, artifact.BuildType,
-		)
+	for _, buildType := range []BuildType{BuildTypeLibrary, BuildTypeApplication} {
+		probe := artifact
+		probe.BuildType = buildType
+
+		if SupportedPublishTarget(probe, target) {
+			return fmt.Sprintf(
+				"artifact %q: publish target %q requires build-type %q (got %q)",
+				artifact.Name, target, buildType, artifact.BuildType,
+			)
+		}
 	}
 
 	return fmt.Sprintf(
