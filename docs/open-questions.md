@@ -1079,6 +1079,49 @@ Pinned in `TestTagSignature_GPG_V6KeyIsNotAuthorised` and
 `TestTagSignature_GPG_V6KeyDoesNotDegradeToNoAllowlist`, the first of which
 says to close this entry and delete itself when it starts failing.
 
+## Three secret-scrub lists, three different memberships
+
+The codebase scrubs secrets out of a subprocess environment in three places,
+each with its own hand-written list:
+
+| List | Where | Applies to |
+|---|---|---|
+| `signerSecretEnv()` | `cli/commands/container/ledgersign.go` | the syft subprocess (12 names) |
+| `changelogEnv`'s `drop` | `adapters/changelog/changelog.go` | the changelog renderer (~24 names) |
+| `mise` env `drop` | `app/toolchain/miseinstalltools.go` | the mise subprocess (4 names) |
+
+They disagree, and not only by scope. `changelogEnv` drops `GITHUB_TOKEN`,
+`GH_TOKEN`, `GITEA_TOKEN`, `GPG_PRIVATE_KEY`, `COSIGN_SIGNING_KEY` and
+`FORGEJO_API_TOKEN`; `signerSecretEnv()` drops none of them, though it does
+drop `MISE_GITHUB_TOKEN` and `REUSABLE_CI_PROVIDER_TOKEN`, which
+`changelogEnv` does not.
+
+Every one of those names is read as a real credential somewhere in the binary
+— `GITHUB_TOKEN` is resolved as both a registry token and a forge token in
+`adapters/github`, and `GPG_PRIVATE_KEY` is the private key `release gpg`
+signs with.
+
+This is defence in depth rather than a live exposure: syft, git-cliff and mise
+are trusted binaries, and none is known to log or forward its environment. The
+argument for scrubbing at all is that a subprocess should not hold key material
+it has no use for — and that argument does not distinguish between
+`GPG_SIGNING_KEY`, which is scrubbed, and `GPG_PRIVATE_KEY`, which is not.
+
+This is the same shape `internal/pathsafe`'s package doc describes for the
+path check that had grown three copies that disagreed: nothing compares the
+lists, because nothing can. The resolution there was one leaf utility under ADR
+0004's third rule. The same fits here — one exported set of credential-bearing
+variable names, with the three call sites narrowing it if they need to.
+
+It also sits next to the skopeo entry above: the skopeo adapter's `UnsetEnv` is
+never wired at all, so a fourth subprocess gets the unscrubbed environment
+whatever the lists say.
+
+Pinned in `TestSignerSecretEnv` (the names that are covered stay covered, no
+duplicates, no empties) and `TestSignerSecretEnv_KnownGaps`, which names the
+uncovered ones and fails as each is closed, so the entry and the list stay in
+step.
+
 ## Still open in the threat model
 
 - [Profile-dependent `externalParameters` reserved keys](threat-model.md) — a
