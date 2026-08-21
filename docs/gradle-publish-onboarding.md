@@ -257,7 +257,10 @@ This validates the plugins, the sources/javadoc jars, the repository
 names, and the credential-property convention against your build script —
 offline, in about a second.
 
-Then publish by pushing a release tag, as with any other artefact type.
+Then publish by pushing a signed request tag, as with any other artefact
+type — `git tag -s release-request/v1.0.0 && git push origin
+release-request/v1.0.0`. The pipeline bumps the version and creates the
+immutable `v1.0.0` tag itself; see [Release process](publishing.md#release-process).
 
 ## A note on SNAPSHOTs
 

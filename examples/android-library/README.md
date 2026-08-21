@@ -44,7 +44,9 @@ Artifact configuration for release builds.
 
 ### `release-workflow.yml`
 
-Production release workflow triggered by version tags.
+Production release workflow, triggered by a signed `release-request/vX.Y.Z`
+tag. The pipeline creates the immutable `vX.Y.Z` tag itself at the
+version-bump commit — do not tag `vX.Y.Z` by hand.
 
 ## Build script requirements
 

@@ -10,7 +10,11 @@ name: Release Workflow
 on:
   push:
     tags:
-      - "v*.*.*"
+      # Releases are REQUESTED, not tagged directly: push a signed
+      # release-request/vX.Y.Z and reusable-ci creates the immutable vX.Y.Z
+      # tag itself, once, at the version-bump commit. Tagging vX.Y.Z by hand
+      # fails — the release tag it would create already exists.
+      - "release-request/v*.*.*"
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
