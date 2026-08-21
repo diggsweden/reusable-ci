@@ -11,6 +11,8 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -239,4 +241,177 @@ func TestManifest(t *testing.T) {
 	if !strings.Contains(string(raw), config.Hex) {
 		t.Errorf("manifest does not reference config digest %s:\n%s", config.Hex, raw)
 	}
+}
+
+// TestMergeManifestFlattensPerArchIndexes covers the shape buildx actually
+// pushes when attestations are on: each per-arch build lands as a
+// single-platform *index* (image + attestation manifest), not an image
+// manifest. Merging must flatten those into the release index — keeping the
+// attestation children and their vnd.docker.reference.* annotations — instead
+// of resolving the default platform, which used to fail an arm64-only child
+// with "no child with platform linux/amd64".
+func TestMergeManifestFlattensPerArchIndexes(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(registry.New())
+	t.Cleanup(srv.Close)
+
+	repo := strings.TrimPrefix(srv.URL, "http://") + "/o/r"
+
+	type child struct {
+		digest   string
+		platform string
+	}
+
+	var (
+		pushed   []string
+		expected []child
+	)
+
+	for _, arch := range []string{"amd64", "arm64"} {
+		img := platformImage(t, "linux", arch)
+
+		attestation, err := random.Image(128, 1)
+		if err != nil {
+			t.Fatalf("random attestation: %v", err)
+		}
+
+		imgDigest, err := img.Digest()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		index := mutate.AppendManifests(empty.Index,
+			mutate.IndexAddendum{
+				Add:        img,
+				Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: arch}},
+			},
+			mutate.IndexAddendum{
+				Add: attestation,
+				Descriptor: v1.Descriptor{
+					Platform: &v1.Platform{OS: "unknown", Architecture: "unknown"},
+					Annotations: map[string]string{
+						"vnd.docker.reference.type":   "attestation-manifest",
+						"vnd.docker.reference.digest": imgDigest.String(),
+					},
+				},
+			},
+		)
+
+		indexDigest, err := index.Digest()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ref, err := name.ParseReference(repo+"@"+indexDigest.String(), name.Insecure)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err = remote.WriteIndex(ref, index, remote.WithContext(t.Context())); err != nil {
+			t.Fatalf("seed %s index: %v", arch, err)
+		}
+
+		attestationDigest, err := attestation.Digest()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		pushed = append(pushed, indexDigest.Hex)
+		expected = append(expected,
+			child{digest: imgDigest.Hex, platform: "linux/" + arch},
+			child{digest: attestationDigest.Hex, platform: "unknown/unknown"},
+		)
+	}
+
+	tag := repo + ":multi"
+	if err := New().MergeManifest(t.Context(), repo, pushed, []string{tag}); err != nil {
+		t.Fatalf("MergeManifest: %v", err)
+	}
+
+	manifest := fetchIndexManifest(t, tag)
+
+	if len(manifest.Manifests) != len(expected) {
+		t.Fatalf("index has %d manifests, want %d", len(manifest.Manifests), len(expected))
+	}
+
+	got := map[string]v1.Descriptor{}
+	for _, descriptor := range manifest.Manifests {
+		got[descriptor.Digest.Hex] = descriptor
+	}
+
+	for _, want := range expected {
+		descriptor, ok := got[want.digest]
+		if !ok {
+			t.Errorf("child %s missing from merged index", want.digest)
+
+			continue
+		}
+
+		if descriptor.Platform == nil {
+			t.Errorf("child %s has no platform descriptor", want.digest)
+
+			continue
+		}
+
+		if plat := descriptor.Platform.OS + "/" + descriptor.Platform.Architecture; plat != want.platform {
+			t.Errorf("child %s platform = %q, want %q", want.digest, plat, want.platform)
+		}
+
+		if want.platform != "unknown/unknown" {
+			continue
+		}
+
+		if descriptor.Annotations["vnd.docker.reference.type"] != "attestation-manifest" {
+			t.Errorf("attestation child %s lost its vnd.docker.reference.* annotations: %v", want.digest, descriptor.Annotations)
+		}
+	}
+}
+
+// platformImage returns a random image whose config advertises os/arch.
+func platformImage(t *testing.T, osName, arch string) v1.Image {
+	t.Helper()
+
+	img, err := random.Image(512, 1)
+	if err != nil {
+		t.Fatalf("random image: %v", err)
+	}
+
+	config, err := img.ConfigFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	config = config.DeepCopy()
+	config.OS = osName
+	config.Architecture = arch
+
+	img, err = mutate.ConfigFile(img, config)
+	if err != nil {
+		t.Fatalf("set platform: %v", err)
+	}
+
+	return img
+}
+
+// fetchIndexManifest reads back the index a tag serves.
+func fetchIndexManifest(t *testing.T, tag string) *v1.IndexManifest {
+	t.Helper()
+
+	ref, err := name.ParseReference(tag, name.Insecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	index, err := remote.Index(ref, remote.WithContext(t.Context()))
+	if err != nil {
+		t.Fatalf("fetch index: %v", err)
+	}
+
+	manifest, err := index.IndexManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return manifest
 }

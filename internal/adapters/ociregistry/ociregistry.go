@@ -86,12 +86,11 @@ func (a *Adapter) Manifest(ctx context.Context, ref string) ([]byte, error) {
 }
 
 // MergeManifest assembles a multi-platform image index from the per-platform
-// images already pushed at image@sha256:<digest> and writes it to every tag —
+// artefacts already pushed at image@sha256:<digest> and writes it to every tag —
 // the daemonless equivalent of
 // `docker buildx imagetools create -t <tag>... <image>@sha256:<digest>...`.
-// The child images already live in the repository, so only the index manifest
-// is written. digests are bare 64-hex strings; each child's platform is read
-// from its config so the index advertises the correct os/arch.
+// The children already live in the repository, so only the index manifest is
+// written. digests are bare 64-hex strings.
 func (a *Adapter) MergeManifest(ctx context.Context, image string, digests, tags []string) error {
 	index := v1.ImageIndex(empty.Index)
 
@@ -101,20 +100,17 @@ func (a *Adapter) MergeManifest(ctx context.Context, image string, digests, tags
 			return fmt.Errorf("merge manifest: parse source %s@sha256:%s: %w", image, digest, err)
 		}
 
-		img, err := remote.Image(ref, a.remoteOpts(ctx)...)
+		desc, err := remote.Get(ref, a.remoteOpts(ctx)...)
 		if err != nil {
 			return fmt.Errorf("merge manifest: fetch %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
 		}
 
-		config, err := img.ConfigFile()
+		addenda, err := mergeAddenda(ref, desc)
 		if err != nil {
-			return fmt.Errorf("merge manifest: read config of %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+			return err
 		}
 
-		index = mutate.AppendManifests(index, mutate.IndexAddendum{
-			Add:        img,
-			Descriptor: v1.Descriptor{Platform: config.Platform()},
-		})
+		index = mutate.AppendManifests(index, addenda...)
 	}
 
 	for _, tag := range tags {
@@ -129,6 +125,73 @@ func (a *Adapter) MergeManifest(ctx context.Context, image string, digests, tags
 	}
 
 	return nil
+}
+
+// mergeAddenda turns one pushed digest into the children it contributes to the
+// merged index.
+//
+// A per-arch push is NOT necessarily an image manifest: with provenance/SBOM
+// attestations enabled (buildx's default), each single-platform build pushes an
+// *index* holding the image plus an attestation manifest that references it by
+// digest. Flattening that index keeps both children — dropping the attestation
+// would silently strip the build's provenance from the released tag.
+//
+// Doing this via remote.Image is what broke before: on an index it resolves the
+// *default* platform, so an arm64-only child index failed with "no child with
+// platform linux/amd64" while the amd64 one happened to succeed.
+func mergeAddenda(ref name.Reference, desc *remote.Descriptor) ([]mutate.IndexAddendum, error) {
+	if !desc.MediaType.IsIndex() {
+		img, err := desc.Image()
+		if err != nil {
+			return nil, fmt.Errorf("merge manifest: read image %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+		}
+
+		config, err := img.ConfigFile()
+		if err != nil {
+			return nil, fmt.Errorf("merge manifest: read config of %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+		}
+
+		return []mutate.IndexAddendum{{
+			Add:        img,
+			Descriptor: v1.Descriptor{Platform: config.Platform()},
+		}}, nil
+	}
+
+	index, err := desc.ImageIndex()
+	if err != nil {
+		return nil, fmt.Errorf("merge manifest: read index %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+	}
+
+	manifest, err := index.IndexManifest()
+	if err != nil {
+		return nil, fmt.Errorf("merge manifest: read index manifest %s: %w: %w", ref, err, errs.ErrDependencyUnavailable)
+	}
+
+	addenda := make([]mutate.IndexAddendum, 0, len(manifest.Manifests))
+
+	for _, child := range manifest.Manifests {
+		img, err := index.Image(child.Digest)
+		if err != nil {
+			return nil, fmt.Errorf("merge manifest: read child %s of %s: %w: %w", child.Digest, ref, err, errs.ErrDependencyUnavailable)
+		}
+
+		// Carry the child's own descriptor across verbatim. Platform keeps the
+		// arch the index advertises (the attestation child's unknown/unknown
+		// included, which is how tooling skips it when selecting a runtime
+		// image), and Annotations carry vnd.docker.reference.* — the link that
+		// binds an attestation to the image it attests.
+		addenda = append(addenda, mutate.IndexAddendum{
+			Add: img,
+			Descriptor: v1.Descriptor{
+				MediaType:   child.MediaType,
+				Platform:    child.Platform,
+				Annotations: child.Annotations,
+				URLs:        child.URLs,
+			},
+		})
+	}
+
+	return addenda, nil
 }
 
 // parse resolves a reference, marking it insecure (plain HTTP) when it targets
