@@ -83,6 +83,16 @@ on:
         required: false
         default: "main"
         type: string
+    secrets:
+      APP_STORE_CONNECT_API_KEY_ID:
+        description: "App Store Connect API key id"
+        required: false
+      APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64:
+        description: "Base64 encoded App Store Connect API private key"
+        required: false
+      APP_STORE_CONNECT_ISSUER_ID:
+        description: "App Store Connect issuer id"
+        required: false
 permissions:
   contents: read
 jobs:

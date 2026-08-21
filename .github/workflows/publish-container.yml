@@ -59,7 +59,6 @@
 #   contents: read         # Read Containerfile and context
 #   packages: write        # Push images to registry
 #   id-token: write        # Generate OIDC token for SLSA (GHCR only)
-#   secrets: inherit       # Pass SARIF_UPLOAD_TOKEN for Code Scanning upload
 #   attestations: write    # Attach SBOM attestation
 #   actions: read          # Read workflow for provenance
 #   security-events: write # Upload SARIF (only required when running without

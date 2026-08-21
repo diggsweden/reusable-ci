@@ -107,6 +107,10 @@ on:
         required: false
         default: "main"
         type: string
+    secrets:
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:
+        description: "Google Play service account JSON"
+        required: false
 permissions:
   contents: read
 jobs:

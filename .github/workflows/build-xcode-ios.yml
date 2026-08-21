@@ -125,6 +125,22 @@ on:
         required: false
         default: "main"
         type: string
+    secrets:
+      CERTIFICATE_BASE64:
+        description: "Base64 encoded Apple signing certificate"
+        required: false
+      CERTIFICATE_PASSPHRASE:
+        description: "Passphrase for the Apple signing certificate"
+        required: false
+      KEYCHAIN_PASSWORD:
+        description: "Password for the temporary macOS keychain"
+        required: false
+      PROVISIONING_PROFILE_BASE64:
+        description: "Base64 encoded Apple provisioning profile"
+        required: false
+      XCCONFIG_BASE64:
+        description: "Base64 encoded xcconfig overrides"
+        required: false
 permissions:
   contents: read
 jobs:

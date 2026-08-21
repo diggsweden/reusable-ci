@@ -15,6 +15,10 @@ on:
         required: false
         default: "main"
         type: string
+    secrets:
+      SARIF_UPLOAD_TOKEN:
+        description: "Token with code_scanning_alerts:write for uploading SARIF to Code Scanning"
+        required: false
 permissions:
   contents: read
 jobs:
@@ -33,7 +37,8 @@ jobs:
     if: ${{ fromJson(inputs['pr-policy-json']).dependencyreview }}
     permissions:
       contents: read
-    secrets: inherit
+    secrets:
+      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
     uses: ./.github/workflows/security-dependency-review.yml
     with:
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
@@ -42,7 +47,8 @@ jobs:
     if: ${{ fromJson(inputs['pr-policy-json']).sastopengrep }}
     permissions:
       contents: read
-    secrets: inherit
+    secrets:
+      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
     uses: ./.github/workflows/security-opengrep.yml
     with:
       opengrep-rules: ${{ fromJson(inputs['pr-context-json']).sast_opengrep_rules }}
@@ -53,7 +59,8 @@ jobs:
     if: ${{ fromJson(inputs['pr-policy-json']).megalint }}
     permissions:
       contents: read
-    secrets: inherit
+    secrets:
+      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
     uses: ./.github/workflows/lint-mega.yml
     with:
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}

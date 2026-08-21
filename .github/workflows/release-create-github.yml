@@ -100,6 +100,16 @@ on:
         description: "Artifact name for SBOM generation (e.g., 'token-lib-ci' for Maven artifactId). If not provided, uses repository name."
         required: false
         type: string
+    secrets:
+      OSPO_BOT_GPG_PASS:
+        description: "Passphrase for OSPO_BOT_GPG_PRIV"
+        required: false
+      OSPO_BOT_GPG_PRIV:
+        description: "GPG private key used to sign tags, commits and release artifacts"
+        required: false
+      RELEASE_BOT_TOKEN:
+        description: "Token used to create GitHub releases and push release commits"
+        required: false
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:

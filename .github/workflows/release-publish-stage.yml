@@ -35,6 +35,37 @@ on:
       build-result-json:
         required: true
         type: string
+    secrets:
+      APP_STORE_CONNECT_API_KEY_ID:
+        description: "App Store Connect API key id"
+        required: false
+      APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64:
+        description: "Base64 encoded App Store Connect API private key"
+        required: false
+      APP_STORE_CONNECT_ISSUER_ID:
+        description: "App Store Connect issuer id"
+        required: false
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:
+        description: "Google Play service account JSON"
+        required: false
+      MAVENCENTRAL_PASSWORD:
+        description: "Maven Central (Sonatype) password or token"
+        required: false
+      MAVENCENTRAL_USERNAME:
+        description: "Maven Central (Sonatype) username"
+        required: false
+      OSPO_BOT_GPG_PASS:
+        description: "Passphrase for OSPO_BOT_GPG_PRIV"
+        required: false
+      OSPO_BOT_GPG_PRIV:
+        description: "GPG private key used to sign tags, commits and release artifacts"
+        required: false
+      SARIF_UPLOAD_TOKEN:
+        description: "Token with code_scanning_alerts:write for uploading SARIF to Code Scanning"
+        required: false
+      registry-password:
+        description: "Registry password/token (required when use-ci-token=false)"
+        required: false
     outputs:
       stage-ran:
         description: Publish stage ran at least one destination
@@ -60,7 +91,6 @@ jobs:
     permissions:
       contents: write
       packages: write
-    secrets: inherit
     uses: ./.github/workflows/publish-maven-github.yml
     with:
       working-directory: ${{ matrix.artifact['working-directory'] }}
@@ -80,7 +110,11 @@ jobs:
       contents: write
       packages: write
       id-token: write
-    secrets: inherit
+    secrets:
+      MAVENCENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD }}
+      MAVENCENTRAL_USERNAME: ${{ secrets.MAVENCENTRAL_USERNAME }}
+      OSPO_BOT_GPG_PASS: ${{ secrets.OSPO_BOT_GPG_PASS }}
+      OSPO_BOT_GPG_PRIV: ${{ secrets.OSPO_BOT_GPG_PRIV }}
     uses: ./.github/workflows/publish-maven-central.yml
     with:
       working-directory: ${{ matrix.artifact['working-directory'] }}
@@ -97,7 +131,10 @@ jobs:
       fail-fast: false
     permissions:
       contents: read
-    secrets: inherit
+    secrets:
+      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+      APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
     uses: ./.github/workflows/publish-apple-appstore.yml
     with:
       ipa-artifact-name: ${{ matrix.artifact.name }}
@@ -115,7 +152,8 @@ jobs:
       fail-fast: false
     permissions:
       contents: read
-    secrets: inherit
+    secrets:
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
     uses: ./.github/workflows/publish-google-play.yml
     with:
       aab-artifact-name: ${{ matrix.artifact.name }}
@@ -144,7 +182,9 @@ jobs:
       id-token: write
       attestations: write
       actions: read
-    secrets: inherit
+    secrets:
+      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
+      registry-password: ${{ secrets['registry-password'] }}
     uses: ./.github/workflows/publish-container.yml
     with:
       branch: ${{ inputs.branch }}
@@ -193,7 +233,6 @@ jobs:
       fail-fast: false
     permissions:
       contents: read
-    secrets: inherit
     uses: ./.github/workflows/sbom-cargo.yml
     with:
       working-directory: ${{ matrix.artifact['working-directory'] }}

@@ -77,6 +77,34 @@ on:
         required: false
         default: "main"
         type: string
+    secrets:
+      AUTHORIZED_RELEASE_DEVELOPERS:
+        description: "Newline or comma separated list of users allowed to cut releases"
+        required: false
+      MAVENCENTRAL_PASSWORD:
+        description: "Maven Central (Sonatype) password or token"
+        required: false
+      MAVENCENTRAL_USERNAME:
+        description: "Maven Central (Sonatype) username"
+        required: false
+      NPM_TOKEN:
+        description: "NPM registry auth token"
+        required: false
+      OSPO_BOT_GPG_PASS:
+        description: "Passphrase for OSPO_BOT_GPG_PRIV"
+        required: false
+      OSPO_BOT_GPG_PRIV:
+        description: "GPG private key used to sign tags, commits and release artifacts"
+        required: false
+      OSPO_BOT_GPG_PUB:
+        description: "GPG public key used to verify signed tags"
+        required: false
+      RELEASE_BOT_TOKEN:
+        description: "Token used to create GitHub releases and push release commits"
+        required: false
+      SARIF_UPLOAD_TOKEN:
+        description: "Token with code_scanning_alerts:write for uploading SARIF to Code Scanning"
+        required: false
   workflow_dispatch: # Allow manual validation
     inputs:
       project-type:

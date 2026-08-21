@@ -36,6 +36,10 @@ on:
         required: false
         default: "main"
         type: string
+    secrets:
+      SARIF_UPLOAD_TOKEN:
+        description: "Token with code_scanning_alerts:write for uploading SARIF to Code Scanning"
+        required: false
 permissions:
   contents: read
 jobs:

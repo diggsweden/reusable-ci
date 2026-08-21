@@ -40,6 +40,16 @@
 name: Bump Version
 on:
   workflow_call: # yamllint disable-line rule:truthy
+    secrets:
+      OSPO_BOT_GPG_PASS:
+        description: "Passphrase for OSPO_BOT_GPG_PRIV"
+        required: false
+      OSPO_BOT_GPG_PRIV:
+        description: "GPG private key used to sign tags, commits and release artifacts"
+        required: false
+      RELEASE_BOT_TOKEN:
+        description: "Token used to create GitHub releases and push release commits"
+        required: false
     outputs:
       release-sha:
         description: "Commit SHA the release tag was moved to (the release commit)"

@@ -67,7 +67,8 @@ jobs:
     permissions:
       contents: read
       packages: write
-    secrets: inherit
+    secrets:
+      registry-password: ${{ secrets['registry-password'] }}
     uses: ./.github/workflows/publish-dev-container.yml
     with:
       working-directory: ${{ matrix.container.context || '.' }}
@@ -94,7 +95,8 @@ jobs:
     permissions:
       contents: read
       packages: write
-    secrets: inherit
+    secrets:
+      registry-password: ${{ secrets['registry-password'] }}
     uses: ./.github/workflows/publish-dev-container.yml
     with:
       working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}
@@ -132,7 +134,6 @@ jobs:
     if: ${{ fromJson(inputs['dev-context-json']).project_type == 'cargo' && inputs.sboms != 'none' }}
     permissions:
       contents: read
-    secrets: inherit
     uses: ./.github/workflows/sbom-cargo.yml
     with:
       working-directory: ${{ fromJson(inputs['dev-context-json']).working_directory }}

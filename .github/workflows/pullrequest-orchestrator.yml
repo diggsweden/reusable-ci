@@ -30,7 +30,6 @@
 # Required Permissions:
 #   contents: read         # Read source code
 #   packages: read         # Access private packages
-#   secrets: inherit       # Pass SARIF_UPLOAD_TOKEN for Code Scanning upload
 #
 # Configurable Linters:
 #   linters.commitlint: Commit message linting (default: true)
@@ -116,6 +115,10 @@ on:
         required: false
         default: "main"
         type: string
+    secrets:
+      SARIF_UPLOAD_TOKEN:
+        description: "Token with code_scanning_alerts:write for uploading SARIF to Code Scanning"
+        required: false
 permissions:
   contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
 jobs:
@@ -161,7 +164,8 @@ jobs:
     needs: [compose-pr-interface]
     permissions:
       contents: read
-    secrets: inherit
+    secrets:
+      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
     uses: ./.github/workflows/pullrequest-quality-stage.yml
     with:
       pr-context-json: ${{ needs.compose-pr-interface.outputs.pr-context-json }}

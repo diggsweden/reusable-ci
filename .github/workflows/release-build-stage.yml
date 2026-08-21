@@ -27,6 +27,37 @@ on:
       xcodeios-artifacts:
         required: true
         type: string
+    secrets:
+      ANDROID_KEYSTORE:
+        description: "Base64 encoded Android signing keystore"
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        description: "Password for the Android signing keystore"
+        required: false
+      ANDROID_KEY_ALIAS:
+        description: "Alias of the Android signing key"
+        required: false
+      ANDROID_KEY_PASSWORD:
+        description: "Password for the Android signing key"
+        required: false
+      CERTIFICATE_BASE64:
+        description: "Base64 encoded Apple signing certificate"
+        required: false
+      CERTIFICATE_PASSPHRASE:
+        description: "Passphrase for the Apple signing certificate"
+        required: false
+      KEYCHAIN_PASSWORD:
+        description: "Password for the temporary macOS keychain"
+        required: false
+      PROVISIONING_PROFILE_BASE64:
+        description: "Base64 encoded Apple provisioning profile"
+        required: false
+      SECRETS_PROPERTIES_BASE64:
+        description: "Base64 encoded secrets.properties consumed by Gradle"
+        required: false
+      XCCONFIG_BASE64:
+        description: "Base64 encoded xcconfig overrides"
+        required: false
     outputs:
       stage-ran:
         description: Build stage ran at least one ecosystem path
@@ -49,7 +80,6 @@ jobs:
       fail-fast: false
     permissions:
       contents: read
-    secrets: inherit
     uses: ./.github/workflows/build-maven.yml
     with:
       working-directory: ${{ matrix.artifact['working-directory'] }}
@@ -68,7 +98,6 @@ jobs:
       fail-fast: false
     permissions:
       contents: read
-    secrets: inherit
     uses: ./.github/workflows/build-npm.yml
     with:
       working-directory: ${{ matrix.artifact['working-directory'] }}
@@ -85,7 +114,6 @@ jobs:
       fail-fast: false
     permissions:
       contents: read
-    secrets: inherit
     uses: ./.github/workflows/build-gradle-app.yml
     with:
       working-directory: ${{ matrix.artifact['working-directory'] }}
@@ -104,7 +132,12 @@ jobs:
       fail-fast: false
     permissions:
       contents: read
-    secrets: inherit
+    secrets:
+      ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      SECRETS_PROPERTIES_BASE64: ${{ secrets.SECRETS_PROPERTIES_BASE64 }}
     uses: ./.github/workflows/build-gradle-android.yml
     with:
       working-directory: ${{ matrix.artifact['working-directory'] }}
@@ -132,7 +165,12 @@ jobs:
       fail-fast: false
     permissions:
       contents: read
-    secrets: inherit
+    secrets:
+      CERTIFICATE_BASE64: ${{ secrets.CERTIFICATE_BASE64 }}
+      CERTIFICATE_PASSPHRASE: ${{ secrets.CERTIFICATE_PASSPHRASE }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+      XCCONFIG_BASE64: ${{ secrets.XCCONFIG_BASE64 }}
     uses: ./.github/workflows/build-xcode-ios.yml
     with:
       xcode-version: ${{ matrix.artifact.config['xcode-version'] }}

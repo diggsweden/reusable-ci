@@ -121,6 +121,22 @@ on:
         required: false
         default: "main"
         type: string
+    secrets:
+      ANDROID_KEYSTORE:
+        description: "Base64 encoded Android signing keystore"
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        description: "Password for the Android signing keystore"
+        required: false
+      ANDROID_KEY_ALIAS:
+        description: "Alias of the Android signing key"
+        required: false
+      ANDROID_KEY_PASSWORD:
+        description: "Password for the Android signing key"
+        required: false
+      SECRETS_PROPERTIES_BASE64:
+        description: "Base64 encoded secrets.properties consumed by Gradle"
+        required: false
     outputs:
       debug-name:
         description: "Uploaded artefact name for the debug APK"
