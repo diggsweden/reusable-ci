@@ -32,6 +32,13 @@ func TestValidateReleaseImagesPathConfinesLedgerUnderDist(t *testing.T) {
 		"dist",
 		"dist/../release-images.json",
 		"dist/sub/../../release-images.json",
+		// Refused since the '..' detection moved to pathsafe.Relative --
+		// deliberate tightenings, pinned so they stay refused: control
+		// characters have no legitimate producer in a CI flag value, and a
+		// doubled slash makes the under-dist suffix read as absolute.
+		"dist/release\timages.json",
+		"dist/release-images.json\n",
+		"dist//release-images.json",
 	} {
 		if err := validateReleaseImagesPath(path, "dist"); err == nil {
 			t.Errorf("path %q was not rejected", path)

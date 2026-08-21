@@ -78,6 +78,19 @@ shape:
 | `app/validate/workspacedir.go` `safeWorkingDir` | validates, cleans, and returns the path |
 | `domain/config/validate.go` | returns violation strings for the artifacts.yml report, not an error |
 | `app/release/assemble.go` | applies the rule to attach-artifact globs rather than paths |
+| `app/release/uploadattachments.go` `expandAttachmentPatterns` | the same glob shape as `assemble.go`, in the same package -- the one pair here that IS nearly a copy |
+| `app/container/signerimage.go` `recreateSignerMetadataDir` | substring `..` on a directory flag -- STRICTER than the component rule, so converging it would loosen a guard; deliberately left |
+
+A simplicity review found the three rows above plus one more in the CLI layer,
+`validateReleaseImagesPath` in `cli/commands/container/releaseimages.go`, which
+has since been converged: its hand-rolled `..` loop now delegates the
+under-dist suffix to `pathsafe.Relative`. The review's framing that
+`dist/..\evil` slipped through there was wrong for this project --
+`filepath.ToSlash` is a no-op on linux/darwin, the only goreleaser targets, so
+`pathsafe` accepts a literal backslash filename exactly as the loop did. What
+the convergence actually bought is one implementation plus two deliberate
+tightenings (control characters, doubled slash), pinned in
+`TestValidateReleaseImagesPathConfinesLedgerUnderDist`.
 
 None is a copy-paste duplicate — each has a different signature, output type and
 error class, and two arguably answer a different question (joining under a root;

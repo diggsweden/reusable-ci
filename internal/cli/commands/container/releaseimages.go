@@ -26,6 +26,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
@@ -441,10 +442,15 @@ func validateReleaseImagesPath(path, distDir string) error {
 		return fmt.Errorf("release images: ledger path must stay under %s/: %s: %w", distDir, path, errs.ErrUsage)
 	}
 
-	for _, part := range strings.Split(path, "/") {
-		if part == ".." {
-			return fmt.Errorf("release images: ledger path must not contain '..': %s: %w", path, errs.ErrUsage)
-		}
+	// The suffix under dist answers to the one workspace-relative rule in
+	// internal/pathsafe rather than to a fourth hand-rolled '..' loop -- the
+	// convergence docs/open-questions.md tracks. Two spellings this refuses
+	// that the old loop accepted, both deliberate tightenings with no
+	// legitimate producer: control characters in the path (the flag value
+	// travels through line-oriented CI files), and a doubled slash directly
+	// after the dist dir ("dist//x"), whose suffix reads as absolute.
+	if !pathsafe.Relative(strings.TrimPrefix(path, distDir+"/")) {
+		return fmt.Errorf("release images: ledger path must be a safe relative path under %s/ without '..': %s: %w", distDir, path, errs.ErrUsage)
 	}
 
 	return nil
