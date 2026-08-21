@@ -153,7 +153,7 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
           GIT_USER_SIGNINGKEY: "true"
           GIT_COMMIT_GPGSIGN: "true"
-          GIT_CONFIG_GLOBAL: "true"
+          REUSABLE_CI_GIT_CONFIG_GLOBAL: "true"
         run: reusable-ci release gpg import
       - name: Bump project version
         env:

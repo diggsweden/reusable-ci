@@ -1033,7 +1033,7 @@ import a GPG private key, optionally cache the passphrase, optionally configure 
 | `--passphrase-file` | path to a file containing the GPG passphrase (use "-" for stdin; defaults to $GPG_PASSPHRASE) | n/a |
 | `--git-user-signingkey` | write user.signingkey/name/email from the imported key | `$GIT_USER_SIGNINGKEY` |
 | `--git-commit-gpgsign` | additionally write commit.gpgsign=true | `$GIT_COMMIT_GPGSIGN` |
-| `--git-config-global` | use --global on the git config writes | `$GIT_CONFIG_GLOBAL` |
+| `--git-config-global` | use --global on the git config writes | `$REUSABLE_CI_GIT_CONFIG_GLOBAL` |
 
 ### `reusable-ci release notes`
 

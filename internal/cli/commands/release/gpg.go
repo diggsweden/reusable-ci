@@ -51,7 +51,16 @@ func gpgImportCmd() *cli.Command {
 				Usage: "write user.signingkey/name/email from the imported key"},
 			&cli.BoolFlag{Name: "git-commit-gpgsign", Sources: cli.EnvVars("GIT_COMMIT_GPGSIGN"),
 				Usage: "additionally write commit.gpgsign=true"},
-			&cli.BoolFlag{Name: "git-config-global", Sources: cli.EnvVars("GIT_CONFIG_GLOBAL"),
+			// NOT sourced from $GIT_CONFIG_GLOBAL: that name belongs to git,
+			// which reads it as the PATH of the global config file. Sharing it
+			// broke both directions — a workflow setting it to "true" made
+			// `git config --global` write a file literally named `true` that
+			// later steps never read (so release commits came out unsigned),
+			// and an environment setting it to a real path (isolatedenv uses
+			// /dev/null) made this bool flag fail to parse. The v2 action took
+			// git_config_global as an input, not an env var; only the port to
+			// flags introduced the clash.
+			&cli.BoolFlag{Name: "git-config-global", Sources: cli.EnvVars("REUSABLE_CI_GIT_CONFIG_GLOBAL"),
 				Usage: "use --global on the git config writes"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
