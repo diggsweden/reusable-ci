@@ -99,9 +99,9 @@ func baseImagesPublicKeyFlags() []cli.Flag {
 }
 
 func baseImagesCommonFromCmd(cmd *cli.Command, requireRegistry, requirePublicKey bool) (baseImagesCommon, error) {
-	serverURL := normalizedServerURL(cmd.String(flagServerURL))
+	serverURL := appcontainer.NormalizedServerURL(cmd.String(flagServerURL))
 
-	serverHost, err := optionalRegistryHost(serverURL)
+	serverHost, err := appcontainer.OptionalRegistryHost(serverURL)
 	if err != nil {
 		return baseImagesCommon{}, err
 	}
@@ -185,7 +185,7 @@ func baseImagesExpectedRepository(cmd *cli.Command, serverHost, repository, repo
 		return "", fmt.Errorf("base images: --expected-repository or both --server-url and --repository are required: %w", errs.ErrUsage)
 	}
 
-	return defaultReleaseImageRepository(serverHost, repository) + repositorySuffix, nil
+	return appcontainer.DefaultReleaseImageRepository(serverHost, repository) + repositorySuffix, nil
 }
 
 // baseImagesExpectedSource resolves the source repository URL expected in
@@ -366,7 +366,7 @@ func baseImagePackageRegistry(cmd *cli.Command, common baseImagesCommon, capabil
 // registry through the OCI adapter would refuse every shared manifest instead
 // of deleting the one version it was asked to.
 func requireRegistrySurfaceMatches(local bool, common baseImagesCommon) error {
-	repoHost, err := optionalRegistryHost(common.ExpectedRepository)
+	repoHost, err := appcontainer.OptionalRegistryHost(common.ExpectedRepository)
 	if err != nil || repoHost == "" {
 		return err
 	}
@@ -378,7 +378,7 @@ func requireRegistrySurfaceMatches(local bool, common baseImagesCommon) error {
 			common.ExpectedRepository, errs.ErrUsage)
 	}
 
-	forgeHost, err := optionalRegistryHost(common.ServerURL)
+	forgeHost, err := appcontainer.OptionalRegistryHost(common.ServerURL)
 	if err != nil {
 		return err
 	}

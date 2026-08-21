@@ -26,7 +26,6 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
-	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
@@ -360,13 +359,13 @@ func releaseImagesCommonFromCmd(cmd *cli.Command) (releaseImagesCommon, error) {
 		ledger = distDir + "/" + defaultLedgerBasename
 	}
 
-	if err := validateReleaseImagesPath(ledger, distDir); err != nil {
+	if err := appcontainer.ValidateReleaseImagesPath(ledger, distDir); err != nil {
 		return releaseImagesCommon{}, err
 	}
 
-	serverURL := normalizedServerURL(cmd.String(flagServerURL))
+	serverURL := appcontainer.NormalizedServerURL(cmd.String(flagServerURL))
 
-	serverHost, err := optionalRegistryHost(serverURL)
+	serverHost, err := appcontainer.OptionalRegistryHost(serverURL)
 	if err != nil {
 		return releaseImagesCommon{}, err
 	}
@@ -409,7 +408,7 @@ func resolveRegistryHostFromFlags(cmd *cli.Command, serverHost string) (string, 
 		return serverHost, nil
 	}
 
-	return registryHost(registry)
+	return appcontainer.RegistryHost(registry)
 }
 
 // releaseImagesExpectedRepository resolves the exact release-image
@@ -425,73 +424,7 @@ func releaseImagesExpectedRepository(cmd *cli.Command, serverHost, repository st
 		return "", fmt.Errorf("release images: --expected-image-repository or both --server-url and --repository are required: %w", errs.ErrUsage)
 	}
 
-	return defaultReleaseImageRepository(serverHost, repository), nil
-}
-
-func validateReleaseImagesPath(path, distDir string) error {
-	if path == "" {
-		return fmt.Errorf("release images: ledger path is required: %w", errs.ErrUsage)
-	}
-
-	distDir = strings.TrimRight(distDir, "/")
-	if distDir == "" {
-		return fmt.Errorf("release images: dist dir is required: %w", errs.ErrUsage)
-	}
-
-	if path == distDir || !strings.HasPrefix(path, distDir+"/") {
-		return fmt.Errorf("release images: ledger path must stay under %s/: %s: %w", distDir, path, errs.ErrUsage)
-	}
-
-	// The suffix under dist answers to the one workspace-relative rule in
-	// internal/pathsafe rather than to a fourth hand-rolled '..' loop -- the
-	// convergence docs/open-questions.md tracks. Two spellings this refuses
-	// that the old loop accepted, both deliberate tightenings with no
-	// legitimate producer: control characters in the path (the flag value
-	// travels through line-oriented CI files), and a doubled slash directly
-	// after the dist dir ("dist//x"), whose suffix reads as absolute.
-	if !pathsafe.Relative(strings.TrimPrefix(path, distDir+"/")) {
-		return fmt.Errorf("release images: ledger path must be a safe relative path under %s/ without '..': %s: %w", distDir, path, errs.ErrUsage)
-	}
-
-	return nil
-}
-
-func defaultReleaseImageRepository(serverHost, repository string) string {
-	return serverHost + "/" + strings.ToLower(repository)
-}
-
-func normalizedServerURL(raw string) string {
-	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
-	if raw == "" || strings.Contains(raw, "://") {
-		return raw
-	}
-
-	return "https://" + raw
-}
-
-func optionalRegistryHost(raw string) (string, error) {
-	if raw == "" {
-		return "", nil
-	}
-
-	return registryHost(raw)
-}
-
-func registryHost(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	raw = strings.TrimPrefix(raw, "https://")
-	raw = strings.TrimPrefix(raw, "http://")
-
-	raw = strings.Trim(raw, "/")
-	if slash := strings.Index(raw, "/"); slash >= 0 {
-		raw = raw[:slash]
-	}
-
-	if raw == "" {
-		return "", fmt.Errorf("release images: registry host is empty: %w", errs.ErrUsage)
-	}
-
-	return raw, nil
+	return appcontainer.DefaultReleaseImageRepository(serverHost, repository), nil
 }
 
 func releaseImagesLoadLedger(common releaseImagesCommon, nonEmpty bool) ([]imageledger.Entry, error) {
