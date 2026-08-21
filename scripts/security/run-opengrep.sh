@@ -253,7 +253,7 @@ main() {
 
   printf "Running OpenGrep with config '%s' on '%s'...\n" "$config" "$target_path"
   set +e
-  PYTHONWARNINGS="ignore:RequestsDependencyWarning" opengrep "${scan_args[@]}"
+  opengrep "${scan_args[@]}"
   scan_exit=$?
   set -e
 

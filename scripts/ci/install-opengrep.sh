@@ -9,7 +9,7 @@
 #   install_opengrep
 
 # renovate: datasource=github-releases depName=opengrep/opengrep
-readonly OPENGREP_VERSION="v1.18.0"
+readonly OPENGREP_VERSION="v1.27.1"
 
 resolve_opengrep_dist() {
   local os arch dist=""
