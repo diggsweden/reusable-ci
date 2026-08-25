@@ -50,7 +50,9 @@ func TestValidate_RejectsUnsupportedPublishTarget(t *testing.T) {
 
 	c := &config.Config{ //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		Artifacts: []config.Artifact{
-			{Name: "gradle-lib", ProjectType: projecttype.Gradle, PublishTo: []config.PublishTarget{config.PublishForgePackages}},
+			// go has no package-registry publish path at all — gradle used
+			// to sit here, but gradle→forge-packages is supported now.
+			{Name: "go-lib", ProjectType: projecttype.Go, PublishTo: []config.PublishTarget{config.PublishForgePackages}},
 			{Name: "maven-app", ProjectType: projecttype.Maven, BuildType: config.BuildTypeApplication, PublishTo: []config.PublishTarget{config.PublishMavenCentral}},
 			{Name: "npm-public", ProjectType: projecttype.NPM, PublishTo: []config.PublishTarget{config.PublishNPMJS}},
 		},
@@ -67,7 +69,7 @@ func TestValidate_RejectsUnsupportedPublishTarget(t *testing.T) {
 		t.Errorf("err should wrap errs.ErrInvalidConfig, got %v", err)
 	}
 
-	for _, want := range []string{"gradle-lib", "maven-app", "npm-public"} {
+	for _, want := range []string{"go-lib", "maven-app", "npm-public"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err should mention %q: %v", want, err)
 		}

@@ -3,6 +3,8 @@
 
 package config
 
+import "strings"
+
 // Per-ecosystem typed configurations for the `config:` block.
 //
 // One of these is non-nil on each Artifact / PlannedArtifact, matching
@@ -39,6 +41,14 @@ type GradleConfig struct {
 	JavaVersion       string `json:"java_version,omitempty"        yaml:"java-version,omitempty"`
 	GradleTasks       string `json:"gradle_tasks,omitempty"        yaml:"gradle-tasks,omitempty"`
 	GradleVersionFile string `json:"gradle_version_file,omitempty" yaml:"gradle-version-file,omitempty"`
+
+	// PublishTasks overrides the publish task derived per target by
+	// publish.PublishTasks. Empty is the norm: the derived
+	// publishAllPublicationsTo<Name>Repository tasks cover plain
+	// maven-publish. Set it only when the project's publishing plugin
+	// names its task differently — vanniktech's
+	// gradle-maven-publish-plugin wants "publishToMavenCentral".
+	PublishTasks string `json:"publish_tasks,omitempty" yaml:"publish-tasks,omitempty"`
 }
 
 // GradleAndroidConfig holds the typed `config:` block for Gradle Android
@@ -52,6 +62,12 @@ type GradleAndroidConfig struct {
 	BuildTypes           string `json:"build_types,omitempty"            yaml:"build-types,omitempty"`
 	IncludeAAB           *bool  `json:"include_aab,omitempty"            yaml:"include-aab,omitempty"`
 	EnableAndroidSigning *bool  `json:"enable_android_signing,omitempty" yaml:"enable-android-signing,omitempty"`
+
+	// PublishTasks overrides the target-derived publish task, same
+	// contract as GradleConfig.PublishTasks. Android *libraries*
+	// (build-type: library) publish their AAR through the same
+	// maven-publish path as plain Gradle artifacts.
+	PublishTasks string `json:"publish_tasks,omitempty" yaml:"publish-tasks,omitempty"`
 
 	// Google Play publishing options carried alongside the Android build
 	// config — they're per-artifact, not separate ecosystems.
@@ -134,6 +150,32 @@ func (a *Artifact) AndroidBuildTypes() string {
 	}
 
 	return a.GradleAndroid.BuildTypes
+}
+
+// PublishTasks returns the adopter's override for the target-derived
+// Gradle publish task, or "" when they did not set one.
+//
+// The override lives on whichever typed block the artifact's project
+// type populates — `gradle` for plain JVM, `gradle_android` for Android
+// libraries — and both spell the same contract, so every consumer
+// (the doctor, the publish plan) reads it through here rather than
+// re-writing the coalescing rule.
+func (a *Artifact) PublishTasks() string {
+	if a == nil {
+		return ""
+	}
+
+	if a.Gradle != nil {
+		if tasks := strings.TrimSpace(a.Gradle.PublishTasks); tasks != "" {
+			return tasks
+		}
+	}
+
+	if a.GradleAndroid != nil {
+		return strings.TrimSpace(a.GradleAndroid.PublishTasks)
+	}
+
+	return ""
 }
 
 // EnableCodeSigning returns true unless the user explicitly set

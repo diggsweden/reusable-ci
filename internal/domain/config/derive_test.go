@@ -90,3 +90,60 @@ func TestAnyRequireAuthorization(t *testing.T) {
 		t.Fatal("did not expect authorization requirement")
 	}
 }
+
+// TestSupportedPublishTarget_GradleToolchain covers the publish-target
+// matrix after gradle and gradle-android libraries were admitted to
+// forge packages and Maven Central.
+func TestSupportedPublishTarget_GradleToolchain(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		projectType projecttype.Type
+		buildType   config.BuildType
+		target      config.PublishTarget
+		want        bool
+	}{
+		// Maven Central requires build-type: library, for every toolchain.
+		{"gradle library to central", projecttype.Gradle, config.BuildTypeLibrary, config.PublishMavenCentral, true},
+		{"gradle application to central", projecttype.Gradle, config.BuildTypeApplication, config.PublishMavenCentral, false},
+		{"gradle unset build-type to central", projecttype.Gradle, "", config.PublishMavenCentral, false},
+		{"android library to central", projecttype.GradleAndroid, config.BuildTypeLibrary, config.PublishMavenCentral, true},
+		{"android application to central", projecttype.GradleAndroid, config.BuildTypeApplication, config.PublishMavenCentral, false},
+
+		// Forge packages takes gradle applications too (see the comment
+		// in SupportedPublishTarget), but android only as a library.
+		{"gradle library to forge packages", projecttype.Gradle, config.BuildTypeLibrary, config.PublishForgePackages, true},
+		{"gradle application to forge packages", projecttype.Gradle, config.BuildTypeApplication, config.PublishForgePackages, true},
+		{"android library to forge packages", projecttype.GradleAndroid, config.BuildTypeLibrary, config.PublishForgePackages, true},
+		{"android application to forge packages", projecttype.GradleAndroid, config.BuildTypeApplication, config.PublishForgePackages, false},
+
+		// Regression guard: Google Play was narrowed to "not a library".
+		// Existing adopter configs commonly leave build-type unset, and
+		// those must keep reaching Play.
+		{"android unset build-type to play", projecttype.GradleAndroid, "", config.PublishGooglePlay, true},
+		{"android application to play", projecttype.GradleAndroid, config.BuildTypeApplication, config.PublishGooglePlay, true},
+		{"android library to play", projecttype.GradleAndroid, config.BuildTypeLibrary, config.PublishGooglePlay, false},
+
+		// Untouched neighbours.
+		{"maven library to central", projecttype.Maven, config.BuildTypeLibrary, config.PublishMavenCentral, true},
+		{"npm to forge packages", projecttype.NPM, "", config.PublishForgePackages, true},
+		{"go to forge packages", projecttype.Go, config.BuildTypeLibrary, config.PublishForgePackages, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := config.SupportedPublishTarget(config.Artifact{
+				Name:        "a",
+				ProjectType: tc.projectType,
+				BuildType:   tc.buildType,
+			}, tc.target)
+			if got != tc.want {
+				t.Errorf("SupportedPublishTarget(%s/%s, %s) = %v, want %v",
+					tc.projectType, tc.buildType, tc.target, got, tc.want)
+			}
+		})
+	}
+}
