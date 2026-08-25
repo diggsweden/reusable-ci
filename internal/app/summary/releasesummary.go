@@ -108,6 +108,11 @@ func ReleaseSummary(ctx context.Context, sink ci.SummarySink, in ReleaseSummaryI
 		{"Build Xcode", target(build, pipeline.TargetXcodeIOS)},
 		{"Publish GitHub", target(publish, pipeline.TargetForgePackages)},
 		{"Publish Maven Central", target(publish, pipeline.TargetMavenCentral)},
+		// The Gradle toolchain publishes through its own pair of jobs (see
+		// ArtifactSets.ForgePackagesGradle) — separate rows, not folded into
+		// the two above, so a Gradle failure is attributable at a glance.
+		{"Publish Forge Packages (Gradle)", target(publish, pipeline.TargetForgePackagesGradle)},
+		{"Publish Maven Central (Gradle)", target(publish, pipeline.TargetMavenCentralGradle)},
 		{"Publish Apple App Store", target(publish, pipeline.TargetXcodeIOS)},
 		{"Publish Google Play", target(publish, pipeline.TargetGooglePlay)},
 		{"Containers", target(publish, pipeline.TargetContainers)},

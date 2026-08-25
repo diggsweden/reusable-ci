@@ -16,7 +16,7 @@ import (
 //
 //nolint:gochecknoglobals // canonical extension list — read-only.
 var ReleaseArtifactExtensions = []string{
-	".jar", ".tgz", ".tar.gz", ".zip", ".war",
+	".jar", ".aar", ".tgz", ".tar.gz", ".zip", ".war",
 }
 
 // IsReleaseArtifact reports whether path looks like a release artifact:

@@ -48,8 +48,16 @@ func gradleAndroidRunCmd() *cli.Command {
    the project root, or cd in first (the forge job does). --working-dir only
    locates gradle.properties for metadata.
 
+   --library builds an Android library instead: <module>:assemble[Flavor]Release,
+   producing an AAR. Release-only and AAB-free by construction, and never
+   keystore-signed — a library's signature is the GPG release key applied at
+   publish time.
+
 EXAMPLE:
-   cd app && reusable-ci build gradle-android run --build-types release --include-aab --enable-signing`,
+   cd app && reusable-ci build gradle-android run --build-types release --include-aab --enable-signing
+
+   # Android library (build-type: library)
+   cd lib && reusable-ci build gradle-android run --library`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagWorkingDir, Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory of gradle.properties to read for metadata; ./gradlew itself runs in the current directory (cd in first)"},
 			&cli.BoolFlag{Name: "include-date", Value: true, Sources: cli.EnvVars("INCLUDE_DATE_STAMP"), Usage: "append a YYYYMMDD-HHMMSS stamp to the artifact name"},
@@ -63,6 +71,7 @@ EXAMPLE:
 			&cli.StringFlag{Name: "tasks-override", Sources: cli.EnvVars("GRADLE_TASKS_OVERRIDE"), Usage: "explicit task list override; bypasses the build-type heuristics"},
 			&cli.StringFlag{Name: "build-types", Value: "debug,release", Sources: cli.EnvVars("BUILD_TYPES"), Usage: "comma-separated Android build types to assemble"},
 			&cli.BoolFlag{Name: "include-aab", Value: true, Sources: cli.EnvVars("INCLUDE_AAB"), Usage: "also emit bundleRelease (produces an AAB)"},
+			&cli.BoolFlag{Name: "library", Sources: cli.EnvVars("ANDROID_LIBRARY"), Usage: "build an Android library (AAR): release-only, no AAB, no keystore signing. Set for build-type: library"},
 			&cli.StringFlag{Name: flagBuildModule, Value: defaultBuildModule, Sources: cli.EnvVars("BUILD_MODULE"), Usage: "gradle module name (e.g. \"app\")"},
 			&cli.BoolFlag{Name: flagSkipTests, Sources: cli.EnvVars("SKIP_TESTS"), Usage: usageSkipTestTask},
 			&cli.BoolFlag{Name: flagBuildSBOM, Value: true, Sources: cli.EnvVars("ENABLE_BUILD_SBOM"), Usage: "generate the cyclonedx-gradle-plugin Build SBOM (default true)"},
@@ -99,6 +108,7 @@ EXAMPLE:
 					GradleTasksOverride:     cmd.String("tasks-override"),
 					BuildTypes:              cmd.String("build-types"),
 					IncludeAAB:              cmd.Bool("include-aab"),
+					Library:                 cmd.Bool("library"),
 					BuildModule:             cmd.String(flagBuildModule),
 					SBOMToolVersion:         cmd.String(flagSBOMToolVersion),
 				})

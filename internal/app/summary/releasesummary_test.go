@@ -35,6 +35,8 @@ func TestReleaseSummary_HappyPath(t *testing.T) {
 		}),
 		PublishStageJSON: stageResultJSON(t, "publish", map[string]string{
 			"forge_packages":        "success",
+			"forge_packages_gradle": "success",
+			"maven_central_gradle":  "failure",
 			"xcode_ios":             "success",
 			"containers":            "success", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			"cargo_container_first": "success",
@@ -64,6 +66,8 @@ func TestReleaseSummary_HappyPath(t *testing.T) {
 		"| Build Go | ✓ |",
 		"| Build Cargo | − |",
 		"| Publish GitHub | ✓ |",
+		"| Publish Forge Packages (Gradle) | ✓ |",
+		"| Publish Maven Central (Gradle) | ✗ |",
 		"| Publish Apple App Store | ✓ |",
 		"| Containers | ✓ |",
 		"| Cargo SBOM | ✓ |",

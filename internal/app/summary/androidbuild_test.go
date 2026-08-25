@@ -84,3 +84,53 @@ func TestAndroidBuild_DefaultFlavorAndSigningDisabled(t *testing.T) {
 		}
 	}
 }
+
+// A library build receives the application path's BuildTypes/IncludeAAB
+// defaults from the workflow — the summary must ignore them and report
+// the one artifact the build actually produced.
+func TestAndroidBuild_LibraryReportsAARNotAPKOrAAB(t *testing.T) {
+	t.Parallel()
+
+	sink := &fakeSummarySink{}
+
+	err := appsummary.AndroidBuild(context.Background(), sink, appsummary.AndroidBuildInput{
+		JavaVersion: "25",
+		JDKDist:     "Temurin",
+		BuildModule: "lib",
+		BuildTypes:  "debug,release", // the default the workflow passes through
+		IncludeAAB:  true,            // ditto
+		Library:     true,
+		AARName:     "my-android-lib",
+		DebugName:   "should-not-appear-debug",
+		ReleaseName: "should-not-appear-release",
+		AABName:     "should-not-appear-aab",
+		Version:     "1.2.3",
+		VersionCode: "42",
+		Now:         time.Date(2026, 5, 10, 14, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := sink.buf.String()
+
+	if !strings.Contains(got, "✓ Release AAR: `my-android-lib`") {
+		t.Errorf("missing the AAR line in:\n%s", got)
+	}
+
+	for _, unwanted := range []string{
+		"Debug APK",
+		"Release APK",
+		"Release AAB",
+		"**Include AAB**",
+		"should-not-appear",
+	} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("library summary should not mention %q:\n%s", unwanted, got)
+		}
+	}
+
+	if !strings.Contains(got, "| **Build Types** | release (library) |") {
+		t.Errorf("library summary should report release-only build types:\n%s", got)
+	}
+}

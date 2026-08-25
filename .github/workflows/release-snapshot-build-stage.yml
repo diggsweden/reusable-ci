@@ -194,6 +194,7 @@ jobs:
       working-directory: ${{ matrix.artifact.working_directory }}
       build-module: ${{ matrix.artifact.gradle_android.build_module }}
       branch: ${{ fromJson(inputs['snapshot-release-plan-json']).context.branch }}
+      library: ${{ matrix.artifact.android_library == true }}
       product-flavor: ${{ matrix.artifact.gradle_android.product_flavor || '' }}
       build-types: ${{ matrix.artifact.gradle_android.build_types || 'debug,release' }}
       include-aab: ${{ matrix.artifact.gradle_android.include_aab != false }}

@@ -13,8 +13,12 @@ func TestIsReleaseArtifact(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]bool{
-		"app.jar":                              true,
-		"./release-artifacts/app.jar":          true,
+		"app.jar":                     true,
+		"./release-artifacts/app.jar": true,
+		// An Android library's AAR is a release asset like any other jar:
+		// it is attached to the release and GPG-signed alongside it.
+		"mylib-release.aar":                    true,
+		"./release-artifacts/lib-release.aar":  true,
 		"frontend.tgz":                         true,
 		"backend.tar.gz":                       true,
 		"my-app.zip":                           true,

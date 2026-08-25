@@ -55,7 +55,7 @@ func TestAndroidReleaseBuild_RunsSequenceAndEmitsNames(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// The four names the workflow consumes, by value. The previous
+			// The names the workflow consumes, by value. The previous
 			// assertion only checked they were non-empty, which the
 			// fallback "unknown" satisfies too -- so a total failure to
 			// resolve a version passed as success.
@@ -63,6 +63,7 @@ func TestAndroidReleaseBuild_RunsSequenceAndEmitsNames(t *testing.T) {
 				"release-name": "app - APK release",
 				"debug-name":   "app - APK debug",
 				"aab-name":     "app - AAB release",
+				"aar-name":     "app - AAR release",
 				"sbom-name":    "app - build SBOM",
 				"version":      "unknown", // no build.gradle in the fixture
 				"version-code": "unknown",
