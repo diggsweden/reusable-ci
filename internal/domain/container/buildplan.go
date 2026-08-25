@@ -92,9 +92,16 @@ func (r BuildRequest) Validate() error {
 	return nil
 }
 
-// CacheRef is the single forge-neutral cache convention: <CacheRepo>:<CacheScope>
-// (or the bare repo when no scope). Empty CacheRepo → "" (caching disabled).
-// Centralised here so no workflow re-encodes the join.
+// CacheRef is the single forge-neutral cache convention:
+// <CacheRepo>/<CacheScope> (or the bare repo when no scope). Empty CacheRepo →
+// "" (caching disabled). Centralised here so no workflow re-encodes the join.
+//
+// The scope is a PATH segment, not a tag. buildah rejects a tagged reference
+// outright — "repository must contain neither a tag nor digest" — because it
+// derives its own content-addressed tags for the cache layers it writes, so
+// the ref it is handed must name a repository and nothing more. A sub-repository
+// keeps the per-(image, arch) isolation the scope exists for while staying a
+// valid repository name.
 func (r BuildRequest) CacheRef() string {
 	if r.CacheRepo == "" {
 		return ""
@@ -104,5 +111,5 @@ func (r BuildRequest) CacheRef() string {
 		return r.CacheRepo
 	}
 
-	return r.CacheRepo + ":" + r.CacheScope
+	return r.CacheRepo + "/" + r.CacheScope
 }

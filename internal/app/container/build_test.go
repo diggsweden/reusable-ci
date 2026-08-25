@@ -121,8 +121,8 @@ func TestBuildImage_PushByDigestHandsTheBuilderEveryInput(t *testing.T) {
 
 	// The cache reference is assembled by the domain rather than re-encoded
 	// by callers, so it is worth naming separately from the two fields.
-	if ref := builder.got.CacheRef(); ref != "ghcr.io/org/buildcache:app-arm64" {
-		t.Errorf("cache ref = %q, want ghcr.io/org/buildcache:app-arm64", ref)
+	if ref := builder.got.CacheRef(); ref != "ghcr.io/org/buildcache/app-arm64" {
+		t.Errorf("cache ref = %q, want ghcr.io/org/buildcache/app-arm64", ref)
 	}
 }
 

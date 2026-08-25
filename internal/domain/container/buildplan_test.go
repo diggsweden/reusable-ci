@@ -61,7 +61,8 @@ func TestBuildRequest_CacheRef(t *testing.T) {
 	cases := map[string]struct {
 		repo, scope, want string
 	}{
-		"repo and scope": {"ghcr.io/o/buildcache", "img-amd64", "ghcr.io/o/buildcache:img-amd64"},
+		// A sub-repository, NOT a tag: buildah rejects a tagged --cache-from.
+		"repo and scope": {"ghcr.io/o/buildcache", "img-amd64", "ghcr.io/o/buildcache/img-amd64"},
 		"repo only":      {"ghcr.io/o/buildcache", "", "ghcr.io/o/buildcache"},
 		"no repo":        {"", "img-amd64", ""},
 	}

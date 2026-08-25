@@ -19,7 +19,8 @@ import (
 const (
 	layers    = "--layers"
 	cacheFrom = "--cache-from"
-	cacheRef  = "ghcr.io/org/cache:main"
+	// A repository, never a tagged reference: buildah refuses a tag here.
+	cacheRef = "ghcr.io/org/cache/main"
 )
 
 // buildArgs is pure argv construction, and the only tests that reached it
