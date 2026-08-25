@@ -2075,13 +2075,25 @@ EXAMPLE:
 resolve a remote git ref to a commit SHA output
 
 ```
+Resolves a ref against a remote with 'git ls-remote'. The remote defaults to the
+   repository being built (--server-url + --repository).
+
+   --self instead targets the repository THIS BINARY came from. Use it for a
+   reusable-ci ref: the run context describes the caller's repository, so the
+   default would look for a reusable-ci branch or tag inside the project being
+   released and either fail or, worse, resolve a same-named ref there.
+
 EXAMPLE:
    reusable-ci platform resolve-ref --remote-url https://github.com/org/app --ref v1.2.3
+
+   # Resolve a reusable-ci ref from inside a consumer's release
+   reusable-ci platform resolve-ref --self --ref v3.0.0
 ```
 
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--remote-url` | remote git URL queried with 'git ls-remote' (default: this repository, derived from --server-url + --repository) | `$REMOTE_URL` |
+| `--self` | resolve against the repository this reusable-ci binary belongs to, not the repository being built | `$RESOLVE_SELF_REPO` |
 | `--server-url` | forge base URL used to derive --remote-url when it is unset | `$CI_SERVER_URL`, `$FORGEJO_SERVER_URL`, `$FORGEJO_SERVER`, `$GITHUB_SERVER_URL` |
 | `--repository` | "owner/repo" used to derive --remote-url when it is unset | `$REPOSITORY`, `$CI_REPO`, `$FORGEJO_REPOSITORY`, `$FORGEJO_REPO`, `$GITHUB_REPOSITORY` |
 | `--ref` | ref to resolve (tag, branch, or full refs/X/Y) | `$REF`, `$FORGEJO_REF`, `$GITHUB_REF` |

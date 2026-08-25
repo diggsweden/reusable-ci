@@ -19,13 +19,13 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
+	"github.com/diggsweden/reusable-ci/v3/internal/selfrepo"
 )
 
 // Check names. Each constant is the human-facing identifier of one
@@ -701,49 +701,13 @@ func hasFloatingReusableCIRef(body []byte, repoSlug string) bool {
 }
 
 // deriveSelfRepoSlug returns the "owner/repo" slug of this binary's own
-// module (e.g. "diggsweden/reusable-ci"), read from the build's module path
-// at runtime. A fork that renames its Go module gets its own slug for free;
-// callers override via REUSABLE_CI_REPO_SLUG when the running repo differs
-// from the module path (vendoring, mirrors). Returns "" when the module path
-// is unavailable, in which case the pin check degrades to a skip rather than
-// asserting someone else's identity.
+// module (e.g. "diggsweden/reusable-ci"). Callers override via
+// REUSABLE_CI_REPO_SLUG when the running repo differs from the module path
+// (vendoring, mirrors). Returns "" when the module path is unavailable, in
+// which case the pin check degrades to a skip rather than asserting
+// someone else's identity.
 func deriveSelfRepoSlug() string {
-	bi, ok := debug.ReadBuildInfo()
-	if !ok {
-		return ""
-	}
-
-	return repoSlugFromModulePath(bi.Main.Path)
-}
-
-// repoSlugFromModulePath turns a Go module path into the "owner/repo" slug
-// used in workflow `uses:` lines: it drops the host segment and any trailing
-// "/vN" major-version element. "github.com/diggsweden/reusable-ci" →
-// "diggsweden/reusable-ci"; "" for paths too short to carry a slug.
-func repoSlugFromModulePath(modPath string) string {
-	parts := strings.Split(modPath, "/")
-	if n := len(parts); n > 0 {
-		if last := parts[n-1]; len(last) > 1 && last[0] == 'v' && allDigits(last[1:]) {
-			parts = parts[:n-1]
-		}
-	}
-
-	if len(parts) < 2 {
-		return ""
-	}
-
-	return parts[len(parts)-2] + "/" + parts[len(parts)-1]
-}
-
-// allDigits reports whether value is non-empty and all ASCII digits.
-func allDigits(value string) bool {
-	for i := range len(value) {
-		if value[i] < '0' || value[i] > '9' {
-			return false
-		}
-	}
-
-	return value != ""
+	return selfrepo.Slug()
 }
 
 func regularFileExists(path string) bool {

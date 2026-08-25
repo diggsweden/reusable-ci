@@ -364,9 +364,16 @@ jobs:
         run: reusable-ci platform checkout
       - name: Resolve reusable-ci ref to commit SHA
         id: resolve-ref
+        # --self, because this ref lives in reusable-ci, not in the project
+        # being released. The run context names the CALLER's repository, so
+        # without it the lookup goes to the consumer's remote: it fails for
+        # a branch name they do not have, and silently resolves the WRONG
+        # commit for one they do (the default v3.0.0 is a plausible tag in
+        # any repo). github.workflow_ref is no help either -- it names the
+        # caller's top-level workflow, not this reusable one.
         env:
           REF: ${{ inputs['reusable-ci-binary-ref'] }}
-        run: reusable-ci platform resolve-ref
+        run: reusable-ci platform resolve-ref --self
       - name: Derive release tag from request ref
         id: relctx
         # release-request/vX.Y.Z → vX.Y.Z (the final release tag). The CLI
