@@ -10,6 +10,7 @@
 package gpg
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domaingpg "github.com/diggsweden/reusable-ci/v3/internal/domain/gpg"
 	"github.com/diggsweden/reusable-ci/v3/internal/safeexec"
 )
@@ -146,6 +148,70 @@ func (a *Adapter) PresetPassphrase(ctx context.Context, keygrip, passphrase stri
 	}
 
 	return nil
+}
+
+// ExportSecretKey returns the ASCII-armored secret key for fingerprint.
+//
+// This exists for Gradle signing. Gradle's useInMemoryPgpKeys goes
+// through Bouncycastle, which reads only RFC 4880 packets — keys
+// exported by newer GnuPG in the v5 format are rejected — so the key has
+// to be re-exported from the keyring rather than passed through as the
+// raw RELEASE_GPG_PRIVATE_KEY secret.
+//
+// Unlike run / runStdin this does NOT use CombinedOutput, and the empty
+// check below is not belt-and-braces. Both exist because of one verified
+// gpg behaviour: **exporting an absent key exits 0**, writing nothing to
+// stdout and only "gpg: WARNING: nothing exported" to stderr. Under
+// CombinedOutput that warning is returned as if it were the key, and the
+// caller signs nothing while believing it holds key material. Capturing
+// stdout separately and rejecting an empty result is what turns that
+// silent success into an error.
+//
+// Stderr is kept separate and only surfaces (redacted) on failure.
+//
+// The returned string is private key material. Callers must pass it
+// straight into a child-process environment — never to a sink, a step
+// output, stdout, or a file.
+func (a *Adapter) ExportSecretKey(ctx context.Context, fingerprint, passphrase string) (string, error) {
+	args := []string{
+		"--batch", "--yes",
+		"--pinentry-mode", "loopback",
+		"--passphrase-fd", "0",
+		"--armor",
+		"--export-secret-keys", fingerprint,
+	}
+
+	cmd := safeexec.Command(ctx, a.gpg(), args...)
+	cmd.Stdin = strings.NewReader(passphrase)
+
+	// Same isolation contract as every other method here: an Adapter built
+	// by NewIsolated must not leak the private-key/passphrase environment
+	// into gpg. Omitting this is exactly the leak NewIsolated exists to
+	// prevent, and this method handles key material.
+	if a.Env != nil {
+		cmd.Env = a.Env
+	}
+
+	var stdout, stderr bytes.Buffer
+
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		wrapped := safeexec.WrapError(err, a.gpg(), "--export-secret-keys")
+		if stderr.Len() == 0 {
+			return "", wrapped
+		}
+
+		return "", fmt.Errorf("%w\n%s", wrapped, safeexec.RedactKeyMaterial(stderr.Bytes()))
+	}
+
+	key := stdout.String()
+	if strings.TrimSpace(key) == "" {
+		return "", fmt.Errorf("gpg exported an empty secret key for %q: %w", fingerprint, errs.ErrValidation)
+	}
+
+	return key, nil
 }
 
 // DeleteSecretKey removes the secret half of the key. Idempotent:

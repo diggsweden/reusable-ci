@@ -2206,6 +2206,42 @@ EXAMPLE:
 |------|-------------|----------|
 | `--credentials-file` | path to a file containing the Google Play service-account JSON (use "-" for stdin; defaults to $GOOGLE_PLAY_SERVICE_ACCOUNT_JSON) | n/a |
 
+### `reusable-ci publish gradle`
+
+publish gradle artifacts from source
+
+#### `reusable-ci publish gradle deploy`
+
+run the target's gradle publish task with credentials bound as ORG_GRADLE_PROJECT_\* properties
+
+```
+Publishes by running the project's OWN maven-publish configuration, so unlike
+   the maven path it does not consume a downloaded artifact — Gradle needs the
+   project to produce its publications, and the job rebuilds from source.
+
+   The task is derived per target as publishAllPublicationsTo<Name>Repository,
+   deliberately not the bare "publish" task (which would push every publication
+   to every configured repository). Override it with --tasks when the project
+   uses a plugin that names its task differently.
+
+   Credentials are resolved and checked BEFORE gradle starts, and reach only the
+   child process environment. --target forge-packages draws its username/token
+   from the detected forge's own package registry; --target maven-central reads
+   $MAVEN_CENTRAL_USERNAME / $MAVEN_CENTRAL_PASSWORD and re-exports the key
+   imported by "release gpg import" for signing.
+
+EXAMPLE:
+   reusable-ci publish gradle deploy --target maven-central --fingerprint "$GPG_FINGERPRINT" --key-id "$GPG_KEY_ID"
+```
+
+| Flag | Description | Env vars |
+|------|-------------|----------|
+| `--target` | publish destination: forge-packages or maven-central (required) | `$PUBLISH_TARGET` |
+| `--tasks` | override the target-derived publish task (e.g. publishToMavenCentral for the vanniktech plugin) | `$GRADLE_PUBLISH_TASKS` |
+| `--working-dir` | directory containing ./gradlew | `$WORKING_DIRECTORY` |
+| `--fingerprint` | signing key fingerprint emitted by 'release gpg import' (required for maven-central) | `$GPG_FINGERPRINT` |
+| `--key-id` | signing key id emitted by 'release gpg import' (required for maven-central) | `$GPG_KEY_ID` |
+
 ### `reusable-ci publish maven-central`
 
 maven central pre-flight checks

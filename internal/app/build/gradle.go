@@ -57,8 +57,13 @@ func resolveGradleVersion(dir string) string {
 }
 
 // GradleMetadata reads the JVM Gradle convention `version=` from
-// gradle.properties and emits version when present. Absence is a warning, not a
-// failure, because some projects compute version in build.gradle(.kts).
+// gradle.properties and emits version + is-snapshot when present.
+// Absence is a warning, not a failure, because some projects compute
+// version in build.gradle(.kts) — those get an empty publish summary
+// rather than a failed publish.
+//
+// is-snapshot mirrors the maven metadata leaf so the two publish
+// summaries stay symmetrical.
 func GradleMetadata(ctx context.Context, sink ci.OutputSink, w io.Writer, annot output.Annotator, in GradleMetadataInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	version := resolveGradleVersion(in.Dir)
 	if version == "" {
@@ -70,6 +75,12 @@ func GradleMetadata(ctx context.Context, sink ci.OutputSink, w io.Writer, annot 
 
 	if err := sink.Set(ctx, "version", version); err != nil {
 		return fmt.Errorf("set version: %w", err)
+	}
+
+	// SetBool rather than Set so JSON consumers get a real boolean,
+	// matching the maven leaf.
+	if err := sink.SetBool(ctx, "is-snapshot", build.IsSnapshot(version)); err != nil {
+		return fmt.Errorf("set is-snapshot: %w", err)
 	}
 
 	_, _ = fmt.Fprintf(w, "Version: %s\n", version)

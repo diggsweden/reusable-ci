@@ -24,6 +24,7 @@ func New() *cli.Command {
 		Commands: []*cli.Command{
 			appStoreCmd(),
 			forgePackagesCmd(),
+			gradleCmd(),
 			googlePlayCmd(),
 			mavenCentralCmd(),
 			npmCmd(),
