@@ -25,7 +25,7 @@ import (
 func New() *cli.Command {
 	return &cli.Command{
 		Name:  "doctor",
-		Usage: "run setup-validation checks against the current repository (artifacts.yml present + valid, release-authorization allowlist when required, workflow id-token permission for sigstore, workflows pin reusable-ci to a tag)",
+		Usage: "run setup-validation checks against the current repository (artifacts.yml present + valid, release-authorization allowlist when required, workflow id-token permission for sigstore, workflows pin reusable-ci to a tag, gradle publishing prerequisites when an artifact publishes via gradle)",
 		Description: `EXAMPLES:
    # Run all checks in the current directory:
    reusable-ci doctor

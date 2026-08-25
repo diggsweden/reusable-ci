@@ -136,6 +136,10 @@ func Run(in Input) ([]Check, error) {
 		checks = append(checks, c)
 	}
 
+	// Silent unless an artifact actually publishes through the Gradle
+	// toolchain, so existing adopters see no new output.
+	checks = append(checks, checkGradlePublishing(root, cfg.Artifacts)...)
+
 	return checks, nil
 }
 

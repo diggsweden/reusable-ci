@@ -20,7 +20,7 @@ then the environment variables listed per flag, then the flag default.
 - [`build`](#reusable-ci-build) — toolchain build wrappers (go, cargo, maven, npm, gradle, gradle-android, xcode-ios)
 - [`config`](#reusable-ci-config) — artifacts.yml schema helpers
 - [`container`](#reusable-ci-container) — container-image helpers (name resolution, manifests, namespace policy, tag/label metadata, …)
-- [`doctor`](#reusable-ci-doctor) — run setup-validation checks against the current repository (artifacts.yml present + valid, release-authorization allowlist when required, workflow id-token permission for sigstore, workflows pin reusable-ci to a tag)
+- [`doctor`](#reusable-ci-doctor) — run setup-validation checks against the current repository (artifacts.yml present + valid, release-authorization allowlist when required, workflow id-token permission for sigstore, workflows pin reusable-ci to a tag, gradle publishing prerequisites when an artifact publishes via gradle)
 - [`lint`](#reusable-ci-lint) — code-style lint wrappers (swift-format, swiftlint)
 - [`plan`](#reusable-ci-plan) — typed release, snapshot-release, and pull-request plan composition
 - [`platform`](#reusable-ci-platform) — CI-runtime git + workspace operations (check out a repo, resolve a ref, inspect the workspace)
@@ -1817,7 +1817,7 @@ EXAMPLE:
 
 ## `reusable-ci doctor`
 
-run setup-validation checks against the current repository (artifacts.yml present + valid, release-authorization allowlist when required, workflow id-token permission for sigstore, workflows pin reusable-ci to a tag)
+run setup-validation checks against the current repository (artifacts.yml present + valid, release-authorization allowlist when required, workflow id-token permission for sigstore, workflows pin reusable-ci to a tag, gradle publishing prerequisites when an artifact publishes via gradle)
 
 ```
 EXAMPLES:
