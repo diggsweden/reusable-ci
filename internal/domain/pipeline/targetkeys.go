@@ -41,6 +41,8 @@ const (
 	// re-deriving build-mode from the planned-artifact list.
 	TargetForgePackages       = "forge_packages"
 	TargetMavenCentral        = "maven_central"
+	TargetForgePackagesGradle = "forge_packages_gradle"
+	TargetMavenCentralGradle  = "maven_central_gradle"
 	TargetGooglePlay          = "google_play"
 	TargetContainers          = "containers"
 	TargetCargoContainerFirst = "cargo_container_first"
