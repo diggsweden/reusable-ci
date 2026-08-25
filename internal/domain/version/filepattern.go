@@ -15,9 +15,15 @@ func FilePattern(pt projecttype.Type) string {
 	case projecttype.NPM:
 		return "CHANGELOG.md package.json package-lock.json"
 	case projecttype.Gradle, projecttype.GradleAndroid:
-		return "CHANGELOG.md gradle.properties build.gradle.kts settings.gradle.kts build.gradle settings.gradle"
+		// One glob per file family rather than an entry per DSL spelling:
+		// build.gradle* covers both Groovy and Kotlin DSL (and any future
+		// suffix) in a single pathspec. Which of these exist varies by
+		// project — see git.AddPathspecs for why that is safe.
+		return "CHANGELOG.md :(glob)gradle.properties :(glob)build.gradle* :(glob)settings.gradle*"
 	case projecttype.XcodeIOS:
-		return "CHANGELOG.md versions.xcconfig :(glob)**/*.xcconfig"
+		// The bare versions.xcconfig literal is redundant: the glob below
+		// already matches it at the repo root.
+		return "CHANGELOG.md :(glob)**/*.xcconfig"
 	case projecttype.Python:
 		return "CHANGELOG.md pyproject.toml"
 	case projecttype.Go:
