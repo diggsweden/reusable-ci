@@ -353,8 +353,8 @@ honoured — differs from 3.8 and earlier.
 | Gradle wrapper required | ✅ | `gradlew` checked in | Pinned-version wrapper guarantees the same Gradle across CI and developer machines. |
 | Version-bump (build.gradle / gradle.properties) | ✅ | `reusable-ci version bump gradle` | Updates `version =` in build.gradle{,.kts} or `version=` in gradle.properties. |
 | Release prerequisite checks | ✅ | `validate-release-prerequisites.yml` | Confirms JDK toolchain pin + wrapper presence. |
-| Publish — Maven Central | ✅ | `publish-maven-central.yml` | Same path as Maven; gradle jars work identically. |
-| Publish — GitHub Packages | ✅ | `publish-maven-github.yml` | |
+| Publish — Maven Central | ✅ | `publish-gradle.yml` | Requires `build-type: library`. Publishes from source via the project's own `maven-publish` config — not the Maven path. |
+| Publish — forge packages | ✅ | `publish-gradle.yml` | Applications may publish here too; only Central requires `build-type: library`. |
 
 #### Caller responsibilities
 
@@ -396,7 +396,10 @@ honoured — differs from 3.8 and earlier.
 | Build-type subset | ✅ | `build-types: debug,release` (default) | Pick which variants to build. |
 | Version-bump (Android `versionName` / `versionCode`) | ✅ | `reusable-ci version bump gradle-android` | Bumps `versionName` and increments `versionCode` together. |
 | Release prerequisite checks | ✅ | `validate-release-prerequisites.yml` | Confirms keystore secrets present when `enable-signing: true`. |
-| Publish — Google Play | ✅ | `publish-google-play.yml` | Track-aware (`internal` / `alpha` / `beta` / `production`); supports staged rollouts. |
+| Publish — Google Play | ✅ | `publish-google-play.yml` | Track-aware (`internal` / `alpha` / `beta` / `production`); supports staged rollouts. Applications only — excluded when `build-type: library`. |
+| AAR build (library mode) | ✅ | `build-gradle-android.yml` with `library: true` | Derives `<module>:assemble[Flavor]Release`, uploads the AAR, skips AAB / debug-APK / keystore signing. |
+| Publish — Maven Central (AAR) | ✅ | `publish-gradle.yml` | Android **libraries** only (`build-type: library`). Same path as plain Gradle; the Android SDK comes from `runtime-image-android`, not a setup step. |
+| Publish — forge packages (AAR) | ✅ | `publish-gradle.yml` | Android **libraries** only (`build-type: library`). |
 | Whats-new notes | ✅ | `whats-new-directory` config field | Localised release notes. |
 | Mapping file (Proguard / R8) | ✅ | `mapping-file` config field | Symbolicated stack traces in Play Console. |
 | Native debug symbols | ✅ | `debug-symbols` config field | Required for native (NDK) crashes. |
