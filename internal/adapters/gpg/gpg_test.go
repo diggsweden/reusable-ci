@@ -129,3 +129,64 @@ func TestImportKey_ErrorNeverEchoesInput(t *testing.T) {
 		t.Fatalf("import error echoed input key material:\n%s", err)
 	}
 }
+
+// TestExportSecretKey_RoundTrip covers the Gradle signing path: the key
+// is re-exported from the keyring in the armored RFC 4880 form that
+// Gradle's Bouncycastle-backed useInMemoryPgpKeys can read.
+//
+// Note this test alone does NOT justify the separate-stdout capture:
+// gpg is silent on stderr when the export succeeds, so CombinedOutput
+// would pass here too. TestExportSecretKey_UnknownFingerprintErrors is
+// the one that pins that decision.
+func TestExportSecretKey_RoundTrip(t *testing.T) {
+	k := gpgkey.New(t)
+	a := adaptergpg.New()
+	ctx := context.Background()
+
+	out, err := a.ExportSecretKey(ctx, k.Fingerprint, "")
+	if err != nil {
+		t.Fatalf("ExportSecretKey: %v", err)
+	}
+
+	if !strings.HasPrefix(strings.TrimSpace(out), "-----BEGIN PGP PRIVATE KEY BLOCK-----") {
+		t.Errorf("export does not start with the armor header:\n%q", firstLine(out))
+	}
+
+	if !strings.HasSuffix(strings.TrimSpace(out), "-----END PGP PRIVATE KEY BLOCK-----") {
+		t.Errorf("export does not end with the armor footer:\n%q", out[max(0, len(out)-80):])
+	}
+
+	// Re-importing the export must be accepted — the round trip is the
+	// real proof the bytes are well-formed.
+	if err := a.ImportKey(ctx, []byte(out)); err != nil {
+		t.Errorf("re-import of exported key failed: %v", err)
+	}
+}
+
+// Exporting an absent key exits **0** with an empty stdout and only a
+// "nothing exported" warning on stderr. This is the case that forces
+// ExportSecretKey to capture stdout separately and reject an empty
+// result: under CombinedOutput the warning text is returned as the key
+// and no error is raised, so a publish would proceed with a garbage
+// signing key. Verified against gpg 2.5.21.
+func TestExportSecretKey_UnknownFingerprintErrors(t *testing.T) {
+	_ = gpgkey.New(t)
+	a := adaptergpg.New()
+
+	out, err := a.ExportSecretKey(context.Background(), "0000000000000000000000000000000000000000", "")
+	if err == nil {
+		t.Fatalf("expected an error for an absent key, got %q", out)
+	}
+
+	if strings.Contains(err.Error(), "PGP PRIVATE KEY") {
+		t.Error("error message leaked key material")
+	}
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+
+	return s
+}
