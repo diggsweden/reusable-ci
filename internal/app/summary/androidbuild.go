@@ -26,6 +26,8 @@ type AndroidBuildInput struct {
 	DebugName   string
 	ReleaseName string
 	AABName     string
+	Library     bool
+	AARName     string
 
 	// Now is baked in for deterministic testing. Empty → time.Now().
 	Now time.Time
@@ -54,6 +56,8 @@ func AndroidBuild(ctx context.Context, sink ci.SummarySink, in AndroidBuildInput
 		DebugName:   in.DebugName,
 		ReleaseName: in.ReleaseName,
 		AABName:     in.AABName,
+		Library:     in.Library,
+		AARName:     in.AARName,
 	}, now)
 
 	return sink.Append(ctx, md)

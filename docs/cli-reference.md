@@ -329,8 +329,16 @@ Runs the whole Android build sequence in one step: compose artifact names,
    the project root, or cd in first (the forge job does). --working-dir only
    locates gradle.properties for metadata.
 
+   --library builds an Android library instead: <module>:assemble[Flavor]Release,
+   producing an AAR. Release-only and AAB-free by construction, and never
+   keystore-signed — a library's signature is the GPG release key applied at
+   publish time.
+
 EXAMPLE:
    cd app && reusable-ci build gradle-android run --build-types release --include-aab --enable-signing
+
+   # Android library (build-type: library)
+   cd lib && reusable-ci build gradle-android run --library
 ```
 
 | Flag | Description | Env vars |
@@ -347,6 +355,7 @@ EXAMPLE:
 | `--tasks-override` | explicit task list override; bypasses the build-type heuristics | `$GRADLE_TASKS_OVERRIDE` |
 | `--build-types` | comma-separated Android build types to assemble | `$BUILD_TYPES` |
 | `--include-aab` | also emit bundleRelease (produces an AAB) | `$INCLUDE_AAB` |
+| `--library` | build an Android library (AAR): release-only, no AAB, no keystore signing. Set for build-type: library | `$ANDROID_LIBRARY` |
 | `--build-module` | gradle module name (e.g. "app") | `$BUILD_MODULE` |
 | `--skip-tests` | append -x test to skip the test task | `$SKIP_TESTS` |
 | `--build-sbom` | generate the cyclonedx-gradle-plugin Build SBOM (default true) | `$ENABLE_BUILD_SBOM` |
@@ -2947,6 +2956,8 @@ EXAMPLE:
 | `--debug-name` | filename of the debug APK | `$DEBUG_NAME` |
 | `--release-name` | filename of the release APK | `$RELEASE_NAME` |
 | `--aab-name` | filename of the bundled AAB | `$AAB_NAME` |
+| `--library` | library mode: report the AAR instead of the APK/AAB variants | `$ANDROID_LIBRARY` |
+| `--aar-name` | filename of the library AAR | `$AAR_NAME` |
 
 #### `reusable-ci report build go`
 

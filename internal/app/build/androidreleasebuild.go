@@ -46,6 +46,14 @@ type AndroidReleaseBuildInput struct {
 	IncludeAAB          bool
 	BuildModule         string
 
+	// Library selects Android *library* mode: build-type: library on a
+	// gradle-android artifact. It is the whole difference — there is no
+	// separate project type and no setup-android flag. A library builds
+	// release-only and AAB-free, and is never keystore-signed: its Maven
+	// Central signature is the GPG release key applied in
+	// publish-gradle.yml, so the keystore decode below is skipped too.
+	Library bool
+
 	// SBOMToolVersion pins the cyclonedx-gradle-plugin.
 	SBOMToolVersion string
 }
@@ -77,7 +85,11 @@ func AndroidReleaseBuild(ctx context.Context, sink ci.OutputSink, summarySink ci
 		return err
 	}
 
-	if in.EnableSigning {
+	// A library is never keystore-signed (see the Library field), so the
+	// decode is skipped even when the caller left --enable-signing on: an
+	// application-shaped default must not put a keystore on disk for a
+	// build that has no use for one.
+	if in.EnableSigning && !in.Library {
 		// Decode outside the working dir (Dir empty → RUNNER_TEMP/mktemp) so no
 		// artifact upload can pick the keystore up. gradle reads the path from
 		// the environment, alongside the per-key password secrets.
@@ -102,6 +114,7 @@ func AndroidReleaseBuild(ctx context.Context, sink ci.OutputSink, summarySink ci
 			BuildTypes:  in.BuildTypes,
 			IncludeAAB:  in.IncludeAAB,
 			BuildModule: in.BuildModule,
+			Library:     in.Library,
 		})
 	}
 

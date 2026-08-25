@@ -44,6 +44,11 @@ on:
         required: true
         type: string
       # === VARIANT CONFIGURATION ===
+      library:
+        description: "true builds an AAR for Maven publishing: the task list becomes <module>:assemble[Flavor]Release, and AAB / debug-APK / keystore-signing derivation is skipped. false (the default) is the application path and behaves exactly as before. Callers pass the plan's `android_library`, which is derived from build-type: library."
+        required: false
+        default: false
+        type: boolean
       product-flavor:
         description: "Product flavor to build (e.g., demo, prod, staging). Leave empty for no flavor."
         required: false
@@ -66,7 +71,7 @@ on:
         type: string
       # === ARTIFACT NAMING ===
       artifact-name:
-        description: "Override the derived artifact-name format. When set, the AAB is uploaded under this exact name and APK/SBOM variants get -debug/-release/-sbom suffixes. Used by the orchestrator (release-build-stage.yml) to align uploads with the artifacts.yml `name:` that release-publish-stage forwards to publish-google-play. Leave empty for date/prefix/repo/flavor-derived naming."
+        description: "Override the derived artifact-name format. When set, the AAB (application) or AAR (library) is uploaded under this exact name and APK/SBOM variants get -debug/-release/-sbom suffixes. Used by the orchestrator (release-build-stage.yml) to align uploads with the artifacts.yml `name:` that release-publish-stage forwards to publish-google-play. Leave empty for date/prefix/repo/flavor-derived naming."
         required: false
         default: ""
         type: string
@@ -138,6 +143,9 @@ on:
       aab-name:
         description: "Uploaded artefact name for the release AAB"
         value: ${{ jobs.build-variants.outputs.aab-name }}
+      aar-name:
+        description: "Artifact name the AAR was uploaded under (library builds)"
+        value: ${{ jobs.build-variants.outputs.aar-name }}
       sbom-name:
         description: "Uploaded artefact name for the build SBOM"
         value: ${{ jobs.build-variants.outputs.sbom-name }}
@@ -156,6 +164,7 @@ jobs:
       debug-name: ${{ steps.build.outputs.debug-name }}
       release-name: ${{ steps.build.outputs.release-name }}
       aab-name: ${{ steps.build.outputs.aab-name }}
+      aar-name: ${{ steps.build.outputs.aar-name }}
       sbom-name: ${{ steps.build.outputs.sbom-name }}
     steps:
       # Defense-in-depth: refuse PR-context triggers. ANDROID_KEYSTORE +
@@ -205,6 +214,10 @@ jobs:
           BUILD_TYPES: ${{ inputs['build-types'] }}
           INCLUDE_AAB: ${{ inputs['include-aab'] }}
           BUILD_MODULE: ${{ inputs['build-module'] }}
+          # Library mode: the binary makes the task list release-only and
+          # AAB-free and skips the keystore decode, so no `if:` on the step
+          # above is needed — one verb, one branch, inside the binary.
+          ANDROID_LIBRARY: ${{ inputs.library }}
           SKIP_TESTS: ${{ inputs['skip-tests'] }}
           ENABLE_BUILD_SBOM: ${{ inputs['enable-build-sbom'] }}
           # renovate: datasource=maven depName=org.cyclonedx:cyclonedx-gradle-plugin
@@ -230,7 +243,7 @@ jobs:
           BUILD_MODULE: ${{ inputs['build-module'] }}
         run: reusable-ci build gradle-android list-artifacts
       - name: Upload Debug APK
-        if: contains(inputs['build-types'], 'debug')
+        if: ${{ !inputs.library && contains(inputs['build-types'], 'debug') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.build.outputs.debug-name }}
@@ -239,7 +252,7 @@ jobs:
           retention-days: "7"
           if-no-files-found: warn
       - name: Upload Release APK
-        if: contains(inputs['build-types'], 'release')
+        if: ${{ !inputs.library && contains(inputs['build-types'], 'release') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.build.outputs.release-name }}
@@ -248,12 +261,27 @@ jobs:
           retention-days: "7"
           if-no-files-found: warn
       - name: Upload AAB
-        if: ${{ inputs['include-aab'] && contains(inputs['build-types'], 'release') }}
+        if: ${{ !inputs.library && inputs['include-aab'] && contains(inputs['build-types'], 'release') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.build.outputs.aab-name }}
           path: |
             ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/bundle/**/*.aab
+          retention-days: "7"
+          if-no-files-found: error
+      - name: Upload AAR
+        # The library counterpart of the APK/AAB uploads above. Uploaded
+        # under the BARE artifact name (aar-name mirrors aab-name's
+        # unsuffixed form) so it matches PlannedArtifact.BuildArtifactName
+        # and the release download finds it. This is what gets attached to
+        # the release and what the Build SBOM describes; publish-gradle.yml
+        # rebuilds from source rather than consuming it.
+        if: ${{ inputs.library }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.build.outputs.aar-name }}
+          path: |
+            ${{ inputs['working-directory'] }}/${{ inputs['build-module'] }}/build/outputs/aar/*.aar
           retention-days: "7"
           if-no-files-found: error
       - name: Generate build summary
@@ -269,6 +297,8 @@ jobs:
           DEBUG_NAME: ${{ steps.build.outputs.debug-name }}
           RELEASE_NAME: ${{ steps.build.outputs.release-name }}
           AAB_NAME: ${{ steps.build.outputs.aab-name }}
+          ANDROID_LIBRARY: ${{ inputs.library }}
+          AAR_NAME: ${{ steps.build.outputs.aar-name }}
           JAVA_VERSION: "25"
           JDK_DIST: "Temurin"
         run: reusable-ci report build android

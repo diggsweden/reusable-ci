@@ -24,15 +24,15 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
-// TestAndroidArtifactNames_EmitsFourNames covers what this layer owns:
-// which sink keys the four names land under, and that every input reaches
+// TestAndroidArtifactNames_EmitsAllNames covers what this layer owns:
+// which sink keys the names land under, and that every input reaches
 // the resolver. How the names themselves compose is the domain's claim,
 // tested in internal/domain/build.
 //
 // Each case compares the whole output map rather than the keys it expects,
 // so an added or renamed output is caught too -- these are consumed by the
 // workflow to name uploaded artifacts.
-func TestAndroidArtifactNames_EmitsFourNames(t *testing.T) {
+func TestAndroidArtifactNames_EmitsAllNames(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -47,6 +47,7 @@ func TestAndroidArtifactNames_EmitsFourNames(t *testing.T) {
 				"debug-name":   "demo-app - APK debug",
 				"release-name": "demo-app - APK release",
 				"aab-name":     "demo-app - AAB release",
+				"aar-name":     "demo-app - AAR release",
 				"sbom-name":    "demo-app - build SBOM",
 			},
 		},
@@ -63,6 +64,7 @@ func TestAndroidArtifactNames_EmitsFourNames(t *testing.T) {
 				"debug-name":   "2026-05-10 - Nightly - demo-app - fdroid - APK debug",
 				"release-name": "2026-05-10 - Nightly - demo-app - fdroid - APK release",
 				"aab-name":     "2026-05-10 - Nightly - demo-app - fdroid - AAB release",
+				"aar-name":     "2026-05-10 - Nightly - demo-app - fdroid - AAR release",
 				"sbom-name":    "2026-05-10 - Nightly - demo-app - fdroid - build SBOM",
 			},
 		},
@@ -83,6 +85,7 @@ func TestAndroidArtifactNames_EmitsFourNames(t *testing.T) {
 				"debug-name":   "wallet-android-demo-debug",
 				"release-name": "wallet-android-demo-release",
 				"aab-name":     "wallet-android-demo",
+				"aar-name":     "wallet-android-demo",
 				"sbom-name":    "wallet-android-demo-sbom",
 			},
 		},
@@ -113,7 +116,7 @@ func TestAndroidArtifactNames_RequiresRepoNameOrOverride(t *testing.T) {
 		t.Fatalf("err = %v, want ErrUsage", err)
 	}
 
-	// Nothing half-emitted: a workflow reading three of four names would
+	// Nothing half-emitted: a workflow reading a subset of the names would
 	// upload artifacts under names the fourth step never agreed to.
 	if got := sink.Keys(); len(got) != 0 {
 		t.Errorf("emitted %q with neither repo-name nor override", got)
@@ -656,13 +659,17 @@ func TestAndroidGradleBuild_RequiresTasks(t *testing.T) {
 	}
 }
 
-func TestAndroidListArtifacts_FindsApkAndAab(t *testing.T) {
+func TestAndroidListArtifacts_FindsApkAabAndAar(t *testing.T) {
 	t.Parallel()
 
 	fsys := testfs.NewReal(t)
 	module := "app"
 	fsys.WriteFile(filepath.Join(module, "build", "outputs", "apk", "debug", "demo.apk"), []byte("apk"))
 	fsys.WriteFile(filepath.Join(module, "build", "outputs", "bundle", "release", "demo.aab"), []byte("aab"))
+	// A library build's only output. Listed alongside the application
+	// outputs on purpose: one module can be built either way, and the
+	// lister is shared.
+	fsys.WriteFile(filepath.Join(module, "build", "outputs", "aar", "demo-release.aar"), []byte("aar"))
 	// Decoys: two non-artifacts a real build genuinely produces under
 	// outputs/ -- the apk metadata and the R8 mapping -- and an .apk
 	// outside the module's outputs tree, which must not be picked up.
@@ -681,8 +688,10 @@ func TestAndroidListArtifacts_FindsApkAndAab(t *testing.T) {
 	// Whole and in walk order. The listing is short and deterministic, so
 	// comparing it entire catches an extra entry as readily as a missing
 	// one -- the previous checks could not see a stray artifact from
-	// another module.
+	// another module. Walk order is lexical per directory, so outputs/aar
+	// precedes outputs/apk, which precedes outputs/bundle.
 	want := "Built artifacts:\n" +
+		filepath.Join(fsys.Root, module, "build", "outputs", "aar", "demo-release.aar") + "\n" +
 		filepath.Join(fsys.Root, module, "build", "outputs", "apk", "debug", "demo.apk") + "\n" +
 		filepath.Join(fsys.Root, module, "build", "outputs", "bundle", "release", "demo.aab") + "\n"
 	if got := out.String(); got != want {
