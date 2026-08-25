@@ -53,6 +53,11 @@ on:
         required: false
         default: 'gradle.properties'
         type: string
+      library:
+        description: "true for a gradle-android artifact declared build-type: library. Such an artifact is released as a Maven artifact, so the bump also writes gradle's `version` property (which populates project.version and therefore the maven publication's version) alongside versionName/versionCode. Ignored for every other project type."
+        required: false
+        default: false
+        type: boolean
       xcode-version-file:
         description: "Path to Xcode version xcconfig file (default: versions.xcconfig)"
         required: false
@@ -192,6 +197,7 @@ jobs:
           WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
           GRADLE_VERSION_FILE: ${{ inputs['gradle-version-file'] }}
           XCODE_VERSION_FILE: ${{ inputs['xcode-version-file'] }}
+          ANDROID_LIBRARY: ${{ inputs.library }}
         run: |
           VERSION="${{ steps.relctx.outputs.version }}" reusable-ci version bump
       - name: Download Full Changelog

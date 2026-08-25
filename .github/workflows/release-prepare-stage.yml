@@ -107,6 +107,10 @@ jobs:
       file-pattern: ${{ fromJson(inputs['prepare-stage-plan-json']).file_pattern || '' }}
       gradle-version-file: ${{ matrix.artifact.gradle.gradle_version_file }}
       working-directory: ${{ matrix.artifact.working_directory }}
+      # An Android library is released as a maven artifact, so its version
+      # of record is gradle's `version` property, not the Android
+      # versionName. The plan derives android_library from build-type.
+      library: ${{ matrix.artifact.android_library == true }}
       # Pick the runtime image that matches the project-type's bump
       # tooling: maven/gradle/gradle-android need JDK + Maven; npm needs
       # Node; cargo needs cargo for Cargo.lock refresh; xcode-ios is

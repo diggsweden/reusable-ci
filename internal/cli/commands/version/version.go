@@ -84,7 +84,11 @@ func bumpCmd() *cli.Command {
    reusable-ci version bump --project-type=npm --version=2.0.0 --working-dir=./app
 
    # Bump a Cargo workspace (the [workspace.package].version field)
-   reusable-ci version bump --project-type=cargo --version=0.5.0`,
+   reusable-ci version bump --project-type=cargo --version=0.5.0
+
+   # Bump an Android LIBRARY: writes versionName/versionCode and, because
+   # a library is released as a maven artifact, the gradle version property
+   reusable-ci version bump --project-type=gradle-android --version=1.2.3 --library`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:     "project-type",
@@ -114,6 +118,11 @@ func bumpCmd() *cli.Command {
 				Sources: cli.EnvVars("MAVEN_CLI_OPTS"),
 				Usage:   "extra args forwarded to mvn (whitespace-separated, e.g. \"-B -ntp\")",
 			},
+			&cli.BoolFlag{
+				Name:    "library",
+				Sources: cli.EnvVars("ANDROID_LIBRARY"),
+				Usage:   "the artifact is build-type: library (gradle-android only); also writes the gradle `version` property the maven publication uses",
+			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			in := appversion.BumpInput{
@@ -122,6 +131,7 @@ func bumpCmd() *cli.Command {
 				WorkingDir:        cmd.String("working-dir"),
 				GradleVersionFile: cmd.String("gradle-version-file"),
 				XcconfigFile:      cmd.String("xcode-version-file"),
+				Library:           cmd.Bool("library"),
 			}
 			if opts := cmd.String("maven-cli-opts"); opts != "" {
 				in.MavenCLIOpts = strings.Fields(opts)

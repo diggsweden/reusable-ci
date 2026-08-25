@@ -186,6 +186,82 @@ func TestBump_GradleAndroid_NoVersionCodeAddsOne(t *testing.T) {
 	}
 }
 
+// An Android LIBRARY is released as a maven artifact, and the version in
+// those coordinates is gradle's `version` property -- setting it in
+// gradle.properties populates project.version, which maven-publish uses
+// for the publication. Writing only versionName left `version` stale, so
+// the publish shipped the previous release's version while reporting the
+// new one.
+func TestBump_GradleAndroidLibrary_AlsoWritesGradleVersion(t *testing.T) {
+	t.Parallel()
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile("gradle.properties", []byte("versionName=0.0.2-SNAPSHOT\nversionCode=1\nversion=0.0.2-SNAPSHOT\n"))
+
+	if err := appversion.Bump(context.Background(), appversion.BumpOps{}, io.Discard, io.Discard, output.Annotator{}, appversion.BumpInput{
+		ProjectType: projecttype.GradleAndroid,
+		Version:     "0.0.4-SNAPSHOT",
+		WorkingDir:  fsys.Root,
+		Library:     true,
+	}); err != nil {
+		t.Fatalf("Bump: %v", err)
+	}
+
+	body := string(fsys.ReadFile("gradle.properties"))
+	for _, want := range []string{"versionName=0.0.4-SNAPSHOT", "versionCode=2", "version=0.0.4-SNAPSHOT"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s in: %q", want, body)
+		}
+	}
+
+	// The stale value must be gone, not merely joined by a new line.
+	if strings.Contains(body, "0.0.2-SNAPSHOT") {
+		t.Errorf("a stale version survived the bump: %q", body)
+	}
+}
+
+// The `version` property is absent on a project that never published from
+// it. Gradle's default for an unset version is the literal string
+// "unspecified", which registries accept as though it were a real
+// version -- so the bump must ADD the property, not skip it.
+func TestBump_GradleAndroidLibrary_AddsGradleVersionWhenAbsent(t *testing.T) {
+	t.Parallel()
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile("gradle.properties", []byte("versionName=0.1.0\nversionCode=7\n"))
+
+	if err := appversion.Bump(context.Background(), appversion.BumpOps{}, io.Discard, io.Discard, output.Annotator{}, appversion.BumpInput{
+		ProjectType: projecttype.GradleAndroid,
+		Version:     "1.0.0",
+		WorkingDir:  fsys.Root,
+		Library:     true,
+	}); err != nil {
+		t.Fatalf("Bump: %v", err)
+	}
+
+	if body := string(fsys.ReadFile("gradle.properties")); !strings.Contains(body, "version=1.0.0") {
+		t.Errorf("version was not added: %q", body)
+	}
+}
+
+// An Android *application* has no maven publication, so nothing should
+// start writing a gradle `version` for it.
+func TestBump_GradleAndroidApplication_LeavesGradleVersionAlone(t *testing.T) {
+	t.Parallel()
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile("gradle.properties", []byte("versionName=0.1.0\nversionCode=7\n"))
+
+	if err := appversion.Bump(context.Background(), appversion.BumpOps{}, io.Discard, io.Discard, output.Annotator{}, appversion.BumpInput{
+		ProjectType: projecttype.GradleAndroid,
+		Version:     "1.0.0",
+		WorkingDir:  fsys.Root,
+	}); err != nil {
+		t.Fatalf("Bump: %v", err)
+	}
+
+	if body := string(fsys.ReadFile("gradle.properties")); strings.Contains(body, "version=1.0.0") {
+		t.Errorf("application bump wrote a gradle version property: %q", body)
+	}
+}
+
 func TestBump_GradleJVM_FileMissingErrors(t *testing.T) {
 	t.Parallel()
 	fsys := testfs.NewReal(t)

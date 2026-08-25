@@ -29,6 +29,13 @@ type BumpInput struct {
 	// XcconfigFile is the .xcconfig path. Empty → "versions.xcconfig".
 	XcconfigFile string
 
+	// Library marks a gradle-android artifact declared `build-type:
+	// library`. Such an artifact is published as a Maven artifact, so its
+	// version of record is Gradle's `version` property — not the Android
+	// `versionName`, which is app metadata. See bumpGradleAndroid.
+	// Ignored by every other project type.
+	Library bool
+
 	// MavenCLIOpts is the value of $MAVEN_CLI_OPTS, split into argv.
 	MavenCLIOpts []string
 }
@@ -100,7 +107,7 @@ func Bump(ctx context.Context, ops BumpOps, w, stderr io.Writer, annot output.An
 	case projecttype.Gradle:
 		return bumpGradleJVM(filepath.Join(dir, gradleFile), in.Version, w, annot)
 	case projecttype.GradleAndroid:
-		return bumpGradleAndroid(filepath.Join(dir, gradleFile), in.Version, w, annot)
+		return bumpGradleAndroid(filepath.Join(dir, gradleFile), in.Version, in.Library, w, annot)
 	case projecttype.XcodeIOS:
 		return bumpXcodeIOS(filepath.Join(dir, xcconfig), in.Version, w)
 	case projecttype.Go:
@@ -207,7 +214,25 @@ func bumpGradleJVM(path, ver string, w io.Writer, annot output.Annotator) error 
 	return nil
 }
 
-func bumpGradleAndroid(path, ver string, w io.Writer, annot output.Annotator) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+// bumpGradleAndroid writes the Android version pair (versionName +
+// versionCode) and, for a library, ALSO the Gradle `version` property.
+//
+// The two are different concepts and a library needs both. `versionName`
+// is Android app metadata; nothing reads it off an AAR. What an Android
+// *library* is released as is a Maven artifact, and the version in those
+// coordinates is Gradle's own `version` property: setting it in
+// gradle.properties populates project.version, which maven-publish uses
+// for the publication with no build-script code at all.
+//
+// Writing only versionName left `version` at whatever it was, so the
+// publish silently shipped a stale version — or, on a project that never
+// set it, the literal string "unspecified", which is Gradle's default
+// for an unset version and is accepted by registries as if it were real.
+//
+// Both are written rather than switching between them: the build-stage
+// summary reads versionName/versionCode, so an application-shaped
+// default keeps working and nothing regresses for apps.
+func bumpGradleAndroid(path, ver string, library bool, w io.Writer, annot output.Annotator) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	body, err := readGradleVersionFile(path, annot)
 	if err != nil {
 		return err
@@ -227,6 +252,17 @@ func bumpGradleAndroid(path, ver string, w io.Writer, annot output.Annotator) er
 		_, _ = fmt.Fprintln(w, "Added versionCode=1")
 	} else {
 		_, _ = fmt.Fprintf(w, "Incremented versionCode: %d → %d\n", res2.Old, res2.New)
+	}
+
+	if library {
+		var vres version.UpdatePropertyResult
+
+		out, vres = version.UpdateGradleJVMVersion(out, ver)
+		if vres == version.UpdatePropertyUpdated {
+			_, _ = fmt.Fprintf(w, "Updated version to %s (android library publishes as a maven artifact)\n", ver)
+		} else {
+			_, _ = fmt.Fprintf(w, "Added version=%s (android library publishes as a maven artifact)\n", ver)
+		}
 	}
 
 	if err := os.WriteFile(path, []byte(out), 0o644); err != nil { //nolint:gosec // project file; ecosystem tools expect 0644.

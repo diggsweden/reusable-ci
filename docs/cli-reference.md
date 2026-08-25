@@ -4180,6 +4180,10 @@ EXAMPLES:
 
    # Bump a Cargo workspace (the [workspace.package].version field)
    reusable-ci version bump --project-type=cargo --version=0.5.0
+
+   # Bump an Android LIBRARY: writes versionName/versionCode and, because
+   # a library is released as a maven artifact, the gradle version property
+   reusable-ci version bump --project-type=gradle-android --version=1.2.3 --library
 ```
 
 | Flag | Description | Env vars |
@@ -4190,6 +4194,7 @@ EXAMPLES:
 | `--gradle-version-file` | path to the gradle.properties file holding the version key (gradle only) | `$GRADLE_VERSION_FILE` |
 | `--xcode-version-file` | path to the xcconfig file holding MARKETING_VERSION (xcode-ios only) | `$XCODE_VERSION_FILE` |
 | `--maven-cli-opts` | extra args forwarded to mvn (whitespace-separated, e.g. "-B -ntp") | `$MAVEN_CLI_OPTS` |
+| `--library` | the artifact is build-type: library (gradle-android only); also writes the gradle `version` property the maven publication uses | `$ANDROID_LIBRARY` |
 
 ### `reusable-ci version commit-changelog-release`
 
