@@ -201,6 +201,11 @@ func TestNewConfigPlan_BuildArtifactNamesMatchConditionalUploads(t *testing.T) {
 		{Name: "android-aab", ProjectType: projecttype.GradleAndroid, GradleAndroid: &config.GradleAndroidConfig{IncludeAAB: &yes, BuildTypes: "release"}}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{Name: "android-no-aab", ProjectType: projecttype.GradleAndroid, GradleAndroid: &config.GradleAndroidConfig{IncludeAAB: &no, BuildTypes: "release"}},
 		{Name: "android-debug", ProjectType: projecttype.GradleAndroid, GradleAndroid: &config.GradleAndroidConfig{IncludeAAB: &yes, BuildTypes: "debug"}},
+		// A library uploads an AAR regardless of the AAB gates, so both of
+		// these must carry a name — including under `include-aab: false`,
+		// the natural thing for a library author to write.
+		{Name: "android-lib", ProjectType: projecttype.GradleAndroid, BuildType: config.BuildTypeLibrary, GradleAndroid: &config.GradleAndroidConfig{IncludeAAB: &no, BuildTypes: "release"}},
+		{Name: "android-lib-default", ProjectType: projecttype.GradleAndroid, BuildType: config.BuildTypeLibrary, GradleAndroid: &config.GradleAndroidConfig{BuildModule: "lib"}},
 		{Name: "ios-signed", ProjectType: projecttype.XcodeIOS, XcodeIOS: &config.XcodeIOSConfig{EnableCodeSigning: &yes}}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{Name: "ios-unsigned", ProjectType: projecttype.XcodeIOS, XcodeIOS: &config.XcodeIOSConfig{EnableCodeSigning: &no}},
 	}}
@@ -219,8 +224,12 @@ func TestNewConfigPlan_BuildArtifactNamesMatchConditionalUploads(t *testing.T) {
 		"android-aab":    "android-aab",
 		"android-no-aab": "",
 		"android-debug":  "",
-		"ios-signed":     "ios-signed",
-		"ios-unsigned":   "ios-unsigned-archive",
+
+		"android-lib":         "android-lib",
+		"android-lib-default": "android-lib-default",
+
+		"ios-signed":   "ios-signed",
+		"ios-unsigned": "ios-unsigned-archive",
 	} {
 		if got := byName[name].BuildArtifactName; got != want {
 			t.Errorf("%s build artifact name = %q, want %q", name, got, want)

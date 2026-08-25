@@ -45,6 +45,52 @@
         }
       },
       {
+        "name": "jvm-lib",
+        "project_type": "gradle",
+        "working_directory": "libs/jvm",
+        "build_type": "library",
+        "publish_to": [
+          "maven-central",
+          "forge-packages"
+        ],
+        "sboms": "all",
+        "effective_sboms": [
+          "build",
+          "analyzed-artifact",
+          "analyzed-container"
+        ],
+        "build_artifact_name": "jvm-lib-build-artifacts",
+        "build_sbom_artifact_name": "jvm-lib-build-sbom",
+        "publish_tasks": "publishToMavenCentral",
+        "gradle": {
+          "java_version": "25",
+          "publish_tasks": "publishToMavenCentral"
+        }
+      },
+      {
+        "name": "android-lib",
+        "project_type": "gradle-android",
+        "working_directory": "libs/android",
+        "build_type": "library",
+        "publish_to": [
+          "maven-central"
+        ],
+        "sboms": "all",
+        "effective_sboms": [
+          "build",
+          "analyzed-artifact",
+          "analyzed-container"
+        ],
+        "build_artifact_name": "android-lib",
+        "build_sbom_artifact_name": "android-lib-sbom",
+        "android_library": true,
+        "needs_android_sdk": true,
+        "gradle_android": {
+          "java_version": "25",
+          "build_module": "lib"
+        }
+      },
+      {
         "name": "api",
         "project_type": "go",
         "working_directory": "cmd/api",
@@ -107,8 +153,56 @@
         }
       }
     ],
-    "gradle": [],
-    "gradle_android": [],
+    "gradle": [
+      {
+        "name": "jvm-lib",
+        "project_type": "gradle",
+        "working_directory": "libs/jvm",
+        "build_type": "library",
+        "publish_to": [
+          "maven-central",
+          "forge-packages"
+        ],
+        "sboms": "all",
+        "effective_sboms": [
+          "build",
+          "analyzed-artifact",
+          "analyzed-container"
+        ],
+        "build_artifact_name": "jvm-lib-build-artifacts",
+        "build_sbom_artifact_name": "jvm-lib-build-sbom",
+        "publish_tasks": "publishToMavenCentral",
+        "gradle": {
+          "java_version": "25",
+          "publish_tasks": "publishToMavenCentral"
+        }
+      }
+    ],
+    "gradle_android": [
+      {
+        "name": "android-lib",
+        "project_type": "gradle-android",
+        "working_directory": "libs/android",
+        "build_type": "library",
+        "publish_to": [
+          "maven-central"
+        ],
+        "sboms": "all",
+        "effective_sboms": [
+          "build",
+          "analyzed-artifact",
+          "analyzed-container"
+        ],
+        "build_artifact_name": "android-lib",
+        "build_sbom_artifact_name": "android-lib-sbom",
+        "android_library": true,
+        "needs_android_sdk": true,
+        "gradle_android": {
+          "java_version": "25",
+          "build_module": "lib"
+        }
+      }
+    ],
     "xcode_ios": [],
     "python": [],
     "go": [
@@ -195,6 +289,79 @@
         "maven": {
           "java_version": "25",
           "settings_path": "settings.xml"
+        }
+      }
+    ],
+    "forge_packages_gradle": [
+      {
+        "name": "jvm-lib",
+        "project_type": "gradle",
+        "working_directory": "libs/jvm",
+        "build_type": "library",
+        "publish_to": [
+          "maven-central",
+          "forge-packages"
+        ],
+        "sboms": "all",
+        "effective_sboms": [
+          "build",
+          "analyzed-artifact",
+          "analyzed-container"
+        ],
+        "build_artifact_name": "jvm-lib-build-artifacts",
+        "build_sbom_artifact_name": "jvm-lib-build-sbom",
+        "publish_tasks": "publishToMavenCentral",
+        "gradle": {
+          "java_version": "25",
+          "publish_tasks": "publishToMavenCentral"
+        }
+      }
+    ],
+    "maven_central_gradle": [
+      {
+        "name": "jvm-lib",
+        "project_type": "gradle",
+        "working_directory": "libs/jvm",
+        "build_type": "library",
+        "publish_to": [
+          "maven-central",
+          "forge-packages"
+        ],
+        "sboms": "all",
+        "effective_sboms": [
+          "build",
+          "analyzed-artifact",
+          "analyzed-container"
+        ],
+        "build_artifact_name": "jvm-lib-build-artifacts",
+        "build_sbom_artifact_name": "jvm-lib-build-sbom",
+        "publish_tasks": "publishToMavenCentral",
+        "gradle": {
+          "java_version": "25",
+          "publish_tasks": "publishToMavenCentral"
+        }
+      },
+      {
+        "name": "android-lib",
+        "project_type": "gradle-android",
+        "working_directory": "libs/android",
+        "build_type": "library",
+        "publish_to": [
+          "maven-central"
+        ],
+        "sboms": "all",
+        "effective_sboms": [
+          "build",
+          "analyzed-artifact",
+          "analyzed-container"
+        ],
+        "build_artifact_name": "android-lib",
+        "build_sbom_artifact_name": "android-lib-sbom",
+        "android_library": true,
+        "needs_android_sdk": true,
+        "gradle_android": {
+          "java_version": "25",
+          "build_module": "lib"
         }
       }
     ],
