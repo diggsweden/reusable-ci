@@ -419,7 +419,7 @@ jobs:
       config-plan-json: ${{ needs.parse-config.outputs.config-plan-json }}
       has-cargo-publish-target: ${{ fromJson(needs.parse-config.outputs['publish-stage-plan-json']).targets.cargo_container_first.runs || fromJson(needs.parse-config.outputs['build-stage-plan-json']).targets.cargo.runs }}
       publish-stage-plan-json: ${{ needs.parse-config.outputs.publish-stage-plan-json }}
-      has-maven-central-publish-target: ${{ fromJson(needs.parse-config.outputs['publish-stage-plan-json']).targets.maven_central.runs }}
+      has-maven-central-publish-target: ${{ fromJson(needs.parse-config.outputs['publish-stage-plan-json']).publishes_to_maven_central }}
       # Enable the JVM reproducibility validator when any Maven/Gradle/
       # Gradle-Android artefact is planned in the build stage.
       has-jvm-artefact: ${{ fromJson(needs.parse-config.outputs['build-stage-plan-json']).targets.maven.runs || fromJson(needs.parse-config.outputs['build-stage-plan-json']).targets.gradle.runs || fromJson(needs.parse-config.outputs['build-stage-plan-json']).targets.gradle_android.runs }}
@@ -521,6 +521,8 @@ jobs:
       reusable-ci-binary-ref: ${{ needs.parse-config.outputs.reusable-ci-binary-ref }}
       runtime-image: ${{ inputs['runtime-image'] }}
       runtime-image-java: ${{ inputs['runtime-image-java'] }}
+      # Android libraries publish from the android-35 image.
+      runtime-image-android: ${{ inputs['runtime-image-android'] }}
       runtime-image-rust: ${{ inputs['runtime-image-rust'] }}
       runtime-image-go: ${{ inputs['runtime-image-go'] }}
       build-result-json: ${{ needs.execute-build-stage.outputs.result-json }}

@@ -1,0 +1,176 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# Gradle Publisher
+#
+# Purpose: Publishes Gradle-toolchain artifacts (plain JVM libraries and
+# Android libraries) to the forge-native package registry or Maven Central
+# via the project's own `maven-publish` configuration.
+#
+# NOTE — this job publishes from SOURCE, not from a downloaded artifact.
+# Gradle's maven-publish needs the project to produce its publications, so
+# this job checks out and rebuilds rather than consuming the build stage's
+# uploaded JAR/AAR. That build-stage artifact still matters — it is what
+# gets attached to the release and what the Build SBOM describes — it is
+# simply not the input here. This is the most surprising property of this
+# path; it is inherent to maven-publish, not an oversight.
+#
+# Android: there is no `setup-android` input. The Android SDK comes from
+# the runtime image — pass runtime-image: ...reusable-ci-runtime-android-35
+# for an Android library. That is the entire Android delta.
+#
+# Requirements:
+#   - The build script applies `maven-publish` (and `signing` for Central)
+#   - Repository blocks named `GitHubPackages` / `MavenCentral`, matching
+#     the derived publish tasks. Override with publish-tasks if they differ
+#     (vanniktech's plugin wants `publishToMavenCentral`).
+#   - Sources + javadoc JARs configured — a hard Maven Central requirement
+#   `reusable-ci doctor` checks all of the above locally.
+#
+# Required Secrets (maven-central only):
+#   MAVEN_CENTRAL_USERNAME: Sonatype Central portal username
+#   MAVEN_CENTRAL_PASSWORD: Sonatype Central portal token
+#   RELEASE_GPG_PRIVATE_KEY: GPG private key for signing
+#   RELEASE_GPG_PASSPHRASE: GPG key passphrase
+#
+# Required Permissions:
+#   contents: read
+#   packages: write  # forge-packages target only
+name: Publish Gradle
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: "Publish destination: forge-packages or maven-central"
+        required: true
+        type: string
+      working-directory:
+        description: "Directory containing ./gradlew"
+        required: false
+        default: "."
+        type: string
+      publish-tasks:
+        description: "Override the target-derived gradle publish task. Empty uses the derived publishAllPublicationsTo<Name>Repository task."
+        required: false
+        default: ""
+        type: string
+      branch:
+        description: "Branch to checkout (default: main)"
+        required: false
+        default: "main"
+        type: string
+      runtime-image:
+        description: "reusable-ci runtime image carrying the JDK + Gradle. Android libraries pass the android-35 image. Optional override; default uses the matching v3.0.0 runtime image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
+        type: string
+      cache-key-prefix:
+        description: "Gradle cache key namespace. Must match the build workflow that warmed the cache, or this job restores an unrelated project's Gradle home and re-resolves everything: build-gradle-app.yml uses 'gradle-', build-gradle-android.yml uses 'gradle-android-'."
+        required: false
+        default: "gradle-"
+        type: string
+    # All secrets are declared `required: false` so callers using
+    # `secrets: inherit` continue to work unchanged. The declarations
+    # exist for discoverability (downstream adopters can see what
+    # this workflow needs without grepping its body) and to let
+    # actionlint / `reusable-ci doctor` validate caller bindings.
+    secrets:
+      MAVEN_CENTRAL_USERNAME:
+        description: "Sonatype Central portal username"
+        required: false
+      MAVEN_CENTRAL_PASSWORD:
+        description: "Sonatype Central portal token (NOT the account password)"
+        required: false
+      RELEASE_GPG_PRIVATE_KEY:
+        description: "Armored OpenPGP private key used to sign published artifacts"
+        required: false
+      RELEASE_GPG_PASSPHRASE:
+        description: "Passphrase for RELEASE_GPG_PRIVATE_KEY"
+        required: false
+permissions:
+  contents: read
+jobs:
+  publish-gradle:
+    name: Publish to ${{ inputs.target }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # Defense-in-depth: refuse PR-context triggers. Maven Central
+      # credentials and the GPG signing key are in scope on this job and
+      # must never run with PR-HEAD code. reusable-ci is pre-baked into
+      # the runtime image.
+      - name: Refuse PR-context trigger (publish/release secrets in scope)
+        run: reusable-ci validate event-context
+      - name: Checkout repository
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CHECKOUT_REF: ${{ inputs.branch }}
+          # All branch refs + tags needed: this job rebuilds from source (see
+          # the header note), and many Android build.gradle.kts files read git
+          # history to derive versionCode (e.g. `git rev-list --count
+          # origin/main`), which needs refs/remotes/origin/*.
+          # Matches build-gradle-android.yml.
+          CHECKOUT_FETCH_ALL_REFS: "true"
+        run: reusable-ci platform checkout
+      - name: Cache Gradle
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ inputs['cache-key-prefix'] }}${{ hashFiles(format('{0}/gradle/wrapper/gradle-wrapper.properties', inputs['working-directory']), format('{0}/**/*.gradle*', inputs['working-directory']), format('{0}/**/gradle.properties', inputs['working-directory'])) }}
+          restore-keys: ${{ inputs['cache-key-prefix'] }}
+      - name: Import GPG key
+        id: import-gpg
+        if: ${{ inputs.target == 'maven-central' }}
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+        run: reusable-ci release gpg import
+      - name: Make gradlew executable
+        working-directory: ${{ inputs['working-directory'] }}
+        run: chmod +x ./gradlew
+      - name: Get version info
+        id: version-info
+        working-directory: ${{ inputs['working-directory'] }}
+        run: reusable-ci build gradle metadata
+      - name: Publish
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          PUBLISH_TARGET: ${{ inputs.target }}
+          GRADLE_PUBLISH_TASKS: ${{ inputs['publish-tasks'] }}
+          # forge-packages credentials are resolved from the forge's own
+          # package registry by the provider role, which reads the ambient
+          # runner context — hence no explicit actor/token wiring here.
+          GITHUB_TOKEN: ${{ github.token }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          # The signing key is re-exported in-process from the keyring
+          # these two identify. It is never carried through a step output:
+          # step and job outputs are not a secrets channel.
+          GPG_FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
+          GPG_KEY_ID: ${{ steps.import-gpg.outputs.keyid }}
+        run: reusable-ci publish gradle deploy
+      - name: Generate publish summary (forge packages)
+        if: ${{ inputs.target == 'forge-packages' }}
+        env:
+          REPOSITORY: ${{ github.repository }}
+          PACKAGE_TYPE: gradle
+        run: reusable-ci report publish forge-packages
+      - name: Generate publish summary (Maven Central)
+        if: ${{ inputs.target == 'maven-central' }}
+        env:
+          IS_SNAPSHOT: ${{ steps.version-info.outputs.is-snapshot }}
+          VERSION: ${{ steps.version-info.outputs.version }}
+        run: reusable-ci report publish maven-central
+      - name: Cleanup GPG key
+        if: always()
+        env:
+          GPG_FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
+        run: reusable-ci release gpg cleanup

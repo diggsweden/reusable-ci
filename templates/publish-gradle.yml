@@ -1,0 +1,101 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+#
+# GitLab CI/CD Catalog component: publish a Gradle-toolchain artifact (plain
+# JVM library or Android library) to the forge-native package registry or to
+# Maven Central, through the project's own `maven-publish` configuration.
+# The GitLab counterpart of .github/workflows/publish-gradle.yml.
+#
+# PUBLISHES FROM SOURCE. Unlike publish-maven-central, this component consumes
+# no build artifact: Gradle's maven-publish needs the project to produce its
+# publications, so the job rebuilds. That suits GitLab, which has no
+# run-artifact download API — there is nothing to fetch and `reusable-ci
+# artifact download` is not used here. The build job's uploaded JAR/AAR still
+# matters for release attachment and SBOMs; it is simply not the input.
+#
+# BUILD SCRIPT CONTRACT: the project applies `maven-publish` (and `signing` for
+# Central), and declares repository blocks named `GitHubPackages` /
+# `MavenCentral` matching the derived publishAllPublicationsTo<Name>Repository
+# tasks. Override with `publish-tasks` when the plugin names its task
+# differently — vanniktech's gradle-maven-publish-plugin wants
+# `publishToMavenCentral`. `reusable-ci doctor` checks all of this locally.
+#
+# ANDROID: there is no setup-android step; the SDK is the image. Pass
+# runtime-image: ...reusable-ci-runtime-android-35 for an Android library.
+# That is the entire Android delta.
+#
+# REQUIRED CI/CD VARIABLES (set masked + protected in the project/group):
+#   target: forge-packages  the forge's own token, injected by the runner
+#   target: maven-central   MAVEN_CENTRAL_USERNAME  Sonatype Central portal username
+#                           MAVEN_CENTRAL_PASSWORD  Sonatype Central portal token
+#                           GPG_PRIVATE_KEY         armored OpenPGP private key
+#                           GPG_PASSPHRASE          passphrase for GPG_PRIVATE_KEY
+# The binary reads these from the environment directly — they are never placed
+# on argv, and the signing key is re-exported in-process from the keyring
+# rather than carried through a job output.
+#
+# Consume (pin a released version):
+#   include:
+#     - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/publish-gradle@1.0.0
+#       inputs:
+#         target: maven-central
+spec:
+  inputs:
+    stage:
+      default: publish
+      description: Pipeline stage the publish runs in.
+    job-name:
+      default: publish-gradle
+      description: Name of the generated job.
+    target:
+      default: forge-packages
+      options: ["forge-packages", "maven-central"]
+      description: Publish destination.
+    working-directory:
+      default: "."
+      description: Directory containing ./gradlew.
+    publish-tasks:
+      default: ""
+      description: Override the target-derived gradle publish task. Empty uses the derived publishAllPublicationsTo<Name>Repository task.
+    runtime-image:
+      default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
+      description: reusable-ci runtime image carrying the JDK + Gradle (pin by @sha256). Android libraries pass the android-35 image.
+---
+"$[[ inputs.job-name ]]":
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.runtime-image ]]
+  variables:
+    PUBLISH_TARGET: "$[[ inputs.target ]]"
+    GRADLE_PUBLISH_TASKS: "$[[ inputs.publish-tasks ]]"
+    # Read by `report publish forge-packages`; the repository comes from the
+    # forge-neutral run-context chain ($CI_PROJECT_PATH here).
+    PACKAGE_TYPE: gradle
+    # This job rebuilds from source, and many Android build.gradle.kts files
+    # read git history to derive versionCode (e.g. `git rev-list --count
+    # origin/main`), which a shallow clone cannot answer.
+    GIT_DEPTH: "0"
+    # Within-job outputs (metadata's version/is-snapshot) land in this dotenv;
+    # GitLab only auto-loads it for *downstream* jobs, so we source it for the
+    # summary step below.
+    CI_OUTPUT: "$CI_PROJECT_DIR/gradle-publish.env"
+    CI_SUMMARY_FILE: "$CI_PROJECT_DIR/gradle-publish-summary.md"
+  script:
+    # Defense-in-depth: refuse MR-context triggers — publish credentials and
+    # the GPG signing key are in this job's env and must never run with
+    # MR-HEAD code.
+    - reusable-ci validate event-context
+    # Only the maven-central target signs, so only it needs the key.
+    - '[ "$PUBLISH_TARGET" = "maven-central" ] && reusable-ci release gpg import || true'
+    - cd "$[[ inputs.working-directory ]]"
+    - chmod +x ./gradlew
+    - reusable-ci build gradle metadata
+    # Credentials are resolved and checked before gradle starts, and reach
+    # only the child process environment.
+    - reusable-ci publish gradle deploy
+    # Load VERSION / IS_SNAPSHOT emitted by metadata so the summary can read them.
+    - 'set -a; [ -f "$CI_OUTPUT" ] && . "$CI_OUTPUT"; set +a'
+    - reusable-ci report publish "$PUBLISH_TARGET"
+  after_script:
+    # Best-effort key teardown; the ephemeral runner is destroyed regardless.
+    - reusable-ci release gpg cleanup || true

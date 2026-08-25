@@ -25,6 +25,11 @@ on:
         required: false
         default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
         type: string
+      runtime-image-android:
+        description: "reusable-ci runtime image for Android library publish jobs (carries the Android SDK). There is no setup-android step; the SDK is the image."
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-android-35:v3.0.0"
+        type: string
       runtime-image-rust:
         description: "reusable-ci runtime image for container-first Cargo SBOM jobs (sbom-cargo.yml). Artefact-first Cargo runs in release-build-stage and uses the same image there."
         required: false
@@ -153,6 +158,56 @@ jobs:
       settings-path: ${{ matrix.artifact.maven.settings_path }}
       profile: ${{ matrix.artifact.maven.profile || 'central-release' }}
       runtime-image: ${{ inputs['runtime-image-java'] }}
+  forge-packages-gradle:
+    name: Publish Forge Packages (Gradle) - ${{ matrix.artifact.name }}
+    # Gates on the whole build stage, not a single build target: one
+    # matrix can carry both `gradle` and `gradle-android` items, and a
+    # job-level `if:` cannot discriminate per matrix item. This is a
+    # deliberate asymmetry with maven-central above, whose matrix is
+    # single-toolchain and so can gate on `targets.maven`.
+    if: ${{ fromJson(inputs['publish-stage-plan-json']).targets.forge_packages_gradle.runs && fromJson(inputs['build-result-json']).result == 'success' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs['publish-stage-plan-json']).targets.forge_packages_gradle.items }}
+      fail-fast: false
+    permissions:
+      # Least-privilege: the forge-native package registry via the
+      # auto-provided GITHUB_TOKEN; no git write.
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-gradle.yml
+    with:
+      target: forge-packages
+      branch: ${{ inputs.branch }}
+      working-directory: ${{ matrix.artifact.working_directory }}
+      publish-tasks: ${{ matrix.artifact.publish_tasks }}
+      runtime-image: ${{ matrix.artifact.needs_android_sdk && inputs['runtime-image-android'] || inputs['runtime-image-java'] }}
+      cache-key-prefix: ${{ matrix.artifact.needs_android_sdk && 'gradle-android-' || 'gradle-' }}
+  maven-central-gradle:
+    name: Publish Maven Central (Gradle) - ${{ matrix.artifact.name }}
+    # Same whole-stage gate as forge-packages-gradle above.
+    if: ${{ fromJson(inputs['publish-stage-plan-json']).targets.maven_central_gradle.runs && fromJson(inputs['build-result-json']).result == 'success' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs['publish-stage-plan-json']).targets.maven_central_gradle.items }}
+      fail-fast: false
+    permissions:
+      # Least-privilege: publishes externally to Sonatype; no git write.
+      contents: read
+      packages: write
+    secrets:
+      MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+      MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+      RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+    uses: ./.github/workflows/publish-gradle.yml
+    with:
+      target: maven-central
+      branch: ${{ inputs.branch }}
+      working-directory: ${{ matrix.artifact.working_directory }}
+      publish-tasks: ${{ matrix.artifact.publish_tasks }}
+      runtime-image: ${{ matrix.artifact.needs_android_sdk && inputs['runtime-image-android'] || inputs['runtime-image-java'] }}
+      cache-key-prefix: ${{ matrix.artifact.needs_android_sdk && 'gradle-android-' || 'gradle-' }}
   xcode-ios:
     name: Publish Apple App Store - ${{ matrix.artifact.name }}
     if: ${{ fromJson(inputs['publish-stage-plan-json']).targets.xcode_ios.runs && fromJson(inputs['build-result-json']).targets.xcode_ios == 'success' }}
@@ -318,7 +373,7 @@ jobs:
       runtime-image: ${{ inputs['runtime-image-go'] }}
   summarize-publish-stage:
     name: Summarize Publish Stage
-    needs: [forge-packages, maven-central, xcode-ios, google-play, containers, cargo-container-first, go-container-first]
+    needs: [forge-packages, maven-central, forge-packages-gradle, maven-central-gradle, xcode-ios, google-play, containers, cargo-container-first, go-container-first]
     if: always()
     runs-on: ubuntu-24.04
     container:
