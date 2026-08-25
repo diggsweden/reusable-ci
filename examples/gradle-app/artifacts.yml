@@ -6,10 +6,29 @@
 # For Android applications, see examples/android-app/ — that path uses
 # `project-type: gradle-android` and routes to build-gradle-android.yml,
 # which understands product flavors, AABs, and Google Play publishing.
+#
+# For an Android *library* (AAR to Maven), see examples/android-library/ —
+# that is `project-type: gradle-android` + `build-type: library`, and it
+# publishes through this same Gradle path rather than to Google Play.
 artifacts:
   - name: my-gradle-lib
     project-type: gradle
     working-directory: .
+    # build-type: library is required to publish to Maven Central.
+    # Gradle applications may publish to forge-packages but not Central.
+    build-type: library
+    publish-to:
+      - forge-packages
+      - maven-central
     config:
       java-version: 25
       gradle-tasks: build
+      # publish-tasks is an OVERRIDE and is normally omitted. The task is
+      # derived per target as publishAllPublicationsTo<Name>Repository,
+      # which requires the build script to name its repository blocks
+      # "GitHubPackages" / "MavenCentral". Set this only when your
+      # publishing plugin names its task differently — users of
+      # vanniktech's gradle-maven-publish-plugin want:
+      #   publish-tasks: publishToMavenCentral
+      # Run `reusable-ci doctor` to check your build script against the
+      # convention before the first release.

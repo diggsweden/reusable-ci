@@ -23,11 +23,14 @@ in with the list.
 - **[NPM Application](npm-app/)** — Node service published to GitHub
   Packages and shipped as a container. Pattern A.
 - **[Gradle JVM](gradle-app/)** — JVM-only Gradle build (libraries,
-  plugins, multi-module). Container path not wired; for Android use the
-  next example.
+  plugins, multi-module), publishable to Maven Central and GitHub
+  Packages. Container path not wired; for Android use the next examples.
 - **[Android Application](android-app/)** — APK / AAB build with
   product flavors, signed with the keystore in `secrets:`, optional
   Google Play upload. Uses the Android runtime image.
+- **[Android Library](android-library/)** — AAR published to Maven
+  Central / GitHub Packages. Same `gradle-android` project-type as the
+  app above; `build-type: library` is the only field that differs.
 - **[Rust Application](cargo-app/)** — Cargo workspace shipped as one
   or more containers, with `cargo build` inside the Containerfile
   (Pattern B) and a separate cargo-cyclonedx SBOM step at release.
@@ -116,8 +119,9 @@ README-only. Background: [GitLab Support Plan](../docs/gitlabsupportplan.md).
 |-------------|----------------|--------------------|---------------------------------|
 | Maven App   | Maven          | single, GHCR       | GHCR                            |
 | NPM App     | NPM            | single, GHCR       | GitHub Packages                 |
-| Gradle JVM  | Gradle         | optional           | not wired today                 |
+| Gradle JVM  | Gradle         | optional           | Maven Central + GitHub Packages |
 | Android App | Gradle Android | optional           | Google Play                     |
+| Android Lib | Gradle Android | not wired          | Maven Central + GitHub Packages |
 | Cargo App   | Cargo          | one or many        | container only                  |
 | Go CLI      | Go             | none               | GitHub Release binaries         |
 | Go Service  | Go             | single, multi-arch | container only                  |

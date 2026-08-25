@@ -172,6 +172,7 @@ graph TD
 
     G --> N[publish-maven-github.yml - Matrix]
     G --> O[publish-maven-central.yml - Matrix]
+    G --> O2[publish-gradle.yml - Matrix]
     G --> P[publish-apple-appstore.yml - Matrix]
     G --> Q[publish-google-play.yml - Matrix]
     G --> R[publish-container.yml - Matrix]

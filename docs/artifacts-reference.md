@@ -93,14 +93,28 @@ containers:
 #### `build-type`
 
 - **Type:** `string`
-- **Description:** Maven build type used by the orchestrator when calling `build-maven.yml`
+- **Description:** Distinguishes a publishable library from an application
 - **Valid values:** `application` (default), `library`
 - **Default:** `application`
-- **Applies to:** Maven only. Gradle workflows ignore this field today.
+- **Applies to:** Maven, Gradle, and Gradle Android.
 - **Example:** `build-type: library`
 - **Behavior:**
-  - `application`: Builds with `mvn package`
-  - `library`: Builds with `mvn package` via the library path, generating sources/javadoc according to the configured Maven profile/project setup
+  - **Maven** — `application`: builds with `mvn package`. `library`: builds
+    via the library path, generating sources/javadoc according to the
+    configured Maven profile/project setup.
+  - **Gradle / Gradle Android** — gates publish targets rather than the
+    build. `library` is required for `maven-central`. For
+    `gradle-android` it also *excludes* `google-play` (a library has no
+    Play listing) and admits `forge-packages`.
+  - **Gradle Android build** — `library` additionally changes the build:
+    the derived task becomes `<module>:assemble[Flavor]Release`, an AAR
+    is uploaded instead of APK/AAB, and Android keystore signing is
+    skipped (`enable-android-signing` has no effect). Flavors are still
+    honoured; `include-aab` and the `debug` build-type are ignored,
+    because `bundle…` and debug APKs do not exist for a library module.
+- **Note for `gradle-android`:** the field has no default, and existing
+  app configs commonly leave it unset. Unset is treated as
+  "not a library", so `google-play` keeps working unchanged.
 
 #### `require-authorization`
 
@@ -346,6 +360,26 @@ way Go containers do.
   - **`gradle-android`:** **not honored** on the orchestrator path. The orchestrator (`release-build-stage.yml`) derives tasks from `product-flavor` + `build-types` + `include-aab` and ignores this field. Configure those instead. The override input still exists on `build-gradle-android.yml` for direct callers (e.g., a hand-rolled `release-snapshot-workflow.yml`).
 - **Default:** `assemble` (JVM); derived (Android, ignored)
 - **Example (JVM):** `gradle-tasks: build test`
+
+#### `config.publish-tasks`
+
+- **Type:** `string`
+- **Applies to:** `gradle` and `gradle-android`
+- **Default:** empty — the task is **derived per publish target** as
+  `publishAllPublicationsTo<Name>Repository`, where `<Name>` is
+  `GitHubPackages` or `MavenCentral`.
+- **Description:** Override for the derived publish task. This is an
+  escape hatch, not a normal field: leave it empty unless your publishing
+  plugin names its task differently.
+- **Why not the bare `publish` task:** `publish` pushes every publication
+  to *every* configured repository, so a project configured for both
+  destinations would publish to Central from inside the forge-packages
+  job. The named-repository tasks are the only per-destination ones.
+- **Cost of the default:** it requires your build script to name its
+  repository blocks `GitHubPackages` / `MavenCentral`. `reusable-ci
+  doctor` checks this and reports the names it actually found.
+- **Most common override** (vanniktech's `gradle-maven-publish-plugin`):
+  `publish-tasks: publishToMavenCentral`
 
 #### `config.gradle-version-file`
 
@@ -828,8 +862,15 @@ containers:
 
 - **Description:** GitHub Packages registry
 - **Requirements:** `GITHUB_TOKEN` (automatic)
-- **Applies to:** Maven libraries and NPM packages. Maven apps and Gradle publishing are not wired today; use a project-owned publishing workflow until reusable-ci adds those publishers.
-- **Registry:** `ghcr.io` (containers), `npm.pkg.github.com` (NPM)
+- **Applies to:** Maven libraries, NPM packages, Gradle artefacts, and
+  Gradle Android *libraries* (`build-type: library`). Gradle applications
+  are allowed — publishing an application jar to a forge registry is a
+  legitimate internal distribution channel. Maven applications are not.
+- **Registry:** `ghcr.io` (containers), `npm.pkg.github.com` (NPM),
+  `maven.pkg.github.com` (Maven / Gradle)
+- **Gradle note:** routes to `publish-gradle.yml`, which publishes from
+  source using the project's own `maven-publish` configuration. See
+  [publishing.md](publishing.md#maven-central-and-forge-packages-gradle).
 
 ### `maven-central`
 
@@ -838,8 +879,14 @@ containers:
   - `MAVEN_CENTRAL_USERNAME` secret
   - `MAVEN_CENTRAL_PASSWORD` secret
   - `build-type: library` (required)
-- **Applies to:** Maven only
+  - `RELEASE_GPG_PRIVATE_KEY` + `RELEASE_GPG_PASSPHRASE` secrets
+- **Applies to:** Maven, Gradle, and Gradle Android — all with
+  `build-type: library`
 - **Note:** Requires Sonatype account and approved groupId
+- **Gradle note:** routes to `publish-gradle.yml` rather than
+  `publish-maven-central.yml`. See
+  [publishing.md](publishing.md#maven-central-and-forge-packages-gradle)
+  for the build-script requirements.
 
 ### `npmjs`
 
@@ -1204,6 +1251,7 @@ For complete working examples, see the [`examples/`](../examples/) directory:
 - **NPM Application**: [`examples/npm-app/`](../examples/npm-app/)
 - **Gradle JVM Library**: [`examples/gradle-app/`](../examples/gradle-app/)
 - **Android Application**: [`examples/android-app/`](../examples/android-app/)
+- **Android Library**: [`examples/android-library/`](../examples/android-library/)
 - **Monorepo**: [`examples/monorepo/`](../examples/monorepo/)
 
 ---

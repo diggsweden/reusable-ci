@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# Example: Android Library Release Workflow
+#
+# Identical to the Android *app* release workflow — the difference between
+# publishing an AAR to Maven Central and an AAB to Google Play lives
+# entirely in artifacts.yml (`build-type: library`), not here.
+name: Release Workflow
+on:
+  push:
+    tags:
+      # Releases are REQUESTED, not tagged directly: push a signed
+      # release-request/vX.Y.Z and reusable-ci creates the immutable vX.Y.Z
+      # tag itself, once, at the version-bump commit. Tagging vX.Y.Z by hand
+      # fails — the release tag it would create already exists.
+      - "release-request/v*"
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  release:
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v3.0.0
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+      actions: read
+    secrets: inherit
+    with:
+      reusable-ci-binary-ref: v3.0.0
+      artifacts-config: .reusable-ci/artifacts.yml
+      release-publisher: github-cli

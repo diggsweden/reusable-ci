@@ -10,8 +10,9 @@ commands.
 
 | Target                    | Artifact types     | Authentication              |
 |---------------------------|--------------------|-----------------------------|
-| Maven Central             | Maven libraries    | Sonatype credentials        |
-| GitHub Packages (Maven)   | Maven artifacts    | `GITHUB_TOKEN` (automatic)  |
+| Maven Central             | Maven and Gradle libraries | Sonatype credentials |
+| Forge packages (Maven)    | Maven artifacts    | forge token (automatic)     |
+| Forge packages (Gradle)   | Gradle artifacts (incl. Android libraries) | forge token (automatic) |
 | GitHub Packages (NPM)     | NPM packages       | `GITHUB_TOKEN` (automatic)  |
 | Container registries      | Container images   | `GITHUB_TOKEN` or registry-password |
 | Apple App Store           | iOS / macOS apps   | App Store Connect API v2    |
@@ -293,6 +294,108 @@ Then use snapshot version in your project:
 ```
 
 **Note:** Snapshots are development versions and may change frequently. Use `updatePolicy>always</updatePolicy>` to always check for latest snapshot.
+
+---
+
+## Maven Central and Forge Packages (Gradle)
+
+Gradle-toolchain artefacts — plain JVM libraries (`project-type: gradle`)
+and Android libraries (`project-type: gradle-android` +
+`build-type: library`) — publish through `publish-gradle.yml` using the
+project's own `maven-publish` configuration.
+
+### Configuration
+
+```yaml
+# .reusable-ci/artifacts.yml
+artifacts:
+  - name: my-gradle-lib
+    project-type: gradle
+    build-type: library          # required for maven-central
+    publish-to:
+      - forge-packages
+      - maven-central
+    config:
+      java-version: 25
+```
+
+An Android library is the same thing with a different project-type:
+
+```yaml
+  - name: my-android-lib
+    project-type: gradle-android
+    build-type: library          # library, not application: no Play listing
+    publish-to: [maven-central]
+    config:
+      build-module: lib
+```
+
+There is no `setup-android` option — the Android SDK comes from the
+runtime image, and the orchestrator routes `gradle-android` artefacts to
+`runtime-image-android` automatically.
+
+### Publishes from source
+
+Unlike the Maven path, this job does **not** consume a downloaded
+artefact. Gradle's `maven-publish` needs the project to produce its
+publications, so the publish job checks out and rebuilds. The build-stage
+artefact is still what gets attached to the release and what the Build
+SBOM describes.
+
+### Build script requirements
+
+| Requirement | Why |
+|---|---|
+| `maven-publish` applied | produces the publications |
+| `signing` applied (Central) | Central rejects unsigned bundles |
+| Sources + javadoc jars | hard Maven Central requirement |
+| Repository blocks named `GitHubPackages` / `MavenCentral` | the derived task is `publishAllPublicationsTo<Name>Repository` |
+
+`reusable-ci doctor` checks all of these against your build script
+offline. Do that before the first release — the failure modes are
+otherwise a late Sonatype rejection or a bare "task not found".
+
+### Overriding the publish task
+
+The publish task is derived per target, so `publish-tasks` is an
+override you normally omit. The derived tasks are the *named-repository*
+forms rather than the bare `publish` task, because `publish` pushes every
+publication to every configured repository — which would publish to
+Central from inside the forge-packages job.
+
+Set the override when your publishing plugin names its task differently.
+The common case is vanniktech's `gradle-maven-publish-plugin`:
+
+```yaml
+    config:
+      publish-tasks: publishToMavenCentral
+```
+
+### Credentials
+
+Credentials reach Gradle as `ORG_GRADLE_PROJECT_*` project properties.
+
+| Property | Source | Target |
+|---|---|---|
+| `githubActor` / `githubToken` | the forge's package registry | forge-packages |
+| `mavenCentralUsername` / `mavenCentralPassword` | `MAVEN_CENTRAL_USERNAME` / `MAVEN_CENTRAL_PASSWORD` | maven-central |
+| `signingKeyId` / `signingKey` / `signingPassword` | release GPG key | maven-central |
+| `signingInMemoryKeyId` / `signingInMemoryKey` / `signingInMemoryKeyPassword` | same values | maven-central |
+
+The signing trio is bound under **both** spellings on purpose: the plain
+`maven-publish` + `signing` idiom reads the first, vanniktech's plugin
+reads the second, and the CI cannot know which plugin you applied. They
+carry identical values, so whichever your build script reads is correct.
+
+The signing key is re-exported from the keyring in-process (Gradle's
+`useInMemoryPgpKeys` goes through Bouncycastle, which only reads RFC 4880
+packets). It never passes through a step output.
+
+### SNAPSHOT publishing
+
+There is no snapshot pipeline for Gradle. Dev-publish is NPM-only.
+Publishing a `-SNAPSHOT` version is a manual technique — set the version
+in `gradle.properties` and publish — not a pipeline feature.
 
 ---
 

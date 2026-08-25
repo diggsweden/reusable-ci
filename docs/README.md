@@ -14,6 +14,7 @@ Learn by starting from a working setup.
 Solve a specific task.
 
 - [Publishing](publishing.md) - Configure Maven Central, GitHub Packages, containers, App Store Connect, and Google Play.
+- [Gradle Publishing Onboarding](gradle-publish-onboarding.md) - Add `maven-publish` to a Gradle or Android-library project so it can publish to Maven Central and GitHub Packages.
 - [Runtime Images](runtime-images.md) - Override runtime images for reproducibility, mirroring, or branch testing.
 - [Verification](verification.md) - Verify release assets, checksums, signatures, attestations, and SBOMs.
 - [SBOM](sbom.md) - Configure SBOM layers and understand release/snapshot defaults.
