@@ -46,13 +46,15 @@ type JVMReproducibilityInput struct {
 //     value is taken as "configured" (we don't validate the literal —
 //     it can be a fixed ISO-8601 or a property reference like
 //     ${git.commit.author.time}).
-//   - Gradle: substring check on build.gradle / build.gradle.kts /
-//     settings.gradle. Looks for "preserveFileTimestamps" set to
-//     false AND "reproducibleFileOrder" set to true. The Gradle DSL
-//     is a script, so a real parse would require a JVM; the
-//     substring approach matches every form we've seen in the wild
-//     (Groovy + Kotlin DSL, with or without "= ", inside an
-//     AbstractArchiveTask block or applied directly).
+//   - Gradle: substring check on build.gradle / build.gradle.kts.
+//     Looks for "preserveFileTimestamps" set to false AND
+//     "reproducibleFileOrder" set to true, in either the Groovy
+//     spelling or the Kotlin DSL bean accessor
+//     ("isPreserveFileTimestamps"). The Gradle DSL is a script, so a
+//     real parse would require a JVM; the substring approach matches
+//     every form we've seen in the wild (with or without "= ",
+//     inside an AbstractArchiveTask block or applied directly, at any
+//     nesting depth — the scan is per-line and block-agnostic).
 func JVMReproducibility(_ context.Context, out io.Writer, annot output.Annotator, in JVMReproducibilityInput) error {
 	plan, err := parseConfigPlan(in.ConfigPlanJSON)
 	if err != nil {
@@ -295,24 +297,29 @@ func checkGradleReproducibility(dir string, out io.Writer, annot output.Annotato
 
 		return true
 	case !preserve && !order:
-		failGradleMissing(dir, "neither preserveFileTimestamps=false nor reproducibleFileOrder=true found", out, annot)
+		failGradleMissing(dir, path, "neither preserveFileTimestamps=false nor reproducibleFileOrder=true found", out, annot)
 
 		return false
 	case !preserve:
-		failGradleMissing(dir, "preserveFileTimestamps=false not found", out, annot)
+		failGradleMissing(dir, path, "preserveFileTimestamps=false not found", out, annot)
 
 		return false
 	default:
-		failGradleMissing(dir, "reproducibleFileOrder=true not found", out, annot)
+		failGradleMissing(dir, path, "reproducibleFileOrder=true not found", out, annot)
 
 		return false
 	}
 }
 
 // gradleHasReproducibilitySetting reports whether the build script
-// assigns key to expectedValue. It tolerates the Groovy and Kotlin
-// DSL idioms ("key = value", "key value", "key=value", with or
-// without whitespace) and trailing characters within a line.
+// assigns key to expectedValue, in either DSL's spelling.
+//
+// Kotlin needs its own spelling because these are Java bean
+// properties: AbstractArchiveTask exposes isPreserveFileTimestamps()
+// / setPreserveFileTimestamps(), which Kotlin surfaces as the
+// property `isPreserveFileTimestamps`. That is the ONLY form that
+// compiles in a .kts file, so matching the bare Groovy name alone
+// rejected every correctly-written Kotlin build script.
 //
 // We don't parse the DSL — that would need a JVM — but the heuristic
 // matches every form we've seen in the wild. False positives are
@@ -320,6 +327,29 @@ func checkGradleReproducibility(dir string, out io.Writer, annot output.Annotato
 // negatives are not (a real setting in an unusual layout would
 // trigger a spurious warning).
 func gradleHasReproducibilitySetting(body []byte, key, expectedValue string) bool {
+	for _, spelling := range gradleSpellings(key) {
+		if gradleAssigns(body, spelling, expectedValue) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// gradleSpellings returns the property names a build script may use
+// for key: the bare Groovy name and the Kotlin bean accessor.
+func gradleSpellings(key string) []string {
+	if key == "" {
+		return nil
+	}
+
+	return []string{key, "is" + strings.ToUpper(key[:1]) + key[1:]}
+}
+
+// gradleAssigns reports whether any line assigns key to expectedValue.
+// It tolerates the DSL idioms ("key = value", "key value", "key=value",
+// with or without whitespace) and trailing characters within a line.
+func gradleAssigns(body []byte, key, expectedValue string) bool {
 	for _, line := range strings.Split(string(body), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "//") {
@@ -363,14 +393,26 @@ func isIdentChar(b byte) bool {
 		b == '_'
 }
 
-func failGradleMissing(dir, reason string, out io.Writer, annot output.Annotator) {
+// failGradleMissing reports the violation and prints a snippet in the
+// DSL of the script that was actually read — pasting the Groovy form
+// into a .kts file does not compile, and vice versa.
+func failGradleMissing(dir, path, reason string, out io.Writer, annot output.Annotator) {
 	annot.Errorf("Gradle reproducibility not configured in %s — JAR builds will not be byte-identical across rebuilds (%s)", displayDir(dir), reason)
 
 	_, _ = fmt.Fprintf(out, "%s %s: %s\n", clicolor.Cross(out), displayDir(dir), reason)
-	_, _ = fmt.Fprintf(out, "  Fix: add to build.gradle{,.kts}:\n")
-	_, _ = fmt.Fprintf(out, "    tasks.withType(AbstractArchiveTask).configureEach {\n")
-	_, _ = fmt.Fprintf(out, "        preserveFileTimestamps = false\n")
-	_, _ = fmt.Fprintf(out, "        reproducibleFileOrder = true\n")
-	_, _ = fmt.Fprintf(out, "    }\n")
+	_, _ = fmt.Fprintf(out, "  Fix: add to %s:\n", filepath.Base(path))
+
+	if strings.HasSuffix(path, ".kts") {
+		_, _ = fmt.Fprintf(out, "    tasks.withType<AbstractArchiveTask>().configureEach {\n")
+		_, _ = fmt.Fprintf(out, "        isPreserveFileTimestamps = false\n")
+		_, _ = fmt.Fprintf(out, "        isReproducibleFileOrder = true\n")
+		_, _ = fmt.Fprintf(out, "    }\n")
+	} else {
+		_, _ = fmt.Fprintf(out, "    tasks.withType(AbstractArchiveTask).configureEach {\n")
+		_, _ = fmt.Fprintf(out, "        preserveFileTimestamps = false\n")
+		_, _ = fmt.Fprintf(out, "        reproducibleFileOrder = true\n")
+		_, _ = fmt.Fprintf(out, "    }\n")
+	}
+
 	_, _ = fmt.Fprintf(out, "  Reference: https://docs.gradle.org/current/userguide/working_with_files.html#sec:reproducible_archives\n")
 }

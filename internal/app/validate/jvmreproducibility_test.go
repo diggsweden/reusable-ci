@@ -159,12 +159,17 @@ tasks.withType(AbstractArchiveTask).configureEach {
 	}
 }
 
+// TestJVMReproducibility_GradleKotlinDSLPasses pins the Kotlin bean-accessor
+// spelling. AbstractArchiveTask exposes isPreserveFileTimestamps()/set…(), so
+// `isPreserveFileTimestamps` is the only form that compiles in a .kts file —
+// this fixture previously used the Groovy spelling inside a .kts, which hid
+// the fact that the matcher rejected every correct Kotlin build script.
 func TestJVMReproducibility_GradleKotlinDSLPasses(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.WriteFile("build.gradle.kts", []byte(`plugins { java }
 tasks.withType<AbstractArchiveTask>().configureEach {
-    preserveFileTimestamps = false
-    reproducibleFileOrder = true
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
 }
 `))
 	fsys.Chdir()
@@ -176,6 +181,109 @@ tasks.withType<AbstractArchiveTask>().configureEach {
 
 	if !strings.Contains(out, "preserveFileTimestamps=false") {
 		t.Errorf("expected pass marker (Kotlin DSL), got:\n%s", out)
+	}
+}
+
+// TestJVMReproducibility_GradleKotlinDSLNestedPasses covers the multi-module
+// shape: the settings live under subprojects{}, not at the top level. The scan
+// is per-line and block-agnostic, so nesting must make no difference.
+func TestJVMReproducibility_GradleKotlinDSLNestedPasses(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile("build.gradle.kts", []byte(`plugins { java }
+subprojects {
+    tasks.withType<AbstractArchiveTask>().configureEach {
+        isPreserveFileTimestamps = false
+        isReproducibleFileOrder = true
+    }
+}
+`))
+	fsys.Chdir()
+
+	out, _, err := runJVMRepro(t, configPlanJSON(`"gradle":[{"name":"app","project_type":"gradle","working_directory":"."}]`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(out, "preserveFileTimestamps=false") {
+		t.Errorf("expected pass marker (nested Kotlin DSL), got:\n%s", out)
+	}
+}
+
+// TestJVMReproducibility_KotlinScriptGetsKotlinSnippet asserts the remediation
+// is written in the DSL of the script that was read: pasting the Groovy form
+// into a .kts file does not compile.
+func TestJVMReproducibility_KotlinScriptGetsKotlinSnippet(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile("build.gradle.kts", []byte(`plugins { java }`))
+	fsys.Chdir()
+
+	out, _, err := runJVMRepro(t, configPlanJSON(`"gradle":[{"name":"app","project_type":"gradle","working_directory":"."}]`))
+	if err == nil {
+		t.Fatal("expected validator to fail on an unconfigured build script")
+	}
+
+	for _, want := range []string{
+		"Fix: add to build.gradle.kts:",
+		"tasks.withType<AbstractArchiveTask>().configureEach {",
+		"isPreserveFileTimestamps = false",
+		"isReproducibleFileOrder = true",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("remediation missing %q, got:\n%s", want, out)
+		}
+	}
+}
+
+// TestJVMReproducibility_GroovyScriptGetsGroovySnippet is the mirror: a
+// build.gradle must keep the bare-property form.
+func TestJVMReproducibility_GroovyScriptGetsGroovySnippet(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile("build.gradle", []byte(`plugins { id 'java' }`))
+	fsys.Chdir()
+
+	out, _, err := runJVMRepro(t, configPlanJSON(`"gradle":[{"name":"app","project_type":"gradle","working_directory":"."}]`))
+	if err == nil {
+		t.Fatal("expected validator to fail on an unconfigured build script")
+	}
+
+	for _, want := range []string{
+		"Fix: add to build.gradle:",
+		"tasks.withType(AbstractArchiveTask).configureEach {",
+		"        preserveFileTimestamps = false",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("remediation missing %q, got:\n%s", want, out)
+		}
+	}
+
+	if strings.Contains(out, "isPreserveFileTimestamps") {
+		t.Errorf("Groovy remediation leaked the Kotlin accessor, got:\n%s", out)
+	}
+}
+
+// TestJVMReproducibility_LongerIdentifierDoesNotPass keeps the identifier
+// boundary honest now that a second spelling is accepted: neither the bare key
+// nor the accessor may match as a substring of a longer identifier.
+func TestJVMReproducibility_LongerIdentifierDoesNotPass(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile("build.gradle.kts", []byte(`plugins { java }
+val myIsPreserveFileTimestamps = false
+val otherPreserveFileTimestamps = false
+val myIsReproducibleFileOrder = true
+`))
+	fsys.Chdir()
+
+	_, stderr, err := runJVMRepro(t, configPlanJSON(`"gradle":[{"name":"app","project_type":"gradle","working_directory":"."}]`))
+	if err == nil {
+		t.Fatal("expected validator to fail: the settings are substrings of longer identifiers")
+	}
+
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Errorf("err = %v, want wrapped ErrValidation", err)
+	}
+
+	if !strings.Contains(stderr, "neither preserveFileTimestamps") {
+		t.Errorf("expected 'neither …' error, got:\n%s", stderr)
 	}
 }
 
