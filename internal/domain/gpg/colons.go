@@ -47,3 +47,54 @@ func colonField(line string, n int) string { //nolint:varnamelen // idiomatic sh
 
 	return parts[n-1]
 }
+
+// AgentAck classifies a gpg-connect-agent transcript.
+//
+// This exists because gpg-connect-agent's EXIT STATUS carries no
+// information: it exits 0 when the agent answers "ERR", and it exits 0
+// even when it cannot reach an agent at all ("can't connect to the
+// gpg-agent … No agent running"). Trusting the status meant a failed
+// PRESET_PASSPHRASE looked like success, and the failure only surfaced
+// much later as gpg falling back to pinentry — which in a container
+// means "Inappropriate ioctl for device", pointing nowhere near the
+// actual cause.
+//
+// The Assuan protocol answers each command with a line: "OK" (optionally
+// followed by text) or "ERR <code> <description>". So a transcript is
+// acknowledged only when it carries an OK and no ERR. detail is the line
+// worth showing an operator: the ERR itself, or the first non-empty line
+// when nothing acknowledged.
+func AgentAck(transcript string) (ok bool, detail string) {
+	var acked bool
+
+	var first string
+
+	for _, raw := range strings.Split(transcript, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+
+		if first == "" {
+			first = line
+		}
+
+		if strings.HasPrefix(line, "ERR ") {
+			return false, line
+		}
+
+		if line == "OK" || strings.HasPrefix(line, "OK ") {
+			acked = true
+		}
+	}
+
+	if acked {
+		return true, ""
+	}
+
+	if first == "" {
+		return false, "no response from gpg-agent"
+	}
+
+	return false, first
+}

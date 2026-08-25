@@ -143,8 +143,22 @@ func (a *Adapter) PresetPassphrase(ctx context.Context, keygrip, passphrase stri
 	hex := domaingpg.HexEncodePassphrase(passphrase)
 
 	cmd := fmt.Sprintf("PRESET_PASSPHRASE %s -1 %s\n", keygrip, hex)
-	if _, err := a.runStdin(ctx, cmd, a.agent(), "/bye"); err != nil {
+
+	transcript, err := a.runStdin(ctx, cmd, a.agent(), "/bye")
+	if err != nil {
 		return fmt.Errorf("preset passphrase: %w", err)
+	}
+
+	// The exit status above proves nothing — gpg-connect-agent exits 0 for
+	// an "ERR" answer and for "no agent running" alike. The transcript is
+	// the only evidence the agent actually took the passphrase, and if it
+	// did not we must fail HERE: the alternative is gpg reaching for
+	// pinentry during `git tag -s` several steps later, in a container
+	// with no TTY, and reporting an ioctl error.
+	if ok, detail := domaingpg.AgentAck(transcript); !ok {
+		return fmt.Errorf(
+			"preset passphrase for keygrip %s: gpg-agent did not acknowledge: %s: %w",
+			keygrip, safeexec.RedactKeyMaterial([]byte(detail)), errs.ErrDependencyUnavailable)
 	}
 
 	return nil

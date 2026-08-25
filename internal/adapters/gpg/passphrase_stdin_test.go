@@ -5,6 +5,7 @@ package gpg_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	adaptergpg "github.com/diggsweden/reusable-ci/v3/internal/adapters/gpg"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domaingpg "github.com/diggsweden/reusable-ci/v3/internal/domain/gpg"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/mockbinary"
 )
@@ -129,7 +131,11 @@ func TestDetachedSign_PassphraseIsNotInTheEnvironment(t *testing.T) {
 // keygrip.
 func TestPresetPassphrase_SendsHexOnStdin(t *testing.T) {
 	bins := mockbinary.New(t)
-	bins.Add("gpg-connect-agent", `cat > /dev/null`)
+	// A real gpg-connect-agent answers each Assuan command with an "OK"
+	// line. The stub must too: PresetPassphrase now classifies the
+	// transcript rather than the (uninformative) exit status, so a silent
+	// stub would model an agent that never took the passphrase.
+	bins.Add("gpg-connect-agent", "cat > /dev/null\necho OK\n")
 
 	adapter := &adaptergpg.Adapter{AgentBin: bins.Path("gpg-connect-agent")}
 
@@ -222,5 +228,37 @@ func TestNewIsolated_SubprocessDoesNotSeeSigningSecrets(t *testing.T) {
 
 	if !strings.Contains(env, "PATH=") {
 		t.Error("PATH did not survive isolation")
+	}
+}
+
+// The motivating failure: gpg-connect-agent exits 0 when the agent
+// answers "ERR" and when no agent is reachable at all, so a passphrase
+// that never landed used to read as cached. The error had to surface
+// several steps later, as gpg reaching for pinentry during `git tag -s`
+// in a TTY-less container and reporting an ioctl error.
+func TestPresetPassphrase_UnacknowledgedAgentFails(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		script string
+	}{
+		{"agent answers ERR", "cat > /dev/null\necho 'ERR 67108881 No secret key <GPG Agent>'\n"},
+		{"no agent reachable", "cat > /dev/null\necho \"gpg-connect-agent: can't connect to the gpg-agent: No agent running\"\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bins := mockbinary.New(t)
+			bins.Add("gpg-connect-agent", tc.script)
+
+			adapter := &adaptergpg.Adapter{AgentBin: bins.Path("gpg-connect-agent")}
+
+			err := adapter.PresetPassphrase(context.Background(),
+				"1111222233334444555566667777888899990000", testPassphrase)
+			if !errors.Is(err, errs.ErrDependencyUnavailable) {
+				t.Fatalf("err = %v, want errs.ErrDependencyUnavailable", err)
+			}
+
+			if strings.Contains(err.Error(), testPassphrase) {
+				t.Error("the error message leaked the passphrase")
+			}
+		})
 	}
 }

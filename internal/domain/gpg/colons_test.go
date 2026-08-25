@@ -44,3 +44,53 @@ func TestParseKeygrips_Empty(t *testing.T) {
 		t.Errorf("got %v, want empty", got)
 	}
 }
+
+// TestAgentAck pins the classification of gpg-connect-agent transcripts.
+// The cases marked "exits 0" are the ones that made a failed
+// PRESET_PASSPHRASE look like a success: gpg-connect-agent reports both
+// through its exit status as OK, so only the transcript distinguishes them.
+func TestAgentAck(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		transcript string
+		wantOK     bool
+		wantDetail string
+	}{
+		{"plain_ok", "OK", true, ""},
+		{"ok_with_text", "OK closing connection", true, ""},
+		{"err_line", "ERR 67108924 Not supported <GPG Agent>", false, "ERR 67108924 Not supported <GPG Agent>"},
+		{
+			// exits 0: the agent answered, and refused.
+			"err_after_greeting",
+			"OK Pleased to meet you\nERR 67108875 Invalid value <GPG Agent>",
+			false,
+			"ERR 67108875 Invalid value <GPG Agent>",
+		},
+		{
+			// exits 0: gpg-connect-agent never reached an agent at all.
+			"no_agent_running",
+			"gpg-connect-agent: can't connect to the gpg-agent: File name too long\ngpg-connect-agent: error sending standard options: No agent running",
+			false,
+			"gpg-connect-agent: can't connect to the gpg-agent: File name too long",
+		},
+		{"empty", "", false, "no response from gpg-agent"},
+		{"whitespace_only", "\n  \n", false, "no response from gpg-agent"},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			ok, detail := gpg.AgentAck(testCase.transcript)
+			if ok != testCase.wantOK {
+				t.Errorf("AgentAck(%q) ok = %v, want %v", testCase.transcript, ok, testCase.wantOK)
+			}
+
+			if detail != testCase.wantDetail {
+				t.Errorf("AgentAck(%q) detail = %q, want %q", testCase.transcript, detail, testCase.wantDetail)
+			}
+		})
+	}
+}
