@@ -64,6 +64,11 @@ var (
 	// sources/javadoc jars on the adopter's behalf, so its presence
 	// satisfies most of the checks below.
 	reVanniktechPlugin = regexp.MustCompile(`com\.vanniktech\.maven\.publish`)
+
+	// A `version=` assignment in gradle.properties. The `\s*=` is what
+	// keeps `versionName=` and `versionCode=` — the Android pair, which
+	// says nothing about the published coordinates — from matching.
+	reGradleVersionProperty = regexp.MustCompile(`(?m)^\s*version\s*=`)
 )
 
 // gradlePublishArtifact pairs an artifact with the build script text
@@ -86,6 +91,10 @@ func checkGradlePublishing(root string, artifacts []config.Artifact) []Check {
 		if len(targets) == 0 {
 			continue
 		}
+
+		// Read from gradle.properties, not the build script, so it runs
+		// whether or not a build script was found below.
+		checks = append(checks, gradleVersionPropertyCheck(root, a))
 
 		dirs := gradleScriptDirs(a)
 
@@ -306,6 +315,70 @@ func gradleRepositoryCheck(found gradlePublishArtifact, targets []publish.Gradle
 		fmt.Sprintf("%s declares no repository named %s", found.path, strings.Join(missing, ", ")),
 		"name the repository block to match, or set config.publish-tasks to the task your "+
 			"plugin uses (vanniktech: publishToMavenCentral)")
+}
+
+// gradleVersionPropertyCheck asserts that gradle.properties declares a
+// `version` property.
+//
+// This is the one check here that reads a properties file rather than a
+// build script, because it is about the published coordinates rather
+// than the build's shape. Setting `version` in gradle.properties
+// populates project.version, and maven-publish takes the publication's
+// version from it with no build-script code at all.
+//
+// Absence is worth a warning specifically because it does NOT fail the
+// build: gradle's default for an unset version is the literal string
+// "unspecified", and a registry accepts that as readily as a real
+// version. The artifact publishes, the pipeline reports success, and the
+// coordinates are garbage. Nothing else in the pipeline catches it —
+// `build gradle metadata` only warns, and the publish itself has no
+// opinion.
+func gradleVersionPropertyCheck(root string, a config.Artifact) Check { //nolint:varnamelen // idiomatic short name.
+	name := gradleCheckName(a, "gradle.properties declares version")
+
+	path := gradleVersionFilePath(a)
+
+	body, err := os.ReadFile(filepath.Join(root, path)) //nolint:gosec // path is config-derived, under the inspected root.
+	if err != nil {
+		return Check{
+			Name:     name,
+			Severity: SeverityWarn,
+			Message:  fmt.Sprintf("%s not found", path),
+			Remediation: "create it with a version= line; without one gradle publishes the literal " +
+				"version \"unspecified\", which registries accept as though it were real",
+		}
+	}
+
+	if !reGradleVersionProperty.Match(body) {
+		return Check{
+			Name:     name,
+			Severity: SeverityWarn,
+			Message:  fmt.Sprintf("%s declares no version= property", path),
+			Remediation: "add version=<x.y.z>; versionName/versionCode are Android app metadata and do " +
+				"not set the published maven version. Without version= gradle publishes " +
+				"\"unspecified\"",
+		}
+	}
+
+	return Check{Name: name, Severity: SeverityOK, Message: path}
+}
+
+// gradleVersionFilePath is the artifact's gradle.properties, honouring the
+// per-ecosystem gradle-version-file override and defaulting to
+// <working-directory>/gradle.properties.
+func gradleVersionFilePath(a config.Artifact) string { //nolint:varnamelen // idiomatic short name.
+	dir := cmp.Or(strings.TrimSpace(a.WorkingDirectory), ".")
+
+	override := ""
+	if a.Gradle != nil {
+		override = strings.TrimSpace(a.Gradle.GradleVersionFile)
+	}
+
+	if override == "" && a.GradleAndroid != nil {
+		override = strings.TrimSpace(a.GradleAndroid.GradleVersionFile)
+	}
+
+	return filepath.Join(dir, cmp.Or(override, "gradle.properties"))
 }
 
 func gradleCheckName(a config.Artifact, suffix string) string {

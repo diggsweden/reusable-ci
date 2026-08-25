@@ -15,6 +15,21 @@ import (
 func gradleChecks(t *testing.T, artifactsYAML string, files map[string]string) []doctor.Check {
 	t.Helper()
 
+	// Every case here is about the BUILD SCRIPT, so an otherwise
+	// well-formed project is the baseline: supply a gradle.properties
+	// carrying a version unless the case is specifically about that file.
+	// Without this each script test would also have to assert on the
+	// version check it is not testing.
+	if _, ok := files["gradle.properties"]; !ok {
+		withDefaults := make(map[string]string, len(files)+1)
+		for k, v := range files {
+			withDefaults[k] = v
+		}
+
+		withDefaults["gradle.properties"] = "version=1.0.0\n"
+		files = withDefaults
+	}
+
 	root := writeRepo(t, artifactsYAML, files)
 
 	all, err := doctor.Run(doctor.Input{Root: root})
@@ -530,10 +545,15 @@ artifacts:
     config:
       build-module: lib
 `,
-			files: map[string]string{"libs/android/build.gradle": `
+			files: map[string]string{
+				"libs/android/build.gradle": `
 apply plugin: 'maven-publish'
 publishing { repositories { maven { name = 'GitHubPackages' } } }
-`},
+`,
+				// gradle.properties sits at the build root, which is the
+				// artifact's working directory -- not the repo root.
+				"libs/android/gradle.properties": "version=1.0.0\n",
+			},
 		},
 	}
 
@@ -559,10 +579,87 @@ publishing { repositories { maven { name = 'GitHubPackages' } } }
 					t.Errorf("check %q = %s (%s), want ok", c.Name, c.Severity, c.Message)
 				}
 
+				// wantPath is about SCRIPT discovery. The version check reads
+				// gradle.properties by design, so it reports that path and is
+				// not part of this assertion.
+				if strings.Contains(c.Name, "gradle.properties") {
+					continue
+				}
+
 				if tc.wantPath != "" && !strings.Contains(c.Message, tc.wantPath) {
 					t.Errorf("check %q should report %q, got %q", c.Name, tc.wantPath, c.Message)
 				}
 			}
 		})
+	}
+}
+
+// The version check is the one that reads gradle.properties rather than a
+// build script. It exists because a missing `version` does NOT fail the
+// build: gradle's default for an unset version is the literal string
+// "unspecified", and registries accept that as readily as a real version,
+// so the publish succeeds with garbage coordinates.
+func TestGradlePublishChecks_VersionProperty(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		properties string
+		present    bool
+		wantOK     bool
+	}{
+		{name: "version present", properties: "version=1.2.3\n", present: true, wantOK: true},
+		{name: "version among other keys", properties: "org.gradle.jvmargs=-Xmx1g\nversion=1.2.3\n", present: true, wantOK: true},
+		{name: "leading whitespace still counts", properties: "  version = 1.2.3\n", present: true, wantOK: true},
+		{name: "no version key", properties: "org.gradle.jvmargs=-Xmx1g\n", present: true, wantOK: false},
+		// The exact shape the android bump used to leave behind: the Android
+		// pair set, the maven version absent.
+		{name: "only the android pair", properties: "versionName=1.2.3\nversionCode=4\n", present: true, wantOK: false},
+		{name: "file absent entirely", present: false, wantOK: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			files := map[string]string{"build.gradle.kts": centralReadyScript}
+			if tc.present {
+				files["gradle.properties"] = tc.properties
+			} else {
+				// Defeat the helper's default without writing a version.
+				files["gradle.properties"] = ""
+			}
+
+			check := gradleCheckMatching(t, gradleChecks(t, centralArtifacts, files), "gradle.properties declares version")
+
+			want := doctor.SeverityWarn
+			if tc.wantOK {
+				want = doctor.SeverityOK
+			}
+
+			if check.Severity != want {
+				t.Errorf("severity = %s (%s), want %s", check.Severity, check.Message, want)
+			}
+		})
+	}
+}
+
+// versionName is Android app metadata and says nothing about the published
+// maven coordinates, so it must never satisfy this check on its own.
+func TestGradlePublishChecks_VersionNameDoesNotSatisfyVersion(t *testing.T) {
+	t.Parallel()
+
+	checks := gradleChecks(t, centralArtifacts, map[string]string{
+		"build.gradle.kts":  centralReadyScript,
+		"gradle.properties": "versionName=1.2.3\nversionCode=4\n",
+	})
+
+	check := gradleCheckMatching(t, checks, "gradle.properties declares version")
+	if check.Severity != doctor.SeverityWarn {
+		t.Fatalf("severity = %s, want warn", check.Severity)
+	}
+
+	if !strings.Contains(check.Remediation, "unspecified") {
+		t.Errorf("remediation should name the silent failure mode, got %q", check.Remediation)
 	}
 }
