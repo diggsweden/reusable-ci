@@ -262,8 +262,8 @@ RUN arch="$(dpkg --print-architecture)" \
        arm64) jdk_arch=aarch64 ;; \
        *) printf 'unsupported arch: %s\n' "$arch" >&2; exit 1 ;; \
      esac \
-  && jdk_version_url="${JDK_VERSION//+/%2B}" \
-  && jdk_version_file="${JDK_VERSION//+/_}" \
+  && jdk_version_url="$(printf '%s' "$JDK_VERSION" | sed 's/+/%2B/g')" \
+  && jdk_version_file="$(printf '%s' "$JDK_VERSION" | tr '+' '_')" \
   && curl -fsSL \
        "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-${jdk_version_url}/OpenJDK25U-jdk_${jdk_arch}_linux_hotspot_${jdk_version_file}.tar.gz" \
        -o /tmp/jdk.tar.gz \
