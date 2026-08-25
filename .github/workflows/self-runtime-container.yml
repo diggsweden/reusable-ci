@@ -248,7 +248,16 @@ jobs:
           BUILD_TARGET: ${{ matrix.runtime.target }}
           BUILD_MODE: load
           IMAGE_REF: localhost/${{ matrix.runtime.local-tag }}
-          BUILD_CACHE_REPO: ${{ github.event_name != 'pull_request' && format('ghcr.io/{0}/reusable-ci-buildcache', github.repository_owner) || '' }}
+          # TEMPORARY (e2e branch): caching disabled. `container build`
+          # assembles the cache ref as <repo>:<scope>, and buildah rejects a
+          # tagged reference for --cache-from ("repository must contain neither
+          # a tag nor digest"). That fails every image build on the current base
+          # too (feat/refactor-go @ f21a545, run 32708414036) — it is not caused
+          # by this branch. Empty BUILD_CACHE_REPO disables caching entirely,
+          # the same path pull_request already takes. A cold build also suits an
+          # e2e: no stale layers between the CLI change and the image.
+          # DELETE this override once the base cache-ref bug is fixed.
+          BUILD_CACHE_REPO: ""
           BUILD_CACHE_SCOPE: ${{ matrix.runtime.target }}-amd64
         run: ./cli-prebuilt/reusable-ci container build
       - name: Smoke-test runtime image
@@ -430,7 +439,11 @@ jobs:
           # Forge-neutral registry layer cache (replaces type=gha): one dedicated
           # cache package per project, tag-scoped per (image, arch). Read-write
           # here (--cache-push; trusted push, packages:write + logged in above).
-          BUILD_CACHE_REPO: ghcr.io/${{ github.repository_owner }}/reusable-ci-buildcache
+          # TEMPORARY (e2e branch): disabled for the same base cache-ref bug as
+          # the verify build above. With an empty repo the CLI emits neither
+          # --cache-from nor --cache-to, so BUILD_CACHE_PUSH below is inert
+          # rather than wrong. DELETE this override with the other one.
+          BUILD_CACHE_REPO: ""
           BUILD_CACHE_SCOPE: ${{ matrix.runtime.target }}-${{ matrix.platform.suffix }}
           BUILD_CACHE_PUSH: "true"
           # OCI labels so each image self-identifies via `docker inspect` / GHCR
