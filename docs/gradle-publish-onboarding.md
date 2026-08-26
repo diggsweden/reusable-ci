@@ -256,14 +256,41 @@ type — `git tag -s release-request/v1.0.0 && git push origin
 release-request/v1.0.0`. The pipeline bumps the version and creates the
 immutable `v1.0.0` tag itself; see [Release process](publishing.md#release-process).
 
-## A note on SNAPSHOTs
+## Publishing SNAPSHOTs
 
-There is **no** snapshot pipeline for Gradle. Dev-publish is NPM-only.
+A tagged release never produces a `-SNAPSHOT` — the release path is for
+stable versions only. SNAPSHOTs come from the **snapshot orchestrator**, on
+branch pushes, and they are opt-in:
 
-Publishing a `-SNAPSHOT` version is a manual testing technique — set the
-version in `gradle.properties`, run the publish task locally against the
-snapshots repository — not a pipeline feature. Do not expect a tagged
-release to produce one.
+```yaml
+jobs:
+  snapshot-release:
+    uses: diggsweden/reusable-ci/.github/workflows/release-snapshot-orchestrator.yml@v3.0.0
+    with:
+      publish-gradle: true
+    secrets: inherit
+```
+
+Two things about this path differ from everything else in this document.
+
+**The version comes from your branch, not from a tag.** `publish-gradle.yml`
+publishes from source, so whatever `gradle.properties` declares is what gets
+published. Nothing rewrites it. Set `version=0.0.4-SNAPSHOT` and that is the
+coordinate that lands in the snapshots repository. Re-running the workflow
+republishes the same version, which is exactly how Maven snapshots are meant
+to work — the repository timestamps each upload.
+
+**The job refuses to publish a non-SNAPSHOT.** The snapshot stage always
+passes `require-snapshot`, so `build gradle metadata` fails the run unless
+the declared version ends in `-SNAPSHOT`. This is deliberate: a Maven Central
+*release* is immutable and cannot be withdrawn, so a branch that had been
+bumped to `1.0.0` must not be able to publish one down the snapshot path.
+
+`publish-gradle` defaults to **false** because these are the only jobs in the
+snapshot flow that receive credentials — `MAVEN_CENTRAL_*` for the registry
+and `RELEASE_GPG_*` for the `signing` plugin. Central does not require
+signatures on snapshots, but a build script calling `signAllPublications()`
+will fail without a key.
 
 ## Troubleshooting
 
@@ -274,6 +301,8 @@ release to produce one.
 | Central rejects the bundle for missing javadoc/sources | `withSourcesJar()` / `withJavadocJar()` not configured. |
 | Publish succeeds but nothing appears on Central | Central publishing is a staged deployment; check the Central Portal for a validation failure. |
 | Publish summary shows no version | `build gradle metadata` reads `gradle.properties` only. A project computing its version in `build.gradle.kts` gets an empty summary — cosmetic, not a failure. |
+| Snapshot run fails with `version ... is not a -SNAPSHOT` | `gradle.properties` declares a release version. The snapshot path publishes what the branch declares and refuses anything that is not a `-SNAPSHOT`. |
+| Snapshot run fails with `no version declared in gradle.properties` | Same gate: a version computed in `build.gradle.kts` is cosmetic elsewhere, but it cannot be *shown* to be a snapshot, so the snapshot path rejects it. Declare `version=` in `gradle.properties`. |
 
 ## See also
 

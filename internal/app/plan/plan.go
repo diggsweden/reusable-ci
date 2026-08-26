@@ -128,6 +128,7 @@ type SnapshotReleaseInput struct {
 	PackageScope        string
 	SBOMs               string
 	PublishNPM          bool
+	PublishGradle       bool
 	UseCIToken          bool
 }
 
@@ -159,6 +160,7 @@ func SnapshotRelease(ctx context.Context, sink ci.OutputSink, in SnapshotRelease
 		PackageScope:        in.PackageScope,
 		SBOMs:               in.SBOMs,
 		PublishNPM:          in.PublishNPM,
+		PublishGradle:       in.PublishGradle,
 		UseCIToken:          in.UseCIToken,
 	})
 	if err != nil {

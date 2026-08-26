@@ -362,8 +362,10 @@ SLSA provenance + analyzed-container SBOM attestations.
 
 **Snapshot releases**: branch pushes go through
 `release-snapshot-orchestrator.yml`. They publish a content-addressed npm
-snapshot (`0.5.9-snapshot-<branch>-<sha>`, dist-tag `snapshot`); no
-containers, no signing, no SLSA, no GitHub Release. The snapshot flow is
+snapshot (`0.5.9-snapshot-<branch>-<sha>`, dist-tag `snapshot`) and, with
+`publish-gradle: true`, Gradle/Android-library `-SNAPSHOT`s to the forge
+registry or Maven Central at whatever version `gradle.properties` declares;
+no containers, no SLSA, no GitHub Release. The snapshot flow is
 branch/dispatch-triggered, never a tag.
 
 ---

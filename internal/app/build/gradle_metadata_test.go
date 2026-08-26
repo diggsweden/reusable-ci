@@ -6,10 +6,12 @@ package build_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
@@ -181,5 +183,72 @@ func TestGradleMetadata_NoVersionEmitsNoIsSnapshot(t *testing.T) {
 
 	if got := sink.Single("is-snapshot"); got != "" {
 		t.Errorf("is-snapshot = %q, want unset", got)
+	}
+}
+
+// RequireSnapshot is the gate that lets the snapshot release flow publish
+// from a branch's own gradle.properties without being able to push a real
+// release to Maven Central. A release version there is not a warning — a
+// Central release is immutable, so the run has to stop before gradle does
+// anything.
+func TestGradleMetadata_RequireSnapshotRejectsReleaseVersion(t *testing.T) {
+	t.Parallel()
+
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile("gradle.properties", []byte("version=1.2.3\n"))
+
+	err := appbuild.GradleMetadata(context.Background(), fakeoutputsink.New(t), &bytes.Buffer{}, output.Annotator{},
+		appbuild.GradleMetadataInput{Dir: fsys.Root, RequireSnapshot: true})
+	if err == nil {
+		t.Fatal("a release version passed the snapshot gate")
+	}
+
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Errorf("error = %v, want it to wrap ErrValidation", err)
+	}
+
+	if !strings.Contains(err.Error(), "1.2.3") {
+		t.Errorf("error %q does not name the offending version", err)
+	}
+}
+
+// The same gate must reject a project that declares no version at all:
+// "no version" cannot be shown to be a snapshot, and the permissive
+// warn-and-continue path would otherwise let it through to gradle.
+func TestGradleMetadata_RequireSnapshotRejectsMissingVersion(t *testing.T) {
+	t.Parallel()
+
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile("gradle.properties", []byte("org.gradle.jvmargs=-Xmx1g\n"))
+
+	var stderr bytes.Buffer
+
+	err := appbuild.GradleMetadata(context.Background(), fakeoutputsink.New(t), &bytes.Buffer{},
+		output.NewAnnotator(&stderr, output.FormatGitHub),
+		appbuild.GradleMetadataInput{Dir: fsys.Root, RequireSnapshot: true})
+	if err == nil {
+		t.Fatal("a missing version passed the snapshot gate")
+	}
+
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Errorf("error = %v, want it to wrap ErrValidation", err)
+	}
+}
+
+func TestGradleMetadata_RequireSnapshotAcceptsSnapshotVersion(t *testing.T) {
+	t.Parallel()
+
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile("gradle.properties", []byte("version=0.0.4-SNAPSHOT\n"))
+
+	sink := fakeoutputsink.New(t)
+
+	if err := appbuild.GradleMetadata(context.Background(), sink, &bytes.Buffer{}, output.Annotator{},
+		appbuild.GradleMetadataInput{Dir: fsys.Root, RequireSnapshot: true}); err != nil {
+		t.Fatalf("GradleMetadata: %v", err)
+	}
+
+	if got := sink.Single("is-snapshot"); got != "true" {
+		t.Errorf("is-snapshot = %q, want %q", got, "true")
 	}
 }

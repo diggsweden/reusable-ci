@@ -86,6 +86,11 @@ on:
         required: false
         default: true
         type: boolean
+      publish-gradle:
+        description: "Publish Gradle/Android-library SNAPSHOTs to the forge registry or Maven Central (gradle projects only). Defaults false: unlike the other snapshot legs this one needs registry credentials and a signing key, so it is opt-in rather than something a caller inherits by upgrading. The published version is whatever the branch's gradle.properties declares, and the job refuses to deploy a non-SNAPSHOT."
+        required: false
+        default: false
+        type: boolean
       npm-registry:
         description: "NPM registry URL"
         required: false
@@ -148,12 +153,25 @@ on:
         type: string
     # Snapshot orchestrator: forwards to release-snapshot-build-stage (which
     # may need Android/iOS signing secrets via gradle-android /
-    # xcode-ios leaves) and release-snapshot-publish-stage (only needs
-    # GITHUB_TOKEN auto-provided + the external registry-password).
+    # xcode-ios leaves) and release-snapshot-publish-stage (GITHUB_TOKEN
+    # auto-provided, the external registry-password, and — only when
+    # publish-gradle is on — the Maven Central credentials and signing key).
     # All `required: false` — `secrets: inherit` callers unchanged.
     secrets:
       registry-password:
         description: "External NPM registry token (required when use-ci-token=false)"
+        required: false
+      MAVEN_CENTRAL_USERNAME:
+        description: "Sonatype Central portal username (publish-gradle to maven-central only)"
+        required: false
+      MAVEN_CENTRAL_PASSWORD:
+        description: "Sonatype Central portal token (publish-gradle to maven-central only)"
+        required: false
+      RELEASE_GPG_PRIVATE_KEY:
+        description: "Armored OpenPGP private key used to sign published snapshots (publish-gradle to maven-central only)"
+        required: false
+      RELEASE_GPG_PASSPHRASE:
+        description: "Passphrase for RELEASE_GPG_PRIVATE_KEY (publish-gradle to maven-central only)"
         required: false
       ANDROID_KEYSTORE:
         description: "Base64-encoded Android signing keystore"
@@ -249,6 +267,7 @@ jobs:
           PACKAGE_SCOPE: ${{ inputs['package-scope'] }}
           SBOMS: ${{ inputs.sboms }}
           PUBLISH_NPM: ${{ inputs['publish-npm'] }}
+          PUBLISH_GRADLE: ${{ inputs['publish-gradle'] }}
           USE_CI_TOKEN: ${{ inputs['use-ci-token'] }}
         run: reusable-ci plan snapshot-release
 
@@ -292,13 +311,17 @@ jobs:
       actions: read
       contents: read
       packages: write
-    # release-snapshot-publish-stage forwards only to leaves using auto-
-    # provided GITHUB_TOKEN; the optional external registry-password
-    # is the only declared secret on the snapshot-publish stage. Bracket
-    # notation is required because GHA expressions parse `-` as
+    # Most leaves here use only the auto-provided GITHUB_TOKEN. The
+    # exceptions are the gradle snapshot legs, which are the sole
+    # credentialed jobs in the snapshot flow — see publish-gradle above.
+    # Bracket notation is required because GHA expressions parse `-` as
     # subtraction in dotted references.
     secrets:
       registry-password: ${{ secrets['registry-password'] }}
+      MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+      MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+      RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
     uses: ./.github/workflows/release-snapshot-publish-stage.yml
     with:
       snapshot-release-plan-json: ${{ needs.setup-snapshot.outputs.snapshot-release-plan-json }}
@@ -307,6 +330,8 @@ jobs:
       runtime-image-node: ${{ inputs['runtime-image-node'] }}
       runtime-image-rust: ${{ inputs['runtime-image-rust'] }}
       runtime-image-go: ${{ inputs['runtime-image-go'] }}
+      runtime-image-java: ${{ inputs['runtime-image-java'] }}
+      runtime-image-android: ${{ inputs['runtime-image-android'] }}
       snapshot-publish-stage-plan-json: ${{ needs.setup-snapshot.outputs.snapshot-publish-stage-plan-json }}
       artifact-transfer-plan-json: ${{ needs.setup-snapshot.outputs.artifact-transfer-plan-json }}
       build-result-json: ${{ needs.execute-snapshot-build-stage.outputs.result-json }}

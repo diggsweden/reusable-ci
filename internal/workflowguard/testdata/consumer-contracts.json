@@ -215,6 +215,10 @@
         "required": false,
         "type": "string"
       },
+      "publish-gradle": {
+        "required": false,
+        "type": "boolean"
+      },
       "publish-npm": {
         "required": false,
         "type": "boolean"
@@ -280,7 +284,11 @@
       "IOS_SIGNING_CERTIFICATE_BASE64",
       "IOS_SIGNING_CERTIFICATE_PASSPHRASE",
       "KEYCHAIN_PASSWORD",
+      "MAVEN_CENTRAL_PASSWORD",
+      "MAVEN_CENTRAL_USERNAME",
       "PROVISIONING_PROFILE_BASE64",
+      "RELEASE_GPG_PASSPHRASE",
+      "RELEASE_GPG_PRIVATE_KEY",
       "SECRETS_PROPERTIES_BASE64",
       "XCCONFIG_BASE64",
       "registry-password"

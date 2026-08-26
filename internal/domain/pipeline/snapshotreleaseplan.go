@@ -33,6 +33,7 @@ type SnapshotReleasePlanInput struct {
 	PackageScope        string
 	SBOMs               string
 	PublishNPM          bool
+	PublishGradle       bool
 	UseCIToken          bool
 }
 
@@ -64,9 +65,13 @@ type SnapshotReleaseContext struct {
 
 // SnapshotReleasePolicy is the dev release policy envelope.
 type SnapshotReleasePolicy struct {
-	PublishNPM bool   `json:"publish_npm"`
-	UseCIToken bool   `json:"use_ci_token"`
-	SBOMs      string `json:"sboms"`
+	PublishNPM bool `json:"publish_npm"`
+	// PublishGradle gates the gradle snapshot publish legs. Separate from
+	// PublishNPM because it carries a heavier contract: it is the only
+	// snapshot target that needs registry credentials and a signing key.
+	PublishGradle bool   `json:"publish_gradle"`
+	UseCIToken    bool   `json:"use_ci_token"`
+	SBOMs         string `json:"sboms"`
 }
 
 // SnapshotReleaseStagePlans contains the stage-specific plans emitted separately
@@ -114,8 +119,15 @@ type DevPublishInputs struct {
 }
 
 // DevPublishTargets are the publish-stage jobs and supporting inputs.
+//
+// The two gradle targets mirror the release path's buckets of the same
+// names. They are matrix jobs, not singletons: one config can carry both
+// a plain-JVM and an Android library, and publish-gradle.yml discriminates
+// per matrix item.
 type DevPublishTargets struct {
 	NPM                 TargetPlan[PlannedArtifact] `json:"npm"`
+	ForgePackagesGradle TargetPlan[PlannedArtifact] `json:"forge_packages_gradle"`
+	MavenCentralGradle  TargetPlan[PlannedArtifact] `json:"maven_central_gradle"`
 	CargoContainerFirst TargetPlan[PlannedArtifact] `json:"cargo_container_first"`
 	GoContainerFirst    TargetPlan[PlannedArtifact] `json:"go_container_first"`
 	GoArtifactFirst     TargetPlan[PlannedArtifact] `json:"go_artifact_first"`
@@ -166,9 +178,10 @@ func NewSnapshotReleasePlan(in SnapshotReleasePlanInput) (SnapshotReleasePlan, e
 		PackageScope:        in.PackageScope,
 	}
 	policy := SnapshotReleasePolicy{
-		PublishNPM: in.PublishNPM,
-		UseCIToken: in.UseCIToken,
-		SBOMs:      cmp.Or(in.SBOMs, "none"),
+		PublishNPM:    in.PublishNPM,
+		PublishGradle: in.PublishGradle,
+		UseCIToken:    in.UseCIToken,
+		SBOMs:         cmp.Or(in.SBOMs, "none"),
 	}
 	build := NewDevBuildStagePlan(in.ConfigPlan)
 
@@ -270,7 +283,14 @@ func NewDevPublishStagePlan(configPlan ConfigPlan, policy SnapshotReleasePolicy,
 	// release path and promoted to :dev by the build-once/promote-many ladder
 	// (promote-stage.yml), never rebuilt for the snapshot flow.
 	targets := DevPublishTargets{
-		NPM:                 targetPlan(artifacts.NPM, len(artifacts.NPM) > 0 && policy.PublishNPM),
+		NPM: targetPlan(artifacts.NPM, len(artifacts.NPM) > 0 && policy.PublishNPM),
+		// Gradle snapshots publish from SOURCE (see publish-gradle.yml's
+		// header), so unlike npm there is no version to compose here: the
+		// project's own gradle.properties carries it. publish-gradle.yml
+		// asserts it is a -SNAPSHOT version before it deploys, which is
+		// what keeps a release version from escaping down this path.
+		ForgePackagesGradle: targetPlan(artifacts.ForgePackagesGradle, len(artifacts.ForgePackagesGradle) > 0 && policy.PublishGradle),
+		MavenCentralGradle:  targetPlan(artifacts.MavenCentralGradle, len(artifacts.MavenCentralGradle) > 0 && policy.PublishGradle),
 		CargoContainerFirst: targetPlan(artifacts.CargoContainerFirst, len(artifacts.CargoContainerFirst) > 0 && buildSBOM),
 		GoContainerFirst:    targetPlan(artifacts.GoContainerFirst, len(artifacts.GoContainerFirst) > 0 && buildSBOM),
 		GoArtifactFirst:     targetPlan(artifacts.GoArtifactFirst, false),

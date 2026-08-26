@@ -358,7 +358,7 @@ uses: diggsweden/reusable-ci/.github/workflows/security-openssf-scorecard.yml@v3
 |----------|---------|-------------|
 | `pullrequest-orchestrator.yml` | Pull request quality control plane | Every repository |
 | `release-orchestrator.yml` | Production release control plane | Production releases |
-| `release-snapshot-orchestrator.yml` | Lightweight snapshot release control plane (npm/SBOM-only) | Development branches |
+| `release-snapshot-orchestrator.yml` | Lightweight snapshot release control plane (npm/SBOM, plus opt-in Gradle SNAPSHOTs) | Development branches |
 
 ### Snapshot vs Production Release
 

@@ -247,3 +247,78 @@ func TestNewSnapshotReleasePlan_RejectsAmbiguousGoDevSBOMArtifactName(t *testing
 		t.Errorf("err = %v", err)
 	}
 }
+
+// gradleSnapshotConfig is an android-library config routed to both gradle
+// publish buckets, which is the shape the snapshot gradle legs plan over.
+func gradleSnapshotConfig(t *testing.T) pipeline.ConfigPlan {
+	t.Helper()
+
+	cfg := &config.Config{
+		Artifacts: []config.Artifact{{
+			Name:        "android-lib",
+			ProjectType: projecttype.GradleAndroid,
+			BuildType:   config.BuildTypeLibrary,
+			PublishTo:   []config.PublishTarget{config.PublishMavenCentral, config.PublishForgePackages},
+			GradleAndroid: &config.GradleAndroidConfig{
+				BuildModule: "access-mechanism",
+			},
+		}},
+	}
+	if err := config.Derive(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	return pipeline.NewConfigPlan(cfg)
+}
+
+// The gradle snapshot legs are the only credentialed jobs in the snapshot
+// flow, so they are opt-in: a caller that does not ask for them must not
+// get a job holding Maven Central credentials and a signing key merely
+// because its config declares a gradle publish target.
+func TestNewSnapshotReleasePlan_GradlePublishIsOptIn(t *testing.T) {
+	t.Parallel()
+
+	plan, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
+		ConfigPlan: gradleSnapshotConfig(t),
+		Branch:     "feature/dev",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	targets := plan.Stages.Publish.Targets
+	if targets.MavenCentralGradle.Runs || targets.ForgePackagesGradle.Runs {
+		t.Errorf("gradle publish runs without publish-gradle: maven_central=%v forge_packages=%v",
+			targets.MavenCentralGradle.Runs, targets.ForgePackagesGradle.Runs)
+	}
+}
+
+func TestNewSnapshotReleasePlan_GradlePublishRunsWhenRequested(t *testing.T) {
+	t.Parallel()
+
+	plan, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
+		ConfigPlan:    gradleSnapshotConfig(t),
+		Branch:        "feature/dev",
+		PublishGradle: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	targets := plan.Stages.Publish.Targets
+	if !targets.MavenCentralGradle.Runs || !targets.ForgePackagesGradle.Runs {
+		t.Fatalf("gradle publish did not run: maven_central=%v forge_packages=%v",
+			targets.MavenCentralGradle.Runs, targets.ForgePackagesGradle.Runs)
+	}
+
+	// The workflow reads needs_android_sdk off each matrix item to pick the
+	// runtime image; an Android library planned without it would publish
+	// from the plain-JVM image and fail resolving the Android plugin.
+	if len(targets.MavenCentralGradle.Items) != 1 {
+		t.Fatalf("maven_central_gradle items = %d, want 1", len(targets.MavenCentralGradle.Items))
+	}
+
+	if !targets.MavenCentralGradle.Items[0].NeedsAndroidSDK {
+		t.Error("android library planned without needs_android_sdk")
+	}
+}

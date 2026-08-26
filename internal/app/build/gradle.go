@@ -37,6 +37,17 @@ type GradleSBOMInput struct {
 // GradleMetadataInput drives GradleMetadata.
 type GradleMetadataInput struct {
 	Dir string
+
+	// RequireSnapshot turns the absence of a -SNAPSHOT suffix into a
+	// failure. The snapshot publish path sets it: that flow publishes
+	// from the branch's own gradle.properties, so nothing upstream has
+	// yet established that the version is a snapshot at all. Without this
+	// gate a branch that had been bumped to a release version would push
+	// a real, immutable release to Maven Central from the snapshot flow.
+	//
+	// It also makes the missing-version case fatal, which it is not
+	// otherwise: "no version declared" cannot be shown to be a snapshot.
+	RequireSnapshot bool
 }
 
 // resolveGradleVersion reads the JVM Gradle convention `version=` from
@@ -67,10 +78,22 @@ func resolveGradleVersion(dir string) string {
 func GradleMetadata(ctx context.Context, sink ci.OutputSink, w io.Writer, annot output.Annotator, in GradleMetadataInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	version := resolveGradleVersion(in.Dir)
 	if version == "" {
+		if in.RequireSnapshot {
+			return fmt.Errorf(
+				"gradle metadata: no version declared in gradle.properties, so it cannot be shown to be a -SNAPSHOT: %w",
+				errs.ErrValidation)
+		}
+
 		// Best-effort metadata: warn and emit nothing, don't fail the run.
 		annot.Warningf("version not found in gradle.properties")
 
 		return nil
+	}
+
+	if in.RequireSnapshot && !build.IsSnapshot(version) {
+		return fmt.Errorf(
+			"gradle metadata: version %s is not a -SNAPSHOT; the snapshot flow must not publish a release version: %w",
+			version, errs.ErrValidation)
 	}
 
 	if err := sink.Set(ctx, "version", version); err != nil {

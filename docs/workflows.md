@@ -238,6 +238,8 @@ Those singleton inputs include the exact NPM build artifact upload name used by 
 
 **Idempotent NPM publishing:** Snapshot versions are content-addressed (`{base}-snapshot-{branch}-{sha}`), so the same commit always produces the same version string. The `publish-snapshot-npm.yml` workflow checks the registry before publishing and skips with a warning if the version already exists. This makes re-runs safe — the pipeline succeeds without attempting to overwrite an immutable package.
 
+**Gradle SNAPSHOT publishing** (`publish-gradle: true`, off by default) works the opposite way, because Maven snapshots and npm packages have opposite constraints. An npm version is immutable, hence the content-addressed name; a Maven `-SNAPSHOT` is *designed* to be republished, and the repository timestamps each upload itself. So there is no version to compose here: `publish-gradle.yml` publishes from source and takes the version from the branch's own `gradle.properties`. What makes that safe is `require-snapshot`, which the snapshot stage always passes — `reusable-ci build gradle metadata` fails the job unless the declared version ends in `-SNAPSHOT`, so a branch bumped to a release version cannot push an immutable release to Maven Central down this path. These are also the only jobs in the snapshot flow that receive credentials; see the snapshot-release trust model in `verification.md`.
+
 ```mermaid
 graph TD
     A[Push: develop or feature/*] --> B[release-snapshot-orchestrator.yml]
@@ -255,6 +257,7 @@ graph TD
     D --> I5[build-cargo.yml]
 
     E --> K[publish-snapshot-npm.yml]
+    E --> K2[publish-gradle.yml]
     E --> L[sbom-cargo.yml]
     E --> L2[sbom-go.yml]
     E --> M[generate-snapshot-sboms]

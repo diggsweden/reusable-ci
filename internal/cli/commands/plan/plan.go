@@ -130,6 +130,10 @@ func snapshotReleaseCmd() *cli.Command {
 			&cli.StringFlag{Name: "scope", Sources: cli.EnvVars("SCOPE", "PACKAGE_SCOPE"), Usage: "npm package scope (e.g. @examplescope) routed to the registry"},
 			&cli.StringFlag{Name: "sboms", Value: "none", Sources: cli.EnvVars("SBOMS"), Usage: "sboms enum gating which CISA layers the snapshot-release produces"},
 			&cli.BoolFlag{Name: "publish-npm", Value: true, Sources: cli.EnvVars("PUBLISH_NPM"), Usage: "include the npm dev-publish step in the plan"},
+			// Defaults false, unlike publish-npm: the gradle snapshot legs
+			// need Central credentials and a signing key, so a caller opts in
+			// rather than inheriting a credentialed job by upgrading.
+			&cli.BoolFlag{Name: "publish-gradle", Sources: cli.EnvVars("PUBLISH_GRADLE"), Usage: "include the gradle snapshot-publish steps in the plan"},
 			&cli.BoolFlag{Name: "use-ci-token", Value: true, Sources: cli.EnvVars("USE_CI_TOKEN"), Usage: "use the CI platform token in place of an explicit registry password"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -151,6 +155,7 @@ func snapshotReleaseCmd() *cli.Command {
 					PackageScope:        cmd.String("scope"),
 					SBOMs:               cmd.String("sboms"),
 					PublishNPM:          cmd.Bool("publish-npm"),
+					PublishGradle:       cmd.Bool("publish-gradle"),
 					UseCIToken:          cmd.Bool("use-ci-token"),
 				})
 

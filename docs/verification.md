@@ -244,11 +244,21 @@ signing; keyless verification is inherently online.
 ### Snapshot-release trust model
 
 Snapshot releases (`release-snapshot-orchestrator.yml`) are intentionally **not**
-signed and **not** attested. They exist for fast iteration on branch pushes, not
-for distribution to external consumers. A snapshot run publishes a
-content-addressed npm snapshot (dist-tag `snapshot`, version
-`<base>-snapshot-<branch>-<sha>`) and, when opted in, SBOMs — it builds **no
-container images**.
+attested, and nothing on this path is cosign-signed. They exist for fast
+iteration on branch pushes, not for distribution to external consumers. A
+snapshot run publishes a content-addressed npm snapshot (dist-tag `snapshot`,
+version `<base>-snapshot-<branch>-<sha>`) and, when opted in, SBOMs — it builds
+**no container images**.
+
+The one exception is `publish-gradle` (opt-in, off by default). Maven artifacts
+have no post-hoc signing step: a Gradle project configured with the `signing`
+plugin signs its publications as it produces them, so a Maven Central snapshot
+carries a detached PGP signature made by the same release key the production
+path uses. That makes the gradle snapshot legs the only credentialed jobs in
+this flow — they receive `MAVEN_CENTRAL_*` and `RELEASE_GPG_*`. Everything else
+here runs on the auto-provided forge token alone. Central does not *require*
+signatures on snapshots; this is a property of how Gradle publishes, not an
+attestation guarantee, and it says nothing about provenance.
 
 Container images are built **once on the release path** (signed with cosign,
 SLSA-attested, SBOM-attested) and then promoted to the moving `:dev` → `:staging`

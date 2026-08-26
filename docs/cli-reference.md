@@ -243,6 +243,7 @@ EXAMPLE:
 | Flag | Description | Env vars |
 |------|-------------|----------|
 | `--working-dir` | directory containing gradle.properties / build.gradle | `$WORKING_DIRECTORY` |
+| `--require-snapshot` | fail unless gradle.properties declares a -SNAPSHOT version (the snapshot publish path sets this) | `$REQUIRE_SNAPSHOT` |
 
 #### `reusable-ci build gradle run`
 
@@ -2002,6 +2003,7 @@ EXAMPLE:
 | `--scope` | npm package scope (e.g. @examplescope) routed to the registry | `$SCOPE`, `$PACKAGE_SCOPE` |
 | `--sboms` | sboms enum gating which CISA layers the snapshot-release produces | `$SBOMS` |
 | `--publish-npm` | include the npm dev-publish step in the plan | `$PUBLISH_NPM` |
+| `--publish-gradle` | include the gradle snapshot-publish steps in the plan | `$PUBLISH_GRADLE` |
 | `--use-ci-token` | use the CI platform token in place of an explicit registry password | `$USE_CI_TOKEN` |
 
 ### `reusable-ci plan write`

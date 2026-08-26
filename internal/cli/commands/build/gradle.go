@@ -77,12 +77,16 @@ func gradleMetadataCmd() *cli.Command {
    reusable-ci build gradle metadata --working-dir .`,
 		Flags: []cli.Flag{
 			commonflags.WorkingDir("directory containing gradle.properties / build.gradle"),
+			&cli.BoolFlag{Name: "require-snapshot", Sources: cli.EnvVars("REQUIRE_SNAPSHOT"), Usage: "fail unless gradle.properties declares a -SNAPSHOT version (the snapshot publish path sets this)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
 				annot := deps.Annotator(cmd)
 
-				return appbuild.GradleMetadata(ctx, d.OutputSink, os.Stderr, annot, appbuild.GradleMetadataInput{Dir: cmd.String("working-dir")})
+				return appbuild.GradleMetadata(ctx, d.OutputSink, os.Stderr, annot, appbuild.GradleMetadataInput{
+					Dir:             cmd.String("working-dir"),
+					RequireSnapshot: cmd.Bool("require-snapshot"),
+				})
 			})
 		},
 	}

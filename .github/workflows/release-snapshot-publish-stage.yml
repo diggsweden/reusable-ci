@@ -41,12 +41,33 @@ on:
         required: false
         default: "ghcr.io/diggsweden/reusable-ci-runtime-go-1.26:v3.0.0"
         type: string
+      runtime-image-java:
+        description: "reusable-ci runtime image for plain-JVM Gradle snapshot publish jobs"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
+        type: string
+      runtime-image-android:
+        description: "reusable-ci runtime image for Android-library Gradle snapshot publish jobs (carries the Android SDK)"
+        required: false
+        default: "ghcr.io/diggsweden/reusable-ci-runtime-android-35:v3.0.0"
+        type: string
       sboms:
         required: false
         default: "none"
         type: string
     secrets:
       registry-password:
+        required: false
+      # The gradle snapshot legs are the only credentialed jobs in the
+      # snapshot flow. All optional: a caller with no gradle target binds
+      # none of them, and the jobs that would use them never run.
+      MAVEN_CENTRAL_USERNAME:
+        required: false
+      MAVEN_CENTRAL_PASSWORD:
+        required: false
+      RELEASE_GPG_PRIVATE_KEY:
+        required: false
+      RELEASE_GPG_PASSPHRASE:
         required: false
     outputs:
       stage-ran:
@@ -85,6 +106,61 @@ jobs:
       runtime-image: ${{ inputs['runtime-image-node'] }}
     secrets:
       registry-password: ${{ secrets.registry-password }}
+  # Gradle snapshot publishing. Unlike npm above, these publish from
+  # SOURCE (see publish-gradle.yml's header) — there is no snapshot
+  # version to compose and apply, because the branch's own
+  # gradle.properties carries it. require-snapshot is what makes that
+  # safe: it refuses to deploy anything that is not a -SNAPSHOT, so a
+  # branch bumped to a release version cannot push an immutable release
+  # to Maven Central down the snapshot path.
+  #
+  # Both gate on the whole build stage rather than a single build target:
+  # one matrix can carry both `gradle` and `gradle-android` items, and a
+  # job-level `if:` cannot discriminate per matrix item. Same asymmetry as
+  # release-publish-stage.yml.
+  forge-packages-gradle:
+    name: Publish Snapshot Forge Packages (Gradle) - ${{ matrix.artifact.name }}
+    if: ${{ fromJson(inputs['snapshot-publish-stage-plan-json']).targets.forge_packages_gradle.runs && fromJson(inputs['build-result-json']).result == 'success' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs['snapshot-publish-stage-plan-json']).targets.forge_packages_gradle.items }}
+      fail-fast: false
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-gradle.yml
+    with:
+      target: forge-packages
+      require-snapshot: true
+      branch: ${{ fromJson(inputs['snapshot-release-plan-json']).context.branch }}
+      working-directory: ${{ matrix.artifact.working_directory }}
+      publish-tasks: ${{ matrix.artifact.publish_tasks }}
+      runtime-image: ${{ matrix.artifact.needs_android_sdk && inputs['runtime-image-android'] || inputs['runtime-image-java'] }}
+      cache-key-prefix: ${{ matrix.artifact.needs_android_sdk && 'gradle-android-' || 'gradle-' }}
+  maven-central-gradle:
+    name: Publish Snapshot Maven Central (Gradle) - ${{ matrix.artifact.name }}
+    if: ${{ fromJson(inputs['snapshot-publish-stage-plan-json']).targets.maven_central_gradle.runs && fromJson(inputs['build-result-json']).result == 'success' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs['snapshot-publish-stage-plan-json']).targets.maven_central_gradle.items }}
+      fail-fast: false
+    permissions:
+      contents: read
+      packages: write
+    secrets:
+      MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+      MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+      RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+    uses: ./.github/workflows/publish-gradle.yml
+    with:
+      target: maven-central
+      require-snapshot: true
+      branch: ${{ fromJson(inputs['snapshot-release-plan-json']).context.branch }}
+      working-directory: ${{ matrix.artifact.working_directory }}
+      publish-tasks: ${{ matrix.artifact.publish_tasks }}
+      runtime-image: ${{ matrix.artifact.needs_android_sdk && inputs['runtime-image-android'] || inputs['runtime-image-java'] }}
+      cache-key-prefix: ${{ matrix.artifact.needs_android_sdk && 'gradle-android-' || 'gradle-' }}
   # Container-first cargo's lockfile-derived "build" SBOM. Artefact-first
   # cargo emits its Build SBOM inline in build-cargo.yml at snapshot-build-stage,
   # so this job only fires for cargo artefacts with build-mode:

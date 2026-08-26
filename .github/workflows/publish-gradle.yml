@@ -64,6 +64,11 @@ on:
         required: false
         default: "ghcr.io/diggsweden/reusable-ci-runtime-java-25:v3.0.0"
         type: string
+      require-snapshot:
+        description: "Fail unless gradle.properties declares a -SNAPSHOT version. Set by the snapshot release flow, which publishes whatever the branch declares and so must not be able to push a real release to Maven Central."
+        required: false
+        default: false
+        type: boolean
       cache-key-prefix:
         description: "Gradle cache key namespace. Must match the build workflow that warmed the cache, or this job restores an unrelated project's Gradle home and re-resolves everything: build-gradle-app.yml uses 'gradle-', build-gradle-android.yml uses 'gradle-android-'."
         required: false
@@ -138,6 +143,8 @@ jobs:
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs['working-directory'] }}
+        env:
+          REQUIRE_SNAPSHOT: ${{ inputs['require-snapshot'] }}
         run: reusable-ci build gradle metadata
       - name: Publish
         working-directory: ${{ inputs['working-directory'] }}
