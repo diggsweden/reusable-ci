@@ -132,10 +132,17 @@ func TestDetachedSign_PassphraseIsNotInTheEnvironment(t *testing.T) {
 func TestPresetPassphrase_SendsHexOnStdin(t *testing.T) {
 	bins := mockbinary.New(t)
 	// A real gpg-connect-agent answers each Assuan command with an "OK"
-	// line. The stub must too: PresetPassphrase now classifies the
-	// transcript rather than the (uninformative) exit status, so a silent
-	// stub would model an agent that never took the passphrase.
-	bins.Add("gpg-connect-agent", "cat > /dev/null\necho OK\n")
+	// line. The stub must too: PresetPassphrase classifies the transcript
+	// rather than the (uninformative) exit status, so a silent stub would
+	// model an agent that never took the passphrase.
+	//
+	// It must also model the argv rule, which is the whole reason this
+	// path once failed in CI: gpg-connect-agent reads stdin ONLY when no
+	// command is given in argv. A stub that answers OK regardless of argv
+	// is the one shape that passes while the real binary discards the
+	// passphrase, so the stub exits 0 saying nothing when argv is
+	// non-empty -- exactly what the real binary does.
+	bins.Add("gpg-connect-agent", "[ $# -eq 0 ] || exit 0\ncat > /dev/null\necho OK\n")
 
 	adapter := &adaptergpg.Adapter{AgentBin: bins.Path("gpg-connect-agent")}
 
@@ -169,6 +176,21 @@ func TestPresetPassphrase_SendsHexOnStdin(t *testing.T) {
 
 	if !strings.Contains(inv.Stdin, "PRESET_PASSPHRASE "+keygrip+" ") {
 		t.Errorf("stdin = %q, want a PRESET_PASSPHRASE for the keygrip", inv.Stdin)
+	}
+
+	// The two assertions below are a pair, and both are about the argv
+	// rule above: a command in argv means stdin is never read, so "/bye"
+	// has to travel on stdin with the PRESET_PASSPHRASE it terminates.
+	// Ranged rather than a length check because the recorder writes an
+	// empty argv as one empty string.
+	for _, arg := range inv.Args {
+		if arg != "" {
+			t.Errorf("argv = %v, want no commands: any argv command makes gpg-connect-agent ignore stdin", inv.Args)
+		}
+	}
+
+	if !strings.HasSuffix(strings.TrimSpace(inv.Stdin), "/bye") {
+		t.Errorf("stdin = %q, want it to end with /bye so the agent closes the connection", inv.Stdin)
 	}
 }
 

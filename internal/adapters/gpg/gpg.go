@@ -142,9 +142,16 @@ func (a *Adapter) ConfigureAgent(ctx context.Context) error {
 func (a *Adapter) PresetPassphrase(ctx context.Context, keygrip, passphrase string) error {
 	hex := domaingpg.HexEncodePassphrase(passphrase)
 
-	cmd := fmt.Sprintf("PRESET_PASSPHRASE %s -1 %s\n", keygrip, hex)
+	// Both lines go on STDIN, and nothing goes in argv. This is not a
+	// style choice: gpg-connect-agent reads stdin ONLY when its argv
+	// carries no commands. Passing "/bye" as an argument puts it in
+	// run-argv-commands mode, where it says goodbye, exits 0, and never
+	// looks at stdin — so the PRESET_PASSPHRASE is silently discarded
+	// and the transcript comes back empty. Verified against gnupg
+	// 2.5.21 with a warm agent.
+	cmd := fmt.Sprintf("PRESET_PASSPHRASE %s -1 %s\n/bye\n", keygrip, hex)
 
-	transcript, err := a.runStdin(ctx, cmd, a.agent(), "/bye")
+	transcript, err := a.runStdin(ctx, cmd, a.agent())
 	if err != nil {
 		return fmt.Errorf("preset passphrase: %w", err)
 	}
