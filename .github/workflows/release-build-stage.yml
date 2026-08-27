@@ -222,7 +222,15 @@ jobs:
       # diverge and the download step fails. Direct callers leave it empty
       # and get derived naming.
       artifact-name: ${{ matrix.artifact.name }}
-      enable-signing: ${{ matrix.artifact.gradle_android.enable_android_signing }}
+      # `== true` rather than the bare field: enable_android_signing is a
+      # *bool with omitempty, so a config that does not set it — the norm
+      # for a library — omits the key entirely and the bare expression
+      # yields "". An empty string into a `type: boolean` input is a
+      # workflow-validation error, and the job then never instantiates at
+      # all: it is absent from the run rather than failing in it, and the
+      # only visible symptom is the stage going red with nothing red in
+      # it. Same guard as include-aab / product-flavor above.
+      enable-signing: ${{ matrix.artifact.gradle_android.enable_android_signing == true }}
       enable-build-sbom: ${{ contains(matrix.artifact.effective_sboms, 'build') }}
       runtime-image: ${{ inputs['runtime-image-android'] }}
   xcode-ios:
