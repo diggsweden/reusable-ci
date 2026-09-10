@@ -111,7 +111,7 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         env:
           # renovate: datasource=npm depName=@cyclonedx/cyclonedx-npm
-          CYCLONEDX_VERSION: "4.2.1"
+          CYCLONEDX_VERSION: "5.0.0"
         # One-shot npx runs the pinned version without mutating global state,
         # so a follow-up step can't inadvertently shadow the binary with a
         # different version.
