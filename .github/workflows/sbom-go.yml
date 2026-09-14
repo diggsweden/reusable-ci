@@ -15,9 +15,9 @@ on:
         default: "."
         type: string
       branch:
-        description: "Branch to checkout"
+        description: "Branch, tag, or SHA to checkout. Empty uses the triggering ref."
         required: false
-        default: "main"
+        default: ""
         type: string
       artifact-name:
         description: "Artifact name for uploads (defaults to 'go-build-sbom')"
@@ -46,6 +46,20 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Guard working-directory stays inside the workspace
+        # Every upload below is rooted at this caller-supplied value. An
+        # absolute path or a parent step would take the artifact from outside
+        # the workspace, so it is refused here, before any step consumes it.
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: |
+          case "$WORKING_DIRECTORY" in
+            "") echo "working-directory must not be empty" >&2; exit 1 ;;
+            /*) echo "working-directory must be workspace-relative: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
+          case "/$WORKING_DIRECTORY/" in
+            */../*) echo "working-directory must not contain parent-directory steps: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
       - name: Checkout repository
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -88,7 +102,7 @@ jobs:
           name: ${{ inputs['artifact-name'] != '' && format('{0}-go-build-sbom', inputs['artifact-name']) || 'go-build-sbom' }}
           path: ${{ inputs['working-directory'] }}/.reusable-ci/go-build-sbom/**/bom.json
           retention-days: "7"
-          if-no-files-found: warn
+          if-no-files-found: error
       - name: Write SBOM status to step summary
         if: always()
         env:

@@ -4,13 +4,14 @@
 #
 # reusable-ci's OWN GitLab pipeline (the GitLab analog of .github/workflows/
 # self-*.yml), distinct from the consumable components under templates/. It:
-#   1. self-tests each component from this checkout (`include: local`, so the
-#      template is exercised at $CI_COMMIT_SHA without a published release);
+#   1. self-tests the nanolinter component from this checkout (`include: local`,
+#      so that template is exercised at $CI_COMMIT_SHA without a release);
 #   2. publishes the components to the CI/CD Catalog on a semver tag, using the
 #      `release` keyword (required by GitLab — not the Releases API).
 #
 # Prerequisite for publication: mark the project as a CI/CD Catalog project
-# (Settings > CI/CD > Catalog) and give it a description. See gitlabsupportplan.md.
+# (Settings > CI/CD > Catalog) and give it a description. Provider acceptance
+# requirements are documented in docs/providers.md and docs/testing.md.
 stages:
   - test
   - release

@@ -7,8 +7,9 @@
 # for subsequent publishing steps. Separates build logic from registry-specific publishing.
 #
 # Build Types:
-#   - app: Standard application JAR (no sources/javadoc)
-#   - lib: Library with sources and javadoc JARs (required for Maven Central)
+#   - app: Application lifecycle (normally a main JAR)
+#   - lib: Library lifecycle with an optional profile
+# The project POM/profile owns all attached sources and javadoc artifacts.
 #
 # Outputs:
 #   - Artifacts uploaded as '<artifact-name>-build-artifacts' or 'maven-build-artifacts' for use by publish-* workflows
@@ -21,7 +22,7 @@ on:
   workflow_call:
     inputs:
       build-type:
-        description: "Build type: app (application) or lib (library with sources/javadoc)"
+        description: "Lifecycle: app (clean package) or lib (compile/test/package with optional profile; POM owns attached artifacts)"
         required: true
         type: string
       working-directory:
@@ -35,9 +36,9 @@ on:
         default: false
         type: boolean
       branch:
-        description: "Branch to checkout"
+        description: "Branch, tag, or SHA to checkout. Empty uses the triggering ref."
         required: false
-        default: "main"
+        default: ""
         type: string
       profile:
         description: "Maven profile to activate (e.g., central-release for libraries)"
@@ -73,6 +74,20 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Guard working-directory stays inside the workspace
+        # Every upload below is rooted at this caller-supplied value. An
+        # absolute path or a parent step would take the artifact from outside
+        # the workspace, so it is refused here, before any step consumes it.
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: |
+          case "$WORKING_DIRECTORY" in
+            "") echo "working-directory must not be empty" >&2; exit 1 ;;
+            /*) echo "working-directory must be workspace-relative: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
+          case "/$WORKING_DIRECTORY/" in
+            */../*) echo "working-directory must not contain parent-directory steps: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
       - name: Checkout repository
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -128,4 +143,4 @@ jobs:
             ${{ inputs['working-directory'] }}/target/bom.json
             ${{ inputs['working-directory'] }}/**/target/bom.json
           retention-days: 7
-          if-no-files-found: warn
+          if-no-files-found: error

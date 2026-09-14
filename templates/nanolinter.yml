@@ -95,6 +95,7 @@ spec:
         work="$(mktemp -d)"
         raw="https://raw.githubusercontent.com/diggsweden/reusable-ci/${RC_REF}/scripts/bootstrap"
         curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-common.sh" "$raw/install-common.sh" &&
+          curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-cosign.sh" "$raw/install-cosign.sh" &&
           curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-reusable-ci.sh" "$raw/install-reusable-ci.sh" &&
           REUSABLE_CI_INSTALL_DIR="$(dirname "$RC_BIN")" \
             bash "$work/install-reusable-ci.sh" "$RC_REF" &&

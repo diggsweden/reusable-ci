@@ -183,7 +183,7 @@ ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
 FROM base AS go
 
 # renovate: datasource=golang-version depName=go
-ARG GO_VERSION=1.26.3
+ARG GO_VERSION=1.26.6
 # renovate: datasource=github-releases depName=CycloneDX/cyclonedx-gomod
 ARG CYCLONEDX_GOMOD_VERSION=v1.10.0
 

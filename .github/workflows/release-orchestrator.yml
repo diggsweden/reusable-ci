@@ -15,11 +15,10 @@
 # 5. Creates GitHub release with changelog, artifacts, and signatures
 #
 # Security controls:
-# - GPG signing of all artifacts (if signatures: true)
+# - Configured artifact signing via GPG, Sigstore, or KMS
 # - SLSA provenance attestation for supply chain security
 # - SBOM generation in multiple formats (CycloneDX, SPDX)
 # - Container vulnerability scanning with Trivy
-# - License compliance checking
 #
 # Required Secrets (depending on configuration):
 #   GITHUB_TOKEN: Automatically provided for GitHub operations
@@ -38,7 +37,7 @@
 #   packages: write       # Publish packages and containers
 #   id-token: write       # Keyless cosign OIDC (sign + attest, no GitHub attestation API)
 #   secrets: inherit       # Pass CODE_SCANNING_TOKEN for Code Scanning upload
-#   actions: read         # Read workflow context
+#   actions: read         # Download workflow artifacts
 #
 # v3 Design
 # - Removed single-artifact inline mode
@@ -61,13 +60,12 @@ on:
         type: string
       # === SHARED CONFIGURATION ===
       release-type:
-        description: "Release type: stable, prerelease (auto-detected from tag if not specified)"
+        description: "Release type override. Production releases are stable-only; omit this or set stable. Prerelease request tags are rejected before planning."
         required: false
         type: string
       branch:
-        description: "Branch to work with (default: main)"
-        required: false
-        default: "main"
+        description: "Explicit branch or ref to prepare and release"
+        required: true
         type: string
       # Changelog creator configuration
       changelog-creator:
@@ -101,7 +99,7 @@ on:
         default: ""
         type: string
       release.signartifacts:
-        description: "GPG sign release artifacts (default: true)"
+        description: "Sign release artifacts with the configured backend (default: true)"
         required: false
         default: true
         type: boolean
@@ -304,7 +302,7 @@ on:
           adopter so the value stays inside the secrets channel
           end-to-end. Forwarded to publish-container.yml where it
           is unpacked into mode-0600 tmpfiles and mounted via
-          BuildKit --mount=type=secret — never recorded in SLSA
+          Buildah --mount=type=secret — never recorded in SLSA
           provenance, step inputs, or workflow logs. Recipe:
           docs/artifacts-reference.md `build-secrets`.
         required: false
@@ -315,10 +313,13 @@ on:
         description: "Push token for promote-release-registry (digital-sovereignty release promotion)."
         required: false
 concurrency:
-  group: release-${{ github.repository }}-${{ github.ref }}
-  cancel-in-progress: false # Queue releases, don't cancel partial releases
+  # GitHub retains only one pending run per group, so branch-wide groups can
+  # silently replace a different pending request. Serialize reruns of this
+  # request only; branch mutation is guarded by the authorized-source SHA CAS.
+  group: reusable-release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
 permissions:
-  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+  contents: read # Default permission; individual jobs declare additions.
 jobs:
   # ===== Stage 0: Configuration And Policy =====
   parse-config:
@@ -337,7 +338,7 @@ jobs:
       publish-stage-plan-json: ${{ steps.plan.outputs.publish-stage-plan-json }}
       artifact-transfer-plan-json: ${{ steps.plan.outputs.artifact-transfer-plan-json }}
 
-      # Commit SHA for reusable-ci-binary-ref, resolved against the remote
+      # Commit SHA for reusable-ci-binary-ref, resolved against the canonical reusable-ci remote
       # before any tag movement. Downstream plain-runner jobs use this so
       # they install the same reusable-ci commit the runtime image was built
       # from, surviving version-bump tag moves.
@@ -349,6 +350,8 @@ jobs:
       # names, image tags or stable/draft classification.
       release-tag: ${{ steps.relctx.outputs.release-tag }}
     steps:
+      - name: Validate release workflow provider
+        run: reusable-ci validate release-provider
       # Defense-in-depth gate at the top of the release pipeline:
       # refuse triggers that would attach signing/package/API secrets
       # to PR-HEAD code. Every downstream job depends on parse-config
@@ -360,11 +363,13 @@ jobs:
       - name: Checkout caller repository
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          CHECKOUT_REF: ${{ inputs.branch }}
+          CHECKOUT_REF: ${{ github.sha }}
+          CHECKOUT_FETCH_ALL_REFS: "true"
         run: reusable-ci platform checkout
       - name: Resolve reusable-ci ref to commit SHA
         id: resolve-ref
         env:
+          REMOTE_URL: https://github.com/diggsweden/reusable-ci
           REF: ${{ inputs['reusable-ci-binary-ref'] }}
         run: reusable-ci platform resolve-ref
       - name: Derive release tag from request ref
@@ -373,6 +378,7 @@ jobs:
         # owns the parsing; bash never strips refs.
         env:
           RELEASE_CONTEXT_REQUIRE_REQUEST: "true"
+          RELEASE_CONTEXT_REQUIRE_STABLE: "true"
         run: reusable-ci version derive-release
       - name: Parse artifacts.yml
         id: parse
@@ -427,6 +433,7 @@ jobs:
       sign-artifacts: ${{ fromJson(needs.parse-config.outputs['release-plan-json']).policy.sign_artifacts }}
       require-allowlisted-signer: ${{ fromJson(needs.parse-config.outputs['release-plan-json']).policy.require_allowlisted_signer }}
       branch: ${{ inputs.branch }}
+      authorized-source-sha: ${{ github.sha }}
       # Cargo prerequisite validation checks Cargo.lock and `cargo --version`,
       # so use the Rust runtime whenever Cargo artifacts (either mode) are present.
       runtime-image: ${{ (fromJson(needs.parse-config.outputs['publish-stage-plan-json']).targets.cargo_container_first.runs || fromJson(needs.parse-config.outputs['build-stage-plan-json']).targets.cargo.runs) && inputs['runtime-image-rust'] || inputs['runtime-image'] }}
@@ -437,6 +444,7 @@ jobs:
     needs: [parse-config, validate-prerequisites]
     if: ${{ !failure() && !cancelled() }}
     permissions:
+      actions: read
       contents: write
       packages: read
     secrets:
@@ -447,7 +455,10 @@ jobs:
     uses: ./.github/workflows/release-prepare-stage.yml
     with:
       branch: ${{ inputs.branch }}
+      authorized-source-sha: ${{ github.sha }}
+      existing-release-sha: ${{ needs.validate-prerequisites.outputs.existing-release-sha }}
       prepare-stage-plan-json: ${{ needs.parse-config.outputs.prepare-stage-plan-json }}
+      reusable-ci-binary-ref: ${{ needs.parse-config.outputs.reusable-ci-binary-ref }}
       # git_signing.method comes from artifacts.yml via the parsed config plan;
       # defaults to gpg, so repos that never set git-signing are unchanged.
       git-signing-method: ${{ fromJson(needs.parse-config.outputs.config-plan-json).git_signing.method }}
@@ -457,11 +468,40 @@ jobs:
       runtime-image-java: ${{ inputs['runtime-image-java'] }}
       runtime-image-node: ${{ inputs['runtime-image-node'] }}
       runtime-image-rust: ${{ inputs['runtime-image-rust'] }}
+  validate-release-tag:
+    name: Validate Final Release Tag
+    needs: [parse-config, execute-prepare-stage]
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ inputs['runtime-image'] }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout immutable release commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CHECKOUT_REF: ${{ needs.execute-prepare-stage.outputs.release-sha }}
+          CHECKOUT_FETCH_ALL_REFS: "true"
+        run: reusable-ci platform checkout
+      - name: Validate remote final tag object and commit
+        env:
+          RELEASE_SHA: ${{ needs.execute-prepare-stage.outputs.release-sha }}
+          TAG_NAME: ${{ needs.parse-config.outputs.release-tag }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: reusable-ci release validate-tag
+      - name: Validate final tag signature
+        env:
+          TAG_NAME: ${{ needs.parse-config.outputs.release-tag }}
+          REPOSITORY: ${{ github.repository }}
+          RELEASE_GPG_PUBLIC_KEY: ${{ secrets.RELEASE_GPG_PUBLIC_KEY }}
+          REQUIRE_VALID_SIGNATURE: "true"
+        run: reusable-ci validate tag signature
   # ===== Stage 3: Build =====
   # Build fanout now lives below this control-plane stage call.
   execute-build-stage:
     name: Build
-    needs: [parse-config, execute-prepare-stage]
+    needs: [parse-config, execute-prepare-stage, validate-release-tag]
     if: ${{ !failure() && !cancelled() }}
     permissions:
       contents: read
@@ -478,7 +518,10 @@ jobs:
       XCCONFIG_BASE64: ${{ secrets.XCCONFIG_BASE64 }}
     uses: ./.github/workflows/release-build-stage.yml
     with:
-      branch: ${{ needs.parse-config.outputs.release-tag }}
+      branch: ${{ needs.execute-prepare-stage.outputs.release-sha }}
+      release-tag: ${{ needs.parse-config.outputs.release-tag }}
+      release-sha: ${{ needs.execute-prepare-stage.outputs.release-sha }}
+      source-date-epoch: ${{ needs.execute-prepare-stage.outputs.source-date-epoch }}
       build-stage-plan-json: ${{ needs.parse-config.outputs.build-stage-plan-json }}
       reusable-ci-binary-ref: ${{ needs.parse-config.outputs.reusable-ci-binary-ref }}
       runtime-image: ${{ inputs['runtime-image'] }}
@@ -516,7 +559,10 @@ jobs:
       REUSABLE_CI_BUILD_SECRETS_JSON: ${{ secrets.REUSABLE_CI_BUILD_SECRETS_JSON }}
     uses: ./.github/workflows/release-publish-stage.yml
     with:
-      branch: ${{ needs.parse-config.outputs.release-tag }}
+      branch: ${{ needs.execute-prepare-stage.outputs.release-sha }}
+      release-tag: ${{ needs.parse-config.outputs.release-tag }}
+      release-sha: ${{ needs.execute-prepare-stage.outputs.release-sha }}
+      source-date-epoch: ${{ needs.execute-prepare-stage.outputs.source-date-epoch }}
       publish-stage-plan-json: ${{ needs.parse-config.outputs.publish-stage-plan-json }}
       reusable-ci-binary-ref: ${{ needs.parse-config.outputs.reusable-ci-binary-ref }}
       runtime-image: ${{ inputs['runtime-image'] }}
@@ -544,9 +590,9 @@ jobs:
     needs: [parse-config, execute-publish-stage]
     if: ${{ !failure() && !cancelled() && fromJson(needs.parse-config.outputs['publish-stage-plan-json']).targets.containers.runs }}
     permissions:
+      actions: read
       contents: read
       packages: write
-      id-token: write
     uses: ./.github/workflows/promote-stage.yml
     with:
       stage: dev
@@ -557,9 +603,9 @@ jobs:
     needs: [parse-config, execute-publish-stage, promote-dev]
     if: ${{ !failure() && !cancelled() && fromJson(needs.parse-config.outputs['publish-stage-plan-json']).targets.containers.runs }}
     permissions:
+      actions: read
       contents: read
       packages: write
-      id-token: write
     uses: ./.github/workflows/promote-stage.yml
     with:
       stage: staging
@@ -571,9 +617,9 @@ jobs:
     needs: [parse-config, execute-publish-stage, promote-staging]
     if: ${{ !failure() && !cancelled() && fromJson(needs.parse-config.outputs['publish-stage-plan-json']).targets.containers.runs }}
     permissions:
+      actions: read
       contents: read
       packages: write
-      id-token: write
     uses: ./.github/workflows/promote-stage.yml
     with:
       stage: release
@@ -591,7 +637,7 @@ jobs:
   # Release creation stays top-level because it is the public end of the pipeline.
   create-release:
     name: Create GitHub Release
-    needs: [parse-config, execute-prepare-stage, execute-publish-stage]
+    needs: [parse-config, execute-prepare-stage, validate-release-tag, execute-publish-stage]
     # Run even if previous jobs were skipped but at least one succeeded
     if: ${{ fromJson(needs.parse-config.outputs['release-plan-json']).policy.create_release }}
     permissions:
@@ -606,7 +652,7 @@ jobs:
     uses: ./.github/workflows/release-create-github.yml
     with:
       release-name: "${{ needs.parse-config.outputs.release-tag }}"
-      checkout-ref: ${{ needs.parse-config.outputs.release-tag }}
+      checkout-ref: ${{ needs.execute-prepare-stage.outputs.release-sha }}
       attach-artifacts: ${{ inputs['release.attachartifacts'] }}
       sboms: ${{ fromJson(needs.parse-config.outputs['release-plan-json']).policy.sboms }}
       sign-artifacts: ${{ fromJson(needs.parse-config.outputs['release-plan-json']).policy.sign_artifacts }}

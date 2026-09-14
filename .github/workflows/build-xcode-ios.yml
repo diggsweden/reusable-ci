@@ -18,13 +18,12 @@
 #   - Configurable schemes and configurations
 #   - iOS code signing with certificates and provisioning profiles
 #   - IPA export with custom options
-#   - Date-stamped artifact names
-#   - Custom artifact naming (environment prefixes)
+#   - Configurable artifact base name with an optional git-ref suffix
 #   - Support for workspace or project files
 #
 # Outputs:
-#   - IPA artifacts with custom names
-#   - Examples: "2025-01-15 - demo_store - wallet-app-ios - Wallet Demo - IPA Release"
+#   - IPA and archive artifacts named from artifact-name (or the repository)
+#     plus `-<ref>` when include-tag is enabled
 #
 # Required Secrets (for signing):
 #   IOS_SIGNING_CERTIFICATE_BASE64: Base64-encoded distribution certificate (.p12)
@@ -110,9 +109,9 @@ on:
         default: "."
         type: string
       branch:
-        description: "Branch, tag, or SHA to checkout"
+        description: "Branch, tag, or SHA to checkout. Empty uses the triggering ref."
         required: false
-        default: "main"
+        default: ""
         type: string
       destination:
         description: "Build destination (default: generic/platform=iOS)"
@@ -142,7 +141,7 @@ on:
         description: "Base64-encoded provisioning profile (.mobileprovision)"
         required: false
       KEYCHAIN_PASSWORD:
-        description: "Ephemeral macOS keychain password generated for this build"
+        description: "No longer used. The build mints its own transient keychain password; this secret is accepted and ignored so existing callers keep working."
         required: false
       XCCONFIG_BASE64:
         description: "Base64-encoded xcconfig file (signing team ID, bundle ID, etc.)"
@@ -157,19 +156,37 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Guard working-directory stays inside the workspace
+        # Every upload below is rooted at this caller-supplied value. An
+        # absolute path or a parent step would take the artifact from outside
+        # the workspace, so it is refused here, before any step consumes it.
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: |
+          case "$WORKING_DIRECTORY" in
+            "") echo "working-directory must not be empty" >&2; exit 1 ;;
+            /*) echo "working-directory must be workspace-relative: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
+          case "/$WORKING_DIRECTORY/" in
+            */../*) echo "working-directory must not contain parent-directory steps: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
       - name: Checkout repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 1
-      - name: Install reusable-ci binary
-        # Same-repo action, resolved at the same release tag the consumer
-        # already pinned; the tag is created once by the release flow and
-        # never force-moved (tag-immutability policy).
-        # nosemgrep: yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag
-        uses: diggsweden/reusable-ci/.github/actions/install-reusable-ci@v3.0.0
+      - name: Checkout reusable-ci bootstrap installers
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: diggsweden/reusable-ci
           ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+          persist-credentials: false
+      - name: Install reusable-ci binary
+        env:
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
 
       # Defense-in-depth: refuse PR-context triggers. IOS_SIGNING_*
       # and PROVISIONING_PROFILE_BASE64 land in env for this job;

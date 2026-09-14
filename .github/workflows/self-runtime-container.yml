@@ -61,9 +61,6 @@ on:
         required: false
         default: false
         type: boolean
-concurrency:
-  group: runtime-container-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -353,7 +350,7 @@ jobs:
         # Keyless signing of the per-arch CycloneDX SBOM attestation below.
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
-          cosign-release: 'v3.1.1'
+          cosign-release: 'v3.1.3'
       - name: Download CLI dist
         # JS action (bootstrap): this download OBTAINS the engine binary —
         # cli-dist is the CLI built this run — so no engine exists yet to run
@@ -528,7 +525,7 @@ jobs:
     name: Publish Manifest (${{ matrix.runtime.name }})
     needs: [publish-arch, build-cli]
     if: >-
-      github.event_name == 'schedule' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)
+      github.event_name == 'schedule' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/refactor-go'))
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -549,6 +546,7 @@ jobs:
           - name: reusable-ci-runtime-android-35
             target: android
     permissions:
+      actions: read
       contents: read
       packages: write
       # id-token: write required for the Sigstore-keyless image
@@ -566,7 +564,7 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
-          cosign-release: 'v3.1.1'
+          cosign-release: 'v3.1.3'
       - name: Download CLI dist
         # JS action (bootstrap): this download OBTAINS the engine binary —
         # cli-dist is the CLI built this run — so no engine exists yet to run
@@ -634,6 +632,15 @@ jobs:
             type=semver,pattern=v{{major}}.{{minor}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
             type=semver,pattern=v{{major}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
         run: reusable-ci container metadata
+      - name: Verify mutable source ref is still current
+        if: ${{ github.ref_type == 'branch' }}
+        run: |
+          set -euo pipefail
+          remote_sha="$(git ls-remote --exit-code origin "$GITHUB_REF" | awk 'NR == 1 { print $1 }')"
+          if [[ "$remote_sha" != "$GITHUB_SHA" ]]; then
+            printf 'Refusing stale publication: %s now resolves to %s, run built %s\n' "$GITHUB_REF" "$remote_sha" "$GITHUB_SHA" >&2
+            exit 1
+          fi
       - name: Create manifest list and push
         env:
           IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/${{ matrix.runtime.name }}
@@ -675,8 +682,8 @@ jobs:
           reusable-ci container attest --type slsaprovenance1 "${{ steps.inspect.outputs.image-digest-ref }}"
 
   # Publish the CLI tarballs (built once by build-cli) to the rolling pre-release
-  # prerelease v3.0.0-pre. Pre-release only — tagged releases still publish via
-  # release-binary.yml until Phase 2 unifies them. Runs after publish-merge so
+  # v3.0.0-pre. Tagged releases currently rebuild and publish through
+  # release-binary.yml. Runs after publish-merge so
   # the pre-release CLI and pre-release images advance together. install-reusable-ci.sh
   # resolves `reusable-ci-binary-ref: v3.0.0-pre` to these assets (download +
   # cosign-verify against the build-cli pre-release identity).
@@ -684,7 +691,10 @@ jobs:
     name: Publish CLI (pre-release)
     needs: [build-cli, publish-merge]
     if: >-
-      github.event_name == 'schedule' || (github.event_name == 'push' && github.ref_type != 'tag') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/refactor-go') && (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref_type != 'tag') || (github.event_name == 'workflow_dispatch' && inputs.publish && github.ref_type != 'tag'))
+    concurrency:
+      group: self-runtime-cli-v3.0.0-pre
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -705,12 +715,14 @@ jobs:
           name: cli-dist
           path: cli-dist
       - name: Publish rolling pre-release
-        # GitHub REST API via curl (no gh, no extra action). Rolling: drop the
-        # existing release + tag, then recreate at this commit and upload the
-        # dist assets — so v3.0.0-pre always re-anchors to the latest pre-release
-        # build. The recreated tag is excluded from this workflow's and
-        # self-release.yml's tag triggers, so it never re-enters the release
-        # path. curl + jq are preinstalled on the runner.
+        # Bootstrap the CLI from this run's checksum-verified linux/amd64
+        # archive, then let the repository-private typed use case update the
+        # pre-provisioned mutable -pre release in place: payloads first, the
+        # signature bundle next, and checksums.txt last as the commit point.
+        # Readers can briefly see mixed/missing payloads, but the old or absent
+        # checksum makes installers fail closed; the channel tag moves only
+        # after the complete asset set verifies. The moved tag is excluded from this workflow's and
+        # self-release.yml's tag triggers, so it never re-enters the release path.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.build-cli.outputs.version }}
@@ -718,35 +730,19 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          tag="v${VERSION}"
-          api="https://api.github.com/repos/${REPO}"
-          auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
-          assets_dir="$(dirname "$(find cli-dist -name checksums.txt | head -1)")"
-          [ -d "$assets_dir" ] || { echo "::error::dist assets not found in cli-dist/"; ls -R cli-dist; exit 1; }
-
-          # Drop any existing release + tag so the channel re-anchors at this commit.
-          rid="$(curl -fsS "${auth[@]}" "${api}/releases/tags/${tag}" 2>/dev/null | jq -r '.id // empty' || true)"
-          [ -n "$rid" ] && curl -fsS -X DELETE "${auth[@]}" "${api}/releases/${rid}" || true
-          curl -fsS -X DELETE "${auth[@]}" "${api}/git/refs/tags/${tag}" >/dev/null 2>&1 || true
-
-          # Recreate the prerelease (also creates the tag at this commit).
-          body="Rolling pre-release built from the latest development commit. Not for production — pin a vN.N.N release for an immutable CLI."
-          create="$(curl -fsS -X POST "${auth[@]}" "${api}/releases" \
-            -d "$(jq -n --arg t "$tag" --arg c "$SHA" --arg n "reusable-ci ${VERSION} (rolling pre-release)" --arg b "$body" \
-                 '{tag_name:$t, target_commitish:$c, name:$n, body:$b, prerelease:true, make_latest:"false"}')")"
-          upload="$(printf '%s' "$create" | jq -r '.upload_url' | sed 's/{?name,label}//')"
-          [ -n "$upload" ] && [ "$upload" != "null" ] || { echo "::error::release create failed"; printf '%s\n' "$create"; exit 1; }
-
-          # Upload the release artifacts only: archives, checksums, the cosign
-          # signature bundle, per-archive SBOMs, and the signed SLSA provenance
-          # statement + bundle (build-cli generates these via cosign sign-blob).
-          # Deliberately excludes goreleaser's internal dist files
-          # (artifacts.json, config.yaml, metadata.json), which are not assets.
-          n=0
-          for f in "$assets_dir"/*.tar.gz "$assets_dir"/checksums.txt "$assets_dir"/checksums.txt.bundle "$assets_dir"/*.sbom.json "$assets_dir"/*.intoto.json "$assets_dir"/*.intoto.jsonl; do
-            [ -f "$f" ] || continue
-            curl -fsS -X POST "${auth[@]}" -H "Content-Type: application/octet-stream" \
-              --data-binary @"$f" "${upload}?name=$(basename "$f")" >/dev/null
-            n=$((n + 1))
-          done
-          printf 'published %s assets to %s\n' "$n" "$tag"
+          assets_dir=cli-dist
+          archive_name="reusable-ci_${VERSION}_linux_amd64.tar.gz"
+          archive="${assets_dir}/${archive_name}"
+          test -f "${assets_dir}/checksums.txt"
+          test -f "$archive"
+          checksum_entries="$(awk -v name="$archive_name" '$2 == name { count++ } END { print count + 0 }' "${assets_dir}/checksums.txt")"
+          if [[ "$checksum_entries" != 1 ]]; then
+            printf 'Expected exactly one checksum entry for %s, found %s\n' "$archive_name" "$checksum_entries" >&2
+            exit 1
+          fi
+          (cd "$assets_dir" && sha256sum --check --strict checksums.txt)
+          mkdir -p cli-publish
+          tar -xzf "$archive" -C cli-publish reusable-ci
+          ./cli-publish/reusable-ci release publish-self-runtime-cli \
+            --repository "$REPO" --source-ref "${GITHUB_REF}" --commit "$SHA" \
+            --assets-dir "$assets_dir"

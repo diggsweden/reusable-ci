@@ -34,9 +34,9 @@ on:
         default: "."
         type: string
       branch:
-        description: "Branch to checkout"
+        description: "Branch, tag, or SHA to checkout. Empty uses the triggering ref."
         required: false
-        default: "main"
+        default: ""
         type: string
       artifact-name:
         description: "Artifact name for uploads (defaults to 'cargo-build-sbom')"
@@ -65,6 +65,20 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Guard working-directory stays inside the workspace
+        # Every upload below is rooted at this caller-supplied value. An
+        # absolute path or a parent step would take the artifact from outside
+        # the workspace, so it is refused here, before any step consumes it.
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: |
+          case "$WORKING_DIRECTORY" in
+            "") echo "working-directory must not be empty" >&2; exit 1 ;;
+            /*) echo "working-directory must be workspace-relative: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
+          case "/$WORKING_DIRECTORY/" in
+            */../*) echo "working-directory must not contain parent-directory steps: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
       - name: Checkout repository
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -99,7 +113,7 @@ jobs:
         # (e.g. "hsm-worker") so each upload is unique. Direct callers
         # who don't pass artifact-name fall back to the bare default,
         # which is fine for single-cargo-artefact projects.
-        # SBOM generation is advisory (beta); a missing bom.json warns, not fails.
+        # Enabled Build SBOMs are mandatory release deliverables.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ inputs['artifact-name'] != '' && format('{0}-cargo-build-sbom', inputs['artifact-name']) || 'cargo-build-sbom' }}
@@ -107,7 +121,7 @@ jobs:
             ${{ inputs['working-directory'] }}/bom.json
             ${{ inputs['working-directory'] }}/**/bom.json
           retention-days: "7"
-          if-no-files-found: warn
+          if-no-files-found: error
       - name: Write SBOM status to step summary
         if: always()
         env:

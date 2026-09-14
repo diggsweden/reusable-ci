@@ -12,8 +12,9 @@
 # (the Maven profile drives GPG signing via maven-gpg-plugin) → write the
 # summary. GPG key is cleaned up in after_script.
 #
-# ARTIFACT CONTRACT: the built library (sources + javadoc JARs under */target/)
-# must already be in the working directory. Provide it via GitLab native artifact
+# ARTIFACT CONTRACT: the project-built library (including POM/profile-attached
+# sources + javadoc JARs under */target/) must already be in the working
+# directory. Provide it via GitLab native artifact
 # passing — `needs:`/`dependencies:` on the build-maven job, or run this in the
 # same pipeline as the build. (Unlike GitHub/Forgejo, the GitLab provider has no
 # run-artifact API, so `reusable-ci artifact download` is not used here.)

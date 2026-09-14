@@ -17,9 +17,9 @@ on:
   workflow_call:
     inputs:
       branch:
-        description: "Branch to generate changelog from"
+        description: "Branch, tag, or SHA to generate the changelog from. Empty uses the triggering ref."
         required: false
-        default: "main"
+        default: ""
         type: string
       changelog-config:
         description: "Path to git-cliff configuration file. Defaults to the bundled template at /opt/reusable-ci/templates/gitcliff/default.toml inside the runtime image."
@@ -82,11 +82,18 @@ jobs:
         env:
           CHANGELOG_FILE: ${{ inputs['output-file'] }}
         run: reusable-ci release validate-changelog
+      - name: Stage Changelog Artifact
+        if: ${{ inputs['upload-as-artifact'] }}
+        env:
+          CHANGELOG_FILE: ${{ inputs['output-file'] }}
+        run: |
+          mkdir -p .reusable-ci/changelog-artifact
+          cp -- "$CHANGELOG_FILE" ".reusable-ci/changelog-artifact/$(basename -- "$CHANGELOG_FILE")"
       - name: Upload Changelog Artifact
         if: ${{ inputs['upload-as-artifact'] }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ inputs['artifact-name'] }}
-          path: ${{ inputs['output-file'] }}
+          path: .reusable-ci/changelog-artifact/**
           retention-days: "7"
           if-no-files-found: warn

@@ -8,7 +8,7 @@
 # and deploys them to Maven Central with GPG signing.
 #
 # Requirements:
-#   - Artifacts must be built with build-maven.yml using build-type: lib
+#   - Artifacts must use build-type: lib, with the POM/profile attaching sources and javadoc JARs
 #   - POM must have required Maven Central metadata (name, description, url, licenses, etc.)
 #   - GPG signing credentials configured
 #   - Maven Central (Sonatype) credentials configured
@@ -20,8 +20,8 @@
 #   RELEASE_GPG_PASSPHRASE: GPG key passphrase
 #
 # Required Permissions:
-#   contents: read   # Download artifacts
-#   packages: write  # Backup publish to GitHub Packages
+#   actions: read   # Download workflow artifacts
+#   contents: read  # Checkout source
 #
 name: Publish Maven Central
 on:
@@ -46,9 +46,8 @@ on:
         default: "central-release"
         type: string
       branch:
-        description: "Branch to checkout (default: main)"
-        required: false
-        default: "main"
+        description: "Explicit branch, tag, or SHA whose package is published"
+        required: true
         type: string
       runtime-image:
         description: "reusable-ci runtime image carrying JDK + Maven. Optional override; default uses the matching v3.0.0 runtime image."
@@ -85,11 +84,10 @@ jobs:
     container:
       image: ${{ inputs['runtime-image'] }}
     permissions:
-      # Least-privilege: Maven Central publishes externally to Sonatype and this
-      # job performs no git write (no tag/commit/release). Confirm on next release.
+      # Maven Central publishes externally to Sonatype. The job reads source and
+      # workflow artifacts but does not use GitHub Packages or OIDC.
+      actions: read
       contents: read
-      packages: write
-      id-token: write
     steps:
       # Defense-in-depth: refuse PR-context triggers. Maven Central
       # credentials + GPG signing key live in env on this job and must

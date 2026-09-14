@@ -2,38 +2,30 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 # Description:
-# Alternative PR lint surface — runs MegaLinter against the consumer repository
+# Alternative PR lint surface - runs MegaLinter against the consumer repository
 # and uploads its security findings to GitHub Code Scanning as SARIF. The peer
 # of lint-nanolinter.yml: selected by `lint-engine: megalinter` on the
 # pullrequest orchestrator. nanolinter and megalinter are mutually exclusive
 # (the PR plan runs at most one), so this never runs alongside nanolinter.
 #
-# MegaLinter is the heavier, governance-recognised engine: it runs its 100+
-# bundled linters from the pinned `oxsecurity/megalinter` image. Unlike the
-# node-less nanolinter flavour image, this job runs on a standard runner with a
-# writable workspace, so MegaLinter writes its own job-summary panel directly —
-# no artifact-shipping is needed.
+# MegaLinter runs its bundled linters using the caller-selected image and reads
+# the repository's `.mega-linter.yml`. The image reference must be pinned by
+# digest.
 #
-# Contract (identical to lint-nanolinter.yml): run as a gate → emit SARIF →
-# reusable-ci enrich + upload to Code Scanning. The SARIF glue is engine-
-# agnostic (it reads the scanner name from the SARIF tool.driver), so MegaLinter
-# findings land in Code Scanning exactly like nanolinter's.
+# The container acts as repository code: it receives a read token, a writable
+# checkout, and a read-write Docker socket. The socket permits control of the
+# host daemon, including containers and mounted host paths. Callers must review
+# and trust the exact image digest before selecting this engine.
 #
-# Adopter configuration is MegaLinter-native: a `.mega-linter.yml` at the repo
-# root is read automatically — the reason this engine exists for teams that
-# standardise on MegaLinter.
-#
-# NOTE: the MegaLinter container invocation below is the first cut and wants
-# live validation on a real PR before v3.0.0 (flavour/digest pin, diff-vs-full
-# behaviour, docker-socket needs of individual linters).
+# The job uses MegaLinter's exit status as the lint gate, emits SARIF, and uses
+# reusable-ci to enrich and upload available findings to Code Scanning.
 name: Lint MegaLinter
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
       megalinter-image:
-        description: "MegaLinter image to lint in (pin by @sha256; pick a flavour at https://megalinter.io/flavors/)"
-        required: false
-        default: "oxsecurity/megalinter:v8"
+        description: "Required trusted MegaLinter image reference pinned by @sha256:<64 lowercase hex>"
+        required: true
         type: string
       reusable-ci-binary-ref:
         description: "reusable-ci version installed (cosign-verified) for the SARIF enrich/upload commands. Use a published release tag (vN.N.N or vN.N.N-pre) so the bootstrap scripts + signature resolve."
@@ -67,13 +59,22 @@ jobs:
       # MegaLinter writes its SARIF here under the mounted workspace.
       SARIF_FILE: megalinter-reports/megalinter-report.sarif
     steps:
+      - name: Validate trusted MegaLinter image digest
+        env:
+          MEGALINTER_IMAGE: ${{ inputs['megalinter-image'] }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$MEGALINTER_IMAGE" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}$ ]]; then
+            printf '::error::megalinter-image must be a reviewed image reference pinned by sha256 digest\n'
+            exit 64
+          fi
       - name: Checkout repository
         # Full history so MegaLinter can scope to the PR diff against the base.
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
       - name: Run MegaLinter (security gate)
-        # Runs the pinned MegaLinter container over the workspace. SARIF_REPORTER
+        # Runs the validated digest-pinned MegaLinter container over the workspace. SARIF_REPORTER
         # emits the SARIF the steps below upload; DISABLE_ERRORS=false makes a
         # blocking finding fail the container (the lint gate). The step fails
         # directly so the red lands HERE; the SARIF steps still run via
@@ -114,6 +115,7 @@ jobs:
           work="$(mktemp -d)"
           raw="https://raw.githubusercontent.com/diggsweden/reusable-ci/${BINARY_REF}/scripts/bootstrap"
           curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-common.sh" "$raw/install-common.sh"
+          curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-cosign.sh" "$raw/install-cosign.sh"
           curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-reusable-ci.sh" "$raw/install-reusable-ci.sh"
           bash "$work/install-reusable-ci.sh" "$BINARY_REF"
       - name: Enrich + upload MegaLinter SARIF to Code Scanning

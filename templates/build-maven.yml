@@ -31,7 +31,7 @@ spec:
     build-type:
       default: app
       options: ["app", "lib"]
-      description: Build shape — "app" (clean package) or "lib" (sources + javadoc).
+      description: Lifecycle — "app" (clean package) or "lib" (compile/test/package with an optional project-owned profile).
     profile:
       default: ""
       description: Maven profile to activate (library builds).

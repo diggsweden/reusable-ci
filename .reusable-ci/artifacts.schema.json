@@ -62,7 +62,7 @@
     },
     "projectType": {
       "type": "string",
-      "description": "Ecosystem identifier. For `go` and `cargo`, config.build-mode selects the pipeline shape (artifact-first|container-first; omitted defaults to artifact-first). Python is recognized as a future placeholder but is not currently a valid choice — no build/publish workflow exists; setting it would silently produce nothing.",
+      "description": "Ecosystem identifier. For `go` and `cargo`, config.build-mode selects the pipeline shape (artifact-first|container-first; omitted defaults to artifact-first). Python is reserved as a future placeholder and is rejected until build/publish support exists.",
       "enum": ["maven", "npm", "gradle", "gradle-android", "xcode-ios", "go", "cargo", "meta"]
     },
     "buildType": {

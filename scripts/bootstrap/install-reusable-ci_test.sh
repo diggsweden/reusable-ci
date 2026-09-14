@@ -18,11 +18,17 @@
 # shellcheck disable=SC2235
 
 set -eo pipefail
-# Deliberately no `-u`: the test helpers source the installer which
-# sets defaults via parameter expansion (${VAR:-default}); set -u
-# rejects those even though they're well-defined under bash's
-# expansion rules. Each test invocation goes through a subshell so
-# inter-test state is fully isolated regardless.
+if [[ "${RC_INSTALLER_TEST_ISOLATED:-}" != "1" ]]; then
+	fixture_root="$(/usr/bin/mktemp -d)"
+	trap '/usr/bin/rm -rf "$fixture_root"' EXIT
+	/usr/bin/mkdir -p "$fixture_root/home"
+	status=0
+	/usr/bin/env -i PATH=/usr/bin:/bin HOME="$fixture_root/home" TMPDIR="$fixture_root" LC_ALL=C \
+		RC_INSTALLER_TEST_ISOLATED=1 /bin/bash --noprofile --norc "${BASH_SOURCE[0]}" || status=$?
+	exit "$status"
+fi
+# Each case uses a subshell to isolate variables and shell options. The shared
+# fixture root below handles filesystem cleanup separately.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=install-reusable-ci.sh
@@ -68,41 +74,61 @@ path_without_cosign() {
 	printf '%s' "$clean"
 }
 
-# stub_cosign writes a fake cosign binary into $1/bin that exits with
-# the supplied code for verify-blob (any other subcommand exits 0).
+# stub_cosign writes a fake cosign binary into $1/bin that records each
+# verify-blob argument list in $1/cosign-calls and exits with the supplied code
+# for it (any other subcommand exits 0).
 stub_cosign() {
 	local dir="$1" verify_exit="$2"
 	mkdir -p "$dir/bin"
 	{
-		printf '#!/bin/sh\nverify_exit=%s\n' "$verify_exit"
+		printf '#!/bin/sh\nverify_exit=%s\ncalls=%s\n' "$verify_exit" "$dir/cosign-calls"
 		cat <<'EOF'
-if [ "$1" = "verify-blob" ]; then exit "$verify_exit"; fi
+if [ "$1" = "verify-blob" ]; then printf '%s\n' "$*" >>"$calls"; exit "$verify_exit"; fi
 exit 0
 EOF
 	} >"$dir/bin/cosign"
 	chmod +x "$dir/bin/cosign"
 }
 
-# Each test is a function that prepares a tmpdir, invokes verify_*,
-# and exits with its return code. The subshell isolation in
-# assert_exit means we don't need explicit cleanup — tmpdirs leak to
-# /tmp which the OS reaps.
+# expect_refusal checks a refusal's status and exact reason on the combined
+# output.
+expect_refusal() {
+	local rc="$1" output="$2" reason="$3"
+	if [[ "$rc" == 0 || "$output" != *"$reason"* ]]; then
+		printf 'refusal status=%s output=%s, want the reason %s\n' "$rc" "$output" "$reason" >&2
+		return 1
+	fi
+}
+
+# All test-owned state is below one root and removed on every exit. Subshells
+# isolate each case's environment; they do not clean up files on their own.
+TEST_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TEST_ROOT"' EXIT
+export TMPDIR="$TEST_ROOT"
 
 t_cosign_absent_fails_by_default() (
 	local tmp
 	tmp="$(mktemp -d)"
 	printf 'fake\n' >"$tmp/checksums.txt"
-	PATH="$(path_without_cosign)" \
-		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
+	printf 'fake bundle\n' >"$tmp/checksums.txt.bundle"
+	local output rc=0
+	output="$(PATH="$(path_without_cosign)" verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/checksums.txt.bundle" 2>&1)" || rc=$?
+	if [[ "$rc" == 1 && "$output" == *"cosign not on PATH"* ]]; then
+		return 1
+	fi
+	printf 'unexpected missing-cosign result: %s\n' "$output" >&2
+	return 2
 )
 
 t_bundle_absent_fails_by_default() (
-	local tmp
+	local tmp output rc=0
 	tmp="$(mktemp -d)"
 	printf 'fake\n' >"$tmp/checksums.txt"
 	stub_cosign "$tmp" 0
-	PATH="$tmp/bin:$(path_without_cosign)" \
-		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle"
+	output="$(PATH="$tmp/bin:$(path_without_cosign)" \
+		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/missing.bundle" 2>&1)" || rc=$?
+	expect_refusal "$rc" "$output" "missing.bundle missing; the release carries no signature bundle" &&
+		[[ ! -e "$tmp/cosign-calls" ]]
 )
 
 t_cosign_verify_passes() (
@@ -112,25 +138,39 @@ t_cosign_verify_passes() (
 	printf 'fake bundle\n' >"$tmp/checksums.txt.bundle"
 	stub_cosign "$tmp" 0
 	PATH="$tmp/bin:$(path_without_cosign)" \
-		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/checksums.txt.bundle"
+		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/checksums.txt.bundle" v3.1.0 >/dev/null &&
+		[[ "$(cat "$tmp/cosign-calls")" == "verify-blob --bundle $tmp/checksums.txt.bundle --new-bundle-format --certificate-identity-regexp $(_reusable_ci_cosign_identity v3.1.0) --certificate-oidc-issuer https://token.actions.githubusercontent.com $tmp/checksums.txt" ]]
 )
 
 t_cosign_verify_rejects() (
-	local tmp
+	local tmp output rc=0
 	tmp="$(mktemp -d)"
 	printf 'tampered\n' >"$tmp/checksums.txt"
 	printf 'fake bundle\n' >"$tmp/checksums.txt.bundle"
 	stub_cosign "$tmp" 1
-	PATH="$tmp/bin:$(path_without_cosign)" \
-		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/checksums.txt.bundle"
+	output="$(PATH="$tmp/bin:$(path_without_cosign)" \
+		verify_reusable_ci_cosign "$tmp/checksums.txt" "$tmp/checksums.txt.bundle" 2>&1)" || rc=$?
+	expect_refusal "$rc" "$output" "cosign verification of checksums.txt failed against identity" &&
+		[[ "$output" != *"verified"* && "$(wc -l <"$tmp/cosign-calls")" == 1 && "$(cat "$tmp/checksums.txt")" == tampered ]]
 )
 
 t_sha256_rejects_tampered() (
-	local tmp
+	local tmp output rc=0
 	tmp="$(mktemp -d)"
 	printf 'genuine\n' >"$tmp/app.tgz"
 	printf '0000000000000000000000000000000000000000000000000000000000000000  app.tgz\n' >"$tmp/checksums.txt"
-	verify_reusable_ci_sha256 "$tmp/app.tgz" "$tmp/checksums.txt"
+	output="$(verify_reusable_ci_sha256 "$tmp/app.tgz" "$tmp/checksums.txt" 2>&1)" || rc=$?
+	expect_refusal "$rc" "$output" "app.tgz SHA-256 mismatch:" &&
+		[[ "$output" == *"want: 0000000000000000000000000000000000000000000000000000000000000000"* ]]
+)
+
+t_sha256_rejects_unlisted_archive() (
+	local tmp output rc=0
+	tmp="$(mktemp -d)"
+	printf 'genuine\n' >"$tmp/app.tgz"
+	printf '0000000000000000000000000000000000000000000000000000000000000000  other.tgz\n' >"$tmp/checksums.txt"
+	output="$(verify_reusable_ci_sha256 "$tmp/app.tgz" "$tmp/checksums.txt" 2>&1)" || rc=$?
+	expect_refusal "$rc" "$output" "app.tgz not in checksums.txt"
 )
 
 t_sha256_accepts_genuine() (
@@ -169,12 +209,12 @@ t_binary_pin_rejects_and_removes() (
 	local tmp
 	tmp="$(mktemp -d)"
 	printf 'binary\n' >"$tmp/reusable-ci"
-	if REUSABLE_CI_BINARY_SHA256="0000000000000000000000000000000000000000000000000000000000000000" \
-		verify_reusable_ci_binary_pin "$tmp/reusable-ci"; then
-		return 1
-	fi
+	local output rc=0
+	output="$(REUSABLE_CI_BINARY_SHA256="0000000000000000000000000000000000000000000000000000000000000000" \
+		verify_reusable_ci_binary_pin "$tmp/reusable-ci" 2>&1)" || rc=$?
 	# fail-closed also removes the mismatching binary
-	[[ ! -f "$tmp/reusable-ci" ]]
+	expect_refusal "$rc" "$output" "installed reusable-ci does not match REUSABLE_CI_BINARY_SHA256:" &&
+		[[ ! -e "$tmp/reusable-ci" && "$output" != *"verified"* ]]
 )
 
 t_release_ref_does_not_fallback() (
@@ -187,10 +227,11 @@ t_release_ref_does_not_fallback() (
 		: >"$tmp/go-install-called"
 		return 0
 	}
-	if REUSABLE_CI_INSTALL_DIR="$tmp/install" install_reusable_ci v3.1.0; then
+	if REUSABLE_CI_INSTALL_DIR="$tmp/install" GITHUB_PATH="$tmp/github-path" install_reusable_ci v3.1.0 >/dev/null 2>&1; then
 		return 1
 	fi
-	[[ ! -e "$tmp/go-install-called" ]]
+	# Nothing else happened: no go install, no binary, no PATH export.
+	[[ ! -e "$tmp/go-install-called" && ! -e "$tmp/install/reusable-ci" && ! -e "$tmp/github-path" ]]
 )
 
 t_explicit_release_go_install_is_honored() (
@@ -211,8 +252,8 @@ t_explicit_release_go_install_is_honored() (
 PRE_SAN_FEAT='https://github.com/diggsweden/reusable-ci/.github/workflows/build-cli.yml@refs/heads/feat/refactor-go'
 PRE_SAN_MAIN='https://github.com/diggsweden/reusable-ci/.github/workflows/build-cli.yml@refs/heads/main'
 REL_SAN='https://github.com/diggsweden/reusable-ci/.github/workflows/release-binary.yml@refs/heads/main'
-# A tag-signed build-cli SAN: NOT accepted until the build-once cutover
-# flips the single release identity to build-cli.yml.
+# A tag-signed build-cli SAN is not accepted by the current tagged-release
+# policy, which trusts release-binary.yml.
 REL_SAN_BUILD_CLI='https://github.com/diggsweden/reusable-ci/.github/workflows/build-cli.yml@refs/tags/v3.1.0'
 
 t_identity_pre_accepts_dev_branches() (
@@ -232,8 +273,8 @@ t_identity_release_accepts_tag_signer() (
 )
 
 t_identity_release_rejects_build_cli_tag_signer() (
-	# One signer at a time: a build-cli tag signature is rejected until
-	# the build-once cutover flips the release identity to it.
+	# One signer at a time: current tagged releases trust release-binary.yml,
+	# not build-cli.yml.
 	id="$(_reusable_ci_cosign_identity v3.1.0)"
 	! printf '%s\n' "$REL_SAN_BUILD_CLI" | grep -Eq "$id"
 )
@@ -252,10 +293,11 @@ printf 'install-reusable-ci.sh test suite\n'
 printf '=================================\n'
 
 assert_exit "cosign absent → fail closed by default" 1 t_cosign_absent_fails_by_default
-assert_exit "bundle absent → fail closed by default" 1 t_bundle_absent_fails_by_default
-assert_exit "cosign verify-blob exit 0 → accept" 0 t_cosign_verify_passes
-assert_exit "cosign verify-blob exit non-0 → reject (tampered)" 1 t_cosign_verify_rejects
-assert_exit "sha256 verify rejects tampered tarball" 1 t_sha256_rejects_tampered
+assert_exit "bundle absent → fail closed with its reason, cosign never run" 0 t_bundle_absent_fails_by_default
+assert_exit "cosign verify-blob exit 0 → accept with the exact verification arguments" 0 t_cosign_verify_passes
+assert_exit "cosign verify-blob exit non-0 → reject once with its reason (tampered)" 0 t_cosign_verify_rejects
+assert_exit "sha256 verify rejects tampered tarball with its reason" 0 t_sha256_rejects_tampered
+assert_exit "sha256 verify rejects an archive missing from checksums" 0 t_sha256_rejects_unlisted_archive
 assert_exit "sha256 verify accepts genuine tarball" 0 t_sha256_accepts_genuine
 assert_exit "binary pin unset → no-op" 0 t_binary_pin_unset_is_noop
 assert_exit "binary pin match → accept" 0 t_binary_pin_accepts_match

@@ -19,7 +19,8 @@
 #   GITHUB_TOKEN: Automatically provided by GitHub Actions
 #
 # Required Permissions:
-#   contents: read   # Download artifacts
+#   actions: read    # Download workflow artifacts
+#   contents: read   # Checkout source
 #   packages: write  # Publish to GitHub Packages
 #
 name: Publish Maven GitHub
@@ -55,9 +56,8 @@ on:
         default: ""
         type: string
       branch:
-        description: "Branch to checkout (default: main)"
-        required: false
-        default: "main"
+        description: "Explicit branch, tag, or SHA whose package is published"
+        required: true
         type: string
       reusable-ci-binary-ref:
         description: "reusable-ci ref/version to install on plain-runner jobs (defaults to v3.0.0)"
@@ -73,7 +73,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       # Least-privilege: publishes to GitHub Packages via GITHUB_TOKEN
-      # (packages: write); no git write performed. Confirm on next release.
+      # (packages: write), and reads the build artifact; no git write performed.
+      actions: read
       contents: read
       packages: write
     steps:
@@ -81,14 +82,18 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ inputs.branch }}
-      - name: Install reusable-ci binary
-        # Same-repo action, resolved at the same release tag the consumer
-        # already pinned; the tag is created once by the release flow and
-        # never force-moved (tag-immutability policy).
-        # nosemgrep: yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag
-        uses: diggsweden/reusable-ci/.github/actions/install-reusable-ci@v3.0.0
+      - name: Checkout reusable-ci bootstrap installers
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: diggsweden/reusable-ci
           ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+          persist-credentials: false
+      - name: Install reusable-ci binary
+        env:
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
       # Defense-in-depth: refuse PR-context triggers. GITHUB_PACKAGES
       # publish uses the auto GITHUB_TOKEN today; the gate prevents
       # any future secret addition (or a misconfigured direct caller)

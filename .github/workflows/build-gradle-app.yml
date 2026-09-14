@@ -43,9 +43,9 @@ on:
         default: false
         type: boolean
       branch:
-        description: "Branch to checkout"
+        description: "Branch, tag, or SHA to checkout. Empty uses the triggering ref."
         required: false
-        default: "main"
+        default: ""
         type: string
       artifact-name:
         description: "Logical artifact name for upload naming (defaults to 'gradle-build-artifacts' when empty)"
@@ -74,6 +74,20 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Guard working-directory stays inside the workspace
+        # Every upload below is rooted at this caller-supplied value. An
+        # absolute path or a parent step would take the artifact from outside
+        # the workspace, so it is refused here, before any step consumes it.
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: |
+          case "$WORKING_DIRECTORY" in
+            "") echo "working-directory must not be empty" >&2; exit 1 ;;
+            /*) echo "working-directory must be workspace-relative: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
+          case "/$WORKING_DIRECTORY/" in
+            */../*) echo "working-directory must not contain parent-directory steps: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
       - name: Checkout repository
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -133,4 +147,4 @@ jobs:
             ${{ inputs['working-directory'] }}/build/reports/cyclonedx/bom.json
             ${{ inputs['working-directory'] }}/**/build/reports/cyclonedx/bom.json
           retention-days: "7"
-          if-no-files-found: warn
+          if-no-files-found: error

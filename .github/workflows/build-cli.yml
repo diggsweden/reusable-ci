@@ -1,16 +1,15 @@
 # SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 # SPDX-License-Identifier: CC0-1.0
 #
-# build-cli — single source of truth for the reusable-ci CLI binary.
+# build-cli — build source for runtime images and the rolling CLI pre-release.
 #
 # Builds linux/darwin × amd64/arm64 with goreleaser (cosign-signed, SBOMs,
 # SLSA build-provenance) ONCE and uploads the dist/ artifact for callers to
 # consume in the SAME run: the runtime-image build bakes the byte-identical
-# linux binary (Containerfile CLI_SOURCE=prebuilt), and a publish job uploads
-# the tarballs to a release. It deliberately does NOT publish (--skip=publish);
-# publishing is the caller's job, so one build feeds both the rolling pre-release
-# channel and (later) tagged releases — eliminating the drift between the CLI
-# in the image and the CLI in the release tarball.
+# linux binary (Containerfile CLI_SOURCE=prebuilt), and the rolling pre-release
+# publisher uploads the same tarballs. It deliberately does NOT publish
+# (--skip=publish); publishing is the caller's job. Tagged releases currently
+# rebuild in release-binary.yml pending the build-once cutover.
 #
 # Reproducibility: SOURCE_DATE_EPOCH + goreleaser's {{.CommitDate}} make
 # rebuilds of the same commit byte-identical.
@@ -86,7 +85,7 @@ jobs:
         if: ${{ inputs.sign }}
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
-          cosign-release: 'v3.1.1'
+          cosign-release: 'v3.1.3'
       - name: Install syft
         # goreleaser's sboms: block shells out to syft (one CycloneDX doc per
         # archive). Pin matches release-binary.yml.
@@ -104,8 +103,8 @@ jobs:
           TAG: ${{ inputs.version-tag }}
         run: printf 'value=%s\n' "${TAG#v}" >> "$GITHUB_OUTPUT"
       - name: Run goreleaser
-        # skip=publish: this workflow only produces dist/; the caller publishes
-        #   (pre-release via REST, or the tagged release in Phase 2).
+        # skip=publish: this workflow only produces dist/; its current caller
+        #   publishes the rolling pre-release. Tagged releases use release-binary.yml.
         # skip=validate: pre-release runs have no real git tag on HEAD; the version is
         #   forced via GORELEASER_CURRENT_TAG instead.
         # Build-only runs (sign=false, e.g. PRs) additionally skip sign+sbom, so

@@ -206,6 +206,7 @@ jobs:
           # -f → fail loudly on any HTTP error (never run a half-downloaded
           # script); --retry rides out transient 5xx/timeouts (e.g. raw CDN 504s).
           curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-common.sh" "$raw/install-common.sh"
+          curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-cosign.sh" "$raw/install-cosign.sh"
           curl --retry 5 --retry-delay 3 --retry-connrefused -sSfL -o "$work/install-reusable-ci.sh" "$raw/install-reusable-ci.sh"
           GITHUB_PATH="" REUSABLE_CI_INSTALL_DIR="$(dirname "$RC_BIN")" \
             bash "$work/install-reusable-ci.sh" "$BINARY_REF"

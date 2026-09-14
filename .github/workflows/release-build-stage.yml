@@ -8,6 +8,15 @@ on:
       branch:
         required: true
         type: string
+      release-tag:
+        required: true
+        type: string
+      release-sha:
+        required: true
+        type: string
+      source-date-epoch:
+        required: true
+        type: string
       build-stage-plan-json:
         required: true
         type: string
@@ -161,6 +170,9 @@ jobs:
       working-directory: ${{ matrix.artifact.working_directory }}
       branch: ${{ inputs.branch }}
       artifact-name: ${{ matrix.artifact.name }}
+      version: ${{ inputs['release-tag'] }}
+      commit: ${{ inputs['release-sha'] }}
+      source-date-epoch: ${{ inputs['source-date-epoch'] }}
       main-package: ${{ matrix.artifact.go.main_package || '.' }}
       binary-name: ${{ matrix.artifact.go.binary_name || '' }}
       platforms: ${{ matrix.artifact.go.platforms || 'linux/amd64,linux/arm64,darwin/amd64,darwin/arm64' }}
@@ -184,6 +196,9 @@ jobs:
       working-directory: ${{ matrix.artifact.working_directory }}
       branch: ${{ inputs.branch }}
       artifact-name: ${{ matrix.artifact.name }}
+      version: ${{ inputs['release-tag'] }}
+      commit: ${{ inputs['release-sha'] }}
+      source-date-epoch: ${{ inputs['source-date-epoch'] }}
       binary-name: ${{ matrix.artifact.cargo.binary_name || '' }}
       platforms: ${{ matrix.artifact.cargo.platforms || 'linux/amd64' }}
       skip-tests: ${{ matrix.artifact.cargo.skip_tests || false }}

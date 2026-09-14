@@ -27,9 +27,9 @@ on:
         default: "secrets,sast"
         type: string
       megalinter-image:
-        description: "MegaLinter image the megalinter lint job runs in (pin by @sha256)"
+        description: "Required for a planned MegaLinter job: reviewed image reference pinned by @sha256:<64 lowercase hex>"
         required: false
-        default: "oxsecurity/megalinter:v8"
+        default: ""
         type: string
       reusable-ci-binary-ref:
         description: "reusable-ci version the lint job installs (cosign-verified) for SARIF tooling"
@@ -104,6 +104,7 @@ jobs:
     container:
       image: ${{ inputs['runtime-image'] }}
     permissions:
+      actions: read
       contents: read
     steps:
       - name: Render nanolinter results panel

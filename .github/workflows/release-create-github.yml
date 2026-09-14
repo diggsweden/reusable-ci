@@ -3,35 +3,38 @@
 # SPDX-License-Identifier: CC0-1.0
 # GitHub Release Creator
 # 
-# Purpose: Creates GitHub releases with  security features including
-# artifact signing, SBOM generation, and checksum calculation using GitHub CLI.
+# Purpose: Stages planned release artifacts, generates integrity evidence, and
+# creates the GitHub Release through reusable-ci's provider integration.
 #
 # How it works:
 # 1. Downloads all artifacts from the workflow run
 # 2. Generates checksums (SHA-256) for all artifacts
 # 3. Creates SBOM in multiple formats (CycloneDX, SPDX) if enabled
-# 4. Signs artifacts with GPG if configured
-# 5. Creates GitHub release with changelog using gh CLI
+# 4. Signs artifacts with the configured GPG, Sigstore, or KMS backend
+# 5. Creates the GitHub release with its changelog
 # 6. Uploads all artifacts, checksums, signatures, and SBOMs to release
 #
 # Security controls:
-# - GPG signing of all release artifacts
+# - Configurable GPG, Sigstore-keyless, or KMS signing
 # - Checksum generation for integrity verification
 # - SBOM for supply chain transparency
 # - Support for attestation attachment
 #
 # Required Secrets:
-#   RELEASE_GPG_PRIVATE_KEY: For GPG import/signing in release creation
-#   RELEASE_GPG_PASSPHRASE: Passphrase for the imported release GPG key
+#   RELEASE_GPG_PRIVATE_KEY: Required only for GPG signing
+#   RELEASE_GPG_PASSPHRASE: Required only for passphrase-protected GPG keys
 #   RELEASE_TOKEN: For release creation and asset upload
 #
 # Required Permissions:
-#   contents: write      # Create releases + upload assets
+#   actions: read     # Download workflow artifacts
+#   contents: write   # Create releases + upload assets
+#   packages: read    # Pull a private runtime image when configured
+#   id-token: write   # Sigstore-keyless signing when configured
 #
 # Generated Files:
 #   - checksums.sha256: SHA-256 checksums for all artifacts
-#   - *.sig: GPG signatures for each artifact
-#   - sbom.json: CycloneDX/SPDX Software Bill of Materials
+#   - *.asc or *.bundle: GPG or cosign signature sidecars
+#   - <project>-<version>-sboms.zip: bundled CycloneDX/SPDX SBOMs
 name: Create GitHub Release
 on:
   workflow_call: # yamllint disable-line rule:truthy
@@ -42,9 +45,8 @@ on:
         default: ""
         type: string
       checkout-ref:
-        description: "Git ref to checkout (branch or tag)"
-        required: false
-        default: "main"
+        description: "Explicit Git ref to checkout and release (branch, tag, or SHA)"
+        required: true
         type: string
       attach-artifacts:
         description: "Glob patterns for artifacts to attach (newline or comma separated)"
@@ -56,7 +58,7 @@ on:
         default: "all"
         type: string
       sign-artifacts:
-        description: "GPG sign all artifacts"
+        description: "Sign release artifacts with the backend selected by config-plan-json"
         required: false
         default: true
         type: boolean
@@ -110,7 +112,7 @@ on:
         description: "Token with contents:write permission for creating the GitHub Release"
         required: false
 permissions:
-  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+  contents: read # Default permission; release creation uses RELEASE_TOKEN.
 jobs:
   generate-changelog:
     name: Generate Release Changelog
@@ -154,6 +156,8 @@ jobs:
           CHECKOUT_REF: ${{ inputs['checkout-ref'] }}
           CHECKOUT_FETCH_ALL_REFS: "true" # full history + all tags
         run: reusable-ci platform checkout
+      - name: Set deterministic release epoch
+        run: printf 'SOURCE_DATE_EPOCH=%s\n' "$(git log -1 --format=%ct HEAD)" >> "$GITHUB_ENV"
       - name: Import GPG key
         # GPG agent setup is only needed when artifact signing uses the
         # GPG backend. Sigstore (keyless OIDC) and KMS (cosign + external
@@ -249,7 +253,7 @@ jobs:
           SOURCE_FILE: ReleasenotesTmp
           TARGET_FILE: release-notes.md
           RELEASE_VERSION: ${{ inputs['release-name'] }}
-          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_COMMIT: ${{ inputs['checkout-ref'] }}
         run: reusable-ci release notes
       - name: Create GitHub Release
         env:

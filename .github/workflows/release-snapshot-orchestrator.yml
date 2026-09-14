@@ -16,7 +16,8 @@
 #
 # Note: the snapshot flow builds no containers. A container is built ONCE on
 # the release path and promoted to :dev by the build-once/promote-many ladder
-# (promote-stage.yml); the snapshot flow is npm/SBOM-only.
+# (promote-stage.yml). Snapshots build configured artifact-first ecosystems,
+# optionally publish npm, and optionally generate SBOMs.
 #
 # Security controls:
 # - Minimal - focused on speed over security for development
@@ -31,8 +32,9 @@
 #   registry-password: Required when use-ci-token=false (for npmjs.org, etc)
 #
 # Required Permissions:
+#   actions: read    # Download workflow artifacts
 #   contents: read   # Read source code
-#   packages: write  # Push images to ghcr.io and packages to GitHub Packages
+#   packages: write  # Publish snapshots to GitHub Packages
 #
 # Differences from Production:
 #   - Snapshot tags (0.5.9-snapshot-feat-name-abc1234) vs version tags
@@ -46,6 +48,10 @@ name: Orchestrate Snapshot Release
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
+      branch:
+        description: "Explicit branch, tag, or SHA used for the snapshot build and publish"
+        required: true
+        type: string
       artifacts-config:
         description: "Path to the artifacts config file. Defaults to .reusable-ci/artifacts.yml. The snapshot release reads containers and per-artefact configuration from this file; auto-derives when the file is absent and the repo has exactly one root manifest."
         required: false
@@ -57,7 +63,7 @@ on:
         default: ""
         type: string
       registry:
-        description: "Registry forwarded to the snapshot plan context (default ghcr.io). The snapshot flow is npm/SBOM-only and builds no containers."
+        description: "Registry forwarded to the snapshot plan context (default ghcr.io). The snapshot flow builds artifact-first ecosystems but no containers."
         required: false
         default: "ghcr.io"
         type: string
@@ -193,7 +199,7 @@ on:
         description: "Published NPM package version (if published)"
         value: ${{ fromJson(jobs.execute-snapshot-publish-stage.outputs['artifacts-json'] || '{}').npm_package_version }}
 permissions:
-  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+  contents: read # Default permission; individual jobs declare additions.
 jobs:
   # ===== Stage 0: Configuration And Policy =====
   # Single Setup job mirroring release-orchestrator.yml's parse-config shape.
@@ -221,22 +227,24 @@ jobs:
       - name: Refuse PR-context trigger (publish/release secrets in scope)
         run: reusable-ci validate event-context
       - name: Checkout caller repository
+        id: checkout
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          CHECKOUT_REF: ${{ inputs.branch }}
         run: reusable-ci platform checkout
       - name: Parse artifacts.yml
         id: parse
         run: reusable-ci config parse-artifacts
         env:
           ARTIFACTS_CONFIG: ${{ inputs['artifacts-config'] }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_REF_NAME: ${{ inputs.branch }}
       - name: Plan snapshot release
         id: plan
         env:
           CONFIG_PLAN_JSON: ${{ steps.parse.outputs.config-plan-json }}
           PROJECT_TYPE: ${{ inputs['project-type'] }}
-          BRANCH: ${{ github.ref_name }}
-          RELEASE_SHA: ${{ github.sha }}
+          BRANCH: ${{ inputs.branch }}
+          RELEASE_SHA: ${{ steps.checkout.outputs['checkout-sha'] }}
           RELEASE_ACTOR: ${{ github.actor }}
           RELEASE_REPOSITORY: ${{ github.repository }}
           WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
@@ -333,8 +341,8 @@ jobs:
           # output empty — produces an empty PROJECT_TYPE instead of a fromJson
           # template crash. This job is `if: always()`; it must summarize failures.
           PROJECT_TYPE: ${{ fromJson(needs.setup-snapshot.outputs['snapshot-release-plan-json'] || '{}').context.project_type }}
-          RELEASE_REF: ${{ github.ref_name }}
-          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_REF: ${{ fromJson(needs.setup-snapshot.outputs['snapshot-release-plan-json'] || '{}').context.branch }}
+          RELEASE_SHA: ${{ fromJson(needs.setup-snapshot.outputs['snapshot-release-plan-json'] || '{}').context.release_sha }}
           RELEASE_ACTOR: ${{ github.actor }}
           RELEASE_REPOSITORY: ${{ github.repository }}
 

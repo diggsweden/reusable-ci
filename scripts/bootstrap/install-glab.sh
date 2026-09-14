@@ -13,6 +13,10 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-common.sh"
 
 # renovate: datasource=gitlab-releases depName=gitlab-org/cli
 readonly GLAB_VERSION="v1.74.0"
+readonly GLAB_SHA256_LINUX_AMD64="75008e8d57825547d944a3193a66a018188b433a4ecb1cf36500ffbafe4689ff"
+readonly GLAB_SHA256_LINUX_ARM64="65f987456b884a9b230895010d24431507e4c9b48bbada4de5400d2d11b0ccee"
+readonly GLAB_SHA256_DARWIN_AMD64="3262db492073ac23318f43de4b59b93463b01ba9d06232d61ff1f02e10082337"
+readonly GLAB_SHA256_DARWIN_ARM64="cc67a9f79079ed9578cd93ca385e3df13975e2ccb03f047c0c6bf51f708af395"
 
 resolve_glab_dist() {
 	local os arch dist=""
@@ -42,22 +46,36 @@ resolve_glab_dist() {
 	printf '%s' "$dist"
 }
 
+resolve_glab_sha256() {
+	case "$1" in
+	glab_1.74.0_linux_amd64.tar.gz) printf '%s' "$GLAB_SHA256_LINUX_AMD64" ;;
+	glab_1.74.0_linux_arm64.tar.gz) printf '%s' "$GLAB_SHA256_LINUX_ARM64" ;;
+	glab_1.74.0_darwin_amd64.tar.gz) printf '%s' "$GLAB_SHA256_DARWIN_AMD64" ;;
+	glab_1.74.0_darwin_arm64.tar.gz) printf '%s' "$GLAB_SHA256_DARWIN_ARM64" ;;
+	*)
+		printf 'ERROR: no pinned SHA-256 for glab asset %s\n' "$1" >&2
+		return 1
+		;;
+	esac
+}
+
 install_glab() {
 	if command -v glab &>/dev/null; then
 		ci_print_already_installed "glab" "$(glab --version 2>/dev/null | head -1 | tr -d '\r')"
 		return 0
 	fi
 
-	local install_dir dist asset_url archive
+	local install_dir dist sha256 asset_url archive
 	install_dir="$(ci_install_dir glab)"
 	mkdir -p "$install_dir"
 
 	dist="$(resolve_glab_dist)" || return 1
+	sha256="$(resolve_glab_sha256 "$dist")" || return 1
 	asset_url="https://gitlab.com/gitlab-org/cli/-/releases/${GLAB_VERSION}/downloads/${dist}"
 	archive="$install_dir/${dist}"
 
 	printf "Installing glab (version: %s)...\n" "$GLAB_VERSION"
-	if ! curl --retry 5 --retry-delay 3 --retry-connrefused -fsSL -o "$archive" "$asset_url"; then
+	if ! ci_download_verified "$asset_url" "$archive" "$sha256"; then
 		printf "ERROR: Failed to download glab from %s\n" "$asset_url" >&2
 		return 1
 	fi

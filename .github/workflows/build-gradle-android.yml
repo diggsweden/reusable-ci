@@ -92,9 +92,9 @@ on:
         default: "."
         type: string
       branch:
-        description: "Branch to checkout"
+        description: "Branch, tag, or SHA to checkout. Empty uses the triggering ref."
         required: false
-        default: "main"
+        default: ""
         type: string
       skip-tests:
         description: "Skip tests during build"
@@ -158,6 +158,20 @@ jobs:
       aab-name: ${{ steps.build.outputs.aab-name }}
       sbom-name: ${{ steps.build.outputs.sbom-name }}
     steps:
+      - name: Guard working-directory stays inside the workspace
+        # Every upload below is rooted at this caller-supplied value. An
+        # absolute path or a parent step would take the artifact from outside
+        # the workspace, so it is refused here, before any step consumes it.
+        env:
+          WORKING_DIRECTORY: ${{ inputs['working-directory'] }}
+        run: |
+          case "$WORKING_DIRECTORY" in
+            "") echo "working-directory must not be empty" >&2; exit 1 ;;
+            /*) echo "working-directory must be workspace-relative: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
+          case "/$WORKING_DIRECTORY/" in
+            */../*) echo "working-directory must not contain parent-directory steps: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
       # Defense-in-depth: refuse PR-context triggers. ANDROID_KEYSTORE +
       # SECRETS_PROPERTIES_BASE64 land in env for this job; must never
       # run with PR-HEAD code. reusable-ci is pre-baked.
@@ -211,7 +225,7 @@ jobs:
           CYCLONEDX_GRADLE_VERSION: "3.2.1"
         run: reusable-ci build gradle-android run
       - name: Upload Build SBOM
-        if: ${{ hashFiles(format('{0}/**/build/reports/bom.json', inputs['working-directory'])) != '' }}
+        if: ${{ inputs['enable-build-sbom'] }}
         # Variant-scoped name (from generate-artifact-names.sh) so matrix
         # dispatch in release-build-stage.yml doesn't collide when multiple
         # flavors/modules build in parallel. Distinct from APK/AAB names so
@@ -223,7 +237,7 @@ jobs:
             ${{ inputs['working-directory'] }}/build/reports/bom.json
             ${{ inputs['working-directory'] }}/**/build/reports/bom.json
           retention-days: "7"
-          if-no-files-found: warn
+          if-no-files-found: error
       - name: List built artifacts
         working-directory: ${{ inputs['working-directory'] }}
         env:

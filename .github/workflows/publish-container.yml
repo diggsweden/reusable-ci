@@ -3,16 +3,10 @@
 # SPDX-License-Identifier: CC0-1.0
 # Container Image Publisher
 #
-# Purpose: Builds and publishes production-grade container images to any
-# OCI-compatible registry with security features including multi-platform
-# support, vulnerability scanning, SBOM generation, and SLSA attestation
-# (GHCR only).
-#
-# Supported Registries:
-# - GitHub Container Registry (ghcr.io) - Full SLSA support
-# - Docker Hub (docker.io) - No SLSA support
-# - Quay.io (quay.io) - No SLSA support
-# - Any OCI-compatible registry - No SLSA support
+# Builds and publishes multi-platform OCI images. Depending on inputs, it also
+# runs vulnerability scans, generates SBOMs, signs the image, and attaches
+# cosign provenance and SBOM attestations. Registry support depends on the
+# registry's compatibility with the OCI and cosign operations used below.
 #
 # How it works:
 # 1. prep: compute image coordinate, tags, and labels once via reusable-ci.
@@ -34,9 +28,8 @@
 #    `cosign verify-attestation` on any registry/forge. Single-arch inputs go
 #    through the same pipeline (matrix-of-1 + one-entry manifest list).
 #
-# Everything (signature, provenance, SBOM) is a cosign-signed in-toto
-# attestation. No GitHub attestation API, no BuildKit/Docker attestation
-# surface — the identical flow works on Forgejo/GitLab.
+# Signing and attestations use cosign rather than the GitHub attestation API or
+# BuildKit-generated attestations.
 #
 # No QEMU. Each runner builds its own architecture natively.
 #
@@ -65,6 +58,7 @@
 #   secrets: inherit: Pass CODE_SCANNING_TOKEN for Code Scanning upload
 #
 # Required Permissions:
+#   actions: read          # Download workflow artifacts and per-arch digests
 #   contents: read         # Read Containerfile and context
 #   packages: write        # Push images + cosign signatures/attestations to registry
 #   id-token: write        # Keyless cosign OIDC for signing + attestations
@@ -93,9 +87,23 @@ on:
         default: "."
         type: string
       branch:
-        description: "Branch to checkout (default: main)"
+        description: "Explicit branch, tag, or SHA whose image is built and published"
+        required: true
+        type: string
+      release-tag:
+        description: "Normalized final release tag used for OCI tags and promotion metadata"
         required: false
-        default: "main"
+        default: ""
+        type: string
+      release-sha:
+        description: "Prepared release commit used for OCI revision metadata"
+        required: false
+        default: ""
+        type: string
+      source-date-epoch:
+        description: "Prepared release commit timestamp used for deterministic OCI metadata"
+        required: false
+        default: ""
         type: string
       platforms:
         description: "Comma-separated list of platforms to build. Each platform builds natively on a runner of that architecture (linux/amd64 -> ubuntu-24.04, linux/arm64 -> ubuntu-24.04-arm). No QEMU emulation. Multi-platform inputs split across runners and are merged into a single manifest list."
@@ -180,7 +188,7 @@ on:
         default: ""
         type: string
       extract-binary-target:
-        description: "Containerfile stage to extract as a binary CI artefact (typically `FROM scratch AS export-binary` with COPY --from=builder). When set, a second buildx build runs per arch leg with --output type=local and the result is uploaded as ${name}-binaries-${arch}. Used by compiled-native ecosystems (cargo, go) where binaries are byproducts of the container build."
+        description: "Containerfile stage to extract as a binary CI artefact (typically `FROM scratch AS export-binary` with COPY --from=builder). When set, a second Buildah build runs per arch leg with --output to a local directory and the result is uploaded as ${name}-binaries-${arch}. Used by compiled-native ecosystems (cargo, go) where binaries are byproducts of the container build."
         required: false
         default: ""
         type: string
@@ -191,7 +199,7 @@ on:
         type: string
       build-secrets:
         description: |
-          Newline/comma/space-separated list of BuildKit secret NAMES
+          Newline/comma/space-separated list of Containerfile secret NAMES
           declared in containers[].build-secrets. The values are pulled
           from the REUSABLE_CI_BUILD_SECRETS_JSON envelope secret and
           materialized as tmpfile mounts at build time so they never
@@ -269,7 +277,7 @@ on:
           so the value stays inside the secrets channel end-to-end.
           Unpacked into per-secret mode-0600 tmpfiles by `reusable-ci
           container materialize-build-secrets` and mounted into
-          BuildKit via --mount=type=secret so values stay out of
+          Buildah via --mount=type=secret so values stay out of
           provenance attestations and step inputs.
         required: false
     outputs:
@@ -283,7 +291,7 @@ on:
         description: "Image metadata JSON (tags + labels)"
         value: ${{ jobs.prep.outputs.metadata }}
 permissions:
-  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+  contents: read # Default permission; individual jobs declare additions.
 jobs:
   prep:
     name: Prepare Build${{ inputs.name && format(' ({0})', inputs.name) || '' }}
@@ -296,6 +304,7 @@ jobs:
       tags: ${{ steps.metadata.outputs.tags }}
       labels: ${{ steps.metadata.outputs.labels }}
       metadata: ${{ steps.metadata.outputs.json }}
+      source-ref-name: ${{ steps.metadata.outputs.source-ref-name }}
       # true only on a tag build whose ref is usable verbatim as an OCI tag —
       # gates the ledger so an unusual tag degrades to "no promotion" instead of
       # failing the manifest push.
@@ -307,7 +316,7 @@ jobs:
       platforms-json: ${{ steps.platforms.outputs.platforms-json }}
       # Unix-epoch seconds of the resolved HEAD commit. Propagated to
       # the build job as SOURCE_DATE_EPOCH (reproducible-builds.org
-      # convention) so BuildKit pins the image-config `created`
+      # convention) so Buildah pins the image-config `created`
       # field and every layer entry's mtime. Without this, two
       # builds of the same source produce different image-config
       # digests — verifiers comparing tag re-issues would see drift.
@@ -359,13 +368,29 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           CONTAINER_REGISTRY: ${{ inputs.registry }}
           ENFORCE_NAMESPACE: ${{ inputs['enforce-namespace'] || github.repository_owner }}
+          ENFORCE_NAMESPACE_ON: ${{ inputs.registry }}
         run: reusable-ci container validate namespace
+      - name: Compute SOURCE_DATE_EPOCH
+        id: source-date
+        env:
+          RELEASE_SOURCE_DATE_EPOCH: ${{ inputs['source-date-epoch'] }}
+        run: |
+          epoch="$RELEASE_SOURCE_DATE_EPOCH"
+          if [ -z "$epoch" ]; then
+            epoch="$(git log -1 --format=%ct HEAD)"
+          fi
+          printf 'epoch=%s\n' "$epoch" >> "$GITHUB_OUTPUT"
+          printf '::notice::SOURCE_DATE_EPOCH=%s (commit %s)\n' "$epoch" "$(git rev-parse --short HEAD)"
       - name: Extract Image Metadata
         id: metadata
         env:
           IMAGE_NAME: ${{ steps.image-name.outputs.name }}
           FLAVOR: latest=false
           EMIT_LABELS: "true"
+          SOURCE_REF_NAME: ${{ inputs['release-tag'] || github.ref_name }}
+          SOURCE_REF_TYPE: ${{ inputs['release-tag'] != '' && 'tag' || github.ref_type }}
+          SOURCE_REVISION: ${{ inputs['release-sha'] || github.sha }}
+          SOURCE_DATE_EPOCH: ${{ steps.source-date.outputs.epoch }}
           TAG_RULES: |
             # Always include the ref as-is (branch name, tag name, or PR number)
             type=ref,event=branch
@@ -373,39 +398,20 @@ jobs:
             type=ref,event=pr
 
             # For version tags only (v1.0.0, v2.3.4, etc)
-            type=semver,pattern={{version}},enable=${{ github.ref_type == 'tag' }}
+            type=semver,pattern={{version}},enable=${{ inputs['release-tag'] != '' || github.ref_type == 'tag' }}
 
             # For stable versions only (no dash in tag name like -beta, -rc)
-            type=semver,pattern={{major}}.{{minor}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
-            type=semver,pattern={{major}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ (inputs['release-tag'] != '' && !contains(inputs['release-tag'], '-')) || (inputs['release-tag'] == '' && github.ref_type == 'tag' && !contains(github.ref_name, '-')) }}
+            type=semver,pattern={{major}},enable=${{ (inputs['release-tag'] != '' && !contains(inputs['release-tag'], '-')) || (inputs['release-tag'] == '' && github.ref_type == 'tag' && !contains(github.ref_name, '-')) }}
 
             # SHA-based tags for non-tag refs (branches, PRs) for traceability
-            type=sha,prefix={{branch}}-,enable=${{ github.ref_type != 'tag' }}
+            type=sha,prefix={{branch}}-,enable=${{ inputs['release-tag'] == '' && github.ref_type != 'tag' }}
         run: reusable-ci container metadata
       - name: Compute platforms JSON
         id: platforms
         env:
           PLATFORMS: ${{ inputs.platforms }}
         run: reusable-ci container platform-plan
-      # Reproducible-builds anchor. `git log -1 --format=%ct` returns
-      # the committer-date of HEAD as Unix epoch seconds. Passed to
-      # BuildKit on the build step as SOURCE_DATE_EPOCH; BuildKit
-      # then writes that value into the image-config `created`
-      # timestamp AND clamps every layer-tar entry's mtime to it. A
-      # rebuild of the same tag therefore produces the same
-      # image-config digest. Reference:
-      # https://docs.docker.com/build/ci/github-actions/reproducible-builds/
-      - name: Compute SOURCE_DATE_EPOCH
-        id: source-date
-        env:
-          # Avoid GitHub's masking on output: `git log` is a local
-          # filesystem read, no secrets involved.
-          GIT_PAGER: cat
-        run: |
-          epoch="$(git log -1 --format=%ct HEAD)"
-          printf 'epoch=%s\n' "$epoch" >> "$GITHUB_OUTPUT"
-          printf '::notice::SOURCE_DATE_EPOCH=%s (commit %s)\n' "$epoch" "$(git rev-parse --short HEAD)"
-
   build-arch:
     name: Build${{ inputs.name && format(' ({0})({1})', inputs.name, matrix.platform) || format(' ({0})', matrix.platform) }}
     needs: prep
@@ -418,6 +424,7 @@ jobs:
       matrix:
         platform: ${{ fromJson(needs.prep.outputs.platforms-json) }}
     permissions:
+      actions: read
       contents: read
       packages: write
       id-token: write # keyless cosign signing of the per-arch CycloneDX SBOM attestation
@@ -538,7 +545,7 @@ jobs:
       - name: Log in to Container Registry
         if: *if_push_image
         # node-less, forge-neutral registry login (replaces docker/login-action):
-        # writes the shared {"auths":…} config docker + buildx + cosign read.
+        # writes the shared {"auths":…} config Buildah and cosign read.
         # Password rides REGISTRY_PASSWORD (a secret), never argv.
         env:
           CONTAINER_REGISTRY: ${{ inputs.registry }}
@@ -546,7 +553,7 @@ jobs:
           REGISTRY_PASSWORD: ${{ inputs['use-ci-token'] && secrets.GITHUB_TOKEN || secrets['registry-password'] }}
         run: reusable-ci container login
       # Unpacks the REUSABLE_CI_BUILD_SECRETS_JSON envelope into per-secret
-      # mode-0600 tmpfiles under $RUNNER_TEMP/build-secrets and emits the
+      # mode-0600 tmpfiles under a unique private $RUNNER_TEMP directory and emits the
       # id=NAME,src=PATH lines `reusable-ci container build` passes to buildah's
       # --secret below. Values never enter the workflow log, step inputs, or
       # SLSA provenance —
@@ -703,12 +710,12 @@ jobs:
         if: &if_sbom_enabled ${{ inputs['enable-analyzed-container-sbom'] && inputs['push-image'] }}
         env:
           ARTIFACT_TYPES: ${{ inputs['artifact-types'] }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_REF_NAME: ${{ inputs['release-tag'] || needs.prep.outputs.source-ref-name }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           IMAGE_NAME: ${{ needs.prep.outputs.image-name }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          # syft is baked into the runtime images, but this buildx job runs on
+          # syft is baked into the runtime images, but this Buildah job runs on
           # the bare host — install it (to /tmp) and run in the same step so its
           # in-process PATH covers the reusable-ci call.
           # shellcheck disable=SC1091
@@ -727,7 +734,7 @@ jobs:
             *-analyzed-container-sbom.spdx.json
             *-analyzed-container-sbom.cyclonedx.json
           retention-days: "30"
-          if-no-files-found: warn
+          if-no-files-found: error
       - name: Attest SBOM (cosign)
         # Signed in-toto CycloneDX attestation attached to THIS per-arch image
         # digest (--recursive=false: each arch has its own SBOM; the SLSA
@@ -781,6 +788,14 @@ jobs:
           BUILD_ARGS: ${{ inputs['build-args'] }}
           BUILD_SECRETS: ${{ steps['build-secrets'].outputs['secret-mounts'] }}
         run: reusable-ci container build
+      - name: Remove materialized build secrets
+        if: ${{ always() }}
+        env:
+          BUILD_SECRETS_DIR: ${{ steps['build-secrets'].outputs['secret-dir'] }}
+        run: |
+          if [[ -n "${BUILD_SECRETS_DIR}" ]]; then
+            rm -rf -- "${BUILD_SECRETS_DIR}"
+          fi
       # Suffix each extracted binary's basename with -linux-${arch} so that
       # when the GitHub Release attach step pulls per-arch artefacts together,
       # they don't collide on the same basename. Convention matches Go's
@@ -821,6 +836,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
+      actions: read
       contents: read
       packages: write
       # id-token is required only for the keyless Sigstore signing
@@ -920,7 +936,7 @@ jobs:
           SIGN_KEY: ${{ inputs['sign-key'] }}
           SIGN_OIDC_ISSUER: ${{ inputs['sign-oidc-issuer'] }}
           # Reproducible build timestamp for the provenance startedOn/finishedOn
-          # (same value BuildKit clamped the image to).
+          # (same value Buildah clamped the image to).
           SOURCE_DATE_EPOCH: ${{ needs.prep.outputs.source-date-epoch }}
         run: |
           reusable-ci container attest --type slsaprovenance1 "${{ steps.outputs.outputs.image-digest-ref }}"
@@ -930,23 +946,19 @@ jobs:
       # re-derives a digest from a tag. Tag builds only; a branch/PR build has no
       # release tag to scope the entry to.
       #
-      # Deliberately LAST and best-effort (continue-on-error): the immutable,
-      # signed, soon-to-be-attested image is the release artifact; the ledger is
-      # a convenience hand-off for promotion. A ledger failure must never block
-      # signing (above) or the provenance attestation job (gated on this job's
-      # success) — it degrades to "promotion can't run", surfaced loudly when
-      # promote-stage finds no ledger, not a lost signature.
+      # Deliberately last: the ledger is the mandatory, digest-pinned hand-off
+      # to promotion for orchestrated releases. Direct non-release builds do not
+      # receive a release-tag input and therefore do not emit one.
       - name: Record release-image ledger
-        if: ${{ needs.prep.outputs['ref-clean'] == 'true' }}
-        continue-on-error: true
+        if: ${{ inputs['release-tag'] != '' && needs.prep.outputs['ref-clean'] == 'true' }}
         env:
           IMAGE_NAME: ${{ needs.prep.outputs.image-name }}
-          REF_NAME: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs['release-tag'] }}
           IMAGE_DIGEST_REF: ${{ steps.outputs.outputs.image-digest-ref }}
           DIGEST: ${{ steps.outputs.outputs.digest }}
         run: |
           reusable-ci container ledger add \
-            --tag "$REF_NAME" \
+            --tag "$RELEASE_TAG" \
             --ref "$IMAGE_DIGEST_REF" \
             --digest "$DIGEST" \
             --image-name "$IMAGE_NAME"
@@ -954,8 +966,7 @@ jobs:
       # container's `name` input so a multi-container release uploads distinct
       # ledgers; promote-stage downloads them all by pattern and merges them.
       - name: Upload release-image ledger
-        if: ${{ needs.prep.outputs['ref-clean'] == 'true' }}
-        continue-on-error: true
+        if: ${{ inputs['release-tag'] != '' && needs.prep.outputs['ref-clean'] == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-images-ledger${{ inputs.name && format('-{0}', inputs.name) || '' }}

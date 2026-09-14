@@ -16,6 +16,8 @@
 
 # shellcheck source=install-common.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-common.sh"
+# shellcheck source=install-cosign.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-cosign.sh"
 
 # Repository owner/name and release URL base are env-overridable so tests can
 # point at a fake server. Defaults match the production GitHub Releases path.
@@ -169,20 +171,26 @@ verify_reusable_ci_cosign() {
 	printf 'Sigstore: %s verified (identity-regex %s)\n' "$(basename "$checksums")" "$identity"
 }
 
-# install_reusable_ci_release downloads the release asset for ref and extracts
-# the `reusable-ci` binary into install_dir. Returns non-zero on any failure;
-# callers must propagate the failure for release refs.
-install_reusable_ci_release() {
+bootstrap_reusable_ci_cosign() {
+	if ! install_cosign; then
+		printf 'ERROR: failed to bootstrap the repository-pinned cosign used to verify reusable-ci\n' >&2
+		return 1
+	fi
+}
+
+# install_reusable_ci_release verifies a privately staged binary before replacing
+# the installed file. The subshell owns bootstrap PATH changes and cleanup traps.
+install_reusable_ci_release() (
 	local ref="$1" install_dir="$2"
 	if ! command -v curl &>/dev/null; then
 		return 1
 	fi
-	local os arch dist tmp
+	local os arch dist tmp candidate=""
 	os="$(resolve_reusable_ci_os)" || return 1
 	arch="$(resolve_reusable_ci_arch)" || return 1
 	dist="$(resolve_reusable_ci_dist "$ref" "$os" "$arch")"
-	tmp="$(mktemp -d)"
-	trap 'rm -rf "$tmp"' RETURN
+	tmp="$(mktemp -d)" || return 1
+	trap 'rm -rf "$tmp"; [[ -z "$candidate" ]] || rm -f "$candidate"' EXIT
 
 	# Retry transient network / 5xx failures (e.g. GitHub Releases returning a
 	# 504 gateway timeout). `--retry` already covers HTTP 408/429/5xx + timeouts;
@@ -192,6 +200,7 @@ install_reusable_ci_release() {
 	local asset_url="${REUSABLE_CI_RELEASE_URL_BASE}/${ref}/${dist}"
 	local sums_url="${REUSABLE_CI_RELEASE_URL_BASE}/${ref}/checksums.txt"
 	local bundle_url="${REUSABLE_CI_RELEASE_URL_BASE}/${ref}/checksums.txt.bundle"
+	CI_TEMP_DIR="$tmp/bootstrap" bootstrap_reusable_ci_cosign || return 1
 	printf 'Downloading reusable-ci %s (%s/%s)...\n' "$ref" "$os" "$arch"
 	if ! curl "${curl_retry[@]}" -sSfL -o "$tmp/$dist" "$asset_url"; then
 		printf 'WARN: failed to download %s\n' "$asset_url" >&2
@@ -211,13 +220,26 @@ install_reusable_ci_release() {
 	if ! verify_reusable_ci_sha256 "$tmp/$dist" "$tmp/checksums.txt"; then
 		return 1
 	fi
-	mkdir -p "$install_dir"
-	if ! tar -xzf "$tmp/$dist" -C "$install_dir" reusable-ci; then
+	mkdir "$tmp/extracted" || return 1
+	if ! tar -xzf "$tmp/$dist" -C "$tmp/extracted" reusable-ci; then
 		printf 'ERROR: failed to extract reusable-ci from %s\n' "$dist" >&2
 		return 1
 	fi
-	chmod +x "$install_dir/reusable-ci"
-}
+	if [[ -L "$tmp/extracted/reusable-ci" || ! -f "$tmp/extracted/reusable-ci" ]]; then
+		printf 'ERROR: release binary must be a non-symlink regular file\n' >&2
+		return 1
+	fi
+	verify_reusable_ci_binary_pin "$tmp/extracted/reusable-ci" || return 1
+	if [[ -L "$install_dir" || -L "$install_dir/reusable-ci" || (-e "$install_dir/reusable-ci" && ! -f "$install_dir/reusable-ci") ]]; then
+		printf 'ERROR: unsafe reusable-ci install destination\n' >&2
+		return 1
+	fi
+	mkdir -p "$install_dir" || return 1
+	candidate="$(mktemp "$install_dir/.reusable-ci.XXXXXXXX")" || return 1
+	cp "$tmp/extracted/reusable-ci" "$candidate" || return 1
+	chmod 0755 "$candidate" || return 1
+	mv -f "$candidate" "$install_dir/reusable-ci" || return 1
+)
 
 install_reusable_ci_go_install() {
 	local ref="$1" install_dir="$2"
@@ -227,10 +249,11 @@ install_reusable_ci_go_install() {
 	fi
 	mkdir -p "$install_dir"
 	if [[ "$ref" == "local" || "$ref" == "." ]]; then
-		GOBIN="$install_dir" go install ./cmd/reusable-ci
+		GOBIN="$install_dir" go install ./cmd/reusable-ci || return 1
 	else
-		GOBIN="$install_dir" go install "${REUSABLE_CI_MODULE_PATH}@${ref}"
+		GOBIN="$install_dir" go install "${REUSABLE_CI_MODULE_PATH}@${ref}" || return 1
 	fi
+	verify_reusable_ci_binary_pin "$install_dir/reusable-ci" || return 1
 }
 
 install_reusable_ci() {
@@ -250,8 +273,6 @@ install_reusable_ci() {
 	else
 		install_reusable_ci_go_install "$ref" "$install_dir" || return 1
 	fi
-
-	verify_reusable_ci_binary_pin "$install_dir/reusable-ci" || return 1
 
 	ci_prepend_path "$install_dir"
 	if [[ -n "${GITHUB_PATH:-}" ]]; then

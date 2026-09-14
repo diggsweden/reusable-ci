@@ -33,6 +33,10 @@ ci_download_verified() {
 	local url="$1"
 	local destination="$2"
 	local sha256="$3"
+	if [[ ! "$sha256" =~ ^[0-9a-f]{64}$ ]]; then
+		printf 'ERROR: a pinned SHA-256 is required before downloading %s\n' "$url" >&2
+		return 1
+	fi
 
 	if ! curl --retry 5 --retry-delay 3 --retry-connrefused --proto '=https' --tlsv1.2 -sSfL "$url" -o "$destination"; then
 		rm -f "$destination"

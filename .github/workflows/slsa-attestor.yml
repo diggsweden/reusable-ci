@@ -1,37 +1,22 @@
 # SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 # SPDX-License-Identifier: CC0-1.0
 #
-# ⚠️  EXPERIMENTAL — ROADMAP, NOT YET EXERCISED IN CI. ⚠️
+# EXPERIMENTAL GITHUB ACTIONS PATTERN; NOT YET EXERCISED IN CI.
 #
-# Isolated, KMS-signing provenance stage for a SLSA Build L3 container pipeline
-# on private / self-hosted infrastructure. Pure Sigstore (cosign + a KMS key) —
-# no forge-specific machinery, so the same shape works on GitHub / Forgejo /
-# GitLab. See docs/verification.md → "SLSA Build L3 (experimental)".
+# This reusable workflow accepts a digest-qualified image, runs the reusable-ci
+# provenance attestor with a KMS key, and pushes the resulting cosign
+# attestation. It requests contents:read and packages:write, does not request a
+# GitHub OIDC token, and lets the caller select the runner label.
 #
-# WHY THIS IS A SEPARATE WORKFLOW (the L3 trust boundary):
-#   This workflow is the ONLY holder of the KMS signing credential. The build
-#   job that produced <image> MUST run as a SEPARATE identity with NO access to
-#   the KMS key, on an EPHEMERAL runner. The only thing that crosses the
-#   boundary is the image DIGEST — immutable and self-verifying — so a
-#   compromised build step cannot forge provenance: it has no signing key, and
-#   this attestor re-reads the registry instead of trusting build-supplied
-#   metadata about the subject.
+# This workflow does not establish a SLSA build level or enforce isolation from
+# the build job. The operator must provide separate build/attestor identities,
+# scope KMS and registry credentials, protect the invoking ref or environment,
+# and select an ephemeral runner when those properties are required.
 #
-# OPERATOR OBLIGATIONS (inherent to SLSA L3 — the platform must provide the
-# isolation; reusable-ci only wires the signer):
-#   1. KMS sign permission scoped to THIS workflow's identity only (never the
-#      build job). e.g. an OpenBao/Vault policy, or a cloud IAM role bound to a
-#      protected environment / protected branch.
-#   2. Ephemeral runners (fresh environment per job) — point `runs-on` at an
-#      ephemeral pool.
-#
-# VERIFY (the KMS public key IS the builder identity):
+# VERIFY (the KMS public key verifies the signature; builder.id is caller-supplied):
 #   cosign verify-attestation --key kms-builder.pub \
 #     --type slsaprovenance1 <registry>/<image>@sha256:...
 #
-# The build remains unchanged: it still signs the image + attests the SBOM with
-# the portable L2 flow in publish-container.yml. This workflow only upgrades the
-# PROVENANCE to an isolated, non-forgeable (L3-in-substance) signature.
 name: SLSA Attestor (experimental)
 
 on:
@@ -51,7 +36,12 @@ on:
         type: string
         default: ""
       predicate-type:
-        description: "Predicate type to attest (slsaprovenance1 | <uri>)."
+        # Only slsaprovenance1 works here. This job passes no --predicate, and
+        # the CLI generates a predicate from the CI environment for that type
+        # alone; any other value fails at run time with "--predicate is
+        # required". The knob stays so a future SLSA predicate version can be
+        # selected without a workflow change.
+        description: "SLSA predicate version to attest. Only slsaprovenance1 is supported: this job generates the predicate from the CI environment, which no other type can do."
         required: false
         type: string
         default: "slsaprovenance1"
@@ -61,7 +51,7 @@ on:
         type: string
         default: "ghcr.io"
       runs-on:
-        description: "Runner label. Point this at an EPHEMERAL pool — isolation is required for L3."
+        description: "Runner label for the attestor job. Use an ephemeral pool when the caller's threat model requires job isolation."
         required: false
         type: string
         default: "ubuntu-24.04"
@@ -83,8 +73,7 @@ on:
           + your cloud's credential-configuration action instead of a token here.
         required: false
 
-# No id-token: KMS signing uses the key, not keyless OIDC. The smaller the
-# surface this isolated signer requests, the better.
+# No id-token: KMS signing uses the key, not keyless OIDC.
 permissions:
   contents: read
   packages: write # push the signed attestation to the registry

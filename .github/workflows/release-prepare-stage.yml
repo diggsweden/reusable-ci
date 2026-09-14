@@ -8,8 +8,22 @@ on:
       branch:
         required: true
         type: string
+      authorized-source-sha:
+        description: "Immutable release-request commit validated as the target branch HEAD"
+        required: true
+        type: string
+      existing-release-sha:
+        description: "Verified existing final-tag commit for an exact-tag recovery"
+        required: false
+        default: ""
+        type: string
       prepare-stage-plan-json:
         required: true
+        type: string
+      reusable-ci-binary-ref:
+        description: "Immutable reusable-ci commit used by the plain-runner preparation job"
+        required: false
+        default: "v3.0.0"
         type: string
       runtime-image:
         description: "reusable-ci runtime image for the summarize job (base is sufficient)"
@@ -75,75 +89,84 @@ on:
         value: ${{ jobs.summarize-prepare-stage.outputs.result-json }}
       release-sha:
         description: Commit SHA the release tag points to (the final HEAD carrying every artifact's bump)
-        value: ${{ jobs.tag-release.outputs.release-sha }}
+        value: ${{ jobs.version-bump.outputs.release-sha }}
+      source-date-epoch:
+        description: Commit timestamp of the prepared release SHA
+        value: ${{ jobs.version-bump.outputs.source-date-epoch }}
 permissions:
   contents: read
 jobs:
-  version-bump:
-    name: Prepare Release - ${{ matrix.artifact.name }}
-    if: ${{ fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
-    strategy:
-      # Each matrix leg commits and pushes to the same release branch. Serialize
-      # them so every leg starts after the preceding bump has landed.
-      max-parallel: 1
-      matrix:
-        artifact: ${{ fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.items }}
-      fail-fast: false
+  generate-full-changelog:
+    name: Generate Full Changelog
+    if: ${{ inputs['existing-release-sha'] == '' && fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
     permissions:
-      contents: write
-      packages: read
-    secrets:
-      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
-      RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
-      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-      RELEASE_SSH_SIGNING_KEY: ${{ secrets.RELEASE_SSH_SIGNING_KEY }}
-    uses: ./.github/workflows/version-bump.yml
+      contents: read
+    uses: ./.github/workflows/generate-changelog.yml
     with:
-      branch: ${{ inputs.branch }}
-      project-type: ${{ matrix.artifact.project_type }}
-      git-signing-method: ${{ inputs['git-signing-method'] }}
-      committer-name: ${{ inputs['committer-name'] }}
-      committer-email: ${{ inputs['committer-email'] }}
-      file-pattern: ${{ fromJson(inputs['prepare-stage-plan-json']).file_pattern || '' }}
-      gradle-version-file: ${{ matrix.artifact.gradle.gradle_version_file }}
-      working-directory: ${{ matrix.artifact.working_directory }}
-      # Pick the runtime image that matches the project-type's bump
-      # tooling: maven/gradle/gradle-android need JDK + Maven; npm needs
-      # Node; cargo needs cargo for Cargo.lock refresh; xcode-ios is
-      # sed-only and uses base.
-      runtime-image: >-
-        ${{ (contains(fromJson('["maven","gradle","gradle-android"]'), matrix.artifact.project_type) && inputs['runtime-image-java']) || (matrix.artifact.project_type == 'npm' && inputs['runtime-image-node']) || (matrix.artifact.project_type == 'cargo' && inputs['runtime-image-rust']) || inputs['runtime-image'] }}
-  # Tag once, after the whole bump matrix, at the branch HEAD that now carries
-  # every artifact's bump. Separated out of version-bump.yml so multi-artifact
-  # releases get a single, deterministic release tag (per-leg tagging would fail
-  # on the second leg or tag an early commit). Runs on the no-bump path too
-  # (version-bump skipped) to tag the existing HEAD.
-  tag-release:
-    name: Tag Release
-    needs: [version-bump]
-    if: ${{ !cancelled() && needs.version-bump.result != 'failure' }}
-    runs-on: ubuntu-24.04
-    container:
-      image: ${{ inputs['runtime-image'] }}
+      branch: ${{ inputs['authorized-source-sha'] }}
+      runtime-image: ${{ inputs['runtime-image'] }}
+      upload-as-artifact: true
+      changelog-config: "/opt/reusable-ci/templates/gitcliff/keepachangelog.toml"
+      git-cliff-args: ""
+      output-file: "CHANGELOG.md"
+      artifact-name: "full-changelog"
+  generate-minimal-changelog:
+    name: Generate Minimal Commit Changelog
+    if: ${{ inputs['existing-release-sha'] == '' && fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
     permissions:
+      contents: read
+    uses: ./.github/workflows/generate-changelog.yml
+    with:
+      branch: ${{ inputs['authorized-source-sha'] }}
+      runtime-image: ${{ inputs['runtime-image'] }}
+      upload-as-artifact: true
+      changelog-config: "/opt/reusable-ci/templates/gitcliff/minimal.toml"
+      git-cliff-args: "--latest --strip header"
+      output-file: "minimal-changelog.txt"
+      artifact-name: "minimal-changelog"
+  version-bump:
+    name: Prepare and Tag Release
+    needs: [generate-full-changelog, generate-minimal-changelog]
+    if: ${{ !cancelled() && needs.generate-full-changelog.result != 'failure' && needs.generate-minimal-changelog.result != 'failure' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
       contents: write
     outputs:
-      release-sha: ${{ steps.tag-release.outputs.release-sha }}
+      release-sha: ${{ steps.release-state.outputs.release-sha }}
+      source-date-epoch: ${{ steps.release-state.outputs.source-date-epoch }}
     steps:
+      - name: Checkout immutable authorized source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ inputs['existing-release-sha'] || inputs['authorized-source-sha'] }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout reusable-ci bootstrap installers
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+      - name: Install reusable-ci binary
+        env:
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
       - name: Refuse PR-context trigger (release secrets in scope)
         run: reusable-ci validate event-context
-      - name: Checkout repository (branch carries every leg's bump)
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          CHECKOUT_REF: ${{ inputs.branch }}
-          CHECKOUT_FETCH_ALL_REFS: "true"
-        run: reusable-ci platform checkout
       - name: Derive release context from request tag
         id: relctx
+        env:
+          RELEASE_CONTEXT_REQUIRE_REQUEST: "true"
+          RELEASE_CONTEXT_REQUIRE_STABLE: "true"
         run: reusable-ci version derive-release
-      # Signing setup mirrors version-bump.yml so `git tag -s` can sign the tag.
-      # TODO: extract a shared composite action once this flow is CI-proven, to
-      # remove the duplication between the two jobs.
+      - name: Revalidate exact-tag recovery lease
+        if: ${{ inputs['existing-release-sha'] != '' }}
+        env:
+          TAG_NAME: ${{ steps.relctx.outputs.release-tag }}
+          BRANCH: ${{ inputs.branch }}
+        run: reusable-ci validate tag commit --require-head
       - name: Import GPG key
         id: import-gpg
         if: ${{ inputs['git-signing-method'] != 'ssh' }}
@@ -163,12 +186,62 @@ jobs:
           GIT_COMMIT_GPGSIGN: "true"
           REUSABLE_CI_GIT_CONFIG_GLOBAL: "true"
         run: reusable-ci release ssh setup
+      - name: Download Full Changelog
+        if: ${{ inputs['existing-release-sha'] == '' && fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: full-changelog
+          ARTIFACT_DIR: .
+        run: reusable-ci artifact download
+      - name: Verify Full Changelog
+        if: ${{ inputs['existing-release-sha'] == '' && fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
+        run: reusable-ci validate changelog --path CHANGELOG.md --required
+      - name: Apply complete version-bump plan
+        id: bump-plan
+        if: ${{ inputs['existing-release-sha'] == '' && fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
+        env:
+          PREPARE_STAGE_PLAN_JSON: ${{ inputs['prepare-stage-plan-json'] }}
+          VERSION: ${{ steps.relctx.outputs.version }}
+          MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
+        run: reusable-ci version bump-plan
+      - name: Download Minimal Changelog
+        if: ${{ inputs['existing-release-sha'] == '' && fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: minimal-changelog
+          ARTIFACT_DIR: .
+        run: reusable-ci artifact download
+      - name: Read Minimal Changelog
+        id: minimal-changelog
+        if: ${{ inputs['existing-release-sha'] == '' && fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
+        run: reusable-ci validate changelog --path minimal-changelog.txt
+      - name: Commit complete release preparation
+        if: ${{ inputs['existing-release-sha'] == '' && fromJson(inputs['prepare-stage-plan-json']).targets.version_bump.runs }}
+        env:
+          BRANCH: ${{ inputs.branch }}
+          AUTHORIZED_SOURCE_SHA: ${{ inputs['authorized-source-sha'] }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          COMMIT_AUTHOR_NAME: ${{ steps.import-gpg.outputs.name || inputs['committer-name'] }}
+          COMMIT_AUTHOR_EMAIL: ${{ steps.import-gpg.outputs.email || inputs['committer-email'] }}
+          COMMIT_MESSAGE: |
+            chore(release): ${{ steps.relctx.outputs.release-tag }}
+
+            ${{ steps.minimal-changelog.outputs.content }}
+
+            ${{ steps.relctx.outputs.commit-trailers }}
+            [skip ci]
+          FILE_PATTERN: ${{ steps.bump-plan.outputs.file-pattern }}
+        run: reusable-ci version commit-push
       - name: Create release tag (create-once, no force) at final HEAD
-        id: tag-release
         env:
           RELEASE_TAG: ${{ steps.relctx.outputs.release-tag }}
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: reusable-ci version tag-release
+      - name: Capture immutable release state
+        id: release-state
+        run: |
+          printf 'release-sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          printf 'source-date-epoch=%s\n' "$(git log -1 --format=%ct HEAD)" >> "$GITHUB_OUTPUT"
       - name: Cleanup GPG key
         if: ${{ always() && inputs['git-signing-method'] != 'ssh' }}
         env:
@@ -179,7 +252,7 @@ jobs:
         run: reusable-ci release ssh cleanup
   summarize-prepare-stage:
     name: Summarize Prepare Stage
-    needs: [version-bump, tag-release]
+    needs: [version-bump]
     if: always()
     runs-on: ubuntu-24.04
     container:

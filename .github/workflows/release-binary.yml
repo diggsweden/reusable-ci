@@ -87,19 +87,14 @@ jobs:
         id: release-context
         env:
           DISPATCH_RELEASE_TAG: ${{ inputs.release-tag }}
-          REQUIRE_RELEASE_REQUEST: ${{ github.event_name == 'workflow_run' && 'true' || 'false' }}
+          UPSTREAM_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          ref_name="$DISPATCH_RELEASE_TAG"
-          if [[ "$REQUIRE_RELEASE_REQUEST" == true ]]; then
-            mapfile -t request_refs < <(git tag --points-at HEAD --list 'release-request/v*')
-            if [[ "${#request_refs[@]}" != 1 ]]; then
-              printf 'Expected exactly one release-request tag at upstream HEAD, found %s\n' "${#request_refs[@]}" >&2
-              exit 1
-            fi
-            ref_name="${request_refs[0]}"
+          if [[ -n "$UPSTREAM_SHA" ]]; then
+            go run ./cmd/reusable-ci version derive-release \
+              --resolve-release-request --revision "$UPSTREAM_SHA"
+          else
+            REF_NAME="$DISPATCH_RELEASE_TAG" go run ./cmd/reusable-ci version derive-release
           fi
-          REF_NAME="$ref_name" RELEASE_CONTEXT_REQUIRE_REQUEST="$REQUIRE_RELEASE_REQUEST" \
-            go run ./cmd/reusable-ci version derive-release
       - name: Checkout created final release tag
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -114,7 +109,7 @@ jobs:
         # bundle, not the detached .sig the v3.7.0 installer fails to fetch).
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
-          cosign-release: 'v3.1.1'
+          cosign-release: 'v3.1.3'
       - name: Install syft
         # goreleaser's sboms: block shells out to syft. Same pin
         # rationale as cosign — explicit version is reviewable in
@@ -131,6 +126,19 @@ jobs:
         run: |
           source_date_epoch="$(git log -1 --format=%ct HEAD)"
           printf 'SOURCE_DATE_EPOCH=%s\n' "$source_date_epoch" >> "$GITHUB_ENV"
+      - name: Verify release tag is still pinned to this commit
+        env:
+          RELEASE_TAG: ${{ steps.release-context.outputs.release-tag }}
+        run: |
+          set -euo pipefail
+          direct="$(git ls-remote --exit-code origin "refs/tags/${RELEASE_TAG}" | awk 'NR == 1 { print $1 }')"
+          peeled="$(git ls-remote origin "refs/tags/${RELEASE_TAG}^{}" | awk 'NR == 1 { print $1 }')"
+          remote_sha="${peeled:-$direct}"
+          local_sha="$(git rev-parse HEAD)"
+          if [[ "$remote_sha" != "$local_sha" ]]; then
+            printf 'Refusing stale release publication: %s resolves to %s, checkout is %s\n' "$RELEASE_TAG" "$remote_sha" "$local_sha" >&2
+            exit 1
+          fi
       - name: Run goreleaser
         uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         with:
@@ -163,7 +171,6 @@ jobs:
             --output dist/reusable-ci.intoto.json \
             --bundle dist/reusable-ci.intoto.jsonl
           tag="$(git describe --tags --exact-match HEAD)"
-          gh release upload "$tag" \
-            dist/reusable-ci.intoto.json \
-            dist/reusable-ci.intoto.jsonl \
-            --clobber
+          "$RUNNER_TEMP/reusable-ci" release attachments upload \
+            --tag "$tag" \
+            --pattern "dist/reusable-ci.intoto.json,dist/reusable-ci.intoto.jsonl"

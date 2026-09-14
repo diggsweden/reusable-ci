@@ -95,6 +95,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 1
     permissions:
+      actions: read
       contents: read
     steps:
       - name: Harden GitHub runner
@@ -104,14 +105,18 @@ jobs:
       # Install reusable-ci first so the artifact download below can use the
       # node-less verb. Unconditional (the download result isn't known yet); the
       # cost on a no-SARIF run is one install.
-      - name: Install reusable-ci binary
-        # Same-repo action, resolved at the same release tag the consumer
-        # already pinned; the tag is created once by the release flow and
-        # never force-moved (tag-immutability policy).
-        # nosemgrep: yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag
-        uses: diggsweden/reusable-ci/.github/actions/install-reusable-ci@v3.0.0
+      - name: Checkout reusable-ci bootstrap installers
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: diggsweden/reusable-ci
           ref: ${{ inputs['reusable-ci-binary-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts/bootstrap
+          persist-credentials: false
+      - name: Install reusable-ci binary
+        env:
+          REUSABLE_CI_BINARY_REF: ${{ inputs['reusable-ci-binary-ref'] }}
+        run: bash .github-shared/scripts/bootstrap/install-reusable-ci.sh "$REUSABLE_CI_BINARY_REF"
       - name: Download scorecard SARIF artifact
         continue-on-error: true
         env:

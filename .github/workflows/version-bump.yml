@@ -30,6 +30,7 @@
 #   RELEASE_GPG_PRIVATE_KEY / RELEASE_GPG_PASSPHRASE: GPG key for signing commits
 #
 # Required Permissions:
+#   actions: read   # Download generated changelog artifacts
 #   contents: write  # Update version files and push commits
 name: Bump Version
 on:
@@ -40,9 +41,8 @@ on:
         value: ${{ jobs.bump-version.outputs.bump-sha }}
     inputs:
       branch:
-        description: "Branch to checkout and work on (default: main)"
-        required: false
-        default: "main"
+        description: "Explicit branch to checkout, update, and push"
+        required: true
         type: string
       project-type:
         description: "Project type: maven, npm, gradle, gradle-android, xcode-ios, cargo"
@@ -105,7 +105,7 @@ on:
         description: "OpenSSH private key for signing the release commit + tag when git-signing-method=ssh"
         required: false
 permissions:
-  contents: read # Best Security practice. Jobs only get read as base, and then permissions are added as needed
+  contents: read # Default permission; the job uses RELEASE_TOKEN for pushes.
 jobs:
   # Generate full changelog for committing to repository
   generate-full-changelog:
@@ -142,6 +142,7 @@ jobs:
     container:
       image: ${{ inputs['runtime-image'] }}
     permissions:
+      actions: read
       contents: write
     outputs:
       bump-sha: ${{ steps.bump-sha.outputs.sha }}
@@ -153,8 +154,9 @@ jobs:
         run: reusable-ci validate event-context
       - name: Checkout repository
         env:
-          # Read-only token for the clone (least-privilege win); the bump commit
-          # and release tag are pushed with RELEASE_TOKEN via the verbs below.
+          # Keep checkout on the read-only job token. The bump commit and release
+          # tag use RELEASE_TOKEN; its repository and operation scope are the
+          # operator's responsibility.
           GITHUB_TOKEN: ${{ github.token }}
           CHECKOUT_REF: ${{ inputs.branch }}
           CHECKOUT_FETCH_ALL_REFS: "true"

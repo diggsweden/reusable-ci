@@ -41,6 +41,7 @@
 #   registry-password: Required when use-ci-token=false (for npmjs.org, etc)
 #
 # Required Permissions:
+#   actions: read   # Download workflow artifacts
 #   contents: read
 #   packages: write  # Only if publishing to GitHub Packages
 #
@@ -58,9 +59,8 @@ on:
         default: "."
         type: string
       branch:
-        description: "Branch, tag, or SHA to checkout. Empty preserves actions/checkout's event default."
-        required: false
-        default: ""
+        description: "Explicit branch, tag, or SHA whose package is published"
+        required: true
         type: string
       registry:
         description: "NPM registry URL"
@@ -124,6 +124,7 @@ jobs:
     container:
       image: ${{ inputs['runtime-image'] }}
     permissions:
+      actions: read
       contents: read
       packages: write
     outputs:
@@ -132,6 +133,20 @@ jobs:
       tarball: ${{ steps.pack.outputs.tarball }}
       publish-status: ${{ steps.check-registry.outputs['already-published'] == 'true' && 'already-exists' || 'published' }}
     steps:
+      - name: Guard working-directory stays inside the workspace
+        # Every upload below is rooted at this caller-supplied value. An
+        # absolute path or a parent step would take the artifact from outside
+        # the workspace, so it is refused here, before any step consumes it.
+        env:
+          WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        run: |
+          case "$WORKING_DIRECTORY" in
+            "") echo "working-directory must not be empty" >&2; exit 1 ;;
+            /*) echo "working-directory must be workspace-relative: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
+          case "/$WORKING_DIRECTORY/" in
+            */../*) echo "working-directory must not contain parent-directory steps: $WORKING_DIRECTORY" >&2; exit 1 ;;
+          esac
       - name: Harden GitHub runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
@@ -145,7 +160,7 @@ jobs:
       - name: Checkout repository
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          CHECKOUT_REF: ${{ inputs.branch || github.ref }}
+          CHECKOUT_REF: ${{ inputs.branch }}
           CHECKOUT_FETCH_ALL_REFS: "true"
         run: reusable-ci platform checkout
       # Compose ~/.npmrc with the literal ${NODE_AUTH_TOKEN} placeholder so
@@ -202,12 +217,20 @@ jobs:
         id: pack
         working-directory: ${{ inputs.working-directory }}
         run: reusable-ci build npm pack
+      - name: Stage tarball artifact
+        if: steps.check-registry.outputs['already-published'] != 'true'
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: |
+          mkdir -p .reusable-ci/npm-snapshot-artifact
+          cp -- "$TARBALL" ".reusable-ci/npm-snapshot-artifact/$(basename -- "$TARBALL")"
       - name: Upload tarball as artifact
         if: steps.check-registry.outputs['already-published'] != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: npm-snapshot-package-${{ github.run_id }}
-          path: ${{ inputs.working-directory }}/${{ steps.pack.outputs.tarball }}
+          path: ${{ inputs.working-directory }}/.reusable-ci/npm-snapshot-artifact/**
           retention-days: "7"
           if-no-files-found: warn
       - name: Publish to NPM registry
