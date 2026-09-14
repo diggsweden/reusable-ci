@@ -97,6 +97,44 @@ func TestInstallMise_RejectsChecksumMismatch(t *testing.T) {
 	}
 }
 
+func TestInstallMise_ReplacesExistingSymlinkWithoutFollowingIt(t *testing.T) {
+	t.Parallel()
+
+	archive := miseArchive(t, "new mise")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(archive) }))
+	t.Cleanup(server.Close)
+
+	dest := t.TempDir()
+
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(outside, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Symlink(outside, filepath.Join(dest, "mise")); err != nil {
+		t.Fatal(err)
+	}
+
+	installPath, err := toolchain.InstallMise(context.Background(), server.Client(), nil, toolchain.InstallMiseInput{
+		Version:          "2026.6.11",
+		LinuxX64SHA256:   shaHexForArch(archive, "amd64"),
+		LinuxARM64SHA256: shaHexForArch(archive, "arm64"),
+		DestDir:          dest,
+		BaseURL:          server.URL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if body, err := os.ReadFile(installPath); err != nil || string(body) != "new mise" {
+		t.Fatalf("installed mise = %q, %v", body, err)
+	}
+
+	if body, err := os.ReadFile(outside); err != nil || string(body) != "keep" {
+		t.Fatalf("symlink target changed = %q, %v", body, err)
+	}
+}
+
 func TestInstallMise_RejectsArchiveWithoutBinary(t *testing.T) {
 	t.Parallel()
 

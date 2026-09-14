@@ -40,7 +40,7 @@ type InstallMiseToolsInput struct {
 // InstallMiseTools runs the setup-toolchain mise install orchestration: sanitize
 // child env, install declared backend runtimes first, install rustup/toolchain
 // when declared, then install either the selected tool subset or the full config.
-func InstallMiseTools(ctx context.Context, runner MiseRunner, out io.Writer, in InstallMiseToolsInput) error {
+func InstallMiseTools(ctx context.Context, runner MiseRunner, out io.Writer, in InstallMiseToolsInput) error { //nolint:cyclop // evidence and subset preflight precede runtime bootstrap and ordered tool installation.
 	if runner == nil {
 		return fmt.Errorf("mise runner is required: %w", errs.ErrUsage)
 	}
@@ -59,6 +59,28 @@ func InstallMiseTools(ctx context.Context, runner MiseRunner, out io.Writer, in 
 	if err != nil {
 		return err
 	}
+
+	if err = validateToolchainEvidence(root, locked); err != nil {
+		return err
+	}
+
+	tools := strings.Fields(in.Tools)
+
+	seen := map[string]bool{}
+	for _, tool := range tools {
+		if strings.HasPrefix(tool, "-") || !toolDeclared(configs, tool) || seen[tool] {
+			return fmt.Errorf("requested tools must be a unique subset of [tools] declarations: %w", errs.ErrUsage)
+		}
+
+		seen[tool] = true
+	}
+
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+
+	runner = rootedMiseRunner{MiseRunner: runner, root: root}
 
 	env, err := miseInstallEnv(os.Environ(), locked)
 	if err != nil {
@@ -81,7 +103,7 @@ func InstallMiseTools(ctx context.Context, runner MiseRunner, out io.Writer, in 
 	}
 
 	args := append([]string{miseCommandInstall}, flags...)
-	args = append(args, strings.Fields(in.Tools)...)
+	args = append(args, tools...)
 
 	return runMiseWithRetry(ctx, runner, env, out, miseRetryAttempts(in.RetryAttempts), miseRetryDelay(in.RetryDelay), args...)
 }
@@ -89,7 +111,7 @@ func InstallMiseTools(ctx context.Context, runner MiseRunner, out io.Writer, in 
 // installRustupToolchain installs rustup when declared and, when the repository
 // pins a toolchain via rust-toolchain.toml, runs `rustup show` and prepends the
 // rustup-managed cargo bin directory to PATH in the returned environment.
-func installRustupToolchain(ctx context.Context, runner MiseRunner, env []string, out io.Writer, root string, configs, flags []string) ([]string, error) {
+func installRustupToolchain(ctx context.Context, runner MiseRunner, env []string, out io.Writer, root string, configs map[string]any, flags []string) ([]string, error) {
 	if !rustupDeclared(configs) {
 		return env, nil
 	}

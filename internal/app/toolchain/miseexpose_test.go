@@ -9,7 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,12 +23,19 @@ type fakeMiseRunner struct {
 }
 
 type fakeMiseCall struct {
+	dir  string
 	env  []string
 	args []string
 }
 
 func (f *fakeMiseRunner) Run(_ context.Context, env []string, args ...string) (string, error) {
-	f.calls = append(f.calls, fakeMiseCall{env: append([]string{}, env...), args: append([]string{}, args...)})
+	dir := ""
+	if len(args) >= 2 && args[0] == "--cd" {
+		dir = args[1]
+		args = args[2:]
+	}
+
+	f.calls = append(f.calls, fakeMiseCall{dir: dir, env: append([]string{}, env...), args: append([]string{}, args...)})
 
 	key := strings.Join(args, "\x00")
 	if value, ok := f.responses[key]; ok {
@@ -96,6 +103,7 @@ func TestExposeMiseTools_ExposesLockedRustupCargoBins(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
+	writeToolchainFile(t, root, "mise.lock", "# owned lock fixture\n")
 	writeToolchainFile(t, root, ".mise.toml", "[tools]\n\"aqua:rust-lang/rustup\" = \"1.28.2\"\n")
 	writeToolchainFile(t, root, "rust-toolchain.toml", "[toolchain]\nchannel = \"1.90.0\"\n")
 	binHome := filepath.Join(root, "home-bin")
@@ -120,12 +128,16 @@ func TestExposeMiseTools_ExposesLockedRustupCargoBins(t *testing.T) {
 
 	wantArgs := []string{"exec", "--no-deps", "--locked", "aqua:rust-lang/rustup", "--", "rustup", "which", "cargo"}
 
-	gotCall := runner.calls[len(runner.calls)-1]
-	if !reflect.DeepEqual(gotCall.args, wantArgs) {
-		t.Fatalf("cargo args = %#v", gotCall.args)
+	if len(runner.calls) == 0 {
+		t.Fatal("mise was never invoked")
 	}
 
-	if !envContains(gotCall.env, "MISE_LOCKED_VERIFY_PROVENANCE=0") || !envContains(gotCall.env, "MISE_PARANOID=0") {
+	gotCall := runner.calls[len(runner.calls)-1]
+	if !slices.Equal(gotCall.args, wantArgs) {
+		t.Fatalf("cargo args = %#v, want %#v", gotCall.args, wantArgs)
+	}
+
+	if !slices.Contains(gotCall.env, "MISE_LOCKED_VERIFY_PROVENANCE=0") || !slices.Contains(gotCall.env, "MISE_PARANOID=0") {
 		t.Fatalf("locked env missing: %#v", gotCall.env)
 	}
 
@@ -167,14 +179,4 @@ func writeExecutable(t *testing.T, path string) {
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil { //nolint:gosec // test-owned path.
 		t.Fatal(err)
 	}
-}
-
-func envContains(env []string, want string) bool {
-	for _, got := range env {
-		if got == want {
-			return true
-		}
-	}
-
-	return false
 }

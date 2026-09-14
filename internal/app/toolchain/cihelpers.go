@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,7 +15,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	domainversion "github.com/diggsweden/reusable-ci/v3/internal/domain/version"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 	"github.com/diggsweden/reusable-ci/v3/internal/safeexec"
 )
 
@@ -28,9 +32,13 @@ type CacheDiscriminatorInput struct {
 // CacheDiscriminator returns the short stable cache-key discriminator used by
 // setup-toolchain for selected tool subsets and extra cache paths.
 func CacheDiscriminator(in CacheDiscriminatorInput) string {
-	sum := sha256.Sum256([]byte(in.Tools + "|" + in.InstallDevTools + "|" + in.ExtraCachePaths))
+	hash := sha256.New()
+	for _, value := range []string{in.Tools, in.InstallDevTools, in.ExtraCachePaths} {
+		_, _ = fmt.Fprintf(hash, "%d:", len(value))
+		_, _ = io.WriteString(hash, value)
+	}
 
-	return hex.EncodeToString(sum[:])[:16]
+	return hex.EncodeToString(hash.Sum(nil))[:16]
 }
 
 // SetupMiseEnvInput drives `toolchain setup-mise-env`.
@@ -45,7 +53,11 @@ type SetupMiseEnvInput struct {
 // SetupMiseEnv writes the runner path/env file entries needed after installing
 // mise and, in cache=false mode, isolates mise's mutable data/cache/state trees
 // under the runner temp directory.
-func SetupMiseEnv(in SetupMiseEnvInput) error {
+// Runner export files are append-only: identical reruns append identical entries
+// rather than rewriting exports left by an earlier command in the same step.
+// Known local obstacles refuse before any creation or append. Later I/O failures
+// may leave created directories or earlier appends; this is not a transaction.
+func SetupMiseEnv(in SetupMiseEnvInput) error { //nolint:cyclop // plan both runner files and every directory before effects.
 	cacheEnabled, err := parseSetupCache(in.Cache)
 	if err != nil {
 		return err
@@ -64,25 +76,39 @@ func SetupMiseEnv(in SetupMiseEnvInput) error {
 		return err
 	}
 
-	if err = setupMiseBinPaths(in.PathFile, binHome); err != nil {
+	binHome, err = resolveMiseLocalPath(binHome, true)
+	if err != nil {
 		return err
 	}
 
-	temp := defaultRunnerTemp(in.RunnerTemp)
-
-	configDir := filepath.Join(temp, "setup-toolchain-mise-config")
-	if err = os.MkdirAll(configDir, 0o755); err != nil { //nolint:gosec // isolated mise config dir read by later CI steps.
-		return fmt.Errorf("create mise config dir %s: %w", configDir, err)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home directory: %w", err)
 	}
 
+	home, err = resolveMiseLocalPath(home, true)
+	if err != nil {
+		return err
+	}
+
+	temp, err := defaultRunnerTemp(in.RunnerTemp)
+	if err != nil {
+		return err
+	}
+
+	temp, err = resolveMiseLocalPath(temp, false)
+	if err != nil {
+		return err
+	}
+
+	configDir := filepath.Join(temp, "setup-toolchain-mise-config")
+	dirs := []string{binHome, filepath.Join(home, ".local", "share", "mise"), configDir}
 	entries := []string{"MISE_CONFIG_DIR=" + configDir}
 
 	if !cacheEnabled {
 		base := filepath.Join(temp, "setup-toolchain-mise-data")
 		for _, name := range []string{"data", "cache", "state"} {
-			if err = os.MkdirAll(filepath.Join(base, name), 0o755); err != nil { //nolint:gosec // isolated mise tree read by later CI steps.
-				return fmt.Errorf("create mise %s dir: %w", name, err)
-			}
+			dirs = append(dirs, filepath.Join(base, name))
 		}
 
 		entries = append(entries,
@@ -92,30 +118,38 @@ func SetupMiseEnv(in SetupMiseEnvInput) error {
 		)
 	}
 
-	return appendEnvFile(in.EnvFile, entries...)
-}
-
-// setupMiseBinPaths creates the bin/data homes and exposes the tool bin
-// directories through the runner path file.
-func setupMiseBinPaths(pathFile, binHome string) error {
-	home, err := os.UserHomeDir()
+	pathFile, err := resolveMiseLocalPath(in.PathFile, false)
 	if err != nil {
-		return fmt.Errorf("resolve home directory: %w", err)
-	}
-
-	if err := os.MkdirAll(binHome, 0o755); err != nil { //nolint:gosec // tool bin dir read by later CI steps.
-		return fmt.Errorf("create bin home %s: %w", binHome, err)
-	}
-
-	if err := os.MkdirAll(filepath.Join(home, ".local", "share", "mise"), 0o755); err != nil { //nolint:gosec // mise data home read by later CI steps.
-		return fmt.Errorf("create mise data home: %w", err)
-	}
-
-	if err := appendPathFile(pathFile, binHome); err != nil {
 		return err
 	}
 
-	return appendPathFile(pathFile, filepath.Join(home, ".cargo", "bin"))
+	envFile, err := resolveMiseLocalPath(in.EnvFile, false)
+	if err != nil {
+		return err
+	}
+
+	if err = preflightMiseLocalPaths(dirs, []string{pathFile, envFile}); err != nil {
+		return err
+	}
+
+	for _, dir := range dirs {
+		root, createErr := pathsafe.MkdirRoot(dir, 0o755)
+		if createErr != nil {
+			return fmt.Errorf("create mise directory %s: %w", dir, createErr)
+		}
+
+		_ = root.Close()
+	}
+
+	if err = appendPathFile(pathFile, binHome); err != nil {
+		return err
+	}
+
+	if err = appendPathFile(pathFile, filepath.Join(home, ".cargo", "bin")); err != nil {
+		return err
+	}
+
+	return appendEnvFile(envFile, entries...)
 }
 
 // InstallChangelogRendererInput drives `toolchain install-changelog-renderer`.
@@ -132,8 +166,33 @@ type InstallChangelogRendererInput struct {
 
 // InstallChangelogRenderer installs the selected changelog renderer into an
 // isolated mise tree and exposes the actual binary through ~/.local/bin.
-func InstallChangelogRenderer(ctx context.Context, runner MiseRunner, out io.Writer, in InstallChangelogRendererInput) error {
+// Local preflight precedes installation/reset. Later failures retain completed
+// installation, scratch reset, links and appends; no rollback is promised.
+func InstallChangelogRenderer(ctx context.Context, runner MiseRunner, out io.Writer, in InstallChangelogRendererInput) error { //nolint:cyclop // validate mandatory pins before starting the existing install/expose sequence.
 	if err := validateChangelogRendererInput(runner, in); err != nil {
+		return err
+	}
+
+	selector, bin, version, err := changelogRendererSelector(in)
+	if err != nil {
+		return err
+	}
+
+	if err = validateInstallMiseInput(in.Mise); err != nil {
+		return err
+	}
+
+	in, prepareDir, err := preflightChangelogPaths(in, bin)
+	if err != nil {
+		return err
+	}
+
+	arch, _, err := miseArchiveArchAndSHA(in.Mise)
+	if err != nil {
+		return err
+	}
+
+	if _, _, err = miseArchiveURL(in.Mise, arch); err != nil {
 		return err
 	}
 
@@ -154,12 +213,12 @@ func InstallChangelogRenderer(ctx context.Context, runner MiseRunner, out io.Wri
 	// happen to pre-ship mise — the failure mode nanolinter's release hit.
 	adoptInstalledMise(runner, misePath)
 
-	selector, bin, version, err := changelogRendererSelector(in)
+	env, err := prepareChangelogMiseEnv(prepareDir, binHome)
 	if err != nil {
 		return err
 	}
 
-	env, err := prepareChangelogMiseEnv(in, binHome)
+	installRoot, err := changelogInstallRoot(prepareDir)
 	if err != nil {
 		return err
 	}
@@ -169,17 +228,13 @@ func InstallChangelogRenderer(ctx context.Context, runner MiseRunner, out io.Wri
 		return err
 	}
 
-	candidate, err := resolveChangelogBinary(ctx, runner, env, tool, bin)
+	candidate, err := resolveChangelogBinary(ctx, runner, env, tool, bin, installRoot)
 	if err != nil {
 		return err
 	}
 
-	link, err := linkChangelogBinary(candidate, binHome, bin)
+	link, err := publishChangelogBinary(candidate, binHome, bin, in.PathFile)
 	if err != nil {
-		return err
-	}
-
-	if err = appendPathFile(in.PathFile, binHome); err != nil {
 		return err
 	}
 
@@ -215,6 +270,152 @@ func validateChangelogRendererInput(runner MiseRunner, in InstallChangelogRender
 	return nil
 }
 
+func preflightChangelogPaths(in InstallChangelogRendererInput, bin string) (InstallChangelogRendererInput, string, error) { //nolint:cyclop // resolve once, then jointly check install, export and reset authority.
+	prepareDir, err := changelogPrepareDir(in.RunID, in.RunnerTemp)
+	if err != nil {
+		return in, "", err
+	}
+
+	in.BinHome, err = resolveBinHome(in.BinHome)
+	if err != nil {
+		return in, "", err
+	}
+
+	in.BinHome, err = resolveMiseLocalPath(in.BinHome, true)
+	if err != nil {
+		return in, "", err
+	}
+
+	in.Mise.DestDir, err = resolveMiseDestDir(in.Mise.DestDir)
+	if err != nil {
+		return in, "", err
+	}
+
+	in.Mise.DestDir, err = resolveMiseLocalPath(in.Mise.DestDir, false)
+	if err != nil {
+		return in, "", err
+	}
+
+	in.PathFile, err = resolveMiseLocalPath(in.PathFile, false)
+	if err != nil {
+		return in, "", err
+	}
+
+	for _, path := range []string{in.PathFile, in.BinHome, in.Mise.DestDir} {
+		if misePathWithin(path, prepareDir) {
+			return in, "", fmt.Errorf("prepare reset overlaps caller path %s: %w", path, errs.ErrValidation)
+		}
+	}
+
+	installPath := filepath.Join(in.Mise.DestDir, "mise")
+
+	selectedPath := filepath.Join(in.BinHome, bin)
+	if misePathWithin(in.PathFile, selectedPath) || misePathWithin(prepareDir, installPath) || misePathWithin(in.BinHome, installPath) ||
+		misePathWithin(prepareDir, selectedPath) || misePathWithin(in.Mise.DestDir, selectedPath) {
+		return in, "", fmt.Errorf("changelog paths overlap an executable destination: %w", errs.ErrValidation)
+	}
+
+	if err = preflightMiseLocalPaths([]string{in.BinHome, in.Mise.DestDir, prepareDir}, []string{in.PathFile, installPath}); err != nil {
+		return in, "", err
+	}
+
+	selectedLeaf, err := os.Lstat(selectedPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return in, "", fmt.Errorf("inspect selected changelog destination: %w", err)
+	}
+
+	if selectedLeaf != nil && !selectedLeaf.Mode().IsRegular() && selectedLeaf.Mode()&os.ModeSymlink == 0 {
+		return in, "", fmt.Errorf("selected changelog destination must be a regular file or symlink: %w", errs.ErrValidation)
+	}
+
+	pathInfo, pathErr := os.Stat(in.PathFile)
+
+	selectedInfo, selectedErr := os.Stat(selectedPath)
+	if selectedErr == nil && (selectedInfo.IsDir() || (pathErr == nil && os.SameFile(pathInfo, selectedInfo))) {
+		return in, "", fmt.Errorf("selected changelog destination is a directory or aliases PATH: %w", errs.ErrValidation)
+	}
+
+	return in, prepareDir, nil
+}
+
+// PATH list separators only matter for exported paths, not ENV values or local
+// output filenames. Validate raw spelling too, before Abs can erase components.
+func resolveMiseLocalPath(path string, pathEntry bool) (string, error) {
+	if strings.ContainsAny(path, "\x00\r\n\t") || (pathEntry && !validMisePathSpelling(path)) {
+		return "", fmt.Errorf("invalid mise local path %q: %w", path, errs.ErrValidation)
+	}
+
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+
+	if strings.ContainsAny(abs, "\x00\r\n\t") || (pathEntry && !validMisePathSpelling(abs)) {
+		return "", fmt.Errorf("invalid resolved mise local path %q: %w", abs, errs.ErrValidation)
+	}
+
+	return abs, nil
+}
+
+func misePathWithin(path, dir string) bool {
+	return path == dir || strings.HasPrefix(path, dir+string(filepath.Separator))
+}
+
+// A missing runner-file parent is valid only if a planned MkdirAll creates it.
+// OpenRoot checks every existing ancestor without following links, even when a
+// later component is missing. This preflight performs no filesystem mutations.
+func preflightMiseLocalPaths(dirs, files []string) error { //nolint:cyclop,gocognit // both path spelling and existing-file identity participate in the joint plan.
+	for _, dir := range dirs {
+		root, err := pathsafe.OpenRoot(dir)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect planned mise directory %s: %w", dir, err)
+		}
+
+		if root != nil {
+			_ = root.Close()
+		}
+	}
+
+	infos := make([]os.FileInfo, len(files))
+	for index, path := range files {
+		parentPlanned := false
+
+		for _, dir := range dirs {
+			if misePathWithin(dir, path) {
+				return fmt.Errorf("runner/install file overlaps planned directory %s: %w", path, errs.ErrValidation)
+			}
+
+			parentPlanned = parentPlanned || misePathWithin(dir, filepath.Dir(path))
+		}
+
+		root, err := pathsafe.OpenRoot(filepath.Dir(path))
+		if err != nil && (!parentPlanned || !errors.Is(err, os.ErrNotExist)) {
+			return fmt.Errorf("open runner/install parent %s: %w", path, err)
+		}
+
+		if root != nil {
+			infos[index], err = root.Lstat(filepath.Base(path))
+			_ = root.Close()
+
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("inspect runner/install file %s: %w", path, err)
+			}
+
+			if infos[index] != nil && !infos[index].Mode().IsRegular() {
+				return fmt.Errorf("runner/install destination %s must be a nonlinked regular file: %w", path, errs.ErrValidation)
+			}
+		}
+
+		for previous := range index {
+			if path == files[previous] || (infos[index] != nil && infos[previous] != nil && os.SameFile(infos[index], infos[previous])) {
+				return fmt.Errorf("runner/install files alias %s and %s: %w", files[previous], path, errs.ErrValidation)
+			}
+		}
+	}
+
+	return nil
+}
+
 // ensureBinHome resolves the tool bin home and creates it.
 func ensureBinHome(binHome string) (string, error) {
 	resolved, err := resolveBinHome(binHome)
@@ -222,22 +423,47 @@ func ensureBinHome(binHome string) (string, error) {
 		return "", err
 	}
 
-	if err := os.MkdirAll(resolved, 0o755); err != nil { //nolint:gosec // tool bin dir read by later CI steps.
+	root, err := pathsafe.MkdirRoot(resolved, 0o755)
+	if err != nil {
 		return "", fmt.Errorf("create bin home %s: %w", resolved, err)
 	}
+
+	_ = root.Close()
 
 	return resolved, nil
 }
 
-// prepareChangelogMiseEnv creates the isolated prepare-mise tree and returns
-// the environment pointing mise at it.
-func prepareChangelogMiseEnv(in InstallChangelogRendererInput, binHome string) ([]string, error) {
-	prepareDir := filepath.Join(defaultRunnerTemp(in.RunnerTemp), "reusable-ci-prepare-mise-"+defaultRunID(in.RunID))
+func changelogPrepareDir(runID, runnerTemp string) (string, error) {
+	runID = defaultRunID(runID)
+	if runID == "" || domainversion.SanitizePathToken(runID) != runID {
+		return "", fmt.Errorf("install-changelog-renderer: run-id must contain only letters, digits, '.', '_' or '-': %w", errs.ErrUsage)
+	}
+
+	temp, err := defaultRunnerTemp(runnerTemp)
+	if err != nil {
+		return "", err
+	}
+	// Installed sources live below this tree and must satisfy the publisher's
+	// source spelling rules, unlike setup's ENV-only directory values.
+	temp, err = resolveMiseLocalPath(temp, true)
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(temp, "reusable-ci-prepare-mise-"+runID), nil
+}
+
+// miseDataDirName is MISE_DATA_DIR's leaf under the prepare tree. The runner
+// environment and the installation authority must name the same directory.
+const miseDataDirName = "data"
+
+// prepareChangelogMiseEnv uses only the already-resolved, preflighted reset path.
+func prepareChangelogMiseEnv(prepareDir, binHome string) ([]string, error) {
 	if err := os.RemoveAll(prepareDir); err != nil {
 		return nil, fmt.Errorf("remove prior prepare mise dir %s: %w", prepareDir, err)
 	}
 
-	for _, name := range []string{"cache", "config", "data", "state"} {
+	for _, name := range []string{"cache", "config", miseDataDirName, "state"} {
 		if err := os.MkdirAll(filepath.Join(prepareDir, name), 0o755); err != nil { //nolint:gosec // isolated mise prepare tree read by later CI steps.
 			return nil, fmt.Errorf("create prepare mise %s dir: %w", name, err)
 		}
@@ -246,8 +472,50 @@ func prepareChangelogMiseEnv(in InstallChangelogRendererInput, binHome string) (
 	return prepareMiseEnv(os.Environ(), binHome, prepareDir), nil
 }
 
-// resolveChangelogBinary locates the installed renderer binary inside the mise tool dir.
-func resolveChangelogBinary(ctx context.Context, runner MiseRunner, env []string, tool, bin string) (string, error) {
+// changelogInstallRoot names the only tree a published renderer may come from:
+// the MISE_DATA_DIR this run just reset. Resolving it once lets a linked runner
+// temp still compare equal to the resolved paths mise reports below it.
+func changelogInstallRoot(prepareDir string) (string, error) {
+	root, err := filepath.EvalSymlinks(filepath.Join(prepareDir, miseDataDirName))
+	if err != nil {
+		return "", fmt.Errorf("resolve changelog installation root: %w", err)
+	}
+
+	if !validMiseSourcePath(root) {
+		return "", fmt.Errorf("invalid changelog installation root %q: %w", root, errs.ErrValidation)
+	}
+
+	return root, nil
+}
+
+// changelogInstalledPath resolves one reported installation path and requires it
+// to stay inside root, so a misconfigured or hostile tool manager cannot nominate
+// an executable this run did not install.
+func changelogInstalledPath(path, root, what string) (string, error) {
+	if !validMiseSourcePath(path) {
+		return "", fmt.Errorf("invalid changelog %s %q: %w", what, path, errs.ErrValidation)
+	}
+
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve changelog %s: %w", what, err)
+	}
+
+	if !validMiseSourcePath(resolved) || !misePathWithin(resolved, root) {
+		return "", fmt.Errorf("changelog %s %q is outside this run's mise installation root: %w", what, resolved, errs.ErrValidation)
+	}
+
+	return resolved, nil
+}
+
+// resolveChangelogBinary locates the installed renderer binary inside the mise
+// tool dir. `mise where` output is tool-manager text, not publication authority:
+// the reported install dir and the directory the binary was found in must both
+// resolve inside this run's isolated installation root. The layout below that
+// root stays mise's business. A leaf link written inside the tree still resolves
+// outward under the shared publisher's documented source-symlink support, so this
+// binds where the selection came from, not the bytes it ultimately names.
+func resolveChangelogBinary(ctx context.Context, runner MiseRunner, env []string, tool, bin, installRoot string) (string, error) {
 	installDir, err := runner.Run(ctx, env, "--no-config", "where", tool)
 	if err != nil {
 		return "", fmt.Errorf("resolve %s install dir: %w", bin, err)
@@ -258,21 +526,67 @@ func resolveChangelogBinary(ctx context.Context, runner MiseRunner, env []string
 		return "", fmt.Errorf("resolve %s install dir: empty output: %w", bin, errs.ErrValidation)
 	}
 
-	return findMiseToolBinary(installDir, bin)
+	installDir, err = changelogInstalledPath(installDir, installRoot, "install dir")
+	if err != nil {
+		return "", err
+	}
+
+	candidate, err := findMiseToolBinary(installDir, bin)
+	if err != nil {
+		return "", err
+	}
+	// A linked child directory can leave the root between the two probes.
+	if _, err = changelogInstalledPath(filepath.Dir(candidate), installRoot, "executable directory"); err != nil {
+		return "", err
+	}
+
+	return candidate, nil
 }
 
-// linkChangelogBinary replaces the bin-home symlink with one pointing at candidate.
-func linkChangelogBinary(candidate, binHome, bin string) (string, error) {
-	link := filepath.Join(binHome, bin)
-	if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("replace symlink %s: %w", link, err)
+// publishChangelogBinary preflights the selected renderer and PATH together.
+// Do not enumerate its directory: sibling executables are not selected tools.
+func publishChangelogBinary(candidate, binHome, bin, pathFile string) (string, error) { //nolint:cyclop // source identity and raw/absolute export validation precede publication.
+	if bin != "git-cliff" && bin != "git-chglog" { //nolint:goconst // keep the closed publication allowlist independent of test constants.
+		return "", fmt.Errorf("unsupported changelog binary %q: %w", bin, errs.ErrValidation)
 	}
 
-	if err := os.Symlink(candidate, link); err != nil {
-		return "", fmt.Errorf("symlink %s -> %s: %w", link, candidate, err)
+	if !validMiseSourcePath(candidate) {
+		return "", fmt.Errorf("invalid changelog executable path %q: %w", candidate, errs.ErrValidation)
 	}
 
-	return link, nil
+	candidate, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return "", fmt.Errorf("resolve changelog executable: %w", err)
+	}
+
+	if !validMiseSourcePath(candidate) {
+		return "", fmt.Errorf("invalid resolved changelog executable path %q: %w", candidate, errs.ErrValidation)
+	}
+
+	info, err := os.Stat(candidate)
+	if err != nil {
+		return "", fmt.Errorf("inspect changelog executable: %w", err)
+	}
+
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return "", fmt.Errorf("changelog executable must be an executable regular file: %w", errs.ErrValidation)
+	}
+
+	if !validMisePathSpelling(binHome) {
+		return "", fmt.Errorf("invalid PATH entry %q: %w", binHome, errs.ErrValidation)
+	}
+	// One absolute bin home binds the published link, PATH entry and version call.
+	binHome, err = filepath.Abs(binHome)
+	if err != nil {
+		return "", fmt.Errorf("resolve changelog bin home: %w", err)
+	}
+
+	selected := []miseExecutable{{name: bin, path: candidate, info: info}}
+	if err = publishMiseExecutables(selected, []string{binHome}, binHome, pathFile); err != nil {
+		return "", err
+	}
+
+	return filepath.Join(binHome, bin), nil
 }
 
 func parseSetupCache(value string) (bool, error) {
@@ -292,26 +606,24 @@ func parseSetupCache(value string) (bool, error) {
 // It does NOT consult $RUNNER_TEMP: value arrives from --runner-temp, whose
 // sources already include it (via cienv.TempDir()) alongside $CI_TEMP_DIR.
 // See defaultReleaseRunnerTemp in app/release for the same reasoning.
-func defaultRunnerTemp(value string) string {
+func defaultRunnerTemp(value string) (string, error) {
 	if strings.TrimSpace(value) != "" {
-		return value
+		return value, nil
 	}
 
-	return os.TempDir()
+	// OS temp locations may have trusted aliases such as /var -> /private/var.
+	// Do not extend this exception to explicit caller-selected destinations.
+	temp, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		return "", fmt.Errorf("resolve OS temp directory: %w", err)
+	}
+
+	return temp, nil
 }
 
 func appendEnvFile(path string, entries ...string) error {
-	envFile, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // CI runner env file chosen by caller.
-	if err != nil {
-		return fmt.Errorf("open env file %s: %w", path, err)
-	}
-
-	defer func() { _ = envFile.Close() }()
-
-	for _, entry := range entries {
-		if _, err := fmt.Fprintln(envFile, entry); err != nil {
-			return fmt.Errorf("append env entry to %s: %w", path, err)
-		}
+	if err := cliio.AppendLines(path, entries...); err != nil {
+		return fmt.Errorf("append env entries: %w", err)
 	}
 
 	return nil
@@ -329,7 +641,7 @@ func prepareMiseEnv(env []string, binHome, prepareDir string) []string {
 	out := envWithOverrides(env, map[string]string{
 		"MISE_CACHE_DIR":  filepath.Join(prepareDir, "cache"),
 		"MISE_CONFIG_DIR": filepath.Join(prepareDir, "config"),
-		"MISE_DATA_DIR":   filepath.Join(prepareDir, "data"),
+		"MISE_DATA_DIR":   filepath.Join(prepareDir, miseDataDirName),
 		"MISE_STATE_DIR":  filepath.Join(prepareDir, "state"),
 	})
 
@@ -348,8 +660,8 @@ func changelogRendererSelector(in InstallChangelogRendererInput) (string, string
 }
 
 func requireVersion(name, version string) error {
-	if strings.TrimSpace(version) == "" {
-		return fmt.Errorf("install-changelog-renderer: %s version is required: %w", name, errs.ErrUsage)
+	if !exactDownloadVersion(version) {
+		return fmt.Errorf("install-changelog-renderer: %s version must be exact MAJOR.MINOR.PATCH: %w", name, errs.ErrUsage)
 	}
 
 	return nil
@@ -361,14 +673,17 @@ func findMiseToolBinary(installDir, bin string) (string, error) {
 		return candidate, nil
 	}
 
-	matches, err := filepath.Glob(filepath.Join(installDir, "*", bin))
+	entries, err := os.ReadDir(installDir)
 	if err != nil {
 		return "", fmt.Errorf("search %s for %s: %w", installDir, bin, err)
 	}
 
-	for _, path := range matches {
-		if executableRegularFile(path) {
-			return path, nil
+	// ReadDir is name-sorted and treats the root literally. Probe joined paths
+	// without IsDir filtering so legitimate linked child directories still work.
+	for _, entry := range entries {
+		candidate = filepath.Join(installDir, entry.Name(), bin)
+		if executableRegularFile(candidate) {
+			return candidate, nil
 		}
 	}
 

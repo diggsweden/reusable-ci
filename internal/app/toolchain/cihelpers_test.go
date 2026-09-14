@@ -14,10 +14,10 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-// TestCacheDiscriminator covers the cache-key discriminator, which had no
+// TestCacheDiscriminator_IsStableAndVariesWithEveryInput covers the cache-key discriminator, which had no
 // test. It decides whether two setup-toolchain runs share a cache, so a
 // collision serves one run's tool set to another.
-func TestCacheDiscriminator(t *testing.T) {
+func TestCacheDiscriminator_IsStableAndVariesWithEveryInput(t *testing.T) {
 	t.Parallel()
 
 	base := toolchain.CacheDiscriminatorInput{Tools: "go,node", InstallDevTools: "true", ExtraCachePaths: "~/.cargo"}
@@ -65,11 +65,11 @@ func TestCacheDiscriminator(t *testing.T) {
 // ~/.local/share/mise and would otherwise touch the developer's own.
 func TestSetupMiseEnv_IsolatesMutableTreesWhenCacheIsOff(t *testing.T) {
 	// No t.Parallel(): mutates HOME via t.Setenv.
-	home := t.TempDir()
+	home := canonicalSetupTempDir(t)
 	t.Setenv("HOME", home)
 
-	runnerTemp := t.TempDir()
-	dir := t.TempDir()
+	runnerTemp := canonicalSetupTempDir(t)
+	dir := canonicalSetupTempDir(t)
 	pathFile := filepath.Join(dir, "path")
 	envFile := filepath.Join(dir, "env")
 
@@ -114,9 +114,9 @@ func TestSetupMiseEnv_IsolatesMutableTreesWhenCacheIsOff(t *testing.T) {
 // the runner's cache is what mise reads and writes.
 func TestSetupMiseEnv_CachedModeLeavesTheSharedTreesAlone(t *testing.T) {
 	// No t.Parallel(): mutates HOME via t.Setenv.
-	t.Setenv("HOME", t.TempDir())
+	t.Setenv("HOME", canonicalSetupTempDir(t))
 
-	dir := t.TempDir()
+	dir := canonicalSetupTempDir(t)
 	envFile := filepath.Join(dir, "env")
 
 	if err := toolchain.SetupMiseEnv(toolchain.SetupMiseEnvInput{
@@ -124,7 +124,7 @@ func TestSetupMiseEnv_CachedModeLeavesTheSharedTreesAlone(t *testing.T) {
 		BinHome:    filepath.Join(dir, "bin"),
 		PathFile:   filepath.Join(dir, "path"),
 		EnvFile:    envFile,
-		RunnerTemp: t.TempDir(),
+		RunnerTemp: canonicalSetupTempDir(t),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -139,9 +139,9 @@ func TestSetupMiseEnv_CachedModeLeavesTheSharedTreesAlone(t *testing.T) {
 
 func TestSetupMiseEnv_Refusals(t *testing.T) {
 	// No t.Parallel(): mutates HOME via t.Setenv.
-	t.Setenv("HOME", t.TempDir())
+	t.Setenv("HOME", canonicalSetupTempDir(t))
 
-	dir := t.TempDir()
+	dir := canonicalSetupTempDir(t)
 	valid := toolchain.SetupMiseEnvInput{
 		Cache: "true", BinHome: filepath.Join(dir, "bin"),
 		PathFile: filepath.Join(dir, "path"), EnvFile: filepath.Join(dir, "env"),
@@ -169,6 +169,17 @@ func TestSetupMiseEnv_Refusals(t *testing.T) {
 			}
 		})
 	}
+}
+
+func canonicalSetupTempDir(t *testing.T) string {
+	t.Helper()
+
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return root
 }
 
 func readFileOrFail(t *testing.T, path string) []byte {

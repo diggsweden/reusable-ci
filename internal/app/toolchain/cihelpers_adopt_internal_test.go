@@ -22,11 +22,12 @@ type binRecordingRunner struct {
 
 func (r *binRecordingRunner) SetBin(bin string) { r.bin = bin }
 
-// TestAdoptInstalledMise pins the PATH-resolution fix: after an in-process
-// mise install, the runner must be pointed at the installed binary — a bare
-// "mise" resolves against the parent PATH, which cannot see ~/.local/bin
-// entries written this step (nanolinter's v0.8.6 release failure).
-func TestAdoptInstalledMise(t *testing.T) {
+// TestAdoptInstalledMise_PinsTheRunnerOnlyWhenAPathIsGiven pins the
+// PATH-resolution fix: after an in-process mise install, the runner must be
+// pointed at the installed binary — a bare "mise" resolves against the parent
+// PATH, which cannot see ~/.local/bin entries written this step (nanolinter's
+// v0.8.6 release failure).
+func TestAdoptInstalledMise_PinsTheRunnerOnlyWhenAPathIsGiven(t *testing.T) {
 	t.Parallel()
 
 	r := &binRecordingRunner{}

@@ -17,7 +17,7 @@ func TestValidateMiseInstall_UnlockedConfigRequiresGithubTokenPresence(t *testin
 	t.Parallel()
 
 	root := t.TempDir()
-	writeToolchainFile(t, root, ".mise.toml", "[tools]\ngo = \"1.25\"\n")
+	writeToolchainFile(t, root, ".mise.toml", "[tools]\ngo = \"1.26.6\"\n")
 
 	err := toolchain.ValidateMiseInstall(toolchain.ValidateMiseInstallInput{Root: root, Locked: "false"})
 	if !errors.Is(err, errs.ErrValidation) {
@@ -41,7 +41,7 @@ func TestValidateMiseInstall_LockedRequiresMiseLock(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	writeToolchainFile(t, root, ".mise.toml", "[tools]\ngo = \"1.25\"\n")
+	writeToolchainFile(t, root, ".mise.toml", "[tools]\ngo = \"1.26.6\"\n")
 
 	err := toolchain.ValidateMiseInstall(toolchain.ValidateMiseInstallInput{Root: root, Locked: "true"})
 	if !errors.Is(err, errs.ErrValidation) {
@@ -67,7 +67,7 @@ func TestValidateMiseInstall_LockedAcceptsPinnedBackendRuntime(t *testing.T) {
 
 	root := t.TempDir()
 	writeToolchainFile(t, root, "mise.lock", "locked\n")
-	writeToolchainFile(t, root, ".mise.toml", "[tools]\ngo = \"1.25\"\n\"go:github.com/x/y\" = \"1.0.0\"\n")
+	writeToolchainFile(t, root, ".mise.toml", "[tools]\ngo = \"1.26.6\"\n\"go:github.com/x/y\" = \"1.0.0\"\n")
 
 	if err := toolchain.ValidateMiseInstall(toolchain.ValidateMiseInstallInput{Root: root, Locked: "true"}); err != nil {
 		t.Fatalf("ValidateMiseInstall: %v", err)

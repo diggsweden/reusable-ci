@@ -4,10 +4,12 @@
 package toolchain_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/app/toolchain"
@@ -24,14 +26,17 @@ import (
 type recordingInstaller struct {
 	calls    int
 	packages []string
+	gotCtx   context.Context //nolint:containedctx // recorded to assert the caller's context is forwarded.
+	err      error
 }
 
-func (r *recordingInstaller) Install(_ context.Context, packages []string, _ io.Writer) error {
+func (r *recordingInstaller) Install(ctx context.Context, packages []string, _ io.Writer) error {
 	r.calls++
 
 	r.packages = append([]string(nil), packages...)
+	r.gotCtx = ctx
 
-	return nil
+	return r.err
 }
 
 // TestInstallSystemDependencies_RefusesUnsafePackageNames is the claim
@@ -150,6 +155,107 @@ func TestInstallSystemDependencies_MissingAPT(t *testing.T) {
 		t.Errorf("the installer ran on a runner with no apt-get")
 	}
 }
+
+// TestInstallSystemDependencies_RequiresAnInstaller covers the wiring mistake.
+// The check sits after the apt-get lookup, so on a runner that has apt-get a
+// nil installer must be named rather than panicking partway through toolchain
+// bootstrap.
+func TestInstallSystemDependencies_RequiresAnInstaller(t *testing.T) {
+	// No t.Parallel(): mockbinary prepends to PATH via t.Setenv.
+	bins := mockbinary.New(t)
+	bins.Add("apt-get", ":")
+
+	err := toolchain.InstallSystemDependencies(context.Background(), nil, io.Discard,
+		toolchain.InstallSystemDependenciesInput{Packages: "curl"})
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage", err)
+	}
+}
+
+// TestInstallSystemDependencies_PropagatesTheInstallerFailure keeps a failed
+// install from reading as a successful bootstrap.
+//
+// The recording double returned nil unconditionally, so every existing test
+// exercised only the happy path. This is the step that puts a build's declared
+// system packages on the runner: swallowing its failure means the build
+// proceeds without them and fails later somewhere that does not name apt.
+func TestInstallSystemDependencies_PropagatesTheInstallerFailure(t *testing.T) {
+	// No t.Parallel(): mockbinary prepends to PATH via t.Setenv.
+	bins := mockbinary.New(t)
+	bins.Add("apt-get", ":")
+
+	installer := &recordingInstaller{err: errAptFailed}
+
+	err := toolchain.InstallSystemDependencies(context.Background(), installer, io.Discard,
+		toolchain.InstallSystemDependenciesInput{Packages: "curl"})
+	if !errors.Is(err, errAptFailed) {
+		t.Fatalf("err = %v, want the installer's own cause", err)
+	}
+}
+
+// TestInstallSystemDependencies_ForwardsTheCallersContext pins cancellation.
+// apt-get install is the longest step in toolchain bootstrap, and a context
+// that does not reach it is a job that cannot be cancelled or timed out where
+// it spends most of its time.
+func TestInstallSystemDependencies_ForwardsTheCallersContext(t *testing.T) {
+	// No t.Parallel(): mockbinary prepends to PATH via t.Setenv.
+	bins := mockbinary.New(t)
+	bins.Add("apt-get", ":")
+
+	type ctxKey struct{}
+
+	ctx := context.WithValue(context.Background(), ctxKey{}, "marker")
+	installer := &recordingInstaller{}
+
+	if err := toolchain.InstallSystemDependencies(ctx, installer, io.Discard,
+		toolchain.InstallSystemDependenciesInput{Packages: "curl"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if installer.gotCtx == nil || installer.gotCtx.Value(ctxKey{}) != "marker" {
+		t.Error("the installer received a context other than the caller's")
+	}
+}
+
+// TestInstallSystemDependencies_SkipIsReported covers the diagnostic, which
+// the missing-apt test discards.
+//
+// Skipping is the one outcome where declared dependencies are absent and the
+// command still succeeds. The line saying so is the only signal an operator
+// gets before the failure it causes appears somewhere unrelated, so it has to
+// name both what was skipped and why.
+func TestInstallSystemDependencies_SkipIsReported(t *testing.T) {
+	// No t.Parallel(): PATH is replaced via t.Setenv.
+	t.Setenv("PATH", t.TempDir())
+
+	var out bytes.Buffer
+
+	installer := &recordingInstaller{}
+	if err := toolchain.InstallSystemDependencies(context.Background(), installer, &out,
+		toolchain.InstallSystemDependenciesInput{Packages: "curl", SkipIfMissingAPT: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{"apt-get", "skipping"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the skip notice does not mention %q:\n%s", want, out.String())
+		}
+	}
+
+	// A nil writer is the same no-op, not a panic: callers that do not want
+	// narration pass one.
+	if err := toolchain.InstallSystemDependencies(context.Background(), installer, nil,
+		toolchain.InstallSystemDependenciesInput{Packages: "curl", SkipIfMissingAPT: true}); err != nil {
+		t.Fatalf("a nil writer must not change the outcome: %v", err)
+	}
+
+	if installer.calls != 0 {
+		t.Error("the installer ran on a runner with no apt-get")
+	}
+}
+
+// errAptFailed stands in for a package manager that refused.
+var errAptFailed = errors.New("apt-get exited 100") //nolint:err113 // test fixture sentinel.
 
 func TestTrustMiseConfig_RequiresARunner(t *testing.T) {
 	t.Parallel()

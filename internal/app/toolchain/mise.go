@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -29,6 +30,8 @@ const defaultMiseBaseURL = "https://github.com/jdx/mise/releases/download"
 const (
 	miseDownloadAttempts   = 4
 	miseDownloadRetryDelay = 2 * time.Second
+	maxMiseArchiveBytes    = 64 << 20
+	maxMiseBinaryBytes     = 64 << 20
 )
 
 // InstallMiseInput drives InstallMise.
@@ -51,15 +54,16 @@ func InstallMise(ctx context.Context, client *http.Client, out io.Writer, in Ins
 		return "", err
 	}
 
-	archive := fmt.Sprintf("mise-v%s-linux-%s-musl.tar.gz", in.Version, arch)
-	baseURL := strings.TrimRight(defaultString(in.BaseURL, defaultMiseBaseURL), "/")
-	url := baseURL + "/v" + in.Version + "/" + archive
+	archive, address, err := miseArchiveURL(in, arch)
+	if err != nil {
+		return "", err
+	}
 
 	if out != nil {
 		_, _ = fmt.Fprintf(out, "Installing mise %s (%s)...\n", in.Version, arch)
 	}
 
-	body, err := downloadMiseArchive(ctx, client, url)
+	body, err := downloadMiseArchive(ctx, client, address)
 	if err != nil {
 		return "", err
 	}
@@ -85,6 +89,40 @@ func InstallMise(ctx context.Context, client *http.Client, out io.Writer, in Ins
 	return installPath, nil
 }
 
+// Build and validate the effective URL without constructing or sending a request.
+func miseArchiveURL(in InstallMiseInput, arch string) (string, string, error) {
+	baseURL := defaultString(in.BaseURL, defaultMiseBaseURL)
+
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid mise download URL: %w: %w", err, errs.ErrUsage)
+	}
+
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return "", "", fmt.Errorf("mise download URL must be absolute HTTP(S): %w", errs.ErrUsage)
+	}
+
+	// The address is quoted in every download error, so credentials in it
+	// would end up in the job log; the pinned SHA-256 is the trust anchor, not
+	// an authenticated source.
+	if parsed.User != nil {
+		return "", "", fmt.Errorf("mise base URL must not carry credentials: %w", errs.ErrUsage)
+	}
+
+	if strings.Contains(baseURL, "#") {
+		return "", "", fmt.Errorf("mise base URL must be a directory prefix without a fragment: %w", errs.ErrUsage)
+	}
+
+	if parsed.RawQuery != "" || parsed.ForceQuery {
+		return "", "", fmt.Errorf("mise base URL must be a directory prefix without a query: %w", errs.ErrUsage)
+	}
+
+	archive := fmt.Sprintf("mise-v%s-linux-%s-musl.tar.gz", in.Version, arch)
+	address := strings.TrimRight(baseURL, "/") + "/v" + in.Version + "/" + archive
+
+	return archive, address, nil
+}
+
 // resolveMiseDestDir defaults an empty destination to ~/.local/bin.
 func resolveMiseDestDir(destDir string) (string, error) {
 	if destDir != "" {
@@ -100,8 +138,8 @@ func resolveMiseDestDir(destDir string) (string, error) {
 }
 
 func validateInstallMiseInput(in InstallMiseInput) error {
-	if in.Version == "" {
-		return fmt.Errorf("mise version is required: %w", errs.ErrUsage)
+	if !exactDownloadVersion(in.Version) {
+		return fmt.Errorf("mise version must be an exact MAJOR.MINOR.PATCH without a v prefix: %w", errs.ErrUsage)
 	}
 
 	if in.LinuxX64SHA256 == "" || in.LinuxARM64SHA256 == "" {
@@ -174,9 +212,17 @@ func downloadMiseArchiveOnce(ctx context.Context, client *http.Client, url strin
 		return nil, shouldRetryMiseHTTPStatus(resp.StatusCode), fmt.Errorf("download %s: HTTP %d: %w", url, resp.StatusCode, errs.ErrDependencyUnavailable)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	if resp.ContentLength > maxMiseArchiveBytes {
+		return nil, false, fmt.Errorf("download %s: archive exceeds %d bytes: %w", url, maxMiseArchiveBytes, errs.ErrMalformedInput)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxMiseArchiveBytes+1))
 	if err != nil {
 		return nil, true, fmt.Errorf("read %s: %w", url, err)
+	}
+
+	if len(body) > maxMiseArchiveBytes {
+		return nil, false, fmt.Errorf("download %s: archive exceeds %d bytes: %w", url, maxMiseArchiveBytes, errs.ErrMalformedInput)
 	}
 
 	return body, false, nil
@@ -225,28 +271,46 @@ func installMiseFromArchive(body []byte, destDir string) (string, error) {
 			return "", fmt.Errorf("mise/bin/mise is not a regular file in archive: %w", errs.ErrMalformedInput)
 		}
 
-		return writeMiseBinary(tr, destDir)
+		if header.Size < 0 || header.Size > maxMiseBinaryBytes {
+			return "", fmt.Errorf("mise/bin/mise exceeds %d bytes: %w", maxMiseBinaryBytes, errs.ErrMalformedInput)
+		}
+
+		return writeMiseBinary(tr, header.Size, destDir)
 	}
 
 	return "", fmt.Errorf("mise binary not found at mise/bin/mise in archive: %w", errs.ErrMalformedInput)
 }
 
 // writeMiseBinary extracts the mise binary entry into destDir and marks it executable.
-func writeMiseBinary(tr *tar.Reader, destDir string) (string, error) {
+func writeMiseBinary(tr *tar.Reader, size int64, destDir string) (string, error) {
 	if err := os.MkdirAll(destDir, 0o755); err != nil { //nolint:gosec // tool install dir read by later CI steps.
 		return "", fmt.Errorf("create install directory %s: %w", destDir, err)
 	}
 
+	root, err := os.OpenRoot(destDir)
+	if err != nil {
+		return "", fmt.Errorf("open install directory %s: %w", destDir, err)
+	}
+	defer func() { _ = root.Close() }()
+
 	installPath := filepath.Join(destDir, "mise")
 
-	out, err := os.OpenFile(installPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) //nolint:gosec // installed executable path chosen by caller.
+	out, err := os.CreateTemp(destDir, ".mise-*") //nolint:gosec // destination is caller-selected and opened as an os.Root above.
 	if err != nil {
-		return "", fmt.Errorf("create %s: %w", installPath, err)
+		return "", fmt.Errorf("create temporary mise binary in %s: %w", destDir, err)
 	}
 
-	if _, err := io.Copy(out, tr); err != nil { //nolint:gosec // G110: archive is SHA-256 pin-verified before extraction.
-		_ = out.Close()
+	tempName := filepath.Base(out.Name())
 
+	complete := false
+	defer func() {
+		if !complete {
+			_ = out.Close()
+			_ = root.Remove(tempName)
+		}
+	}()
+
+	if _, err := io.CopyN(out, tr, size); err != nil {
 		return "", fmt.Errorf("write %s: %w", installPath, err)
 	}
 
@@ -254,9 +318,15 @@ func writeMiseBinary(tr *tar.Reader, destDir string) (string, error) {
 		return "", fmt.Errorf("close %s: %w", installPath, err)
 	}
 
-	if err := os.Chmod(installPath, 0o755); err != nil { //nolint:gosec // mise must be executable by the runner.
+	if err := root.Chmod(tempName, 0o755); err != nil { //nolint:gosec // mise must be executable by the runner.
 		return "", fmt.Errorf("set executable mode on %s: %w", installPath, err)
 	}
+
+	if err := root.Rename(tempName, "mise"); err != nil {
+		return "", fmt.Errorf("install %s: %w", installPath, err)
+	}
+
+	complete = true
 
 	return installPath, nil
 }
