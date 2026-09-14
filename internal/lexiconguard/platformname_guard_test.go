@@ -4,15 +4,15 @@
 package lexiconguard
 
 import (
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
+	"github.com/stretchr/testify/require"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
 )
 
 // platformOwner is the one package entitled to a type called Platform.
@@ -44,51 +44,23 @@ const platformOwner = "internal/domain/container"
 func TestPlatformTypeIsSingleSourced(t *testing.T) {
 	t.Parallel()
 
-	root := reporoot.Path(t)
+	offenders, visited, err := platformOffenders(reporoot.Path(t))
+	require.NoError(t, err)
+	require.NotZero(t, visited)
 
-	var offenders []string
+	owned, err := filepath.Glob(filepath.Join(reporoot.Path(t), platformOwner, "*.go"))
+	require.NoError(t, err)
 
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
+	declared := 0
 
-		if entry.IsDir() {
-			if name := entry.Name(); name == ".git" || name == "dist" || name == "node_modules" {
-				return filepath.SkipDir
-			}
+	for _, file := range owned {
+		names, typesErr := exportedTypesNamed(file, "Platform")
+		require.NoError(t, typesErr)
 
-			return nil
-		}
-
-		if !strings.HasSuffix(path, ".go") {
-			return nil
-		}
-
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return relErr
-		}
-
-		rel = filepath.ToSlash(rel)
-		if strings.HasPrefix(rel, platformOwner+"/") {
-			return nil
-		}
-
-		names, parseErr := exportedTypesNamed(path, "Platform")
-		if parseErr != nil {
-			return parseErr
-		}
-
-		for range names {
-			offenders = append(offenders, rel)
-		}
-
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk repository: %v", err)
+		declared += len(names)
 	}
+
+	require.Equal(t, 1, declared, "%s must declare exactly one type Platform to own the word", platformOwner)
 
 	if len(offenders) > 0 {
 		t.Errorf(
@@ -101,6 +73,47 @@ func TestPlatformTypeIsSingleSourced(t *testing.T) {
 			platformOwner, strings.Join(offenders, ", "), platformOwner,
 		)
 	}
+
+	root := t.TempDir()
+	path := filepath.Join(root, "internal", "app", "poison.go")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+
+	for _, name := range []string{"Other", "Platform"} {
+		require.NoError(t, os.WriteFile(path, []byte("package fixture\ntype "+name+" struct{}\n"), 0o600))
+
+		found, visited, err := platformOffenders(root)
+		require.NoError(t, err)
+		require.Equal(t, 1, visited)
+
+		if name == "Platform" {
+			require.Equal(t, []string{"internal/app/poison.go"}, found)
+		} else {
+			require.Empty(t, found)
+		}
+	}
+}
+
+func platformOffenders(root string) ([]string, int, error) {
+	var offenders []string
+
+	visited, err := walkGoSources(root, func(path, rel string) error {
+		if strings.HasPrefix(rel, platformOwner+"/") {
+			return nil
+		}
+
+		names, err := exportedTypesNamed(path, "Platform")
+		if err != nil {
+			return err
+		}
+
+		for range names {
+			offenders = append(offenders, rel)
+		}
+
+		return nil
+	})
+
+	return offenders, visited, err
 }
 
 // exportedTypesNamed returns each exported type declaration in path whose name

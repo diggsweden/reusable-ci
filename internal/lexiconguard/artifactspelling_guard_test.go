@@ -15,17 +15,7 @@
 // where a new guard belongs.
 package lexiconguard
 
-import (
-	"io/fs"
-	"os"
-	"path/filepath"
-	"strings"
-	"testing"
-
-	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
-
-	"github.com/stretchr/testify/require"
-)
+import "testing"
 
 // britishArtifact is the British spelling the codebase standardized away from.
 // The domain, identifiers, CLI usage strings, and prose all use the American
@@ -40,57 +30,11 @@ const britishArtifact = "artefact"
 func TestArtifactSpellingIsAmerican(t *testing.T) {
 	t.Parallel()
 
-	allowed := map[string]bool{
-		"internal/lexiconguard/artifactspelling_guard_test.go": true,
-		// contractresidue.go's ARTEFACT_NAME is the *legacy* env-var name its
-		// residue detector must keep verbatim to catch workflows still using
-		// the old British spelling — the one place the word legitimately stays.
-		"internal/app/validate/contractresidue.go": true,
-	}
-
-	root := reporoot.Path(t)
-
-	var offenders []string
-
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if entry.IsDir() {
-			if name := entry.Name(); name == ".git" || name == "dist" || name == "node_modules" {
-				return filepath.SkipDir
-			}
-
-			return nil
-		}
-
-		if filepath.Ext(entry.Name()) != ".go" {
-			return nil
-		}
-
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return relErr
-		}
-
-		if allowed[filepath.ToSlash(rel)] {
-			return nil
-		}
-
-		content, readErr := os.ReadFile(path) //nolint:gosec // test walks repo-local files.
-		if readErr != nil {
-			return readErr
-		}
-
-		if strings.Contains(strings.ToLower(string(content)), britishArtifact) {
-			offenders = append(offenders, filepath.ToSlash(rel))
-		}
-
-		return nil
-	})
-	require.NoError(t, err)
-
-	require.Emptyf(t, offenders,
-		"British \"artefact\" spelling found; use \"artifact\": %v", offenders)
+	singleSource{
+		patterns: []string{britishArtifact},
+		owners:   []string{"internal/lexiconguard/artifactspelling_guard_test.go"},
+		// A spelling rule, not a pattern literal: "Artefact" offends too.
+		fold: true,
+	}.requireSingleSourced(t,
+		`British "artefact" spelling found; use "artifact"`)
 }

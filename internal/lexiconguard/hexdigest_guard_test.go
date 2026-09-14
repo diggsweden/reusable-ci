@@ -3,17 +3,7 @@
 
 package lexiconguard
 
-import (
-	"io/fs"
-	"os"
-	"path/filepath"
-	"strings"
-	"testing"
-
-	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
-
-	"github.com/stretchr/testify/require"
-)
+import "testing"
 
 // bareSHA256HexPattern is the bare "64 lowercase hex" regex — a sha256 with no
 // `sha256:` prefix. The caret sits directly before the hex class, which the
@@ -21,65 +11,19 @@ import (
 // do, so this literal is a precise sentinel for the bare form alone.
 const bareSHA256HexPattern = "^[0-9a-f]{64}$"
 
-// TestBareSHA256HexRegexIsSingleSourced keeps the bare sha256-hex shape check
-// single-sourced in domain/container (container.ValidSHA256Hex). It is a trust
-// invariant — a mutable value must never pass where a pinned content hash is
-// required — so, like digestRE/ValidDigest beside it, it lives in one place
-// rather than being re-compiled in every package that records or re-validates
-// ledger entries. Callers use container.ValidSHA256Hex.
-func TestBareSHA256HexRegexIsSingleSourced(t *testing.T) {
+// TestBareSHA256HexLiteralIsSingleSourced rejects direct regexp calls restating
+// the canonical bare digest pattern. It ignores comments and inert string data;
+// see singleSource.regexpCalls for the bounded constant-resolution scope. This
+// source guard is not proof that all runtime digest checks use the canonical API.
+func TestBareSHA256HexLiteralIsSingleSourced(t *testing.T) {
 	t.Parallel()
 
-	allowed := map[string]bool{
-		"internal/lexiconguard/hexdigest_guard_test.go":  true,
-		"internal/domain/container/ref.go":      true,
-		"internal/domain/container/ref_test.go": true,
-	}
-
-	root := reporoot.Path(t)
-
-	var offenders []string
-
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if entry.IsDir() {
-			if name := entry.Name(); name == ".git" || name == "dist" || name == "node_modules" {
-				return filepath.SkipDir
-			}
-
-			return nil
-		}
-
-		if filepath.Ext(entry.Name()) != ".go" {
-			return nil
-		}
-
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return relErr
-		}
-
-		if allowed[filepath.ToSlash(rel)] {
-			return nil
-		}
-
-		content, readErr := os.ReadFile(path) //nolint:gosec // test walks repo-local files.
-		if readErr != nil {
-			return readErr
-		}
-
-		if strings.Contains(string(content), bareSHA256HexPattern) {
-			offenders = append(offenders, filepath.ToSlash(rel))
-		}
-
-		return nil
-	})
-	require.NoError(t, err)
-
-	require.Emptyf(t, offenders,
-		"bare sha256-hex regex re-declared outside domain/container; call container.ValidSHA256Hex instead: %v",
-		offenders)
+	singleSource{
+		patterns:    []string{bareSHA256HexPattern},
+		regexpCalls: true,
+		owners: []string{
+			"internal/domain/container/ref.go",
+		},
+	}.requireSingleSourced(t,
+		"bare sha256-hex regex re-declared outside domain/container; call container.ValidSHA256Hex instead")
 }
