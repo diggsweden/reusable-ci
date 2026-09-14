@@ -16,8 +16,13 @@ import (
 // Validate loads `path` (or stdin when path is "-"), parses + validates
 // it, and emits any non-fatal warnings to `warnW`. Returns a
 // *config.ValidationError when the schema is violated; nil when the
-// config is clean.
+// config is clean. Warnings are best effort: a nil writer discards them
+// and a failing writer does not turn a valid config into an error.
 func Validate(path string, warnW io.Writer) error {
+	if warnW == nil {
+		warnW = io.Discard
+	}
+
 	data, err := cliio.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("config: read %q: %w", path, err)

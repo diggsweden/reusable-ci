@@ -7,11 +7,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
 
+	"github.com/stretchr/testify/require"
+
 	appconfig "github.com/diggsweden/reusable-ci/v3/internal/app/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
@@ -131,8 +136,14 @@ func TestEmitConfigPlan_EmptyArtifactsErrors(t *testing.T) {
 	sink := fakeoutputsink.New(t)
 
 	err := appconfig.EmitConfigPlan(context.Background(), sink, nil, &bytes.Buffer{}, output.Annotator{}, appconfig.EmitConfigPlanInput{Path: path})
-	if err == nil || !strings.Contains(err.Error(), "no artifacts found") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrInvalidConfig) || !strings.Contains(err.Error(), "no artifacts found") {
+		t.Fatalf("err = %v, want ErrInvalidConfig naming the empty artifact list", err)
+	}
+
+	// A config that describes nothing must not emit a plan a later job would
+	// act on.
+	if got := sink.Keys(); len(got) != 0 {
+		t.Errorf("emitted %q for a config with no artifacts", got)
 	}
 }
 
@@ -149,12 +160,12 @@ func TestEmitConfigPlan_FileNotFoundFallsToAutoDeriveAndReportsMissingManifest(t
 		Path: ".reusable-ci/artifacts.yml",
 		FS:   empty,
 	})
-	if err == nil || !strings.Contains(err.Error(), "no recognised manifest at repo root") {
-		t.Errorf("expected actionable auto-derive failure, got: %v", err)
+	if !errors.Is(err, errs.ErrMissingInput) || !strings.Contains(err.Error(), "no recognised manifest at repo root") {
+		t.Fatalf("err = %v, want ErrMissingInput with the actionable auto-derive message", err)
 	}
 }
 
-func TestEmitConfigPlan_MavenAppToForgePackagesExcluded(t *testing.T) {
+func TestEmitConfigPlan_BuildTypeOmissionPreservesPlanAndPublishFilters(t *testing.T) {
 	t.Parallel()
 	path := writeYAML(t, `
 artifacts:
@@ -165,7 +176,13 @@ artifacts:
   - name: lib
     project-type: maven
     build-type: library
+    publish-to: [forge-packages, maven-central]
+  - name: omitted
+    project-type: maven
     publish-to: [forge-packages]
+  - name: unpublished
+    project-type: maven
+    build-type: library
 `)
 	sink := fakeoutputsink.New(t)
 	summary := &fakeSummary{}
@@ -176,15 +193,51 @@ artifacts:
 	}
 
 	plan := configPlanFromSink(t, sink)
-	if len(plan.Artifacts.ForgePackages) != 1 || plan.Artifacts.ForgePackages[0].Name != "lib" {
-		t.Errorf("library should be in forge_packages: %+v", plan.Artifacts.ForgePackages)
+	requireOnlyConfigPlanOutput(t, sink)
+	require.Len(t, plan.Artifacts.All, 4)
+	require.Equal(t, plan.Artifacts.All, plan.Artifacts.Maven)
+
+	for i, want := range []struct{ name, buildType string }{
+		{"app", "application"}, {"lib", "library"}, {"omitted", ""}, {"unpublished", "library"},
+	} {
+		require.Equal(t, want.name, plan.Artifacts.All[i].Name)
+		require.Equal(t, want.buildType, string(plan.Artifacts.All[i].BuildType))
+		require.Contains(t, summary.buf.String(), "### "+want.name)
 	}
 
-	for _, artifact := range plan.Artifacts.ForgePackages {
-		if artifact.Name == "app" {
-			t.Errorf("maven application should be excluded from forge_packages: %+v", plan.Artifacts.ForgePackages)
-		}
+	require.Equal(t, []pipeline.PlannedArtifact{plan.Artifacts.All[1], plan.Artifacts.All[2]}, plan.Artifacts.ForgePackages,
+		"keep requested library and omitted entries; exclude application and unrequested targets")
+	require.Equal(t, []pipeline.PlannedArtifact{plan.Artifacts.All[1]}, plan.Artifacts.MavenCentral)
+	// The wire plan must preserve omission too, not just decode back to zero.
+	var wire struct {
+		Artifacts struct {
+			All []map[string]json.RawMessage `json:"all"`
+		} `json:"artifacts"`
 	}
+	require.NoError(t, json.Unmarshal([]byte(sink.Single("config-plan-json")), &wire))
+	require.Len(t, wire.Artifacts.All, 4)
+	require.NotContains(t, wire.Artifacts.All[2], "build_type")
+}
+
+func TestEmitConfigPlan_OmittedBuildTypeRefusesMavenCentralBeforeOutput(t *testing.T) {
+	t.Parallel()
+	path := writeYAML(t, `artifacts:
+  - name: omitted
+    project-type: maven
+    publish-to: [maven-central]
+`)
+	sink := fakeoutputsink.New(t)
+	summary := &fakeSummary{}
+
+	var stderr bytes.Buffer
+
+	err := appconfig.EmitConfigPlan(t.Context(), sink, summary, &stderr,
+		output.NewAnnotator(&stderr, output.FormatGitHub), appconfig.EmitConfigPlanInput{Path: path})
+	require.ErrorIs(t, err, errs.ErrInvalidConfig, "Maven Central requires an explicit library build-type")
+	require.Contains(t, err.Error(), `artifact "omitted": publish target "maven-central" requires build-type "library" (got "")`)
+	require.Empty(t, sink.Keys())
+	require.Empty(t, summary.buf.String())
+	require.Empty(t, stderr.String())
 }
 
 func TestEmitConfigPlan_ContainersDeriveTypesAndAnalyzedSBOM(t *testing.T) {
@@ -218,12 +271,16 @@ containers:
 	}
 
 	c := plan.Containers.All[0] //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	if !slices.Equal(c.ArtifactTypes, []projecttype.Type{projecttype.Maven, projecttype.NPM}) {
+		t.Fatalf("derived types=%v", c.ArtifactTypes)
+	}
+
 	if c.Name != "my-app" {
 		t.Errorf("name = %v", c.Name)
 	}
 
-	if got := c.EnableAnalyzedContainerSBOM; got != true {
-		t.Errorf("enable-analyzed-container-sbom = %v", got)
+	if !c.EnableAnalyzedContainerSBOM {
+		t.Error("enable-analyzed-container-sbom = false, want true (an artifact asked for all SBOMs)")
 	}
 
 	if got := c.BuildArgsString; got != "BAZ=qux\nFOO=bar" {
@@ -448,8 +505,9 @@ containers:
 		t.Fatal(err)
 	}
 
-	if plan.Version != pipeline.ConfigPlanVersion {
-		t.Errorf("version = %d, want %d", plan.Version, pipeline.ConfigPlanVersion)
+	// The wire contract, not the constant that produces it.
+	if plan.Version != 1 {
+		t.Errorf("version = %d, want 1", plan.Version)
 	}
 
 	if plan.FallbackProjectType != projecttype.Maven {
@@ -628,11 +686,29 @@ containers:
 	}
 
 	c := plan.Containers.All[0]
-	if got := c.EnableAnalyzedContainerSBOM; got != false {
-		t.Errorf("enable-analyzed-container-sbom = %v", got)
+	if c.EnableAnalyzedContainerSBOM {
+		t.Error("enable-analyzed-container-sbom = true, want false (no artifact asked for analyzed SBOMs)")
 	}
 
 	if got := c.BuildArgsString; got != "" {
 		t.Errorf("build-args-string = %v", got)
+	}
+}
+
+func TestEmitConfigPlan_ParseFailureClassifiesInvalidConfigOnce(t *testing.T) {
+	t.Parallel()
+
+	path := writeYAML(t, "artifactz:\n  - name: x\n")
+	sink := fakeoutputsink.New(t)
+
+	err := appconfig.EmitConfigPlan(context.Background(), sink, nil, &bytes.Buffer{}, output.Annotator{}, appconfig.EmitConfigPlanInput{Path: path})
+	if !errors.Is(err, errs.ErrInvalidConfig) {
+		t.Fatalf("err = %v, want ErrInvalidConfig", err)
+	}
+
+	// Parse already classifies every failure; wrapping the sentinel again
+	// printed "invalid configuration: invalid configuration" to the operator.
+	if got := strings.Count(err.Error(), errs.ErrInvalidConfig.Error()); got != 1 {
+		t.Errorf("err = %v: sentinel text appears %d times, want 1", err, got)
 	}
 }

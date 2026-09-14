@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
 )
@@ -23,21 +24,7 @@ import (
 func schemaPath(t *testing.T) string {
 	t.Helper()
 
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for dir := wd; dir != "/"; dir = filepath.Dir(dir) {
-		candidate := filepath.Join(dir, ".reusable-ci", "artifacts.schema.json")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-
-	t.Fatal("could not find .reusable-ci/artifacts.schema.json walking up from test cwd")
-
-	return ""
+	return filepath.Join(reporoot.Path(t), ".reusable-ci", "artifacts.schema.json")
 }
 
 // loadSchema compiles the project schema with the draft pinned to
@@ -58,6 +45,7 @@ func loadSchema(t *testing.T) *jsonschema.Schema {
 	}
 
 	c := jsonschema.NewCompiler()
+	c.UseLoader(jsonschema.SchemeURLLoader{})
 	c.DefaultDraft(jsonschema.Draft2020)
 
 	if err = c.AddResource("artifacts.schema.json", doc); err != nil {

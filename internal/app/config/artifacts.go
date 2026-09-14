@@ -20,6 +20,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
+	domainsummary "github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
 // EmitConfigPlanInput drives `config parse-artifacts`.
@@ -55,7 +56,9 @@ func EmitConfigPlan(
 	}
 
 	if err := config.Validate(cfg); err != nil {
-		return fmt.Errorf("%w: %w", err, errs.ErrInvalidConfig)
+		// No extra ErrInvalidConfig wrap: ValidationError already unwraps to
+		// it, and double-wrapping printed "invalid configuration" twice.
+		return err
 	}
 
 	for _, w := range config.Warnings(cfg) {
@@ -66,13 +69,15 @@ func EmitConfigPlan(
 		return err
 	}
 
-	if err := emitValueOutput(ctx, sink, "config-plan-json", pipeline.NewConfigPlan(cfg)); err != nil {
+	plan := pipeline.NewConfigPlan(cfg)
+	if err := emitValueOutput(ctx, sink, "config-plan-json", plan); err != nil {
 		return err
 	}
 
-	// Markdown summary block.
+	// Markdown summary block, rendered from the same plan so its defaults
+	// (working directory, Containerfile) are the ones the pipeline uses.
 	if summary != nil {
-		if err := summary.Append(ctx, renderConfigSummary(cfg)); err != nil {
+		if err := summary.Append(ctx, renderConfigSummary(plan)); err != nil {
 			return err
 		}
 	}
@@ -90,7 +95,9 @@ func loadConfig(in EmitConfigPlanInput, annot output.Annotator) (*config.Config,
 	if err == nil {
 		cfg, parseErr := config.Parse(data)
 		if parseErr != nil {
-			return nil, fmt.Errorf("parse %s: %w: %w", in.Path, parseErr, errs.ErrInvalidConfig)
+			// Parse classifies every failure as ErrInvalidConfig itself; a
+			// second wrap doubled the "invalid configuration" tail.
+			return nil, fmt.Errorf("parse %s: %w", in.Path, parseErr)
 		}
 
 		return cfg, nil
@@ -133,25 +140,29 @@ func emitValueOutput[T any](ctx context.Context, sink ci.OutputSink, key string,
 	return sink.Set(ctx, key, string(b))
 }
 
-func renderConfigSummary(cfg *config.Config) string {
+func renderConfigSummary(plan pipeline.ConfigPlan) string {
+	// Every value comes from artifacts.yml, which a pull request can edit, so
+	// each is rendered as literal text rather than Markdown.
+	text := domainsummary.LiteralText
+
 	var b strings.Builder //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	b.WriteString("## Configuration\n")
 
-	for _, a := range cfg.Artifacts {
-		_, _ = fmt.Fprintf(&b, "### %s\n", a.Name)
-		_, _ = fmt.Fprintf(&b, "- **Type:** %s\n", a.ProjectType)
-		_, _ = fmt.Fprintf(&b, "- **Publish To:** %s\n", joinPublishTo(a.PublishTo))
-		_, _ = fmt.Fprintf(&b, "- **Directory:** %s\n\n", a.WorkingDirectory)
+	for _, a := range plan.Artifacts.All {
+		_, _ = fmt.Fprintf(&b, "### %s\n", text(a.Name))
+		_, _ = fmt.Fprintf(&b, "- **Type:** %s\n", text(string(a.ProjectType)))
+		_, _ = fmt.Fprintf(&b, "- **Publish To:** %s\n", text(joinPublishTo(a.PublishTo)))
+		_, _ = fmt.Fprintf(&b, "- **Directory:** %s\n\n", text(a.WorkingDirectory))
 	}
 
-	if len(cfg.Containers) > 0 {
+	if len(plan.Containers.All) > 0 {
 		b.WriteString("\n## Containers\n")
 
-		for _, c := range cfg.Containers {
-			_, _ = fmt.Fprintf(&b, "### %s\n", c.Name)
-			_, _ = fmt.Fprintf(&b, "- **From:** %s\n", strings.Join(c.From, ", "))
-			_, _ = fmt.Fprintf(&b, "- **Artifact Types:** %s\n", joinProjectTypes(c.ArtifactTypes))
-			_, _ = fmt.Fprintf(&b, "- **Containerfile:** %s\n\n", c.ContainerFile)
+		for _, c := range plan.Containers.All {
+			_, _ = fmt.Fprintf(&b, "### %s\n", text(c.Name))
+			_, _ = fmt.Fprintf(&b, "- **From:** %s\n", text(strings.Join(c.From, ", ")))
+			_, _ = fmt.Fprintf(&b, "- **Artifact Types:** %s\n", text(joinProjectTypes(c.ArtifactTypes)))
+			_, _ = fmt.Fprintf(&b, "- **Containerfile:** %s\n\n", text(c.ContainerFile))
 		}
 	}
 

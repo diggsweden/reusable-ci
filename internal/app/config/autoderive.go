@@ -4,6 +4,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -121,11 +122,12 @@ func statable(fsys fs.FS, path string) bool {
 	rel = strings.TrimPrefix(rel, "./")
 	rel = strings.TrimPrefix(rel, "/")
 
-	_, err := fs.Stat(fsys, rel)
-	// Stat succeeded → the path exists and is a candidate manifest. Any
+	info, err := fs.Stat(fsys, rel)
+	// Only a regular file is a candidate manifest, as on the OS path: a
+	// directory named go.mod used to be detected and then fail to read. Any
 	// error — ErrNotExist or an unexpected one (permission, symlink loop)
 	// — is treated as "no, can't be confident it's a manifest".
-	return err == nil
+	return err == nil && info.Mode().IsRegular()
 }
 
 func deriveFromManifest(fsys fs.FS, root string, manifest detectedManifest) (*config.Config, error) {
@@ -188,7 +190,7 @@ func readManifestName(fsys fs.FS, root string, manifest detectedManifest) (strin
 	case projecttype.Go:
 		return sbom.GoModuleName(body), nil
 	case projecttype.Gradle:
-		return gradleRootProjectName(fsys, root), nil
+		return gradleRootProjectName(fsys, root)
 	default:
 		// GradleAndroid / XcodeIOS / Python / Meta / Auto / Unknown
 		// don't reach this function — readManifestName is only called
@@ -210,20 +212,32 @@ func mavenArtifactID(body []byte) (string, error) {
 
 // gradleRootProjectName tries to read `rootProject.name` from
 // settings.gradle{,.kts}, falling back to the directory basename
-// when no settings file is present (build.gradle by itself doesn't
-// carry a project name).
-func gradleRootProjectName(fsys fs.FS, root string) string {
+// when no settings file names it (build.gradle by itself doesn't
+// carry a project name). A settings file that exists but cannot be read
+// is an error: falling back would publish under a name the project did not
+// choose.
+func gradleRootProjectName(fsys fs.FS, root string) (string, error) {
 	for _, name := range []string{"settings.gradle", "settings.gradle.kts"} {
-		if settings, err := readManifest(fsys, root, name); err == nil {
-			if found := sbom.GradleRootProjectName(settings); found != "" {
-				return found
-			}
+		settings, err := readManifest(fsys, root, name)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", name, err)
+		}
+
+		if found := sbom.GradleRootProjectName(settings); found != "" {
+			return found, nil
 		}
 	}
 
-	abs, _ := filepath.Abs(root)
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
 
-	return filepath.Base(abs)
+	return filepath.Base(abs), nil
 }
 
 func readManifest(fsys fs.FS, root, filename string) ([]byte, error) {

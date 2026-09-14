@@ -6,6 +6,7 @@ package config_test
 import (
 	"bytes"
 	"errors"
+	"io/fs"
 	"strings"
 	"testing"
 
@@ -36,9 +37,16 @@ artifacts:
 func TestValidate_FileNotFound(t *testing.T) {
 	t.Parallel()
 
-	err := appconfig.Validate("/does/not/exist.yml", nil)
-	if err == nil {
-		t.Fatal("expected error")
+	err := appconfig.Validate(testfs.NewReal(t).Path("missing.yml"), nil)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("err = %v, want a not-exist error — a missing config is not the same as an invalid one", err)
+	}
+
+	// Specifically not a ValidationError: the file was never read, so
+	// there are no violations to report.
+	var ve *config.ValidationError
+	if errors.As(err, &ve) {
+		t.Errorf("a missing file was reported as a validation failure: %v", err)
 	}
 }
 

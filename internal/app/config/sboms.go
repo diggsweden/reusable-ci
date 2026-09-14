@@ -44,7 +44,12 @@ type ExpandSBOMsInput struct {
 //
 //nolint:cyclop // expands layer×format×naming permutations for each artifact.
 func ExpandSBOMs(ctx context.Context, out io.Writer, in ExpandSBOMsInput) error {
-	if in.Value == "" {
+	// Trimmed before the comparison: an all-whitespace --sboms is the same
+	// operator mistake as an empty one. Comparing the raw value let "   "
+	// fall through to the domain validator, which is right to call a bad
+	// artifacts.yml value ErrValidation but wrong for a flag — so the same
+	// typo exited 2 or 1 depending on whether the operator hit the space bar.
+	if strings.TrimSpace(in.Value) == "" {
 		return fmt.Errorf("value required (expected: all | none | comma-list of build,analyzed-artifact,analyzed-container): %w", errs.ErrUsage)
 	}
 
@@ -70,6 +75,10 @@ func ExpandSBOMs(ctx context.Context, out io.Writer, in ExpandSBOMsInput) error 
 		format = ExpandSBOMsFormatJSON
 	}
 
+	if format != ExpandSBOMsFormatJSON && format != ExpandSBOMsFormatComma {
+		return fmt.Errorf("--format must be json or comma, got: %s: %w", format, errs.ErrUsage)
+	}
+
 	comma := strings.Join(layerStrings(keep), ",")
 	if in.Sink != nil && (in.Output == output.FormatGitHub || in.Output == output.FormatGitLab) {
 		if err := in.Sink.Set(ctx, "layers", comma); err != nil {
@@ -91,9 +100,9 @@ func ExpandSBOMs(ctx context.Context, out io.Writer, in ExpandSBOMsInput) error 
 		strs := layerStrings(keep)
 		// json.Marshal returns "null" for nil slices; force "[]" for empty.
 		if len(strs) == 0 {
-			_, _ = fmt.Fprintln(out, "[]")
+			_, err := fmt.Fprintln(out, "[]")
 
-			return nil
+			return err
 		}
 
 		b, err := json.Marshal(strs)
@@ -101,11 +110,13 @@ func ExpandSBOMs(ctx context.Context, out io.Writer, in ExpandSBOMsInput) error 
 			return err
 		}
 
-		_, _ = fmt.Fprintln(out, string(b))
+		_, err = fmt.Fprintln(out, string(b))
+
+		return err
 	case ExpandSBOMsFormatComma:
-		_, _ = fmt.Fprintln(out, comma)
-	default:
-		return fmt.Errorf("--format must be json or comma, got: %s: %w", format, errs.ErrUsage)
+		_, err := fmt.Fprintln(out, comma)
+
+		return err
 	}
 
 	return nil

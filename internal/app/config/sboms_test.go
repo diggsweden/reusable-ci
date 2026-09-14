@@ -6,11 +6,13 @@ package config_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
 
 	appconfig "github.com/diggsweden/reusable-ci/v3/internal/app/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 )
@@ -52,21 +54,36 @@ func TestExpandSBOMs_RejectsBadValue(t *testing.T) {
 	err := appconfig.ExpandSBOMs(context.Background(), &bytes.Buffer{}, appconfig.ExpandSBOMsInput{
 		Value: "banana",
 	})
-	if err == nil || !strings.Contains(err.Error(), "unknown token") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), "unknown token") {
+		t.Errorf("err = %v, want ErrValidation naming the unknown token", err)
 	}
 }
 
+// TestExpandSBOMs_EmptyValueErrors pins every empty form to one answer.
+//
+// The app-layer guard used to compare Value == "" exactly, so a value of only
+// spaces slipped past it and was refused one layer down by
+// domain/config.ExpandSBOMs — which is right to call a bad artifacts.yml
+// value ErrValidation, but wrong for a flag. The same typo therefore exited 2
+// or 1 depending on whether the operator hit the space bar. The guard trims
+// now, so every spelling of "nothing" is CLI misuse.
 func TestExpandSBOMs_EmptyValueErrors(t *testing.T) {
 	t.Parallel()
 
-	for _, value := range []string{"", "   "} {
+	for _, value := range []string{"", "   ", "\t", "\n "} {
 		t.Run("value_"+strconv.Quote(value), func(t *testing.T) {
 			t.Parallel()
 
 			err := appconfig.ExpandSBOMs(context.Background(), &bytes.Buffer{}, appconfig.ExpandSBOMsInput{Value: value})
-			if err == nil || !strings.Contains(err.Error(), "value required") {
-				t.Errorf("err = %v", err)
+			if !errors.Is(err, errs.ErrUsage) {
+				t.Fatalf("err = %v, want ErrUsage", err)
+			}
+
+			// And the message lists what the operator could have typed.
+			for _, want := range []string{"value required", "all | none"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("err = %v, want it to mention %q", err, want)
+				}
 			}
 		})
 	}
@@ -79,8 +96,8 @@ func TestExpandSBOMs_InvalidFormatErrors(t *testing.T) {
 		Value:  "all",
 		Format: "xml",
 	})
-	if err == nil || !strings.Contains(err.Error(), "--format must be json or comma") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "--format must be json or comma") {
+		t.Errorf("err = %v, want ErrUsage naming the bad --format", err)
 	}
 }
 
