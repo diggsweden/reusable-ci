@@ -14,12 +14,19 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
+
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-// errSinkClosed is returned by Set after Close. Lets callers branch with
-// errors.Is rather than string-matching the message.
+// errSinkClosed is returned by the write methods after Close. It is
+// deliberately unexported and wraps no errs.* sentinel: writing to a
+// closed sink is a lifecycle bug in the calling command, not anything
+// the operator did, so it falls through errs.ExitCodeFromError to
+// ExitCodeSoftware -- "an error we did not classify, file a bug", which
+// is the honest answer here. Classifying it as ErrUsage would exit 64
+// and blame the user's command line for a defect in this program.
 var errSinkClosed = errors.New("output sink is closed")
 
 // Sink writes scalar outputs to a dotenv file declared by the GitLab job as an
@@ -29,6 +36,10 @@ type Sink struct {
 	mu     sync.Mutex
 	w      io.WriteCloser
 	closed bool
+	// written maps each dotenv name this sink has emitted back to the sink
+	// key that produced it, so a second key normalising onto the same name
+	// can be refused. See Set.
+	written map[string]string
 }
 
 // NewFromEnv returns a Sink targeting $CI_OUTPUT. GitLab has no built-in
@@ -64,13 +75,35 @@ func (s *Sink) Set(_ context.Context, key, value string) error {
 		return fmt.Errorf("gitlaboutput: Set: %w", errSinkClosed)
 	}
 
+	// The key mapping is not injective: "-" and "_" both become "_", so
+	// "image-digest" and "image_digest" are one GitLab variable. dotenv is
+	// last-wins, and both writes succeed, so the losing value disappears with
+	// no error anywhere -- a release step reading it gets the other key's
+	// value. Refusing the second SOURCE key is what makes that impossible to
+	// ship; re-setting the same key is left alone, because that is a caller
+	// overwriting its own value rather than two values silently merging.
+	if prior, ok := s.written[envKey]; ok && prior != key {
+		return fmt.Errorf(
+			"gitlaboutput: output keys %q and %q both write the GitLab variable %s; one of them must be renamed: %w",
+			prior, key, envKey, errs.ErrValidation,
+		)
+	}
+
 	if openErr := s.ensureOpen(); openErr != nil {
 		return openErr
 	}
 
-	_, err = fmt.Fprintf(s.w, "%s=%s\n", envKey, value)
+	if _, err = fmt.Fprintf(s.w, "%s=%s\n", envKey, value); err != nil {
+		return err
+	}
 
-	return err
+	if s.written == nil {
+		s.written = make(map[string]string)
+	}
+
+	s.written[envKey] = key
+
+	return nil
 }
 
 // SetMultiline returns an explicit error because GitLab dotenv reports only
@@ -108,7 +141,7 @@ func (s *Sink) ensureOpen() error {
 		return fmt.Errorf("gitlaboutput: CI_OUTPUT is required for GitLab dotenv outputs: %w", errs.ErrUsage)
 	}
 
-	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // dotenv output is read by GitLab runner; 0644 expected.
+	f, err := cliio.OpenAppendNoFollow(s.path, 0o644) //nolint:varnamelen // idiomatic for the os.File handle.
 	if err != nil {
 		return fmt.Errorf("open %q: %w", s.path, err)
 	}

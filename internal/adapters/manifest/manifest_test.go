@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/manifest"
@@ -42,10 +41,6 @@ func TestSink_Write_CreatesDir(t *testing.T) {
 	}
 }
 
-type rawBody string
-
-func (r rawBody) MarshalJSON() ([]byte, error) { return []byte(r), nil }
-
 func TestSink_WriteJSON_PreservesBody(t *testing.T) {
 	t.Parallel()
 	fsys := testfs.NewReal(t)
@@ -53,13 +48,14 @@ func TestSink_WriteJSON_PreservesBody(t *testing.T) {
 	s := manifest.New(dir)
 
 	body := `{"stage":"build","result":"success","ran":true,"targets":{"npm":"success","maven":"skipped"}}`
-	if err := s.WriteJSON(context.Background(), "build", rawBody(body)); err != nil {
+	if err := s.WriteJSON(context.Background(), "build", jsonBody(body)); err != nil {
 		t.Fatal(err)
 	}
 
-	got := fsys.ReadFile("build-result.json")
-	if !strings.HasPrefix(string(got), body) {
-		t.Errorf("body not preserved: %s", got)
+	// Exactly the body plus the trailing newline the writer appends. A
+	// prefix check would pass if anything were appended after it.
+	if got, want := string(fsys.ReadFile("build-result.json")), body+"\n"; got != want {
+		t.Errorf("body = %q, want %q", got, want)
 	}
 }
 

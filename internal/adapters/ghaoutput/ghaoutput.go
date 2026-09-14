@@ -22,12 +22,19 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
+
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-// errSinkClosed is returned by Set/SetMultiline after Close. It lets
-// callers branch with errors.Is without string-matching the message.
+// errSinkClosed is returned by the write methods after Close. It is
+// deliberately unexported and wraps no errs.* sentinel: writing to a
+// closed sink is a lifecycle bug in the calling command, not anything
+// the operator did, so it falls through errs.ExitCodeFromError to
+// ExitCodeSoftware -- "an error we did not classify, file a bug", which
+// is the honest answer here. Classifying it as ErrUsage would exit 64
+// and blame the user's command line for a defect in this program.
 var errSinkClosed = errors.New("output sink is closed")
 
 // Sink writes to the configured output file path, opening on first use.
@@ -106,7 +113,24 @@ func (s *Sink) Set(_ context.Context, key, value string) error {
 //	...
 //	<delim>
 //
-// The delimiter is a random hex string so it never collides with content.
+// The delimiter is 16 bytes from crypto/rand, hex-encoded. That makes an
+// attacker-supplied line closing the heredoc early infeasible rather than
+// merely unlikely, and the generated delimiter is checked against the lines
+// anyway, so "cannot collide" is a property of this function and not of the
+// odds.
+//
+// The block is assembled in memory and written once. Writing opener, lines and
+// terminator as separate calls meant every failure between them returned an
+// error having already committed the opener, leaving an unterminated heredoc
+// in $GITHUB_OUTPUT -- which the runner either rejects as a parse error or
+// reads as swallowing every output written after it, including another step's.
+// Building first also moves the delimiter check ahead of any write.
+//
+// This is one write, not an atomic one, and the difference is worth stating:
+// a short write from the operating system can still commit a prefix, and no
+// code at this layer can take those bytes back from a shared append-only file.
+// What is guaranteed is that this package never commits the opener as a step
+// of its own and then fails.
 func (s *Sink) SetMultiline(_ context.Context, key string, lines []string) error {
 	if !validOutputKey(key) {
 		return fmt.Errorf("ghaoutput: invalid output key %q: %w", key, errs.ErrValidation)
@@ -128,21 +152,37 @@ func (s *Sink) SetMultiline(_ context.Context, key string, lines []string) error
 		return fmt.Errorf("delimiter: %w", err)
 	}
 
-	if _, err := fmt.Fprintf(s.w, "%s<<%s\n", key, delim); err != nil {
+	block, err := buildHeredoc(key, delim, lines)
+	if err != nil {
 		return err
 	}
+
+	_, err = io.WriteString(s.w, block)
+
+	return err
+}
+
+// buildHeredoc renders the whole block. Separate from SetMultiline so the
+// delimiter-collision refusal can be exercised: through SetMultiline the
+// delimiter comes from crypto/rand and a caller cannot supply a line matching
+// it, which is the point of the design and also why the guard would otherwise
+// be untestable.
+func buildHeredoc(key, delim string, lines []string) (string, error) {
+	var block strings.Builder
+
+	fmt.Fprintf(&block, "%s<<%s\n", key, delim)
 
 	for _, line := range lines {
-		if _, err := fmt.Fprintln(s.w, line); err != nil {
-			return err
+		if line == delim {
+			return "", fmt.Errorf("ghaoutput: multiline output %q contains its own delimiter: %w", key, errs.ErrValidation)
 		}
+
+		fmt.Fprintln(&block, line)
 	}
 
-	if _, err := fmt.Fprintln(s.w, delim); err != nil {
-		return err
-	}
+	fmt.Fprintln(&block, delim)
 
-	return nil
+	return block.String(), nil
 }
 
 // Close flushes the underlying file. After Close, Set and SetMultiline
@@ -167,7 +207,7 @@ func (s *Sink) ensureOpen() error {
 		return nil
 	}
 
-	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec,varnamelen // $GITHUB_OUTPUT file read by the runner; 'f' is idiomatic for the os.File handle.
+	f, err := cliio.OpenAppendNoFollow(s.path, 0o644) //nolint:varnamelen // idiomatic for the os.File handle.
 	if err != nil {
 		// os.OpenFile already returns "open <path>: <syscall err>" via
 		// *fs.PathError. Adding our own "open <path>:" prefix would

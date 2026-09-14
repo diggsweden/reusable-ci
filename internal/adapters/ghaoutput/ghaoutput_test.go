@@ -37,60 +37,6 @@ func TestSet_WritesScalar(t *testing.T) {
 	}
 }
 
-//nolint:cyclop // exercises 11 EOF/heredoc invariants in one writer round-trip.
-func TestSetMultiline_HeredocShape(t *testing.T) {
-	fsys := testfs.NewReal(t)
-	path := fsys.WriteFile("out", nil)
-
-	s := ghaoutput.New(path) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-
-	err := s.SetMultiline(context.Background(), "tags", []string{
-		"ghcr.io/x/y:1.2.3", "ghcr.io/x/y:1.2", "ghcr.io/x/y:1",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := s.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	data := fsys.ReadFile("out")
-	got := string(data)
-
-	if !strings.HasPrefix(got, "tags<<EOF_") {
-		t.Errorf("output does not start with heredoc opener: %q", got)
-	}
-
-	if !strings.Contains(got, "ghcr.io/x/y:1.2.3\nghcr.io/x/y:1.2\nghcr.io/x/y:1\n") {
-		t.Errorf("output missing tag lines: %q", got)
-	}
-	// Delimiter appears twice: once as opener, once as closer
-	lines := strings.Split(got, "\n")
-	if len(lines) < 2 {
-		t.Fatalf("not enough lines: %d", len(lines))
-	}
-
-	delim := strings.TrimPrefix(lines[0], "tags<<")
-	if delim == "" || !strings.HasPrefix(delim, "EOF_") {
-		t.Errorf("delimiter missing or malformed: %q", delim)
-	}
-
-	closingFound := false
-
-	for _, l := range lines[1:] {
-		if l == delim {
-			closingFound = true
-
-			break
-		}
-	}
-
-	if !closingFound {
-		t.Errorf("closing delimiter not found in output: %q", got)
-	}
-}
-
 func TestSet_RejectsNewlineValue(t *testing.T) {
 	fsys := testfs.NewReal(t)
 
@@ -171,13 +117,19 @@ func TestSetMultiline_ContentCannotCloseTheHeredoc(t *testing.T) {
 
 	got := string(fsys.ReadFile("out"))
 
-	first, rest, _ := strings.Cut(got, "\n")
-	delim := strings.TrimPrefix(first, "tags<<")
+	first, _, _ := strings.Cut(got, "\n")
 
-	// Every line, then the delimiter, and nothing after it.
-	want := strings.Join(lines, "\n") + "\n" + delim + "\n"
-	if rest != want {
-		t.Errorf("body = %q, want %q", rest, want)
+	delim := strings.TrimPrefix(first, "tags<<")
+	if delim == first {
+		t.Fatalf("no heredoc opener: %q", first)
+	}
+
+	// The whole file: opener, every line verbatim, the delimiter, nothing
+	// after it. Anything the runner would read as a further output shows up
+	// here as a difference.
+	want := "tags<<" + delim + "\n" + strings.Join(lines, "\n") + "\n" + delim + "\n"
+	if got != want {
+		t.Errorf("output = %q, want %q", got, want)
 	}
 }
 
@@ -210,9 +162,16 @@ func TestSetAfterClose_Errors(t *testing.T) {
 	if err := s.SetMultiline(context.Background(), "k", []string{"x"}); err == nil {
 		t.Errorf("SetMultiline after Close did not error")
 	}
+
+	// The refusal has to mean nothing was appended: the runner reads this
+	// file after the step ends, so a write that errored but landed anyway
+	// would still become an output.
+	if data := fsys.ReadFile("out"); len(data) != 0 {
+		t.Errorf("output written after Close: %q", data)
+	}
 }
 
-func TestNewFromEnv(t *testing.T) {
+func TestNewFromEnv_PrefersGitHubOutputAndFallsBackToDevNull(t *testing.T) {
 	tests := []struct {
 		name       string
 		githubPath string
@@ -258,4 +217,71 @@ func TestNewFromEnv(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestNewFromEnvVars_PrefersTheFirstSetName covers the constructor the CLI
+// actually wires up (deps.go passes "FORGEJO_OUTPUT", "GITHUB_OUTPUT"), which
+// had no test at all. Order is the whole contract: on a Forgejo runner both
+// names are set — the native one and the compat alias — and writing to the
+// alias would put the step's outputs where the runner does not read them.
+func TestNewFromEnvVars_PrefersTheFirstSetName(t *testing.T) {
+	tests := []struct {
+		name     string
+		forgejo  string
+		github   string
+		wantFile string
+		wantIdle string
+	}{
+		{name: "both set, native wins", forgejo: "fj", github: "gh", wantFile: "fj", wantIdle: "gh"},
+		{name: "falls through to the alias", github: "gh", wantFile: "gh"},
+		{name: "an empty value is not set", forgejo: "", github: "gh", wantFile: "gh"},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			fsys := testfs.NewReal(t)
+
+			env := testenv.New(t)
+
+			for name, rel := range map[string]string{
+				"FORGEJO_OUTPUT": testCase.forgejo,
+				"GITHUB_OUTPUT":  testCase.github,
+			} {
+				if rel == "" {
+					env.Setenv(name, "")
+
+					continue
+				}
+
+				env.Setenv(name, fsys.WriteFile(rel, nil))
+			}
+
+			s := ghaoutput.NewFromEnvVars("FORGEJO_OUTPUT", "GITHUB_OUTPUT")
+			require.NoError(t, s.Set(context.Background(), "k", "v"))
+			require.NoError(t, s.Close(context.Background()))
+
+			if got := string(fsys.ReadFile(testCase.wantFile)); got != "k=v\n" {
+				t.Errorf("%s = %q, want %q", testCase.wantFile, got, "k=v\n")
+			}
+
+			if testCase.wantIdle != "" {
+				if data := fsys.ReadFile(testCase.wantIdle); len(data) != 0 {
+					t.Errorf("%s was written to as well: %q", testCase.wantIdle, data)
+				}
+			}
+		})
+	}
+}
+
+// TestNewFromEnvVars_FallsBackToDevNullWhenNoNameIsSet keeps a local run
+// (no runner, no output file) from failing on an output write. A fallback of
+// "" instead of os.DevNull would surface here as an open error.
+func TestNewFromEnvVars_FallsBackToDevNullWhenNoNameIsSet(t *testing.T) {
+	env := testenv.New(t)
+	env.Setenv("FORGEJO_OUTPUT", "")
+	env.Setenv("GITHUB_OUTPUT", "")
+
+	s := ghaoutput.NewFromEnvVars("FORGEJO_OUTPUT", "GITHUB_OUTPUT")
+	require.NoError(t, s.Set(context.Background(), "k", "v"))
+	require.NoError(t, s.SetMultiline(context.Background(), "m", []string{"a", "b"}))
+	require.NoError(t, s.Close(context.Background()))
 }

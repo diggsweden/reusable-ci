@@ -5,11 +5,13 @@ package manifest_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/manifest"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
@@ -77,10 +79,16 @@ func TestSink_CollectJobs_MissingDirIsEmpty(t *testing.T) {
 func TestSink_WriteJob_RejectsEmptyName(t *testing.T) {
 	t.Parallel()
 
-	sink := manifest.New(t.TempDir())
+	dir := t.TempDir()
+	sink := manifest.New(dir)
 
 	err := sink.WriteJob(context.Background(), "", summary.JobResultEnvelope{Result: summary.ResultSuccess})
-	if err == nil {
-		t.Fatal("expected error for empty job name")
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage", err)
+	}
+
+	// And nothing was written under a blank name.
+	if entries, _ := os.ReadDir(filepath.Join(dir, "jobs")); len(entries) != 0 {
+		t.Errorf("a refused write created %v", entries)
 	}
 }

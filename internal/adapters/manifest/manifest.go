@@ -12,19 +12,23 @@ package manifest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
-
+	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // Sink writes <stage>-result.json under Dir. Safe for concurrent use —
 // each Write / WriteJSON is guarded by mu so racing callers don't
-// interleave the MkdirAll + WriteFile sequence. Matches the
+// interleave single-file staging and installation. Matches the
 // concurrent-safety invariant the sibling ghaoutput / stepsummary sinks
 // already establish.
 type Sink struct {
@@ -52,28 +56,19 @@ func New(dir string) *Sink { return &Sink{Dir: dir} }
 // pre-shaped as a json.Marshaler — for stage-result envelopes that's
 // summary.StageResultEnvelope.
 func (s *Sink) Write(_ context.Context, stage string, result map[string]any) error {
-	if stage == "" {
-		return fmt.Errorf("manifest stage name is empty: %w", errs.ErrUsage)
+	if !summary.ValidResultName(stage) {
+		return fmt.Errorf("invalid manifest stage name %q: %w", stage, errs.ErrUsage)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if err := os.MkdirAll(s.Dir, 0o755); err != nil { //nolint:gosec // manifest dir read by downstream workflow steps.
-		return fmt.Errorf("mkdir %q: %w", s.Dir, err)
-	}
 
 	body, err := json.Marshal(result)
 	if err != nil {
 		return fmt.Errorf("marshal manifest %q: %w", stage, err)
 	}
 
-	path := filepath.Join(s.Dir, stage+"-result.json")
-	if err := os.WriteFile(path, append(body, '\n'), 0o644); err != nil { //nolint:gosec // manifest file read by workflow; 0644 expected.
-		return fmt.Errorf("write %q: %w", path, err)
-	}
-
-	return nil
+	return writeResultFile(s.Dir, stage+"-result.json", body)
 }
 
 // WriteJSON implements ci.ManifestSink. The body's MarshalJSON output
@@ -83,28 +78,19 @@ func (s *Sink) Write(_ context.Context, stage string, result map[string]any) err
 func (s *Sink) WriteJSON(_ context.Context, stage string, body interface {
 	MarshalJSON() ([]byte, error)
 }) error {
-	if stage == "" {
-		return fmt.Errorf("manifest stage name is empty: %w", errs.ErrUsage)
+	if !summary.ValidResultName(stage) {
+		return fmt.Errorf("invalid manifest stage name %q: %w", stage, errs.ErrUsage)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if err := os.MkdirAll(s.Dir, 0o755); err != nil { //nolint:gosec // manifest dir read by downstream workflow steps.
-		return fmt.Errorf("mkdir %q: %w", s.Dir, err)
-	}
 
 	raw, err := body.MarshalJSON()
 	if err != nil {
 		return fmt.Errorf("marshal manifest %q: %w", stage, err)
 	}
 
-	path := filepath.Join(s.Dir, stage+"-result.json")
-	if err := os.WriteFile(path, append(raw, '\n'), 0o644); err != nil { //nolint:gosec // manifest file read by workflow; 0644 expected.
-		return fmt.Errorf("write %q: %w", path, err)
-	}
-
-	return nil
+	return writeResultFile(s.Dir, stage+"-result.json", raw)
 }
 
 // jobsSubdir holds per-job result records, kept separate from the
@@ -117,33 +103,62 @@ const jobsSubdir = "jobs"
 func (s *Sink) WriteJob(_ context.Context, job string, body interface {
 	MarshalJSON() ([]byte, error)
 }) error {
-	if job == "" {
-		return fmt.Errorf("job-result name is empty: %w", errs.ErrUsage)
+	if !summary.ValidResultName(job) {
+		return fmt.Errorf("invalid job-result name %q: %w", job, errs.ErrUsage)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	dir := filepath.Join(s.Dir, jobsSubdir)
-	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // result dir read by downstream workflow steps.
-		return fmt.Errorf("mkdir %q: %w", dir, err)
-	}
 
 	raw, err := body.MarshalJSON()
 	if err != nil {
 		return fmt.Errorf("marshal job-result %q: %w", job, err)
 	}
 
-	path := filepath.Join(dir, job+".json")
-	if err := os.WriteFile(path, append(raw, '\n'), 0o644); err != nil { //nolint:gosec // result file read by workflow; 0644 expected.
-		return fmt.Errorf("write %q: %w", path, err)
+	return writeResultFile(filepath.Join(s.Dir, jobsSubdir), job+".json", raw)
+}
+
+// Stage only this record under a checked real directory. Installation rejects
+// preexisting symlinks and replaces regular files without truncating hardlinks.
+func writeResultFile(dir, name string, body []byte) error {
+	stage, err := pathsafe.NewArtifactStaging(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = stage.Close() }()
+
+	destination, err := pathsafe.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = destination.Close() }()
+
+	previous, err := destination.Lstat(name)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect result %q: %w", name, err)
+	}
+
+	if err := stage.Root().WriteFile(name, append(body, '\n'), 0o644); err != nil {
+		return fmt.Errorf("stage result %q: %w", name, err)
+	}
+	// Preserve replacement permissions on the new inode, never on an old
+	// inode shared with a hardlink. New files retain the creation umask.
+	if previous != nil && previous.Mode().IsRegular() {
+		if err := stage.Root().Chmod(name, previous.Mode().Perm()); err != nil {
+			return fmt.Errorf("preserve result permissions %q: %w", name, err)
+		}
+	}
+
+	if err := stage.Install(); err != nil {
+		return fmt.Errorf("install result %q: %w", name, err)
 	}
 
 	return nil
 }
 
 // CollectJobs implements ci.JobResultStore. Reads every <Dir>/jobs/*.json as
-// raw JSON. A missing jobs directory yields no records (not an error): a stage
+// raw JSON, using the shared bounded regular-file reader and rejecting existing
+// symlinks. A missing jobs directory yields no records (not an error): a stage
 // where no job ran simply collected nothing.
 func (s *Sink) CollectJobs(_ context.Context) ([][]byte, error) {
 	s.mu.Lock()
@@ -151,13 +166,19 @@ func (s *Sink) CollectJobs(_ context.Context) ([][]byte, error) {
 
 	dir := filepath.Join(s.Dir, jobsSubdir)
 
-	entries, err := os.ReadDir(dir)
+	root, err := pathsafe.OpenRoot(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
 
 		return nil, fmt.Errorf("read job-result dir %q: %w", dir, err)
+	}
+	defer func() { _ = root.Close() }()
+
+	entries, err := fs.ReadDir(root.FS(), ".")
+	if err != nil {
+		return nil, fmt.Errorf("list job-result dir %q: %w", dir, err)
 	}
 
 	docs := make([][]byte, 0, len(entries))
@@ -167,7 +188,16 @@ func (s *Sink) CollectJobs(_ context.Context) ([][]byte, error) {
 			continue
 		}
 
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name())) //nolint:gosec // path is under the result dir this sink owns.
+		info, err := root.Lstat(entry.Name())
+		if err != nil {
+			return nil, fmt.Errorf("inspect job-result %q: %w", entry.Name(), err)
+		}
+
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("job-result %q is not a regular file: %w", entry.Name(), errs.ErrValidation)
+		}
+
+		data, err := cliio.ReadFileInRoot(root, entry.Name())
 		if err != nil {
 			return nil, fmt.Errorf("read job-result %q: %w", entry.Name(), err)
 		}

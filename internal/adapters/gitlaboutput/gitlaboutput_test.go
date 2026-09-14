@@ -52,26 +52,56 @@ func TestSet_RejectsInvalidDotenvData(t *testing.T) {
 	}
 }
 
-// TestSet_DashAndUnderscoreKeysCollide records that the dotenv key
-// mapping is not injective: "-" becomes "_", so two distinct sink keys
-// can become one GitLab variable, and the later write wins.
+// TestSet_RefusesTwoKeysThatBecomeOneVariable covers the one way this sink can
+// lose a value without reporting anything.
 //
-// No two keys emitted today collide -- all 69 were checked -- but the
-// codebase mixes both spellings, so this is the shape a future collision
-// would take. It is here to be found by whoever adds the key that
-// collides, rather than as a guard over the whole key set.
-func TestSet_DashAndUnderscoreKeysCollide(t *testing.T) {
+// The key mapping is not injective: "-" and "_" both become "_", so
+// "image-digest" and "image_digest" are one GitLab variable. dotenv is
+// last-wins, so before the refusal both writes succeeded, the file held two
+// IMAGE_DIGEST lines, and a release step reading it got the other key's value
+// with no error raised anywhere.
+//
+// This replaces a test that recorded the collision as tolerated. That test
+// said it was "here to be found by whoever adds the key that collides", which
+// it was not: it used two hardcoded keys, so adding a colliding production key
+// would not have failed it, and its claim that no live pair collides had gone
+// stale by a dozen keys with nothing rechecking it. Refusing in the sink is
+// the protection the comment described.
+func TestSet_RefusesTwoKeysThatBecomeOneVariable(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	path := fsys.WriteFile("out.env", nil)
 
 	s := gitlaboutput.New(path)
 	require.NoError(t, s.Set(context.Background(), "image-digest", "first"))
-	require.NoError(t, s.Set(context.Background(), "image_digest", "second"))
+
+	err := s.Set(context.Background(), "image_digest", "second")
+	require.ErrorIs(t, err, errs.ErrValidation)
+	// Both spellings are named: the operator has to rename one, and cannot
+	// without being told which two collided.
+	require.Contains(t, err.Error(), `"image-digest"`)
+	require.Contains(t, err.Error(), `"image_digest"`)
+	require.Contains(t, err.Error(), "IMAGE_DIGEST")
 	require.NoError(t, s.Close(context.Background()))
 
-	if got, want := string(fsys.ReadFile("out.env")), "IMAGE_DIGEST=first\nIMAGE_DIGEST=second\n"; got != want {
-		t.Errorf("output = %q, want %q", got, want)
-	}
+	// The refused value is not written. A second IMAGE_DIGEST line would be
+	// the loss this refusal exists to prevent, reported and then committed
+	// anyway.
+	require.Equal(t, "IMAGE_DIGEST=first\n", string(fsys.ReadFile("out.env")))
+}
+
+// TestSet_AllowsTheSameKeyTwice is the boundary of that refusal. A caller
+// overwriting its own key is one value with a later revision, not two values
+// merging, and the collision guard must not turn it into an error.
+func TestSet_AllowsTheSameKeyTwice(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	path := fsys.WriteFile("out.env", nil)
+
+	s := gitlaboutput.New(path)
+	require.NoError(t, s.Set(context.Background(), "image-digest", "first"))
+	require.NoError(t, s.Set(context.Background(), "image-digest", "second"))
+	require.NoError(t, s.Close(context.Background()))
+
+	require.Equal(t, "IMAGE_DIGEST=first\nIMAGE_DIGEST=second\n", string(fsys.ReadFile("out.env")))
 }
 
 func TestSetMultiline_Unsupported(t *testing.T) {
@@ -114,14 +144,23 @@ func TestSetAfterClose_Errors(t *testing.T) {
 		t.Fatal("expected Set after Close to error")
 	}
 
-	// Both entry points, so a closed sink cannot be written through
-	// either one.
-	if err := s.SetMultiline(context.Background(), "key", []string{"v"}); err == nil {
-		t.Error("expected SetMultiline after Close to error")
+	// SetMultiline is refused whether the sink is open or not -- a dotenv
+	// file has no multi-line form -- so this pins the capability gap, not
+	// the closed-sink guard. Asserting only "it errored" would read as
+	// the latter and pass for the wrong reason.
+	if err := s.SetMultiline(context.Background(), "key", []string{"v"}); !errors.Is(err, errs.ErrUnsupported) {
+		t.Errorf("SetMultiline after Close = %v, want ErrUnsupported", err)
+	}
+
+	// The refusal has to mean nothing was appended: the runner sources this
+	// dotenv file after the job ends, so a write that errored but landed
+	// anyway would still become a variable.
+	if data := fsys.ReadFile("out.env"); len(data) != 0 {
+		t.Errorf("dotenv written after Close: %q", data)
 	}
 }
 
-func TestNewFromEnv(t *testing.T) {
+func TestNewFromEnv_WritesUppercasedKeysToCIOutput(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	env := testenv.New(t)
 	env.Setenv("CI_OUTPUT", fsys.WriteFile("out.env", nil))
